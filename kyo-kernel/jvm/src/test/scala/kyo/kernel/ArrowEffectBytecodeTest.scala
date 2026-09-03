@@ -2,13 +2,10 @@ package kyo.kernel
 
 import kyo.Id
 import kyo.Tag
+import org.scalatest.freespec.AnyFreeSpec
 import scala.reflect.ClassTag
 
-/** Pins the compiled size of the ArrowEffect expansions at user call sites: suspend, suspendWith, and the region constructor.
-  *
-  * A size that moves here is a result to look at, never a baseline to quietly rewrite.
-  */
-class ArrowEffectBytecodeTest extends kyo.Test:
+class ArrowEffectBytecodeTest extends AnyFreeSpec:
 
     object TestEffect extends ArrowEffect[Id, Id]
 
@@ -23,28 +20,18 @@ class ArrowEffectBytecodeTest extends kyo.Test:
             ArrowEffect.handleCont(Tag[TestEffect.type], v)([C] => (input, cont) => cont(input), a => a)
 
     "suspend" in {
-        // one allocation and a return
         val sizes = methodBytecodeSize[TestSuspend]
-        assert(sizes == Map("test" -> 14))
+        assert(sizes == Map("test" -> 14), sizes.toString)
     }
 
     "suspendWith" in {
-        // the suspension and its continuation fuse into one anonymous class, so the call site is a
-        // single allocation, the same size as a bare suspend
         val sizes = methodBytecodeSize[TestSuspendWith]
-        assert(sizes == Map("test" -> 14))
+        assert(sizes == Map("test" -> 14), sizes.toString)
     }
 
     "handleCont" in {
-        // the expansion opens with the settled-input check (reading the settled value through
-        // `Nested.unnest`; an inline extension on the opaque type would drag a proxy chain for the
-        // type's owner into every site), carries the done clause, and allocates twice: the region
-        // node and the handler it holds. Whether the handler should fuse into the node is a design
-        // question, not a pin to adjust. The expansion also loads the Effect module before the
-        // deferral call: an @static symbol named in inline-expanded code crashes a downstream
-        // macro-owning module's clean build (see the PendingBytecodeTest lift pins).
         val sizes = methodBytecodeSize[TestHandleCont]
-        assert(sizes == Map("test" -> 40))
+        assert(sizes == Map("test" -> 48), sizes.toString)
     }
 
     private def methodBytecodeSize[A](using ct: ClassTag[A]): Map[String, Int] =

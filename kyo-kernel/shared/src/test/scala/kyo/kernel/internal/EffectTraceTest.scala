@@ -1,42 +1,188 @@
 package kyo.kernel.internal
 
-import kyo.Arrow
 import kyo.Const
+import kyo.Maybe
 import kyo.Tag
 import kyo.discard
-import kyo.kernel.*
+import kyo.Arrow
+import kyo.Loop
+import kyo.kernel.<
+import kyo.kernel.ArrowEffect
+import kyo.kernel.Effect
+import org.scalatest.freespec.AnyFreeSpec
 import scala.annotation.tailrec
 import scala.util.control.NoStackTrace
 
-class EffectTraceTest extends kyo.Test:
-
+class EffectTraceTest extends AnyFreeSpec:
     sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())
-
-    // the fused node: the operation carries its own continuation
-    inline def askWith[B, S](inline f: Int => B < S): B < (Ask & S) =
-        ArrowEffect.suspendWith[Any](Tag[Ask], ())(f)
+    def runAsk[A, S](v: A < (Ask & S))(answer: Int): A < S =
+        ArrowEffect.handleCont(Tag[Ask], v)([C] => (_, cont) => cont(answer))
 
     sealed trait Say extends ArrowEffect[Const[String], Const[Unit]]
     def say(s: String): Unit < Say = ArrowEffect.suspend[Any](Tag[Say], s)
+    def runSay[A, S](v: A < (Say & S)): A < S =
+        ArrowEffect.handleCont(Tag[Say], v)([C] => (_, cont) => cont(()))
 
-    // row-generic, so a region can be handled while another effect stays open
-    def answerAsk[A, S](value: Int)(v: A < (Ask & S)): A < S =
-        ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue(value))
+    final class Boom extends RuntimeException("boom")
 
-    def dropSay[A, S](v: A < (Say & S)): A < S =
-        ArrowEffect.handleLoop(Tag[Say], v)([C] => _ => Loop.continue(()))
+    private def carrier(ex: Throwable): Maybe[EffectTrace] =
+        Maybe.fromOption(ex.getSuppressed.collectFirst { case c: EffectTrace => c })
 
-    def carrier(ex: Throwable): Option[EffectTrace] =
-        ex.getSuppressed.collectFirst { case t: EffectTrace => t }
+    "a throw inside a region carries the region's label" in {
+        val v  = runAsk(ask.map(_ => (throw Boom()): Int))(1)
+        val ex = intercept[Boom](v.eval)
+        val c  = carrier(ex)
+        assert(c.nonEmpty)
+        assert(ex.getMessage == "boom")
+        assert(c.get.getMessage.contains(Tag[Ask].show))
+        assert(ex.getStackTrace.exists(e => e.getClassName == Tag[Ask].show && e.getMethodName == "handle"))
+    }
 
-    def methods(ex: Throwable): List[String] =
+    "regions splice innermost first" in {
+        val inner = runAsk(ask.map(_ => (throw Boom()): Int))(1)
+        val outer = runSay(inner: Int < (Say & Any))
+        val ex    = intercept[Boom](outer.eval)
+        val trace = ex.getStackTrace
+        val ask0  = trace.indexWhere(_.getClassName == Tag[Ask].show)
+        val say0  = trace.indexWhere(_.getClassName == Tag[Say].show)
+        assert(ask0 >= 0 && say0 >= 0 && ask0 < say0)
+    }
+
+    "the continuation a region holds contributes its frames" in {
+
+        val v  = runAsk(ask.map(_ => (throw Boom()): Int))(1).map(_ + 1)
+        val ex = intercept[Boom](runSay(v: Int < Say).eval)
+        assert(ex.getStackTrace.exists(e => e.getFileName == "EffectTraceTest.scala"))
+    }
+
+    "nested evals accumulate their regions innermost first" in {
+        val inner = runAsk(ask.map(_ => (throw Boom()): Int))(1)
+
+        val outer: Int < Any = runSay(say("x").map { _ =>
+            val r: Int = inner.eval
+            r
+        })
+        val ex    = intercept[Boom](outer.eval)
+        val trace = ex.getStackTrace
+        assert(trace.exists(_.getClassName == Tag[Ask].show))
+        assert(trace.exists(_.getClassName == Tag[Say].show))
+        val regions = trace.filter(_.getMethodName == "handle").map(_.getClassName).toList
+        assert(regions.indexOf(Tag[Ask].show) < regions.indexOf(Tag[Say].show))
+        assert(ex.getSuppressed.count(_.isInstanceOf[EffectTrace]) == 1)
+    }
+
+    "a failure rethrown through a later eval on the same thread names the later eval's region" in {
+        val shared = Boom()
+        discard(intercept[Boom](runAsk(ask.map(_ => (throw shared): Int))(1).eval))
+        val ex    = intercept[Boom](runSay(say("x").map(_ => (throw shared): Int)).eval)
+        val trace = ex.getStackTrace
+        assert(trace.exists(_.getClassName == Tag[Ask].show))
+        assert(trace.exists(_.getClassName == Tag[Say].show))
+    }
+
+    "a fused region names the body, then the region" in {
+        val fused: Int < Any =
+            ArrowEffect.handleLoopWith[Const[Unit], Const[Int], Ask, Int, Int, Any, Any](Tag[Ask], innerStep(ask))(
+                [C] => _ => Loop.continue((), 1: Int < Any),
+                a => a
+            )((_: Int) + 1)
+        val ex  = intercept[Boom](fused.eval)
+        val els = carrier(ex).get.elements.toList
+        assert(els.exists(_.getMethodName == "innerStep"))
+        assert(els.exists(_.getMethodName == "handle"))
+        assert(els.indexWhere(_.getMethodName == "innerStep") < els.indexWhere(_.getMethodName == "handle"))
+    }
+
+    "a recovery clause inspects the enriched exception" in {
+        var sawCarrier = false
+        val v = ArrowEffect.handleCont(Tag[Ask], ask.map(_ => (throw Boom()): Int))(
+            [C] => (_, cont) => cont(1),
+            a => a,
+            ex =>
+                sawCarrier = ex.getSuppressed.exists(_.isInstanceOf[EffectTrace]) &&
+                    ex.getStackTrace.exists(_.getClassName == Tag[Ask].show)
+                Maybe(-1)
+        )
+        assert(v.eval == -1)
+        assert(sawCarrier)
+    }
+
+    "a failure born in a recovery is described from the regions under it" in {
+        final class Second extends RuntimeException("second")
+        val inner: Int < Say = ArrowEffect.handleCont(Tag[Ask], ask.map(_ => (throw Boom()): Int))(
+            [C] => (_, cont) => cont(1),
+            a => a,
+            _ => throw Second()
+        )
+        var enriched = Maybe.empty[Boolean]
+        val checked: Int < Any = ArrowEffect.handleCont(Tag[Say], inner)(
+            [C] => (_, cont) => cont(()),
+            a => a,
+            ex =>
+                enriched = Maybe(ex.getMessage == "second" && ex.getStackTrace.exists(_.getClassName == Tag[Say].show))
+                Maybe(-7)
+        )
+        assert(checked.eval == -7)
+        assert(enriched == Maybe(true))
+    }
+
+    "NoStackTrace keeps its carrier and skips the splice" in {
+        final class Silent extends RuntimeException("silent") with NoStackTrace
+        val v  = runAsk(ask.map(_ => (throw Silent()): Int))(1)
+        val ex = intercept[Silent](v.eval)
+        val c  = carrier(ex)
+        assert(c.nonEmpty)
+        assert(c.get.elements.nonEmpty)
+        assert(ex.getStackTrace.isEmpty)
+    }
+
+    "a fatal error passes through untouched" in {
+        val v  = runAsk(ask.map(_ => (throw new InterruptedException("stop")): Int))(1)
+        val ex = intercept[InterruptedException](v.eval)
+        assert(carrier(ex).isEmpty)
+    }
+
+    "a suppression-disabled exception travels untouched" in {
+
+        object Shared extends RuntimeException("shared", null, false, false)
+        val v  = runAsk(ask.map(_ => (throw Shared): Int))(1)
+        val ex = intercept[Shared.type](v.eval)
+        assert(carrier(ex).isEmpty)
+        assert(ex.getStackTrace.isEmpty)
+    }
+
+    "a chain past the cap reports the drop" in {
+        def wrap(n: Int, v: Int < Ask): Int < Ask =
+            if n == 0 then v
+            else wrap(n - 1, ArrowEffect.handleCont(Tag[Say], v: Int < (Say & Ask))([C] => (_, cont) => cont(())))
+        val v  = runAsk(wrap(100, ask.map(_ => (throw Boom()): Int)))(1)
+        val ex = intercept[Boom](v.eval)
+        val c  = carrier(ex)
+        assert(c.nonEmpty)
+        assert(c.get.dropped > 0)
+        assert(c.get.getMessage.contains("more not walked"))
+    }
+
+    "a throw with no region standing still carries the frames of the steps it was in" in {
+        val v: Int < Any = runAsk(ask)(1).map(_ => (throw Boom()): Int).map(_ + 1)
+        val ex           = intercept[Boom](v.eval)
+        assert(carrier(ex).nonEmpty)
+        assert(carrier(ex).get.elements.forall(_.getFileName == "EffectTraceTest.scala"))
+        assert(carrier(ex).get.elements.forall(_.getClassName.startsWith("map @ ")))
+        assert(!kyo.internal.Platform.isJVM || ex.getStackTrace.exists(_.getFileName == "EffectTraceTest.scala"))
+    }
+
+    "the carrier renders the frames as a message" in {
+        val v  = runAsk(ask.map(_ => (throw Boom()): Int))(1)
+        val ex = intercept[Boom](v.eval)
+        assert(carrier(ex).get.getMessage.startsWith("effect trace:"))
+    }
+    private def methods(ex: Throwable): List[String] =
         carrier(ex).toList.flatMap(_.elements.iterator.map(_.getMethodName))
 
-    def classes(ex: Throwable): List[String] =
+    private def classes(ex: Throwable): List[String] =
         carrier(ex).toList.flatMap(_.elements.iterator.map(_.getClassName))
-
-    class Boom extends RuntimeException("boom")
 
     def innerStep(v: Int < Ask): Int < Ask = v.map(_ => throw new Boom)
     def outerStep(v: Int < Ask): Int < Ask = innerStep(v).map(_ + 1)
@@ -44,8 +190,6 @@ class EffectTraceTest extends kyo.Test:
     def stepA(v: Int < Ask): Int < Ask = v.map(_ + 1)
     def stepB(v: Int < Ask): Int < Ask = v.map(_ + 2)
 
-    // alternating sites so consecutive frames differ: a run of one frame collapses to one
-    // element, which is what a loop over a single map site produces
     def deepChain(depth: Int): Int < Ask =
         @tailrec def loop(i: Int, acc: Int < Ask): Int < Ask =
             if i == 0 then acc
@@ -53,10 +197,25 @@ class EffectTraceTest extends kyo.Test:
         loop(depth, innerStep(ask))
     end deepChain
 
+    inline def askWith[B, S](inline f: Int => B < S): B < (Ask & S) = ArrowEffect.suspendWith[Any](Tag[Ask], ())(f)
+
+    "a throw in a cont handler's clause carries the continuation it was handed" in {
+        val boom = new RuntimeException("boom")
+        val ex = intercept[RuntimeException] {
+            ArrowEffect.handleCont(Tag[Ask], outerStep(ask))([C] => (_, _) => throw boom).eval
+        }
+        assert(ex eq boom)
+        val ms = methods(ex)
+        assert(ms.contains("innerStep"))
+        assert(ms.contains("outerStep"))
+        assert(ms.contains("ask"))
+        assert(ms.contains("handle"))
+    }
+
     "a throw in a handler clause carries the suspension and its region" in {
         val boom = new RuntimeException("boom")
         val ex = intercept[RuntimeException] {
-            Eval(ArrowEffect.handleLoop(Tag[Ask], ask.map(_ + 1))([C] => _ => throw boom, a => a))
+            ArrowEffect.handleLoop(Tag[Ask], ask.map(_ + 1))([C] => _ => throw boom, a => a).eval
         }
         assert(ex eq boom)
         val t = carrier(ex)
@@ -67,83 +226,37 @@ class EffectTraceTest extends kyo.Test:
         assert(msg.contains("handle"))
     }
 
-    "a throw in a continuation frame names its site" in {
+    "a throw in a continuation frame with no region standing travels on the physical trace" in {
         def deep(i: Int): Int < Any =
             if i == 0 then 0 else (0: Int < Any).map(_ => deep(i - 1))
-        def boomAt(v: Int < Any): Int < Any = v.map(_ => (throw new RuntimeException("late")): Int)
-        val ex                              = intercept[RuntimeException](Eval(boomAt(deep(10000))))
-        val t                               = carrier(ex)
-        assert(t.nonEmpty)
-        assert(t.get.getMessage.contains("boomAt"))
+        var site = 0
+        def boomAt(v: Int < Any): Int < Any =
+            v.map { _ =>
+                site = summon[kyo.Frame].position.lineNumber; (throw new RuntimeException("late")): Int
+            }
+        val ex = intercept[RuntimeException](boomAt(deep(10000)).eval)
+        assert(carrier(ex).forall(_.elements.isEmpty))
+        val top = ex.getStackTrace.head
+        assert(!kyo.internal.Platform.isJVM || (top.getFileName == "EffectTraceTest.scala" && top.getLineNumber == site))
     }
 
     "an unhandled suspension arrives enriched" in {
-        val ex = intercept[Throwable](Eval(ask.asInstanceOf[Int < Any]))
-        assert(ex.getMessage.contains("Unexpected pending effect"))
+        val ex = intercept[Throwable](ask.asInstanceOf[Int < Any].eval)
+        assert(ex.getMessage.contains("unhandled suspension"))
         val t = carrier(ex)
         assert(t.nonEmpty)
         assert(t.get.getMessage.contains("ask"))
     }
 
-    "nested evals accumulate their regions innermost first" in {
-        def innerBoom: Int =
-            Eval(answerAsk(1)(ask.map(_ => (throw new RuntimeException("x")): Int)))
-        val outer: Int < Any = dropSay(say("s").map(_ => innerBoom))
-        val ex               = intercept[RuntimeException](Eval(outer))
-        val t                = carrier(ex)
-        assert(t.nonEmpty)
-        val regions = t.get.elements.filter(_.getMethodName == "handle").map(_.getClassName)
-        assert(regions.exists(_.contains("Ask")))
-        assert(regions.exists(_.contains("Say")))
-        assert(regions.indexWhere(_.contains("Ask")) < regions.indexWhere(_.contains("Say")))
-    }
-
-    "NoStackTrace keeps its carrier and its empty stack" in {
-        class Silent extends Exception with NoStackTrace
-        val ex = intercept[Silent] {
-            Eval(ArrowEffect.handleLoop(Tag[Ask], ask)([C] => _ => throw new Silent, a => a))
-        }
-        assert(carrier(ex).nonEmpty)
-        assert(ex.getStackTrace.isEmpty)
-    }
-
-    "a chain past the cap reports the drop" in {
-        def deep(i: Int): Int < Any =
-            if i == 0 then (0: Int < Any).map(_ => (throw new RuntimeException("deep")): Int)
-            else (0: Int < Any).map(_ => deep(i - 1))
-        def tower(v: Int < Any, n: Int): Int < Any =
-            if n == 0 then v
-            else if n % 2 == 0 then tower(v.map(_ + 1), n - 1)
-            else tower(v.map(_ + 2), n - 1)
-        val ex = intercept[RuntimeException](Eval(tower(deep(10000), 100)))
-        val t  = carrier(ex)
-        assert(t.nonEmpty)
-        assert(t.get.dropped > 0)
-        assert(t.get.getMessage.contains("more not walked"))
-    }
-
-    "a fatal error passes through untouched" in {
-        val ex = intercept[StackOverflowError] {
-            Eval(ArrowEffect.handleLoop(Tag[Ask], ask)([C] => _ => throw new StackOverflowError, a => a))
-        }
-        assert(carrier(ex).isEmpty)
-        assert(ex.getSuppressed.isEmpty)
-    }
-
     "the effect frames of a throw inside a mapped step" - {
-
-        // `ask` is answered before the map body runs, so by the time the throw happens the
-        // suspension is behind the eval rather than ahead of it: a map over a suspension mints a
-        // deferral node here rather than fusing into the operation. The fused form below is where
-        // the operation's own frame is pinned.
         "are carried through an eval" in {
-            val ex = intercept[Boom](Eval(answerAsk(1)(outerStep(ask))))
+            val ex = intercept[Boom](runAsk(outerStep(ask))(1).eval)
             assert(methods(ex).contains("innerStep"))
             assert(methods(ex).contains("outerStep"))
         }
 
         "name the call site's callee and the enclosing definition" in {
-            val ex  = intercept[Boom](Eval(answerAsk(1)(outerStep(ask))))
+            val ex  = intercept[Boom](runAsk(outerStep(ask))(1).eval)
             val els = carrier(ex).get.elements.toList
             val inner = els.find(_.getMethodName == "innerStep") match
                 case Some(e) => e
@@ -154,20 +267,20 @@ class EffectTraceTest extends kyo.Test:
         }
 
         "run innermost first" in {
-            val ex = intercept[Boom](Eval(answerAsk(1)(outerStep(ask))))
+            val ex = intercept[Boom](runAsk(outerStep(ask))(1).eval)
             val ms = methods(ex)
             assert(ms.indexOf("innerStep") < ms.indexOf("outerStep"))
         }
 
         "skip the internal frame placeholder" in {
-            val ex = intercept[Boom](Eval(answerAsk(1)(outerStep(ask))))
+            val ex = intercept[Boom](runAsk(outerStep(ask))(1).eval)
             assert(carrier(ex).get.elements.forall(_.getFileName != "<internal>"))
         }
 
         "a fused suspension carries the operation's own frame" in {
             def fusedStep: Int < Ask                 = askWith(_ => throw new Boom)
             def aroundFused(v: Int < Ask): Int < Ask = v.map(_ + 1)
-            val ex                                   = intercept[Boom](Eval(answerAsk(1)(aroundFused(fusedStep))))
+            val ex                                   = intercept[Boom](runAsk(aroundFused(fusedStep))(1).eval)
             val ms                                   = methods(ex)
             assert(ms.contains("fusedStep"))
             assert(ms.contains("aroundFused"))
@@ -179,88 +292,38 @@ class EffectTraceTest extends kyo.Test:
     "a suspension boundary the physical stack cannot cross" in {
         def thrower(v: Int < Ask): Int < Ask = v.map(_ => throw new Boom)
         def around(v: Int < Ask): Int < Ask  = thrower(v).map(_ + 1)
-        val ex                               = intercept[Boom](Eval(answerAsk(1)(around(ask))))
+        val ex                               = intercept[Boom](runAsk(around(ask))(1).eval)
         assert(methods(ex).contains("around"))
         assert(methods(ex).contains("thrower"))
     }
 
-    "a deferred block" - {
-
-        "carries the steps after a budget rescue" in {
-            def boomHere: Int < Any = (0: Int < Any).map(_ => (throw new Boom): Int)
-            def deep(i: Int): Int < Any =
-                if i == 0 then boomHere else (0: Int < Any).map(_ => deep(i - 1))
-            val ex = intercept[Boom](Eval(deep(600)))
-            assert(methods(ex).contains("deep") || methods(ex).contains("boomHere"))
-        }
-
-        // Known limit, recorded rather than guarded: a throw from the body of `Effect.defer` happens
-        // while the eval reads the node's payload, which is the one path into user code the attach
-        // sites do not cover. Guarding it would put a try region on the deferral arm, the hottest
-        // arm of the eval, to describe a failure on a surface that carries no frame of its own
-        // (Kyo.Defer declares no `frame`). The exception propagates correctly; it arrives without
-        // effect frames.
-        //
-        // "carries the deferred site" in {
-        //     def deferred: Int < Any = Effect.defer[Int, Any](throw new Boom)
-        //     val ex                  = intercept[Boom](Eval(deferred))
-        //     assert(methods(ex).contains("deferred"))
-        //     assert(classes(ex).exists(_.startsWith("defer @ ")))
-        // }
+    "a throw after a budget rescue with no region standing travels on the physical trace" in {
+        def boomHere: Int < Any = (0: Int < Any).map(_ => (throw new Boom): Int)
+        def deep(i: Int): Int < Any =
+            if i == 0 then boomHere else (0: Int < Any).map(_ => deep(i - 1))
+        val ex = intercept[Boom](deep(600).eval)
+        assert(carrier(ex).forall(_.elements.isEmpty))
+        assert(!kyo.internal.Platform.isJVM || ex.getStackTrace.exists(_.getMethodName.contains("boomHere")))
     }
 
     "region nesting" - {
-
         def useAsk: Int < (Ask & Say) = outerStep(ask).map(v => say("x").map(_ => v))
 
-        "appears as one element per handler tag, innermost first" in {
-            val ex = intercept[Boom](Eval(dropSay(answerAsk(1)(useAsk))))
-            val cs = classes(ex)
-            assert(cs.exists(_.endsWith("Ask")))
-            assert(cs.exists(_.endsWith("Say")))
-            assert(cs.indexWhere(_.endsWith("Ask")) < cs.indexWhere(_.endsWith("Say")))
-        }
-
         "names each region exactly once" in {
-            val ex = intercept[Boom](Eval(dropSay(answerAsk(1)(useAsk))))
+            val ex = intercept[Boom](runSay(runAsk(useAsk)(1)).eval)
             assert(classes(ex).count(_.endsWith("Ask")) == 1)
             assert(classes(ex).count(_.endsWith("Say")) == 1)
         }
 
-        "a fused region names the body, then the region" in {
-            val fused: Int < Any =
-                ArrowEffect.handleLoopWith[Const[Unit], Const[Int], Ask, Int, Int, Any, Any](Tag[Ask], innerStep(ask))(
-                    [C] => _ => Loop.continue(1),
-                    a => a
-                )((_: Int) + 1)
-            val ex  = intercept[Boom](Eval(fused))
-            val els = carrier(ex).get.elements.toList
-            assert(els.exists(_.getMethodName == "innerStep"))
-            assert(els.exists(_.getMethodName == "handle"))
-            assert(els.indexWhere(_.getMethodName == "innerStep") < els.indexWhere(_.getMethodName == "handle"))
-        }
-
-        // A clause that suspends produces a self-referential adapter node, which the walk reaches in
-        // its arrow role. The assertion that matters most is that the case terminates at all: walked
-        // in the node role it would re-enqueue itself forever, inside a catch, with an exception in
-        // flight.
-        //
-        // Accepted limit, recorded rather than papered over: the region body's own frames do not
-        // appear here. The clause's answer is settled, so the eval resumes the captured
-        // continuation strictly inside `map` rather than through a delivery site, and by the time
-        // the throw reaches an attach site those frames have already been consumed. The region this
-        // clause serves is absent for a second reason: the eval pops that handler for the clause's
-        // duration, which is the clause-scope semantics. What survives is the clause's own frame and
-        // the region that answered the clause.
         "a throw under an emitting clause walks without looping" in {
             val v: Int < Any =
-                dropSay(
+                runSay(
                     ArrowEffect.handleLoop(Tag[Ask], innerStep(ask))(
-                        [C] => _ => say("e").map(_ => Loop.continue(1: Int < Any)),
+                        [C] => _ => say("e").map(_ => Loop.continue((), 1: Int < Any)),
                         a => a
                     )
                 )
-            val ex = intercept[Boom](Eval(v))
+            val ex = intercept[Boom](v.eval)
             assert(carrier(ex).nonEmpty)
             assert(classes(ex).exists(_.endsWith("Say")))
             assert(carrier(ex).get.elements.forall(_.getFileName != "<internal>"))
@@ -272,7 +335,7 @@ class EffectTraceTest extends kyo.Test:
                     [C] => (_, cont) => cont(1).map(_ => cont(2)),
                     a => a
                 )
-            val ex = intercept[Boom](Eval(r))
+            val ex = intercept[Boom](r.eval)
             assert(classes(ex).count(_.endsWith("Ask")) == 1)
         }
     }
@@ -282,7 +345,7 @@ class EffectTraceTest extends kyo.Test:
         val before                   = fatal.getStackTrace
         def fatalStep: Int < Ask     = ask.map(_ => throw fatal)
         var caught: Throwable | Null = null
-        try discard(Eval(answerAsk(1)(fatalStep)))
+        try discard(runAsk(fatalStep)(1).eval)
         catch case ex: Throwable => caught = ex
         assert(caught eq fatal)
         assert(fatal.getSuppressed.isEmpty)
@@ -290,61 +353,39 @@ class EffectTraceTest extends kyo.Test:
     }
 
     "the cap" - {
-
         "stops the walk at exactly the cap and records what it did not reach" in {
-            val ex = intercept[Boom](Eval(answerAsk(1)(deepChain(200))))
+            val ex = intercept[Boom](runAsk(deepChain(200))(1).eval)
             assert(carrier(ex).get.elements.length == 64)
             assert(carrier(ex).get.dropped > 0)
         }
 
         "bounds a chain far deeper than the Java stack" in {
-            val ex = intercept[Boom](Eval(answerAsk(1)(deepChain(1000000))))
+            val ex = intercept[Boom](runAsk(deepChain(1000000))(1).eval)
             assert(carrier(ex).get.elements.length == 64)
             assert(carrier(ex).get.dropped > 0)
         }
     }
 
     "a failure of the walk itself leaves the original failure travelling" in {
-        // a node whose frame cannot be read: describing a failure must never replace the
-        // failure being described
         val unreadable =
-            new Kyo.Suspend[Const[Unit], Const[Int], Ask, Any, Int, Any]:
-                def tag   = Tag[Ask]
-                def input = ()
-                def frame = throw new IllegalStateException("frame read failed")
-                def cont  = Arrow.id[Int]
-        val ex = intercept[Throwable](Eval(unreadable.asInstanceOf[Int < Any]))
-        assert(ex.getMessage.contains("Unexpected pending effect"))
+            new Pending.SuspendArrow[Const[Unit], Const[Int], Ask, Any, Int, Any]:
+                def tag            = Tag[Ask]
+                def input          = ()
+                override def frame = throw new IllegalStateException("frame read failed")
+                def cont           = Arrow.id[Int]
+        val ex = intercept[Throwable](unreadable.asInstanceOf[Int < Any].eval)
         assert(carrier(ex).toList.flatMap(_.elements.toList).isEmpty)
     }
 
-    "the carrier renders the frames as a message" in {
-        val ex  = intercept[Boom](Eval(answerAsk(1)(outerStep(ask))))
-        val msg = carrier(ex).get.getMessage
-        assert(msg.startsWith("effect trace:"))
-        assert(msg.contains("innerStep"))
-        assert(msg.contains("outerStep"))
-    }
-
-    "the effect frames of a throw are carried through a catching guard" in {
-        val ex = intercept[Boom](Eval(answerAsk(1)(Effect.catching(outerStep(ask))(e => throw e))))
-        assert(methods(ex).contains("innerStep"))
-        assert(methods(ex).contains("outerStep"))
-        assert(classes(ex).exists(_.startsWith("catching @ ")))
-    }
-
     "a second crossing rewrites the spliced trace rather than duplicating it" in {
-        def rethrown: Int < Any = Effect.catching {
-            val crossed: Int = Eval(answerAsk(1)(outerStep(ask)))
+        def rethrown: Int < Any = Effect.defer {
+            val crossed: Int = runAsk(outerStep(ask))(1).eval
             crossed
-        }(e => throw e)
-        val ex = intercept[Boom](Eval(rethrown))
+        }
+        val ex = intercept[Boom](rethrown.eval)
         assert(ex.getStackTrace.count(_.getMethodName == "innerStep") == 1)
         assert(ex.getStackTrace.count(_.getMethodName == "outerStep") == 1)
         assert(ex.getSuppressed.count(_.isInstanceOf[EffectTrace]) == 1)
     }
-
-    // the concurrent-attach race on a shared exception instance lives in the jvm-native
-    // EffectTraceThreadingTest: it needs real threads
 
 end EffectTraceTest

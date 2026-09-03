@@ -1,7 +1,13 @@
 package kyo
 
+import kyo.Maybe
+import kyo.TestVariant
+import kyo.discard
+import kyo.kernel.<
+import org.scalatest.freespec.AnyFreeSpec
+
 @TestVariant("Coll", "List", "Chunk")
-class KyoForeachCollTest extends Test:
+class KyoForeachCollTest extends AnyFreeSpec:
 
     import KyoForeachTest.*
 
@@ -10,8 +16,6 @@ class KyoForeachCollTest extends Test:
 
     @TestVariant("Seq", "List", "Chunk")
     type Coll[X] = Seq[X]
-
-    // @TestVariant("Coll", "List", "Chunk")
     "Coll specialized" - {
         "collectAll" in {
             assert(Kyo.collectAll(Coll.empty).eval == Coll.empty)
@@ -64,7 +68,6 @@ class KyoForeachCollTest extends Test:
             assert(Kyo.foreachIndexed(Coll(1))((idx, v) => (idx, v)).eval == Coll((0, 1)))
             assert(Kyo.foreachIndexed(Coll(1, 2))((idx, v) => (idx, v)).eval == Coll((0, 1), (1, 2)))
             assert(Kyo.foreachIndexed(Coll(1, 2, 3))((idx, v) => (idx, v)).eval == Coll((0, 1), (1, 2), (2, 3)))
-            // Test with a larger sequence
             assert(Kyo.foreachIndexed(Coll.tabulate(100)(identity))((idx, v) => idx == v).eval == Coll.fill(100)(true))
         }
         "foreachDiscard" in {
@@ -137,13 +140,13 @@ class KyoForeachCollTest extends Test:
                 acc = (sum, include, curr) => if include then sum + curr else sum,
                 epilog = sum => s"Sum: $sum"
             )
-            assert(sumWithMessage.eval == "Sum: 2") // 1 + 2 + (-1) = 2
+            assert(sumWithMessage.eval == "Sum: 2")
 
             val collectUntilOdd = Kyo.shiftedWhile(Coll(2, 4, 6, 7, 8))(
                 prolog = Coll.empty,
                 f = isEven,
                 acc = (list, include, curr) => if include then curr +: list else list,
-                epilog = _.reverse // Maintain original order
+                epilog = _.reverse
             )
             assert(collectUntilOdd.eval == Coll(2, 4, 6))
 
@@ -399,6 +402,4 @@ class KyoForeachCollTest extends Test:
             }
         }
     }
-
-    // @TestVariant("Coll", "List", "Chunk")
 end KyoForeachCollTest

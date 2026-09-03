@@ -3,23 +3,28 @@ package kyo.kernel.internal
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
+import kyo.Const
+import kyo.Tag
 import kyo.discard
-import kyo.kernel.*
+import kyo.Loop
+import kyo.kernel.<
+import kyo.kernel.ArrowEffect
+import org.scalatest.freespec.AnyFreeSpec
 
-class SafepointConcurrencyTest extends kyo.Test:
+class SafepointConcurrencyTest extends AnyFreeSpec:
 
-    private val Period = 512
+    private val Period = Safepoint.period()
     private val Slots  = 65536
     private val Homes  = 8192
 
     def spinUntil(deadlineMs: Long = 10000)(condition: => Boolean): Boolean =
-        val deadline = System.currentTimeMillis() + deadlineMs
-        while !condition && System.currentTimeMillis() < deadline do Thread.onSpinWait()
+        val deadline = java.lang.System.currentTimeMillis() + deadlineMs
+        while !condition && java.lang.System.currentTimeMillis() < deadline do Thread.onSpinWait()
         condition
     end spinUntil
 
-    sealed trait Ask extends ArrowEffect[kyo.Const[Unit], kyo.Const[Int]]
-    def ask: Int < Ask = ArrowEffect.suspend[Any](kyo.Tag[Ask], ())
+    sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
+    def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())
 
     "a stop request from another thread is visible once and consumed" in {
         @volatile var ready         = false
@@ -95,8 +100,8 @@ class SafepointConcurrencyTest extends kyo.Test:
         )
         target.start()
         assert(spinUntil()(ready))
-        val deadline = System.currentTimeMillis() + 10000
-        while !done && System.currentTimeMillis() < deadline do
+        val deadline = java.lang.System.currentTimeMillis() + 10000
+        while !done && java.lang.System.currentTimeMillis() < deadline do
             discard(Safepoint.stop(target))
             Thread.onSpinWait()
         target.join(10000)
@@ -104,11 +109,6 @@ class SafepointConcurrencyTest extends kyo.Test:
     }
 
     "a stop delivered during a fast answer loop ends the slice" in {
-        // the clause answers settled values, so the loop iterates through nextAnswer without
-        // re-entering the eval; a stop delivered mid-loop must still bring the slice back pending.
-        // Repeated so the delivery lands inside the loop reliably; a run where the slice completes
-        // is only legal when the stop arrived after the last poll, which the long countdown makes
-        // vanishingly rare and the pending-count assertion tolerates
         def countdown(i: Int): Int < Ask =
             if i == 0 then 0 else ask.map(a => countdown(i - a))
         var pendingRuns = 0
@@ -118,11 +118,11 @@ class SafepointConcurrencyTest extends kyo.Test:
             @volatile var pending = false
             val target = new Thread(() =>
                 val region: Int < Any =
-                    ArrowEffect.handleLoop(kyo.Tag[Ask], countdown(5_000_000))(
+                    ArrowEffect.handleLoop(Tag[Ask], countdown(5_000_000))(
                         [C] =>
                             _ =>
                                 started = true
-                                Loop.continue(1: Int < Any)
+                                Loop.continue((), 1: Int < Any)
                         ,
                         a => a
                     )
@@ -136,14 +136,10 @@ class SafepointConcurrencyTest extends kyo.Test:
             if pending then pendingRuns += 1
             run += 1
         end while
-        // a lost stop leaves the slice running to completion every time; delivery inside a five
-        // million answer loop must park the overwhelming majority of runs
         assert(pendingRuns > 40)
     }
 
     "a live thread that never evaluated is not stoppable" in {
-        // the caller holds a claimed cell, so the probe reads a table with mixed
-        // occupancy before it reaches a free one
         discard(Safepoint.get())
         @volatile var running = true
         @volatile var started = false
@@ -272,7 +268,7 @@ class SafepointConcurrencyTest extends kyo.Test:
                 enterAfter = Safepoint.enter(slot)
                 Safepoint.exit(slot)
                 stoppedResult = Safepoint.consumeStopped(slot)
-                evalResult = Eval(burn(Period * 4))
+                evalResult = burn(Period * 4).eval
                 probeReady.countDown()
                 discard(checked.await(60, TimeUnit.SECONDS))
             )

@@ -1,10 +1,34 @@
 package kyo.kernel.internal
 
-import kyo.kernel.*
+import kyo.Const
+import kyo.Maybe
+import kyo.Tag
+import kyo.discard
+import kyo.kernel.<
+import kyo.kernel.ArrowEffect
+import kyo.kernel.Effect
+import org.scalatest.freespec.AnyFreeSpec
 
-class SafepointTest extends kyo.Test:
+class SafepointTest extends AnyFreeSpec:
 
-    private val Period = 512
+    private val Period = Safepoint.period()
+
+    sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
+    def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())
+
+    private def requestStop(): Unit =
+        discard(Safepoint.get())
+        discard(Safepoint.stop(Thread.currentThread()))
+        Safepoint.deadline(java.lang.System.currentTimeMillis() - 1)
+    end requestStop
+
+    private def silenced[A](f: => A): A =
+        val thread   = Thread.currentThread()
+        val previous = thread.getUncaughtExceptionHandler()
+        thread.setUncaughtExceptionHandler((_, _) => ())
+        try f
+        finally thread.setUncaughtExceptionHandler(previous)
+    end silenced
 
     "stop wraps the slot and stopped consumes it once" in {
         val slot = Safepoint.get()
@@ -38,8 +62,6 @@ class SafepointTest extends kyo.Test:
         assert(Safepoint.consumeStopped(slot))
         Safepoint.endSlice(slot, prev)
         val prev2 = Safepoint.beginSlice(slot, new AnyRef)
-        // delivered against a slice that no longer holds the slot: observed as no stop, and the
-        // consume takes the stale sentinel out so the channel is clean for the next request
         assert(Safepoint.stop(Thread.currentThread(), slice))
         assert(!Safepoint.stopped(slot))
         assert(!Safepoint.consumeStopped(slot))
@@ -69,7 +91,6 @@ class SafepointTest extends kyo.Test:
         val slot  = Safepoint.get()
         val slice = new AnyRef
         Safepoint.endSlice(slot, Safepoint.beginSlice(slot, slice))
-        // the delivery raced the boundary: the slice is gone when the sentinel lands
         assert(Safepoint.stop(Thread.currentThread(), slice))
         var steps        = 0
         var v: Int < Any = Effect.defer(0)
@@ -79,7 +100,7 @@ class SafepointTest extends kyo.Test:
                 x + 1
             }
         }
-        assert(Eval.partial(v).evalNow == kyo.Maybe(100))
+        assert(Eval.partial(v).evalNow == Maybe(100))
         assert(steps == 100)
     }
 
@@ -95,6 +116,57 @@ class SafepointTest extends kyo.Test:
         assert(Safepoint.enter(slot))
         Safepoint.exit(slot)
         Safepoint.restore(slot, saved)
+    }
+
+    "a throwing release in a nested eval does not disarm the enclosing slice" in silenced {
+        val inner: Int < Ask =
+            Effect.bracket(Effect.defer(1))((_, _) => throw new IllegalStateException("release"))(_ => ask.map(_ + 1))
+        val dropped: Int < Any =
+            ArrowEffect.handleCont(Tag[Ask], inner)([C] => (_, _) => -1, a => a)
+        var built = 0
+        val outer: Int < Any =
+            Effect.defer {
+                discard(dropped.eval)
+                0
+            }.map { z =>
+                var acc: Int < Any = z
+                var i              = 0
+                while i < 100 do
+                    acc = acc.map { x =>
+                        built += 1
+                        if built == 50 then requestStop()
+                        x + 1
+                    }
+                    i += 1
+                end while
+                acc
+            }
+        val p = Eval.partial(outer)
+        assert(p.evalNow.isEmpty)
+        assert(built >= 50 && built <= 52, s"built=$built")
+        assert(p.eval == 100)
+        assert(built == 100)
+    }
+
+    "a throwing release on the completing path leaves the caller's safepoint state intact" in silenced {
+        val v: Int < Ask =
+            Effect.bracket(Effect.defer(1))((_, _) => throw new IllegalStateException("release"))(_ => ask.map(_ + 1))
+        val dropped: Int < Any =
+            ArrowEffect.handleCont(Tag[Ask], v)([C] => (_, _) => -1, a => a)
+        val slot = Safepoint.get()
+        discard(Safepoint.enter(slot))
+        discard(Safepoint.enter(slot))
+        try
+            val before = Safepoint.save(slot)
+            Safepoint.restore(slot, before)
+            assert(dropped.eval == -1)
+            val after = Safepoint.save(slot)
+            Safepoint.restore(slot, after)
+            assert(after.equals(before))
+        finally
+            Safepoint.exit(slot)
+            Safepoint.exit(slot)
+        end try
     }
 
 end SafepointTest

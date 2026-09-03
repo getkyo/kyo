@@ -1,6 +1,9 @@
 package kyo
 
-import kyo.kernel.*
+import kyo.Const
+import kyo.Tag
+import kyo.kernel.<
+import kyo.kernel.ArrowEffect
 
 object KyoForeachTest:
     sealed trait TestEffect1 extends ArrowEffect[Const[Int], Const[Int]]

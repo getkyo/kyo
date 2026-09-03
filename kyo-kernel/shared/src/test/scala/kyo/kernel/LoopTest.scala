@@ -1,16 +1,23 @@
 package kyo.kernel
 
+import kyo.Const
 import kyo.Frame
-import kyo.kernel.internal.*
+import kyo.Maybe
+import kyo.Tag
+import kyo.kernel.<
+import kyo.kernel.ArrowEffect
+import kyo.kernel.ContextEffect
+import kyo.kernel.Effect
+import org.scalatest.freespec.AnyFreeSpec
 
-class LoopTest extends kyo.Test:
+class LoopTest extends AnyFreeSpec:
 
     given Frame = Frame.internal
 
-    // produces the value behind a deferred step so the loop's pending arm is
-    // exercised
-    def defer[A, S](v: => A < S): A < S =
-        Effect.defer(v)
+    sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
+    def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())
+
+    sealed trait Cfg extends ContextEffect[Int]
 
     "apply" - {
         "with a single iteration" in {
@@ -90,7 +97,7 @@ class LoopTest extends kyo.Test:
 
         "suspend at the beginning" in {
             val result = Loop(1)(i =>
-                defer {
+                Effect.defer {
                     if i < 5 then Loop.continue(i + 1) else Loop.done(i)
                 }
             )
@@ -100,7 +107,7 @@ class LoopTest extends kyo.Test:
         "suspend in the middle" in {
             val result = Loop(1)(i =>
                 if i < 3 then
-                    defer(Loop.continue(i + 1))
+                    Effect.defer(Loop.continue(i + 1))
                 else if i < 5 then
                     Loop.continue(i + 1)
                 else
@@ -114,7 +121,7 @@ class LoopTest extends kyo.Test:
                 if i < 5 then
                     Loop.continue(i + 1)
                 else
-                    defer(Loop.done(i))
+                    Effect.defer(Loop.done(i))
             )
             assert(result.eval == 5)
         }
@@ -181,7 +188,7 @@ class LoopTest extends kyo.Test:
 
         "suspend at the beginning" in {
             val result = Loop(1, 1)((i, j) =>
-                defer {
+                Effect.defer {
                     if i + j < 5 then Loop.continue(i + 1, j + 1) else Loop.done(i + j)
                 }
             )
@@ -191,7 +198,7 @@ class LoopTest extends kyo.Test:
         "suspend in the middle" in {
             val result = Loop(1, 1)((i, j) =>
                 if i + j < 3 then
-                    defer(Loop.continue(i + 1, j + 1))
+                    Effect.defer(Loop.continue(i + 1, j + 1))
                 else if i + j < 5 then
                     Loop.continue(i + 1, j + 1)
                 else
@@ -205,7 +212,7 @@ class LoopTest extends kyo.Test:
                 if i + j < 5 then
                     Loop.continue(i + 1, j + 1)
                 else
-                    defer(Loop.done(i + j))
+                    Effect.defer(Loop.done(i + j))
             )
             assert(result.eval == 6)
         }
@@ -261,7 +268,7 @@ class LoopTest extends kyo.Test:
 
         "suspend at the beginning" in {
             val result = Loop(1, 1, 1)((i, j, k) =>
-                defer {
+                Effect.defer {
                     if i + j + k < 5 then Loop.continue(i + 1, j + 1, k + 1) else Loop.done(i + j + k)
                 }
             )
@@ -271,7 +278,7 @@ class LoopTest extends kyo.Test:
         "suspend in the middle" in {
             val result = Loop(1, 1, 1)((i, j, k) =>
                 if i + j + k < 3 then
-                    defer(Loop.continue(i + 1, j + 1, k + 1))
+                    Effect.defer(Loop.continue(i + 1, j + 1, k + 1))
                 else if i + j + k < 5 then
                     Loop.continue(i + 1, j + 1, k + 1)
                 else
@@ -285,7 +292,7 @@ class LoopTest extends kyo.Test:
                 if i + j + k < 5 then
                     Loop.continue(i + 1, j + 1, k + 1)
                 else
-                    defer(Loop.done(i + j + k))
+                    Effect.defer(Loop.done(i + j + k))
             )
             assert(result.eval == 6)
         }
@@ -342,7 +349,7 @@ class LoopTest extends kyo.Test:
 
         "suspend at the beginning" in {
             val result = Loop(1, 1, 1, 1)((i, j, k, l) =>
-                defer {
+                Effect.defer {
                     if i + j + k + l < 5 then Loop.continue(i + 1, j + 1, k + 1, l + 1) else Loop.done(i + j + k + l)
                 }
             )
@@ -352,7 +359,7 @@ class LoopTest extends kyo.Test:
         "suspend in the middle" in {
             val result = Loop(1, 1, 1, 1)((i, j, k, l) =>
                 if i + j + k + l < 3 then
-                    defer(Loop.continue(i + 1, j + 1, k + 1, i + 1))
+                    Effect.defer(Loop.continue(i + 1, j + 1, k + 1, i + 1))
                 else if i + j + k + l < 5 then
                     Loop.continue(i + 1, j + 1, k + 1, l + 1)
                 else
@@ -366,7 +373,7 @@ class LoopTest extends kyo.Test:
                 if i + j + k + l < 5 then
                     Loop.continue(i + 1, j + 1, k + 1, l + 1)
                 else
-                    defer(Loop.done(i + j + k + l))
+                    Effect.defer(Loop.done(i + j + k + l))
             )
             assert(result.eval == 8)
         }
@@ -401,9 +408,9 @@ class LoopTest extends kyo.Test:
         "suspend" in {
             val result = Loop.indexed(idx =>
                 if idx < 5 then
-                    defer(Loop.continue)
+                    Effect.defer(Loop.continue)
                 else
-                    defer(Loop.done(idx))
+                    Effect.defer(Loop.done(idx))
             )
             assert(result.eval == 5)
         }
@@ -438,9 +445,9 @@ class LoopTest extends kyo.Test:
         "suspend" in {
             val result = Loop.indexed(1)((idx, i) =>
                 if idx < 5 then
-                    defer(Loop.continue(i + 1))
+                    Effect.defer(Loop.continue(i + 1))
                 else
-                    defer(Loop.done(i))
+                    Effect.defer(Loop.done(i))
             )
             assert(result.eval == 6)
         }
@@ -477,9 +484,9 @@ class LoopTest extends kyo.Test:
         "suspend" in {
             val result = Loop.indexed(1, 1)((idx, i, j) =>
                 if idx < 5 then
-                    defer(Loop.continue(i + 1, j + 1))
+                    Effect.defer(Loop.continue(i + 1, j + 1))
                 else
-                    defer(Loop.done(i + j))
+                    Effect.defer(Loop.done(i + j))
             )
             assert(result.eval == 12)
         }
@@ -522,9 +529,9 @@ class LoopTest extends kyo.Test:
         "suspend" in {
             val result = Loop.indexed(1, 1, 1)((idx, i, j, k) =>
                 if idx < 5 then
-                    defer(Loop.continue(i + 1, j + 1, k + 1))
+                    Effect.defer(Loop.continue(i + 1, j + 1, k + 1))
                 else
-                    defer(Loop.done(i + j + k))
+                    Effect.defer(Loop.done(i + j + k))
             )
             assert(result.eval == 18)
         }
@@ -567,9 +574,9 @@ class LoopTest extends kyo.Test:
         "suspend" in {
             val result = Loop.indexed(1, 1, 1, 1)((idx, i, j, k, l) =>
                 if idx < 5 then
-                    defer(Loop.continue(i + 1, j + 1, k + 1, l + 1))
+                    Effect.defer(Loop.continue(i + 1, j + 1, k + 1, l + 1))
                 else
-                    defer(Loop.done(i + j + k + l))
+                    Effect.defer(Loop.done(i + j + k + l))
             )
             assert(result.eval == 24)
         }
@@ -618,9 +625,9 @@ class LoopTest extends kyo.Test:
             val result = Loop.foreach {
                 effect += "A"
                 if effect.length < 3 then
-                    defer(Loop.continue)
+                    Effect.defer(Loop.continue)
                 else
-                    defer(Loop.done)
+                    Effect.defer(Loop.done)
                 end if
             }
             result.eval
@@ -629,7 +636,7 @@ class LoopTest extends kyo.Test:
 
         "returns" in {
             val result = Loop.foreach {
-                defer(Loop.done(1))
+                Effect.defer(Loop.done(1))
             }
             assert(result.eval == 1)
         }
@@ -637,7 +644,7 @@ class LoopTest extends kyo.Test:
 
     "repeat" in {
         var count = 0
-        val io    = defer(count += 1)
+        val io    = Effect.defer(count += 1)
 
         Loop.repeat(0)(io).eval
         assert(count == 0)
@@ -655,9 +662,6 @@ class LoopTest extends kyo.Test:
         assert(count == 10000)
     }
 
-    // a deferred body hides a miscount: an extra evaluation of `run` only builds a node, and if the loop
-    // then stops it is discarded unexecuted. A settled body is executed by the evaluation itself, so it is
-    // the case that reports the count honestly
     "repeat with a settled body runs it exactly n times" in {
         var count = 0
 
@@ -675,6 +679,55 @@ class LoopTest extends kyo.Test:
         count = 0
         Loop.repeat(100)(({ count += 1 }: Unit < Any)).eval
         assert(count == 100)
+    }
+
+    "repeat suspends a bare operation each time" in {
+        var answered = 0
+        val r: Unit < Any = ArrowEffect.handleLoop(Tag[Ask], Loop.repeat(3)(ask))(
+            [C] =>
+                _ =>
+                    answered += 1
+                    Loop.continue((), 1: Int < Any)
+            ,
+            a => a
+        )
+        r.eval
+        assert(answered == 3)
+    }
+
+    "repeat enters a context region each time" in {
+        var entered = 0
+        val region: Int < Any =
+            ContextEffect.handleInheritable(Tag[Cfg]) { (_: Maybe[Int]) =>
+                entered += 1
+                1
+            }(ContextEffect.suspend(Tag[Cfg]))
+        Loop.repeat(3)(region).eval
+        assert(entered == 3)
+    }
+
+    "repeat acquires a bracket each time" in {
+        var acquired = 0
+        var released = 0
+        val body: Int < Any =
+            Effect.bracket(Effect.defer {
+                acquired += 1
+                acquired
+            })((_, _) => released += 1)(a => (a: Int < Any))
+        Loop.repeat(3)(body).eval
+        assert(acquired == 3)
+        assert(released == 3)
+    }
+
+    "indexed loops a bare operation whose answer is an outcome" in {
+        sealed trait Step extends ArrowEffect[Const[Int], Const[Loop.Outcome[Int, Int]]]
+        def step(i: Int): Loop.Outcome[Int, Int] < Step = ArrowEffect.suspend[Any](Tag[Step], i)
+        val looped: Int < Step                          = Loop.indexed(0)((_, i) => step(i))
+        val r: Int < Any = ArrowEffect.handleLoop(Tag[Step], looped)(
+            [C] => i => Loop.continue((), (if i < 3 then Loop.continue(i + 1) else Loop.done(i)): Loop.Outcome[Int, Int] < Any),
+            a => a
+        )
+        assert(r.eval == 3)
     }
 
     "whileTrue" - {
@@ -696,7 +749,7 @@ class LoopTest extends kyo.Test:
 
         "with suspended condition" in {
             var counter = 0
-            val result = Loop.whileTrue(defer(counter < 3)) {
+            val result = Loop.whileTrue(Effect.defer(counter < 3)) {
                 counter += 1
             }
             result.eval
@@ -706,7 +759,7 @@ class LoopTest extends kyo.Test:
         "with suspended body" in {
             var counter = 0
             val result = Loop.whileTrue(counter < 3) {
-                defer(counter += 1)
+                Effect.defer(counter += 1)
             }
             result.eval
             assert(counter == 3)
@@ -724,8 +777,8 @@ class LoopTest extends kyo.Test:
         "stack safety with suspended operations" in {
             var counter     = 0
             val largeNumber = 10000
-            val result = Loop.whileTrue(defer(counter < largeNumber)) {
-                defer(counter += 1)
+            val result = Loop.whileTrue(Effect.defer(counter < largeNumber)) {
+                Effect.defer(counter += 1)
             }
             result.eval
             assert(counter == largeNumber)
@@ -769,7 +822,7 @@ class LoopTest extends kyo.Test:
 
         "a done payload that is a computation held as a value stays data" in {
             var evaluated = 0
-            val payload: Int < Any = defer {
+            val payload: Int < Any = Effect.defer {
                 evaluated += 1
                 2
             }
@@ -786,7 +839,7 @@ class LoopTest extends kyo.Test:
     "outcome payloads held as data" - {
 
         def payloadOf(counter: () => Unit): Int < Any =
-            defer {
+            Effect.defer {
                 counter()
                 2
             }
@@ -795,7 +848,7 @@ class LoopTest extends kyo.Test:
             var evaluated = 0
             val payload   = payloadOf(() => evaluated += 1)
             val looped = Loop(0) { _ =>
-                defer(Loop.done[Int, Int < Any](payload))
+                Effect.defer(Loop.done[Int, Int < Any](payload))
             }
             val data = looped.eval
             assert(evaluated == 0)
@@ -807,7 +860,7 @@ class LoopTest extends kyo.Test:
             var evaluated = 0
             val payload   = payloadOf(() => evaluated += 1)
             val looped = Loop(0) { i =>
-                if i < 3 then defer(Loop.continue(i + 1))
+                if i < 3 then Effect.defer(Loop.continue(i + 1))
                 else Loop.done[Int, Int < Any](payload)
             }
             val data = looped.eval
@@ -820,7 +873,7 @@ class LoopTest extends kyo.Test:
             var evaluated = 0
             val payload   = payloadOf(() => evaluated += 1)
             val looped = Loop(0) { i =>
-                defer {
+                Effect.defer {
                     if i < 3 then Loop.continue(i + 1)
                     else Loop.done[Int, Int < Any](payload)
                 }
@@ -835,7 +888,7 @@ class LoopTest extends kyo.Test:
             var evaluated = 0
             val payload   = payloadOf(() => evaluated += 1)
             val looped = Loop.indexed { idx =>
-                defer {
+                Effect.defer {
                     if idx == 0 then Loop.continue
                     else Loop.done[Unit, Int < Any](payload)
                 }
@@ -850,7 +903,7 @@ class LoopTest extends kyo.Test:
             var evaluated = 0
             val payload   = payloadOf(() => evaluated += 1)
             val looped = Loop(0, 1) { (a, b) =>
-                defer(Loop.done[Int, Int, Int < Any](payload))
+                Effect.defer(Loop.done[Int, Int, Int < Any](payload))
             }
             val data = looped.eval
             assert(evaluated == 0)
@@ -863,7 +916,7 @@ class LoopTest extends kyo.Test:
             var rounds    = 0
             val payload   = payloadOf(() => evaluated += 1)
             val looped = Loop.foreach {
-                defer {
+                Effect.defer {
                     if rounds < 2 then
                         rounds += 1
                         Loop.continue
@@ -883,7 +936,7 @@ class LoopTest extends kyo.Test:
             val looped = Loop(payload: Int < Any) { state =>
                 if first then
                     first = false
-                    defer(Loop.continue(state))
+                    Effect.defer(Loop.continue(state))
                 else Loop.done[Int < Any, Int < Any](state)
             }
             val data = looped.eval
@@ -895,7 +948,7 @@ class LoopTest extends kyo.Test:
         "a doubly nested payload loses exactly one level per eval" in {
             var evaluated                = 0
             val inner: Int < Any         = payloadOf(() => evaluated += 1)
-            val outer: (Int < Any) < Any = kyo.Kyo.lift[Int < Any, Any](inner)
+            val outer: (Int < Any) < Any = Kyo.lift[Int < Any, Any](inner)
             val looped = Loop(0) { _ =>
                 Loop.done[Int, (Int < Any) < Any](outer)
             }
@@ -905,6 +958,58 @@ class LoopTest extends kyo.Test:
             assert(evaluated == 0)
             assert(twice.eval == 2)
             assert(evaluated == 1)
+        }
+    }
+
+    "outcome payloads that are outcomes" - {
+        "a done payload that is itself a Continue stops the loop" in {
+            type Out = Loop.Outcome[Int, Int]
+            val hostile: Out = Loop.continue[Int, Int, Any](1).eval
+            var runs         = 0
+            val looped = Loop(0) { _ =>
+                runs += 1
+                if runs > 2 then throw new IllegalStateException("done payload re-entered the loop as a continue")
+                Loop.done[Int, Out](hostile)
+            }
+            val out = looped.eval
+            assert(runs == 1)
+            assert(out.asInstanceOf[AnyRef] eq hostile.asInstanceOf[AnyRef])
+        }
+
+        "a done payload of type Any holding a Continue stops the loop" in {
+            val hostile: Any = Loop.continue[Int, Int, Any](1).eval: Loop.Outcome[Int, Int]
+            var runs         = 0
+            val looped = Loop(0) { _ =>
+                runs += 1
+                if runs > 2 then throw new IllegalStateException("done payload re-entered the loop as a continue")
+                Loop.done[Int, Any](hostile)
+            }
+            val out = looped.eval
+            assert(runs == 1)
+            assert(out.asInstanceOf[AnyRef] eq hostile.asInstanceOf[AnyRef])
+        }
+
+        "a suspended done payload that is itself a Continue stops the loop" in {
+            type Out = Loop.Outcome[Int, Int]
+            val hostile: Out = Loop.continue[Int, Int, Any](1).eval
+            var runs         = 0
+            val looped = Loop(0) { _ =>
+                runs += 1
+                if runs > 2 then throw new IllegalStateException("done payload re-entered the loop as a continue")
+                Effect.defer(Loop.done[Int, Out](hostile))
+            }
+            val out = looped.eval
+            assert(runs == 1)
+            assert(out.asInstanceOf[AnyRef] eq hostile.asInstanceOf[AnyRef])
+        }
+
+        "an Any-typed done payload holding a computation stays data" in {
+            var evaluated          = 0
+            val payload: Int < Any = Effect.defer { evaluated += 1; 2 }
+            val r: Any < Any       = Loop(0)(_ => Loop.done[Int, Any](payload))
+            val out                = r.eval
+            assert(evaluated == 0)
+            assert(out.asInstanceOf[AnyRef] eq payload.asInstanceOf[AnyRef])
         }
     }
 end LoopTest

@@ -1,11 +1,14 @@
 package kyo.kernel.internal
 
 import kyo.Const
+import kyo.Maybe
 import kyo.discard
-import kyo.kernel.*
+import kyo.kernel.<
+import kyo.kernel.ArrowEffect
+import org.scalatest.freespec.AnyFreeSpec
 import scala.compiletime.testing.typeCheckErrors
 
-class CanLiftTest extends kyo.Test:
+class CanLiftTest extends AnyFreeSpec:
 
     sealed trait TestEffect extends ArrowEffect[Const[Int], Const[Int]]
 
@@ -50,7 +53,6 @@ class CanLiftTest extends kyo.Test:
     "resolves for higher-kinded types" in {
         trait HigherKinded[F[_]]
         discard(summon[CanLift[HigherKinded[List]]])
-        // the pending type appears only under the constructor, never as the lifted type itself
         discard(summon[CanLift[HigherKinded[[A] =>> A < Any]]])
         succeed
     }
@@ -67,8 +69,6 @@ class CanLiftTest extends kyo.Test:
 
         assert(42.weakMethod == "weak method called")
         assert("hello".weakMethod == "weak method called")
-        // the evidence is unsatisfiable for a pending type, so the extension is not applicable and
-        // the compiler reports the missing member rather than the evidence's own message
         val errors = typeCheckErrors("(42: Int < Any).weakMethod")
         assert(errors.nonEmpty, "expected a type error, code compiled")
     }
@@ -80,9 +80,6 @@ class CanLiftTest extends kyo.Test:
         assert(boundedMethod(42) == "bounded method called")
     }
 
-    // a union with a pending arm does not itself conform to the pending type, so it lifts; an
-    // intersection with a pending arm conforms to it, so it does not. The asymmetry is the
-    // conformance test doing exactly what it says, and both directions are pinned
     "resolves for a union, including one with a pending arm" in {
         type Union = Int | String
         discard(summon[CanLift[Union]])
@@ -99,7 +96,7 @@ class CanLiftTest extends kyo.Test:
     }
 
     "case objects lift without reaching the macro" in {
-        discard(summon[CanLift[kyo.Maybe.Absent.type]])
+        discard(summon[CanLift[Maybe.Absent.type]])
         succeed
     }
 

@@ -1,127 +1,52 @@
 package kyo
 
+import kyo.Chunk
+import kyo.Frame
+import kyo.Maybe
+import kyo.Maybe.Absent
+import kyo.Maybe.Present
 import kyo.kernel.<
-import kyo.kernel.Loop
-import kyo.kernel.internal.*
 import scala.annotation.tailrec
 import scala.annotation.targetName
 import scala.collection.IterableOps
 
-/** Object containing utility functions for working with Kyo effects.
-  *
-  * Provides sequential operations for working with collections and effects. For concurrent/parallel variants of these operations, see the
-  * Async effect. Use the Kyo companion object methods when sequential processing is sufficient and Async when concurrent processing would
-  * be beneficial.
-  */
 object Kyo:
 
-    /** Explicitly lifts a pure plain value to a Kyo computation.
-      *
-      * While pure values are automatically lifted into Kyo computations in most cases, this method can be useful in specific scenarios,
-      * such as in if/else expressions, to help with type inference.
-      *
-      * Note: This is a zero-cost operation that simply wraps the value in a Kyo computation type without introducing any effect suspension.
-      *
-      * @tparam A
-      *   The type of the value
-      * @tparam S
-      *   The effect context (can be Any)
-      * @param v
-      *   The value to lift into the effect context
-      * @return
-      *   A computation that directly produces the given value without suspension
-      */
-    // TODO could these two methods (lift, unit) not be inline and use @static instead? or does it regress performance?
     inline def lift[A, S](inline v: A): A < S = v
 
-    /** Returns a pure effect that produces Unit.
-      *
-      * This is exactly equivalent to `pure(())`, as both simply lift the Unit value into the effect context without introducing any effect
-      * suspension.
-      *
-      * @tparam S
-      *   The effect context (can be Any)
-      * @return
-      *   A computation that directly produces Unit without suspension
-      */
     inline def unit: Unit < Any = ()
 
-    /** Run one of two effects based on the result of an effectful condition. An effectful if/then/else expression.
-      *
-      * @param condition
-      *   Effectful boolean condition
-      * @param ifTrue
-      *   Effect to run if condition evaluates to true
-      * @param ifFalse
-      *   Effect to run if condition evaluates to false
-      * @return
-      *   An effect that runs ifTrue when the condition is evaluated to true, otherwise ifFalse
-      */
     def when[S](condition: Boolean < S)[A, S1](ifTrue: => A < S1, ifFalse: => A < S1)(using Frame): A < (S & S1) =
         condition.map(if _ then ifTrue else ifFalse)
 
-    /** Run an effect if an effectful condition evaluates to true. Returns a [[Maybe]] which is [[Present]] if the conditional effect is run
-      * and [[Absent]] if not.
-      *
-      * @param condition
-      *   Effectful boolean condition
-      * @param ifTrue
-      *   Effect to run if condition evaluates to true
-      * @return
-      *   An effect that runs `ifTrue` if `condition` evaluates to true
-      */
     def when[S](condition: Boolean < S)[A, S1](ifTrue: => A < S1)(using Frame): Maybe[A] < (S & S1) =
         condition.map(if _ then ifTrue.map(Present(_)) else Absent)
 
-    /** Run an effect if an effectful condition evaluates to false. Returns a [[Maybe]] which is [[Present]] if the conditional effect is
-      * run and [[Absent]] if not.
-      *
-      * @param condition
-      *   Effectful boolean condition
-      * @param ifFalse
-      *   Effect to run if condition evaluates to false
-      * @return
-      *   An effect that runs `ifFalse` if `condition` evaluates to false
-      */
     def unless[S](condition: Boolean < S)[A, S1](ifFalse: => A < S1)(using Frame): Maybe[A] < (S & S1) =
         condition.map(if _ then Absent else ifFalse.map(Present(_)))
 
-    /** Zips two effects into a tuple.
-      */
     def zip[A1, A2, S](v1: A1 < S, v2: A2 < S)(using Frame): (A1, A2) < S =
         v1.map(t1 => v2.map(t2 => (t1, t2)))
 
-    /** Zips three effects into a tuple.
-      */
     def zip[A1, A2, A3, S](v1: A1 < S, v2: A2 < S, v3: A3 < S)(using Frame): (A1, A2, A3) < S =
         v1.map(t1 => v2.map(t2 => v3.map(t3 => (t1, t2, t3))))
 
-    /** Zips four effects into a tuple.
-      */
     def zip[A1, A2, A3, A4, S](v1: A1 < S, v2: A2 < S, v3: A3 < S, v4: A4 < S)(using Frame): (A1, A2, A3, A4) < S =
         v1.map(t1 => v2.map(t2 => v3.map(t3 => v4.map(t4 => (t1, t2, t3, t4)))))
 
-    /** Zips five effects into a tuple.
-      */
     def zip[A1, A2, A3, A4, A5, S](v1: A1 < S, v2: A2 < S, v3: A3 < S, v4: A4 < S, v5: A5 < S)(using Frame): (A1, A2, A3, A4, A5) < S =
         v1.map(t1 => v2.map(t2 => v3.map(t3 => v4.map(t4 => v5.map(t5 => (t1, t2, t3, t4, t5))))))
 
-    /** Zips six effects into a tuple.
-      */
     def zip[A1, A2, A3, A4, A5, A6, S](v1: A1 < S, v2: A2 < S, v3: A3 < S, v4: A4 < S, v5: A5 < S, v6: A6 < S)(using
         Frame
     ): (A1, A2, A3, A4, A5, A6) < S =
         v1.map(t1 => v2.map(t2 => v3.map(t3 => v4.map(t4 => v5.map(t5 => v6.map(t6 => (t1, t2, t3, t4, t5, t6)))))))
 
-    /** Zips seven effects into a tuple. A new effect that produces a tuple of the results
-      */
     def zip[A1, A2, A3, A4, A5, A6, A7, S](v1: A1 < S, v2: A2 < S, v3: A3 < S, v4: A4 < S, v5: A5 < S, v6: A6 < S, v7: A7 < S)(using
         Frame
     ): (A1, A2, A3, A4, A5, A6, A7) < S =
         v1.map(t1 => v2.map(t2 => v3.map(t3 => v4.map(t4 => v5.map(t5 => v6.map(t6 => v7.map(t7 => (t1, t2, t3, t4, t5, t6, t7))))))))
 
-    /** Zips eight effects into a tuple.
-      */
     def zip[A1, A2, A3, A4, A5, A6, A7, A8, S](
         v1: A1 < S,
         v2: A2 < S,
@@ -138,8 +63,6 @@ object Kyo:
             )
         )
 
-    /** Zips nine effects into a tuple.
-      */
     def zip[A1, A2, A3, A4, A5, A6, A7, A8, A9, S](
         v1: A1 < S,
         v2: A2 < S,
@@ -159,8 +82,6 @@ object Kyo:
             )
         )
 
-    /** Zips ten effects into a tuple.
-      */
     def zip[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, S](
         v1: A1 < S,
         v2: A2 < S,
@@ -187,33 +108,11 @@ object Kyo:
             )
         )
 
-    // -----------------------------------------------------------------------------------------------------------------
-    // Generic
-    // -----------------------------------------------------------------------------------------------------------------
-
-    /** Applies an effect-producing function to each element of a collection.
-      *
-      * @param source
-      *   The input collection
-      * @param f
-      *   The effect-producing function to apply to each element
-      * @return
-      *   A new effect that produces a collection of results
-      */
     def foreach[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, B, S](source: CC[A])(f: A => B < S)(using Frame): CC[B] < S =
         Kyo.foreach(Chunk.from(source))(f).map: resultChunk =>
             source.iterableFactory.from(resultChunk)
     end foreach
 
-    /** Applies an effect-producing function to each element of a collection, and concatenates the resulting collections.
-      *
-      * @param source
-      *   The input collection
-      * @param f
-      *   The effect-producing function that returns a collection of results per element
-      * @return
-      *   A new effect that produces a flattened Chunk of all results
-      */
     def foreachConcat[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, B, S](source: CC[A])(f: A => IterableOnce[B] < S)(
         using Frame
     ): CC[B] < S =
@@ -221,15 +120,6 @@ object Kyo:
             source.iterableFactory.from(resultChunk)
     end foreachConcat
 
-    /** Applies an effect-producing function to each element of a sequence along with its index.
-      *
-      * @param source
-      *   The input collection
-      * @param f
-      *   The effect-producing function to apply to each element and its index
-      * @return
-      *   A new effect that produces a Chunk of results
-      */
     def foreachIndexed[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, B, S](source: CC[A])(f: (Int, A) => B < S)(using
         Frame
     ): CC[B] < S =
@@ -237,145 +127,52 @@ object Kyo:
             source.iterableFactory.from(resultChunk)
     end foreachIndexed
 
-    /** Applies an effect-producing function to each element of a collection, discarding the results.
-      *
-      * @param source
-      *   The input collection
-      * @param f
-      *   The effect-producing function to apply to each element
-      * @return
-      *   A new effect that produces Unit
-      */
     def foreachDiscard[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, B, S](source: CC[A])(f: A => Any < S)(using Frame): Unit < S =
         Kyo.foreachDiscard(Chunk.from(source))(f)
     end foreachDiscard
 
-    /** Filters elements of a collection based on an effect-producing predicate.
-      *
-      * @param source
-      *   The input collection
-      * @param f
-      *   The effect-producing predicate function
-      * @return
-      *   A new effect that produces a Chunk of filtered elements
-      */
     def filter[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, S](source: CC[A])(f: A => Boolean < S)(using Frame): CC[A] < S =
         Kyo.filter(Chunk.from(source))(f).map: resultChunk =>
             source.iterableFactory.from(resultChunk)
     end filter
 
-    /** Folds over a collection with an effect-producing function.
-      *
-      * @param source
-      *   The input collection
-      * @param acc
-      *   The initial accumulator value
-      * @param f
-      *   The effect-producing folding function
-      * @return
-      *   A new effect that produces the final accumulated value
-      */
     def foldLeft[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, B, S](source: CC[A])(acc: B)(f: (B, A) => B < S)(using
         Frame
     ): B < S =
         Kyo.foldLeft(Chunk.from(source))(acc)(f)
     end foldLeft
 
-    /** Collects and transforms elements from a collection using an effect-producing function that returns Maybe values.
-      *
-      * This method applies the given function to each element in the collection and collects only the Present values into a Chunk. It's
-      * similar to a combination of flatMap and filter, where elements are both transformed and filtered in a single pass.
-      *
-      * @param source
-      *   The input collection
-      * @param f
-      *   The effect-producing function that returns Maybe values
-      * @return
-      *   A new effect that produces a Chunk containing only the Present values after transformation
-      */
     def collect[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, B, S](source: CC[A])(f: A => Maybe[B] < S)(using Frame): CC[B] < S =
         val chunk = Chunk.from(source)
         collect[A, B, S](chunk)(f).map: resultChunk =>
             source.iterableFactory.from(resultChunk)
     end collect
 
-    /** Collects the results of a collection of effects into a single effect.
-      *
-      * @param source
-      *   The collection of effects
-      * @return
-      *   A new effect that produces a Chunk of results
-      */
     def collectAll[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, S](source: CC[A < S])(using Frame): CC[A] < S =
         Kyo.collectAll(Chunk.from(source)).map: resultChunk =>
             source.iterableFactory.from(resultChunk)
     end collectAll
 
-    /** Collects the results of a collection of effects, discarding the results.
-      *
-      * @param source
-      *   The collection of effects
-      * @return
-      *   A new effect that produces Unit
-      */
     def collectAllDiscard[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, S](source: CC[A < S])(using Frame): Unit < S =
         Kyo.collectAllDiscard(Chunk.from(source))
     end collectAllDiscard
 
-    /** Finds the first element in a collection that satisfies a predicate.
-      *
-      * @param source
-      *   The input collection
-      * @param f
-      *   The effect-producing predicate function
-      * @return
-      *   A new effect that produces Maybe of the first matching element
-      */
     def findFirst[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, B, S](source: CC[A])(f: A => Maybe[B] < S)(using
         Frame
     ): Maybe[B] < S =
         Kyo.findFirst(Chunk.from(source))(f)
     end findFirst
 
-    /** Takes elements from a collection while a predicate holds true.
-      *
-      * @param source
-      *   The input collection
-      * @param f
-      *   The effect-producing predicate function
-      * @return
-      *   A new effect that produces a Chunk of taken elements
-      */
     def takeWhile[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, S](source: CC[A])(f: A => Boolean < S)(using Frame): CC[A] < S =
         Kyo.takeWhile(Chunk.from(source))(f).map: resultChunk =>
             source.iterableFactory.from(resultChunk)
     end takeWhile
 
-    /** Splits the collection into prefix/suffix pair where all elements in the prefix satisfy `f`.
-      *
-      * @param f
-      *   A predicate that returns `true` while elements should be included in the prefix
-      * @return
-      *   A tuple `(prefix, suffix)` where:
-      *   - `prefix`: All elements before first failure of `f`
-      *   - `suffix`: First failing element and all remaining elements
-      * @note
-      *   Optimized for both linear and indexed sequences
-      */
     def span[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, S](source: CC[A])(f: A => Boolean < S)(using Frame): (CC[A], CC[A]) < S =
         Kyo.span(Chunk.from(source))(f).map: (leftChunk, rightChunk) =>
             (source.iterableFactory.from(leftChunk), source.iterableFactory.from(rightChunk))
     end span
 
-    /** Drops elements from an `IterableOnce` while a predicate holds true.
-      *
-      * @param source
-      *   The input `IterableOnce`
-      * @param f
-      *   The effect-producing predicate function
-      * @return
-      *   A new effect that produces a Chunk of remaining elements
-      */
     def dropWhile[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, S](source: CC[A])(f: A => Boolean < S)(using Frame): CC[A] < S =
         Kyo.dropWhile(Chunk.from(source))(f).map: resultChunk =>
             source.iterableFactory.from(resultChunk)
@@ -397,15 +194,6 @@ object Kyo:
             (source.iterableFactory.from(leftChunk), source.iterableFactory.from(rightChunk))
     end partitionMap
 
-    /** Computes a prefix scan of the collection.
-      *
-      * @param z
-      *   Initial accumulator value
-      * @param op
-      *   Effectful operation that combines accumulator with each element
-      * @return
-      *   Chunk containing all intermediate accumulator states
-      */
     def scanLeft[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, B, S](source: CC[A])(z: B)(op: (B, A) => B < S)(using
         Frame
     ): CC[B] < S =
@@ -427,22 +215,12 @@ object Kyo:
             Map.from(resultChunk.view.mapValues(source.iterableFactory.from(_)))
     end groupMap
 
-    /** Creates a Chunk by repeating an effect-producing value.
-      *
-      * @param n
-      *   The number of times to repeat the value
-      * @param v
-      *   The effect-producing value
-      * @return
-      *   A new effect that produces a Chunk of repeated values
-      */
     def fill[A, S](n: Int)(v: A < S)(using Frame): Chunk[A] < S =
         Loop.indexed(Chunk.empty[A]) { (idx, acc) =>
             if idx == n then Loop.done(acc)
             else v.map(t => Loop.continue(acc.append(t)))
         }
 
-    // for kyo-direct
     private[kyo] def shiftedWhile[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, S, B, C](source: CC[A])(
         prolog: B,
         f: A => Boolean < S,
@@ -452,19 +230,6 @@ object Kyo:
         Kyo.shiftedWhile(Chunk.from(source))(prolog, f, acc, epilog)
     end shiftedWhile
 
-    // -----------------------------------------------------------------------------------------------------------------
-    // List
-    // -----------------------------------------------------------------------------------------------------------------
-
-    /** Applies an effect-producing function to each element of an `List`.
-      *
-      * @param source
-      *   The input `List`
-      * @param f
-      *   The effect-producing function to apply to each element
-      * @return
-      *   A new effect that produces a List of results
-      */
     def foreach[A, B, S](source: List[A])(f: A => B < S)(using Frame): List[B] < S =
         source match
             case Nil         => Nil
@@ -479,15 +244,6 @@ object Kyo:
 
     end foreach
 
-    /** Applies an effect-producing function to each element of an `List`, and concatenates the resulting collections.
-      *
-      * @param source
-      *   The input `List`
-      * @param f
-      *   The effect-producing function that returns a collection of results per element
-      * @return
-      *   A new effect that produces a flattened List of all results
-      */
     def foreachConcat[A, B, S](source: List[A])(f: A => IterableOnce[B] < S)(using Frame): List[B] < S =
         source match
             case Nil         => Nil
@@ -500,15 +256,6 @@ object Kyo:
                 }
     end foreachConcat
 
-    /** Applies an effect-producing function to each element of a sequence along with its index.
-      *
-      * @param source
-      *   The input `List`
-      * @param f
-      *   The effect-producing function to apply to each element and its index
-      * @return
-      *   A new effect that produces a List of results
-      */
     def foreachIndexed[A, B, S](source: List[A])(f: (Int, A) => B < S)(using Frame): List[B] < S =
         source match
             case Nil         => Nil
@@ -520,15 +267,6 @@ object Kyo:
                         case Nil          => Loop.done(acc.reverse)
     end foreachIndexed
 
-    /** Applies an effect-producing function to each element of an `List`, discarding the results.
-      *
-      * @param source
-      *   The input `List`
-      * @param f
-      *   The effect-producing function to apply to each element
-      * @return
-      *   A new effect that produces Unit
-      */
     def foreachDiscard[A, B, S](source: List[A])(f: A => Any < S)(using Frame): Unit < S =
         source match
             case Nil         => ()
@@ -541,15 +279,6 @@ object Kyo:
         end match
     end foreachDiscard
 
-    /** Filters elements of an `List` based on an effect-producing predicate.
-      *
-      * @param source
-      *   The input `List`
-      * @param f
-      *   The effect-producing predicate function
-      * @return
-      *   A new effect that produces a List of filtered elements
-      */
     def filter[A, S](source: List[A])(f: A => Boolean < S)(using Frame): List[A] < S =
         source match
             case Nil => Nil
@@ -566,17 +295,6 @@ object Kyo:
                         case Nil => Loop.done(accList.reverse)
     end filter
 
-    /** Folds over an `List` with an effect-producing function.
-      *
-      * @param source
-      *   The input `List`
-      * @param acc
-      *   The initial accumulator value
-      * @param f
-      *   The effect-producing folding function
-      * @return
-      *   A new effect that produces the final accumulated value
-      */
     def foldLeft[A, B, S](source: List[A])(acc: B)(f: (B, A) => B < S)(using Frame): B < S =
         source match
             case Nil         => acc
@@ -588,18 +306,6 @@ object Kyo:
                         case Nil          => Loop.done(acc)
     end foldLeft
 
-    /** Collects and transforms elements from an `List` using an effect-producing function that returns Maybe values.
-      *
-      * This method applies the given function to each element in the `List` and collects only the Present values into a List. It's similar
-      * to a combination of flatMap and filter, where elements are both transformed and filtered in a single pass.
-      *
-      * @param source
-      *   The input `List`
-      * @param f
-      *   The effect-producing function that returns Maybe values
-      * @return
-      *   A new effect that produces a List containing only the Present values after transformation
-      */
     def collect[A, B, S](source: List[A])(f: A => Maybe[B] < S)(using Frame): List[B] < S =
         source match
             case Nil => Nil
@@ -616,13 +322,6 @@ object Kyo:
                         case Nil => Loop.done(accList.reverse)
     end collect
 
-    /** Collects the results of an `List` of effects into a single effect.
-      *
-      * @param source
-      *   The `List` of effects
-      * @return
-      *   A new effect that produces a Chunk of results
-      */
     def collectAll[A, S](source: List[A < S])(using Frame): List[A] < S =
         source match
             case Nil         => Nil
@@ -635,13 +334,6 @@ object Kyo:
         end match
     end collectAll
 
-    /** Collects the results of a `List` of effects, discarding the results.
-      *
-      * @param source
-      *   The `List` of effects
-      * @return
-      *   A new effect that produces Unit
-      */
     def collectAllDiscard[A, S](source: List[A < S])(using Frame): Unit < S =
         source match
             case Nil         => ()
@@ -653,15 +345,6 @@ object Kyo:
                         case Nil          => Loop.done
     end collectAllDiscard
 
-    /** Finds the first element in a `List` that satisfies a predicate.
-      *
-      * @param source
-      *   The input `List`
-      * @param f
-      *   The effect-producing predicate function
-      * @return
-      *   A new effect that produces Maybe of the first matching element
-      */
     def findFirst[A, B, S](source: List[A])(f: A => Maybe[B] < S)(using Frame): Maybe[B] < S =
         source match
             case Nil         => Absent
@@ -676,15 +359,6 @@ object Kyo:
                         case Nil => Loop.done(Absent)
     end findFirst
 
-    /** Takes elements from a `List` while a predicate holds true.
-      *
-      * @param source
-      *   The input `List`
-      * @param f
-      *   The effect-producing predicate function
-      * @return
-      *   A new effect that produces a List of taken elements
-      */
     def takeWhile[A, S](source: List[A])(f: A => Boolean < S)(using Frame): List[A] < S =
         source match
             case Nil => Nil
@@ -698,15 +372,6 @@ object Kyo:
                         case Nil => Loop.done(acc.reverse)
     end takeWhile
 
-    /** Splits the collection into prefix/suffix pair where all elements in the prefix satisfy `f`.
-      *
-      * @param f
-      *   A predicate that returns `true` while elements should be included in the prefix
-      * @return
-      *   A tuple `(prefix, suffix)` where:
-      *   - `prefix`: All elements before first failure of `f`
-      *   - `suffix`: First failing element and all remaining elements
-      */
     def span[A, S](source: List[A])(f: A => Boolean < S)(using Frame): (List[A], List[A]) < S =
         source match
             case Nil => (Nil, Nil)
@@ -724,15 +389,6 @@ object Kyo:
                         case Nil => Loop.done((acc.reverse, Nil))
     end span
 
-    /** Drops elements from a `List` while a predicate holds true.
-      *
-      * @param source
-      *   The input `List`
-      * @param f
-      *   The effect-producing predicate function
-      * @return
-      *   A new effect that produces a List of remaining elements
-      */
     def dropWhile[A, S](source: List[A])(f: A => Boolean < S)(using Frame): List[A] < S =
         source match
             case Nil => Nil
@@ -746,17 +402,6 @@ object Kyo:
                         case Nil => Loop.done(Nil)
     end dropWhile
 
-    /** Splits the collection into two lists, depending on the result of the predicate.
-      *
-      * @param source
-      *   The input `List`
-      * @param f
-      *   The effect-producing predicate function
-      * @return
-      *   A tuple `(lefts, rights)` where:
-      *   - `lefts`: All elements that satisfy the predicate
-      *   - `rights`: All elements that do not satisfy the predicate
-      */
     def partition[S, A](source: List[A])(f: A => Boolean < S)(using Frame): (List[A], List[A]) < S =
         source match
             case Nil => (Nil, Nil)
@@ -774,17 +419,6 @@ object Kyo:
                         case Nil => Loop.done((trues.reverse, falses.reverse))
     end partition
 
-    /** Splits the collection into two lists, depending on the result of the effect-producing function.
-      *
-      * @param source
-      *   The input `List`
-      * @param f
-      *   The effect-producing function that returns an Either
-      * @return
-      *   A tuple `(lefts, rights)` where:
-      *   - `lefts`: All elements that are Left
-      *   - `rights`: All elements that are Right
-      */
     def partitionMap[S, A, A1, A2](source: List[A])(f: A => Either[A1, A2] < S)(using Frame): (List[A1], List[A2]) < S =
         source match
             case Nil => (Nil, Nil)
@@ -802,15 +436,6 @@ object Kyo:
                         case Nil => Loop.done((lefts.reverse, rights.reverse))
     end partitionMap
 
-    /** Computes a prefix scan of the collection.
-      *
-      * @param z
-      *   Initial accumulator value
-      * @param op
-      *   Effectful operation that combines accumulator with each element
-      * @return
-      *   List containing all intermediate accumulator states
-      */
     def scanLeft[S, A, B](source: List[A])(z: B)(op: (B, A) => B < S)(using Frame): List[B] < S =
         source match
             case Nil => z :: Nil
@@ -825,15 +450,6 @@ object Kyo:
                         case Nil => Loop.done(acc.reverse)
     end scanLeft
 
-    /** Groups elements of the collection by the result of the function.
-      *
-      * @param source
-      *   The input `List`
-      * @param f
-      *   The effect-producing function that returns the key for each element
-      * @return
-      *   A Map where keys are the results of the function and values are lists of elements
-      */
     def groupBy[S, A, K](source: List[A])(f: A => K < S)(using Frame): Map[K, List[A]] < S =
         source match
             case Nil         => Map.empty[K, List[A]]
@@ -853,17 +469,6 @@ object Kyo:
                         case Nil => Loop.done(acc.view.mapValues(_.reverse).toMap)
     end groupBy
 
-    /** Groups elements of the collection by the result of the function and applies a transformation to each element.
-      *
-      * @param source
-      *   The input `List`
-      * @param key
-      *   The effect-producing function that returns the key for each element
-      * @param f
-      *   The effect-producing function that returns the value for each element
-      * @return
-      *   A Map where keys are the results of the function and values are lists of transformed elements
-      */
     def groupMap[S, A, K, B](source: List[A])(key: A => K < S)(f: A => B < S)(using Frame): Map[K, List[B]] < S =
         source match
             case Nil => Map.empty[K, List[B]]
@@ -890,25 +495,6 @@ object Kyo:
                         case Nil => Loop.done(acc.view.mapValues(_.reverse).toMap)
     end groupMap
 
-    /** Processes elements of a `List` while a predicate holds true, maintaining an accumulator state. This function implements a stateful
-      * iteration pattern where:
-      *   1. The predicate function `f` determines whether to continue processing
-      *   2. The accumulator function `acc` updates state based on the predicate result
-      *   3. The epilog function transforms the final accumulator state into the result
-      *
-      * @param source
-      *   The input `List` to process
-      * @param prolog
-      *   Initial state value for the accumulator
-      * @param f
-      *   Effect-producing predicate that determines whether to continue processing
-      * @param acc
-      *   Function that updates the accumulator state based on predicate result and current element
-      * @param epilog
-      *   Function that transforms the final accumulator state into the result
-      * @return
-      *   A new effect that produces the final transformed result
-      */
     private[kyo] def shiftedWhile[A, S, B, C](source: List[A])(
         prolog: B,
         f: A => Boolean < S,
@@ -929,270 +515,78 @@ object Kyo:
                         case Nil => Loop.done(epilog(b))
     end shiftedWhile
 
-    // -----------------------------------------------------------------------------------------------------------------
-    // Seq
-    // -----------------------------------------------------------------------------------------------------------------
-
-    /** Applies an effect-producing function to each element of a `Seq`.
-      *
-      * @param source
-      *   The input `Seq`
-      * @param f
-      *   The effect-producing function to apply to each element
-      * @return
-      *   A new effect that produces a Seq of results
-      */
     inline def foreach[A, B, S](source: Seq[A])(f: A => B < S)(using Frame): Seq[B] < S =
         foreach(Chunk.from(source))(f)
     end foreach
 
-    /** Applies an effect-producing function to each element of a `Seq`, and concatenates the resulting collections.
-      *
-      * @param source
-      *   The input `Seq`
-      * @param f
-      *   The effect-producing function that returns a collection of results per element
-      * @return
-      *   A new effect that produces a flattened Seq of all results
-      */
     inline def foreachConcat[A, B, S](source: Seq[A])(f: A => IterableOnce[B] < S)(using Frame): Seq[B] < S =
         foreachConcat(Chunk.from(source))(f)
     end foreachConcat
 
-    /** Applies an effect-producing function to each element of a sequence along with its index.
-      *
-      * @param source
-      *   The input `Seq`
-      * @param f
-      *   The effect-producing function to apply to each element and its index
-      * @return
-      *   A new effect that produces a Seq of results
-      */
     inline def foreachIndexed[A, B, S](source: Seq[A])(f: (Int, A) => B < S)(using Frame): Seq[B] < S =
         foreachIndexed(Chunk.from(source))(f)
     end foreachIndexed
 
-    /** Applies an effect-producing function to each element of a `Seq`, discarding the results.
-      *
-      * @param source
-      *   The input `Seq`
-      * @param f
-      *   The effect-producing function to apply to each element
-      * @return
-      *   A new effect that produces Unit
-      */
     inline def foreachDiscard[A, B, S](source: Seq[A])(f: A => Any < S)(using Frame): Unit < S =
         foreachDiscard(Chunk.from(source))(f)
     end foreachDiscard
 
-    /** Filters elements of a `Seq` based on an effect-producing predicate.
-      *
-      * @param source
-      *   The input `Seq`
-      * @param f
-      *   The effect-producing predicate function
-      * @return
-      *   A new effect that produces a Vector of filtered elements
-      */
     inline def filter[A, S](source: Seq[A])(f: A => Boolean < S)(using Frame): Seq[A] < S =
         filter(Chunk.from(source))(f)
     end filter
 
-    /** Folds over a `Seq` with an effect-producing function.
-      *
-      * @param source
-      *   The input `Seq`
-      * @param acc
-      *   The initial accumulator value
-      * @param f
-      *   The effect-producing folding function
-      * @return
-      *   A new effect that produces the final accumulated value
-      */
     inline def foldLeft[A, B, S](source: Seq[A])(acc: B)(f: (B, A) => B < S)(using Frame): B < S =
         foldLeft(Chunk.from(source))(acc)(f)
     end foldLeft
 
-    /** Collects and transforms elements from a `Seq` using an effect-producing function that returns Maybe values.
-      *
-      * This method applies the given function to each element in the `Seq` and collects only the Present values into a Seq. It's similar to
-      * a combination of flatMap and filter, where elements are both transformed and filtered in a single pass.
-      *
-      * @param source
-      *   The input `Seq`
-      * @param f
-      *   The effect-producing function that returns Maybe values
-      * @return
-      *   A new effect that produces a Vector containing only the Present values after transformation
-      */
     inline def collect[A, B, S](source: Seq[A])(f: A => Maybe[B] < S)(using Frame): Seq[B] < S =
         collect(Chunk.from(source))(f)
     end collect
 
-    /** Collects the results of a `Seq` of effects into a single effect.
-      *
-      * @param source
-      *   The `Seq` of effects
-      * @return
-      *   A new effect that produces a Seq of results
-      */
     inline def collectAll[A, S](source: Seq[A < S])(using Frame): Seq[A] < S =
         collectAll(Chunk.from(source))
     end collectAll
 
-    /** Collects the results of a `Seq` of effects, discarding the results.
-      *
-      * @param source
-      *   The `Seq` of effects
-      * @return
-      *   A new effect that produces Unit
-      */
     inline def collectAllDiscard[A, S](source: Seq[A < S])(using Frame): Unit < S =
         collectAllDiscard(Chunk.from(source))
     end collectAllDiscard
 
-    /** Finds the first element in a `Seq` that satisfies a predicate.
-      *
-      * @param source
-      *   The input `Seq`
-      * @param f
-      *   The effect-producing predicate function
-      * @return
-      *   A new effect that produces Maybe of the first matching element
-      */
     inline def findFirst[A, B, S](source: Seq[A])(f: A => Maybe[B] < S)(using Frame): Maybe[B] < S =
         findFirst(Chunk.from(source))(f)
     end findFirst
 
-    /** Takes elements from a `Seq` while a predicate holds true.
-      *
-      * @param source
-      *   The input `Seq`
-      * @param f
-      *   The effect-producing predicate function
-      * @return
-      *   A new effect that produces a Vector of taken elements
-      */
     inline def takeWhile[A, S](source: Seq[A])(f: A => Boolean < S)(using Frame): Seq[A] < S =
         takeWhile(Chunk.from(source))(f)
     end takeWhile
 
-    /** Splits the collection into prefix/suffix pair where all elements in the prefix satisfy `f`.
-      *
-      * @param f
-      *   A predicate that returns `true` while elements should be included in the prefix
-      * @return
-      *   A tuple `(prefix, suffix)` where:
-      *   - `prefix`: All elements before first failure of `f`
-      *   - `suffix`: First failing element and all remaining elements
-      */
     inline def span[A, S](source: Seq[A])(f: A => Boolean < S)(using Frame): (Seq[A], Seq[A]) < S =
         span(Chunk.from(source))(f)
     end span
 
-    /** Drops elements from a `Seq` while a predicate holds true.
-      *
-      * @param source
-      *   The input `Seq`
-      * @param f
-      *   The effect-producing predicate function
-      * @return
-      *   A new effect that produces a Seq of remaining elements
-      */
     inline def dropWhile[A, S](source: Seq[A])(f: A => Boolean < S)(using Frame): Seq[A] < S =
         dropWhile(Chunk.from(source))(f)
     end dropWhile
 
-    /** Splits the collection into two vectors, depending on the result of the predicate.
-      *
-      * @param source
-      *   The input `Seq`
-      * @param f
-      *   The effect-producing predicate function
-      * @return
-      *   A tuple `(lefts, rights)` where:
-      *   - `lefts`: All elements that satisfy the predicate
-      *   - `rights`: All elements that do not satisfy the predicate
-      */
     inline def partition[S, A](source: Seq[A])(f: A => Boolean < S)(using Frame): (Seq[A], Seq[A]) < S =
         partition(Chunk.from(source))(f)
     end partition
 
-    /** Splits the collection into two vectors, depending on the result of the effect-producing function.
-      *
-      * @param source
-      *   The input `Seq`
-      * @param f
-      *   The effect-producing function that returns an Either
-      * @return
-      *   A tuple `(lefts, rights)` where:
-      *   - `lefts`: All elements that are Left
-      *   - `rights`: All elements that are Right
-      */
     inline def partitionMap[S, A, A1, A2](source: Seq[A])(f: A => Either[A1, A2] < S)(using Frame): (Seq[A1], Seq[A2]) < S =
         partitionMap(Chunk.from(source))(f)
     end partitionMap
 
-    /** Computes a prefix scan of the collection.
-      *
-      * @param z
-      *   Initial accumulator value
-      * @param op
-      *   Effectful operation that combines accumulator with each element
-      * @return
-      *   Seq containing all intermediate accumulator states
-      */
     inline def scanLeft[S, A, B](source: Seq[A])(z: B)(op: (B, A) => B < S)(using Frame): Seq[B] < S =
         scanLeft(Chunk.from(source))(z)(op)
     end scanLeft
 
-    /** Groups elements of the collection by the result of the function.
-      *
-      * @param source
-      *   The input `Seq`
-      * @param f
-      *   The effect-producing function that returns the key for each element
-      * @return
-      *   A Map where keys are the results of the function and values are vectors of elements
-      */
     inline def groupBy[S, A, K](source: Seq[A])(f: A => K < S)(using Frame): Map[K, Seq[A]] < S =
         groupBy(Chunk.from(source))(f)
     end groupBy
 
-    /** Groups elements of the collection by the result of the function and applies a transformation to each element.
-      *
-      * @param source
-      *   The input `Seq`
-      * @param key
-      *   The effect-producing function that returns the key for each element
-      * @param f
-      *   The effect-producing function that returns the value for each element
-      * @return
-      *   A Map where keys are the results of the function and values are vectors of transformed elements
-      */
     inline def groupMap[S, A, K, B](source: Seq[A])(key: A => K < S)(f: A => B < S)(using Frame): Map[K, Seq[B]] < S =
         groupMap(Chunk.from(source))(key)(f)
     end groupMap
 
-    /** Processes elements of a `Seq` while a predicate holds true, maintaining an accumulator state. This function implements a stateful
-      * iteration pattern where:
-      *   1. The predicate function `f` determines whether to continue processing
-      *   2. The accumulator function `acc` updates state based on the predicate result
-      *   3. The epilog function transforms the final accumulator state into the result
-      *
-      * @param source
-      *   The input `Seq` to process
-      * @param prolog
-      *   Initial state value for the accumulator
-      * @param f
-      *   Effect-producing predicate that determines whether to continue processing
-      * @param acc
-      *   Function that updates the accumulator state based on predicate result and current element
-      * @param epilog
-      *   Function that transforms the final accumulator state into the result
-      * @return
-      *   A new effect that produces the final transformed result
-      */
     private[kyo] inline def shiftedWhile[A, S, B, C](source: Seq[A])(
         prolog: B,
         f: A => Boolean < S,
@@ -1202,19 +596,6 @@ object Kyo:
         shiftedWhile(Chunk.from(source))(prolog, f, acc, epilog)
     end shiftedWhile
 
-    // -----------------------------------------------------------------------------------------------------------------
-    // Chunk
-    // -----------------------------------------------------------------------------------------------------------------
-
-    /** Applies an effect-producing function to each element of a `Chunk`.
-      *
-      * @param source
-      *   The input `Chunk`
-      * @param f
-      *   The effect-producing function to apply to each element
-      * @return
-      *   A new effect that produces a Chunk of results
-      */
     def foreach[A, B, S](source: Chunk[A])(f: A => B < S)(using Frame): Chunk[B] < S =
         val chunk = source.toIndexed
         val len   = chunk.length
@@ -1231,15 +612,6 @@ object Kyo:
         end match
     end foreach
 
-    /** Applies an effect-producing function to each element of a `Chunk`, and concatenates the resulting collections.
-      *
-      * @param source
-      *   The input `Chunk`
-      * @param f
-      *   The effect-producing function that returns a collection of results per element
-      * @return
-      *   A new effect that produces a flattened Chunk of all results
-      */
     def foreachConcat[A, B, S](source: Chunk[A])(f: A => IterableOnce[B] < S)(using Frame): Chunk[B] < S =
         val chunk = source.toIndexed
         val len   = chunk.length
@@ -1252,15 +624,6 @@ object Kyo:
         end match
     end foreachConcat
 
-    /** Applies an effect-producing function to each element of a sequence along with its index.
-      *
-      * @param source
-      *   The input `Chunk`
-      * @param f
-      *   The effect-producing function to apply to each element and its index
-      * @return
-      *   A new effect that produces a Chunk of results
-      */
     def foreachIndexed[A, B, S](source: Chunk[A])(f: (Int, A) => B < S)(using Frame): Chunk[B] < S =
         val chunk = source.toIndexed
         val len   = chunk.length
@@ -1277,15 +640,6 @@ object Kyo:
         end match
     end foreachIndexed
 
-    /** Applies an effect-producing function to each element of a `Chunk`, discarding the results.
-      *
-      * @param source
-      *   The input `Chunk`
-      * @param f
-      *   The effect-producing function to apply to each element
-      * @return
-      *   A new effect that produces Unit
-      */
     def foreachDiscard[A, B, S](source: Chunk[A])(f: A => Any < S)(using Frame): Unit < S =
         val chunk = source.toIndexed
         val len   = chunk.length
@@ -1299,15 +653,6 @@ object Kyo:
         end match
     end foreachDiscard
 
-    /** Filters elements of a `Chunk` based on an effect-producing predicate.
-      *
-      * @param source
-      *   The input `Chunk`
-      * @param f
-      *   The effect-producing predicate function
-      * @return
-      *   A new effect that produces a Chunk of filtered elements
-      */
     def filter[A, S](source: Chunk[A])(f: A => Boolean < S)(using Frame): Chunk[A] < S =
         val chunk = source.toIndexed
         val len   = chunk.length
@@ -1328,17 +673,6 @@ object Kyo:
         end match
     end filter
 
-    /** Folds over a `Chunk` with an effect-producing function.
-      *
-      * @param source
-      *   The input `Chunk`
-      * @param acc
-      *   The initial accumulator value
-      * @param f
-      *   The effect-producing folding function
-      * @return
-      *   A new effect that produces the final accumulated value
-      */
     def foldLeft[A, B, S](source: Chunk[A])(acc: B)(f: (B, A) => B < S)(using Frame): B < S =
         val chunk = source.toIndexed
         val len   = chunk.length
@@ -1352,18 +686,6 @@ object Kyo:
         end match
     end foldLeft
 
-    /** Collects and transforms elements from a `Chunk` using an effect-producing function that returns Maybe values.
-      *
-      * This method applies the given function to each element in the `Chunk` and collects only the Present values into a Chunk. It's
-      * similar to a combination of flatMap and filter, where elements are both transformed and filtered in a single pass.
-      *
-      * @param source
-      *   The input `Chunk`
-      * @param f
-      *   The effect-producing function that returns Maybe values
-      * @return
-      *   A new effect that produces a Chunk containing only the Present values after transformation
-      */
     def collect[A, B, S](source: Chunk[A])(f: A => Maybe[B] < S)(using Frame): Chunk[B] < S =
         val chunk = source.toIndexed
         val len   = chunk.length
@@ -1384,13 +706,6 @@ object Kyo:
         end match
     end collect
 
-    /** Collects the results of a `Chunk` of effects into a single effect.
-      *
-      * @param source
-      *   The `Chunk` of effects
-      * @return
-      *   A new effect that produces a Chunk of results
-      */
     def collectAll[A, S](source: Chunk[A < S])(using Frame): Chunk[A] < S =
         val chunk = source.toIndexed
         val len   = chunk.length
@@ -1406,13 +721,6 @@ object Kyo:
         end match
     end collectAll
 
-    /** Collects the results of a `Chunk` of effects, discarding the results.
-      *
-      * @param source
-      *   The `Chunk` of effects
-      * @return
-      *   A new effect that produces Unit
-      */
     def collectAllDiscard[A, S](source: Chunk[A < S])(using Frame): Unit < S =
         val chunk = source.toIndexed
         val len   = chunk.length
@@ -1426,15 +734,6 @@ object Kyo:
         end match
     end collectAllDiscard
 
-    /** Finds the first element in a `Chunk` that satisfies a predicate.
-      *
-      * @param source
-      *   The input `Chunk`
-      * @param f
-      *   The effect-producing predicate function
-      * @return
-      *   A new effect that produces Maybe of the first matching element
-      */
     def findFirst[A, B, S](source: Chunk[A])(f: A => Maybe[B] < S)(using Frame): Maybe[B] < S =
         val chunk = source.toIndexed
         val len   = chunk.length
@@ -1451,15 +750,6 @@ object Kyo:
         end match
     end findFirst
 
-    /** Takes elements from a `Chunk` while a predicate holds true.
-      *
-      * @param source
-      *   The input `Chunk`
-      * @param f
-      *   The effect-producing predicate function
-      * @return
-      *   A new effect that produces a Chunk of taken elements
-      */
     def takeWhile[A, S](source: Chunk[A])(f: A => Boolean < S)(using Frame): Chunk[A] < S =
         val chunk = source.toIndexed
         val len   = chunk.length
@@ -1480,15 +770,6 @@ object Kyo:
         end match
     end takeWhile
 
-    /** Splits the collection into prefix/suffix pair where all elements in the prefix satisfy `f`.
-      *
-      * @param f
-      *   A predicate that returns `true` while elements should be included in the prefix
-      * @return
-      *   A tuple `(prefix, suffix)` where:
-      *   - `prefix`: All elements before first failure of `f`
-      *   - `suffix`: First failing element and all remaining elements
-      */
     def span[A, S](source: Chunk[A])(f: A => Boolean < S)(using Frame): (Chunk[A], Chunk[A]) < S =
         val chunk = source.toIndexed
         val len   = chunk.length
@@ -1509,15 +790,6 @@ object Kyo:
         end match
     end span
 
-    /** Drops elements from a `Chunk` while a predicate holds true.
-      *
-      * @param source
-      *   The input `Chunk`
-      * @param f
-      *   The effect-producing predicate function
-      * @return
-      *   A new effect that produces a Chunk of remaining elements
-      */
     def dropWhile[A, S](source: Chunk[A])(f: A => Boolean < S)(using Frame): Chunk[A] < S =
         val chunk = source.toIndexed
         val len   = chunk.length
@@ -1537,17 +809,6 @@ object Kyo:
         end match
     end dropWhile
 
-    /** Splits the collection into two chunks, depending on the result of the predicate.
-      *
-      * @param source
-      *   The input `Chunk`
-      * @param f
-      *   The effect-producing predicate function
-      * @return
-      *   A tuple `(lefts, rights)` where:
-      *   - `lefts`: All elements that satisfy the predicate
-      *   - `rights`: All elements that do not satisfy the predicate
-      */
     def partition[S, A](source: Chunk[A])(f: A => Boolean < S)(using Frame): (Chunk[A], Chunk[A]) < S =
         val chunk = source.toIndexed
         val len   = chunk.length
@@ -1568,17 +829,6 @@ object Kyo:
         end match
     end partition
 
-    /** Splits the collection into two chunks, depending on the result of the effect-producing function.
-      *
-      * @param source
-      *   The input `Chunk`
-      * @param f
-      *   The effect-producing function that returns an Either
-      * @return
-      *   A tuple `(lefts, rights)` where:
-      *   - `lefts`: All elements that are Left
-      *   - `rights`: All elements that are Right
-      */
     def partitionMap[S, A, A1, A2](source: Chunk[A])(f: A => Either[A1, A2] < S)(using Frame): (Chunk[A1], Chunk[A2]) < S =
         val chunk = source.toIndexed
         val len   = chunk.length
@@ -1599,15 +849,6 @@ object Kyo:
         end match
     end partitionMap
 
-    /** Computes a prefix scan of the collection.
-      *
-      * @param z
-      *   Initial accumulator value
-      * @param op
-      *   Effectful operation that combines accumulator with each element
-      * @return
-      *   Chunk containing all intermediate accumulator states
-      */
     def scanLeft[S, A, B](source: Chunk[A])(z: B)(op: (B, A) => B < S)(using Frame): Chunk[B] < S =
         val chunk = source.toIndexed
         val len   = chunk.length
@@ -1622,15 +863,6 @@ object Kyo:
         end match
     end scanLeft
 
-    /** Groups elements of the collection by the result of the function.
-      *
-      * @param source
-      *   The input `Chunk`
-      * @param f
-      *   The effect-producing function that returns the key for each element
-      * @return
-      *   A Map where keys are the results of the function and values are chunks of elements
-      */
     def groupBy[S, A, K](source: Chunk[A])(f: A => K < S)(using Frame): Map[K, Chunk[A]] < S =
         val chunk = source.toIndexed
         val len   = chunk.length
@@ -1652,17 +884,6 @@ object Kyo:
         end match
     end groupBy
 
-    /** Groups elements of the collection by the result of the function and applies a transformation to each element.
-      *
-      * @param source
-      *   The input `Chunk`
-      * @param key
-      *   The effect-producing function that returns the key for each element
-      * @param f
-      *   The effect-producing function that returns the value for each element
-      * @return
-      *   A Map where keys are the results of the function and values are chunks of transformed elements
-      */
     def groupMap[S, A, K, B](source: Chunk[A])(key: A => K < S)(f: A => B < S)(using Frame): Map[K, Chunk[B]] < S =
         val chunk = source.toIndexed
         val len   = chunk.length
@@ -1689,25 +910,6 @@ object Kyo:
         end match
     end groupMap
 
-    /** Processes elements of a `Chunk` while a predicate holds true, maintaining an accumulator state. This function implements a stateful
-      * iteration pattern where:
-      *   1. The predicate function `f` determines whether to continue processing
-      *   2. The accumulator function `acc` updates state based on the predicate result
-      *   3. The epilog function transforms the final accumulator state into the result
-      *
-      * @param source
-      *   The input `Chunk` to process
-      * @param prolog
-      *   Initial state value for the accumulator
-      * @param f
-      *   Effect-producing predicate that determines whether to continue processing
-      * @param acc
-      *   Function that updates the accumulator state based on predicate result and current element
-      * @param epilog
-      *   Function that transforms the final accumulator state into the result
-      * @return
-      *   A new effect that produces the final transformed result
-      */
     private[kyo] def shiftedWhile[A, S, B, C](source: Chunk[A])(
         prolog: B,
         f: A => Boolean < S,
@@ -1730,19 +932,6 @@ object Kyo:
         end match
     end shiftedWhile
 
-    // -----------------------------------------------------------------------------------------------------------------
-    // Set
-    // -----------------------------------------------------------------------------------------------------------------
-
-    /** Applies an effect-producing function to each element of a `Set`.
-      *
-      * @param source
-      *   The input `Set`
-      * @param f
-      *   The effect-producing function to apply to each element
-      * @return
-      *   A new effect that produces a Set of results
-      */
     def foreach[A, B, S](source: Set[A])(f: A => B < S)(using Frame): Set[B] < S =
         if source.isEmpty then Set.empty
         else
@@ -1755,15 +944,6 @@ object Kyo:
         end if
     end foreach
 
-    /** Applies an effect-producing function to each element of a `Set`, and concatenates the resulting collections.
-      *
-      * @param source
-      *   The input `Set`
-      * @param f
-      *   The effect-producing function that returns a collection of results per element
-      * @return
-      *   A new effect that produces a flattened Set of all results
-      */
     def foreachConcat[A, B, S](source: Set[A])(f: A => IterableOnce[B] < S)(using Frame): Set[B] < S =
         if source.isEmpty then Set.empty
         else
@@ -1776,15 +956,6 @@ object Kyo:
         end if
     end foreachConcat
 
-    /** Applies an effect-producing function to each element of a sequence along with its index.
-      *
-      * @param source
-      *   The input `Set`
-      * @param f
-      *   The effect-producing function to apply to each element and its index
-      * @return
-      *   A new effect that produces a Set of results
-      */
     def foreachIndexed[A, B, S](source: Set[A])(f: (Int, A) => B < S)(using Frame): Set[B] < S =
         if source.isEmpty then Set.empty
         else
@@ -1797,15 +968,6 @@ object Kyo:
         end if
     end foreachIndexed
 
-    /** Applies an effect-producing function to each element of a `Set`, discarding the results.
-      *
-      * @param source
-      *   The input `Set`
-      * @param f
-      *   The effect-producing function to apply to each element
-      * @return
-      *   A new effect that produces Unit
-      */
     def foreachDiscard[A, B, S](source: Set[A])(f: A => Any < S)(using Frame): Unit < S =
         if source.isEmpty then ()
         else
@@ -1816,15 +978,6 @@ object Kyo:
                     f(current).andThen(Loop.continue(curSet - current))
     end foreachDiscard
 
-    /** Filters elements of a `Set` based on an effect-producing predicate.
-      *
-      * @param source
-      *   The input `Set`
-      * @param f
-      *   The effect-producing predicate function
-      * @return
-      *   A new effect that produces a Set of filtered elements
-      */
     def filter[A, S](source: Set[A])(f: A => Boolean < S)(using Frame): Set[A] < S =
         if source.isEmpty then Set.empty
         else
@@ -1838,17 +991,6 @@ object Kyo:
         end if
     end filter
 
-    /** Folds over a `Set` with an effect-producing function.
-      *
-      * @param source
-      *   The input `Set`
-      * @param acc
-      *   The initial accumulator value
-      * @param f
-      *   The effect-producing folding function
-      * @return
-      *   A new effect that produces the final accumulated value
-      */
     def foldLeft[A, B, S](source: Set[A])(acc: B)(f: (B, A) => B < S)(using Frame): B < S =
         if source.isEmpty then acc
         else
@@ -1860,18 +1002,6 @@ object Kyo:
         end if
     end foldLeft
 
-    /** Collects and transforms elements from a `Set` using an effect-producing function that returns Maybe values.
-      *
-      * This method applies the given function to each element in the `Set` and collects only the Present values into a Set. It's similar to
-      * a combination of flatMap and filter, where elements are both transformed and filtered in a single pass.
-      *
-      * @param source
-      *   The input `Set`
-      * @param f
-      *   The effect-producing function that returns Maybe values
-      * @return
-      *   A new effect that produces a Set containing only the Present values after transformation
-      */
     def collect[A, B, S](source: Set[A])(f: A => Maybe[B] < S)(using Frame): Set[B] < S =
         if source.isEmpty then Set.empty
         else
@@ -1885,13 +1015,6 @@ object Kyo:
         end if
     end collect
 
-    /** Collects the results of a `Set` of effects into a single effect.
-      *
-      * @param source
-      *   The `Set` of effects
-      * @return
-      *   A new effect that produces a Set of results
-      */
     def collectAll[A, S](source: Set[A < S])(using Frame): Set[A] < S =
         if source.isEmpty then Set.empty
         else
@@ -1904,13 +1027,6 @@ object Kyo:
         end if
     end collectAll
 
-    /** Collects the results of a `Set` of effects, discarding the results.
-      *
-      * @param source
-      *   The `Set` of effects
-      * @return
-      *   A new effect that produces Unit
-      */
     def collectAllDiscard[A, S](source: Set[A < S])(using Frame): Unit < S =
         if source.isEmpty then ()
         else
@@ -1922,15 +1038,6 @@ object Kyo:
         end if
     end collectAllDiscard
 
-    /** Finds the first element in a `Set` that satisfies a predicate.
-      *
-      * @param source
-      *   The input `Set`
-      * @param f
-      *   The effect-producing predicate function
-      * @return
-      *   A new effect that produces Maybe of the first matching element
-      */
     def findFirst[A, B, S](source: Set[A])(f: A => Maybe[B] < S)(using Frame): Maybe[B] < S =
         if source.isEmpty then Absent
         else
@@ -1944,15 +1051,6 @@ object Kyo:
         end if
     end findFirst
 
-    /** Takes elements from a `Set` while a predicate holds true.
-      *
-      * @param source
-      *   The input `Set`
-      * @param f
-      *   The effect-producing predicate function
-      * @return
-      *   A new effect that produces a Chunk of taken elements
-      */
     def takeWhile[A, S](source: Set[A])(f: A => Boolean < S)(using Frame): Set[A] < S =
         if source.isEmpty then Set.empty
         else
@@ -1966,15 +1064,6 @@ object Kyo:
         end if
     end takeWhile
 
-    /** Splits the collection into prefix/suffix pair where all elements in the prefix satisfy `f`.
-      *
-      * @param f
-      *   A predicate that returns `true` while elements should be included in the prefix
-      * @return
-      *   A tuple `(prefix, suffix)` where:
-      *   - `prefix`: All elements before first failure of `f`
-      *   - `suffix`: First failing element and all remaining elements
-      */
     def span[A, S](source: Set[A])(f: A => Boolean < S)(using Frame): (Set[A], Set[A]) < S =
         if source.isEmpty then (Set.empty, Set.empty)
         else
@@ -1988,15 +1077,6 @@ object Kyo:
         end if
     end span
 
-    /** Drops elements from a `Set` while a predicate holds true.
-      *
-      * @param source
-      *   The input `Set`
-      * @param f
-      *   The effect-producing predicate function
-      * @return
-      *   A new effect that produces a Set of remaining elements
-      */
     def dropWhile[A, S](source: Set[A])(f: A => Boolean < S)(using Frame): Set[A] < S =
         if source.isEmpty then Set.empty
         else
@@ -2010,17 +1090,6 @@ object Kyo:
         end if
     end dropWhile
 
-    /** Splits the collection into two sets, depending on the result of the predicate.
-      *
-      * @param source
-      *   The input `Set`
-      * @param f
-      *   The effect-producing predicate function
-      * @return
-      *   A tuple `(lefts, rights)` where:
-      *   - `lefts`: All elements that satisfy the predicate
-      *   - `rights`: All elements that do not satisfy the predicate
-      */
     def partition[S, A](source: Set[A])(f: A => Boolean < S)(using Frame): (Set[A], Set[A]) < S =
         if source.isEmpty then (Set.empty, Set.empty)
         else
@@ -2034,17 +1103,6 @@ object Kyo:
         end if
     end partition
 
-    /** Splits the collection into two sets, depending on the result of the effect-producing function.
-      *
-      * @param source
-      *   The input `Set`
-      * @param f
-      *   The effect-producing function that returns an Either
-      * @return
-      *   A tuple `(lefts, rights)` where:
-      *   - `lefts`: All elements that are Left
-      *   - `rights`: All elements that are Right
-      */
     def partitionMap[S, A, A1, A2](source: Set[A])(f: A => Either[A1, A2] < S)(using Frame): (Set[A1], Set[A2]) < S =
         if source.isEmpty then (Set.empty, Set.empty)
         else
@@ -2058,15 +1116,6 @@ object Kyo:
         end if
     end partitionMap
 
-    /** Computes a prefix scan of the collection.
-      *
-      * @param z
-      *   Initial accumulator value
-      * @param op
-      *   Effectful operation that combines accumulator with each element
-      * @return
-      *   Set containing all intermediate accumulator states
-      */
     def scanLeft[S, A, B](source: Set[A])(z: B)(op: (B, A) => B < S)(using Frame): Set[B] < S =
         if source.isEmpty then Set(z)
         else
@@ -2079,15 +1128,6 @@ object Kyo:
         end if
     end scanLeft
 
-    /** Groups elements of the collection by the result of the function.
-      *
-      * @param source
-      *   The input `Set`
-      * @param f
-      *   The effect-producing function that returns the key for each element
-      * @return
-      *   A Map where keys are the results of the function and values are sets of elements
-      */
     def groupBy[S, A, K](source: Set[A])(f: A => K < S)(using Frame): Map[K, Set[A]] < S =
         if source.isEmpty then Map.empty[K, Set[A]]
         else
@@ -2106,17 +1146,6 @@ object Kyo:
         end if
     end groupBy
 
-    /** Groups elements of the collection by the result of the function and applies a transformation to each element.
-      *
-      * @param source
-      *   The input `Set`
-      * @param key
-      *   The effect-producing function that returns the key for each element
-      * @param f
-      *   The effect-producing function that returns the value for each element
-      * @return
-      *   A Map where keys are the results of the function and values are chunks of transformed elements
-      */
     def groupMap[S, A, K, B](source: Set[A])(key: A => K < S)(f: A => B < S)(using Frame): Map[K, Set[B]] < S =
         if source.isEmpty then Map.empty[K, Set[B]]
         else
@@ -2136,25 +1165,6 @@ object Kyo:
         end if
     end groupMap
 
-    /** Processes elements of a `Set` while a predicate holds true, maintaining an accumulator state. This function implements a stateful
-      * iteration pattern where:
-      *   1. The predicate function `f` determines whether to continue processing
-      *   2. The accumulator function `acc` updates state based on the predicate result
-      *   3. The epilog function transforms the final accumulator state into the result
-      *
-      * @param source
-      *   The input `Set` to process
-      * @param prolog
-      *   Initial state value for the accumulator
-      * @param f
-      *   Effect-producing predicate that determines whether to continue processing
-      * @param acc
-      *   Function that updates the accumulator state based on predicate result and current element
-      * @param epilog
-      *   Function that transforms the final accumulator state into the result
-      * @return
-      *   A new effect that produces the final transformed result
-      */
     private[kyo] def shiftedWhile[A, S, B, C](source: Set[A])(
         prolog: B,
         f: A => Boolean < S,
@@ -2173,19 +1183,6 @@ object Kyo:
         end if
     end shiftedWhile
 
-    // -----------------------------------------------------------------------------------------------------------------
-    // Map
-    // -----------------------------------------------------------------------------------------------------------------
-
-    /** Applies an effect-producing function to each element of a `Map`.
-      *
-      * @param source
-      *   The input `Map`
-      * @param f
-      *   The effect-producing function to apply to each element
-      * @return
-      *   A new effect that produces a Map of results
-      */
     def foreach[K1, V1, K2, V2, S](source: Map[K1, V1])(f: ((K1, V1)) => (K2, V2) < S)(using Frame): Map[K2, V2] < S =
         if source.isEmpty then Map.empty
         else
@@ -2198,15 +1195,6 @@ object Kyo:
         end if
     end foreach
 
-    /** Applies an effect-producing function to each element of a `Map`.
-      *
-      * @param source
-      *   The input `Map`
-      * @param f
-      *   The effect-producing function to apply to each element
-      * @return
-      *   A new effect that produces a Chunk of results
-      */
     @targetName("foreachToChunk")
     def foreach[K1, V1, B, S](source: Map[K1, V1])(f: ((K1, V1)) => B < S)(using Frame): Chunk[B] < S =
         if source.isEmpty then Chunk.empty
@@ -2220,15 +1208,6 @@ object Kyo:
         end if
     end foreach
 
-    /** Applies an effect-producing function to each element of a `Map`, and concatenates the resulting collections.
-      *
-      * @param source
-      *   The input `Map`
-      * @param f
-      *   The effect-producing function that returns a collection of results per element
-      * @return
-      *   A new effect that produces a flattened Map of all results
-      */
     def foreachConcat[K1, V1, K2, V2, S](source: Map[K1, V1])(f: ((K1, V1)) => IterableOnce[(K2, V2)] < S)(using Frame): Map[K2, V2] < S =
         if source.isEmpty then Map.empty
         else
@@ -2241,15 +1220,6 @@ object Kyo:
         end if
     end foreachConcat
 
-    /** Applies an effect-producing function to each element of a `Map`, and concatenates the resulting collections.
-      *
-      * @param source
-      *   The input `Map`
-      * @param f
-      *   The effect-producing function that returns a collection of results per element
-      * @return
-      *   A new effect that produces a flattened Chunk of all results
-      */
     @targetName("foreachConcatToChunk")
     def foreachConcat[K1, V1, B, S](source: Map[K1, V1])(f: ((K1, V1)) => IterableOnce[B] < S)(using Frame): Chunk[B] < S =
         if source.isEmpty then Chunk.empty
@@ -2263,15 +1233,6 @@ object Kyo:
         end if
     end foreachConcat
 
-    /** Applies an effect-producing function to each element of a `Map`, discarding the results.
-      *
-      * @param source
-      *   The input `Map`
-      * @param f
-      *   The effect-producing function to apply to each element
-      * @return
-      *   A new effect that produces Unit
-      */
     def foreachDiscard[K1, V1, S](source: Map[K1, V1])(f: ((K1, V1)) => Any < S)(using Frame): Unit < S =
         if source.isEmpty then ()
         else
@@ -2282,15 +1243,6 @@ object Kyo:
                     f(cur).andThen(Loop.continue(curMap - cur._1))
     end foreachDiscard
 
-    /** Filters elements of a `Map` based on an effect-producing predicate.
-      *
-      * @param source
-      *   The input `Map`
-      * @param f
-      *   The effect-producing predicate function
-      * @return
-      *   A new effect that produces a Map of filtered elements
-      */
     def filter[K1, V1, S](source: Map[K1, V1])(f: ((K1, V1)) => Boolean < S)(using Frame): Map[K1, V1] < S =
         if source.isEmpty then Map.empty
         else
@@ -2304,15 +1256,6 @@ object Kyo:
         end if
     end filter
 
-    /** Filters elements of a `Map` based on an effect-producing predicate on keys.
-      *
-      * @param source
-      *   The input `Map`
-      * @param f
-      *   The effect-producing predicate function
-      * @return
-      *   A new effect that produces a Map of filtered elements
-      */
     def filterKeys[K1, V1, S](source: Map[K1, V1])(f: K1 => Boolean < S)(using Frame): Map[K1, V1] < S =
         if source.isEmpty then Map.empty
         else
@@ -2326,17 +1269,6 @@ object Kyo:
         end if
     end filterKeys
 
-    /** Folds over a `Map` with an effect-producing function.
-      *
-      * @param source
-      *   The input `Map`
-      * @param acc
-      *   The initial accumulator value
-      * @param f
-      *   The effect-producing folding function
-      * @return
-      *   A new effect that produces the final accumulated value
-      */
     def foldLeft[K1, V1, B, S](source: Map[K1, V1])(acc: B)(f: (B, (K1, V1)) => B < S)(using Frame): B < S =
         if source.isEmpty then acc
         else
@@ -2348,18 +1280,6 @@ object Kyo:
         end if
     end foldLeft
 
-    /** Collects and transforms elements from a `Map` using an effect-producing function that returns Maybe values.
-      *
-      * This method applies the given function to each element in the `Map` and collects only the Present values into a Map. It's similar to
-      * a combination of flatMap and filter, where elements are both transformed and filtered in a single pass.
-      *
-      * @param source
-      *   The input `Map`
-      * @param f
-      *   The effect-producing function that returns Maybe values
-      * @return
-      *   A new effect that produces a Map containing only the Present values after transformation
-      */
     def collect[K1, V1, K2, V2, S](source: Map[K1, V1])(f: ((K1, V1)) => Maybe[(K2, V2)] < S)(using Frame): Map[K2, V2] < S =
         if source.isEmpty then Map.empty
         else
@@ -2373,18 +1293,6 @@ object Kyo:
         end if
     end collect
 
-    /** Collects and transforms elements from a `Map` using an effect-producing function that returns Maybe values.
-      *
-      * This method applies the given function to each element in the `Map` and collects only the Present values into a Map. It's similar to
-      * a combination of flatMap and filter, where elements are both transformed and filtered in a single pass.
-      *
-      * @param source
-      *   The input `Map`
-      * @param f
-      *   The effect-producing function that returns Maybe values
-      * @return
-      *   A new effect that produces a Chunk containing only the Present values after transformation
-      */
     @targetName("collectToChunk")
     def collect[K1, V1, B, S](source: Map[K1, V1])(f: ((K1, V1)) => Maybe[B] < S)(using Frame): Chunk[B] < S =
         if source.isEmpty then Chunk.empty
@@ -2399,13 +1307,6 @@ object Kyo:
         end if
     end collect
 
-    /** Collects the results of a `Map` of effects into a single effect.
-      *
-      * @param source
-      *   The `Map` of effects
-      * @return
-      *   A new effect that produces a Map of results
-      */
     def collectAll[K1, V1, S](source: Map[K1, V1 < S])(using Frame): Map[K1, V1] < S =
         if source.isEmpty then Map.empty
         else
@@ -2418,13 +1319,6 @@ object Kyo:
         end if
     end collectAll
 
-    /** Collects the results of a `Map` of effects, discarding the results.
-      *
-      * @param source
-      *   The `Map` of effects
-      * @return
-      *   A new effect that produces Unit
-      */
     def collectAllDiscard[K1, V1, S](source: Map[K1, V1 < S])(using Frame): Unit < S =
         if source.isEmpty then ()
         else
@@ -2436,15 +1330,6 @@ object Kyo:
         end if
     end collectAllDiscard
 
-    /** Finds the first element in a `Map` that satisfies a predicate.
-      *
-      * @param source
-      *   The input `Map`
-      * @param f
-      *   The effect-producing predicate function
-      * @return
-      *   A new effect that produces Maybe of the first matching element
-      */
     def findFirst[K1, V1, B, S](source: Map[K1, V1])(f: ((K1, V1)) => Maybe[B] < S)(using Frame): Maybe[B] < S =
         if source.isEmpty then Absent
         else
@@ -2458,15 +1343,6 @@ object Kyo:
         end if
     end findFirst
 
-    /** Takes elements from a `Map` while a predicate holds true.
-      *
-      * @param source
-      *   The input `Map`
-      * @param f
-      *   The effect-producing predicate function
-      * @return
-      *   A new effect that produces a Chunk of taken elements
-      */
     def takeWhile[K1, V1, S](source: Map[K1, V1])(f: ((K1, V1)) => Boolean < S)(using Frame): Map[K1, V1] < S =
         if source.isEmpty then Map.empty
         else
@@ -2480,15 +1356,6 @@ object Kyo:
         end if
     end takeWhile
 
-    /** Splits the collection into prefix/suffix pair where all elements in the prefix satisfy `f`.
-      *
-      * @param f
-      *   A predicate that returns `true` while elements should be included in the prefix
-      * @return
-      *   A tuple `(prefix, suffix)` where:
-      *   - `prefix`: All elements before first failure of `f`
-      *   - `suffix`: First failing element and all remaining elements
-      */
     def span[K1, V1, S](source: Map[K1, V1])(f: ((K1, V1)) => Boolean < S)(using Frame): (Map[K1, V1], Map[K1, V1]) < S =
         if source.isEmpty then (Map.empty, Map.empty)
         else
@@ -2502,15 +1369,6 @@ object Kyo:
         end if
     end span
 
-    /** Drops elements from a `Map` while a predicate holds true.
-      *
-      * @param source
-      *   The input `Map`
-      * @param f
-      *   The effect-producing predicate function
-      * @return
-      *   A new effect that produces a Map of remaining elements
-      */
     def dropWhile[K1, V1, S](source: Map[K1, V1])(f: ((K1, V1)) => Boolean < S)(using Frame): Map[K1, V1] < S =
         if source.isEmpty then Map.empty
         else
@@ -2524,17 +1382,6 @@ object Kyo:
         end if
     end dropWhile
 
-    /** Splits the collection into two maps, depending on the result of the predicate.
-      *
-      * @param source
-      *   The input `Map`
-      * @param f
-      *   The effect-producing predicate function
-      * @return
-      *   A tuple `(lefts, rights)` where:
-      *   - `lefts`: All elements that satisfy the predicate
-      *   - `rights`: All elements that do not satisfy the predicate
-      */
     def partition[K1, V1, S](source: Map[K1, V1])(f: ((K1, V1)) => Boolean < S)(using Frame): (Map[K1, V1], Map[K1, V1]) < S =
         if source.isEmpty then (Map.empty, Map.empty)
         else
@@ -2548,17 +1395,6 @@ object Kyo:
         end if
     end partition
 
-    /** Splits the collection into two maps, depending on the result of the effect-producing function.
-      *
-      * @param source
-      *   The input `Map`
-      * @param f
-      *   The effect-producing function that returns an Either
-      * @return
-      *   A tuple `(lefts, rights)` where:
-      *   - `lefts`: All elements that are Left
-      *   - `rights`: All elements that are Right
-      */
     def partitionMap[K1, V1, K2, V2, K3, V3, S](source: Map[K1, V1])(f: ((K1, V1)) => Either[(K2, V2), (K3, V3)] < S)(using
         Frame
     ): (Map[K2, V2], Map[K3, V3]) < S =
@@ -2574,15 +1410,6 @@ object Kyo:
         end if
     end partitionMap
 
-    /** Computes a prefix scan of the collection.
-      *
-      * @param z
-      *   Initial accumulator value
-      * @param op
-      *   Effectful operation that combines accumulator with each element
-      * @return
-      *   Chunk containing all intermediate accumulator states
-      */
     def scanLeft[K1, V1, B, S](source: Map[K1, V1])(z: B)(op: (B, (K1, V1)) => B < S)(using Frame): Chunk[B] < S =
         if source.isEmpty then Chunk(z)
         else
@@ -2595,15 +1422,6 @@ object Kyo:
         end if
     end scanLeft
 
-    /** Groups elements of the collection by the result of the function.
-      *
-      * @param source
-      *   The input `Map`
-      * @param f
-      *   The effect-producing function that returns the key for each element
-      * @return
-      *   A Map where keys are the results of the function and values are sets of elements
-      */
     def groupBy[K1, V1, K2, S](source: Map[K1, V1])(f: ((K1, V1)) => K2 < S)(using Frame): Map[K2, Map[K1, V1]] < S =
         if source.isEmpty then Map.empty[K2, Map[K1, V1]]
         else
@@ -2622,17 +1440,6 @@ object Kyo:
         end if
     end groupBy
 
-    /** Groups elements of the collection by the result of the function and applies a transformation to each element.
-      *
-      * @param source
-      *   The input `Set`
-      * @param key
-      *   The effect-producing function that returns the key for each element
-      * @param f
-      *   The effect-producing function that returns the value for each element
-      * @return
-      *   A Map where keys are the results of the function and values are chunks of transformed elements
-      */
     def groupMap[K1, V1, K2, V2, S](source: Map[K1, V1])(key: ((K1, V1)) => K2 < S)(f: ((K1, V1)) => V2 < S)(
         using Frame
     ): Map[K2, Chunk[V2]] < S =
@@ -2654,25 +1461,6 @@ object Kyo:
         end if
     end groupMap
 
-    /** Processes elements of a `Map` while a predicate holds true, maintaining an accumulator state. This function implements a stateful
-      * iteration pattern where:
-      *   1. The predicate function `f` determines whether to continue processing
-      *   2. The accumulator function `acc` updates state based on the predicate result
-      *   3. The epilog function transforms the final accumulator state into the result
-      *
-      * @param source
-      *   The input `Map` to process
-      * @param prolog
-      *   Initial state value for the accumulator
-      * @param f
-      *   Effect-producing predicate that determines whether to continue processing
-      * @param acc
-      *   Function that updates the accumulator state based on predicate result and current element
-      * @param epilog
-      *   Function that transforms the final accumulator state into the result
-      * @return
-      *   A new effect that produces the final transformed result
-      */
     private[kyo] def shiftedWhile[K1, V1, S, B, C](source: Map[K1, V1])(
         prolog: B,
         f: ((K1, V1)) => Boolean < S,

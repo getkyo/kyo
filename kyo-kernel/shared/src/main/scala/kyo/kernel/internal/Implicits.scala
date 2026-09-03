@@ -1,11 +1,9 @@
 package kyo.kernel.internal
 
-import kyo.<
-import kyo.Arrow
-import kyo.kernel.*
+import kyo.kernel.<
 import scala.language.implicitConversions
 
-private[kernel] trait Implicits:
+trait Implicits:
 
     implicit inline def lift[A, S](v: A)(using inline cl: CanLift[A]): A < S =
         inline scala.compiletime.erasedValue[A] match
@@ -16,8 +14,6 @@ private[kernel] trait Implicits:
 
     implicit inline def abortCastUnit[S1, S2](inline v: Unit < S1): Unit < S2 = ${ LiftMacro.abortCastUnitMacro[S1, S2]('v) }
 
-    // the value lift cannot reach the result position of a function type, so a function returning a
-    // bare value needs its own conversion to pass where a computation-returning one is expected
     implicit inline def liftPureFunction1[A1, B](inline f: A1 => B)(
         using inline flat: CanLift[B]
     ): A1 => B < Any =

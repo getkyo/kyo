@@ -4,6 +4,7 @@ type <[+A, -S] = kernel.<[A, S]
 
 val Loop = kernel.Loop
 
+export kernel.Arrow
 export kernel.Isolate
 
 /** Identity type constructor.
@@ -25,3 +26,11 @@ type Id[A] = A
   *   The constant type to return
   */
 type Const[A] = [B] =>> A
+
+extension (self: kyo.bug.type)
+    private[kyo] def failTag[A, B, S](
+        kyo: A < S,
+        expected: Tag[B]
+    ): Nothing =
+        self(s"Unexpected pending effect while handling ${expected.show}: " + kyo)
+end extension

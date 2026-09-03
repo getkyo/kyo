@@ -3,21 +3,19 @@ package kyo.kernel.internal
 import kyo.Const
 import kyo.Maybe
 import kyo.Tag
-import kyo.kernel.*
+import kyo.Loop
+import kyo.kernel.<
+import kyo.kernel.ArrowEffect
+import org.scalatest.freespec.AnyFreeSpec
 
-/** The representation contract: a value crosses the pending type unwrapped, and only a value that would itself read as a computation is
-  * boxed. Getting this wrong in either direction is what makes the evaluator mistake a payload for a suspension, or hand a caller a box
-  * where it expected a value.
-  */
-class NestedTest extends kyo.Test:
+class NestedTest extends AnyFreeSpec:
 
     sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())
 
     def answerAsk[A, S](value: Int)(v: A < (Ask & S)): A < S =
-        ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue(value: Int < Any), a => a)
+        ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue((), value: Int < Any), a => a)
 
-    // the pending type erases to its union, so a test can look at what a lift actually produced
     def boxed(v: Any): Boolean = v.isInstanceOf[Nested[?]]
 
     "lift" - {
@@ -50,8 +48,6 @@ class NestedTest extends kyo.Test:
             assert(answerAsk(41)(twice.eval.eval).eval == 42)
         }
 
-        // map over a settled value runs strictly, so this computation is its result by the time the
-        // lift sees it, and there is nothing an evaluator could mistake for a suspension
         "does not box a computation that has already settled" in {
             val inner: Int < Any     = (1: Int < Any).map(_ + 1)
             val v: (Int < Any) < Any = Nested.nest(inner)

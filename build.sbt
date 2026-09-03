@@ -763,18 +763,6 @@ lazy val `kyo-kernel` =
             // Bytecode-shape pins (PendingBytecodeTest, ArrowEffectBytecodeTest) read method
             // sizes through javassist, matching the old kernel's BytecodeTest.
             libraryDependencies += "org.javassist" % "javassist" % "3.32.0-GA" % Test,
-            // The proto demo's debugger reports each allocated class's real memory layout
-            // (field offsets, header, padding) through JOL; demo-only debt, dropped when the
-            // proto graduates. The run forks with self-attach allowed so JOL reads exact
-            // layouts through Instrumentation instead of estimating, and the Unsafe flag
-            // keeps the JDK's one-time deprecation notice out of the log.
-            libraryDependencies += "org.openjdk.jol" % "jol-core" % "0.17",
-            Compile / run / fork := true,
-            Compile / run / javaOptions ++= Seq(
-                "-Djdk.attach.allowAttachSelf=true",
-                "-XX:+EnableDynamicAgentLoading",
-                "--sun-misc-unsafe-memory-access=allow"
-            ),
             // Benchmarks run on default JVM flags: Jmh extends Test, which carries
             // UseCompactObjectHeaders from kyo-settings, and a collector-dependent layout
             // flag must not be baked into the canonical numbers.

@@ -558,11 +558,11 @@ class BenchTest extends Test[Any]:
     check("a log missing a row's profile is refused", missingRow.isFailure, s"$missingRow")
     val variantWithCpu = Abort.run(Ingest.attachCpu(
         leg("variant", Seq(("suspensionBaseline", 160.0, 1.0, 640.0), ("evalFixedOverhead", 0.004, 0.0001, 8.0))),
-        cpuLog.replace("kyo.kernel.internal.Eval$.go", "kyo.proto.Eval$.go").replace("600000000   60.00%", "800000000   80.00%"), "cpu.log"
+        cpuLog.replace("kyo.kernel.internal.Eval$.go", "kyo.Eval$.go").replace("600000000   60.00%", "800000000   80.00%"), "cpu.log"
     )).eval.getOrThrow
     val cpuReport = Report.render(Bench.compare(withCpu, variantWithCpu))
     check("the report has a CPU-by-row section", cpuReport.contains("CPU by row"), cpuReport.takeRight(600))
-    check("with each side's frames", cpuReport.contains("kyo.kernel.internal.Eval$.go") && cpuReport.contains("kyo.proto.Eval$.go"))
+    check("with each side's frames", cpuReport.contains("kyo.kernel.internal.Eval$.go") && cpuReport.contains("kyo.Eval$.go"))
     check("and no section without row profiles", !Report.render(Bench.compare(kernelRun, kernelRun)).contains("CPU by row"))
     // the run-level noise frames come from the rows' merged profiles, where one method appears once per
     // row: the -wi 20 report listed boxToInteger three times as its three largest contributors

@@ -1,16 +1,17 @@
 package kyo.kernel.internal
 
-import kyo.Arrow
+import java.util.concurrent.ConcurrentLinkedQueue
 import kyo.Const
 import kyo.Maybe
 import kyo.Tag
 import kyo.discard
-import kyo.kernel.*
+import kyo.Arrow
+import kyo.Loop
+import kyo.kernel.<
+import kyo.kernel.ArrowEffect
+import org.scalatest.freespec.AnyFreeSpec
 
-/** The captured-continuation-as-value pin that resumes on real threads; the same-thread shots stay
-  * in the shared EvalTest.
-  */
-class EvalThreadingTest extends kyo.Test:
+class EvalThreadingTest extends AnyFreeSpec:
 
     sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())
@@ -19,10 +20,10 @@ class EvalThreadingTest extends kyo.Test:
     def say(s: String): Unit < Say = ArrowEffect.suspend[Any](Tag[Say], s)
 
     def stateful(body: Int < (Ask & Say)): Int < Say =
-        ArrowEffect.handleLoopState(Tag[Ask], 0, body)([C] => (s, _) => Loop.continue(s + 1, s), (_, a) => a)
+        ArrowEffect.handleLoopState(Tag[Ask], 0, body)([C] => (s, _) => Loop.continue(s + 1, s: Int < Any), (_, a) => a)
 
     def answerAsk[A, S](value: Int)(v: A < (Ask & S)): A < S =
-        ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue(value), a => a)
+        ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue((), value: Int < Any), a => a)
 
     "a captured continuation resumes on another thread" in {
         var stored: Maybe[Arrow[Unit, Int, Say]] = Maybe.empty
@@ -35,10 +36,10 @@ class EvalThreadingTest extends kyo.Test:
             ,
             a => a
         )
-        assert(Eval(r) == -1)
+        assert(r.eval == -1)
         val k             = stored.get
-        def resume(): Int = Eval(ArrowEffect.handleCont(Tag[Say], k(()))([C] => (_, cont) => cont(()), a => a))
-        val results       = new java.util.concurrent.ConcurrentLinkedQueue[Int]()
+        def resume(): Int = ArrowEffect.handleCont(Tag[Say], k(()))([C] => (_, cont) => cont(()), a => a).eval
+        val results       = new ConcurrentLinkedQueue[Int]()
         val threads = (1 to 4).map(_ =>
             new Thread(() =>
                 results.add(resume()); ()
@@ -50,8 +51,6 @@ class EvalThreadingTest extends kyo.Test:
         assert(results.isEmpty)
     }
 
-    // the stop-driven halves of EvalTest's partial-evaluation section: stops are the jvm-native
-    // preemption mechanism, self-delivered or from another thread
     "partial evaluation under stops" - {
 
         "a preemption stop reifies and resumes with handler state" in {
@@ -63,15 +62,12 @@ class EvalThreadingTest extends kyo.Test:
                     (n, _) =>
                         clauseRuns += 1
                         if n == 10 then discard(Safepoint.stop(Thread.currentThread()))
-                        Loop.continue(n + 1, 1)
+                        Loop.continue(n + 1, 1: Int < Any)
                 ,
                 (n, a) => n + a
             )
             val first = Eval.partial(counted)
             assert(first.evalNow == Maybe.Absent)
-            // the slice stopped where the stop was lodged, not budget-periods later: the eleventh
-            // clause run raises the stop, and at most one more answer may slip through before the
-            // park lands
             assert(clauseRuns >= 11 && clauseRuns <= 12, s"clauseRuns=$clauseRuns")
             assert(Eval.partial(first).evalNow == Maybe(100))
             assert(clauseRuns == 100)
@@ -86,10 +82,6 @@ class EvalThreadingTest extends kyo.Test:
         }
 
         "a cross-thread stop parks a running slice" in {
-            // the suspension channel: the answers loop peeks the sentinel at each answer, bails,
-            // and the park check sees the same pending stop. A consuming poll would lose the
-            // preemption here; the loop never terminates on its own, so parking is the only way
-            // the thread ends
             @volatile var started = false
             @volatile var parked  = false
             val t = new Thread(() =>
@@ -109,9 +101,6 @@ class EvalThreadingTest extends kyo.Test:
         }
 
         "a cross-thread stop parks a settled spin with no suspensions" in {
-            // the settled channel: observation through the plain home probe, the drain making the
-            // next step defer, and the park check taking the still-pending stop. No suspension
-            // anywhere; the spin only ends by parking
             @volatile var started = false
             @volatile var parked  = false
             val t = new Thread(() =>
@@ -131,8 +120,6 @@ class EvalThreadingTest extends kyo.Test:
         }
 
         "a stop the slice outruns is consumed at the boundary" in {
-            // the stop lands after the last poll point, so the slice completes; the boundary
-            // consumes the sentinel, and the next slice runs instead of short-circuiting
             val v: Int < Any = (1: Int < Any).map { x =>
                 discard(Safepoint.stop(Thread.currentThread()))
                 x + 41

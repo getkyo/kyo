@@ -2,14 +2,12 @@ package kyo.kernel.internal
 
 import kyo.Const
 import kyo.Tag
-import kyo.kernel.*
+import kyo.kernel.<
+import kyo.kernel.ArrowEffect
+import org.scalatest.freespec.AnyFreeSpec
 import scala.annotation.tailrec
 
-/** A map tower resumed through a captured continuation at every level: each capture holds the trailing maps of all the levels before it, so
-  * whatever the capture and the resume cost per entry is paid once per level. Kept apart from the corpus so it can be run and debugged
-  * alone.
-  */
-class EvalCaptureTowerTest extends kyo.Test:
+class EvalCaptureTowerTest extends AnyFreeSpec:
 
     sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())
@@ -23,7 +21,7 @@ class EvalCaptureTowerTest extends kyo.Test:
         def loop(i: Int): Int < Ask =
             if i > 20000 then i else ask.map(a => loop(i + a)).map(x => x)
         val r: Int < Any = ArrowEffect.handleCont(Tag[Ask], loop(0))([C] => (_, cont) => cont(1), a => a)
-        assert(Eval(r) == 20001)
+        assert(r.eval == 20001)
     }
 
     "a capture across an inner region keeps the region as an entry" in {
@@ -39,7 +37,7 @@ class EvalCaptureTowerTest extends kyo.Test:
             a => a
         )
         val r: Int < Any = ArrowEffect.handleCont(Tag[Ask], inner)([C] => (_, cont) => cont(1), a => a)
-        assert(Eval(r) == 1 + Reach + 8)
+        assert(r.eval == 1 + Reach + 8)
         assert(seen == List("x"))
     }
 
@@ -50,6 +48,6 @@ class EvalCaptureTowerTest extends kyo.Test:
             [C] => (_, cont) => cont(1).map(r1 => cont(2).map(r2 => r1 * 100000 + r2)),
             a => a
         )
-        assert(Eval(r) == (1 + Reach + 8) * 100000 + (2 + Reach + 8))
+        assert(r.eval == (1 + Reach + 8) * 100000 + (2 + Reach + 8))
     }
 end EvalCaptureTowerTest

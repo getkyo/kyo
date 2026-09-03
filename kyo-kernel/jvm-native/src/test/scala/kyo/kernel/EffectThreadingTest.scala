@@ -1,14 +1,14 @@
 package kyo.kernel
 
-import kyo.Result
+import java.util.concurrent.atomic.AtomicInteger
 import kyo.discard
 import kyo.kernel.internal.Eval
 import kyo.kernel.internal.Safepoint
+import org.scalatest.freespec.AnyFreeSpec
 
-/** The bracket tests that need real threads: cross-thread stops and racing resumers. The
-  * cross-platform bracket coverage stays in the shared EffectTest.
-  */
-class EffectThreadingTest extends kyo.Test:
+class EffectThreadingTest extends AnyFreeSpec:
+
+    private object Abandoned extends RuntimeException("abandoned", null, false, false)
 
     "a cross-thread stop parks inside a bracket and abandonment releases" in {
         @volatile var started       = false
@@ -20,10 +20,10 @@ class EffectThreadingTest extends kyo.Test:
                     started = true
                     spin(v)
                 }
-            val v: Int < Any = Effect.bracket(Effect.defer(1))(_ => released += 1)(r => spin(r))
+            val v: Int < Any = Effect.bracket(Effect.defer(1))((_, _) => released += 1)(r => spin(r))
             val p            = Eval.partial(v)
             sawUnreleased = released == 0 && p.evalNow.isEmpty
-            Eval.finalizeResources(p)
+            Eval.release(p, Abandoned)
         )
         t.start()
         while !started do ()
@@ -37,9 +37,9 @@ class EffectThreadingTest extends kyo.Test:
     "an abandonment racing a resume releases exactly once" in {
         var iterations = 0
         while iterations < 200 do
-            val released = new java.util.concurrent.atomic.AtomicInteger
+            val released = new AtomicInteger
             val v: Int < Any =
-                Effect.bracket(Effect.defer(1))(_ => discard(released.incrementAndGet()))(r =>
+                Effect.bracket(Effect.defer(1))((_, _) => discard(released.incrementAndGet()))(r =>
                     Effect.defer {
                         discard(Safepoint.stop(Thread.currentThread()))
                         r
@@ -47,8 +47,8 @@ class EffectThreadingTest extends kyo.Test:
                 )
             val p = Eval.partial(v)
             assert(p.evalNow.isEmpty)
-            val resumer   = new Thread(() => discard(Eval(p)))
-            val abandoner = new Thread(() => Eval.finalizeResources(p))
+            val resumer   = new Thread(() => discard(p.eval))
+            val abandoner = new Thread(() => Eval.release(p, Abandoned))
             resumer.start()
             abandoner.start()
             resumer.join(10000)

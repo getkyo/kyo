@@ -11,8 +11,8 @@
 # Usage:
 #   package-check.sh <base>..<tip> <review-dir> <package-path> [-- <paths>...]
 #
-#   package-check.sh 31a7b4bde9..HEAD reviews/proto-region-stack kyo/proto/kernel \
-#       -- kyo-kernel/shared/src/main/scala/kyo/proto
+#   package-check.sh 31a7b4bde9..HEAD reviews/proto-region-stack kyo/kernel \
+#       -- kyo-kernel/shared/src/main/scala/kyo/kernel
 #
 # The trailing paths narrow the flag count to the same surface `flags.md` was generated for, so the
 # two are compared like for like.
