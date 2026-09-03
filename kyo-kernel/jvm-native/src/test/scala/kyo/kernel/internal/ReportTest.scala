@@ -6,6 +6,7 @@ import kyo.Tag
 import kyo.discard
 import kyo.kernel.<
 import kyo.kernel.ArrowEffect
+import kyo.kernel.Bracket
 import kyo.kernel.Effect
 import org.scalatest.freespec.AnyFreeSpec
 import scala.collection.mutable.ListBuffer
@@ -30,8 +31,8 @@ class ReportTest extends AnyFreeSpec:
     "a release failing on the discard drain reaches the handler on its signal" in {
         val log = ListBuffer[String]()
         val body: Int < Ask =
-            Effect.bracket(Effect.defer(1))((_, _) => discard(log += "outer")) { _ =>
-                Effect.bracket(Effect.defer(2))((_, _) => throw Bad) { _ =>
+            Bracket(Effect.defer(1))((_, _) => discard(log += "outer")) { _ =>
+                Bracket(Effect.defer(2))((_, _) => throw Bad) { _ =>
                     ask.map(x => x)
                 }
             }

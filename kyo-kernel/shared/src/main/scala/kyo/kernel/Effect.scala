@@ -1,13 +1,8 @@
 package kyo.kernel
 
-import java.util.concurrent.atomic.AtomicBoolean
-import kyo.Closed
 import kyo.Frame
-import kyo.Maybe
-import kyo.Tag
 import kyo.kernel.internal.*
 import scala.annotation.nowarn
-import scala.util.control.NonFatal
 
 /** The base trait for all effects in the Kyo effect system.
   *
@@ -24,57 +19,9 @@ import scala.util.control.NonFatal
   */
 abstract class Effect private[kernel] ()
 
-// Diverges from main: `Effect.catching` is gone (D2), each handler carries a `recover` arm instead.
+// Diverges from main: `Effect.catching` is gone (D2), each handler carries a `recover` arm instead, and the bracket lives in
+// `Bracket`.
 object Effect:
-
-    // Not on main: `bracket`, the `Finalize` region it runs the use body under, and the `Cell` that runs the release exactly once.
-    sealed private[kyo] trait Finalize extends ContextEffect[Cell]
-
-    final private[kyo] class Cell(fin: Maybe[Throwable] => Unit) extends AtomicBoolean:
-        private[kyo] def complete(): Unit           = if compareAndSet(false, true) then fin(Maybe.Absent)
-        private[kyo] def drain(ex: Throwable): Unit = if compareAndSet(false, true) then fin(Maybe(ex))
-    end Cell
-
-    private[kyo] object Cell:
-        // the state a bracket hands to an isolated child: nothing completes or drains it, so a copy
-        // holding it never runs a release and never refuses a re-entry
-        val inert: Cell = new Cell(_ => ())
-    end Cell
-
-    def bracket[A, S1](acquire: A < S1)(
-        release: (A, Maybe[Throwable]) => Unit
-    )[B, S2](use: A => B < S2)(using _frame: Frame): B < (S1 & S2) =
-        val ensure = new Arrow.Ensure[A, B, S1 & S2]:
-            def frame = _frame
-            override def apply(a: A) =
-                val cell = new Cell(outcome => release(a, outcome))
-                val body =
-                    try use(a)
-                    catch
-                        case ex =>
-                            try cell.drain(ex)
-                            catch case t if NonFatal(t) && (t ne ex) => ex.addSuppressed(t)
-                            throw ex
-                val h = new Handler.ContextHandler[Cell, Finalize, B, S1 & S2]:
-                    def tag                        = Tag[Finalize]
-                    def derive(outer: Maybe[Cell]) = cell
-                    // the bracket belongs to the computation that installed it and closes only with
-                    // its own scope: an isolated child, a spawned fiber included, gets an inert copy
-                    def fork(parent: Cell)                                              = Cell.inert
-                    def join(parent: Cell, fk: Cell, child: Cell)                       = parent
-                    override private[kyo] def done(state: Cell): Unit                   = state.complete()
-                    override private[kyo] def release(state: Cell, ex: Throwable): Unit = state.drain(ex)
-                    override private[kyo] def reenter(state: Cell): Unit =
-                        if state.get() then
-                            throw new Closed("Bracket resource", _frame)(using _frame)
-                new Pending.HandleContext[Cell, Finalize, B, S1 & S2]:
-                    override def frame = _frame
-                    def value          = body
-                    def handler        = h
-                end new
-            end apply
-        defer(acquire).chain(ensure)
-    end bracket
 
     // Not on main: the `defer` overloads that build a `Pending.Defer` node around a value and the continuations that run after it.
     def defer[A, B, S](v: A < S, cont: Arrow[A, B, S]): B < S =

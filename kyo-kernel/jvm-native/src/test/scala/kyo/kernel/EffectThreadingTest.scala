@@ -20,7 +20,7 @@ class EffectThreadingTest extends AnyFreeSpec:
                     started = true
                     spin(v)
                 }
-            val v: Int < Any = Effect.bracket(Effect.defer(1))((_, _) => released += 1)(r => spin(r))
+            val v: Int < Any = Bracket(Effect.defer(1))((_, _) => released += 1)(r => spin(r))
             val p            = Eval.partial(v)
             sawUnreleased = released == 0 && p.evalNow.isEmpty
             Eval.release(p, Abandoned)
@@ -39,7 +39,7 @@ class EffectThreadingTest extends AnyFreeSpec:
         while iterations < 200 do
             val released = new AtomicInteger
             val v: Int < Any =
-                Effect.bracket(Effect.defer(1))((_, _) => discard(released.incrementAndGet()))(r =>
+                Bracket(Effect.defer(1))((_, _) => discard(released.incrementAndGet()))(r =>
                     Effect.defer {
                         discard(Safepoint.stop(Thread.currentThread()))
                         r

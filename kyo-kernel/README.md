@@ -394,7 +394,7 @@ assert(answering(7)(recovered).eval == 7)
 
 ### Acquire, use, release
 
-`Effect.bracket` binds a resource for the extent of a use and guarantees the release runs, whichever way the extent ends. The release is told what it is releasing and how the extent ended, which is what lets one commit on success and roll back otherwise:
+`Bracket` binds a resource for the extent of a use and guarantees the release runs, whichever way the extent ends. The release is told what it is releasing and how the extent ended, which is what lets one commit on success and roll back otherwise:
 
 ```scala
 def noteOutcome(id: Int, outcome: Result[Any, Int]): String =
@@ -402,20 +402,20 @@ def noteOutcome(id: Int, outcome: Result[Any, Int]): String =
         case Result.Success(v) => s"handle $id committed at $v"
         case _                 => s"handle $id did not complete"
 
-val session: Int < Ask = Effect.bracket(1)(noteOutcome)(id => ask.map(_ + id))
+val session: Int < Ask = Bracket(1)(noteOutcome)(id => ask.map(_ + id))
 
 assert(answering(41)(session).eval == 42)
 ```
 
 The assertion covers what the caller can see: the resource reached the use, and the use's result came back. What the release did is deliberately not visible from here.
 
-> **Note:** the release takes no effects, `Any < Any`, because it has to be able to run where nothing is installed to answer for it, which is all an interpreter that is ending can offer. Its result is discarded for the same reason. A release exists to act outside the computation, closing a socket or handing a permit back, so nothing it does is observable to the computation it belonged to. The shorter form, `Effect.bracket(acquire)(release)(use)` with a release taking only the resource, is this one for releases that do not care how the extent ended.
+> **Note:** the release takes no effects, `Any < Any`, because it has to be able to run where nothing is installed to answer for it, which is all an interpreter that is ending can offer. Its result is discarded for the same reason. A release exists to act outside the computation, closing a socket or handing a permit back, so nothing it does is observable to the computation it belonged to. The shorter form, `Bracket(acquire)(release)(use)` with a release taking only the resource, is this one for releases that do not care how the extent ended.
 
 Three outcomes reach a release: the value the extent completed with, the failure an unwind carried through it, and abandonment, for an extent that never ended because nobody resumed the continuation holding it. That third one is not hypothetical. A clause that discards its continuation drops the whole remainder of the computation, and every bracket outstanding in that remainder still releases, told it was abandoned:
 
 ```scala
 val dropped: Int < Any =
-    ArrowEffect.handleCont(Tag[Ask], Effect.bracket(1)(noteOutcome)(id => ask.map(_ + id)))(
+    ArrowEffect.handleCont(Tag[Ask], Bracket(1)(noteOutcome)(id => ask.map(_ + id)))(
         [C] => (_, _) => -1,
         a => a
     )

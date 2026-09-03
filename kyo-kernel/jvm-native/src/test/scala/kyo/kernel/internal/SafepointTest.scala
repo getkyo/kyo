@@ -6,6 +6,7 @@ import kyo.Tag
 import kyo.discard
 import kyo.kernel.<
 import kyo.kernel.ArrowEffect
+import kyo.kernel.Bracket
 import kyo.kernel.Effect
 import org.scalatest.freespec.AnyFreeSpec
 
@@ -120,7 +121,7 @@ class SafepointTest extends AnyFreeSpec:
 
     "a throwing release in a nested eval does not disarm the enclosing slice" in silenced {
         val inner: Int < Ask =
-            Effect.bracket(Effect.defer(1))((_, _) => throw new IllegalStateException("release"))(_ => ask.map(_ + 1))
+            Bracket(Effect.defer(1))((_, _) => throw new IllegalStateException("release"))(_ => ask.map(_ + 1))
         val dropped: Int < Any =
             ArrowEffect.handleCont(Tag[Ask], inner)([C] => (_, _) => -1, a => a)
         var built = 0
@@ -150,7 +151,7 @@ class SafepointTest extends AnyFreeSpec:
 
     "a throwing release on the completing path leaves the caller's safepoint state intact" in silenced {
         val v: Int < Ask =
-            Effect.bracket(Effect.defer(1))((_, _) => throw new IllegalStateException("release"))(_ => ask.map(_ + 1))
+            Bracket(Effect.defer(1))((_, _) => throw new IllegalStateException("release"))(_ => ask.map(_ + 1))
         val dropped: Int < Any =
             ArrowEffect.handleCont(Tag[Ask], v)([C] => (_, _) => -1, a => a)
         val slot = Safepoint.get()

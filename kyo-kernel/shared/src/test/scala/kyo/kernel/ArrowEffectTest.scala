@@ -2676,7 +2676,7 @@ class ArrowEffectTest extends AnyFreeSpec:
             def probe(handle: (Int < Ask) => Int < Any): (Int, Boolean) =
                 var sawPanic = false
                 val body: Int < Ask =
-                    Effect.bracket(Effect.defer(1))((_, r: Maybe[Throwable]) =>
+                    Bracket(Effect.defer(1))((_, r: Maybe[Throwable]) =>
                         r match
                             case Maybe.Present(ex) => sawPanic = ex.getMessage == "clause-boom"
                             case _                 => ()

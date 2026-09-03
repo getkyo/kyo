@@ -2,7 +2,8 @@
 
 Status: ruled. A bracket is not inheritable: it belongs to the computation that installed it and
 closes only with its own scope. The bracket's `fork` hands an isolated child `Cell.inert`, so the
-child's copy neither completes, releases, nor refuses (`Effect.scala`); the S8 pin inverts to match
+child's copy neither completes, releases, nor refuses; the bracket now lives in `Bracket.scala` as
+the `Bracket` API, with `Effect.bracket` removed, and its tests in `BracketTest`. The S8 pin inverts to match
 the non-isolated pin (a bracket outside the answering handler is not carried by an escaped
 continuation), and a new pin covers the spawn shape (an isolated child built inside a bracket and
 evaluated after it ended is not refused). The isolate and the handler API are untouched. The

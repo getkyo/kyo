@@ -5,6 +5,7 @@ import kyo.Tag
 import kyo.discard
 import kyo.kernel.<
 import kyo.kernel.ArrowEffect
+import kyo.kernel.Bracket
 import kyo.kernel.Effect
 import org.scalatest.freespec.AnyFreeSpec
 import scala.collection.mutable.ListBuffer
@@ -106,7 +107,7 @@ class DebuggerTest extends AnyFreeSpec:
         var released = 0
         val d        = new Recording
         session(d) {
-            val v = Effect.bracket(Effect.defer(1))((_, _) => released += 1)(r => (r + 1: Int < Any).map(_ * 2))
+            val v = Bracket(Effect.defer(1))((_, _) => released += 1)(r => (r + 1: Int < Any).map(_ * 2))
             assert(v.eval == 4)
         }
         assert(released == 1)

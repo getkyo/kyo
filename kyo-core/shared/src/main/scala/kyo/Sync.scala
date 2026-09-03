@@ -79,7 +79,7 @@ object Sync:
     )[B, S2](use: A => B < S2)(using Frame): B < (Sync & S1 & S2) =
         // Unsafe: the kernel's release is synchronous, so the effectful release runs to completion here,
         // and only its own Abort surfaces, as a throw
-        Effect.bracket(acquire)((resource, outcome) =>
+        Bracket(acquire)((resource, outcome) =>
             discard(Sync.Unsafe.evalOrThrow(release(resource, outcome.fold(Result.succeed(()))(Result.panic)))(
                 using
                 summon[Frame],
@@ -95,7 +95,7 @@ object Sync:
         // throws, or is abandoned.
         // Unsafe: the kernel's release is synchronous, so the effectful release runs to completion here,
         // and only its own Abort surfaces, as a throw
-        Effect.bracket(acquire)((resource, _) =>
+        Bracket(acquire)((resource, _) =>
             discard(Sync.Unsafe.evalOrThrow(release(resource))(using summon[Frame], AllowUnsafe.embrace.danger))
         )(use)
 
@@ -132,7 +132,7 @@ object Sync:
         // locals bound around the ensure reach it.
         // Unsafe: the kernel's release is synchronous, so the finalizer runs to completion here, and
         // only its own Abort surfaces as a throw, keeping the panic semantics
-        Effect.bracket(())((_, outcome) =>
+        Bracket(())((_, outcome) =>
             discard(Sync.Unsafe.evalOrThrow(f(outcome.map(Result.Panic(_))))(using summon[Frame], AllowUnsafe.embrace.danger))
         )(_ => v)
 

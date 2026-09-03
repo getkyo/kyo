@@ -759,7 +759,7 @@ class LoopTest extends AnyFreeSpec:
         var acquired = 0
         var released = 0
         val body: Int < Any =
-            Effect.bracket(Effect.defer {
+            Bracket(Effect.defer {
                 acquired += 1
                 acquired
             })((_, _) => released += 1)(a => (a: Int < Any))

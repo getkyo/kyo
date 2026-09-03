@@ -7,6 +7,7 @@ import kyo.Maybe
 import kyo.Tag
 import kyo.kernel.<
 import kyo.kernel.ArrowEffect
+import kyo.kernel.Bracket
 import kyo.kernel.ContextEffect
 import kyo.kernel.Effect
 import kyo.kernel.Isolate
@@ -255,7 +256,7 @@ class ProtoKernelTest extends AnyFreeSpec:
 
         "bracket" in {
             var released = false
-            val v        = Effect.bracket(1)((_, _) => released = true)(r => ask.map(_ + r))
+            val v        = Bracket(1)((_, _) => released = true)(r => ask.map(_ + r))
             assert(answer(v).eval == 2)
             assert(released)
         }

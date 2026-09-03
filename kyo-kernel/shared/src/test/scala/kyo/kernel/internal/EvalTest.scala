@@ -9,6 +9,7 @@ import kyo.Tag
 import kyo.discard
 import kyo.kernel.<
 import kyo.kernel.ArrowEffect
+import kyo.kernel.Bracket
 import kyo.kernel.ContextEffect
 import kyo.kernel.Effect
 import kyo.kernel.internal.Pending.Park
@@ -799,7 +800,7 @@ class EvalTest extends AnyFreeSpec:
                     release = (s: Int, _: Throwable) => discard(log += s"release cfg $s")
                 )(v)
             val v: Int < Any =
-                Effect.bracket(Effect.defer(1))((_, _) => bracket += 1) { a =>
+                Bracket(Effect.defer(1))((_, _) => bracket += 1) { a =>
                     hooked(a)(Effect.defer {
                         requestStop()
                         Effect.defer(a)

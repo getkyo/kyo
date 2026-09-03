@@ -87,7 +87,7 @@ class ArrowEffectMaskTest extends AnyFreeSpec:
         "a bracket inside the mask releases after the tunneled answer flows back" in {
             var order = List.empty[String]
             val v: Int < Ask =
-                Effect.bracket(Effect.defer {
+                Bracket(Effect.defer {
                     order ::= "acquire"
                     0
                 })((_, _) => order ::= "release") { _ =>
@@ -104,7 +104,7 @@ class ArrowEffectMaskTest extends AnyFreeSpec:
         "a bracket inside the mask releases when the outer handler discards the continuation" in {
             var order = List.empty[String]
             val v: Int < Ask =
-                Effect.bracket(Effect.defer {
+                Bracket(Effect.defer {
                     order ::= "acquire"
                     0
                 })((_, _) => order ::= "release") { _ =>
