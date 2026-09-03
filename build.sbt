@@ -752,7 +752,8 @@ lazy val `kyo-kernel` =
             // the scheduler the kernel powers, and the scheduler's preemption writes into the
             // stop channel and safepoint state the kernel suites assert on. See kyo.Test in this
             // module's test sources.
-            libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test
+            libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
+            Test / sourceGenerators += TestVariant.generate.taskValue
         )
         .jvmSettings(
             mimaCheck(false),

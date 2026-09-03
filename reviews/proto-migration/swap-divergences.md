@@ -108,28 +108,66 @@ throws it), `kyo/Test.scala` (test base `IsolateTest` extends), `kyo/TestVariant
 
 ## Build
 
-`build.sbt`, kyo-kernel block: `Test / unmanagedJars := Seq.empty` while the stack above the kernel is
-red (the doctest driver jar is built from it); the javassist Test dependency for the bytecode pins; the
-jmh scope with the cross-bench dependencies and the compile-bench compiler. The JOL dependency and the
-demo fork settings are gone with `protodemo`.
+`build.sbt`, kyo-kernel block: the scalatest Test dependency in place of main's `.withKyoTest` (the
+kernel suites run on ScalaTest, see the Tests section); `Test / unmanagedJars := Seq.empty` while the
+stack above the kernel is red (the doctest driver jar is built from it); the javassist Test dependency
+for the bytecode pins; the jmh scope with the cross-bench dependencies and the compile-bench compiler.
+Main's `Test / sourceGenerators += TestVariant.generate.taskValue` is back, so `KyoForeachCollTest`'s
+`List` and `Chunk` variants are generated and run again (the branch had dropped the line, and with it
+that coverage). The JOL dependency and the demo fork settings are gone with `protodemo`.
 
 ## Tests
 
-To be regenerated after the test-suite minimization pass (agents T1 to T6, reports in `swap-hunks/T*.md`).
-The mapping below is the pre-pass content comparison.
+The twelve suites with a counterpart on main were rewritten on main's skeleton by agents T1 to T6
+(reports in `swap-hunks/T*.md`, reviewed hunk by hunk): main's case names, groups, order, fixtures and
+imports, this kernel's own cases after main's, every main case present under main's name or ported to
+this kernel's API, and a main case omitted only where the feature is gone by design. Base class: main's
+suites extend `kyo.test.Test[Any]`; here they extend ScalaTest's `AnyFreeSpec`, or the module-local
+`kyo.Test` (an `AnyFreeSpec` with `typeCheckFailure`) where main's cases pin compiler messages. kyo-test
+runs its leaves as fibers on the scheduler the kernel powers, so the kernel suites stay on ScalaTest;
+nothing moved toward kyo-test.
 
-| suite (main leaves) | twin under the proto's names | ported | divergent by ruling |
-|---|---|---|---|
-| `KyoTest` (108), `KyoForeachCollTest` (57), `LoopTest` (84) | all | | |
-| `PendingTest` (50) | all: map, flatMap, for-comprehension, flatten, unit, andThen, eval, the lift rejections (`ImplicitsTest`), `evalNow` (3), `handle` (4 plus the arities), the nested computations including the denied-budget cases, the Render case (`ImplicitsTest`) | | |
-| `CanLiftTest` (11) | all, as "resolves for" and "rejects" cases | | |
-| `ArrowEffectTest` (38) | single-effect handling, stack safety, `handleFirst` (5), the `catching` group as "recover, ported from catching", the `Nested` cases as "nested box", `handlePartial` as `Eval.partial` in `EvalTest`, the plain multi-shot case | delimited continuation: multi shot with another effect, multiple shifts over different effect sets, short circuiting; flow effect with dynamic tags: single poll, poll and emit, multiple flows | the two, three and four effect `handle` overloads (D2 family) |
-| `ContextEffectTest` (11) | reads, layering, ifUndefined and ifDefined, nesting | three bindings: each read takes its own; binding order | the `Noninheritable` marker (D4) |
-| `EffectTest` (8) | `defer` (simple, nested, order) | | `catching` (4 cases) and `defer with catching` (D2); "defer with a recovery inside" is the port over a recovering region |
-| `IsolateTest` (28) | `derive`, `run`, `andThen`, `use`, `apply`, the variance groups, `nest`, the contextual isolate | | the `Isolate.internal.runDetached`, `Trace` and `Safepoint.Interceptor` cases (the proto's `Contextual` isolate has no such internals; their properties live under "Contextual" and "ported crossings"); "should propagate only non-isolated effects" (D4) |
-| `ContextTest` (11) | empty, read, unbound, shadowing, different tags | | the `Map` API (`isEmpty`, `contains`, `getOrElse`, `set`) and `inherit` (D4) |
+### Diff size per suite, before and after the pass
 
-Main-only test files: `internal/TraceTest`, `internal/TracePoolTest`, jvm `internal/TracePoolConcurrencyTest`
-(the trace pool is gone; `EffectTraceTest`, `EffectTracePhysicalTest` and `EffectTraceThreadingTest` cover the
-replacement), jvm `BytecodeTest` (split into `PendingBytecodeTest`, `ArrowEffectBytecodeTest` and
-`DebuggerBytecodeTest`).
+| suite | before | after | main cases | omitted (reason) |
+|---|---|---|---|---|
+| `kyo/KyoTest` | 51/54 | 23/13 | all | none; the two `pendingUntilFixed` stack-safety cases run everywhere and assert the real answers (`2 * n + 1`, `n + n / 32`); `toString` pins this kernel's exact renderings |
+| `kyo/KyoForeachTest` | 6/4 | 2/2 | all | none |
+| `kyo/KyoForeachCollTest` | 18/17 | 3/1 | all | none; its `List` and `Chunk` variants are generated again, see Build |
+| `kernel/ArrowEffectTest` | 2710/581 | 2902/328 | 34 of 38 | four cases on `Safepoint.Interceptor` deferral (handleFirst, handle.catching x2, handlePartial); every handler is a lazy node here, pinned by the `handleCont` lazy case and the `Eval.partial` cases |
+| `kernel/ContextEffectTest` | 403/105 | 393/21 | all 11 | none |
+| `kernel/EffectTest` | 89/79 | 81/59 | 4 of 8 | the `catching` group (4): `Effect.catching` is gone, the `recover` arms carry it, covered in `ArrowEffectTest` (pointers per case in T4.md) |
+| `kernel/IsolateTest` | 547/174 | 587/82 | 26 of 28 | `restoring` (`Safepoint.Interceptor`, `Isolate.internal.restoring`), `context inheritance` (`Noninheritable`); ten main cases ported over `isolate.run` and `Contextual.capture` |
+| `kernel/LoopTest` | 314/2 | 306/1 | all | none; main's body is byte-identical |
+| `kernel/PendingTest` | 566/248 | 505/34 | all 50 | none; `evalNow / accepts nested computations` asserts `Absent` before the run (no eager handling here), the three denied-safepoint cases use a drained budget for main's targeted interceptor |
+| `kernel/internal/CanLiftTest` | 71/49 | 24/8 | all 11 | none |
+| `kernel/internal/ContextTest` | 47/65 | 47/41 | 9 of 11 | the two `inherit` cases (`Noninheritable`) |
+| `kyo/TestVariant` | 0 | 0 | | |
+
+Expectations adjusted on main's text, each with a `// Diverges from main:` comment at the site:
+`ArrowEffectTest` "execution is tail-recursive" bounds the stack variance at 20 (the evaluator's frames
+between the test body and the loop add a constant 12, main's inline handling at most 10) and
+"handleFirst on Nested" reads its answer at `eval` by closing the standing row; `KyoTest` as above;
+`PendingTest` as above. `Loop.repeat` needed no adjustment in main's case, since main's body is
+deferred and its extra evaluation discards an unrun node; the settled-body case that pins the
+difference is this kernel's.
+
+New pin, on this kernel's by-name `handle` stages: `PendingTest` "a by-name stage sees an exception
+thrown while the receiver is built" fails against main's strict `f1` at the two-stage call and passes
+here.
+
+### Main's suites with no file here
+
+| main suite | what became of its cases |
+|---|---|
+| jvm `BytecodeTest` (4 pins) | every expansion site it pins is pinned in `PendingBytecodeTest` (`map`) and `ArrowEffectBytecodeTest` (`suspend`, `suspendWith`, `handleCont`), with this kernel's numbers |
+| `internal/TraceTest` | four cases ported into `EffectTraceTest` ("repeated frames", "counts only consecutive repeats", the carrier's one-line-per-frame rendering, "bug #1172 null frames"); the golden `Trace.render` snapshots, the count suffix and the ring-index cases are main's rendering and ring, which do not exist here; the frame budget is pinned by the cap group |
+| `internal/TracePoolTest`, jvm `internal/TracePoolConcurrencyTest` | `TracePool` does not exist; nothing is pooled |
+| jvm `internal/SafepointTest` | four cases ported into `SafepointConcurrencyTest` under main's names (slot identity across and within threads); interceptors, `ensure` (now `Effect.bracket`, covered by `EffectBracketTest`) and the `State` depth/interceptor bits are gone. A `SafepointTest` at main's jvm path would duplicate the class the branch already has under `jvm-native` |
+
+Ours-only suites, unchanged by the pass: `ArrowEffectMaskTest`, `ArrowTest`, `EffectBracketTest`,
+`internal/{DebuggerTest, EvalCaptureTowerTest, EvalTest, ImplicitsTest, NestedTest, StackTest}`,
+jvm `{ArrowEffectBytecodeTest, PendingBytecodeTest, internal/DebuggerBytecodeTest, internal/EvalConcurrencyTest}`,
+`outsidekyo/KernelTest`, `kyo/Test`. `ImplicitsTest` now duplicates main's lift rejections and the
+`show` case that returned to `PendingTest` at main's positions; the copies to drop, if any, are the ones
+in `ImplicitsTest`.
