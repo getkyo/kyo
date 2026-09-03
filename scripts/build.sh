@@ -185,14 +185,14 @@ container_provision() {
     local sbt_version; sbt_version=$(sed -n 's/^sbt.version=//p' "$PROJECT_DIR/project/build.properties")
     # liburing-dev + libssl-dev: the kyo-net JVM FFI shims link the io_uring (-luring) and OpenSSL TLS data planes; without them
     # kyo-netJVM's ffiCompile fails (cannot find -luring). Small and always installed so any kyo-net command builds in the container.
-    local apt_pkgs="curl ca-certificates patch liburing-dev libssl-dev"
+    # file + binutils are not optional: native_assert_arch reads a member of the staged archive to
+    # prove it is really for the target architecture, and fails when either tool is missing. The
+    # base image carries neither.
+    local apt_pkgs="curl ca-certificates patch liburing-dev libssl-dev file binutils"
     local node_pkgs="" native_pkgs="" bssl_pkgs="" aeron_pkgs=""
     # Alpine equivalents, used when KYO_BUILD_IMAGE names a musl image. Alpine spells the OpenSSL and
     # libuuid development packages differently (openssl-dev, util-linux-dev) and has no separate
     # ca-certificates-for-curl split, so the lists are mapped rather than shared.
-    # `file` is not optional here: native_assert_arch's linux branch soft-skips its architecture
-    # assertion when ar or file is missing, so without it the local musl repro would silently check
-    # less than release.yml's Alpine legs, which apk-add both.
     local apk_pkgs="bash curl ca-certificates patch liburing-dev openssl-dev tar file binutils"
     local apk_node_pkgs="" apk_native_pkgs="" apk_bssl_pkgs="" apk_aeron_pkgs=""
     # "all" provisions the union (raw sbt mode may run any platform's command in the container).
