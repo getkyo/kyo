@@ -42,9 +42,13 @@ release at the region's end and `Closed` on the remainder.
 
 `take` is unaffected: it answers inside its own region (`Loop.done`), and "Sync.ensure over an
 unbounded stream releases once when take ends it" is green. The cross-fiber hand-out (a
-remainder crossing a fiber boundary) is a separate, already pending lane: "a self-contained
-stream's resource does not survive a fiber hand-out" is green on the current behavior and
-"a resource-carrying remainder crosses a fiber boundary" is `pendingUntilFixed`.
+remainder crossing a fiber boundary) is a separate lane with two green pins in the same group:
+"a self-contained stream's resource does not survive a fiber hand-out" (the peeling fiber's
+teardown drains the resource, and the consuming fiber panics on the spent scope) and "a
+Scope-rowed stream peeled across a fiber releases at the enclosing extent" (a resource meant to
+outlive the peel keeps `Scope` in the row). An earlier `pendingUntilFixed` pin for a remainder
+carrying its resource across the boundary (`bdc5fc32e7`) was removed in `ba02f07d2b` when the
+`Scope`-rowed contract replaced it; an earlier revision of this report still named it.
 
 ## 2. Who depends on handing a remainder out
 
