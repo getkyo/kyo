@@ -1,25 +1,27 @@
 package kyo.kernel
 
-import kyo.Arrow
-import kyo.Chunk
-import kyo.Const
-import kyo.Id
-import kyo.Kyo
-import kyo.Loop
-import kyo.Maybe
-import kyo.Maybe.Absent
-import kyo.Maybe.Present
-import kyo.Tag
-import kyo.discard
-import kyo.kernel.internal.Eval
-import kyo.kernel.internal.Pending
-import kyo.kernel.internal.Safepoint
+import kyo.*
+import kyo.kernel.*
+import kyo.kernel.internal.*
 import org.scalatest.freespec.AnyFreeSpec
 import scala.annotation.tailrec
 import scala.collection.mutable.ListBuffer
 import scala.compiletime.testing.typeCheckErrors
 
 class ArrowEffectTest extends AnyFreeSpec:
+
+    sealed trait TestEffect1 extends ArrowEffect[Const[Int], Const[String]]
+    sealed trait TestEffect2 extends ArrowEffect[Const[String], Const[Int]]
+    sealed trait TestEffect3 extends ArrowEffect[Const[Boolean], Const[Double]]
+
+    def testEffect1(i: Int): String < TestEffect1 =
+        ArrowEffect.suspend[Any](Tag[TestEffect1], i)
+
+    def testEffect2(s: String): Int < TestEffect2 =
+        ArrowEffect.suspend[Any](Tag[TestEffect2], s)
+
+    def testEffect3(b: Boolean): Double < TestEffect3 =
+        ArrowEffect.suspend[Any](Tag[TestEffect3], b)
 
     sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())
@@ -38,16 +40,694 @@ class ArrowEffectTest extends AnyFreeSpec:
     def recovering[A, S](v: A < (Wrap & S))(f: Throwable => A): A < S =
         ArrowEffect.handleCont(Tag[Wrap], v)([C] => (_, cont) => cont(()), a => a, ex => Maybe(f(ex)))
 
-    sealed trait TestEffect1 extends ArrowEffect[Const[Int], Const[String]]
-
-    def testEffect1(i: Int): String < TestEffect1 = ArrowEffect.suspend[Any](Tag[TestEffect1], i)
-
-    sealed trait TestEffect2 extends ArrowEffect[Const[String], Const[Int]]
-
-    def testEffect2(s: String): Int < TestEffect2 = ArrowEffect.suspend[Any](Tag[TestEffect2], s)
-
     def burn(n: Int): Int < Any =
         if n == 0 then 0 else (0: Int < Any).map(_ => burn(n - 1))
+
+    "suspend" in {
+        val effect: String < TestEffect1 = testEffect1(42)
+        discard(effect)
+        // ArrowEffect.suspend produces a String < TestEffect1; the type ascription above is the verification
+        succeed
+    }
+
+    "handle" - {
+        "single effect" in {
+            val effect = testEffect1(42)
+            val result = ArrowEffect.handleCont(Tag[TestEffect1], effect)(
+                [C] => (input, cont) => cont(input.toString)
+            )
+            assert(result.eval == "42")
+        }
+
+        "two effects" in {
+            val effect =
+                for
+                    s <- testEffect1(42)
+                    i <- testEffect2(s)
+                yield i
+
+            val result = ArrowEffect.handleCont(
+                Tag[TestEffect2],
+                ArrowEffect.handleCont(Tag[TestEffect1], effect)([C] => (input, cont) => cont(input.toString))
+            )([C] => (input, cont) => cont(input.toInt))
+
+            assert(result.eval == 42)
+        }
+
+        "three effects" in {
+            val effect =
+                for
+                    s <- testEffect1(42)
+                    i <- testEffect2(s)
+                    d <- testEffect3(i % 2 == 0)
+                yield d
+
+            val result = ArrowEffect.handleCont(
+                Tag[TestEffect3],
+                ArrowEffect.handleCont(
+                    Tag[TestEffect2],
+                    ArrowEffect.handleCont(Tag[TestEffect1], effect)([C] => (input, cont) => cont(input.toString))
+                )([C] => (input, cont) => cont(input.toInt))
+            )([C] => (input, cont) => cont(if input then 1.0 else 0.0))
+
+            assert(result.eval == 1.0)
+        }
+
+        "with state" in {
+            val effect =
+                for
+                    s1 <- testEffect1(42)
+                    s2 <- testEffect1(43)
+                yield (s1, s2)
+
+            val result = ArrowEffect.handleLoopState(Tag[TestEffect1], 0, effect)(
+                [C] => (state, input) => Loop.continue(state + 1, (input + state).toString: String < Any)
+            )
+
+            assert(result.eval == ("42", "44"))
+        }
+
+        "execution is tail-recursive" in {
+            var minDepth = Int.MaxValue
+            var maxDepth = 0
+            def loop(i: Int): Int < TestEffect1 =
+                val depth = (new Exception).getStackTrace().size
+                if depth < minDepth then minDepth = depth
+                if depth > maxDepth then maxDepth = depth
+                if i == 0 then 42
+                else testEffect1(i).map(_ => loop(i - 1))
+            end loop
+
+            val effect = loop(10000)
+
+            val result = ArrowEffect.handleCont(Tag[TestEffect1], effect)(
+                [C] => (input, cont) => cont(input.toString)
+            )
+
+            assert(result.eval == 42)
+            // Diverges from main: the evaluator's frames between the test body and the loop body add a
+            // constant 12 here, main's inline handling added at most 10.
+            assert(maxDepth - minDepth <= 20)
+        }
+    }
+
+    "handleFirst" - {
+        "handles first occurrence of effect" in {
+            val effect =
+                for
+                    s1 <- testEffect1(10)
+                    s2 <- testEffect1(20)
+                    s3 <- testEffect1(30)
+                yield (s1, s2, s3)
+
+            val result: (String, String, String) < TestEffect1 = ArrowEffect.handleFirst(Tag[TestEffect1], effect)(
+                [C] => (input, cont) => cont("handled"),
+                identity
+            )
+
+            val finalResult = ArrowEffect.handleCont(Tag[TestEffect1], result) {
+                [C] => (input, cont) => cont(input.toString)
+            }
+
+            assert(finalResult.eval == ("handled", "20", "30"))
+        }
+
+        "preserves unhandled effects" in {
+            val effect =
+                for
+                    s1 <- testEffect1(10)
+                    i1 <- testEffect2("test")
+                    s2 <- testEffect1(20)
+                yield (s1, i1, s2)
+
+            val result: (String, Int, String) < (TestEffect1 & TestEffect2) =
+                ArrowEffect.handleFirst(Tag[TestEffect1], effect)(
+                    [C] => (input, cont) => cont("handled"),
+                    identity
+                )
+
+            val finalResult = ArrowEffect.handleCont(
+                Tag[TestEffect2],
+                ArrowEffect.handleCont(Tag[TestEffect1], result)([C] => (input, cont) => cont(input.toString))
+            )([C] => (input, cont) => cont(input.length))
+
+            assert(finalResult.eval == ("handled", 4, "20"))
+        }
+
+        "handles pure values correctly" in {
+            val effect: String < Any = "pure"
+            val result: String < TestEffect1 = ArrowEffect.handleFirst(Tag[TestEffect1], effect)(
+                [C] => (input, cont) => cont("handled"),
+                s => s + "-done"
+            )
+
+            val finalResult = ArrowEffect.handleCont(Tag[TestEffect1], result) {
+                [C] => (input, cont) => cont(input.toString)
+            }
+
+            assert(finalResult.eval == "pure-done")
+        }
+
+        "stack safety with nested effects" in {
+            def nested(n: Int): Int < TestEffect1 =
+                if n == 0 then 42
+                else testEffect1(n).map(_ => nested(n - 1))
+
+            val effect = nested(10000)
+            val result: Int < TestEffect1 = ArrowEffect.handleFirst(Tag[TestEffect1], effect)(
+                [C] => (input, cont) => cont("42"),
+                identity
+            )
+
+            val finalResult = ArrowEffect.handleCont(Tag[TestEffect1], result) {
+                [C] => (input, cont) => cont(input.toString)
+            }
+
+            assert(finalResult.eval == 42)
+        }
+
+        "answers the first operation and hands the raw remainder" in {
+            val v = ask.map(a => ask.map(b => a * 10 + b))
+            val r: Int < Any = ArrowEffect.handleFirst(Tag[Ask], v)(
+                [C] => (_, cont) => ArrowEffect.handleCont(Tag[Ask], cont(4))([C2] => (_, k) => k(2), a => a),
+                a => a
+            )
+            assert(r.eval == 42)
+        }
+
+        "a body that completes without the effect takes done" in {
+            val r: Int < Any = ArrowEffect.handleFirst(Tag[Ask], 5: Int < Ask)([C] => (_, _) => -1, a => a * 2)
+            assert(r.eval == 10)
+        }
+
+        "the clause may end the computation without resuming" in {
+            var reached = false
+            val v = ask.map { a =>
+                reached = true
+                a
+            }
+            val r: Int < Any = ArrowEffect.handleFirst(Tag[Ask], v)([C] => (_, _) => -1, a => a)
+            assert(r.eval == -1)
+            assert(!reached)
+        }
+
+        "re-handling the remainder round by round sees every operation" in {
+            def collect(v: Int < Ask, acc: List[Int]): List[Int] < Any =
+                ArrowEffect.handleFirst(Tag[Ask], v)(
+                    [C] => (_, cont) => collect(cont(acc.size + 1), acc :+ (acc.size + 1)),
+                    a => acc :+ a
+                )
+            val v = ask.map(a => ask.map(b => a * 10 + b))
+            assert(collect(v, Nil).eval == List(1, 2, 12))
+        }
+    }
+
+    "handle.catching" - {
+        "failure" in {
+            val effect = ArrowEffect.suspend[Int](Tag[TestEffect1], 42)
+            val result = ArrowEffect.handleCont(Tag[TestEffect1], effect)(
+                [C] => (input, cont) => throw new RuntimeException("Test exception"),
+                a => a,
+                recover = {
+                    case _: RuntimeException => Maybe("recovered")
+                }
+            )
+            assert(result.eval == "recovered")
+        }
+
+        "success" in {
+            val effect = ArrowEffect.suspend[Int](Tag[TestEffect1], 42)
+            val result = ArrowEffect.handleCont(Tag[TestEffect1], effect)(
+                [C] => (input, cont) => cont(input.toString),
+                a => a,
+                recover = {
+                    case _: RuntimeException => Maybe("recovered")
+                }
+            )
+            assert(result.eval == "42")
+        }
+    }
+
+    "deeply nested effects" in {
+        def nested(n: Int): Int < (TestEffect1 & TestEffect2) =
+            if n == 0 then 0
+            else
+                for
+                    s <- testEffect1(n)
+                    i <- testEffect2(s)
+                    r <- nested(n - 1)
+                yield i + r
+
+        val result = ArrowEffect.handleCont(
+            Tag[TestEffect2],
+            ArrowEffect.handleCont(Tag[TestEffect1], nested(1000))([C] => (input, cont) => cont(input.toString))
+        )([C] => (input, cont) => cont(input.toInt))
+
+        assert(result.eval == 500500)
+    }
+
+    "non-Const inputs/outputs" - {
+        sealed trait CustomEffect extends ArrowEffect[List, Option]
+
+        def customEffect(input: List[Int]): Option[Int] < CustomEffect =
+            ArrowEffect.suspend[Int](Tag[CustomEffect], input)
+
+        "suspend and handle" in {
+            val effect = customEffect(List(1, 2, 3))
+            val result = ArrowEffect.handleCont(Tag[CustomEffect], effect)(
+                [C] => (input, cont) => cont(input.headOption)
+            )
+            assert(result.eval == Some(1))
+        }
+
+        "chained effects" in {
+            val effect =
+                for
+                    a <- customEffect(List(1, 2, 3))
+                    b <- customEffect(List(4, 5, 6))
+                yield (a, b)
+
+            val result = ArrowEffect.handleCont(Tag[CustomEffect], effect)(
+                [C] => (input, cont) => cont(input.headOption)
+            )
+            assert(result.eval == (Some(1), Some(4)))
+        }
+
+        "handle with state" in {
+            val effect =
+                for
+                    a <- customEffect(List(1, 2, 3))
+                    b <- customEffect(List(4, 5, 6))
+                yield (a, b)
+
+            val result = ArrowEffect.handleLoopState(Tag[CustomEffect], 0, effect)(
+                [C] => (state, input) => Loop.continue(state + 1, (Some(input(state)): Option[C]): Option[C] < Any)
+            )
+            assert(result.eval == (Some(1), Some(5)))
+        }
+    }
+
+    // Diverges from main: handlePartial is gone, the partial evaluation entry point here is
+    // Eval.partial over a computation whose effects are already handled, and the stop condition is
+    // the safepoint's rather than a flag handed to the handler.
+    "handlePartial" - {
+        "evaluates pure values" in {
+            val x: Int < Any = 5
+            val result       = Eval.partial(x)
+            assert(result.evalNow == Maybe(5))
+        }
+
+        "suspends at effects" in {
+            val x: Int < TestEffect1 = testEffect1(5).map(_ => 6)
+            val result = Eval.partial(
+                ArrowEffect.handleCont(Tag[TestEffect1], x)(
+                    [C] => (input, cont) => cont(input.toString)
+                )
+            )
+            assert(result.evalNow == Maybe(6))
+        }
+
+        "respects the stop condition" in {
+            var called       = false
+            val x: Int < Any = Effect.defer(5)
+            requestStop()
+            val result = Eval.partial(
+                ArrowEffect.handleCont(Tag[TestEffect1], x)(
+                    [C] =>
+                        (input, cont) =>
+                            called = true
+                            cont(input.toString)
+                )
+            )
+            assert(!called)
+            assert(result.evalNow.isEmpty)
+        }
+
+        "evaluates nested suspensions" in {
+            val x: Int < Any = Effect.defer(Effect.defer(5))
+            val result       = Eval.partial(x)
+            assert(result.evalNow == Maybe(5))
+        }
+    }
+
+    "nested effects handling" - {
+
+        given [A, B]: CanEqual[A, B] = CanEqual.derived
+
+        sealed trait NestedTestEffect extends ArrowEffect[Const[Int], Const[Int]]
+
+        def suspendNested(i: Int): Int < NestedTestEffect =
+            ArrowEffect.suspend[Any](Tag[NestedTestEffect], i)
+
+        val nestedTag: Tag[NestedTestEffect] = Tag[NestedTestEffect]
+
+        def flatten[A, B, C](v: A < B < C): A < (B & C) = v.map(a => a)
+
+        // Diverges from main: Nested is a plain box here rather than a suspension node, so a
+        // handler's settled path unnests it and the done arm re-boxes. The wrapper each case reads
+        // back is a fresh instance, so these assert on the computation it carries.
+
+        "not handle Nested" - {
+
+            def handle[A, S](v: A < (S & NestedTestEffect)): A < S =
+                ArrowEffect.handleCont(nestedTag, v)([C] => (input, cont) => cont(input * 10), a => Kyo.lift(a))
+
+            "unwraps Nested and returns inner suspension" in {
+                val comp: Int < NestedTestEffect         = suspendNested(5)
+                val nested: Int < NestedTestEffect < Any = Kyo.lift(comp)
+                val result: Int < NestedTestEffect < Any = handle(nested)
+
+                val crossed = Nested.unnest[Any](result).asInstanceOf[AnyRef]
+                assert(crossed eq comp.asInstanceOf[AnyRef], "handleSimple should return the nested computation")
+
+                val flattened   = flatten(result)
+                val finalResult = handle(flattened)
+
+                assert(finalResult.eval == 50)
+            }
+        }
+
+        "handleFirst on Nested" - {
+
+            def handle[A, S](v: A < (S & NestedTestEffect)): A < (S & NestedTestEffect) =
+                ArrowEffect.handleFirst(nestedTag, v)(
+                    [C] => (input, cont) => cont(input * 10),
+                    a => Kyo.lift(a)
+                )
+
+            "done callback receives unwrapped value" in {
+                val comp                                 = suspendNested(5)
+                val nested: Int < NestedTestEffect < Any = Kyo.lift(comp)
+
+                val result = handle(nested)
+
+                val crossed = Nested.unnest[Any](result).asInstanceOf[AnyRef]
+                assert(crossed eq comp.asInstanceOf[AnyRef], "handleFirst should return the nested computation")
+
+                val flattened                           = flatten(result)
+                val finalResult: Int < NestedTestEffect = handle(flattened)
+                // Diverges from main: the region is a node here, so its answer is observable at eval
+                // rather than at evalNow, and the row it leaves standing is closed to read it.
+                assert(ArrowEffect.handleCont(nestedTag, finalResult)([C] => (input, cont) => cont(input)).eval == 50)
+            }
+        }
+
+        "handleLoop (stateless) on Nested" - {
+
+            def handle[A, S](v: A < (S & NestedTestEffect)): A < S =
+                ArrowEffect.handleLoop(Tag[NestedTestEffect], v)(
+                    [C] => input => Loop.continue((), (input * 10): Int < Any),
+                    a => Kyo.lift(a)
+                )
+
+            "unwraps Nested and handles inner suspension" in {
+                val comp: Int < NestedTestEffect         = suspendNested(5)
+                val nested: Int < NestedTestEffect < Any = Kyo.lift(comp)
+
+                val result  = handle(nested)
+                val crossed = Nested.unnest[Any](result).asInstanceOf[AnyRef]
+                assert(crossed eq comp.asInstanceOf[AnyRef], "handleLoop should return the nested computation")
+
+                val flattened              = flatten(result)
+                val finalResult: Int < Any = handle(flattened)
+
+                assert(finalResult.eval == 50)
+            }
+        }
+
+        "handleLoop (stateful) on Nested" - {
+
+            def handle[A, S](v: A < (S & NestedTestEffect)): A < S =
+                ArrowEffect.handleLoopState(nestedTag, 0, v)(
+                    [C] => (state, input) => Loop.continue(state + 1, ((input + state) * 10): Int < Any),
+                    (_, a) => Kyo.lift(a)
+                )
+
+            "unwraps Nested and handles inner suspension" in {
+                val comp: Int < NestedTestEffect         = suspendNested(5)
+                val nested: Int < NestedTestEffect < Any = Kyo.lift(comp)
+
+                val result  = handle(nested)
+                val crossed = Nested.unnest[Any](result).asInstanceOf[AnyRef]
+                assert(crossed eq comp.asInstanceOf[AnyRef], "handleLoop should return the nested computation")
+
+                val flattened              = flatten(result)
+                val finalResult: Int < Any = handle(flattened)
+
+                assert(finalResult.eval == 50)
+            }
+
+        }
+
+        "handleLoop (stateful + done) on Nested" - {
+
+            def handle[A, S](v: A < (S & NestedTestEffect)): A < S =
+                ArrowEffect.handleLoopState(nestedTag, 0, v)(
+                    [C] => (state, input) => Loop.continue(state + 1, (input * 10): Int < Any),
+                    (state, v) => Kyo.lift(v)
+                )
+
+            "unwraps Nested and handles inner suspension" in {
+                val comp: Int < NestedTestEffect         = suspendNested(5)
+                val nested: Int < NestedTestEffect < Any = Kyo.lift(comp)
+
+                val result  = handle(nested)
+                val crossed = Nested.unnest[Any](result).asInstanceOf[AnyRef]
+                assert(crossed eq comp.asInstanceOf[AnyRef], "handleLoop should return the nested computation")
+
+                val flattened              = flatten(result)
+                val finalResult: Int < Any = handle(flattened)
+
+                assert(finalResult.eval == 50)
+            }
+        }
+
+        "handleCatching on Nested" - {
+
+            def handle[A, S](v: A < (S & NestedTestEffect)): A < S =
+                ArrowEffect.handleCont(nestedTag, v)(
+                    [C] => (input, cont) => cont(input * 10),
+                    a => Kyo.lift(a),
+                    recover = e => throw e
+                )
+
+            "unwraps Nested and handles inner suspension" in {
+                val comp: Int < NestedTestEffect         = suspendNested(5)
+                val nested: Int < NestedTestEffect < Any = Kyo.lift(comp)
+
+                val result  = handle(nested)
+                val crossed = Nested.unnest[Any](result).asInstanceOf[AnyRef]
+                assert(crossed eq comp.asInstanceOf[AnyRef], "handleLoop should return the nested computation")
+
+                val flattened              = flatten(result)
+                val finalResult: Int < Any = handle(flattened)
+
+                assert(finalResult.eval == 50)
+            }
+        }
+
+        "handlePartial on Nested" - {
+
+            // Diverges from main: Eval.partial takes a computation with no effects left in the row,
+            // so the region is closed before the partial evaluation instead of being handed two
+            // handlers and a stop flag.
+            def handle[A](v: A < NestedTestEffect): A < Any =
+                Eval.partial(
+                    ArrowEffect.handleCont(nestedTag, v)([C] => (input, cont) => cont(input * 10), a => Kyo.lift(a))
+                )
+
+            "unwraps Nested and handles inner suspension" in {
+                val comp: Int < NestedTestEffect         = suspendNested(5)
+                val nested: Int < NestedTestEffect < Any = Kyo.lift(comp)
+
+                val result  = handle(nested)
+                val crossed = Nested.unnest[Any](result).asInstanceOf[AnyRef]
+                assert(crossed eq comp.asInstanceOf[AnyRef], "handlePartial should return the nested computation")
+
+                val flattened   = flatten(result)
+                val finalResult = handle(flattened)
+                assert(finalResult.evalNow == Maybe(50))
+            }
+        }
+    }
+
+    "effects with variance" - {
+
+        "delimited continuation" - {
+
+            sealed trait Delim[R, +S] extends ArrowEffect[[A] =>> Delim.Op[A, R, S], Id]
+
+            object Delim:
+
+                enum Op[A, R, -S]:
+                    case Shift[A, R, S](f: (A => R < (Delim[R, S] & S)) => R < (Delim[R, S] & S)) extends Op[A, R, S]
+
+                def shift[A, R: Tag, S](f: (A => R < (Delim[R, S] & S)) => R < (Delim[R, S] & S))(using
+                    tag: Tag[Delim[R, S]]
+                ): A < (Delim[R, S] & S) =
+                    ArrowEffect.suspend[A](tag, Op.Shift(f))
+
+                def run[R: Tag, S](v: R < (Delim[R, S] & S))(using tag: Tag[Delim[R, S]]): R < S =
+                    ArrowEffect.handleCont(tag, v)(
+                        [A] =>
+                            (input, cont) =>
+                                input match
+                                    case Op.Shift(f) =>
+                                        // the compiler currently can't prove that the shift effect set
+                                        // is the same as the one being handled as restricted by the method signature
+                                        f(cont(_).asInstanceOf)
+                    )
+
+            end Delim
+
+            "multi shot" in {
+                val v =
+                    Delim.shift[Int, Int, Any] { k =>
+                        k(42).map(a => k(42 + 1).map(b => a + b))
+                    }.map(_ * 10)
+                        .handle(Delim.run)
+                assert(v.eval == (42 * 10) + ((42 + 1) * 10))
+            }
+
+            "multi shot with other effect" in {
+                val v =
+                    Delim.shift[Int, Int, TestEffect2] { k =>
+                        k(42).map(a => testEffect2("a").map(k).map(b => a + b))
+                    }.map(_ * 10)
+                        .handle(
+                            Delim.run,
+                            v => ArrowEffect.handleCont(Tag[TestEffect2], v)([C] => (input, cont) => cont(input.size))
+                        )
+                assert(v.eval == (42 * 10) + ("a".size * 10))
+            }
+
+            "multiple shift with different effect sets" in {
+                val v =
+                    Delim.shift[Int, Int, TestEffect2] { k =>
+                        k(42).map { r =>
+                            testEffect2("a").map(v => r + v)
+                        }
+                    }.map(_ * 10).map { v1 =>
+                        Delim.shift[Int, Int, TestEffect1] { k =>
+                            k(42).map { r =>
+                                testEffect1(v1).map(s => r + s.length)
+                            }
+                        }
+                    }
+                        .handle(
+                            Delim.run,
+                            v => ArrowEffect.handleCont(Tag[TestEffect1], v)([C] => (input, cont) => cont(input.toString)),
+                            v => ArrowEffect.handleCont(Tag[TestEffect2], v)([C] => (input, cont) => cont(input.size))
+                        )
+                assert(v.eval == 46)
+            }
+
+            "short circuiting" in {
+                def test(numbers: List[Int], expected: Int) =
+                    val r =
+                        Kyo.foldLeft(numbers)(0) { (acc, n) =>
+                            if n < 0 || n == 42 then
+                                Delim.shift[Int, Int, Any] { _ => -1 }
+                            else
+                                acc + n
+                        }.handle(Delim.run)
+                    assert(r.eval == expected)
+                end test
+                test(List(1, 2), 3)
+                test(List(1, 2, -1), -1)
+                test(List(1, 2, 42, 3), -1)
+            }
+        }
+
+        "flow effect with dynamic tags" - {
+            sealed trait Flow[+In, -Out] extends ArrowEffect[Flow.Op[In, Out, *], Id]
+
+            object Flow:
+                enum Op[-In, +Out, R]:
+                    case Poll[V]()     extends Op[V, Nothing, Maybe[V]]
+                    case Emit[V](v: V) extends Op[Any, V, Unit]
+
+                def emit[V: Tag](value: V): Unit < Flow[Any, V] =
+                    ArrowEffect.suspend(Tag[Flow[Any, V]], Op.Emit(value))
+
+                def poll[V: Tag]: Maybe[V] < Flow[V, Nothing] =
+                    ArrowEffect.suspend(Tag[Flow[V, Nothing]], Op.Poll())
+
+                def run[A, S, In: Tag, Out: Tag](in: Chunk[In])(v: A < (Flow[In, Out] & S)): (Chunk[In], Chunk[Out], A) < S =
+                    ArrowEffect.handleLoopState(Tag[Flow[In, Out]], (in, Chunk.empty[Out]), v)(
+                        [C] =>
+                            (state, input) =>
+                                val (in, out) = state
+                                (input: @unchecked) match
+                                    case Op.Emit(v) =>
+                                        Loop.continue((in, out.append(v)), ((): Unit < Any).asInstanceOf[C < Any])
+                                    case Op.Poll() =>
+                                        Loop.continue((in.tail, out), (in.headMaybe: Maybe[In] < Any).asInstanceOf[C < Any])
+                                end match
+                        ,
+                        (state, r) => (state._1, state._2, r)
+                    )
+
+            end Flow
+
+            "single poll" in {
+                def test(source: Chunk[Int], in: Chunk[Int], out: Chunk[Int], result: Maybe[Int]) =
+                    val (i, o, r) = Flow.run(source)(Flow.poll[Int]).eval
+                    assert(i == in)
+                    assert(o == out)
+                    assert(r == result)
+                end test
+                test(Chunk.empty, Chunk.empty, Chunk.empty, Absent)
+                test(Chunk(1), Chunk.empty, Chunk.empty, Present(1))
+                test(Chunk(1, 2), Chunk(2), Chunk.empty, Present(1))
+            }
+
+            "poll and emit" in {
+                def test(source: Chunk[Int], out: Chunk[Int], result: Int) =
+                    val v =
+                        Loop(0) { acc =>
+                            Flow.poll[Int].map {
+                                case Absent     => Loop.done(acc)
+                                case Present(v) => Flow.emit(v + 1).andThen(Loop.continue(acc + v))
+                            }
+                        }
+                    val (i, o, r) = Flow.run(source)(v).eval
+                    assert(i.isEmpty)
+                    assert(o == out)
+                    assert(r == result)
+                end test
+                test(Chunk.empty, Chunk.empty, 0)
+                test(Chunk(1), Chunk(2), 1)
+                test(Chunk(1, 2), Chunk(2, 3), 3)
+            }
+
+            "multiple flows in the same computation" in {
+                def test(
+                    iSource: Chunk[Int],
+                    sSource: Chunk[String],
+                    iOut: Chunk[Int],
+                    sOut: Chunk[String]
+                ) =
+                    val a =
+                        Loop(0) { acc =>
+                            Kyo.zip(Flow.poll[Int], Flow.poll[String]).map(_.zip(_)).map {
+                                case Absent => Loop.done(acc)
+                                case Present((i, s)) =>
+                                    Flow.emit(i + 1).andThen(Flow.emit(s + "a")).andThen(Loop.continue(acc + i + s.size))
+                            }
+                        }
+                    val b: (Chunk[Int], Chunk[Int], Int) < Flow[String, String] = Flow.run(iSource)(a)
+                    val (_, so, (_, io, _))                                     = Flow.run(sSource)(b).eval
+                    assert(so == sOut)
+                    assert(io == iOut)
+                end test
+                test(Chunk(1), Chunk.empty, Chunk.empty, Chunk.empty)
+                test(Chunk.empty, Chunk("a"), Chunk.empty, Chunk.empty)
+                test(Chunk(1), Chunk("a"), Chunk(2), Chunk("aa"))
+                test(Chunk(1, 2), Chunk("a", "b"), Chunk(2, 3), Chunk("aa", "ba"))
+            }
+        }
+    }
 
     "handleLoop" - {
         "answers every operation in place" in {
@@ -1029,43 +1709,6 @@ class ArrowEffectTest extends AnyFreeSpec:
                 _ => Maybe(-1)
             )
             assert(r.eval == -1)
-        }
-    }
-
-    "handleFirst" - {
-        "answers the first operation and hands the raw remainder" in {
-            val v = ask.map(a => ask.map(b => a * 10 + b))
-            val r: Int < Any = ArrowEffect.handleFirst(Tag[Ask], v)(
-                [C] => (_, cont) => ArrowEffect.handleCont(Tag[Ask], cont(4))([C2] => (_, k) => k(2), a => a),
-                a => a
-            )
-            assert(r.eval == 42)
-        }
-
-        "a body that completes without the effect takes done" in {
-            val r: Int < Any = ArrowEffect.handleFirst(Tag[Ask], 5: Int < Ask)([C] => (_, _) => -1, a => a * 2)
-            assert(r.eval == 10)
-        }
-
-        "the clause may end the computation without resuming" in {
-            var reached = false
-            val v = ask.map { a =>
-                reached = true
-                a
-            }
-            val r: Int < Any = ArrowEffect.handleFirst(Tag[Ask], v)([C] => (_, _) => -1, a => a)
-            assert(r.eval == -1)
-            assert(!reached)
-        }
-
-        "re-handling the remainder round by round sees every operation" in {
-            def collect(v: Int < Ask, acc: List[Int]): List[Int] < Any =
-                ArrowEffect.handleFirst(Tag[Ask], v)(
-                    [C] => (_, cont) => collect(cont(acc.size + 1), acc :+ (acc.size + 1)),
-                    a => acc :+ a
-                )
-            val v = ask.map(a => ask.map(b => a * 10 + b))
-            assert(collect(v, Nil).eval == List(1, 2, 12))
         }
     }
 
@@ -2079,48 +2722,6 @@ class ArrowEffectTest extends AnyFreeSpec:
         }
     }
 
-    "non-Const inputs and outputs" - {
-        sealed trait CustomEffect extends ArrowEffect[List, Option]
-
-        def customEffect(input: List[Int]): Option[Int] < CustomEffect =
-            ArrowEffect.suspend[Int](Tag[CustomEffect], input)
-
-        "suspend and handle" in {
-            val effect = customEffect(List(1, 2, 3))
-            val result = ArrowEffect.handleCont(Tag[CustomEffect], effect)(
-                [C] => (input, cont) => cont(input.headOption),
-                a => a
-            )
-            assert(result.eval == Some(1))
-        }
-
-        "chained effects" in {
-            val effect =
-                for
-                    a <- customEffect(List(1, 2, 3))
-                    b <- customEffect(List(4, 5, 6))
-                yield (a, b)
-            val result = ArrowEffect.handleCont(Tag[CustomEffect], effect)(
-                [C] => (input, cont) => cont(input.headOption),
-                a => a
-            )
-            assert(result.eval == (Some(1), Some(4)))
-        }
-
-        "handle with state" in {
-            val effect =
-                for
-                    a <- customEffect(List(1, 2, 3))
-                    b <- customEffect(List(4, 5, 6))
-                yield (a, b)
-            val result = ArrowEffect.handleLoopState(Tag[CustomEffect], 0, effect)(
-                [C] => (state, input) => Loop.continue(state + 1, (Some(input(state)): Option[C]): Option[C] < Any),
-                (_, a) => a
-            )
-            assert(result.eval == (Some(1), Some(5)))
-        }
-    }
-
     "recover, ported from catching" - {
         "the recovery dispatches on the exception type" in {
             def recovered(ex: Throwable): String < Any =
@@ -2767,162 +3368,6 @@ class ArrowEffectTest extends AnyFreeSpec:
             val later: Int < Err  = caught.map(a => fail("later").map(_ => a + 1))
             assert(runErr(caught.map(_ + 1)).eval == Right(42))
             assert(runErr(later).eval == Left("later"))
-        }
-    }
-
-    "delimited continuation, ported" - {
-        sealed trait Delim[R, +S] extends ArrowEffect[[A] =>> Delim.Op[A, R, S], Id]
-
-        object Delim:
-
-            enum Op[A, R, -S]:
-                case Shift[A, R, S](f: (A => R < (Delim[R, S] & S)) => R < (Delim[R, S] & S)) extends Op[A, R, S]
-
-            def shift[A, R: Tag, S](f: (A => R < (Delim[R, S] & S)) => R < (Delim[R, S] & S))(using
-                tag: Tag[Delim[R, S]]
-            ): A < (Delim[R, S] & S) =
-                ArrowEffect.suspend[A](tag, Op.Shift(f))
-
-            def run[R: Tag, S](v: R < (Delim[R, S] & S))(using tag: Tag[Delim[R, S]]): R < S =
-                ArrowEffect.handleCont(tag, v)(
-                    [A] =>
-                        (input, cont) =>
-                            input match
-                                case Op.Shift(f) =>
-                                    f(cont(_).asInstanceOf)
-                )
-        end Delim
-
-        "multi shot with other effect" in {
-            val v =
-                Delim.shift[Int, Int, TestEffect2] { k =>
-                    k(42).map(a => testEffect2("a").map(k).map(b => a + b))
-                }.map(_ * 10)
-                    .handle(
-                        Delim.run,
-                        v => ArrowEffect.handleCont(Tag[TestEffect2], v)([C] => (input, cont) => cont(input.size))
-                    )
-            assert(v.eval == (42 * 10) + ("a".size * 10))
-        }
-
-        "multiple shift with different effect sets" in {
-            val v =
-                Delim.shift[Int, Int, TestEffect2] { k =>
-                    k(42).map { r =>
-                        testEffect2("a").map(v => r + v)
-                    }
-                }.map(_ * 10).map { v1 =>
-                    Delim.shift[Int, Int, TestEffect1] { k =>
-                        k(42).map { r =>
-                            testEffect1(v1).map(s => r + s.length)
-                        }
-                    }
-                }
-                    .handle(
-                        Delim.run,
-                        v => ArrowEffect.handleCont(Tag[TestEffect1], v)([C] => (input, cont) => cont(input.toString)),
-                        v => ArrowEffect.handleCont(Tag[TestEffect2], v)([C] => (input, cont) => cont(input.size))
-                    )
-            assert(v.eval == 46)
-        }
-
-        "short circuiting" in {
-            def test(numbers: List[Int], expected: Int) =
-                val r =
-                    Kyo.foldLeft(numbers)(0) { (acc, n) =>
-                        if n < 0 || n == 42 then
-                            Delim.shift[Int, Int, Any] { _ => -1 }
-                        else
-                            acc + n
-                    }.handle(Delim.run)
-                assert(r.eval == expected)
-            end test
-            test(List(1, 2), 3)
-            test(List(1, 2, -1), -1)
-            test(List(1, 2, 42, 3), -1)
-        }
-    }
-
-    "flow effect with dynamic tags, ported" - {
-        sealed trait Flow[+In, -Out] extends ArrowEffect[Flow.Op[In, Out, *], Id]
-
-        object Flow:
-            enum Op[-In, +Out, R]:
-                case Poll[V]()     extends Op[V, Nothing, Maybe[V]]
-                case Emit[V](v: V) extends Op[Any, V, Unit]
-
-            def emit[V: Tag](value: V): Unit < Flow[Any, V] =
-                ArrowEffect.suspend(Tag[Flow[Any, V]], Op.Emit(value))
-
-            def poll[V: Tag]: Maybe[V] < Flow[V, Nothing] =
-                ArrowEffect.suspend(Tag[Flow[V, Nothing]], Op.Poll())
-
-            def run[A, S, In: Tag, Out: Tag](in: Chunk[In])(v: A < (Flow[In, Out] & S)): (Chunk[In], Chunk[Out], A) < S =
-                ArrowEffect.handleLoopState(Tag[Flow[In, Out]], (in, Chunk.empty[Out]), v)(
-                    [C] =>
-                        (state, input) =>
-                            val (in, out) = state
-                            (input: @unchecked) match
-                                case Op.Emit(v) =>
-                                    Loop.continue((in, out.append(v)), ((): Unit < Any).asInstanceOf[C < Any])
-                                case Op.Poll() =>
-                                    Loop.continue((in.tail, out), (in.headMaybe: Maybe[In] < Any).asInstanceOf[C < Any])
-                            end match
-                    ,
-                    (state, r) => (state._1, state._2, r)
-                )
-        end Flow
-
-        "single poll" in {
-            def test(source: Chunk[Int], in: Chunk[Int], out: Chunk[Int], result: Maybe[Int]) =
-                val (i, o, r) = Flow.run(source)(Flow.poll[Int]).eval
-                assert(i == in)
-                assert(o == out)
-                assert(r == result)
-            end test
-            test(Chunk.empty, Chunk.empty, Chunk.empty, Absent)
-            test(Chunk(1), Chunk.empty, Chunk.empty, Present(1))
-            test(Chunk(1, 2), Chunk(2), Chunk.empty, Present(1))
-        }
-
-        "poll and emit" in {
-            def test(source: Chunk[Int], out: Chunk[Int], result: Int) =
-                val v =
-                    Loop(0) { acc =>
-                        Flow.poll[Int].map {
-                            case Absent     => Loop.done(acc)
-                            case Present(v) => Flow.emit(v + 1).andThen(Loop.continue(acc + v))
-                        }
-                    }
-                val (i, o, r) = Flow.run(source)(v).eval
-                assert(i.isEmpty)
-                assert(o == out)
-                assert(r == result)
-            end test
-            test(Chunk.empty, Chunk.empty, 0)
-            test(Chunk(1), Chunk(2), 1)
-            test(Chunk(1, 2), Chunk(2, 3), 3)
-        }
-
-        "multiple flows in the same computation" in {
-            def test(iSource: Chunk[Int], sSource: Chunk[String], iOut: Chunk[Int], sOut: Chunk[String]) =
-                val a =
-                    Loop(0) { acc =>
-                        Kyo.zip(Flow.poll[Int], Flow.poll[String]).map(_.zip(_)).map {
-                            case Absent => Loop.done(acc)
-                            case Present((i, s)) =>
-                                Flow.emit(i + 1).andThen(Flow.emit(s + "a")).andThen(Loop.continue(acc + i + s.size))
-                        }
-                    }
-                val b: (Chunk[Int], Chunk[Int], Int) < Flow[String, String] = Flow.run(iSource)(a)
-                val (_, so, (_, io, _))                                     = Flow.run(sSource)(b).eval
-                assert(so == sOut)
-                assert(io == iOut)
-            end test
-            test(Chunk(1), Chunk.empty, Chunk.empty, Chunk.empty)
-            test(Chunk.empty, Chunk("a"), Chunk.empty, Chunk.empty)
-            test(Chunk(1), Chunk("a"), Chunk(2), Chunk("aa"))
-            test(Chunk(1, 2), Chunk("a", "b"), Chunk(2, 3), Chunk("aa", "ba"))
         }
     }
 
