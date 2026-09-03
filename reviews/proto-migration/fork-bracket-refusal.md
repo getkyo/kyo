@@ -73,6 +73,11 @@ C. Fork the pool's workers outside any bracket in kyo-test (`LeafPool` at object
 
 ## What runs meanwhile
 
-Prelude suites are being run one class per JVM (`scratchpad/prelude-per-class/summary.txt`), which
-sidesteps the pool. `kyo-test-runnerJVM`'s `SelfTestsRunnerTest` cannot pass until the ruling is
-applied, since it runs two suites through one pool by design.
+Prelude suites run one class per JVM, which sidesteps the pool: all 17 `kyo-preludeJVM` suites are
+green that way (AbortTest 159, StreamTest 187, PipeTest 134, EmitTest 42, BatchTest 35, EnvTest 35,
+VarTest 32, ChoiceTest 31, PollTest 30, AspectTest 23, LayerTest 23 with 3 pending, LocalTest 22,
+SinkTest 18, CheckTest 15, MemoTest 15, IsolatePreludeTest 11, MonadLawsTest 2). The module-level
+`kyo-preludeJVM/test` still hangs at its second or third suite by the mechanism above.
+`kyo-test-runnerJVM`'s `SelfTestsRunnerTest` cannot pass until the ruling is applied, since it
+runs two suites through one pool by design. `kyo-test-apiJVM` passes as a module because its
+suites are plain ScalaTest classes that never touch the pool.
