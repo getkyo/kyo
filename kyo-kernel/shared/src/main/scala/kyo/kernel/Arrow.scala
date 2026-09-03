@@ -108,7 +108,7 @@ object Arrow:
                     cont.head(apply(Nested.unnest(v)), cont.tail)
     end Ensure
 
-    final private[kyo] class Chain[A, B, C, S] private[proto] (
+    final private[kyo] class Chain[A, B, C, S] private[kernel] (
         val a: Arrow[A, B, S],
         val b: Arrow[B, C, S]
     ) extends Arrow[A, C, S]:

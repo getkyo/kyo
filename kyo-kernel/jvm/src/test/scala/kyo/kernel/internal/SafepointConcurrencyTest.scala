@@ -4,9 +4,9 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import kyo.Const
+import kyo.Loop
 import kyo.Tag
 import kyo.discard
-import kyo.Loop
 import kyo.kernel.<
 import kyo.kernel.ArrowEffect
 import org.scalatest.freespec.AnyFreeSpec

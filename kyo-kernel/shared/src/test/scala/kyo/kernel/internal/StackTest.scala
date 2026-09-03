@@ -1,12 +1,12 @@
 package kyo.kernel.internal
 
+import kyo.Arrow
 import kyo.Chunk
 import kyo.Const
+import kyo.Loop
 import kyo.Maybe
 import kyo.Tag
 import kyo.discard
-import kyo.Arrow
-import kyo.Loop
 import kyo.kernel.<
 import kyo.kernel.ArrowEffect
 import kyo.kernel.ContextEffect

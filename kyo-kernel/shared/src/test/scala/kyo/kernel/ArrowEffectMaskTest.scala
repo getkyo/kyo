@@ -1,11 +1,11 @@
 package kyo.kernel
 
+import kyo.Arrow
 import kyo.Const
+import kyo.Loop
 import kyo.Maybe
 import kyo.Tag
 import kyo.discard
-import kyo.Arrow
-import kyo.Loop
 import kyo.kernel.ArrowEffect.Mask
 import kyo.kernel.internal.Eval
 import kyo.kernel.internal.Pending

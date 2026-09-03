@@ -1,15 +1,15 @@
 package kyo.kernel
 
+import kyo.Arrow
 import kyo.Const
 import kyo.Frame
+import kyo.Kyo
+import kyo.Loop
 import kyo.Maybe
 import kyo.Maybe.*
 import kyo.Tag
 import kyo.Test
 import kyo.discard
-import kyo.Arrow
-import kyo.Kyo
-import kyo.Loop
 import kyo.kernel.internal.Eval
 import kyo.kernel.internal.Safepoint
 import kyo.kernel.internal.Stack

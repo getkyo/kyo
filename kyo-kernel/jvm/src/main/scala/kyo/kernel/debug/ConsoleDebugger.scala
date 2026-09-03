@@ -4,55 +4,6 @@ import kyo.kernel.Arrow
 import kyo.kernel.Loop
 import kyo.kernel.internal.Debugger
 import kyo.kernel.internal.Pending
-import org.openjdk.jol.datamodel.Model64
-import org.openjdk.jol.datamodel.Model64_Lilliput
-import org.openjdk.jol.info.ClassLayout
-import org.openjdk.jol.layouters.HotSpotLayouter
-import scala.jdk.CollectionConverters.*
-
-object ConsoleDebugger:
-
-    private var layoutCache = Map.empty[Class[?], String]
-
-    private def layoutLine(cls: Class[?]): String =
-        layoutCache.getOrElse(
-            cls, {
-                val line = layout(cls)
-                layoutCache = layoutCache.updated(cls, line)
-                line
-            }
-        )
-
-    private val jdk           = Runtime.version().feature()
-    private val classicLayout = new HotSpotLayouter(new Model64(true, true, 8), jdk)
-    private val compactLayout = new HotSpotLayouter(new Model64_Lilliput(true, 8, false), jdk)
-
-    private def layout(cls: Class[?]): String =
-        val measured           = ClassLayout.parseClass(cls)
-        val runsCompact        = measured.headerSize == 8
-        val other              = ClassLayout.parseClass(cls, if runsCompact then classicLayout else compactLayout)
-        val (classic, compact) = if runsCompact then (other, measured) else (measured, other)
-        val star               = if runsCompact then ("", "*") else ("*", "")
-        s"📐 classic${star._1} ${segments(classic)} ∙ compact${star._2} ${segments(compact)}"
-    end layout
-
-    private def segments(l: ClassLayout): String =
-        val fields = l.fields().asScala.toSeq.sortBy(_.offset)
-        val sb     = new StringBuilder
-        sb.append(s"${l.instanceSize} B [hdr ${l.headerSize}")
-        var end: Long = l.headerSize
-        for f <- fields do
-            if f.offset > end then sb.append(s" | gap ${f.offset - end}")
-            val name = if f.name.startsWith("$") then f.name else f.name.takeWhile(_ != '$')
-            sb.append(s" | $name ${f.size}")
-            end = f.offset + f.size
-        end for
-        if l.instanceSize > end then sb.append(s" | pad ${l.instanceSize - end}")
-        sb.append("]")
-        sb.toString
-    end segments
-
-end ConsoleDebugger
 
 final class ConsoleDebugger extends Debugger:
 
@@ -94,7 +45,6 @@ final class ConsoleDebugger extends Debugger:
             case v                                         => v.getClass.getSimpleName
         counts = counts.updated(name, counts.getOrElse(name, 0) + 1)
         println(s"$pad🧮 alloc: $value")
-        println(s"$pad${ConsoleDebugger.layoutLine(value.getClass)}")
     end onAlloc
 
     override def onUnfused(arrow: Any): Unit =

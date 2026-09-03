@@ -1,9 +1,9 @@
 package kyo.kernel.internal
 
 import kyo.Const
+import kyo.Loop
 import kyo.Maybe
 import kyo.Tag
-import kyo.Loop
 import kyo.kernel.<
 import kyo.kernel.ArrowEffect
 import org.scalatest.freespec.AnyFreeSpec

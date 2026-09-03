@@ -1,12 +1,12 @@
 package kyo.kernel
 
+import kyo.Arrow
 import kyo.Const
+import kyo.Kyo
+import kyo.Loop
 import kyo.Maybe
 import kyo.Tag
 import kyo.discard
-import kyo.Arrow
-import kyo.Kyo
-import kyo.Loop
 import kyo.kernel.internal.Safepoint
 import org.scalatest.freespec.AnyFreeSpec
 import scala.annotation.tailrec

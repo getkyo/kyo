@@ -1,10 +1,10 @@
 package kyo.kernel
 
 import kyo.Const
+import kyo.Loop
 import kyo.Maybe
 import kyo.Tag
 import kyo.discard
-import kyo.Loop
 import org.scalatest.freespec.AnyFreeSpec
 import scala.collection.mutable.ListBuffer
 

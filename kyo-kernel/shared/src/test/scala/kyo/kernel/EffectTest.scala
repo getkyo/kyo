@@ -1,10 +1,10 @@
 package kyo.kernel
 
+import kyo.Arrow
 import kyo.Const
+import kyo.Loop
 import kyo.Maybe
 import kyo.Tag
-import kyo.Arrow
-import kyo.Loop
 import org.scalatest.freespec.AnyFreeSpec
 
 class EffectTest extends AnyFreeSpec:

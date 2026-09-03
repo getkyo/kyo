@@ -1,9 +1,9 @@
 package kyo.kernel
 
-import kyo.Const
-import kyo.Tag
 import kyo.Arrow
+import kyo.Const
 import kyo.Loop
+import kyo.Tag
 import org.scalatest.freespec.AnyFreeSpec
 
 class ArrowEffectThreadingTest extends AnyFreeSpec:

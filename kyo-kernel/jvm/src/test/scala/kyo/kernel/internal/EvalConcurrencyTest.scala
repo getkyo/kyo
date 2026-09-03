@@ -2,9 +2,9 @@ package kyo.kernel.internal
 
 import java.util.concurrent.ConcurrentLinkedQueue
 import kyo.Const
+import kyo.Loop
 import kyo.Maybe
 import kyo.Tag
-import kyo.Loop
 import kyo.kernel.<
 import kyo.kernel.ArrowEffect
 import org.scalatest.freespec.AnyFreeSpec

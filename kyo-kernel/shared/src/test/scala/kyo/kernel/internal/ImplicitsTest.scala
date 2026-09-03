@@ -1,11 +1,11 @@
 package kyo.kernel.internal
 
 import kyo.Const
+import kyo.Loop
 import kyo.Render
 import kyo.Result
 import kyo.Tag
 import kyo.discard
-import kyo.Loop
 import kyo.kernel.<
 import kyo.kernel.ArrowEffect
 import kyo.render
