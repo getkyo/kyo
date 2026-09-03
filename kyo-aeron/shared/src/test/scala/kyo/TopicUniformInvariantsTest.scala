@@ -350,53 +350,49 @@ class TopicUniformInvariantsTest extends Test:
     // immediately and the next offer would dereference freed memory on Native/JS.
     "offer after the caller's own closePublication returns the safe Closed sentinel, no UAF (JVM/JS/Native)" in {
         val payload = Array[Byte](1, 2, 3, 4)
-        for
-            dir <- Path.run(Path.tempDir("kyo-aeron-offer-after-close"))
-            rt  <- AeronPlatform.embedded(dir.unsafe.show)
-            transport = rt.transport
-            offerResult <- Abort.run[TopicTransportException] {
-                addPublication(transport, offerAfterOwnCloseStreamId).map { pub =>
-                    Sync.Unsafe.defer {
-                        // The caller's own close: marks the bundle closed, defers the free.
-                        transport.closePublication(pub)
-                        // The three guarded reads on the same, now-closed handle.
-                        val offered   = transport.offer(pub, payload)
-                        val connected = transport.publicationIsConnected(pub)
-                        val maxMsgLen = transport.maxMessageLength(pub)
-                        (offered, connected, maxMsgLen)
+        withEmbeddedRuntime("kyo-aeron-offer-after-close") { rt =>
+            val transport = rt.transport
+            for
+                offerResult <- Abort.run[TopicTransportException] {
+                    addPublication(transport, offerAfterOwnCloseStreamId).map { pub =>
+                        Sync.Unsafe.defer {
+                            // The caller's own close: marks the bundle closed, defers the free.
+                            transport.closePublication(pub)
+                            // The three guarded reads on the same, now-closed handle.
+                            val offered   = transport.offer(pub, payload)
+                            val connected = transport.publicationIsConnected(pub)
+                            val maxMsgLen = transport.maxMessageLength(pub)
+                            (offered, connected, maxMsgLen)
+                        }
                     }
                 }
-            }
-            _ <- Sync.Unsafe.defer(rt.close())
-            _ <- Path.run(dir.removeAll)
-        yield offerResult match
-            case Result.Success((offered, connected, maxMsgLen)) =>
-                assert(
-                    offered == AeronSentinels.Closed,
-                    s"expected offer after the caller's own closePublication to return AeronSentinels.Closed (-4); got $offered"
-                )
-                assert(
-                    !connected,
-                    s"expected publicationIsConnected after own close to be false; got $connected"
-                )
-                assert(
-                    maxMsgLen == 0,
-                    s"expected maxMessageLength after own close to be 0 (the shim's closed-guard returns 0 on every platform); got $maxMsgLen"
-                )
-            case other =>
-                fail(s"add/offer round-trip failed before the assertion: $other")
-        end for
+            yield offerResult match
+                case Result.Success((offered, connected, maxMsgLen)) =>
+                    assert(
+                        offered == AeronSentinels.Closed,
+                        s"expected offer after the caller's own closePublication to return AeronSentinels.Closed (-4); got $offered"
+                    )
+                    assert(
+                        !connected,
+                        s"expected publicationIsConnected after own close to be false; got $connected"
+                    )
+                    assert(
+                        maxMsgLen == 0,
+                        s"expected maxMessageLength after own close to be 0 (the shim's closed-guard returns 0 on every platform); got $maxMsgLen"
+                    )
+                case other =>
+                    fail(s"add/offer round-trip failed before the assertion: $other")
+            end for
+        }
     }
 
     // Proves the per-client sweep is the sole free-owner of the deferred bundle: a double-free or
     // use-after-free would crash the process before the assertion. fatalError is read before the runtime
     // closes, since the runtime owns the transport's client handle.
     "client-close after a caller-closed publication is clean: no double-free, fatalError Absent (JVM/JS/Native)" in {
-        for
-            dir <- Path.run(Path.tempDir("kyo-aeron-client-close"))
-            rt  <- AeronPlatform.embedded(dir.unsafe.show)
-            transport = rt.transport
-            fatalAfterClose <- Abort.run[TopicTransportException] {
+        withEmbeddedRuntime("kyo-aeron-client-close") { rt =>
+            val transport = rt.transport
+            for fatalAfterClose <- Abort.run[TopicTransportException] {
                 addPublication(transport, clientCloseStreamId).map { pub =>
                     Sync.Unsafe.defer {
                         transport.closePublication(pub)
@@ -406,17 +402,16 @@ class TopicUniformInvariantsTest extends Test:
             }
             // Close the client: the sweep frees the deferred bundle. A double-free would
             // crash here; reaching the assertion proves it did not.
-            _ <- Sync.Unsafe.defer(rt.close())
-            _ <- Path.run(dir.removeAll)
-        yield fatalAfterClose match
-            case Result.Success(fatal) =>
-                assert(
-                    fatal.isEmpty,
-                    s"expected fatalError to be Absent after a clean caller-close; got $fatal"
-                )
-            case other =>
-                fail(s"add/close round-trip failed before the assertion: $other")
-        end for
+            yield fatalAfterClose match
+                case Result.Success(fatal) =>
+                    assert(
+                        fatal.isEmpty,
+                        s"expected fatalError to be Absent after a clean caller-close; got $fatal"
+                    )
+                case other =>
+                    fail(s"add/close round-trip failed before the assertion: $other")
+            end for
+        }
     }
 
     private val pollAfterOwnCloseStreamId = 202
@@ -436,43 +431,39 @@ class TopicUniformInvariantsTest extends Test:
     // close a no-op. Two guards meet here: the shim keeps the freed handle inert, and SubscriptionState
     // reports itself closed so the poll never hands the shim the receive buffer closeSubscription released.
     "poll after the caller's own closeSubscription returns no fragment and a second close is a no-op, no UAF (JVM/JS/Native)" in {
-        for
-            dir <- Path.run(Path.tempDir("kyo-aeron-poll-after-close"))
-            rt  <- AeronPlatform.embedded(dir.unsafe.show)
-            transport = rt.transport
-            pollResult <- Abort.run[TopicTransportException] {
-                addSubscription(transport, pollAfterOwnCloseStreamId).map { sub =>
-                    Sync.Unsafe.defer {
-                        // The caller's own close: marks the bundle closed, defers the free.
-                        transport.closeSubscription(sub)
-                        // Guarded poll on the same, now-closed handle.
-                        val polled = transport.pollOne(sub)
-                        // Second close: must be an idempotent no-op.
-                        transport.closeSubscription(sub)
-                        polled
+        withEmbeddedRuntime("kyo-aeron-poll-after-close") { rt =>
+            val transport = rt.transport
+            for
+                pollResult <- Abort.run[TopicTransportException] {
+                    addSubscription(transport, pollAfterOwnCloseStreamId).map { sub =>
+                        Sync.Unsafe.defer {
+                            // The caller's own close: marks the bundle closed, defers the free.
+                            transport.closeSubscription(sub)
+                            // Guarded poll on the same, now-closed handle.
+                            val polled = transport.pollOne(sub)
+                            // Second close: must be an idempotent no-op.
+                            transport.closeSubscription(sub)
+                            polled
+                        }
                     }
                 }
-            }
-            _ <- Sync.Unsafe.defer(rt.close())
-            _ <- Path.run(dir.removeAll)
-        yield pollResult match
-            case Result.Success(polled) =>
-                assert(
-                    polled.isEmpty,
-                    s"expected pollOne after the caller's own closeSubscription to return Absent; got $polled"
-                )
-            case other =>
-                fail(s"add/poll round-trip failed before the assertion: $other")
-        end for
+            yield pollResult match
+                case Result.Success(polled) =>
+                    assert(
+                        polled.isEmpty,
+                        s"expected pollOne after the caller's own closeSubscription to return Absent; got $polled"
+                    )
+                case other =>
+                    fail(s"add/poll round-trip failed before the assertion: $other")
+            end for
+        }
     }
 
     // Mirror of the publication client-close leaf above, for the subscription sweep.
     "client-close after a caller-closed subscription is clean: no double-free, fatalError Absent (JVM/JS/Native)" in {
-        for
-            dir <- Path.run(Path.tempDir("kyo-aeron-sub-client-close"))
-            rt  <- AeronPlatform.embedded(dir.unsafe.show)
-            transport = rt.transport
-            fatalAfterClose <- Abort.run[TopicTransportException] {
+        withEmbeddedRuntime("kyo-aeron-sub-client-close") { rt =>
+            val transport = rt.transport
+            for fatalAfterClose <- Abort.run[TopicTransportException] {
                 addSubscription(transport, subClientCloseStreamId).map { sub =>
                     Sync.Unsafe.defer {
                         transport.closeSubscription(sub)
@@ -482,17 +473,16 @@ class TopicUniformInvariantsTest extends Test:
             }
             // Close the client: the subscription sweep frees the deferred bundle. A double-free
             // would crash here; reaching the assertion proves it did not.
-            _ <- Sync.Unsafe.defer(rt.close())
-            _ <- Path.run(dir.removeAll)
-        yield fatalAfterClose match
-            case Result.Success(fatal) =>
-                assert(
-                    fatal.isEmpty,
-                    s"expected fatalError to be Absent after a clean caller-close; got $fatal"
-                )
-            case other =>
-                fail(s"add/close round-trip failed before the assertion: $other")
-        end for
+            yield fatalAfterClose match
+                case Result.Success(fatal) =>
+                    assert(
+                        fatal.isEmpty,
+                        s"expected fatalError to be Absent after a clean caller-close; got $fatal"
+                    )
+                case other =>
+                    fail(s"add/close round-trip failed before the assertion: $other")
+            end for
+        }
     }
 
     // aeron_errcode() reports AERON_CLIENT_ERRORED_MEDIA_DRIVER as a negated driver code; math.abs at both

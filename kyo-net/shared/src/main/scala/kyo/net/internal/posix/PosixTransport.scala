@@ -584,24 +584,33 @@ final private[net] class PosixTransport private[posix] (
         config: kyo.net.NetConfig
     )(using allow: AllowUnsafe, frame: Frame): Unit =
         val writablePromise = new IOPromise[Closed | NetException, Unit]
+        // Release the connect's resources on the carrier that owns the submission ring, never on whichever carrier happens to resolve this
+        // promise. The completion driver stashes `addr` on the handle as its connectTarget and marshals it when it preps the connect SQE, and
+        // that prep runs on the reap carrier from an op this method has ALREADY enqueued. Freeing `addr` here directly raced that prep: the
+        // buffer's memory session closed underneath it, the prep threw, and because an SQE had already been acquired (io_uring_get_sqe advances
+        // the submission tail, so the slot is committed the moment it is handed out) the connect went to the kernel as a zeroed SQE while its
+        // pending entry, and the in-flight count holding the handle's deferred close, stayed behind forever. Going through the engine FIFO
+        // orders this strictly after that prep, so the submit either ran with a live buffer or is rejected by the isClosing check it sets.
+        // The raw fd close is deferred with it for the same reason: closing the descriptor under a prepared connect lets the number be
+        // recycled before the SQE reaches the kernel. On the poller and the inline drivers this is the same FIFO their other engine ops use.
+        def releaseConnect(complete: () => Unit): Unit =
+            driver.submitEngineOp { () =>
+                addr.close()
+                closeUnwiredHandle(handle, driver, connectPhase = true)
+                complete()
+            }
         writablePromise.onComplete { result =>
             result match
                 case Result.Success(_) =>
                     val err = if checkSoError then soError(handle.writeFd) else 0
                     if err != 0 then
-                        addr.close()
-                        closeUnwiredHandle(handle, driver, connectPhase = true)
-                        promise.completeDiscard(Result.fail(connectFail(host, port, new NetErrno(err))))
+                        releaseConnect(() => promise.completeDiscard(Result.fail(connectFail(host, port, new NetErrno(err)))))
                     else completeOrTls(handle, addr, driver, target, port, tls, promise, config)
                     end if
                 case Result.Failure(cause) =>
-                    addr.close()
-                    closeUnwiredHandle(handle, driver, connectPhase = true)
-                    promise.completeDiscard(Result.fail(connectFail(host, port, cause)))
+                    releaseConnect(() => promise.completeDiscard(Result.fail(connectFail(host, port, cause))))
                 case Result.Panic(e) =>
-                    addr.close()
-                    closeUnwiredHandle(handle, driver, connectPhase = true)
-                    promise.completeDiscard(Result.panic(e))
+                    releaseConnect(() => promise.completeDiscard(Result.panic(e)))
             end match
         }
         // Promise.Unsafe[A, S] is an opaque alias over IOPromise[Any, A < S] (kyo.Fiber.scala), structurally different from this
@@ -1191,6 +1200,7 @@ final private[net] class PosixTransport private[posix] (
                         if handle.claimFdClose() then
                             discard(sockets.shutdown(clientFd, PosixConstants.SHUT_RDWR))
                             handle.fdCloseSink = Present(() => closeRawFd(clientFd))
+                        end if
                         engine.free()
                     end teardown
                     // One deadline per accepted connection: when handshakeTimeout is finite, a client that completed the TCP accept but stalls
@@ -1488,6 +1498,7 @@ final private[net] class PosixTransport private[posix] (
             if handle.claimFdClose() then
                 discard(sockets.shutdown(handle.writeFd, PosixConstants.SHUT_RDWR))
                 handle.fdCloseSink = Present(() => closeRawFd(handle.writeFd))
+            end if
             driver.closeHandle(handle)
             if held then discard(handle.endDeferredClose())
         end if

@@ -35,9 +35,14 @@ private[kyo] object FakeServer:
                 val it = accepted.iterator()
                 while it.hasNext do
                     val conn = it.next()
-                    if conn.isOpen then
-                        try conn.close()
-                        catch case scala.util.control.NonFatal(_) => ()
+                    // Closed unconditionally. `Connection.close` is idempotent, so asking a connection that already
+                    // finished to close again costs nothing, while an `isOpen` guard here would skip precisely the
+                    // connections that most need this finalizer: `isOpen` reports false for `Upgrading` and `Closing`,
+                    // and a connection abandoned mid-upgrade holds an fd that `closeFn` deliberately cannot take, so
+                    // `close` is the only thing that releases it. Skipping those strands the descriptor for the rest
+                    // of the run.
+                    try conn.close()
+                    catch case scala.util.control.NonFatal(_) => ()
                 end while
             }).andThen(listener)
         }
