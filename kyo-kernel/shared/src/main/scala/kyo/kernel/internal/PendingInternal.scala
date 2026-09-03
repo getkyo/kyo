@@ -70,7 +70,7 @@ object Pending:
             case kyo: Pending[A, E & S] @unchecked =>
                 val h  = handler
                 val st = state
-                new Handle[State, E, A, B, B, S]:
+                new HandleArrow[State, E, A, B, B, S]:
                     def value   = kyo
                     def handler = h
                     def state   = st
@@ -79,23 +79,24 @@ object Pending:
             case _ =>
                 handler.done(state, Nested.unnest[A](v))
 
-    abstract class Handle[State, E <: Effect, A, B, C, -S] extends Pending[C, S]:
+    sealed abstract class Handle[E <: Effect, A, C, -S] extends Pending[C, S]:
         Debugger.onAlloc(this)
 
         def value: A < (E & S)
+        def handler: Handler[E, ?, S]
+    end Handle
+
+    abstract class HandleArrow[State, E <: Effect, A, B, C, -S] extends Handle[E, A, C, S]:
         def handler: Handler[E, B, S]
         def state: State
         def cont: Arrow[B, C, S]
 
         override def toString =
-            if cont.isInstanceOf[Arrow.Id[?]] then s"Handle(${short(value)}, $handler, $state)"
-            else s"Handle(${short(value)}, $handler, $state, ${if cont eq this then "this" else short(cont)})"
-    end Handle
+            if cont.isInstanceOf[Arrow.Id[?]] then s"HandleArrow(${short(value)}, $handler, $state)"
+            else s"HandleArrow(${short(value)}, $handler, $state, ${if cont eq this then "this" else short(cont)})"
+    end HandleArrow
 
-    abstract class HandleContext[State, E <: ContextEffect[State], A, -S] extends Pending[A, S]:
-        Debugger.onAlloc(this)
-
-        def value: A < (E & S)
+    abstract class HandleContext[State, E <: ContextEffect[State], A, -S] extends Handle[E, A, A, S]:
         def handler: Handler.ContextHandler[State, E, A, S]
 
         override def toString = s"HandleContext(${short(value)}, $handler)"
@@ -130,7 +131,7 @@ object Pending:
 
     abstract class SnapshotWith[A, -S] extends Snapshot[A, S] with Arrow.Transform[Stack, A, S]
 
-    abstract class HandleWith[State, E <: Effect, A, B, C, -S]
-        extends Handle[State, E, A, B, C, S] with Arrow.Transform[B, C, S]
+    abstract class HandleArrowWith[State, E <: Effect, A, B, C, -S]
+        extends HandleArrow[State, E, A, B, C, S] with Arrow.Transform[B, C, S]
 
 end Pending

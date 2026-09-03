@@ -163,7 +163,7 @@ import scala.util.control.NonFatal
                                 end match
                             end if
 
-                case kyo: Pending.Handle[?, ?, ?, ?, T, S2] @unchecked =>
+                case kyo: Pending.HandleArrow[?, ?, ?, ?, T, S2] @unchecked =>
                     Debugger.onRegionEnter(kyo.handler, kyo.state)
                     stack.push(kyo.handler, kyo.state, kyo.cont.chain(contA.chain(contB)))
                     loop(kyo.value, Arrow.id, Arrow.id, ctx)
@@ -432,12 +432,12 @@ import scala.util.control.NonFatal
                     p match
                         case kyo: Pending.Defer[?, ?, ?, ?] =>
                             collect(kyo.value)
-                        case kyo: Pending.Handle[?, ?, ?, ?, ?, ?] =>
-                            collect(kyo.value)
                         case kyo: Pending.HandleContext[VX, CX, ?, ?] @unchecked =>
                             val hc = kyo.handler
                             collected += hc
                             collected += hc.derive(Maybe.empty).asInstanceOf[AnyRef]
+                            collect(kyo.value)
+                        case kyo: Pending.Handle[?, ?, ?, ?] =>
                             collect(kyo.value)
                         case kyo: Pending.Park[?, ?] =>
                             expandOwed(collected, kyo.owed)

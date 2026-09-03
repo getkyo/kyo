@@ -33,7 +33,7 @@ final class ConsoleDebugger extends Debugger:
             case _: Pending.Defer[?, ?, ?, ?]              => "Defer"
             case _: Pending.SuspendArrow[?, ?, ?, ?, ?, ?] => "SuspendArrow"
             case _: Pending.SuspendContext[?, ?, ?, ?]     => "SuspendContext"
-            case _: Pending.Handle[?, ?, ?, ?, ?, ?]       => "Handle"
+            case _: Pending.HandleArrow[?, ?, ?, ?, ?, ?]  => "HandleArrow"
             case _: Pending.HandleContext[?, ?, ?, ?]      => "HandleContext"
             case _: Arrow.Id[?]                            => "Id"
             case _: Arrow.Chain[?, ?, ?, ?]                => "Chain"

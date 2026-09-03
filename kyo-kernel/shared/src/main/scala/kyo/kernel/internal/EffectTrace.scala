@@ -208,7 +208,7 @@ private[kernel] object EffectTrace:
                             case s: Pending.Snapshot[?, ?] =>
                                 frame(s.frame)
                                 push(s.cont)
-                            case h: Pending.Handle[?, ?, ?, ?, ?, ?] =>
+                            case h: Pending.HandleArrow[?, ?, ?, ?, ?, ?] =>
 
                                 push(h.cont)
                                 push(new Region(h.handler.tag))

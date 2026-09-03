@@ -1094,6 +1094,14 @@ class ArrowEffectTest extends AnyFreeSpec:
             assert(seen == 0)
         }
 
+        "sees through a context region" in {
+            sealed trait Cfg extends ContextEffect[Int]
+            val region: Int < Ask = ContextEffect.handleInheritable(Tag[Cfg], 1)(ask.map(_ + 1))
+            var seen              = 0
+            ArrowEffect.dispatchFirst(Tag[Ask], region)([C] => _ => seen += 1)
+            assert(seen == 1)
+        }
+
         "sees through a parked slice" in {
             val body: Int < Ask =
                 ask.map { a =>
