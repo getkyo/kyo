@@ -101,7 +101,7 @@ class ArrowEffectTest extends AnyFreeSpec:
                 yield (s1, s2)
 
             val result = ArrowEffect.handleLoopState(Tag[TestEffect1], 0, effect)(
-                [C] => (state, input) => Loop.continue(state + 1, (input + state).toString: String < Any)
+                [C] => (state, input) => Loop.continue(state + 1, (input + state).toString)
             )
 
             assert(result.eval == ("42", "44"))
@@ -321,7 +321,7 @@ class ArrowEffectTest extends AnyFreeSpec:
                 yield (a, b)
 
             val result = ArrowEffect.handleLoopState(Tag[CustomEffect], 0, effect)(
-                [C] => (state, input) => Loop.continue(state + 1, (Some(input(state)): Option[C]): Option[C] < Any)
+                [C] => (state, input) => Loop.continue(state + 1, (Some(input(state)): Option[C]))
             )
             assert(result.eval == (Some(1), Some(5)))
         }
@@ -436,7 +436,7 @@ class ArrowEffectTest extends AnyFreeSpec:
 
             def handle[A, S](v: A < (S & NestedTestEffect)): A < S =
                 ArrowEffect.handleLoop(Tag[NestedTestEffect], v)(
-                    [C] => input => Loop.continue((), (input * 10): Int < Any),
+                    [C] => input => Loop.continue((input * 10)),
                     a => Kyo.lift(a)
                 )
 
@@ -459,7 +459,7 @@ class ArrowEffectTest extends AnyFreeSpec:
 
             def handle[A, S](v: A < (S & NestedTestEffect)): A < S =
                 ArrowEffect.handleLoopState(nestedTag, 0, v)(
-                    [C] => (state, input) => Loop.continue(state + 1, ((input + state) * 10): Int < Any),
+                    [C] => (state, input) => Loop.continue(state + 1, ((input + state) * 10)),
                     (_, a) => Kyo.lift(a)
                 )
 
@@ -483,7 +483,7 @@ class ArrowEffectTest extends AnyFreeSpec:
 
             def handle[A, S](v: A < (S & NestedTestEffect)): A < S =
                 ArrowEffect.handleLoopState(nestedTag, 0, v)(
-                    [C] => (state, input) => Loop.continue(state + 1, (input * 10): Int < Any),
+                    [C] => (state, input) => Loop.continue(state + 1, (input * 10)),
                     (state, v) => Kyo.lift(v)
                 )
 
@@ -660,9 +660,9 @@ class ArrowEffectTest extends AnyFreeSpec:
                                 val (in, out) = state
                                 (input: @unchecked) match
                                     case Op.Emit(v) =>
-                                        Loop.continue((in, out.append(v)), ((): Unit < Any).asInstanceOf[C < Any])
+                                        Loop.continue((in, out.append(v)), (()).asInstanceOf[C < Any])
                                     case Op.Poll() =>
-                                        Loop.continue((in.tail, out), (in.headMaybe: Maybe[In] < Any).asInstanceOf[C < Any])
+                                        Loop.continue((in.tail, out), (in.headMaybe).asInstanceOf[C < Any])
                                 end match
                         ,
                         (state, r) => (state._1, state._2, r)
@@ -733,7 +733,7 @@ class ArrowEffectTest extends AnyFreeSpec:
         "answers every operation in place" in {
             def loop(i: Int): Int < Ask =
                 if i < 3 then ask.map(a => loop(i + a)) else i
-            val r: Int < Any = ArrowEffect.handleLoop(Tag[Ask], loop(0))([C] => _ => Loop.continue((), 1: Int < Any), a => a)
+            val r: Int < Any = ArrowEffect.handleLoop(Tag[Ask], loop(0))([C] => _ => Loop.continue(1), a => a)
             assert(r.eval == 3)
         }
 
@@ -804,7 +804,7 @@ class ArrowEffectTest extends AnyFreeSpec:
                     a => Kyo.lift(a)
                 )
             val r: (Int < Say) < Any =
-                ArrowEffect.handleLoop(Tag[Tick], handled)([C] => _ => Loop.continue((), (): Unit < Any), a => Kyo.lift(a))
+                ArrowEffect.handleLoop(Tag[Tick], handled)([C] => _ => Loop.continue(()), a => Kyo.lift(a))
             val boxed = r.eval
             assert(!reached)
             val out: Int < Any = ArrowEffect.handleCont(Tag[Say], boxed)([C] => (_, cont) => cont(()), a => a)
@@ -848,14 +848,14 @@ class ArrowEffectTest extends AnyFreeSpec:
         }
 
         "done sees the settled result" in {
-            val r: Int < Any = ArrowEffect.handleLoop(Tag[Ask], ask.map(_ + 1))([C] => _ => Loop.continue((), 41: Int < Any), a => a * 10)
+            val r: Int < Any = ArrowEffect.handleLoop(Tag[Ask], ask.map(_ + 1))([C] => _ => Loop.continue(41), a => a * 10)
             assert(r.eval == 420)
         }
 
         "a settled input applies done strictly" in {
             var ran = false
             val r: Int < Any = ArrowEffect.handleLoop(Tag[Ask], 41: Int < Ask)(
-                [C] => _ => Loop.continue((), 0: Int < Any),
+                [C] => _ => Loop.continue(0),
                 a =>
                     ran = true
                     a + 1
@@ -867,27 +867,27 @@ class ArrowEffectTest extends AnyFreeSpec:
         "deep sequential operations are stack safe" in {
             def loop(n: Int): Int < Ask =
                 if n == 0 then 0 else ask.map(_ => loop(n - 1))
-            val r: Int < Any = ArrowEffect.handleLoop(Tag[Ask], loop(100000))([C] => _ => Loop.continue((), 1: Int < Any), a => a)
+            val r: Int < Any = ArrowEffect.handleLoop(Tag[Ask], loop(100000))([C] => _ => Loop.continue(1), a => a)
             assert(r.eval == 0)
         }
 
         "the innermost region of a tag answers" in {
-            val inner: Int < Any = ArrowEffect.handleLoop(Tag[Ask], ask)([C] => _ => Loop.continue((), 1: Int < Any), a => a)
-            val outer: Int < Any = ArrowEffect.handleLoop(Tag[Ask], inner: Int < Ask)([C] => _ => Loop.continue((), 2: Int < Any), a => a)
+            val inner: Int < Any = ArrowEffect.handleLoop(Tag[Ask], ask)([C] => _ => Loop.continue(1), a => a)
+            val outer: Int < Any = ArrowEffect.handleLoop(Tag[Ask], inner: Int < Ask)([C] => _ => Loop.continue(2), a => a)
             assert(outer.eval == 1)
         }
 
         "a clause answers effectfully" in {
             var seen = List.empty[String]
             val handled: Int < Say = ArrowEffect.handleLoop(Tag[Ask], ask.map(_ + 1))(
-                [C] => _ => say("consult").map(_ => Loop.continue((), 41: Int < Any)),
+                [C] => _ => say("consult").map(_ => Loop.continue(41)),
                 a => a
             )
             val r: Int < Any = ArrowEffect.handleLoop(Tag[Say], handled)(
                 [C] =>
                     s =>
                         seen = s :: seen
-                        Loop.continue((), (): Unit < Any)
+                        Loop.continue(())
                 ,
                 a => a
             )
@@ -913,7 +913,7 @@ class ArrowEffectTest extends AnyFreeSpec:
                 [C] =>
                     s =>
                         seen = s :: seen
-                        Loop.continue((), (): Unit < Any)
+                        Loop.continue(())
                 ,
                 a => a
             )
@@ -927,14 +927,14 @@ class ArrowEffectTest extends AnyFreeSpec:
             var seen = List.empty[String]
             val v    = ask.map(a => ask.map(b => a * 10 + b))
             val handled: Int < Say = ArrowEffect.handleLoop(Tag[Ask], v)(
-                [C] => _ => say("x").map(_ => Loop.continue((), 1: Int < Any)),
+                [C] => _ => say("x").map(_ => Loop.continue(1)),
                 a => a
             )
             val r: Int < Any = ArrowEffect.handleLoop(Tag[Say], handled)(
                 [C] =>
                     s =>
                         seen = s :: seen
-                        Loop.continue((), (): Unit < Any)
+                        Loop.continue(())
                 ,
                 a => a
             )
@@ -950,19 +950,19 @@ class ArrowEffectTest extends AnyFreeSpec:
                     [C] =>
                         s =>
                             interiorSeen = s :: interiorSeen
-                            Loop.continue((), (): Unit < Any)
+                            Loop.continue(())
                     ,
                     a => a
                 )
             val handled: Int < Say = ArrowEffect.handleLoop(Tag[Ask], body)(
-                [C] => _ => say("clause").map(_ => Loop.continue((), 41: Int < Any)),
+                [C] => _ => say("clause").map(_ => Loop.continue(41)),
                 a => a
             )
             val r: Int < Any = ArrowEffect.handleLoop(Tag[Say], handled)(
                 [C] =>
                     s =>
                         outerSeen = s :: outerSeen
-                        Loop.continue((), (): Unit < Any)
+                        Loop.continue(())
                 ,
                 a => a
             )
@@ -975,7 +975,7 @@ class ArrowEffectTest extends AnyFreeSpec:
             def deep(i: Int): Int < Any =
                 if i == 0 then 41 else (0: Int < Any).map(_ => deep(i - 1))
             val r: Int < Any = ArrowEffect.handleLoop(Tag[Ask], ask.map(_ + 1))(
-                [C] => _ => deep(10000).map(n => Loop.continue((), n: Int < Any)),
+                [C] => _ => deep(10000).map(n => Loop.continue(n)),
                 a => a
             )
             assert(r.eval == 42)
@@ -985,14 +985,14 @@ class ArrowEffectTest extends AnyFreeSpec:
             var answered        = 0
             val body: Int < Ask = ask.map(a => ask.map(b => a * 10 + b))
             val doubled: Int < Ask = ArrowEffect.handleLoop(Tag[Ask], body)(
-                [C] => _ => ask.map(v => Loop.continue((), v * 2: Int < Any)),
+                [C] => _ => ask.map(v => Loop.continue(v * 2)),
                 a => a
             )
             val r: Int < Any = ArrowEffect.handleLoop(Tag[Ask], doubled)(
                 [C] =>
                     _ =>
                         answered += 1
-                        Loop.continue((), 3: Int < Any)
+                        Loop.continue(3)
                 ,
                 a => a
             )
@@ -1003,7 +1003,7 @@ class ArrowEffectTest extends AnyFreeSpec:
         "a suspended clause dispatch is multi-shot" in {
             val body: Int < Ask = ask.map(_ + 1)
             val handled: Int < Say = ArrowEffect.handleLoop(Tag[Ask], body)(
-                [C] => _ => say("s").map(_ => Loop.continue((), 10: Int < Any)),
+                [C] => _ => say("s").map(_ => Loop.continue(10)),
                 a => a
             )
             val r: Int < Any = ArrowEffect.handleCont(Tag[Say], handled)(
@@ -1016,12 +1016,12 @@ class ArrowEffectTest extends AnyFreeSpec:
         "a foreign operation crosses the region in place" in {
             var order                   = List.empty[String]
             val body: Int < (Ask & Say) = say("a").map(_ => ask).map(i => i + 1)
-            val inner: Int < Say        = ArrowEffect.handleLoop(Tag[Ask], body)([C] => _ => Loop.continue((), 41: Int < Any), a => a)
+            val inner: Int < Say        = ArrowEffect.handleLoop(Tag[Ask], body)([C] => _ => Loop.continue(41), a => a)
             val r: Int < Any = ArrowEffect.handleLoop(Tag[Say], inner)(
                 [C] =>
                     s =>
                         order = s :: order
-                        Loop.continue((), (): Unit < Any)
+                        Loop.continue(())
                 ,
                 a => a
             )
@@ -1032,7 +1032,7 @@ class ArrowEffectTest extends AnyFreeSpec:
         "an effectful answer resolves through an outer handler" in {
             val v: Int < Ask = ask.map(_ + 1)
             val looped: Int < Say =
-                ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue((), say("fetch").map(_ => 41)), a => a)
+                ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue(say("fetch").map(_ => 41)), a => a)
             val r: Int < Any = ArrowEffect.handleCont(Tag[Say], looped)([C] => (_, cont) => cont(()), a => a)
             assert(r.eval == 42)
         }
@@ -1044,7 +1044,7 @@ class ArrowEffectTest extends AnyFreeSpec:
                     _ =>
                         say("pre").map { _ =>
                             logged += 1
-                            Loop.continue((), 41: Int < Any)
+                            Loop.continue(41)
                     },
                 a => a
             )
@@ -1074,20 +1074,20 @@ class ArrowEffectTest extends AnyFreeSpec:
         "handles nested per recursion step in bounded stack" in {
             def go(n: Int): Int < Any =
                 if n == 0 then 0
-                else ArrowEffect.handleLoop(Tag[Ask], ask.map(_ => go(n - 1)))([C] => _ => Loop.continue((), 1: Int < Any), a => a)
+                else ArrowEffect.handleLoop(Tag[Ask], ask.map(_ => go(n - 1)))([C] => _ => Loop.continue(1), a => a)
             assert(go(100000).eval == 0)
         }
 
         "context effects arise from answering handlers" in {
             def provide[A, S](value: Int)(v: A < (Ask & S)): A < S =
-                ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue((), value: Int < Any), a => a)
+                ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue(value), a => a)
             assert(provide(42)(ask.map(_ + 1)).eval == 43)
             assert(provide(1)(provide(2)(ask)).eval == 2)
         }
 
         "stays in force across a foreign crossing captured by an outer handle" in {
             val v: Int < (Ask & Say) = say("x").map(_ => ask).map(_ + 1)
-            val looped: Int < Say    = ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue((), 41: Int < Any), a => a)
+            val looped: Int < Say    = ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue(41), a => a)
             val r: Int < Any         = ArrowEffect.handleCont(Tag[Say], looped)([C] => (_, cont) => cont(()), a => a)
             assert(r.eval == 42)
         }
@@ -1296,7 +1296,7 @@ class ArrowEffectTest extends AnyFreeSpec:
         "threads state through operations" in {
             val v = ask.map(a => ask.map(b => a * 10 + b))
             val r: Int < Any = ArrowEffect.handleLoopState(Tag[Ask], 1, v)(
-                [C] => (s, _) => Loop.continue(s + 1, s: Int < Any),
+                [C] => (s, _) => Loop.continue(s + 1, s),
                 (_, a) => a
             )
             assert(r.eval == 12)
@@ -1305,7 +1305,7 @@ class ArrowEffectTest extends AnyFreeSpec:
         "done observes the final state" in {
             val v = ask.map(a => ask.map(b => a + b))
             val r: (Int, Int) < Any = ArrowEffect.handleLoopState(Tag[Ask], 10, v)(
-                [C] => (s, _) => Loop.continue(s + 1, s: Int < Any),
+                [C] => (s, _) => Loop.continue(s + 1, s),
                 (s, a) => (s, a)
             )
             assert(r.eval == (12, 21))
@@ -1314,7 +1314,7 @@ class ArrowEffectTest extends AnyFreeSpec:
         "Loop.done bypasses done" in {
             val v = ask.map(a => ask.map(b => a + b))
             val r: String < Any = ArrowEffect.handleLoopState(Tag[Ask], 0, v)(
-                [C] => (s, _) => if s == 1 then Loop.done("stopped") else Loop.continue(s + 1, 1: Int < Any),
+                [C] => (s, _) => if s == 1 then Loop.done("stopped") else Loop.continue(s + 1, 1),
                 (s, a) => s"done $a"
             )
             assert(r.eval == "stopped")
@@ -1324,14 +1324,14 @@ class ArrowEffectTest extends AnyFreeSpec:
             var seen = List.empty[String]
             val v    = ask.map(a => ask.map(b => a * 10 + b))
             val handled: Int < Say = ArrowEffect.handleLoopState(Tag[Ask], 1, v)(
-                [C] => (s, _) => say(s"state $s").map(_ => Loop.continue(s + 1, s: Int < Any)),
+                [C] => (s, _) => say(s"state $s").map(_ => Loop.continue(s + 1, s)),
                 (_, a) => a
             )
             val r: Int < Any = ArrowEffect.handleLoop(Tag[Say], handled)(
                 [C] =>
                     s =>
                         seen = s :: seen
-                        Loop.continue((), (): Unit < Any)
+                        Loop.continue(())
                 ,
                 a => a
             )
@@ -1342,16 +1342,16 @@ class ArrowEffectTest extends AnyFreeSpec:
         "state survives a foreign crossing" in {
             val body: Int < (Ask & Say) = ask.map(a => say("x").map(_ => ask.map(b => a * 10 + b)))
             val inner: Int < Say = ArrowEffect.handleLoopState(Tag[Ask], 1, body)(
-                [C] => (s, _) => Loop.continue(s + 1, s: Int < Any),
+                [C] => (s, _) => Loop.continue(s + 1, s),
                 (_, a) => a
             )
-            val r: Int < Any = ArrowEffect.handleLoop(Tag[Say], inner)([C] => _ => Loop.continue((), (): Unit < Any), a => a)
+            val r: Int < Any = ArrowEffect.handleLoop(Tag[Say], inner)([C] => _ => Loop.continue(()), a => a)
             assert(r.eval == 12)
         }
 
         "a settled input applies done strictly with the initial state" in {
             val r: Int < Any = ArrowEffect.handleLoopState(Tag[Ask], 7, 35: Int < Ask)(
-                [C] => (s, _) => Loop.continue(s, 0: Int < Any),
+                [C] => (s, _) => Loop.continue(s, 0),
                 (s, a) => s + a
             )
             assert(r.eval == 42)
@@ -1361,7 +1361,7 @@ class ArrowEffectTest extends AnyFreeSpec:
             def go(n: Int): Int < Ask =
                 if n == 0 then 0 else ask.map(_ => go(n - 1))
             val r: Int < Any = ArrowEffect.handleLoopState(Tag[Ask], 3, go(5))(
-                [C] => (remaining, _) => if remaining > 0 then Loop.continue(remaining - 1, 1: Int < Any) else Loop.done(-1),
+                [C] => (remaining, _) => if remaining > 0 then Loop.continue(remaining - 1, 1) else Loop.done(-1),
                 (_, a) => a
             )
             assert(r.eval == -1)
@@ -1372,7 +1372,7 @@ class ArrowEffectTest extends AnyFreeSpec:
             val sayHandled: Int < Ask      = ArrowEffect.handleCont(Tag[Say], program)([C] => (_, cont) => cont(()), a => a)
             val v: Int < Ask               = sayHandled.map(a => ask.map(b => a * 10 + b))
             val r: Int < Any = ArrowEffect.handleLoopState(Tag[Ask], 1, v)(
-                [C] => (state, _) => Loop.continue(state + 1, state: Int < Any),
+                [C] => (state, _) => Loop.continue(state + 1, state),
                 (_, a) => a
             )
             assert(r.eval == 12)
@@ -1381,7 +1381,7 @@ class ArrowEffectTest extends AnyFreeSpec:
         "done sees the final answer" in {
             val v = ask.map(a => ask.map(b => a + b))
             val r: Int < Any = ArrowEffect.handleLoopState(Tag[Ask], 10, v)(
-                [C] => (s, _) => Loop.continue(s + 1, s: Int < Any),
+                [C] => (s, _) => Loop.continue(s + 1, s),
                 (_, a) => a * 2
             )
             assert(r.eval == 42)
@@ -1389,7 +1389,7 @@ class ArrowEffectTest extends AnyFreeSpec:
 
         "done may be effectful" in {
             val r: Int < Say = ArrowEffect.handleLoopState(Tag[Ask], 5, ask)(
-                [C] => (s, _) => Loop.continue(s, s: Int < Any),
+                [C] => (s, _) => Loop.continue(s, s),
                 (s, a) => say("bye").map(_ => s + a)
             )
             val out: Int < Any = ArrowEffect.handleCont(Tag[Say], r)([C] => (_, cont) => cont(()), a => a)
@@ -1423,7 +1423,7 @@ class ArrowEffectTest extends AnyFreeSpec:
                 [C] =>
                     s =>
                         seen = s
-                        Loop.continue((), (): Unit < Any)
+                        Loop.continue(())
                 ,
                 a => a
             )
@@ -1442,7 +1442,7 @@ class ArrowEffectTest extends AnyFreeSpec:
     "handleLoopWith" - {
         "applies the continuation to the region result" in {
             val r: Int < Any = ArrowEffect.handleLoopWith[Const[Unit], Const[Int], Ask, Int, Int, Any, Any](Tag[Ask], ask.map(_ + 1))(
-                [C] => _ => Loop.continue((), 41: Int < Any),
+                [C] => _ => Loop.continue(41),
                 a => a * 10
             )(b => b + 1)
             assert(r.eval == 421)
@@ -1450,7 +1450,7 @@ class ArrowEffectTest extends AnyFreeSpec:
 
         "applies the continuation to a settled input" in {
             val r: Int < Any = ArrowEffect.handleLoopWith[Const[Unit], Const[Int], Ask, Int, Int, Any, Any](Tag[Ask], 41: Int < Ask)(
-                [C] => _ => Loop.continue((), 0: Int < Any),
+                [C] => _ => Loop.continue(0),
                 a => a + 1
             )(b => b * 10)
             assert(r.eval == 420)
@@ -1469,7 +1469,7 @@ class ArrowEffectTest extends AnyFreeSpec:
         "applies the continuation with the final state observed" in {
             val v = ask.map(a => ask.map(b => a * 10 + b))
             val r: Int < Any = ArrowEffect.handleLoopStateWith[Const[Unit], Const[Int], Ask, Int, Int, Any, Any, Int](Tag[Ask], 1, v)(
-                [C] => (s, _) => Loop.continue(s + 1, s: Int < Any),
+                [C] => (s, _) => Loop.continue(s + 1, s),
                 (s, a) => s * 100 + a
             )(b => b + 1)
             assert(r.eval == 313)
@@ -1478,7 +1478,7 @@ class ArrowEffectTest extends AnyFreeSpec:
         "applies the continuation to a settled input" in {
             val r: Int < Any =
                 ArrowEffect.handleLoopStateWith[Const[Unit], Const[Int], Ask, Int, Int, Any, Any, Int](Tag[Ask], 7, 35: Int < Ask)(
-                    [C] => (s, _) => Loop.continue(s, 0: Int < Any),
+                    [C] => (s, _) => Loop.continue(s, 0),
                     (s, a) => s + a
                 )(b => b * 2)
             assert(r.eval == 84)
@@ -1488,7 +1488,7 @@ class ArrowEffectTest extends AnyFreeSpec:
     "suspendWith" - {
         "suspends and continues in one node" in {
             val v: Int < Ask = ArrowEffect.suspendWith[Any](Tag[Ask], ())(_ + 1)
-            val r: Int < Any = ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue((), 41: Int < Any), a => a)
+            val r: Int < Any = ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue(41), a => a)
             assert(r.eval == 42)
         }
 
@@ -1496,7 +1496,7 @@ class ArrowEffectTest extends AnyFreeSpec:
             def loop(i: Int): Int < Ask =
                 if i > 100000 then i
                 else ArrowEffect.suspendWith[Any](Tag[Ask], ())(a => loop(i + a))
-            val r: Int < Any = ArrowEffect.handleLoop(Tag[Ask], loop(0))([C] => _ => Loop.continue((), 1: Int < Any), a => a)
+            val r: Int < Any = ArrowEffect.handleLoop(Tag[Ask], loop(0))([C] => _ => Loop.continue(1), a => a)
             assert(r.eval == 100001)
         }
 
@@ -1525,7 +1525,7 @@ class ArrowEffectTest extends AnyFreeSpec:
         val inner: Int < Say = ArrowEffect.handleLoop(
             Tag[Ask],
             ask.map(a => say("x").map(_ => ask.map(b => a + b)))
-        )([C] => _ => Loop.continue((), 1: Int < Any), a => a)
+        )([C] => _ => Loop.continue(1), a => a)
         val r: Int < Any = ArrowEffect.handleCont(Tag[Say], inner)([C] => (_, cont) => cont(()), a => a)
         assert(r.eval == 2)
     }
@@ -1539,7 +1539,7 @@ class ArrowEffectTest extends AnyFreeSpec:
                 if runs > 1 then throw new IllegalStateException("body re-ran")
                 say("x").map(_ => a + 1)
             }
-        )([C] => _ => Loop.continue((), 1: Int < Any), a => a)
+        )([C] => _ => Loop.continue(1), a => a)
         val r: Int < Any = ArrowEffect.handleCont(Tag[Say], inner)([C] => (_, cont) => cont(()), a => a)
         assert(r.eval == 2)
         assert(runs == 1)
@@ -1550,7 +1550,7 @@ class ArrowEffectTest extends AnyFreeSpec:
             Tag[Ask],
             10,
             ask.map(a => say("x").map(_ => ask.map(b => a * 100 + b)))
-        )([C] => (s, _) => Loop.continue(s + 1, s: Int < Any), (_, a) => a)
+        )([C] => (s, _) => Loop.continue(s + 1, s), (_, a) => a)
         val r: Int < Any = ArrowEffect.handleCont(Tag[Say], inner)([C] => (_, cont) => cont(()), a => a)
         assert(r.eval == 1011)
     }
@@ -1560,7 +1560,7 @@ class ArrowEffectTest extends AnyFreeSpec:
             Tag[Ask],
             0,
             ask.map(a => say("x").map(_ => ask.map(b => a * 10 + b)))
-        )([C] => (s, _) => Loop.continue(s + 1, s: Int < Any), (_, a) => a)
+        )([C] => (s, _) => Loop.continue(s + 1, s), (_, a) => a)
         val r: Int < Any = ArrowEffect.handleCont(Tag[Say], inner)(
             [C] => (_, cont) => cont(()).map(r1 => cont(()).map(r2 => r1 * 100 + r2)),
             a => a
@@ -1569,7 +1569,7 @@ class ArrowEffectTest extends AnyFreeSpec:
     }
 
     "a map after the region applies to the result" in {
-        val r: Int < Any = ArrowEffect.handleLoop(Tag[Ask], ask.map(_ + 1))([C] => _ => Loop.continue((), 41: Int < Any), a => a)
+        val r: Int < Any = ArrowEffect.handleLoop(Tag[Ask], ask.map(_ + 1))([C] => _ => Loop.continue(41), a => a)
         assert(r.map(_ * 10).eval == 420)
     }
 
@@ -1594,7 +1594,7 @@ class ArrowEffectTest extends AnyFreeSpec:
             if n == 0 then v else tower(v.map(_ + 1), n - 1)
         val body = ask.map(a => tower(ask.map(b => a + b), 64))
         val r: Int < Any = ArrowEffect.handleLoopState(Tag[Ask], 10, body)(
-            [C] => (st, _) => Loop.continue(st + 1, st: Int < Any),
+            [C] => (st, _) => Loop.continue(st + 1, st),
             (st, a) => a * 1000 + st
         )
         assert(r.eval == 85012)
@@ -1652,7 +1652,7 @@ class ArrowEffectTest extends AnyFreeSpec:
                 [C] =>
                     s =>
                         seen = s :: seen
-                        Loop.continue((), (): Unit < Any)
+                        Loop.continue(())
                 ,
                 a => a
             )
@@ -1683,7 +1683,7 @@ class ArrowEffectTest extends AnyFreeSpec:
         "a stateful region's recovery clause receives the live state, not the install-time state" in {
             val body: Int < Ask = ask.map(_ => ask.map(_ => (throw Boom): Int))
             val r: Int < Any = ArrowEffect.handleLoopState(Tag[Ask], 0, body)(
-                [C] => (s, _) => Loop.continue(s + 1, 1: Int < Any),
+                [C] => (s, _) => Loop.continue(s + 1, 1),
                 (_, a) => a,
                 (s, _) => Maybe(-100 - s)
             )
@@ -1861,7 +1861,7 @@ class ArrowEffectTest extends AnyFreeSpec:
             val payload: Int < Say   = say("p").map(_ => 7)
             val v: (Int < Say) < Ask = ask.map(_ => Kyo.lift(payload))
             val r: (Int < Say) < Any = ArrowEffect.handleLoopState(Tag[Ask], 0, v)(
-                [C] => (state, _) => Loop.continue(state + 1, 0: Int < Any),
+                [C] => (state, _) => Loop.continue(state + 1, 0),
                 (_, a) => Kyo.lift(a)
             )
             val boxed          = r.eval
@@ -1897,15 +1897,15 @@ class ArrowEffectTest extends AnyFreeSpec:
         "settled inputs pass through strictly" in {
             val v: Int < Ask     = 42
             val cont: Int < Any  = ArrowEffect.handleCont(Tag[Ask], v)([C] => (_, cont) => cont(0), a => a)
-            val loop: Int < Any  = ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue((), 0: Int < Any), a => a)
-            val state: Int < Any = ArrowEffect.handleLoopState(Tag[Ask], 7, v)([C] => (s, _) => Loop.continue(s, 0: Int < Any), (_, a) => a)
+            val loop: Int < Any  = ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue(0), a => a)
+            val state: Int < Any = ArrowEffect.handleLoopState(Tag[Ask], 7, v)([C] => (s, _) => Loop.continue(s, 0), (_, a) => a)
             assert(cont.evalNow == Maybe(42))
             assert(loop.evalNow == Maybe(42))
             assert(state.evalNow == Maybe(42))
             assert(ArrowEffect.handleCont(Tag[Ask], v)([C] => (_, cont) => cont(0)).evalNow == Maybe(42))
-            assert(ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue((), 0: Int < Any)).evalNow == Maybe(42))
+            assert(ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue(0)).evalNow == Maybe(42))
             assert(ArrowEffect.handleLoopState(Tag[Ask], 7, v)(
-                [C] => (s, _) => Loop.continue(s, 0: Int < Any)
+                [C] => (s, _) => Loop.continue(s, 0)
             ).evalNow == Maybe(42))
         }
 
@@ -1959,7 +1959,7 @@ class ArrowEffectTest extends AnyFreeSpec:
             def loop(i: Int): Int < Ask =
                 if i == 0 then 0 else ask.map(a => loop(i - a))
             val r: Int < Any = ArrowEffect.handleLoopState(Tag[Ask], 0, loop(10000))(
-                [C] => (s, _) => Effect.defer(Loop.continue(s + 1, 1: Int < Any)),
+                [C] => (s, _) => Effect.defer(Loop.continue(s + 1, 1)),
                 (s, a) => s + a
             )
             assert(r.eval == 10000)
@@ -1967,7 +1967,7 @@ class ArrowEffectTest extends AnyFreeSpec:
 
         "the overload without done completes with the result and discards the state" in {
             val v = ask.map(a => ask.map(b => a + b))
-            val r = ArrowEffect.handleLoopState(Tag[Ask], 10, v)([C] => (s, _) => Loop.continue(s + 1, s: Int < Any))
+            val r = ArrowEffect.handleLoopState(Tag[Ask], 10, v)([C] => (s, _) => Loop.continue(s + 1, s))
             assert(r.eval == 21)
         }
 
@@ -1977,7 +1977,7 @@ class ArrowEffectTest extends AnyFreeSpec:
                 [C] =>
                     (s, _) =>
                         if s == 10 then requestStop()
-                        Loop.continue(s + 1, s: Int < Any)
+                        Loop.continue(s + 1, s)
                 ,
                 (s, a) => s * 1000 + a * 2
             )
@@ -2354,7 +2354,7 @@ class ArrowEffectTest extends AnyFreeSpec:
 
         "a throw inside a region nested in the computation is recovered" in {
             val region = ArrowEffect.handleLoop(Tag[Say], say("x").map(_ => (throw new RuntimeException("boom")): Int))(
-                [X] => _ => Loop.continue((), (): Unit < Any)
+                [X] => _ => Loop.continue(())
             )
             val v: Int < Ask = ask.map(_ => region)
             val r            = ArrowEffect.handleCont(Tag[Ask], v)([X] => (_, cont) => cont(0), a => a, _ => Maybe(-1))
@@ -2433,7 +2433,7 @@ class ArrowEffectTest extends AnyFreeSpec:
                 ask.map(a => ask.map(b => say("x").andThen(ask.map(c => a + b + c))))
             val region: Int < Say =
                 ArrowEffect.handleLoopState(Tag[Ask], 0, body)(
-                    [C] => (n, _) => Loop.continue(n + 1, n: Int < Any),
+                    [C] => (n, _) => Loop.continue(n + 1, n),
                     (n, a) => n * 1000 + a
                 )
             val r0 = ArrowEffect.handleCont(Tag[Say], region)(
@@ -2456,7 +2456,7 @@ class ArrowEffectTest extends AnyFreeSpec:
                     [C] =>
                         (n, i) =>
                             seen += ((n, i))
-                            Loop.continue(n + 1, n: Int < Any)
+                            Loop.continue(n + 1, n)
                     ,
                     (n, a) => n * 1000 + a
                 ).eval
@@ -2471,14 +2471,14 @@ class ArrowEffectTest extends AnyFreeSpec:
         "a clause can run a full eval of its own mid-loop" in {
             def innerRun(): Int =
                 ArrowEffect.handleLoopState(Tag[Ask], 100, ask.map(a => ask.map(b => a + b)))(
-                    [C] => (n, _) => Loop.continue(n + 1, n: Int < Any),
+                    [C] => (n, _) => Loop.continue(n + 1, n),
                     (n, a) => n + a
                 ).eval
             val r: Int = ArrowEffect.handleLoopState(Tag[Ask], 0, ask.map(a => ask.map(b => a + b)))(
                 [C] =>
                     (n, _) =>
                         val i = innerRun()
-                        Loop.continue(n + 1, (n + i): Int < Any)
+                        Loop.continue(n + 1, (n + i))
                 ,
                 (n, a) => n * 100000 + a
             ).eval
@@ -2495,7 +2495,7 @@ class ArrowEffectTest extends AnyFreeSpec:
                     [C] =>
                         (n, _) =>
                             states += n
-                            Loop.continue(n + 1, n: Int < Any)
+                            Loop.continue(n + 1, n)
                     ,
                     (n, a) => a
                 )
@@ -2514,7 +2514,7 @@ class ArrowEffectTest extends AnyFreeSpec:
                     [C] =>
                         (n, _) =>
                             if n == 10 then requestStop()
-                            Loop.continue(n + 1, 1: Int < Any)
+                            Loop.continue(n + 1, 1)
                     ,
                     (n, a) => n + a
                 )
@@ -2621,14 +2621,14 @@ class ArrowEffectTest extends AnyFreeSpec:
             var outerSaw        = List.empty[String]
             val body: Int < Ask = ask.map(a => ask.map(b => ask.map(c => a * 100 + b * 10 + c)))
             val askRegion: Int < Say = ArrowEffect.handleLoopState(Tag[Ask], "s", body)(
-                [C] => (s, _) => say(s).map(_ => Loop.continue(s + "+", s.length: Int < Any)),
+                [C] => (s, _) => say(s).map(_ => Loop.continue(s + "+", s.length)),
                 (s, a) => if s == "s+++" then a else -1000
             )
             val sayRegion: Int < Any = ArrowEffect.handleLoopState(Tag[Say], 0, askRegion)(
                 [C] =>
                     (n, msg) =>
                         outerSaw = outerSaw :+ msg
-                        Loop.continue(n + 1, (): Unit < Any)
+                        Loop.continue(n + 1, ())
                 ,
                 (n, a) => n * 1000 + a
             )
@@ -2675,7 +2675,7 @@ class ArrowEffectTest extends AnyFreeSpec:
                     Effect.defer((throw Boom()): Int).map(_ + a)
                 }
             val region: Int < Any = ArrowEffect.handleLoop(Tag[Ask], body)(
-                [C] => _ => Loop.continue((), 1: Int < Any),
+                [C] => _ => Loop.continue(1),
                 a => a
             )
             val r =
@@ -2712,7 +2712,7 @@ class ArrowEffectTest extends AnyFreeSpec:
             val payload: Int < Say = say("p").map(_ => 7)
             val region: (Int < Say) < Any =
                 ArrowEffect.handleLoop(Tag[AskBoxed], askBoxed.map(v => Kyo.lift(v)))(
-                    [C] => _ => Loop.continue((), Kyo.lift(payload): (Int < Say) < Any),
+                    [C] => _ => Loop.continue(Kyo.lift(payload): (Int < Say) < Any),
                     a => Kyo.lift(a)
                 )
             val got: Int < Say = region.eval
@@ -2750,7 +2750,7 @@ class ArrowEffectTest extends AnyFreeSpec:
         "a throw after a stateful region's exit reaches the recovery" in {
             val region: String < Any =
                 ArrowEffect.handleLoopState(Tag[TestEffect1], 7, testEffect1(1).map(a => testEffect1(2).map(b => a + b)))(
-                    [C] => (state, input) => Loop.continue(state + 1, (input * state).toString: String < Any),
+                    [C] => (state, input) => Loop.continue(state + 1, (input * state).toString),
                     (_, a) => a
                 )
             val effect = recovering(region.map(s => if s.nonEmpty then throw new RuntimeException("Test exception") else s))(_ => "caught")
@@ -2762,7 +2762,7 @@ class ArrowEffectTest extends AnyFreeSpec:
                 testEffect1(3).map { prefix =>
                     val region: String < Any =
                         ArrowEffect.handleLoopState(Tag[TestEffect1], 7, testEffect1(1).map(a => testEffect1(2).map(b => a + b)))(
-                            [C] => (state, input) => Loop.continue(state + 1, (input * state).toString: String < Any),
+                            [C] => (state, input) => Loop.continue(state + 1, (input * state).toString),
                             (_, a) => a
                         )
                     region.map(s => if s.nonEmpty then throw new RuntimeException("Test exception") else prefix + s)
@@ -2781,7 +2781,7 @@ class ArrowEffectTest extends AnyFreeSpec:
             val body = testEffect1(1).map(a => burn(Period * 2).map(_ => testEffect1(2).map(b => a + b)))
             val region: String < Any =
                 ArrowEffect.handleLoopState(Tag[TestEffect1], 7, body)(
-                    [C] => (state, input) => Loop.continue(state + 1, (input * state).toString: String < Any),
+                    [C] => (state, input) => Loop.continue(state + 1, (input * state).toString),
                     (_, a) => a
                 )
             val effect = recovering(region.map(s => if s.nonEmpty then throw new RuntimeException("Test exception") else s))(_ => "caught")
@@ -2804,7 +2804,7 @@ class ArrowEffectTest extends AnyFreeSpec:
             }
             val region: String < Any =
                 ArrowEffect.handleLoopState(Tag[TestEffect1], 7, body)(
-                    [C] => (state, input) => Loop.continue(state + 1, (input * state).toString: String < Any),
+                    [C] => (state, input) => Loop.continue(state + 1, (input * state).toString),
                     (_, a) => a
                 )
             val effect = recovering(region.map(s => if s.nonEmpty then throw new RuntimeException("Test exception") else s))(_ => "caught")
@@ -2817,7 +2817,7 @@ class ArrowEffectTest extends AnyFreeSpec:
             var seen = ""
             val inner: Int < (Ask & Say) =
                 ArrowEffect.handleLoopState(Tag[Ask], 0, say("deep").map(_ => ask))(
-                    [X] => (state, _) => Loop.continue(state + 1, state: Int < Any),
+                    [X] => (state, _) => Loop.continue(state + 1, state),
                     (_, a) => a
                 )
             val outer: Int < Say = ArrowEffect.handleCont(Tag[Ask], inner)([X] => (_, cont) => cont(1), a => a)
@@ -2831,11 +2831,11 @@ class ArrowEffectTest extends AnyFreeSpec:
                 say("s").map(_ => ask.map(a => Effect.defer((throw Boom()): Int).map(_ + a)))
             val recovered: Int < (Ask & Say) = recovering(body)(_ => -1)
             val askRegion: Int < Say = ArrowEffect.handleLoopState(Tag[Ask], "s0", recovered)(
-                [C] => (s, _) => Loop.continue(s + "+", 1: Int < Any),
+                [C] => (s, _) => Loop.continue(s + "+", 1),
                 (s, a) => if s == "s0+" then a else -100
             )
             val sayRegion: Int < Any = ArrowEffect.handleLoopState(Tag[Say], 100, askRegion)(
-                [C] => (n, _) => Loop.continue(n + 1, (): Unit < Any),
+                [C] => (n, _) => Loop.continue(n + 1, ()),
                 (n, a) => n * 1000 + a
             )
             assert(sayRegion.eval == 100999)
@@ -2860,7 +2860,7 @@ class ArrowEffectTest extends AnyFreeSpec:
         "an Any-typed Continue2 does not conform to the clause's outcome without Loop.done" in {
             assert(typeCheckErrors(
                 """
-                val hostile: Any = Loop.continue((), 0: Int < Any).eval
+                val hostile: Any = Loop.continue((), 0).eval
                 ArrowEffect.handleLoop(Tag[Ask], ask: Any < Ask)([C] => _ => hostile, (a: Any) => a)
                 """
             ).nonEmpty)
@@ -2875,8 +2875,8 @@ class ArrowEffectTest extends AnyFreeSpec:
         "the fused loop leaves a subtype operation to the general path" in {
             val askAtSub: Int < AskSub = ArrowEffect.suspend[Any](Tag[AskSub], ())
             val body: Int < AskSub     = ask.map(a => askAtSub.map(b => a * 10 + b))
-            val r                      = ArrowEffect.handleLoop(Tag[Ask], body)([C] => _ => Loop.continue((), 1: Int < Any), a => a)
-            val out: Int < Any         = ArrowEffect.handleLoop(Tag[AskSub], r)([C] => _ => Loop.continue((), 2: Int < Any), a => a)
+            val r                      = ArrowEffect.handleLoop(Tag[Ask], body)([C] => _ => Loop.continue(1), a => a)
+            val out: Int < Any         = ArrowEffect.handleLoop(Tag[AskSub], r)([C] => _ => Loop.continue(2), a => a)
             assert(out.eval == 12)
         }
 
@@ -2889,7 +2889,7 @@ class ArrowEffectTest extends AnyFreeSpec:
                     [C] =>
                         _ =>
                             requestStop()
-                            Loop.continue((), Kyo.lift[Int < Say, Any](payload))
+                            Loop.continue(Kyo.lift[Int < Say, Any](payload))
                     ,
                     a => Kyo.lift[Int < Say, Any](a)
                 )
@@ -2902,7 +2902,7 @@ class ArrowEffectTest extends AnyFreeSpec:
             val boom                    = new RuntimeException("boom")
             val body: Int < (Ask & Say) = say("x").map(_ => ask.map(_ => (throw boom): Int))
             val inner: Int < Say = ArrowEffect.handleLoopState(Tag[Ask], 0, body)(
-                [C] => (s, _) => Loop.continue(s + 1, 1: Int < Any),
+                [C] => (s, _) => Loop.continue(s + 1, 1),
                 (_, a) => a,
                 (s, _) => Maybe(-100 - s)
             )
@@ -2916,7 +2916,7 @@ class ArrowEffectTest extends AnyFreeSpec:
         def read: Int < Cfg = ContextEffect.suspend(Tag[Cfg])
 
         def answerAsk[A, S](value: Int)(v: A < (Ask & S)): A < S =
-            ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue((), value: Int < Any), a => a)
+            ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue(value), a => a)
 
         "a local handler around the operation does not see the effect its interpreter's clause raises" in {
             var localAnswered = 0
@@ -3132,7 +3132,7 @@ class ArrowEffectTest extends AnyFreeSpec:
         "a loop region's recovery does not guard its clause after the clause suspends" in {
             val boom = new RuntimeException("boom")
             val viaLoop: Int < Say = ArrowEffect.handleLoop(Tag[Ask], ask.map(_ + 1))(
-                [C] => _ => say("c").map(_ => (throw boom): Loop.Outcome2[Unit, Int < (Ask & Say), Int < Say]),
+                [C] => _ => say("c").map(_ => (throw boom): Loop.Outcome[Int < (Ask & Say), Int < Say]),
                 a => a,
                 _ => Maybe(-1)
             )
@@ -3167,25 +3167,25 @@ class ArrowEffectTest extends AnyFreeSpec:
 
         def runWriter[A, S](v: A < (Tell & S)): (A, List[Int]) < S =
             ArrowEffect.handleLoopState(Tag[Tell], List.empty[Int], v)(
-                [C] => (acc, w) => Loop.continue(acc ++ w, (): Unit < Any),
+                [C] => (acc, w) => Loop.continue(acc ++ w, ()),
                 (acc, a) => (a, acc)
             )
 
         def listen[A, S](v: A < (Tell & S)): (A, List[Int]) < (Tell & S) =
             ArrowEffect.handleLoopState(Tag[Tell], List.empty[Int], v)(
-                [C] => (acc, w) => tell(w).map(_ => Loop.continue(acc ++ w, (): Unit < Any)),
+                [C] => (acc, w) => tell(w).map(_ => Loop.continue(acc ++ w, ())),
                 (acc, a) => (a, acc)
             )
 
         def pass[A, S](v: (A, List[Int] => List[Int]) < (Tell & S)): A < (Tell & S) =
             ArrowEffect.handleLoopState(Tag[Tell], List.empty[Int], v)(
-                [C] => (acc, w) => Loop.continue(acc ++ w, (): Unit < Any),
+                [C] => (acc, w) => Loop.continue(acc ++ w, ()),
                 (acc, af) => tell(af._2(acc)).map(_ => af._1)
             )
 
         def censor[A, S](f: List[Int] => List[Int])(v: A < (Tell & S)): A < (Tell & S) =
             ArrowEffect.handleLoop(Tag[Tell], v)(
-                [C] => w => tell(f(w)).map(_ => Loop.continue((), (): Unit < Any)),
+                [C] => w => tell(f(w)).map(_ => Loop.continue(())),
                 a => a
             )
 
@@ -3271,7 +3271,7 @@ class ArrowEffectTest extends AnyFreeSpec:
 
         def counted[A, S](v: A < (Bump & S)): A < S =
             ArrowEffect.handleLoopState(Tag[Bump], 0, v)(
-                [C] => (n, _) => Loop.continue(n + 1, (n + 1): Int < Any),
+                [C] => (n, _) => Loop.continue(n + 1, (n + 1)),
                 (_, a) => a
             )
 

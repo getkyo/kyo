@@ -334,7 +334,7 @@ class ContextEffectTest extends AnyFreeSpec:
         "a region crossed to a foreign loop answered with a pending outcome completes without a release" in {
             val log          = ListBuffer.empty[String]
             val v: Int < Ask = logged(log)(ask.map(a => count.map(_ + a)))
-            val r: Int < Any = ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Effect.defer(Loop.continue((), 41: Int < Any)), a => a)
+            val r: Int < Any = ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Effect.defer(Loop.continue(41)), a => a)
             assert(r.eval == 42)
             assert(log.toList == List("done"))
         }
@@ -449,7 +449,7 @@ class ContextEffectTest extends AnyFreeSpec:
         }
 
         def answerAsk[A, S](value: Int)(v: A < (Ask & S)): A < S =
-            ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue((), value: Int < Any), a => a)
+            ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue(value), a => a)
 
         "a crossing resumed in a nested eval inside the clause is out of contract: its region is released again at the owner's exit" in {
             val log             = ListBuffer[String]()

@@ -14,7 +14,7 @@ class NestedTest extends AnyFreeSpec:
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())
 
     def answerAsk[A, S](value: Int)(v: A < (Ask & S)): A < S =
-        ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue((), value: Int < Any), a => a)
+        ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue(value), a => a)
 
     def boxed(v: Any): Boolean = v.isInstanceOf[Nested[?]]
 

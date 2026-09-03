@@ -138,7 +138,7 @@ class ProtoBench:
         def loop(i: Int): Int < Ask =
             if i > Depth then i
             else ask.map(a => loop(i + a))
-        run(ArrowEffect.handleLoop(Tag[Ask], loop(0))([C] => _ => Loop.continue((), 1: Int < Any), a => a))
+        run(ArrowEffect.handleLoop(Tag[Ask], loop(0))([C] => _ => Loop.continue(1), a => a))
     end handleLoopAnswersInPlace
 
     @Benchmark
@@ -148,7 +148,7 @@ class ProtoBench:
             else ask.map(a => loop(i + a))
         run(
             ArrowEffect.handleLoopWith(Tag[Ask], loop(0))(
-                [C] => _ => Loop.continue((), 1: Int < Any),
+                [C] => _ => Loop.continue(1),
                 a => a
             )(b => b + 1)
         )
@@ -169,7 +169,7 @@ class ProtoBench:
             else ask.map(a => loop(i + a))
         run(
             ArrowEffect.handleLoopState(Tag[Ask], 0, loop(0))(
-                [C] => (state, _) => Loop.continue(state + 1, 1: Int < Any),
+                [C] => (state, _) => Loop.continue(state + 1, 1),
                 (_, a) => a
             )
         )
@@ -203,10 +203,10 @@ class ProtoBench:
             if i > NarrowDepth then i
             else ask.map(a => loop(i + a))
         val emitted: Int < Tick = ArrowEffect.handleLoop(Tag[Ask], loop(0))(
-            [C] => _ => tick.map(t => Loop.continue((), t: Int < Any)),
+            [C] => _ => tick.map(t => Loop.continue(t)),
             a => a
         )
-        run(ArrowEffect.handleLoop(Tag[Tick], emitted)([C] => _ => Loop.continue((), 1: Int < Any), a => a))
+        run(ArrowEffect.handleLoop(Tag[Tick], emitted)([C] => _ => Loop.continue(1), a => a))
     end emittingClausesPayRegionRebuild
 
     @Benchmark
@@ -368,8 +368,8 @@ class ProtoBench:
         def loop(i: Int): Int < (Ask & Ask2) =
             if i > Depth then i
             else ask.map(a => ask2.map(t => loop(i + a + t)))
-        val inner: Int < Ask2 = ArrowEffect.handleLoop(Tag[Ask], loop(seed - 1))([C] => _ => Loop.continue((), 1: Int < Any), a => a)
-        run(ArrowEffect.handleLoop(Tag[Ask2], inner)([C] => _ => Loop.continue((), 0: Int < Any), a => a))
+        val inner: Int < Ask2 = ArrowEffect.handleLoop(Tag[Ask], loop(seed - 1))([C] => _ => Loop.continue(1), a => a)
+        run(ArrowEffect.handleLoop(Tag[Ask2], inner)([C] => _ => Loop.continue(0), a => a))
     end foreignCrossingsAnsweredInPlace
 
     @Benchmark

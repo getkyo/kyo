@@ -134,7 +134,7 @@ class ArrowEffectMaskTest extends AnyFreeSpec:
             val v: Int < (Ask & Say) =
                 say("a").map(_ => ask.map(a => say("b").map(_ => a)))
             val counted: (Int, Int) < (Mask[Ask] & Any) = ArrowEffect.handleLoopState(Tag[Say], 0, Mask[Ask](v))(
-                [C] => (s, _) => Loop.continue(s + 1, (): Unit < Any),
+                [C] => (s, _) => Loop.continue(s + 1, ()),
                 (s, a) => (s, a)
             )
             val out = Mask.run[Ask](counted)

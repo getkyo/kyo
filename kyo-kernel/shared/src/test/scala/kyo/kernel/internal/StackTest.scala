@@ -21,28 +21,28 @@ class StackTest extends AnyFreeSpec:
     sealed trait Say    extends ArrowEffect[Const[String], Const[Unit]]
     sealed trait Env    extends ContextEffect[Int]
 
-    def askHandler: Handler.LoopHandler[Unit, Const[Unit], Const[Int], Ask, Int, Int, Any] =
-        new Handler.LoopHandler[Unit, Const[Unit], Const[Int], Ask, Int, Int, Any]:
-            def tag                              = Tag[Ask]
-            def run[X](state: Unit, input: Unit) = Loop.continue((), 1: Int < Any)
-            def done(state: Unit, v: Int)        = v
+    def askHandler: Handler.LoopHandler[Const[Unit], Const[Int], Ask, Int, Int, Any] =
+        new Handler.LoopHandler[Const[Unit], Const[Int], Ask, Int, Int, Any]:
+            def tag                       = Tag[Ask]
+            def run[X](input: Unit)       = Loop.continue(1)
+            def done(state: Unit, v: Int) = v
 
-    def askSubHandler: Handler.LoopHandler[Unit, Const[Unit], Const[Int], AskSub, Int, Int, Any] =
-        new Handler.LoopHandler[Unit, Const[Unit], Const[Int], AskSub, Int, Int, Any]:
-            def tag                              = Tag[AskSub]
-            def run[X](state: Unit, input: Unit) = Loop.continue((), 1: Int < Any)
-            def done(state: Unit, v: Int)        = v
+    def askSubHandler: Handler.LoopHandler[Const[Unit], Const[Int], AskSub, Int, Int, Any] =
+        new Handler.LoopHandler[Const[Unit], Const[Int], AskSub, Int, Int, Any]:
+            def tag                       = Tag[AskSub]
+            def run[X](input: Unit)       = Loop.continue(1)
+            def done(state: Unit, v: Int) = v
 
-    def sayHandler: Handler.LoopHandler[Unit, Const[String], Const[Unit], Say, Int, Int, Any] =
-        new Handler.LoopHandler[Unit, Const[String], Const[Unit], Say, Int, Int, Any]:
-            def tag                                = Tag[Say]
-            def run[X](state: Unit, input: String) = Loop.continue((), (): Unit < Any)
-            def done(state: Unit, v: Int)          = v
+    def sayHandler: Handler.LoopHandler[Const[String], Const[Unit], Say, Int, Int, Any] =
+        new Handler.LoopHandler[Const[String], Const[Unit], Say, Int, Int, Any]:
+            def tag                       = Tag[Say]
+            def run[X](input: String)     = Loop.continue(())
+            def done(state: Unit, v: Int) = v
 
-    def statefulHandler: Handler.LoopHandler[Int, Const[Unit], Const[Int], Ask, Int, Int, Any] =
-        new Handler.LoopHandler[Int, Const[Unit], Const[Int], Ask, Int, Int, Any]:
+    def statefulHandler: Handler.LoopStateHandler[Int, Const[Unit], Const[Int], Ask, Int, Int, Any] =
+        new Handler.LoopStateHandler[Int, Const[Unit], Const[Int], Ask, Int, Int, Any]:
             def tag                             = Tag[Ask]
-            def run[X](state: Int, input: Unit) = Loop.continue(state + 1, 1: Int < Any)
+            def run[X](state: Int, input: Unit) = Loop.continue(state + 1, 1)
             def done(state: Int, v: Int)        = v + state
 
     def envHandler: Handler.ContextHandler[Int, Env, Int, Any] =

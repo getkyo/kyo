@@ -85,7 +85,7 @@ class EffectTraceTest extends AnyFreeSpec:
     "a fused region names the body, then the region" in {
         val fused: Int < Any =
             ArrowEffect.handleLoopWith[Const[Unit], Const[Int], Ask, Int, Int, Any, Any](Tag[Ask], innerStep(ask))(
-                [C] => _ => Loop.continue((), 1: Int < Any),
+                [C] => _ => Loop.continue(1),
                 a => a
             )((_: Int) + 1)
         val ex  = intercept[Boom](fused.eval)
@@ -329,7 +329,7 @@ class EffectTraceTest extends AnyFreeSpec:
             val v: Int < Any =
                 runSay(
                     ArrowEffect.handleLoop(Tag[Ask], innerStep(ask))(
-                        [C] => _ => say("e").map(_ => Loop.continue((), 1: Int < Any)),
+                        [C] => _ => say("e").map(_ => Loop.continue(1)),
                         a => a
                     )
                 )

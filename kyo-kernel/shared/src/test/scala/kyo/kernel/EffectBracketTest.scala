@@ -140,9 +140,9 @@ class EffectBracketTest extends AnyFreeSpec:
                         ask.map(x => a + x)
                     }
                 }
-            val inner: Int < Str = ArrowEffect.handleLoop(Tag[Ask], body)([C] => _ => Loop.continue((), 1: Int < Any), b => b)
+            val inner: Int < Str = ArrowEffect.handleLoop(Tag[Ask], body)([C] => _ => Loop.continue(1), b => b)
             val r: Int < Any =
-                ArrowEffect.handleLoop(Tag[Str], inner)([C] => n => Loop.continue((), s"s$n": String < Any), b => b)
+                ArrowEffect.handleLoop(Tag[Str], inner)([C] => n => Loop.continue(s"s$n"), b => b)
             assert(r.eval == 8)
             assert(log.toList == List("use s1 true"))
             assert(seen == Maybe(Maybe.empty))
@@ -224,7 +224,7 @@ class EffectBracketTest extends AnyFreeSpec:
                     ask.map(x => a + x)
                 }
             val r: Int < Any = ArrowEffect.handleLoop(Tag[Ask], body)(
-                [C] => _ => Effect.defer(Loop.continue((), 1: Int < Ask)),
+                [C] => _ => Effect.defer(Loop.continue(1: Int < Ask)),
                 b => b
             )
             assert(r.eval == 8)
@@ -724,7 +724,7 @@ class EffectBracketTest extends AnyFreeSpec:
             val v        = Effect.bracket(Effect.defer(1))((r, _) => released = Maybe(r))(r => ask.map(a => ask.map(b => a + b + r)))
             val stopped =
                 ArrowEffect.handleLoopState(Tag[Ask], 0, v)(
-                    [C] => (s, _) => if s == 1 then Loop.done(-1) else Loop.continue(s + 1, 1: Int < Any),
+                    [C] => (s, _) => if s == 1 then Loop.done(-1) else Loop.continue(s + 1, 1),
                     (_, a) => a
                 )
             assert(stopped.eval == -1)
@@ -1395,7 +1395,7 @@ class EffectBracketTest extends AnyFreeSpec:
                         outcomes :+= outcome
                     } { r =>
                         ArrowEffect.handleLoop(Tag[Ask], ask.map(_ + r))(
-                            [C] => _ => Loop.continue((), 1: Int < Any),
+                            [C] => _ => Loop.continue(1),
                             _ => (throw boom): Int
                         )
                     }

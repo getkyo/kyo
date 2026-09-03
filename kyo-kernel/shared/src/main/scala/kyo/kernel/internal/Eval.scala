@@ -14,6 +14,7 @@ import kyo.kernel.ArrowEffect
 import kyo.kernel.ContextEffect
 import kyo.kernel.Effect
 import kyo.kernel.Loop
+import kyo.kernel.Loop.Outcome
 import kyo.kernel.Loop.Outcome2
 import language.implicitConversions
 import scala.annotation.publicInBinary
@@ -93,22 +94,82 @@ import scala.util.control.NonFatal
                                         Debugger.onResult(result)
                                         loop(result, Arrow.id, Arrow.id, ctx2)
                                     // TODO are you sure the repeated code for the special atTop case is worth it? size of the loop mehtod is critical for performance
-                                    case handler: Handler.LoopHandler[VX, IX, OX, EX, C, Y, S2] @unchecked if atTop =>
-                                        val k    = kyo.cont.chain(contA.chain(contB)).asInstanceOf[Arrow[Any, Any, Any]]
-                                        val exit = handler.answers(stack.state(idx).asInstanceOf[VX], kyo.input, k, armed, slot, kyo.frame)
+                                    case handler: Handler.LoopHandler[IX, OX, EX, C, Y, S2] @unchecked if atTop =>
+                                        val k    = kyo.cont.chain(contA.chain(contB))
+                                        val exit = handler.answers(kyo.input, k, armed, slot, kyo.frame)
                                         Debugger.onResult(exit)
                                         exit match
-                                            case e: Loop.Continue2[VX, Any] @unchecked =>
-                                                stack.setState(idx, e._1)
-                                                loop(e._2.asInstanceOf[Any < S2], Arrow.id, Arrow.id, ctx)
-                                            case pending: Pending[Outcome2[VX, OX[VX] < (EX & S2), Y < S2], S2] @unchecked =>
-                                                val reentry = k.asInstanceOf[Arrow[OX[VX], C, EX & S2]]
+                                            case e: Loop.Continue[C < (EX & S2)] @unchecked =>
+                                                loop(e._1, Arrow.id, Arrow.id, ctx)
+                                            case pending: Pending[Outcome[OX[VX] < (EX & S2), Y < S2], S2] @unchecked =>
+                                                val next = stack.continuation(idx).asInstanceOf[Arrow[Y, Any, S2]]
+                                                Debugger.onRegionExit(handler, pending)
+                                                stack.pop()
+                                                if stack.owesAny then stack.oweBelow(idx, stack.takePopped())
+                                                type OutT = Outcome[OX[VX] < (EX & S2), Y < S2]
+                                                loop[OutT, Y, Any, S2](pending, handler.clauseDispatch(k), next, ctx)
+                                            case done =>
+                                                val result =
+                                                    Nested.unnest[Y < S2](Loop.unnest(done.asInstanceOf[Outcome[Any, Y < S2]]))
+                                                Debugger.onRegionExit(handler, result)
+                                                val next = stack.continuation(idx).asInstanceOf[Arrow[Y, Any, Any]]
+                                                if stack.owesAny then drainDiscarded(stack.takeOwed(idx))
+                                                stack.truncate(idx)
+                                                loop(result, next, Arrow.id, ctx)
+                                        end match
+                                    case handler: Handler.LoopHandler[IX, OX, EX, C, Y, S2] @unchecked =>
+                                        val outcome0 = handler.running(kyo.input, kyo, stack, idx)
+                                        stack.sink = outcome0
+                                        Debugger.onResult(outcome0)
+                                        outcome0 match
+                                            case outcome: Loop.Continue[OX[VX] < (EX & S2)] @unchecked =>
+                                                val ans = outcome._1
+                                                if !ans.isInstanceOf[Pending[?, ?]] then
+                                                    loop(ans, kyo.cont, contA.chain(contB), ctx)
+                                                else
+                                                    val entries = dumped(stack, idx, kyo)
+                                                    val ctx2    = rebound(entries, ctx)
+                                                    loop(ans, kyo.crossing(entries, contA.chain(contB)), Arrow.id, ctx2)
+                                                end if
+                                            case pending: Pending[Outcome[OX[VX] < (EX & S2), Y < S2], S2] @unchecked =>
+                                                val entries = dumped(stack, idx, kyo)
+                                                val ctx2    = rebound(entries, ctx)
                                                 val next    = stack.continuation(idx).asInstanceOf[Arrow[Y, Any, S2]]
                                                 Debugger.onRegionExit(handler, pending)
                                                 stack.pop()
                                                 if stack.owesAny then stack.oweBelow(idx, stack.takePopped())
+                                                type OutT = Outcome[OX[VX] < (EX & S2), Y < S2]
+                                                val reentry2 = kyo.crossing(entries, contA.chain(contB))
+                                                loop[OutT, Y, Any, S2](pending, handler.clauseDispatch(reentry2), next, ctx2)
+                                            case outcome =>
+                                                val entries = dumped(stack, idx, kyo)
+                                                val ctx2    = rebound(entries, ctx)
+                                                val result =
+                                                    Nested.unnest[Y < S2](Loop.unnest(outcome.asInstanceOf[Outcome[
+                                                        OX[VX] < (EX & S2),
+                                                        Y < S2
+                                                    ]]))
+                                                Debugger.onRegionExit(handler, result)
+                                                val next = stack.continuation(idx).asInstanceOf[Arrow[Y, Any, Any]]
+                                                if stack.owesAny then drainDiscarded(stack.takeOwed(idx))
+                                                stack.truncate(idx)
+                                                loop(result, next, Arrow.id, ctx2)
+                                        end match
+                                    case handler: Handler.LoopStateHandler[VX, IX, OX, EX, C, Y, S2] @unchecked if atTop =>
+                                        val k    = kyo.cont.chain(contA.chain(contB))
+                                        val exit = handler.answers(stack.state(idx).asInstanceOf[VX], kyo.input, k, armed, slot, kyo.frame)
+                                        Debugger.onResult(exit)
+                                        exit match
+                                            case e: Loop.Continue2[VX, C < (EX & S2)] @unchecked =>
+                                                stack.setState(idx, e._1)
+                                                loop(e._2, Arrow.id, Arrow.id, ctx)
+                                            case pending: Pending[Outcome2[VX, OX[VX] < (EX & S2), Y < S2], S2] @unchecked =>
+                                                val next = stack.continuation(idx).asInstanceOf[Arrow[Y, Any, S2]]
+                                                Debugger.onRegionExit(handler, pending)
+                                                stack.pop()
+                                                if stack.owesAny then stack.oweBelow(idx, stack.takePopped())
                                                 type OutT = Outcome2[VX, OX[VX] < (EX & S2), Y < S2]
-                                                loop[OutT, Y, Any, S2](pending, handler.clauseDispatch(reentry), next, ctx)
+                                                loop[OutT, Y, Any, S2](pending, handler.clauseDispatch(k), next, ctx)
                                             case done =>
                                                 val result =
                                                     Nested.unnest[Y < S2](Loop.unnest(done.asInstanceOf[Outcome2[VX, Any, Y < S2]]))
@@ -118,20 +179,21 @@ import scala.util.control.NonFatal
                                                 stack.truncate(idx)
                                                 loop(result, next, Arrow.id, ctx)
                                         end match
-                                    case handler: Handler.LoopHandler[VX, IX, OX, EX, C, Y, S2] @unchecked =>
+                                    case handler: Handler.LoopStateHandler[VX, IX, OX, EX, C, Y, S2] @unchecked =>
                                         val outcome0 = handler.running(stack.state(idx).asInstanceOf[VX], kyo.input, kyo, stack, idx)
                                         stack.sink = outcome0
                                         Debugger.onResult(outcome0)
                                         outcome0 match
-                                            case outcome: Loop.Continue2[VX, OX[VX] < (EX & S2)] @unchecked
-                                                if !outcome._2.isInstanceOf[Pending[?, ?]] =>
-                                                stack.setState(idx, outcome._1)
-                                                loop(outcome._2, kyo.cont, contA.chain(contB), ctx)
                                             case outcome: Loop.Continue2[VX, OX[VX] < (EX & S2)] @unchecked =>
-                                                val entries = dumped(stack, idx, kyo)
-                                                val ctx2    = rebound(entries, ctx)
                                                 stack.setState(idx, outcome._1)
-                                                loop(outcome._2, kyo.crossing(entries, contA.chain(contB)), Arrow.id, ctx2)
+                                                val ans = outcome._2
+                                                if !ans.isInstanceOf[Pending[?, ?]] then
+                                                    loop(ans, kyo.cont, contA.chain(contB), ctx)
+                                                else
+                                                    val entries = dumped(stack, idx, kyo)
+                                                    val ctx2    = rebound(entries, ctx)
+                                                    loop(ans, kyo.crossing(entries, contA.chain(contB)), Arrow.id, ctx2)
+                                                end if
                                             case pending: Pending[Outcome2[VX, OX[VX] < (EX & S2), Y < S2], S2] @unchecked =>
                                                 val entries = dumped(stack, idx, kyo)
                                                 val ctx2    = rebound(entries, ctx)
@@ -140,8 +202,7 @@ import scala.util.control.NonFatal
                                                 stack.pop()
                                                 if stack.owesAny then stack.oweBelow(idx, stack.takePopped())
                                                 type OutT = Outcome2[VX, OX[VX] < (EX & S2), Y < S2]
-                                                val reentry2 =
-                                                    kyo.crossing(entries, contA.chain(contB)).asInstanceOf[Arrow[OX[VX], C, EX & S2]]
+                                                val reentry2 = kyo.crossing(entries, contA.chain(contB))
                                                 loop[OutT, Y, Any, S2](pending, handler.clauseDispatch(reentry2), next, ctx2)
                                             case outcome =>
                                                 val entries = dumped(stack, idx, kyo)

@@ -186,7 +186,7 @@ class SafepointConcurrencyTest extends AnyFreeSpec:
                         [C] =>
                             _ =>
                                 started = true
-                                Loop.continue((), 1: Int < Any)
+                                Loop.continue(1)
                         ,
                         a => a
                     )

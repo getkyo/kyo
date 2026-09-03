@@ -205,7 +205,7 @@ class ProtoKernelTest extends AnyFreeSpec:
         }
 
         "handleLoop" in {
-            val v = ArrowEffect.handleLoop(Tag[Ask], ask.map(_ + 1))([C] => _ => Loop.continue((), 3: Int < Any))
+            val v = ArrowEffect.handleLoop(Tag[Ask], ask.map(_ + 1))([C] => _ => Loop.continue(3))
             assert(v.eval == 4)
         }
 
@@ -216,7 +216,7 @@ class ProtoKernelTest extends AnyFreeSpec:
 
         "handleLoopState" in {
             val v: Int < Any = ArrowEffect.handleLoopState(Tag[Ask], 7, ask.map(_ + 1))(
-                [C] => (state, _) => Loop.continue(state + 1, state: Int < Any),
+                [C] => (state, _) => Loop.continue(state + 1, state),
                 (state, a) => a * 100 + state
             )
             assert(v.eval == 808)
@@ -224,7 +224,7 @@ class ProtoKernelTest extends AnyFreeSpec:
 
         "handleLoopState without a done clause" in {
             val v = ArrowEffect.handleLoopState(Tag[Ask], 7, ask.map(_ + 1))(
-                [C] => (state, _) => Loop.continue(state + 1, state: Int < Any)
+                [C] => (state, _) => Loop.continue(state + 1, state)
             )
             assert(v.eval == 8)
         }
@@ -239,7 +239,7 @@ class ProtoKernelTest extends AnyFreeSpec:
 
         "handleLoopWith" in {
             val v: Int < Any = ArrowEffect.handleLoopWith(Tag[Ask], ask.map(_ + 1))(
-                [C] => _ => Loop.continue((), 3: Int < Any),
+                [C] => _ => Loop.continue(3),
                 a => a
             )((b: Int) => b * 10)
             assert(v.eval == 40)
@@ -247,7 +247,7 @@ class ProtoKernelTest extends AnyFreeSpec:
 
         "handleLoopStateWith" in {
             val v: Int < Any = ArrowEffect.handleLoopStateWith(Tag[Ask], 7, ask.map(_ + 1))(
-                [C] => (state, _) => Loop.continue(state + 1, state: Int < Any),
+                [C] => (state, _) => Loop.continue(state + 1, state),
                 (state, a) => a + state
             )(b => b * 10)
             assert(v.eval == 160)

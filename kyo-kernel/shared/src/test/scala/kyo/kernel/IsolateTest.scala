@@ -29,8 +29,8 @@ class IsolateTest extends Test:
             [C] =>
                 (s, in) =>
                     in match
-                        case Present(n) => Loop.continue(n, (n: Int < Any))
-                        case Absent     => Loop.continue(s, (s: Int < Any)),
+                        case Present(n) => Loop.continue(n, (n))
+                        case Absent     => Loop.continue(s, (s)),
             (s, a) => (s, a)
         )
 
@@ -39,8 +39,8 @@ class IsolateTest extends Test:
             [C] =>
                 (s, in) =>
                     in match
-                        case Present(n) => Loop.continue(n, (n: Int < Any))
-                        case Absent     => Loop.continue(s, (s: Int < Any)),
+                        case Present(n) => Loop.continue(n, (n))
+                        case Absent     => Loop.continue(s, (s)),
             (s, a) => (s, a)
         )
 
@@ -766,7 +766,7 @@ class IsolateTest extends Test:
         def read: Int < TestEffect1 = ContextEffect.suspend(Tag[TestEffect1])
 
         def answerAsk[A, S](value: Int)(v: A < (Ask & S)): A < S =
-            ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue((), value: Int < Any), a => a)
+            ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue(value), a => a)
 
         def requestStop(): Unit =
             discard(Safepoint.get())

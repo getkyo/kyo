@@ -327,7 +327,7 @@ object ArrowEffect:
         inline effectTag: Tag[E],
         v: A < (E & S)
     )(
-        inline handle: [C] => I[C] => Loop.Outcome2[Unit, O[C] < (E & S & S2), A < (S & S2)] < (S & S2)
+        inline handle: [C] => I[C] => Loop.Outcome[O[C] < (E & S & S2), A < (S & S2)] < (S & S2)
     )(using inline _frame: Frame): A < (S & S2) =
         handleLoop(effectTag, v)(handle, a => a)
 
@@ -350,17 +350,50 @@ object ArrowEffect:
       * @return
       *   The computation result with the function implementation provided
       */
+    @nowarn("msg=anonymous")
     inline def handleLoop[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](
         inline effectTag: Tag[E],
         v: A < (E & S)
     )(
-        inline handle: [C] => I[C] => Loop.Outcome2[Unit, O[C] < (E & S & S2), B < (S & S2)] < (S & S2),
+        inline handle: [C] => I[C] => Loop.Outcome[O[C] < (E & S & S2), B < (S & S2)] < (S & S2),
         inline done: A => B < (S & S2)
     )(using inline _frame: Frame): B < (S & S2) =
-        handleLoopState[I, O, E, A, B, S, S2, Unit](effectTag, (), v)(
-            [C] => (st: Unit, input: I[C]) => handle[C](input),
-            (st, v0) => done(v0)
-        )
+        def onDone(v0: A): B < (S & S2) = done(v0)
+        v match
+            case _: Pending[?, ?] =>
+                val h =
+                    new Handler.LoopHandler[I, O, E, A, B, S & S2]:
+                        def tag = effectTag
+                        def run[X](input: I[X]) =
+                            handle[X](input)
+                        override def answers[X](
+                            input0: I[X],
+                            k0: Arrow[O[X], A, E & S & S2],
+                            armed: Boolean,
+                            slot: Safepoint.Slot,
+                            frame: Frame
+                        ): Loop.Outcome[A < (E & S & S2), B < (S & S2)] < (S & S2) =
+                            Handler.answersLoop[I, O, E, A, B, S & S2, X](
+                                effectTag,
+                                [C] => (in: I[C]) => handle[C](in),
+                                frame,
+                                input0,
+                                k0,
+                                armed,
+                                slot
+                            )
+                        def done(state: Unit, v0: A) = onDone(v0)
+
+                new Pending.HandleArrow[Unit, E, A, B, B, S & S2]:
+                    override def frame = _frame
+                    def value          = v
+                    def handler        = h
+                    def state          = ()
+                    def cont           = Arrow.id
+                end new
+            case _ => onDone(Nested.unnest(v))
+        end match
+    end handleLoop
 
     /** Handles an arrow effect with a loop-based approach, custom completion handling and a recover arm.
       *
@@ -380,19 +413,56 @@ object ArrowEffect:
       * @return
       *   The computation result with the function implementation provided
       */
+    @nowarn("msg=anonymous")
     inline def handleLoop[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](
         inline effectTag: Tag[E],
         v: A < (E & S)
     )(
-        inline handle: [C] => I[C] => Loop.Outcome2[Unit, O[C] < (E & S & S2), B < (S & S2)] < (S & S2),
+        inline handle: [C] => I[C] => Loop.Outcome[O[C] < (E & S & S2), B < (S & S2)] < (S & S2),
         inline done: A => B < (S & S2),
         inline recover: Throwable => Maybe[B < (S & S2)]
     )(using inline _frame: Frame): B < (S & S2) =
-        handleLoopState[I, O, E, A, B, S, S2, Unit](effectTag, (), v)(
-            [C] => (st: Unit, input: I[C]) => handle[C](input),
-            (st, v0) => done(v0),
-            (st, ex) => recover(ex)
-        )
+        def onDone(v0: A): B < (S & S2)                   = done(v0)
+        def onRecover(ex: Throwable): Maybe[B < (S & S2)] = recover(ex)
+        v match
+            case _: Pending[?, ?] =>
+                val h =
+                    new Handler.LoopHandler[I, O, E, A, B, S & S2]:
+                        def tag = effectTag
+                        def run[X](input: I[X]) =
+                            handle[X](input)
+                        override def answers[X](
+                            input0: I[X],
+                            k0: Arrow[O[X], A, E & S & S2],
+                            armed: Boolean,
+                            slot: Safepoint.Slot,
+                            frame: Frame
+                        ): Loop.Outcome[A < (E & S & S2), B < (S & S2)] < (S & S2) =
+                            Handler.answersLoop[I, O, E, A, B, S & S2, X](
+                                effectTag,
+                                [C] => (in: I[C]) => handle[C](in),
+                                frame,
+                                input0,
+                                k0,
+                                armed,
+                                slot
+                            )
+                        def done(state: Unit, v0: A)                     = onDone(v0)
+                        override def recover(state: Unit, ex: Throwable) = onRecover(ex)
+
+                new Pending.HandleArrow[Unit, E, A, B, B, S & S2]:
+                    override def frame = _frame
+                    def value          = v
+                    def handler        = h
+                    def state          = ()
+                    def cont           = Arrow.id
+                end new
+            case _ =>
+                try onDone(Nested.unnest(v))
+                catch
+                    case ex if NonFatal(ex) => onRecover(ex).getOrElse(throw ex)
+        end match
+    end handleLoop
 
     // Diverges from main: main's stateful `handleLoop` overloads are `handleLoopState` here, and the
     // last overload adds `recover` (D2).
@@ -464,18 +534,18 @@ object ArrowEffect:
         v match
             case _: Pending[?, ?] =>
                 val h =
-                    new Handler.LoopHandler[State, I, O, E, A, B, S & S2]:
+                    new Handler.LoopStateHandler[State, I, O, E, A, B, S & S2]:
                         def tag = effectTag
                         def run[X](st: State, input: I[X]) =
                             handle[X](st, input)
                         override def answers[X](
                             state0: State,
                             input0: I[X],
-                            k0: Arrow[Any, Any, Any],
+                            k0: Arrow[O[X], A, E & S & S2],
                             armed: Boolean,
                             slot: Safepoint.Slot,
                             frame: Frame
-                        ): Loop.Outcome2[State, Any, B < (S & S2)] < (S & S2) =
+                        ): Loop.Outcome2[State, A < (E & S & S2), B < (S & S2)] < (S & S2) =
                             Handler.answersLoopState[State, I, O, E, A, B, S & S2, X](
                                 effectTag,
                                 [C] => (st: State, in: I[C]) => handle[C](st, in),
@@ -535,18 +605,18 @@ object ArrowEffect:
         v match
             case _: Pending[?, ?] =>
                 val h =
-                    new Handler.LoopHandler[State, I, O, E, A, B, S & S2]:
+                    new Handler.LoopStateHandler[State, I, O, E, A, B, S & S2]:
                         def tag = effectTag
                         def run[X](st: State, input: I[X]) =
                             handle[X](st, input)
                         override def answers[X](
                             state0: State,
                             input0: I[X],
-                            k0: Arrow[Any, Any, Any],
+                            k0: Arrow[O[X], A, E & S & S2],
                             armed: Boolean,
                             slot: Safepoint.Slot,
                             frame: Frame
-                        ): Loop.Outcome2[State, Any, B < (S & S2)] < (S & S2) =
+                        ): Loop.Outcome2[State, A < (E & S & S2), B < (S & S2)] < (S & S2) =
                             Handler.answersLoopState[State, I, O, E, A, B, S & S2, X](
                                 effectTag,
                                 [C] => (st: State, in: I[C]) => handle[C](st, in),
@@ -692,21 +762,59 @@ object ArrowEffect:
       * @param f
       *   The transformation applied to the region's result
       */
+    @nowarn("msg=anonymous")
     inline def handleLoopWith[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](
         using inline _frame: Frame
     )(
         inline effectTag: Tag[E],
         v: A < (E & S)
     )(
-        inline handle: [X] => I[X] => Loop.Outcome2[Unit, O[X] < (E & S & S2), B < (S & S2)] < (S & S2),
+        inline handle: [X] => I[X] => Loop.Outcome[O[X] < (E & S & S2), B < (S & S2)] < (S & S2),
         inline done: A => B < (S & S2)
     )[C, S3](
         inline f: B => C < S3
     ): C < (S & S2 & S3) =
-        handleLoopStateWith[I, O, E, A, B, S, S2, Unit](effectTag, (), v)(
-            [X] => (st: Unit, input: I[X]) => handle[X](input),
-            (st, v0) => done(v0)
-        )(f)
+        def onDone(v0: A): B < (S & S2) = done(v0)
+        def onF(v0: B): C < S3          = f(v0)
+        v match
+            case _: Pending[?, ?] =>
+                val h =
+                    new Handler.LoopHandler[I, O, E, A, B, S & S2]:
+                        def tag = effectTag
+                        def run[X](input: I[X]) =
+                            handle[X](input)
+                        override def answers[X](
+                            input0: I[X],
+                            k0: Arrow[O[X], A, E & S & S2],
+                            armed: Boolean,
+                            slot: Safepoint.Slot,
+                            frame: Frame
+                        ): Loop.Outcome[A < (E & S & S2), B < (S & S2)] < (S & S2) =
+                            Handler.answersLoop[I, O, E, A, B, S & S2, X](
+                                effectTag,
+                                [X0] => (in: I[X0]) => handle[X0](in),
+                                frame,
+                                input0,
+                                k0,
+                                armed,
+                                slot
+                            )
+                        def done(state: Unit, v0: A) = onDone(v0)
+
+                new Pending.HandleArrowWith[Unit, E, A, B, C, S & S2 & S3]:
+                    override def frame = _frame
+                    def value          = v
+                    def handler        = h
+                    def state          = ()
+                    def cont           = this
+                    override def apply[D, S4](b: B < S4, cont2: Arrow[C, D, S4]) =
+                        b match
+                            case kyo: Pending[B, S4] @unchecked => Effect.defer(kyo, this, cont2)
+                            case _                              => cont2(onF(Nested.unnest[B](b)), Arrow.id)
+                end new
+            case _ => onDone(Nested.unnest(v)).map(onF)
+        end match
+    end handleLoopWith
 
     /** handleLoopState with a continuation fused into the region node: the region's result flows into f without a separate map node.
       *
@@ -731,18 +839,18 @@ object ArrowEffect:
         v match
             case _: Pending[?, ?] =>
                 val h =
-                    new Handler.LoopHandler[State, I, O, E, A, B, S & S2]:
+                    new Handler.LoopStateHandler[State, I, O, E, A, B, S & S2]:
                         def tag = effectTag
                         def run[X](st: State, input: I[X]) =
                             handle[X](st, input)
                         override def answers[X](
                             state0: State,
                             input0: I[X],
-                            k0: Arrow[Any, Any, Any],
+                            k0: Arrow[O[X], A, E & S & S2],
                             armed: Boolean,
                             slot: Safepoint.Slot,
                             frame: Frame
-                        ): Loop.Outcome2[State, Any, B < (S & S2)] < (S & S2) =
+                        ): Loop.Outcome2[State, A < (E & S & S2), B < (S & S2)] < (S & S2) =
                             Handler.answersLoopState[State, I, O, E, A, B, S & S2, X](
                                 effectTag,
                                 [C] => (st: State, in: I[C]) => handle[C](st, in),

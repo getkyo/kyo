@@ -20,7 +20,7 @@ class ArrowEffectThreadingTest extends AnyFreeSpec:
             ask.map(a => ask.map(b => say("x").andThen(ask.map(c => a + b + c))))
         val region: Int < Say =
             ArrowEffect.handleLoopState(Tag[Ask], 0, body)(
-                [C] => (n, _) => Loop.continue(n + 1, n: Int < Any),
+                [C] => (n, _) => Loop.continue(n + 1, n),
                 (n, a) => n * 1000 + a
             )
         val r0 = ArrowEffect.handleCont(Tag[Say], region)(
@@ -67,7 +67,7 @@ class ArrowEffectThreadingTest extends AnyFreeSpec:
             null,
             () =>
                 val handled = ArrowEffect.handleLoopState(Tag[Ask], 0, loop(20000))(
-                    [C] => (s, _) => Effect.defer(Loop.continue(s + 1, 1: Int < Any)),
+                    [C] => (s, _) => Effect.defer(Loop.continue(s + 1, 1)),
                     (s, a) => s + a
                 )
                 result =

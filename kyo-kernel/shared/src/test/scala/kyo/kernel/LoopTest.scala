@@ -736,7 +736,7 @@ class LoopTest extends AnyFreeSpec:
             [C] =>
                 _ =>
                     answered += 1
-                    Loop.continue((), 1: Int < Any)
+                    Loop.continue(1)
             ,
             a => a
         )
@@ -773,7 +773,7 @@ class LoopTest extends AnyFreeSpec:
         def step(i: Int): Loop.Outcome[Int, Int] < Step = ArrowEffect.suspend[Any](Tag[Step], i)
         val looped: Int < Step                          = Loop.indexed(0)((_, i) => step(i))
         val r: Int < Any = ArrowEffect.handleLoop(Tag[Step], looped)(
-            [C] => i => Loop.continue((), (if i < 3 then Loop.continue(i + 1) else Loop.done(i)): Loop.Outcome[Int, Int] < Any),
+            [C] => i => Loop.continue((if i < 3 then Loop.continue(i + 1) else Loop.done(i)): Loop.Outcome[Int, Int] < Any),
             a => a
         )
         assert(r.eval == 3)

@@ -20,10 +20,10 @@ class EvalThreadingTest extends AnyFreeSpec:
     def say(s: String): Unit < Say = ArrowEffect.suspend[Any](Tag[Say], s)
 
     def stateful(body: Int < (Ask & Say)): Int < Say =
-        ArrowEffect.handleLoopState(Tag[Ask], 0, body)([C] => (s, _) => Loop.continue(s + 1, s: Int < Any), (_, a) => a)
+        ArrowEffect.handleLoopState(Tag[Ask], 0, body)([C] => (s, _) => Loop.continue(s + 1, s), (_, a) => a)
 
     def answerAsk[A, S](value: Int)(v: A < (Ask & S)): A < S =
-        ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue((), value: Int < Any), a => a)
+        ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue(value), a => a)
 
     "a captured continuation resumes on another thread" in {
         var stored: Maybe[Arrow[Unit, Int, Say]] = Maybe.empty
@@ -62,7 +62,7 @@ class EvalThreadingTest extends AnyFreeSpec:
                     (n, _) =>
                         clauseRuns += 1
                         if n == 10 then discard(Safepoint.stop(Thread.currentThread()))
-                        Loop.continue(n + 1, 1: Int < Any)
+                        Loop.continue(n + 1, 1)
                 ,
                 (n, a) => n + a
             )

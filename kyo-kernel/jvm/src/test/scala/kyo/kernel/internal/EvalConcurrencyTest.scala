@@ -17,7 +17,7 @@ class EvalConcurrencyTest extends AnyFreeSpec:
     def say(s: String): Unit < Say = ArrowEffect.suspend[Any](Tag[Say], s)
 
     def stateful(body: Int < (Ask & Say)): Int < Say =
-        ArrowEffect.handleLoopState(Tag[Ask], 0, body)([C] => (s, _) => Loop.continue(s + 1, s: Int < Any), (_, a) => a)
+        ArrowEffect.handleLoopState(Tag[Ask], 0, body)([C] => (s, _) => Loop.continue(s + 1, s), (_, a) => a)
 
     "a captured continuation resumes on other threads, each shot independent" in {
         var stored: Maybe[Unit => Int < Say] = Maybe.empty

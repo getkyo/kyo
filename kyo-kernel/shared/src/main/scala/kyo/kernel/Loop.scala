@@ -143,7 +143,7 @@ object Loop:
     // be told from a continuation; unnest reads the answer back out.
     final private[kyo] class Done[O](val value: O)
 
-    private[kyo] def unnest[A, B, O](v: Outcome2[A, B, O]): O =
+    private[kyo] def unnest[A, B, C, D, O](v: Outcome[A, O] | Outcome2[A, B, O] | Outcome3[A, B, C, O] | Outcome4[A, B, C, D, O]): O =
         v match
             case v: Done[O @unchecked] => v.value
             case v                     => v.asInstanceOf[O]
