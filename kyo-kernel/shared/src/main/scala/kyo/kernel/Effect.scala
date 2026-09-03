@@ -13,6 +13,19 @@ import language.implicitConversions
 import scala.annotation.nowarn
 import scala.util.control.NonFatal
 
+/** The base trait for all effects in the Kyo effect system.
+  *
+  * When code performs an effectful operation, instead of executing immediately, effects create a suspended computation that captures what
+  * needs to be done. These suspended computations can then be interpreted in different ways through effect handlers.
+  *
+  * This suspension mechanism is the foundation of Kyo's effect system. It allows effectful code to be pure and composable - rather than
+  * performing operations directly, code builds up a description of what operations should occur. This description can then be interpreted
+  * by handlers that determine how the operations are actually executed.
+  *
+  * There are two kinds of effects:
+  *   - [[ArrowEffect]] for suspended computations involving input/output transformations.
+  *   - [[ContextEffect]] for suspended computations requiring contextual values.
+  */
 abstract class Effect private[kernel] ()
 
 object Effect:

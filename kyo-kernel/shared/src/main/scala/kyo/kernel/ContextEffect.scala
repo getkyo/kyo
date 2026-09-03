@@ -9,10 +9,37 @@ import kyo.kernel.internal.Nested
 import kyo.kernel.internal.Pending
 import scala.annotation.nowarn
 
+/** Represents the requirement for a value that will be provided later by a handler.
+  *
+  * While ArrowEffect represents functions awaiting implementation, ContextEffect represents values awaiting provision. It captures the need
+  * for a value of type A without specifying where that value comes from. When a handler provides a value, that value becomes available
+  * within the handler's scope - once the handler's scope ends, the value is no longer available to computations.
+  *
+  * This mechanism aligns with dependency injection patterns - handlers act as injectors that provide values within their scope, and
+  * different handlers can provide different values in different scopes. The composition of effects automatically tracks these requirements
+  * through the type system.
+  *
+  * Context effects come in two varieties. By default, values are inherited across async boundaries when computations are suspended and
+  * resumed. Effects that mix the ContextEffect.Noninheritable trait do not cross async boundaries, requiring fresh values when computation
+  * resumes asynchronously. This isolation is useful for values that should remain within a single async context, like thread-local data.
+  *
+  * The polymorphic type parameter A defines what type of value is required:
+  * @tparam A
+  *   The type of value that will be provided by a handler
+  */
 abstract class ContextEffect[+A] extends Effect
 
 object ContextEffect:
 
+    /** Creates a suspended computation that requests a value from a context effect. This establishes a requirement for a value that must be
+      * satisfied by a handler higher up in the program. The requirement becomes part of the effect type, ensuring that handlers must
+      * provide the requested value before the program can execute.
+      *
+      * @param effectTag
+      *   Identifies which context effect to request the value from
+      * @return
+      *   A computation that will receive the requested value when executed
+      */
     @nowarn("msg=anonymous")
     inline def suspend[A, E <: ContextEffect[A]](inline effectTag: Tag[E])(using inline _frame: Frame): A < E =
         new Pending.SuspendContext[A, E, A, E]:
@@ -21,6 +48,16 @@ object ContextEffect:
             def default        = Maybe.empty
             def cont           = Arrow.id
 
+    /** Creates a suspended computation that requests a context value and transforms it immediately upon receipt. This combines the
+      * operations of requesting and transforming a context value into a single step.
+      *
+      * @param effectTag
+      *   Identifies which context effect to request the value from
+      * @param f
+      *   The transformation to apply to the received value
+      * @return
+      *   A computation containing the transformed value
+      */
     @nowarn("msg=anonymous")
     inline def suspendWith[A, E <: ContextEffect[A], B, S](
         inline effectTag: Tag[E]
@@ -37,6 +74,17 @@ object ContextEffect:
                     case kyo: Pending[A, S2] @unchecked => Effect.defer(kyo, this, cont2)
                     case _                              => cont2(f(Nested.unnest[A](v)), Arrow.id)
 
+    /** Requests a value from a context effect with a specified default value. Unlike standard suspend, this version does not create a
+      * mandatory effect requirement. If no handler provides a value, the computation proceeds with the default value instead. This makes
+      * the context value optional rather than required.
+      *
+      * @param effectTag
+      *   Identifies which context effect to request the value from
+      * @param default
+      *   The value to use when no handler provides one
+      * @return
+      *   A computation that provides either the context value or default
+      */
     @nowarn("msg=anonymous")
     inline def suspend[A, E <: ContextEffect[A]](
         inline effectTag: Tag[E],
@@ -48,6 +96,16 @@ object ContextEffect:
             def default        = Maybe(defaultValue)
             def cont           = Arrow.id
 
+    /** Creates a suspended computation that requests a context value and transforms it immediately upon receipt. This combines the
+      * operations of requesting and transforming a context value into a single step.
+      *
+      * @param effectTag
+      *   Identifies which context effect to request the value from
+      * @param f
+      *   The transformation to apply to the received value
+      * @return
+      *   A computation containing the transformed value
+      */
     @nowarn("msg=anonymous")
     inline def suspendWith[A, E <: ContextEffect[A], B, S](
         inline effectTag: Tag[E],
@@ -85,6 +143,19 @@ object ContextEffect:
     )(v: B < (E & S))(using inline _frame: Frame): B < S =
         handle(effectTag)(derive, (parent: A) => parent, (parent: A, _: A, _: A) => parent)(v)
 
+    /** Handles a context effect by providing a value for a specific computation scope. This satisfies suspend operations within that scope
+      * by making the provided value available to them. The handler establishes a region where the context value is defined and can be
+      * accessed.
+      *
+      * @param effectTag
+      *   Identifies which context effect to handle
+      * @param value
+      *   The value to provide to the computation
+      * @param v
+      *   The computation requiring the context value
+      * @return
+      *   The computation result with the context value provided
+      */
     inline def handle[A, E <: ContextEffect[A], B, S](
         inline effectTag: Tag[E]
     )(
@@ -95,6 +166,19 @@ object ContextEffect:
     )(v: B < (E & S))(using inline _frame: Frame): B < S =
         handle(effectTag)((outer: Maybe[A]) => outer.fold(ifUndefined)(ifDefined), fork, join)(v)
 
+    /** Handles a context effect by providing a value for a specific computation scope. This satisfies suspend operations within that scope
+      * by making the provided value available to them. The handler establishes a region where the context value is defined and can be
+      * accessed.
+      *
+      * @param effectTag
+      *   Identifies which context effect to handle
+      * @param value
+      *   The value to provide to the computation
+      * @param v
+      *   The computation requiring the context value
+      * @return
+      *   The computation result with the context value provided
+      */
     inline def handle[A, E <: ContextEffect[A], B, S](
         inline effectTag: Tag[E]
     )(
@@ -106,6 +190,19 @@ object ContextEffect:
     )(v: B < (E & S))(using inline _frame: Frame): B < S =
         handle(effectTag)((outer: Maybe[A]) => outer.fold(ifUndefined)(ifDefined), fork, join, release = release)(v)
 
+    /** Handles a context effect by providing a value for a specific computation scope. This satisfies suspend operations within that scope
+      * by making the provided value available to them. The handler establishes a region where the context value is defined and can be
+      * accessed.
+      *
+      * @param effectTag
+      *   Identifies which context effect to handle
+      * @param value
+      *   The value to provide to the computation
+      * @param v
+      *   The computation requiring the context value
+      * @return
+      *   The computation result with the context value provided
+      */
     @nowarn("msg=anonymous")
     inline def handle[A, E <: ContextEffect[A], B, S](
         inline effectTag: Tag[E]
