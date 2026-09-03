@@ -1,25 +1,32 @@
 package kyo.kernel
 
-import kyo.Const
-import kyo.Loop
-import kyo.Maybe
-import kyo.Tag
-import kyo.discard
+import kyo.*
+import kyo.kernel.*
 import org.scalatest.freespec.AnyFreeSpec
 import scala.collection.mutable.ListBuffer
 
 class ContextEffectTest extends AnyFreeSpec:
 
+    sealed trait TestRuntimeEffect1 extends ContextEffect[Int]
+    sealed trait TestRuntimeEffect2 extends ContextEffect[String]
+    sealed trait TestRuntimeEffect3 extends ContextEffect[Boolean]
+
+    def testRuntimeEffect1: Int < TestRuntimeEffect1 =
+        ContextEffect.suspend(Tag[TestRuntimeEffect1])
+
+    def testRuntimeEffect2: String < TestRuntimeEffect2 =
+        ContextEffect.suspend(Tag[TestRuntimeEffect2])
+
+    def testRuntimeEffect3: Boolean < TestRuntimeEffect3 =
+        ContextEffect.suspend(Tag[TestRuntimeEffect3])
+
     sealed trait Count extends ContextEffect[Int]
-    sealed trait Name  extends ContextEffect[String]
-    sealed trait Flag  extends ContextEffect[Boolean]
+    def count: Int < Count = ContextEffect.suspend(Tag[Count])
 
     sealed trait Cfg    extends ContextEffect[Int]
     sealed trait CfgSub extends Cfg
 
-    def count: Int < Count   = ContextEffect.suspend(Tag[Count])
-    def label: String < Name = ContextEffect.suspend(Tag[Name])
-    def flag: Boolean < Flag = ContextEffect.suspend(Tag[Flag])
+    sealed trait MapCtx extends ContextEffect[Map[String, Int]]
 
     sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())
@@ -27,47 +34,148 @@ class ContextEffectTest extends AnyFreeSpec:
     sealed trait Say extends ArrowEffect[Const[String], Const[Unit]]
     def say(s: String): Unit < Say = ArrowEffect.suspend[Any](Tag[Say], s)
 
-    "reads what is bound" - {
+    "suspend" in {
+        val effect: Int < TestRuntimeEffect1 = testRuntimeEffect1
+        discard(effect)
+        // ContextEffect.suspend produces an Int < TestRuntimeEffect1; the type ascription above is the verification
+        succeed
+    }
 
-        "a binding answers a read under it" in {
-            assert(ContextEffect.handleInheritable(Tag[Count], 42)(count).eval == 42)
+    "handle" - {
+
+        "const value" in {
+            val effect = testRuntimeEffect1
+            val result = ContextEffect.handleInheritable(Tag[TestRuntimeEffect1], 42)(effect)
+            assert(result.eval == 42)
         }
+
+        "single effect" in {
+            val effect = testRuntimeEffect1
+            val result = ContextEffect.handleInheritable(Tag[TestRuntimeEffect1], 42, _ + 1)(effect)
+            assert(result.eval == 42)
+        }
+
+        "two effects" in {
+            val effect =
+                for
+                    i <- testRuntimeEffect1
+                    s <- testRuntimeEffect2
+                yield s"$i-$s"
+
+            val result =
+                ContextEffect.handleInheritable(Tag[TestRuntimeEffect1], 42, _ + 1) {
+                    ContextEffect.handleInheritable(Tag[TestRuntimeEffect2], "default", _.toUpperCase)(effect)
+                }
+
+            assert(result.eval == "42-default")
+        }
+
+        "three effects" in {
+            val effect =
+                for
+                    i <- testRuntimeEffect1
+                    s <- testRuntimeEffect2
+                    b <- testRuntimeEffect3
+                yield s"$i-$s-$b"
+
+            val result =
+                ContextEffect.handleInheritable(Tag[TestRuntimeEffect1], 42, _ + 1) {
+                    ContextEffect.handleInheritable(Tag[TestRuntimeEffect2], "default", _.toUpperCase) {
+                        ContextEffect.handleInheritable(Tag[TestRuntimeEffect3], false, !_)(effect): String < (TestRuntimeEffect1 &
+                            TestRuntimeEffect2)
+                    }
+                }
+
+            assert(result.eval == "42-default-false")
+        }
+
+        "ifUndefined behavior" in {
+            val effect = testRuntimeEffect1
+            val result = ContextEffect.handleInheritable(Tag[TestRuntimeEffect1], 100, _ * 2)(effect)
+            assert(result.eval == 100)
+        }
+
+        "ifDefined behavior" in {
+            val effect =
+                for
+                    _ <- testRuntimeEffect1
+                    i <- testRuntimeEffect1
+                yield i
+
+            val result =
+                ContextEffect.handleInheritable(Tag[TestRuntimeEffect1], 100, _ * 2) {
+                    ContextEffect.handleInheritable(Tag[TestRuntimeEffect1], 100, _ * 2)(effect)
+                }
+            assert(result.eval == 200)
+        }
+
+        "multiple uses of the same effect" in {
+            val effect =
+                for
+                    i1 <- testRuntimeEffect1
+                    i2 <- testRuntimeEffect1
+                    i3 <- testRuntimeEffect1
+                yield i1 + i2 + i3
+
+            val result = ContextEffect.handleInheritable(Tag[TestRuntimeEffect1], 10, _ + 1)(effect)
+            assert(result.eval == 30)
+        }
+
+        "nested effects" in {
+            val innerEffect = testRuntimeEffect2
+            val outerEffect =
+                for
+                    i <- testRuntimeEffect1
+                    s <- ContextEffect.handleInheritable(Tag[TestRuntimeEffect2], "inner", _.toUpperCase)(innerEffect)
+                yield s"$i-$s"
+
+            val result = ContextEffect.handleInheritable(Tag[TestRuntimeEffect1], 42, _ + 1)(outerEffect)
+            assert(result.eval == "42-inner")
+        }
+
+        "effect order preservation" in {
+            val effect =
+                for
+                    i <- testRuntimeEffect1
+                    s <- testRuntimeEffect2
+                    b <- testRuntimeEffect3
+                yield s"$i-$s-$b"
+
+            val result =
+                ContextEffect.handleInheritable(Tag[TestRuntimeEffect3], true, !_) {
+                    ContextEffect.handleInheritable(Tag[TestRuntimeEffect2], "middle", _.toUpperCase) {
+                        ContextEffect.handleInheritable(Tag[TestRuntimeEffect1], 10, _ * 2)(effect): String < (TestRuntimeEffect2 &
+                            TestRuntimeEffect3)
+                    }
+                }
+
+            assert(result.eval == "10-middle-true")
+        }
+
+        "with transformation" in {
+            val effect =
+                for
+                    i <- testRuntimeEffect1
+                    s <- testRuntimeEffect2
+                yield s"$i-$s"
+
+            val result = ContextEffect.handleInheritable(Tag[TestRuntimeEffect1], 1, i => if i < 10 then i * 2 else i / 2) {
+                ContextEffect.handleInheritable(Tag[TestRuntimeEffect2], "start", s => s + s.length.toString)(effect)
+            }
+
+            assert(result.eval == "1-start")
+        }
+    }
+
+    "reads what is bound" - {
 
         "a read transforms in the same step" in {
             val v = ContextEffect.suspendWith(Tag[Count])(c => c * 2)
             assert(ContextEffect.handleInheritable(Tag[Count], 21)(v).eval == 42)
         }
-
-        "every read under one binding takes the same value" in {
-            val v = count.map(a => count.map(b => count.map(c => a + b + c)))
-            assert(ContextEffect.handleInheritable(Tag[Count], 10, _ + 1)(v).eval == 30)
-        }
-
-        "bindings of different effects stand together" in {
-            val v = count.map(c => label.map(n => flag.map(f => s"$c-$n-$f")))
-            val r =
-                ContextEffect.handleInheritable(Tag[Flag], true, !_) {
-                    ContextEffect.handleInheritable(Tag[Name], "middle", _.toUpperCase) {
-                        ContextEffect.handleInheritable(Tag[Count], 10, _ * 2)(v): String < (Name & Flag)
-                    }
-                }
-            assert(r.eval == "10-middle-true")
-        }
     }
 
     "layering" - {
-
-        "nothing bound outside takes ifUndefined" in {
-            assert(ContextEffect.handleInheritable(Tag[Count], 100, _ * 2)(count).eval == 100)
-        }
-
-        "a binding inside another applies ifDefined to it" in {
-            val r =
-                ContextEffect.handleInheritable(Tag[Count], 100, _ * 2) {
-                    ContextEffect.handleInheritable(Tag[Count], 100, _ * 2)(count)
-                }
-            assert(r.eval == 200)
-        }
 
         "the innermost binding is what a read takes" in {
             val r =
@@ -409,40 +517,6 @@ class ContextEffectTest extends AnyFreeSpec:
             )
             assert(answerAsk(0)(first).eval == 42)
             assert(log.toList == List("clause", "release cfg 1", "done cfg 1"))
-        }
-    }
-
-    sealed trait MapCtx extends ContextEffect[Map[String, Int]]
-
-    "three bindings, ported" - {
-        sealed trait Label extends ContextEffect[String]
-        sealed trait Flag  extends ContextEffect[Boolean]
-
-        val read: String < (Count & Label & Flag) =
-            for
-                i <- ContextEffect.suspend(Tag[Count])
-                s <- ContextEffect.suspend(Tag[Label])
-                b <- ContextEffect.suspend(Tag[Flag])
-            yield s"$i-$s-$b"
-
-        "each read takes its own binding" in {
-            val result =
-                ContextEffect.handleInheritable(Tag[Count], 42, _ + 1) {
-                    ContextEffect.handleInheritable(Tag[Label], "default", _.toUpperCase) {
-                        ContextEffect.handleInheritable(Tag[Flag], false, !_)(read): String < (Count & Label)
-                    }
-                }
-            assert(result.eval == "42-default-false")
-        }
-
-        "the binding order does not change what a read takes" in {
-            val result =
-                ContextEffect.handleInheritable(Tag[Flag], true, !_) {
-                    ContextEffect.handleInheritable(Tag[Label], "middle", _.toUpperCase) {
-                        ContextEffect.handleInheritable(Tag[Count], 10, _ * 2)(read): String < (Label & Flag)
-                    }
-                }
-            assert(result.eval == "10-middle-true")
         }
     }
 

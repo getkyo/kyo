@@ -26,6 +26,70 @@ class SafepointConcurrencyTest extends AnyFreeSpec:
     sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())
 
+    // Slot is an opaque Int, so the identity checks in the ported cases below need multiversal
+    // equality for it.
+    private given CanEqual[Safepoint.Slot, Safepoint.Slot] = CanEqual.derived
+
+    // Ported from main's kyo/kernel/internal/SafepointTest.scala. Main's Safepoint was an implicit
+    // per-evaluation value and its suite pinned that a computation never carries one across a
+    // thread and never gets a fresh one within a thread. Here Safepoint is the evaluator's
+    // per-thread slot, so the same property is which slot a thread resolves. Main's remaining
+    // cases are omitted by design: interceptors, Safepoint.ensure and the depth/interceptor bits
+    // of Safepoint.State are gone from this kernel.
+    "does not allow capturing across threads" in {
+        val slot                             = Safepoint.get()
+        @volatile var forked: Safepoint.Slot = slot
+        val t                                = new Thread(() => forked = Safepoint.get())
+        t.start()
+        t.join(10000)
+        assert(!t.isAlive)
+        assert(forked != slot)
+    }
+
+    "allows resuming in the same thread" in {
+        val slot                    = Safepoint.get()
+        var resumed: Safepoint.Slot = slot
+        discard {
+            (0: Int < Any).map { _ =>
+                resumed = Safepoint.get()
+                0
+            }.eval
+        }
+        assert(resumed == slot)
+        assert(Safepoint.get() == slot)
+    }
+
+    "no leak between forked executions" in {
+        val slot                             = Safepoint.get()
+        @volatile var forked: Safepoint.Slot = slot
+        @volatile var result                 = 0
+        val t = new Thread(() =>
+            forked = Safepoint.get()
+            result = (1: Int < Any).map(_ + 1).map(_ + 2).eval
+        )
+        t.start()
+        t.join(10000)
+        assert(!t.isAlive)
+        assert(result == 4)
+        assert(forked != slot)
+    }
+
+    "no new Safepoint for nested eval calls" in {
+        val outer                 = Safepoint.get()
+        var inner: Safepoint.Slot = outer
+        val result =
+            (0: Int < Any).map { _ =>
+                val nested =
+                    (21: Int < Any).map { v =>
+                        inner = Safepoint.get()
+                        v
+                    }.eval
+                nested * 2
+            }.eval
+        assert(result == 42)
+        assert(inner == outer)
+    }
+
     "a stop request from another thread is visible once and consumed" in {
         @volatile var ready         = false
         @volatile var stopDelivered = false

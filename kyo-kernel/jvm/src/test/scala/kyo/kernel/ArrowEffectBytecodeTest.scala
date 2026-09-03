@@ -12,7 +12,7 @@ class ArrowEffectBytecodeTest extends AnyFreeSpec:
     class TestSuspend:
         def test() = ArrowEffect.suspend[Int](Tag[TestEffect.type], 42)
 
-    class TestSuspendWith:
+    class TestSuspendMap:
         def test() = ArrowEffect.suspendWith[Int](Tag[TestEffect.type], 42)(_ + 1)
 
     class TestHandleCont:
@@ -25,7 +25,7 @@ class ArrowEffectBytecodeTest extends AnyFreeSpec:
     }
 
     "suspendWith" in {
-        val sizes = methodBytecodeSize[TestSuspendWith]
+        val sizes = methodBytecodeSize[TestSuspendMap]
         assert(sizes == Map("test" -> 14), sizes.toString)
     }
 

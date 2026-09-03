@@ -1,43 +1,71 @@
 package kyo.kernel.internal
 
-import kyo.Maybe
-import kyo.Tag
-import kyo.kernel.ContextEffect
-import org.scalatest.freespec.AnyFreeSpec
+import kyo.*
+import kyo.kernel.*
 
-class ContextTest extends AnyFreeSpec:
+class ContextTest extends Test:
 
     sealed trait TestEffect1 extends ContextEffect[Int]
     sealed trait TestEffect2 extends ContextEffect[String]
     sealed trait Base        extends ContextEffect[Int]
     sealed trait Sub         extends Base
 
-    "empty reads nothing" in {
-        assert(Context.empty.get(Tag[TestEffect1]).isEmpty)
-        assert(Context.empty.get(Tag[TestEffect2]).isEmpty)
-    }
-
-    "bind" - {
-        "reads back the bound value" in {
-            val context = Context.empty.bind(Tag[TestEffect1], 42)
-            assert(context.get(Tag[TestEffect1]) == Maybe(42))
+    "empty" - {
+        "should be empty" in {
+            // Diverges from main: Context has no isEmpty predicate here; the empty context is the
+            // one with no binding to unbind.
+            assert(intercept[Throwable](Context.empty.unbind).getMessage.contains("empty context"))
         }
 
-        "reads nothing for an unbound tag" in {
+        "should not contain any tags" in {
+            assert(Context.empty.get(Tag[TestEffect1]).isEmpty)
+            assert(Context.empty.get(Tag[TestEffect2]).isEmpty)
+        }
+    }
+
+    "contains" - {
+        "should return true for contained tags" in {
+            val context = Context.empty.bind(Tag[TestEffect1], 42)
+            assert(context.get(Tag[TestEffect1]).isDefined)
+        }
+
+        "should return false for non-contained tags" in {
             val context = Context.empty.bind(Tag[TestEffect1], 42)
             assert(context.get(Tag[TestEffect2]).isEmpty)
         }
+    }
 
-        "a second binding of the same tag shadows the first" in {
+    "getOrElse" - {
+        "should return value for contained tags" in {
+            val context = Context.empty.bind(Tag[TestEffect1], 42)
+            assert(context.get(Tag[TestEffect1]).getOrElse(0) == 42)
+        }
+
+        "should return default for non-contained tags" in {
+            val context = Context.empty.bind(Tag[TestEffect1], 42)
+            assert(context.get(Tag[TestEffect2]).getOrElse("default") == "default")
+        }
+    }
+
+    "set" - {
+        "should add new values" in {
+            val context = Context.empty.bind(Tag[TestEffect1], 42)
+            assert(context.get(Tag[TestEffect1]) == Maybe(42))
+        }
+
+        "should update existing values" in {
             val context = Context.empty.bind(Tag[TestEffect1], 42).bind(Tag[TestEffect1], 24)
             assert(context.get(Tag[TestEffect1]) == Maybe(24))
         }
+    }
 
-        "bindings of different tags do not interfere" in {
-            val context = Context.empty.bind(Tag[TestEffect1], 42).bind(Tag[TestEffect2], "test")
-            assert(context.get(Tag[TestEffect1]) == Maybe(42))
-            assert(context.get(Tag[TestEffect2]) == Maybe("test"))
-        }
+    "multiple effects" in {
+        val context = Context.empty
+            .bind(Tag[TestEffect1], 42)
+            .bind(Tag[TestEffect2], "test")
+
+        assert(context.get(Tag[TestEffect1]).getOrElse(0) == 42)
+        assert(context.get(Tag[TestEffect2]).getOrElse("") == "test")
     }
 
     "a read at a supertype" - {
@@ -68,10 +96,6 @@ class ContextTest extends AnyFreeSpec:
             val context = Context.empty.bind(Tag[TestEffect1], 42).bind(Tag[TestEffect2], "test")
             assert(context.unbind.get(Tag[TestEffect2]).isEmpty)
             assert(context.unbind.get(Tag[TestEffect1]) == Maybe(42))
-        }
-
-        "of the empty context fails" in {
-            assert(intercept[Throwable](Context.empty.unbind).getMessage.contains("empty context"))
         }
     }
 

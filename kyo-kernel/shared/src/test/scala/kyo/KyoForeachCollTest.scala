@@ -1,9 +1,5 @@
 package kyo
 
-import kyo.Maybe
-import kyo.TestVariant
-import kyo.discard
-import kyo.kernel.<
 import org.scalatest.freespec.AnyFreeSpec
 
 @TestVariant("Coll", "List", "Chunk")
@@ -16,6 +12,8 @@ class KyoForeachCollTest extends AnyFreeSpec:
 
     @TestVariant("Seq", "List", "Chunk")
     type Coll[X] = Seq[X]
+
+    // @TestVariant("Coll", "List", "Chunk")
     "Coll specialized" - {
         "collectAll" in {
             assert(Kyo.collectAll(Coll.empty).eval == Coll.empty)
@@ -48,13 +46,13 @@ class KyoForeachCollTest extends AnyFreeSpec:
         "collectDiscard" in {
             var count = 0
             val io    = TestEffect1(1).map(_ => count += 1)
-            discard(TestEffect1.run(Kyo.collectAllDiscard(Coll.empty)).eval)
+            TestEffect1.run(Kyo.collectAllDiscard(Coll.empty)).eval
             assert(count == 0)
-            discard(TestEffect1.run(Kyo.collectAllDiscard(Coll(io))).eval)
+            TestEffect1.run(Kyo.collectAllDiscard(Coll(io))).eval
             assert(count == 1)
-            discard(TestEffect1.run(Kyo.collectAllDiscard(Coll.fill(42)(io))).eval)
+            TestEffect1.run(Kyo.collectAllDiscard(Coll.fill(42)(io))).eval
             assert(count == 43)
-            discard(TestEffect1.run(Kyo.collectAllDiscard(Coll.fill(10)(io))).eval)
+            TestEffect1.run(Kyo.collectAllDiscard(Coll.fill(10)(io))).eval
             assert(count == 53)
         }
         "foreach" in {
@@ -68,17 +66,18 @@ class KyoForeachCollTest extends AnyFreeSpec:
             assert(Kyo.foreachIndexed(Coll(1))((idx, v) => (idx, v)).eval == Coll((0, 1)))
             assert(Kyo.foreachIndexed(Coll(1, 2))((idx, v) => (idx, v)).eval == Coll((0, 1), (1, 2)))
             assert(Kyo.foreachIndexed(Coll(1, 2, 3))((idx, v) => (idx, v)).eval == Coll((0, 1), (1, 2), (2, 3)))
+            // Test with a larger sequence
             assert(Kyo.foreachIndexed(Coll.tabulate(100)(identity))((idx, v) => idx == v).eval == Coll.fill(100)(true))
         }
         "foreachDiscard" in {
             var acc: Coll[Int] = Coll.empty
-            discard(TestEffect1.run(Kyo.foreachDiscard(Coll.empty[Int])(v => TestEffect1(v).map(i => acc :+= i))).eval)
+            TestEffect1.run(Kyo.foreachDiscard(Coll.empty[Int])(v => TestEffect1(v).map(i => acc :+= i))).eval
             assert(acc == Coll.empty[Int])
             acc = Coll.empty
-            discard(TestEffect1.run(Kyo.foreachDiscard(Coll(1))(v => TestEffect1(v).map(i => acc :+= i))).eval)
+            TestEffect1.run(Kyo.foreachDiscard(Coll(1))(v => TestEffect1(v).map(i => acc :+= i))).eval
             assert(acc == Coll(2))
             acc = Coll.empty
-            discard(TestEffect1.run(Kyo.foreachDiscard(Coll(1, 2))(v => TestEffect1(v).map(i => acc :+= i))).eval)
+            TestEffect1.run(Kyo.foreachDiscard(Coll(1, 2))(v => TestEffect1(v).map(i => acc :+= i))).eval
             assert(acc == Coll(2, 3))
         }
         "foldLeft" in {
@@ -140,13 +139,13 @@ class KyoForeachCollTest extends AnyFreeSpec:
                 acc = (sum, include, curr) => if include then sum + curr else sum,
                 epilog = sum => s"Sum: $sum"
             )
-            assert(sumWithMessage.eval == "Sum: 2")
+            assert(sumWithMessage.eval == "Sum: 2") // 1 + 2 + (-1) = 2
 
             val collectUntilOdd = Kyo.shiftedWhile(Coll(2, 4, 6, 7, 8))(
                 prolog = Coll.empty,
                 f = isEven,
                 acc = (list, include, curr) => if include then curr +: list else list,
-                epilog = _.reverse
+                epilog = _.reverse // Maintain original order
             )
             assert(collectUntilOdd.eval == Coll(2, 4, 6))
 
@@ -387,7 +386,7 @@ class KyoForeachCollTest extends AnyFreeSpec:
             "collectDiscard" in {
                 var count = 0
                 val io    = TestEffect1(1).map(_ => count += 1)
-                discard(TestEffect1.run(Kyo.collectAllDiscard(Coll.fill(n)(io))).eval)
+                TestEffect1.run(Kyo.collectAllDiscard(Coll.fill(n)(io))).eval
                 assert(count == n)
             }
 
@@ -397,9 +396,11 @@ class KyoForeachCollTest extends AnyFreeSpec:
 
             "foreachDiscard" in {
                 var acc = Coll.empty[Int]
-                discard(TestEffect1.run(Kyo.foreachDiscard(Coll.fill(n)(1))(v => TestEffect1(v).map(i => acc :+= i))).eval)
+                TestEffect1.run(Kyo.foreachDiscard(Coll.fill(n)(1))(v => TestEffect1(v).map(i => acc :+= i))).eval
                 assert(acc.size == n)
             }
         }
     }
+
+    // @TestVariant("Coll", "List", "Chunk")
 end KyoForeachCollTest

@@ -1,20 +1,13 @@
 package kyo.kernel
 
-import kyo.Const
-import kyo.Frame
-import kyo.Kyo
-import kyo.Maybe
-import kyo.Tag
-import kyo.kernel.<
-import kyo.kernel.ArrowEffect
-import kyo.kernel.ContextEffect
-import kyo.kernel.Effect
+import kyo.*
 import org.scalatest.freespec.AnyFreeSpec
 
+// Diverges from main: kyo-kernel does not depend on kyo-test here, so the suite extends
+// ScalaTest's AnyFreeSpec instead of kyo.test.Test.
 class LoopTest extends AnyFreeSpec:
 
-    given Frame = Frame.internal
-
+    // Not on main: fixtures for the extra cases at the end of the file.
     sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())
 
@@ -663,6 +656,61 @@ class LoopTest extends AnyFreeSpec:
         assert(count == 10000)
     }
 
+    "whileTrue" - {
+        "continues while condition is true" in {
+            var counter = 0
+            Loop.whileTrue(counter < 5) {
+                counter += 1
+            }.eval
+            assert(counter == 5)
+        }
+
+        "does not execute when condition is initially false" in {
+            var executed = false
+            Loop.whileTrue(false) {
+                executed = true
+            }.eval
+            assert(!executed)
+        }
+
+        "with suspended condition" in {
+            var counter = 0
+            val result = Loop.whileTrue(Effect.defer(counter < 3)) {
+                counter += 1
+            }
+            result.eval
+            assert(counter == 3)
+        }
+
+        "with suspended body" in {
+            var counter = 0
+            val result = Loop.whileTrue(counter < 3) {
+                Effect.defer(counter += 1)
+            }
+            result.eval
+            assert(counter == 3)
+        }
+
+        "stack safety" in {
+            var counter     = 0
+            val largeNumber = 100000
+            Loop.whileTrue(counter < largeNumber) {
+                counter += 1
+            }.eval
+            assert(counter == largeNumber)
+        }
+
+        "stack safety with suspended operations" in {
+            var counter     = 0
+            val largeNumber = 10000
+            val result = Loop.whileTrue(Effect.defer(counter < largeNumber)) {
+                Effect.defer(counter += 1)
+            }
+            result.eval
+            assert(counter == largeNumber)
+        }
+    }
+
     "repeat with a settled body runs it exactly n times" in {
         var count = 0
 
@@ -729,61 +777,6 @@ class LoopTest extends AnyFreeSpec:
             a => a
         )
         assert(r.eval == 3)
-    }
-
-    "whileTrue" - {
-        "continues while condition is true" in {
-            var counter = 0
-            Loop.whileTrue(counter < 5) {
-                counter += 1
-            }.eval
-            assert(counter == 5)
-        }
-
-        "does not execute when condition is initially false" in {
-            var executed = false
-            Loop.whileTrue(false) {
-                executed = true
-            }.eval
-            assert(!executed)
-        }
-
-        "with suspended condition" in {
-            var counter = 0
-            val result = Loop.whileTrue(Effect.defer(counter < 3)) {
-                counter += 1
-            }
-            result.eval
-            assert(counter == 3)
-        }
-
-        "with suspended body" in {
-            var counter = 0
-            val result = Loop.whileTrue(counter < 3) {
-                Effect.defer(counter += 1)
-            }
-            result.eval
-            assert(counter == 3)
-        }
-
-        "stack safety" in {
-            var counter     = 0
-            val largeNumber = 100000
-            Loop.whileTrue(counter < largeNumber) {
-                counter += 1
-            }.eval
-            assert(counter == largeNumber)
-        }
-
-        "stack safety with suspended operations" in {
-            var counter     = 0
-            val largeNumber = 10000
-            val result = Loop.whileTrue(Effect.defer(counter < largeNumber)) {
-                Effect.defer(counter += 1)
-            }
-            result.eval
-            assert(counter == largeNumber)
-        }
     }
 
     "constructors" - {

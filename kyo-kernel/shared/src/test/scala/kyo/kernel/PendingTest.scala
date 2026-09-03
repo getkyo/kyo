@@ -1,18 +1,8 @@
 package kyo.kernel
 
-import kyo.Const
-import kyo.Kyo
-import kyo.Loop
-import kyo.Maybe
-import kyo.Maybe.Absent
-import kyo.Maybe.Present
-import kyo.Render
-import kyo.Result
-import kyo.Tag
-import kyo.Test
-import kyo.discard
+import kyo.*
+import kyo.kernel.*
 import kyo.kernel.internal.Safepoint
-import kyo.render
 import scala.annotation.nowarn
 import scala.annotation.tailrec
 

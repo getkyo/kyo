@@ -1,26 +1,19 @@
 package kyo.kernel
 
-import kyo.Arrow
-import kyo.Const
-import kyo.Frame
-import kyo.Kyo
-import kyo.Loop
-import kyo.Maybe
+import kyo.*
 import kyo.Maybe.*
-import kyo.Tag
-import kyo.Test
-import kyo.discard
-import kyo.kernel.internal.Eval
-import kyo.kernel.internal.Safepoint
-import kyo.kernel.internal.Stack
+import kyo.kernel.Arrow
+import kyo.kernel.internal.*
 import scala.collection.mutable.ListBuffer
 
 class IsolateTest extends Test:
 
-    sealed trait TestEffect1         extends ContextEffect[Int]
-    sealed trait TestEffect2         extends ContextEffect[String]
-    sealed trait TestEffect3         extends ContextEffect[Boolean]
-    sealed trait NotContextEffect    extends ArrowEffect[Const[Int], Const[Int]]
+    sealed trait TestEffect1      extends ContextEffect[Int]
+    sealed trait TestEffect2      extends ContextEffect[String]
+    sealed trait TestEffect3      extends ContextEffect[Boolean]
+    sealed trait NotContextEffect extends ArrowEffect[Const[Int], Const[Int]]
+
+    // Not on main: the fixtures below back this kernel's extra groups.
     sealed trait NotContextEffectSub extends NotContextEffect
 
     sealed trait CellA extends ArrowEffect[Const[Maybe[Int]], Const[Int]]
@@ -98,16 +91,286 @@ class IsolateTest extends Test:
             typeCheckFailure("Isolate.derive[NotContextEffect, Any, Any]")(error)
         }
 
-        "a derived isolate for context effects passes the computation through" in {
-            val i = Isolate.derive[TestEffect1, Any, Any]
-            val v = i.run(ContextEffect.suspend(Tag[TestEffect1]))
-            assert(ContextEffect.handleInheritable(Tag[TestEffect1], 10)(v).eval == 10)
-        }
-
         "resolves implicitly for context effects" in {
             val i = summon[Isolate[TestEffect1, Any, TestEffect1]]
             val v = i.run(ContextEffect.suspend(Tag[TestEffect1]))
             assert(ContextEffect.handleInheritable(Tag[TestEffect1], 7)(v).eval == 7)
+        }
+    }
+
+    "isolate application" - {
+        "no context effect suspension" in {
+            // Diverges from main: `runDetached`'s (Trace, Context) callback is gone. `capture` hands
+            // the isolate the contextual regions in scope, and with no handler outside there are none.
+            val effect: Stack.Snapshot < Any = Isolate.internal.Contextual.capture { (snapshot: Stack.Snapshot) =>
+                snapshot
+            }
+            assert(effect.eval.isEmpty)
+        }
+
+        "allows access to context" in {
+            val isolate = Isolate.derive[TestEffect1, Any, Any]
+            val effect = Isolate.internal.Contextual.capture { snapshot =>
+                ContextEffect.suspend[Int, TestEffect1](Tag[TestEffect1], 42)
+            }
+            val result = ContextEffect.handleInheritable(Tag[TestEffect1], 10, _ + 1)(effect)
+            assert(result.eval == 10)
+        }
+
+        "isolates runtime effect" in {
+            val isolate = Isolate.derive[TestEffect1, Any, Any]
+            val effect: Int < TestEffect1 = isolate.run {
+                ContextEffect.suspend(Tag[TestEffect1])
+            }
+            val result = ContextEffect.handleInheritable(Tag[TestEffect1], 42, _ + 1)(effect)
+            assert(result.eval == 42)
+        }
+    }
+
+    "nested isolates" in {
+
+        val effect: Int < (TestEffect1 & TestEffect2) =
+            Isolate.internal.Contextual.run {
+                Isolate.internal.Contextual.run {
+                    for
+                        x <- ContextEffect.suspend[Int, TestEffect1](Tag[TestEffect1])
+                        y <- ContextEffect.suspend[String, TestEffect2](Tag[TestEffect2])
+                    yield x + y.length
+                }
+            }
+
+        val result = ContextEffect.handleInheritable(Tag[TestEffect1], 10, _ + 1) {
+            ContextEffect.handleInheritable(Tag[TestEffect2], "test", _.toUpperCase)(effect)
+        }
+        assert(result.eval == 14)
+    }
+
+    "with non-context effect" in {
+        val isolate = Isolate.derive[TestEffect1, Any, Any]
+        val effect: Int < (TestEffect1 & NotContextEffect) = isolate.run {
+            for
+                x <- ContextEffect.suspend[Int, TestEffect1](Tag[TestEffect1])
+                y <- ArrowEffect.suspend[Int](Tag[NotContextEffect], 1)
+            yield x + y
+        }
+
+        val result = ContextEffect.handleInheritable(Tag[TestEffect1], 10, _ + 1) {
+            ArrowEffect.handleCont(Tag[NotContextEffect], effect) {
+                [C] => (input, cont) => cont(input + 1)
+            }
+        }
+
+        assert(result.eval == 12)
+    }
+
+    "preserves outer effects" in {
+        val outerEffect = ContextEffect.suspend[Int, TestEffect1](Tag[TestEffect1])
+        val innerEffect = ContextEffect.suspend[Int, TestEffect1](Tag[TestEffect1])
+        val isolate     = Isolate.derive[TestEffect1, Any, Any]
+
+        val effect: Int < TestEffect1 =
+            for
+                outer <- outerEffect
+                inner <- isolate.run(innerEffect)
+            yield outer + inner
+
+        val result = ContextEffect.handleInheritable(Tag[TestEffect1], 20, _ + 1)(effect)
+        assert(result.eval == 40)
+    }
+
+    "residual effects" - {
+        sealed trait ResidualEffect    extends ArrowEffect[Const[Int], Const[Int]]
+        sealed trait SubResidualEffect extends ResidualEffect
+
+        "supports residual effects in S type parameter" in {
+            val isolate                                      = Isolate.derive[TestEffect1, ResidualEffect, Any]
+            val _: Isolate[TestEffect1, ResidualEffect, Any] = isolate
+            succeed
+        }
+
+        "allows using residual effects within isolate" in {
+            val isolate = Isolate.derive[TestEffect1, ResidualEffect, Any]
+            val effect: Int < (TestEffect1 & ResidualEffect) =
+                isolate.run {
+                    for
+                        x <- ContextEffect.suspend[Int, TestEffect1](Tag[TestEffect1])
+                        y <- ArrowEffect.suspend[Int](Tag[ResidualEffect], x)
+                    yield y
+                }
+
+            val result = ContextEffect.handleInheritable(Tag[TestEffect1], 10, _ + 1) {
+                ArrowEffect.handleCont(Tag[ResidualEffect], effect) {
+                    [C] => (input, cont) => cont(input * 2)
+                }
+            }
+
+            assert(result.eval == 20)
+        }
+
+        "preserves residual effects after isolate application" in {
+            val isolate = Isolate.derive[TestEffect1, ResidualEffect, Any]
+            val effect: Int < (TestEffect1 & ResidualEffect) = isolate.run {
+                ContextEffect.suspend[Int, TestEffect1](Tag[TestEffect1])
+            }
+
+            val result = ContextEffect.handleInheritable(Tag[TestEffect1], 5, _ + 1)(effect)
+
+            val finalResult = ArrowEffect.handleCont(Tag[ResidualEffect], result) {
+                [C] => (input, cont) => cont(input * 2)
+            }
+            assert(finalResult.eval == 5)
+        }
+
+        "supports subclasses of residual effects" in {
+            val isolate = Isolate.derive[TestEffect1, ResidualEffect, Any]
+            val effect: Int < (TestEffect1 & SubResidualEffect) = isolate.run {
+                for
+                    x <- ContextEffect.suspend[Int, TestEffect1](Tag[TestEffect1])
+                    y <- ArrowEffect.suspend[Int](Tag[SubResidualEffect], x)
+                yield y
+            }
+
+            val result = ContextEffect.handleInheritable(Tag[TestEffect1], 15, _ + 1) {
+                ArrowEffect.handleCont(Tag[SubResidualEffect], effect) {
+                    [C] => (input, cont) => cont(input * 2)
+                }
+            }
+
+            assert(result.eval == 30)
+        }
+    }
+
+    "variance" - {
+        "Remove parameter (invariant)" - {
+            "cannot accept supertypes" in {
+                typeCheckFailure("""
+                    val isolate: Isolate[TestEffect1, Any, Any] = Isolate.derive[TestEffect1, Any, Any]
+                    val _: Isolate[Any, Any, Any] = isolate
+                """)(
+                    "Required: kyo.kernel.Isolate[Any, Any, Any]"
+                )
+            }
+
+            "cannot accept subtypes" in {
+                typeCheckFailure("""
+                    val isolate: Isolate[Any, Any, Any] = Isolate.internal.Contextual
+                    val _: Isolate[TestEffect1, Any, Any] = isolate
+                """)(
+                    "Required: kyo.kernel.Isolate[IsolateTest.this.TestEffect1, Any, Any]"
+                )
+            }
+        }
+
+        "Keep parameter (contravariant)" - {
+            "accepts subtypes" in {
+                val isolate: Isolate[TestEffect1, Any, Any]   = Isolate.derive[TestEffect1, Any, Any]
+                val _: Isolate[TestEffect1, TestEffect2, Any] = isolate
+                succeed
+            }
+
+            "does not accept supertypes" in {
+                typeCheckFailure("""
+                    val isolate: Isolate[TestEffect1, TestEffect2, Any] = Isolate.derive[TestEffect1, TestEffect2, Any]
+                    val _: Isolate[TestEffect1, Any, Any] = isolate
+                """)(
+                    "Required: kyo.kernel.Isolate[IsolateTest.this.TestEffect1, Any, Any]"
+                )
+            }
+        }
+
+        "Restore parameter (covariant)" - {
+            "accepts supertypes" in {
+                val isolate: Isolate[TestEffect1, Any, Any]   = Isolate.derive[TestEffect1, Any, Any]
+                val _: Isolate[TestEffect1, Any, TestEffect1] = isolate
+                succeed
+            }
+
+            "does not accept subtypes" in {
+                typeCheckFailure("""
+                    val isolate: Isolate[TestEffect1, Any, TestEffect1] = Isolate.derive[TestEffect1, Any, TestEffect1]
+                    val _: Isolate[TestEffect1, Any, Any] = isolate
+                """)(
+                    "Required: kyo.kernel.Isolate[IsolateTest.this.TestEffect1, Any, Any]"
+                )
+            }
+        }
+
+        "mixed variance scenarios" - {
+            "contravariant Keep with covariant Restore" in {
+                val isolate: Isolate[TestEffect1, Any, Any]           = Isolate.derive[TestEffect1, Any, Any]
+                val _: Isolate[TestEffect1, TestEffect2, TestEffect1] = isolate
+                succeed
+            }
+
+            "variance preserved through andThen" in {
+                val isolate1: Isolate[TestEffect1, Any, Any] = Isolate.derive[TestEffect1, Any, Any]
+                val isolate2: Isolate[TestEffect2, Any, Any] = Isolate.derive[TestEffect2, Any, Any]
+
+                val composed                                                                      = isolate1.andThen(isolate2)
+                val _: Isolate[TestEffect1 & TestEffect2, TestEffect3, TestEffect1 & TestEffect2] = composed
+                succeed
+            }
+
+            "complex intersection types" in {
+                val isolate: Isolate[TestEffect1 & TestEffect2, Any, Any] =
+                    Isolate.derive[TestEffect1 & TestEffect2, Any, Any]
+                val _: Isolate[TestEffect1 & TestEffect2, TestEffect3, TestEffect1] = isolate
+                succeed
+            }
+
+            "all three variance interactions" in {
+                val isolate: Isolate[TestEffect1, Any, Any]                                       = Isolate.derive[TestEffect1, Any, Any]
+                val _: Isolate[TestEffect1, TestEffect2 & TestEffect3, TestEffect1 & TestEffect2] = isolate
+                succeed
+            }
+        }
+    }
+
+    "nest" - {
+        "tunnels effects through isolation" in {
+            val isolate                   = Isolate.derive[TestEffect1, Any, TestEffect1]
+            val effect: Int < TestEffect1 = ContextEffect.suspend[Int, TestEffect1](Tag[TestEffect1])
+
+            val nested: Int < TestEffect1 < TestEffect1 = isolate.nest(effect)
+            val flattened: Int < TestEffect1            = nested.flatten
+
+            val result = ContextEffect.handleInheritable(Tag[TestEffect1], 42, _ + 1)(flattened)
+            assert(result.eval == 42)
+        }
+
+        "allows effect handling between nest and flatten" in {
+            val isolate = Isolate.derive[TestEffect1, TestEffect2, Any]
+            val effect: Int < (TestEffect1 & TestEffect2) =
+                for
+                    x <- ContextEffect.suspend[Int, TestEffect1](Tag[TestEffect1])
+                    y <- ContextEffect.suspend[String, TestEffect2](Tag[TestEffect2])
+                yield x + y.length
+
+            val nested = isolate.nest(effect)
+
+            val handled   = ContextEffect.handleInheritable(Tag[TestEffect2], "hello", _.toUpperCase)(nested)
+            val flattened = handled.flatten
+
+            val result = ContextEffect.handleInheritable(Tag[TestEffect1], 10, _ + 1)(flattened)
+            assert(result.eval == 15)
+        }
+
+        "transforms Remove to Restore in type signature" in {
+            val isolate                   = Isolate.derive[TestEffect1, Any, TestEffect2]
+            val effect: Int < TestEffect1 = ContextEffect.suspend[Int, TestEffect1](Tag[TestEffect1])
+
+            val nested: Int < TestEffect2 < TestEffect1 = isolate.nest(effect)
+            val _: Int < TestEffect2 < TestEffect1      = nested
+            succeed
+        }
+
+        "a stateful isolate defers the restore to the nested layer" in {
+            val nested = updateA.nest(setA(9).map(_ => getA))
+
+            val (outerState, pendingRestore) = runA(0)(nested).eval
+            assert(outerState == 0)
+
+            assert(runA(5)(pendingRestore).eval == ((9, 9)))
         }
     }
 
@@ -262,137 +525,6 @@ class IsolateTest extends Test:
             val cont  = continuationOf(bound)
             assert(runFork(cont(0)).eval == 0)
             assert(ContextEffect.handleInheritable(Tag[TestEffect1], 5)(runFork(cont(0))).eval == 0)
-        }
-    }
-
-    "variance" - {
-        "Remove parameter (invariant)" - {
-            "cannot accept supertypes" in {
-                typeCheckFailure("""
-                    val isolate: Isolate[TestEffect1, Any, Any] = Isolate.derive[TestEffect1, Any, Any]
-                    val _: Isolate[Any, Any, Any] = isolate
-                """)(
-                    "Required: kyo.kernel.Isolate[Any, Any, Any]"
-                )
-            }
-
-            "cannot accept subtypes" in {
-                typeCheckFailure("""
-                    val isolate: Isolate[Any, Any, Any] = Isolate.internal.Contextual
-                    val _: Isolate[TestEffect1, Any, Any] = isolate
-                """)(
-                    "Required: kyo.kernel.Isolate[IsolateTest.this.TestEffect1, Any, Any]"
-                )
-            }
-        }
-
-        "Keep parameter (contravariant)" - {
-            "accepts subtypes" in {
-                val isolate: Isolate[TestEffect1, Any, Any]   = Isolate.derive[TestEffect1, Any, Any]
-                val _: Isolate[TestEffect1, TestEffect2, Any] = isolate
-                succeed
-            }
-
-            "does not accept supertypes" in {
-                typeCheckFailure("""
-                    val isolate: Isolate[TestEffect1, TestEffect2, Any] = Isolate.derive[TestEffect1, TestEffect2, Any]
-                    val _: Isolate[TestEffect1, Any, Any] = isolate
-                """)(
-                    "Required: kyo.kernel.Isolate[IsolateTest.this.TestEffect1, Any, Any]"
-                )
-            }
-        }
-
-        "Restore parameter (contravariant)" - {
-            "accepts supertypes" in {
-                val isolate: Isolate[TestEffect1, Any, Any]   = Isolate.derive[TestEffect1, Any, Any]
-                val _: Isolate[TestEffect1, Any, TestEffect1] = isolate
-                succeed
-            }
-
-            "does not accept subtypes" in {
-                typeCheckFailure("""
-                    val isolate: Isolate[TestEffect1, Any, TestEffect1] = Isolate.derive[TestEffect1, Any, TestEffect1]
-                    val _: Isolate[TestEffect1, Any, Any] = isolate
-                """)(
-                    "Required: kyo.kernel.Isolate[IsolateTest.this.TestEffect1, Any, Any]"
-                )
-            }
-        }
-
-        "mixed variance scenarios" - {
-            "contravariant Keep with contravariant Restore" in {
-                val isolate: Isolate[TestEffect1, Any, Any]           = Isolate.derive[TestEffect1, Any, Any]
-                val _: Isolate[TestEffect1, TestEffect2, TestEffect1] = isolate
-                succeed
-            }
-
-            "variance preserved through andThen" in {
-                val isolate1: Isolate[TestEffect1, Any, Any] = Isolate.derive[TestEffect1, Any, Any]
-                val isolate2: Isolate[TestEffect2, Any, Any] = Isolate.derive[TestEffect2, Any, Any]
-
-                val composed                                                                      = isolate1.andThen(isolate2)
-                val _: Isolate[TestEffect1 & TestEffect2, TestEffect3, TestEffect1 & TestEffect2] = composed
-                succeed
-            }
-
-            "complex intersection types" in {
-                val isolate: Isolate[TestEffect1 & TestEffect2, Any, Any] =
-                    Isolate.derive[TestEffect1 & TestEffect2, Any, Any]
-                val _: Isolate[TestEffect1 & TestEffect2, TestEffect3, TestEffect1] = isolate
-                succeed
-            }
-
-            "all three variance interactions" in {
-                val isolate: Isolate[TestEffect1, Any, Any]                                       = Isolate.derive[TestEffect1, Any, Any]
-                val _: Isolate[TestEffect1, TestEffect2 & TestEffect3, TestEffect1 & TestEffect2] = isolate
-                succeed
-            }
-        }
-    }
-
-    "nest" - {
-        "tunnels effects through isolation" in {
-            val isolate                   = Isolate.derive[TestEffect1, Any, TestEffect1]
-            val effect: Int < TestEffect1 = ContextEffect.suspend(Tag[TestEffect1])
-
-            val nested: Int < TestEffect1 < TestEffect1 = isolate.nest(effect)
-            val flattened: Int < TestEffect1            = nested.flatten
-
-            assert(ContextEffect.handleInheritable(Tag[TestEffect1], 42)(flattened).eval == 42)
-        }
-
-        "allows effect handling between nest and flatten" in {
-            val isolate = Isolate.derive[TestEffect1, TestEffect2, Any]
-            val effect: Int < (TestEffect1 & TestEffect2) =
-                ContextEffect.suspend(Tag[TestEffect1]).map(x =>
-                    ContextEffect.suspend(Tag[TestEffect2]).map(y => x + y.length)
-                )
-
-            val nested = isolate.nest(effect)
-
-            val handled   = ContextEffect.handleInheritable(Tag[TestEffect2], "hello")(nested)
-            val flattened = handled.flatten
-
-            assert(ContextEffect.handleInheritable(Tag[TestEffect1], 10)(flattened).eval == 15)
-        }
-
-        "transforms Remove to Restore in type signature" in {
-            val isolate                   = Isolate.derive[TestEffect1, Any, TestEffect2]
-            val effect: Int < TestEffect1 = ContextEffect.suspend(Tag[TestEffect1])
-
-            val nested: Int < TestEffect2 < TestEffect1 = isolate.nest(effect)
-            val _: Int < TestEffect2 < TestEffect1      = nested
-            succeed
-        }
-
-        "a stateful isolate defers the restore to the nested layer" in {
-            val nested = updateA.nest(setA(9).map(_ => getA))
-
-            val (outerState, pendingRestore) = runA(0)(nested).eval
-            assert(outerState == 0)
-
-            assert(runA(5)(pendingRestore).eval == ((9, 9)))
         }
     }
 

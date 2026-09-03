@@ -1,10 +1,7 @@
 package kyo.kernel
 
-import kyo.Arrow
-import kyo.Const
-import kyo.Loop
-import kyo.Maybe
-import kyo.Tag
+import kyo.*
+import kyo.kernel.*
 import org.scalatest.freespec.AnyFreeSpec
 
 class EffectTest extends AnyFreeSpec:
@@ -23,64 +20,78 @@ class EffectTest extends AnyFreeSpec:
     def inc: Arrow[Int, Int, Any]    = Arrow[Int](i => i + 1)
     def double: Arrow[Int, Int, Any] = Arrow[Int](i => i * 2)
 
-    "defer composes with maps without running early" in {
-        var ran = false
-        val d: Int < Any = Effect.defer {
-            ran = true
-            1
-        }
-        val r = d.map(_ + 1)
-        assert(!ran)
-        assert(r.eval == 2)
-        assert(ran)
-    }
+    "defer" - {
 
-    "defer suspends effects performed by its body" in {
-        var ran = false
-        val d: Int < Ask = Effect.defer {
-            ran = true
-            ask.map(_ + 1)
+        "simple" in {
+            var executed = false
+            val effect = Effect.defer {
+                executed = true
+                42
+            }
+            assert(!executed)
+            assert(effect.eval == 42)
+            assert(executed)
         }
-        assert(!ran)
-        assert(answerAsk(41)(d).eval == 42)
-        assert(ran)
-    }
 
-    "deferInline delays evaluation until the eval" in {
-        var ran = false
-        val d: Int < Any = Effect.deferInline {
-            ran = true
-            7
-        }
-        assert(!ran)
-        assert(d.map(_ * 6).eval == 42)
-        assert(ran)
-    }
-
-    "defer evaluates once per eval of a fresh value" in {
-        var runs = 0
-        def d: Int < Any = Effect.defer {
-            runs += 1
-            runs
-        }
-        assert(d.eval == 1)
-        assert(d.eval == 2)
-    }
-
-    "nested defer calls run innermost last, in order" in {
-        var order = List.empty[Int]
-        val d: Int < Any = Effect.defer {
-            order = 1 :: order
-            Effect.defer {
-                order = 2 :: order
+        "nested defer calls" in {
+            var order = List.empty[Int]
+            val effect = Effect.defer {
+                order = 1 :: order
                 Effect.defer {
-                    order = 3 :: order
-                    42
+                    order = 2 :: order
+                    Effect.defer {
+                        order = 3 :: order
+                        42
+                    }
                 }
             }
+            assert(effect.eval == 42)
+            assert(order == List(3, 2, 1))
         }
-        assert(d.eval == 42)
-        assert(order == List(3, 2, 1))
+
+        "defer composes with maps without running early" in {
+            var ran = false
+            val d: Int < Any = Effect.defer {
+                ran = true
+                1
+            }
+            val r = d.map(_ + 1)
+            assert(!ran)
+            assert(r.eval == 2)
+            assert(ran)
+        }
+
+        "defer suspends effects performed by its body" in {
+            var ran = false
+            val d: Int < Ask = Effect.defer {
+                ran = true
+                ask.map(_ + 1)
+            }
+            assert(!ran)
+            assert(answerAsk(41)(d).eval == 42)
+            assert(ran)
+        }
+
+        "deferInline delays evaluation until the eval" in {
+            var ran = false
+            val d: Int < Any = Effect.deferInline {
+                ran = true
+                7
+            }
+            assert(!ran)
+            assert(d.map(_ * 6).eval == 42)
+            assert(ran)
+        }
+
+        "defer evaluates once per eval of a fresh value" in {
+            var runs = 0
+            def d: Int < Any = Effect.defer {
+                runs += 1
+                runs
+            }
+            assert(d.eval == 1)
+            assert(d.eval == 2)
+        }
     }
 
     "defer with a recovery inside" in {
@@ -95,6 +106,7 @@ class EffectTest extends AnyFreeSpec:
                 b <- recovering(Effect.defer(2 / 0))(_ => 2)
                 c <- Effect.defer(3)
             yield a + b + c
+
         assert(effect.eval == 6)
     }
 
