@@ -134,7 +134,7 @@ object ContextEffect:
             override def frame = _frame
             def value          = v
             def handler        = h
-            lazy val state     = h.derive(Maybe.empty)
+            val state          = h.derive(Maybe.empty)
             def cont           = Arrow.id
         end new
     end handle
