@@ -341,7 +341,7 @@ class ChoiceTest extends kyo.test.Test[Any]:
         "a bracket outside the region releases once, after every branch" in {
             var log = Chunk.empty[String]
             val v =
-                Effect.bracket("res")(_ => log = log.append("release")) { _ =>
+                Effect.bracket("res")((_, _) => log = log.append("release")) { _ =>
                     Choice.run {
                         Choice.eval(1, 2, 3).map { n =>
                             log = log.append(s"branch$n")
@@ -359,7 +359,7 @@ class ChoiceTest extends kyo.test.Test[Any]:
         "a bracket outside the region is live in every branch" in {
             var released = false
             val v =
-                Effect.bracket(1)(_ => released = true) { res =>
+                Effect.bracket(1)((_, _) => released = true) { res =>
                     Choice.run {
                         Choice.eval(1, 2, 3).map(n => (n, released))
                     }
@@ -376,7 +376,7 @@ class ChoiceTest extends kyo.test.Test[Any]:
             val v = Choice.run {
                 for
                     n <- Choice.eval(1, 2, 3)
-                    r <- Effect.bracket({ opens += 1; n })(_ => closes += 1)(a => a * 10)
+                    r <- Effect.bracket({ opens += 1; n })((_, _) => closes += 1)(a => a * 10)
                 yield r
             }
             assert(v.eval == Chunk(10, 20, 30))
@@ -391,7 +391,7 @@ class ChoiceTest extends kyo.test.Test[Any]:
             val v = Choice.run {
                 for
                     n <- Choice.eval(1, 2)
-                    r <- Effect.bracket({ log = log.append(s"open$n"); n })(_ => log = log.append(s"close$n"))(a => a)
+                    r <- Effect.bracket({ log = log.append(s"open$n"); n })((_, _) => log = log.append(s"close$n"))(a => a)
                 yield r
             }
             assert(v.eval == Chunk(1, 2))

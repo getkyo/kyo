@@ -41,7 +41,11 @@ import scala.language.implicitConversions
 // where main has Kyo, its suspension ADT. The combinators below build Arrow and Defer nodes and
 // leave the stack-depth budget to the evaluator, so their function parameters take no
 // `Safepoint ?=>` context and no Safepoint evidence; `eval` and `flatten` go through Eval.
-opaque type <[+A, -S] = A | Pending[A, S]
+// The third arm is the wrapper the lift puts around a nested computation. On main that wrapper is
+// a Kyo, so it inhabits the second arm; here it stands apart from the node family and needs its
+// own arm, or `Nothing < S` erases to Pending and a position holding a nested computation cannot
+// carry it.
+opaque type <[+A, -S] = A | Pending[A, S] | Nested[A]
 
 // Not on main: the lifts main defines in this object (lift, liftAnyVal, liftUnit, abortCastUnit
 // and the liftPureFunction overloads) live in internal.Implicits, which is mixed in here.

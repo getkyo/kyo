@@ -452,6 +452,16 @@ class PendingTest extends Test:
             assert(TestEffect1.run(nested.map(c => c)).eval == "Effect1:42")
         }
 
+        "a nested computation with a Nothing result" in {
+            // `Nothing < S` is `Pending[Nothing, S]` alone, so a position holding a nested one must
+            // still admit the lift's wrapper
+            val inner: Nothing < TestEffect1          = TestEffect1(7).map(_ => (throw new IllegalStateException("unreached")): Nothing)
+            val nested: (Nothing < TestEffect1) < Any = Kyo.lift(inner)
+            val stopped: String < Any =
+                ArrowEffect.handleLoop(Tag[TestEffect1], nested.flatten)([C] => input => Loop.done(s"stopped at $input"))
+            assert(stopped.eval == "stopped at 7")
+        }
+
         "multiple effects" in {
             val comp: Int < TestEffect2 < TestEffect1 =
                 Kyo.lift(TestEffect1(10)).map(_.map(s => Kyo.lift(TestEffect2(s))))

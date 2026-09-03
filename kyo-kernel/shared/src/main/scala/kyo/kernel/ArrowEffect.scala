@@ -198,7 +198,7 @@ object ArrowEffect:
     @nowarn("msg=anonymous")
     inline def handleCont[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](
         inline effectTag: Tag[E],
-        v: A < (E & S)
+        inline v: => A < (E & S)
     )(
         inline handle: [C] => (I[C], Arrow[O[C], A, E & S & S2]) => A < (E & S & S2),
         inline done: A => B < (S & S2),
@@ -206,28 +206,34 @@ object ArrowEffect:
     )(using inline _frame: Frame): B < (S & S2) =
         def onDone(v0: A): B < (S & S2)                   = done(v0)
         def onRecover(ex: Throwable): Maybe[B < (S & S2)] = recover(ex)
-        v match
-            case _: Pending[?, ?] =>
-                val h =
-                    new Handler.ContHandler[I, O, E, A, B, S & S2]:
-                        def tag = effectTag
-                        def run[X](input: I[X], next: Arrow[O[X], A, E & S & S2]) =
-                            handle[X](input, next)
-                        def done(state: Unit, v0: A)                     = onDone(v0)
-                        override def recover(state: Unit, ex: Throwable) = onRecover(ex)
+        // the input is forced under the recovery clause, as main's handleCatching forces its by-name
+        // input: a throw while building the computation is the region's to answer, like one raised
+        // in its extent
+        try
+            val v0 = v
+            v0 match
+                case _: Pending[?, ?] =>
+                    val h =
+                        new Handler.ContHandler[I, O, E, A, B, S & S2]:
+                            def tag = effectTag
+                            def run[X](input: I[X], next: Arrow[O[X], A, E & S & S2]) =
+                                handle[X](input, next)
+                            def done(state: Unit, v0: A)                     = onDone(v0)
+                            override def recover(state: Unit, ex: Throwable) = onRecover(ex)
 
-                new Pending.HandleArrow[Unit, E, A, B, B, S & S2]:
-                    override def frame = _frame
-                    def value          = v
-                    def handler        = h
-                    def state          = ()
-                    def cont           = Arrow.id
-                end new
-            case _ =>
-                try onDone(Nested.unnest(v))
-                catch
-                    case ex if NonFatal(ex) => onRecover(ex).getOrElse(throw ex)
-        end match
+                    new Pending.HandleArrow[Unit, E, A, B, B, S & S2]:
+                        override def frame = _frame
+                        def value          = v0
+                        def handler        = h
+                        def state          = ()
+                        def cont           = Arrow.id
+                    end new
+                case _ =>
+                    onDone(Nested.unnest(v0))
+            end match
+        catch
+            case ex if NonFatal(ex) => onRecover(ex).getOrElse(throw ex)
+        end try
     end handleCont
 
     // Not on main: the first suspension is carried out of the region as a value, so handleFirst is a
@@ -416,7 +422,7 @@ object ArrowEffect:
     @nowarn("msg=anonymous")
     inline def handleLoop[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](
         inline effectTag: Tag[E],
-        v: A < (E & S)
+        inline v: => A < (E & S)
     )(
         inline handle: [C] => I[C] => Loop.Outcome[O[C] < (E & S & S2), B < (S & S2)] < (S & S2),
         inline done: A => B < (S & S2),
@@ -424,44 +430,48 @@ object ArrowEffect:
     )(using inline _frame: Frame): B < (S & S2) =
         def onDone(v0: A): B < (S & S2)                   = done(v0)
         def onRecover(ex: Throwable): Maybe[B < (S & S2)] = recover(ex)
-        v match
-            case _: Pending[?, ?] =>
-                val h =
-                    new Handler.LoopHandler[I, O, E, A, B, S & S2]:
-                        def tag = effectTag
-                        def run[X](input: I[X]) =
-                            handle[X](input)
-                        override def answers[X](
-                            input0: I[X],
-                            k0: Arrow[O[X], A, E & S & S2],
-                            armed: Boolean,
-                            slot: Safepoint.Slot,
-                            frame: Frame
-                        ): Loop.Outcome[A < (E & S & S2), B < (S & S2)] < (S & S2) =
-                            Handler.answersLoop[I, O, E, A, B, S & S2, X](
-                                effectTag,
-                                [C] => (in: I[C]) => handle[C](in),
-                                frame,
-                                input0,
-                                k0,
-                                armed,
-                                slot
-                            )
-                        def done(state: Unit, v0: A)                     = onDone(v0)
-                        override def recover(state: Unit, ex: Throwable) = onRecover(ex)
+        // the input is forced under the recovery clause, as in the recovering handleCont
+        try
+            val v0 = v
+            v0 match
+                case _: Pending[?, ?] =>
+                    val h =
+                        new Handler.LoopHandler[I, O, E, A, B, S & S2]:
+                            def tag = effectTag
+                            def run[X](input: I[X]) =
+                                handle[X](input)
+                            override def answers[X](
+                                input0: I[X],
+                                k0: Arrow[O[X], A, E & S & S2],
+                                armed: Boolean,
+                                slot: Safepoint.Slot,
+                                frame: Frame
+                            ): Loop.Outcome[A < (E & S & S2), B < (S & S2)] < (S & S2) =
+                                Handler.answersLoop[I, O, E, A, B, S & S2, X](
+                                    effectTag,
+                                    [C] => (in: I[C]) => handle[C](in),
+                                    frame,
+                                    input0,
+                                    k0,
+                                    armed,
+                                    slot
+                                )
+                            def done(state: Unit, v0: A)                     = onDone(v0)
+                            override def recover(state: Unit, ex: Throwable) = onRecover(ex)
 
-                new Pending.HandleArrow[Unit, E, A, B, B, S & S2]:
-                    override def frame = _frame
-                    def value          = v
-                    def handler        = h
-                    def state          = ()
-                    def cont           = Arrow.id
-                end new
-            case _ =>
-                try onDone(Nested.unnest(v))
-                catch
-                    case ex if NonFatal(ex) => onRecover(ex).getOrElse(throw ex)
-        end match
+                    new Pending.HandleArrow[Unit, E, A, B, B, S & S2]:
+                        override def frame = _frame
+                        def value          = v0
+                        def handler        = h
+                        def state          = ()
+                        def cont           = Arrow.id
+                    end new
+                case _ =>
+                    onDone(Nested.unnest(v0))
+            end match
+        catch
+            case ex if NonFatal(ex) => onRecover(ex).getOrElse(throw ex)
+        end try
     end handleLoop
 
     // Diverges from main: main's stateful `handleLoop` overloads are `handleLoopState` here, and the
@@ -594,7 +604,7 @@ object ArrowEffect:
     inline def handleLoopState[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2, State](
         inline effectTag: Tag[E],
         state: State,
-        v: A < (E & S)
+        inline v: => A < (E & S)
     )(
         inline handle: [C] => (State, I[C]) => Loop.Outcome2[State, O[C] < (E & S & S2), B < (S & S2)] < (S & S2),
         inline done: (State, A) => B < (S & S2),
@@ -602,47 +612,52 @@ object ArrowEffect:
     )(using inline _frame: Frame): B < (S & S2) =
         def onDone(st: State, v0: A): B < (S & S2)                   = done(st, v0)
         def onRecover(st: State, ex: Throwable): Maybe[B < (S & S2)] = recover(st, ex)
-        v match
-            case _: Pending[?, ?] =>
-                val h =
-                    new Handler.LoopStateHandler[State, I, O, E, A, B, S & S2]:
-                        def tag = effectTag
-                        def run[X](st: State, input: I[X]) =
-                            handle[X](st, input)
-                        override def answers[X](
-                            state0: State,
-                            input0: I[X],
-                            k0: Arrow[O[X], A, E & S & S2],
-                            armed: Boolean,
-                            slot: Safepoint.Slot,
-                            frame: Frame
-                        ): Loop.Outcome2[State, A < (E & S & S2), B < (S & S2)] < (S & S2) =
-                            Handler.answersLoopState[State, I, O, E, A, B, S & S2, X](
-                                effectTag,
-                                [C] => (st: State, in: I[C]) => handle[C](st, in),
-                                frame,
-                                state0,
-                                input0,
-                                k0,
-                                armed,
-                                slot
-                            )
-                        def done(st: State, v0: A)                     = onDone(st, v0)
-                        override def recover(st: State, ex: Throwable) = onRecover(st, ex)
-                val state0 = state
+        // the input is forced under the recovery clause, as in the recovering handleCont; a throw
+        // there sees the initial state, the only one the region has had
+        try
+            val v0 = v
+            v0 match
+                case _: Pending[?, ?] =>
+                    val h =
+                        new Handler.LoopStateHandler[State, I, O, E, A, B, S & S2]:
+                            def tag = effectTag
+                            def run[X](st: State, input: I[X]) =
+                                handle[X](st, input)
+                            override def answers[X](
+                                state0: State,
+                                input0: I[X],
+                                k0: Arrow[O[X], A, E & S & S2],
+                                armed: Boolean,
+                                slot: Safepoint.Slot,
+                                frame: Frame
+                            ): Loop.Outcome2[State, A < (E & S & S2), B < (S & S2)] < (S & S2) =
+                                Handler.answersLoopState[State, I, O, E, A, B, S & S2, X](
+                                    effectTag,
+                                    [C] => (st: State, in: I[C]) => handle[C](st, in),
+                                    frame,
+                                    state0,
+                                    input0,
+                                    k0,
+                                    armed,
+                                    slot
+                                )
+                            def done(st: State, v0: A)                     = onDone(st, v0)
+                            override def recover(st: State, ex: Throwable) = onRecover(st, ex)
+                    val state0 = state
 
-                new Pending.HandleArrow[State, E, A, B, B, S & S2]:
-                    override def frame = _frame
-                    def value          = v
-                    def handler        = h
-                    def state          = state0
-                    def cont           = Arrow.id
-                end new
-            case _ =>
-                try onDone(state, Nested.unnest(v))
-                catch
-                    case ex if NonFatal(ex) => onRecover(state, ex).getOrElse(throw ex)
-        end match
+                    new Pending.HandleArrow[State, E, A, B, B, S & S2]:
+                        override def frame = _frame
+                        def value          = v0
+                        def handler        = h
+                        def state          = state0
+                        def cont           = Arrow.id
+                    end new
+                case _ =>
+                    onDone(state, Nested.unnest(v0))
+            end match
+        catch
+            case ex if NonFatal(ex) => onRecover(state, ex).getOrElse(throw ex)
+        end try
     end handleLoopState
 
     // Not on main: the clause is handed the suspended operation itself instead of its input, which is

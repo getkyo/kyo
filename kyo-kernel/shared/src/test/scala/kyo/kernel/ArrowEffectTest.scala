@@ -1710,6 +1710,33 @@ class ArrowEffectTest extends AnyFreeSpec:
             )
             assert(r.eval == -1)
         }
+
+        "a throw while the input is forced reaches the recovery clause" in {
+            val r: Int < Any = ArrowEffect.handleCont(Tag[Ask], (throw Boom): Int < Ask)(
+                [C] => (_, cont) => cont(1),
+                a => a,
+                _ => Maybe(-1)
+            )
+            assert(r.eval == -1)
+        }
+
+        "a throw while a loop region's input is forced reaches its recovery clause" in {
+            val r: Int < Any = ArrowEffect.handleLoop(Tag[Ask], (throw Boom): Int < Ask)(
+                [C] => _ => Loop.continue(1),
+                a => a,
+                _ => Maybe(-1)
+            )
+            assert(r.eval == -1)
+        }
+
+        "a throw while a stateful loop region's input is forced reaches its recovery clause with the initial state" in {
+            val r: Int < Any = ArrowEffect.handleLoopState(Tag[Ask], 5, (throw Boom): Int < Ask)(
+                [C] => (s, _) => Loop.continue(s, 1),
+                (_, a) => a,
+                (s, _) => Maybe(-100 - s)
+            )
+            assert(r.eval == -105)
+        }
     }
 
     "dispatchFirst" - {

@@ -596,7 +596,7 @@ object Abort:
     def catching[E](
         using Frame
     )[A, S](v: => A < S)(using ct: ConcreteTag[E]): A < (Abort[E] & S) =
-        ArrowEffect.handleCont(Tag[Catching], Effect.defer(v): A < (Catching & Abort[E] & S))(
+        ArrowEffect.handleCont(Tag[Catching], v: A < (Catching & Abort[E] & S))(
             [C] => (_, cont) => cont(()),
             a => a,
             {
@@ -621,7 +621,7 @@ object Abort:
     )[A, S, E1](f: E => E1)(v: => A < S)(
         using ct: ConcreteTag[E]
     ): A < (Abort[E1] & S) =
-        ArrowEffect.handleCont(Tag[Catching], Effect.defer(v): A < (Catching & Abort[E1] & S))(
+        ArrowEffect.handleCont(Tag[Catching], v: A < (Catching & Abort[E1] & S))(
             [C] => (_, cont) => cont(()),
             a => a,
             {
