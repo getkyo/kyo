@@ -79,4 +79,74 @@ What it cannot do. A remainder dropped without being resumed holds its resource 
 
 Pins that change. BracketTest "a handleFirst clause runs before the release its remainder runs after" (1288-1313) becomes: `closedAtClause` false, first shot runs (`seen == List("branch 10")`), release once, `Closed` at the second shot, which is the multi-shot law applied to a handed-out remainder. ContextEffectTest "a handleFirst remainder re-enters a raw region the region's end already released" (507-519) becomes `List("clause", "done cfg 1")`: the raw region is no longer released and then revived, which is the "one of done or release per instance" direction open-issues.md §2 names for S9. The four stream pins go green. Nothing else in BracketTest exercises a `handleFirst` exit; the `handleFirst` groups in ArrowEffectTest (134-241, 2116-2295) carry no bracket and every one of them evaluates the clause's value after the region ended already, so "an operation raised by the clause reaches the outer handler" (2222-2237) and "the innermost handleFirst wins" (2271-2281) are unchanged. IsolateTest's `continuationOf` (453-468) stashes a continuation from a `handleFirst` clause and resumes it in later evals; its raw region is released at the first eval's end and revived by each resume, exactly as today.
 
-<!-- parts 7 to 11 pending -->
+Cost. On the settled path, none. On a suspension, `FirstHandler` regions pay the failed class tests of the arms before theirs; regions of other kinds pay nothing new. The `loop` method grows by the arm, which the skill treats as a design property to measure (SKILL.md:493-510), and every `ProtoBench` row must be run on both tips per open-issues.md §5 (`-f 1` then `-f 3`, `-prof gc`), the crossing rows in particular. Per stream element, versus today: one `Chunk.concat` in `oweBelow` (Stack.scala:59-63) and one lane rebuild in `settle` (77-88) replace one `drainDiscarded`; `settle` already walks every lane on every crossing resume today, it just finds nothing. Unverified until measured; if `loop`'s size regresses, the TODO at Eval.scala:73 and 101 (move the at-top branching out of line) is the lever, not dropping the arm.
+
+Failure introduced. None found. The one semantic change beyond the pins is that the clause's effects and throws are attached to the region while it is still installed, and its value is evaluated once it is gone, which is what `handleCont`'s `done` already does (271-272) and what the signature says.
+
+### B. The same law, decided by the token at the settled exit
+
+Equation: identical to A. Realization: the note `handle-first-custody.md` proposes. In the `ArrowHandler` settled exit (Eval.scala:267-272), `arrowExit()` takes `res` and, only when `stack.owesAny`, passes the popped lane below when `res` is a `FirstSuspended` and drains otherwise. One site: the loop family's done arms cannot produce the token, since loop clauses never hold `k`. Guarded by `owesAny`, so the class test runs only for a region that dumped something.
+
+What it guarantees: everything A does, with the same pins flipping. What it cannot: it keeps the region installed while the user's `handle` runs inside `done` (269), keeps `FirstSuspended`, the union, and the two casts, and the rule "a settled value that holds the continuation" is knowable only from the value's class. A future exit site (a new handler family's settled arm) has to remember it. That is correctness by inspection, in the one place the skill says to avoid it. Cost: one class test under `owesAny`. Failure introduced: none, same reasoning as A.
+
+If the owner wants the smallest diff first, B is it, but it is not a stepping stone to A: A replaces it entirely, so landing B first is paying twice.
+
+### C. No region drains at a settled exit; every debt flows to the enclosing scope
+
+Equation: every exit is the in-flight exit. Rejected on a correctness argument, not scope. `Abort.run`'s clause is `(input, _) => input` (Abort.scala:224): it drops the continuation, and a bracket inside an aborted body is released by the discard drain at `Abort.run`'s own exit. Under C that release moves to the enclosing scope, so `Abort.run(Bracket(acq)(_ => Abort.fail(e)))` inside a long-lived loop holds its resource for the loop's life. The pins that hold the line: BracketTest "a discarded continuation releases when its region completes, before the handler's continuation" (1114-1129) and "a region installed inside the use does not intercept the release" (1097-1112). This is also main's weakness, custody with the fiber (main Safepoint.scala:157-166, 169-192), which the report already calls a leak.
+
+### D. The debt travels in the value
+
+Equation: the First exit returns `Park(handle(i, k), Snapshot.empty, owed)`, the node the evaluator already builds for a park with nothing installed (Eval.scala:290) and consumes at 246-248 by owing to the current top. Within an eval this is A's `oweBelow` with an allocation and a round trip through the loop; the value is consumed one step later. Across evals it could only differ if an eval returned the `Park` unconsumed as its result, past the drain at 440, and then a dropped value is a leak nobody can drain. That is the constraint "no leak that outlives the eval able to drain it" stated as a prohibition. Not a design; recorded because it looks compositional and is ceremony.
+
+### E. A consumer-held stepper or close token
+
+The region cannot stay installed while the consumer runs (the consumer is the region's `next`), so a stepper is a detached pair: resume and close. The kernel already has both: the crossing arrow is resume (PendingInternal.scala:47-63) and `Eval.release(v, ex)` is close (Eval.scala:493-528), the pair `IOTask.abandon` uses (IOTask.scala:467-474). A stepper type adds a name, not a guarantee; the guarantee is still the enclosing scope's drain. What a close does add is promptness for the drops in section 4.A's "cannot": `zip` and `Pipe.transform` could release a dropped remainder at the drop. That is a prelude refinement on top of A, spelled with `Eval.release` (reachable from package `kyo`) or a public discard whose equation is the abandonment law already visible through fiber abandonment. Not required for correctness; open question 6.
+
+### F. Ownership in the types
+
+Scala has no linear types, so "resume exactly once or close" cannot be a type. A one-shot flag on the arrow is a runtime guard weaker than the one that exists (the cell refuses at re-install, per region, Bracket.scala:70-72, which also covers a replay inside the body). A marker effect in the handed-out continuation's row (an `Owed` the consumer must discharge) forces a discharge site, but the discharge handler is where exactly-once would be implemented, so it is the same accounting with more surface, and every stream combinator's row changes. The type that does carry the semantics is `handleFirst`'s signature itself; A is what makes the evaluator honor it, and the row widening in A is the one type-level improvement available.
+
+### G. A law on users: keep Q4, resources spanning emissions live outside the combinator
+
+Equation: no bracket is ever between an answering handler and its operation, so no bracket ever enters a continuation. Sound by construction, and the only candidate that is: with `Scope` in the row the `Scope.run` region sits below every peel (the green pin at StreamCoreExtensionsTest.scala:1099-1119; `StreamCompression` already works this way with `Scope.acquireRelease` and `Emit.runFirst`, StreamCompression.scala:156, 166, 240, 277, 359, 363).
+
+What it costs. `Sync.ensure` has no row to lift, so `Stream(Sync.ensure(close)(loop emitting))` is refused by every peel. The repository's own `mapPar`, `mapParUnordered` and `mapChunkPar` are that spelling (section 2): under G they must change their public rows to carry `Scope`, or hold their channel elsewhere, which for a stream that owns its channel does not exist. The four stream pins invert to assert `Closed` or are rewritten with `Scope` in the row. Q4 stays. Zero kernel change. Ranked below A and B because it forbids the spelling the repository already uses and moves the cost onto every parallel stream combinator's API.
+
+### H. Restructure the combinators
+
+`handleFirstWith` (the consumer runs inside the clause) nests one region per element: the `Stack` grows on the heap (Stack.scala:28-38, 200-219), so no stack overflow, but unbounded growth and an `O(depth)` `settle` walk per resume (65-75). A fiber per side over a channel makes every `Sync` stream `Async` and allocates per element. One loop region over one side whose clause pulls from the other still reifies the other side's rest as a value, the same hand-out. Agreed with `handle-first-custody.md`: the coroutine step is the combinator, and the hand-out is its meaning, not an accident of the encoding.
+
+## 5. Interactions with rulings and open lanes
+
+- Q4 is revisited, with the loop family's pending exit as the precedent and Q4's own objection answered by custody with the scope rather than the token. Q3, S3, S4 and "bracket not inheritable" are untouched: forks still get `Cell.inert` (Bracket.scala:66), `settle` is the same identity search, and the spawn shape's pins (BracketTest.scala:600-652) do not involve a `handleFirst` exit.
+- "A leaked capture resumed after its region completed is refused as closed" (BracketTest.scala:262-282) stands: a `handleCont` clause that stashes and returns a plain value is a settled exit and drains. The distinction the report draws between that pin and `handleFirst` becomes the distinction between handler kinds under A, and between a plain value and the token under B.
+- The multi-shot law stands and is what the flipped Q4 pin asserts.
+- S9 (open-issues.md §1 and §2). The raw-region pin flips to "done only" for the same-eval case, which is the direction §2 names. The cross-eval double fire (done in a nested eval, release at the outer lane's drain) is unchanged, and so is the multi-shot re-owe of inner snapshots at `installed` (333, 340). One constraint for whoever rules S9: IsolateTest 453-476 pins that a raw region stashed out of a `handleFirst` and resumed in later evals, twice, revives each time; a released mark that refuses re-entry would invert those kernel pins.
+- The cross-fiber lane stays as the report describes. Nothing here changes what the peeling eval's end drains.
+- EffectTrace: `FirstHandler.answering` attaches with the region installed, as `ContHandler.answering` does. Debugger: `onRegionExit` moves to the pop in the arm.
+
+## 6. What changes, by file
+
+Under A: Handler.scala (the family, beside `ContHandler` at 34-43); Eval.scala (the arm in the `SuspendArrow` dispatch; nothing at the settled exit); ArrowEffect.scala (264-282 rebuilt over the family, 242-246 deleted, the scaladoc at 248-262 stating custody); Bracket.scala scaladoc (12-25, add the hand-out sentence); BracketTest.scala 1288-1313 and ContextEffectTest.scala 507-519 restated; StreamCoreExtensionsTest 1004-1068 unchanged and green; ChoiceTest 401-417 restated per section 3; backlog.md Q4 entry and open-issues.md §2 updated. Emit.scala, Poll.scala, Stream.scala, Sink.scala, Pipe.scala, Choice.scala, Actor.scala: no change unless the row is widened, and even then their inferred `S2` makes the widening invisible.
+
+Under B: Eval.scala 267-272 and 354-358 only, plus the same pin and document changes.
+
+## 7. Ranked recommendation
+
+1. A. The in-flight exit by handler kind. It is the operational reading of `handleFirst`'s signature, it reuses the exit law the loop family already has, it removes a type, a union and two casts, and it leaves no state for a future site to get wrong.
+2. B. The same law by token check. Smallest diff; keeps the encoding A removes; the rule lives in a value's class.
+3. G. Keep Q4 and make `Scope` in the row the law. Sound by construction, at the price of the repository's own parallel stream combinators and of `Sync.ensure` inside any stream body.
+4. E, as a prelude follow-up to A: prompt release of the remainders `zip` and `Pipe.transform` drop.
+5. C, D, F, H: rejected for the reasons given.
+
+## 8. Open questions for the owner
+
+1. Revisit Q4 as argued: is `handleFirst`'s exit the in-flight exit, with custody in the enclosing scope, the loop family's pending exit being the precedent?
+2. A or B: the handler family plus one arm, or the token check at the settled exit.
+3. Under A, widen the public continuation row to `E & S & S2` (no cast, no call site changes) or keep `E & S` with one categorized cast.
+4. ChoiceTest 401-417: restate to the multi-shot law and add the bracket-outside spelling, or hold the pin red as a marker for a law that has no evaluator.
+5. ContextEffectTest 507-519 flips to `("clause", "done cfg 1")`: accept now as the S9 direction, or hold the flip until S9 is ruled as a whole.
+6. Whether `zip` and `Pipe.transform` should release a dropped remainder at the drop, and if so through `Eval.release` or a public discard.
+7. The measurement plan: the `ProtoBench` rows on both tips, and a stream benchmark for the per-element `oweBelow` and `settle` cost, since none exists in `ProtoBench` that I could see (unverified).
+8. Confirm the location of the cross-fiber `pendingUntilFixed` pin the report names; I could not find it, and A does not touch that lane either way.
