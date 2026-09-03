@@ -228,8 +228,12 @@ class CompileLoadRoundTripTest extends kyo.test.Test[Any]:
                         .asInstanceOf[java.lang.Integer]
                 catch
                     case e: java.lang.reflect.InvocationTargetException =>
-                        val cause = if e.getCause ne null then e.getCause else e
-                        throw new RuntimeException(s"binding call failed: ${cause.getClass.getName}: ${cause.getMessage}", cause)
+                        // The chain matters, not just the first link: an ExceptionInInitializerError carries
+                        // the load failure underneath it, and its own message is null. Render the whole trace.
+                        val cause  = if e.getCause ne null then e.getCause else e
+                        val writer = new java.io.StringWriter
+                        cause.printStackTrace(new java.io.PrintWriter(writer))
+                        throw new RuntimeException(s"binding call failed:\n${writer.toString}", cause)
                 end try
             end result
             assert(result.intValue() == 5)
@@ -305,8 +309,12 @@ class CompileLoadRoundTripTest extends kyo.test.Test[Any]:
                         .asInstanceOf[java.lang.Integer]
                 catch
                     case e: java.lang.reflect.InvocationTargetException =>
-                        val cause = if e.getCause ne null then e.getCause else e
-                        throw new RuntimeException(s"binding call failed: ${cause.getClass.getName}: ${cause.getMessage}", cause)
+                        // The chain matters, not just the first link: an ExceptionInInitializerError carries
+                        // the load failure underneath it, and its own message is null. Render the whole trace.
+                        val cause  = if e.getCause ne null then e.getCause else e
+                        val writer = new java.io.StringWriter
+                        cause.printStackTrace(new java.io.PrintWriter(writer))
+                        throw new RuntimeException(s"binding call failed:\n${writer.toString}", cause)
                 end try
             end result
             assert(result.intValue() == 5)
