@@ -1,16 +1,13 @@
 package kyo.kernel
 
-import kyo.Frame
-import kyo.Maybe
+import kyo.*
+import kyo.kernel.Arrow
 import kyo.kernel.Arrow.Step
-import kyo.kernel.internal.Debugger
-import kyo.kernel.internal.Nested
-import kyo.kernel.internal.Pending
-import kyo.kernel.internal.Safepoint
-import kyo.kernel.internal.site
+import kyo.kernel.internal.*
 import scala.annotation.nowarn
 import scala.annotation.tailrec
 import scala.annotation.targetName
+import scala.util.NotGiven
 
 /** Provides utilities for creating and managing iterative computations with effects.
   *
@@ -24,12 +21,13 @@ import scala.annotation.targetName
   * The outcome of each iteration is represented by an Outcome type, which can either signal continuation with new state values or
   * completion with a final result.
   */
-// Diverges from main: the Outcome types are covariant in O and Done wraps a settled answer so
-// a pending outcome can be told from a continue; `continue` answers as a computation
-// (Outcome < Any) since a clause may suspend before continuing; repeat and indexed test the
-// body's answer for Pending; the Continue classes report to the debugger and print themselves.
+// Diverges from main: the combinators loop over this kernel's Pending representation. They take no
+// Safepoint evidence and no `Safepoint ?=>` body, since the evaluator polls the budget itself, and a
+// combinator whose body can suspend defers the rest of the loop through an Arrow node (`Step`) that
+// is cached in `step` and reused across iterations, unwrapping a `Done` answer when the loop settles.
 object Loop:
 
+    // Diverges from main: the Continue classes report to the debugger and print themselves.
     /** Represents the state to be carried forward to the next iteration of a loop.
       *
       * @tparam A
@@ -92,6 +90,7 @@ object Loop:
         override def toString = s"Continue4(${_1}, ${_2}, ${_3}, ${_4})"
     end Continue4
 
+    // Diverges from main: the Outcome types are covariant in O.
     /** Represents the result of a loop iteration, which can either continue with new state or complete with a final value.
       *
       * @tparam A
@@ -140,6 +139,8 @@ object Loop:
       */
     opaque type Outcome4[A, B, C, D, +O] = O | Continue4[A, B, C, D]
 
+    // Not on main: Done wraps a settled answer that is itself a Continue, so a completed outcome can
+    // be told from a continuation; unnest reads the answer back out.
     final private[kyo] class Done[O](val value: O)
 
     private[kyo] def unnest[A, B, O](v: Outcome2[A, B, O]): O =
@@ -151,6 +152,7 @@ object Loop:
         new Continue:
             def _1 = ()
 
+    // Diverges from main: continue answers as a computation, since a clause may suspend before continuing.
     /** Creates an outcome signaling continuation with no state value.
       *
       * This is a convenience method for continuing a loop without maintaining any state between iterations. It's particularly useful for
@@ -159,9 +161,7 @@ object Loop:
       * @return
       *   An Outcome indicating continuation with Unit state
       */
-    inline def continue[A]: Outcome[Unit, A] < Any =
-
-        _continueUnit.asInstanceOf[Outcome[Unit, A] < Any]
+    inline def continue[A]: Outcome[Unit, A] < Any = _continueUnit.asInstanceOf[Outcome[Unit, A] < Any]
 
     /** Creates an outcome signaling continuation with a single state value.
       *
@@ -170,7 +170,6 @@ object Loop:
       */
     @nowarn("msg=anonymous")
     inline def continue[A, O, S](inline v: A): Outcome[A, O] < S =
-
         val v0 = v
         (new Continue[A]:
             def _1 = v0
@@ -185,21 +184,23 @@ object Loop:
       *   The second state value
       */
     @nowarn("msg=anonymous")
-    inline def continue[A, B, O](inline v1: A, inline v2: B): Outcome2[A, B, O] < Any =
+    inline def continue[A, B, o](inline v1: A, inline v2: B): Outcome2[A, B, o] < Any =
         val v1x = v1
         val v2x = v2
         (new Continue2[A, B]:
             def _1 = v1x
             def _2 = v2x
-        ).asInstanceOf[Outcome2[A, B, O] < Any]
+        ).asInstanceOf[Outcome2[A, B, o] < Any]
     end continue
 
-    /** Creates an outcome signaling continuation with two state values.
+    /** Creates an outcome signaling continuation with three state values.
       *
       * @param v1
       *   The first state value
       * @param v2
       *   The second state value
+      * @param v3
+      *   The third state value
       */
     @nowarn("msg=anonymous")
     inline def continue[A, B, C, O](inline v1: A, inline v2: B, inline v3: C): Outcome3[A, B, C, O] < Any =
@@ -213,13 +214,19 @@ object Loop:
         ).asInstanceOf[Outcome3[A, B, C, O] < Any]
     end continue
 
+    /** Creates an outcome signaling continuation with four state values.
+      *
+      * @param v1
+      *   The first state value
+      * @param v2
+      *   The second state value
+      * @param v3
+      *   The third state value
+      * @param v4
+      *   The fourth state value
+      */
     @nowarn("msg=anonymous")
-    inline def continue[A, B, C, D, O](
-        inline v1: A,
-        inline v2: B,
-        inline v3: C,
-        inline v4: D
-    ): Outcome4[A, B, C, D, O] < Any =
+    inline def continue[A, B, C, D, O](inline v1: A, inline v2: B, inline v3: C, inline v4: D): Outcome4[A, B, C, D, O] < Any =
         val v1x = v1
         val v2x = v2
         val v3x = v3
@@ -232,10 +239,11 @@ object Loop:
         ).asInstanceOf[Outcome4[A, B, C, D, O] < Any]
     end continue
 
+    // Diverges from main: done answers as a computation, wrapping an answer that is itself a Continue
+    // in Done and nesting any other answer so it cannot be mistaken for a suspension.
     /** Creates an outcome signaling completion with no value. */
     @targetName("done0")
-    inline def done[A]: Outcome[A, Unit] < Any =
-        ().asInstanceOf[Outcome[A, Unit] < Any]
+    inline def done[A]: Outcome[A, Unit] < Any = ().asInstanceOf[Outcome[A, Unit] < Any]
 
     /** Creates an outcome signaling completion with a final value.
       *
@@ -248,7 +256,7 @@ object Loop:
             case v: Continue[?] => new Done(v).asInstanceOf[Outcome[A, O] < Any]
             case v              => Nested.nest[Outcome[A, O], Any](v)
 
-    /** Creates an outcome signaling completion with a final value.
+    /** Creates an outcome signaling completion with a final value for a two-state loop.
       *
       * @param v
       *   The final value
@@ -259,7 +267,7 @@ object Loop:
             case v: Continue2[?, ?] => new Done(v).asInstanceOf[Outcome2[A, B, O] < Any]
             case v                  => Nested.nest[Outcome2[A, B, O], Any](v)
 
-    /** Creates an outcome signaling completion with a final value.
+    /** Creates an outcome signaling completion with a final value for a three-state loop.
       *
       * @param v
       *   The final value
@@ -270,7 +278,7 @@ object Loop:
             case v: Continue3[?, ?, ?] => new Done(v).asInstanceOf[Outcome3[A, B, C, O] < Any]
             case v                     => Nested.nest[Outcome3[A, B, C, O], Any](v)
 
-    /** Creates an outcome signaling completion with a final value.
+    /** Creates an outcome signaling completion with a final value for a four-state loop.
       *
       * @param v
       *   The final value
@@ -293,11 +301,10 @@ object Loop:
       * @return
       *   The final result after loop completion
       */
-    @nowarn("msg=anonymous")
     inline def apply[A, O, S](inline input: A)(inline run: A => Outcome[A, O] < S)(
         using inline _frame: Frame
     ): O < S =
-
+        @nowarn("msg=anonymous")
         @tailrec def loop(step: Maybe[Arrow[Outcome[A, O], O, S]], v: Outcome[A, O] < S): O < S =
             v match
                 case next: Continue[A] @unchecked =>
@@ -314,7 +321,6 @@ object Loop:
                                         val slot = Safepoint.get()
                                         if !Safepoint.enter(slot) then Effect.defer(v, this, cont)
                                         else
-
                                             val out = cont.head(loop(Maybe(this), v.asInstanceOf[Outcome[A, O] < S]), cont.tail)
                                             Safepoint.exit(slot)
                                             out
@@ -342,11 +348,10 @@ object Loop:
       * @return
       *   The final result after loop completion
       */
-    @nowarn("msg=anonymous")
     inline def apply[A, B, O, S](input1: A, input2: B)(inline run: (A, B) => Outcome2[A, B, O] < S)(
         using inline _frame: Frame
     ): O < S =
-
+        @nowarn("msg=anonymous")
         @tailrec def loop(step: Maybe[Arrow[Outcome2[A, B, O], O, S]], v: Outcome2[A, B, O] < S): O < S =
             v match
                 case next: Continue2[A, B] @unchecked =>
@@ -392,11 +397,10 @@ object Loop:
       * @return
       *   The final result after loop completion
       */
-    @nowarn("msg=anonymous")
     inline def apply[A, B, C, O, S](input1: A, input2: B, input3: C)(
         inline run: (A, B, C) => Outcome3[A, B, C, O] < S
     )(using inline _frame: Frame): O < S =
-
+        @nowarn("msg=anonymous")
         @tailrec def loop(step: Maybe[Arrow[Outcome3[A, B, C, O], O, S]], v: Outcome3[A, B, C, O] < S): O < S =
             v match
                 case next: Continue3[A, B, C] @unchecked =>
@@ -426,10 +430,10 @@ object Loop:
         loop(Maybe.empty, Loop.continue(input1, input2, input3))
     end apply
 
-    /** Executes a loop with three state values.
+    /** Executes a loop with four state values.
       *
-      * Maintains three independent state values between iterations, allowing for even more complex stateful computations while preserving
-      * type safety and separation of concerns.
+      * The most complex variant, maintaining four independent state values between iterations. This enables sophisticated stateful
+      * computations while keeping all state values properly typed and organized.
       *
       * @param input1
       *   The first initial state value
@@ -437,16 +441,17 @@ object Loop:
       *   The second initial state value
       * @param input3
       *   The third initial state value
+      * @param input4
+      *   The fourth initial state value
       * @param run
       *   The function to execute for each iteration, receiving all current states and producing an outcome
       * @return
       *   The final result after loop completion
       */
-    @nowarn("msg=anonymous")
     inline def apply[A, B, C, D, O, S](input1: A, input2: B, input3: C, input4: D)(
         inline run: (A, B, C, D) => Outcome4[A, B, C, D, O] < S
     )(using inline _frame: Frame): O < S =
-
+        @nowarn("msg=anonymous")
         @tailrec def loop(step: Maybe[Arrow[Outcome4[A, B, C, D, O], O, S]], v: Outcome4[A, B, C, D, O] < S): O < S =
             v match
                 case next: Continue4[A, B, C, D] @unchecked =>
@@ -476,6 +481,8 @@ object Loop:
         loop(Maybe.empty, Loop.continue(input1, input2, input3, input4))
     end apply
 
+    // Diverges from main: indexed tests the body's answer for Pending and defers the rest of the loop
+    // through it, instead of rebuilding the suspension around the loop.
     /** Executes an indexed loop without state values.
       *
       * This method runs an iterative computation that maintains a counter between iterations. Each iteration receives the current index and
@@ -487,8 +494,9 @@ object Loop:
       * @return
       *   The final result after loop completion
       */
-    inline def indexed[O, S](inline run: Int => Outcome[Unit, O] < S)(using inline _frame: Frame): O < S =
-
+    inline def indexed[O, S](inline run: Int => Outcome[Unit, O] < S)(using
+        inline _frame: Frame
+    ): O < S =
         def suspended(idx: Int)(v: Outcome[Unit, O] < S): O < S =
             v.map(loop(idx)(_))
         @tailrec def loop(idx: Int)(v: Outcome[Unit, O] < S): O < S =
@@ -516,7 +524,9 @@ object Loop:
       * @return
       *   The final result after loop completion
       */
-    inline def indexed[A, O, S](input: A)(inline run: (Int, A) => Outcome[A, O] < S)(using inline _frame: Frame): O < S =
+    inline def indexed[A, O, S](input: A)(inline run: (Int, A) => Outcome[A, O] < S)(using
+        inline _frame: Frame
+    ): O < S =
         def suspended(idx: Int)(v: Outcome[A, O] < S): O < S =
             v.map(loop(idx)(_))
         @tailrec def loop(idx: Int)(v: Outcome[A, O] < S): O < S =
@@ -564,17 +574,19 @@ object Loop:
         loop(0)(Loop.continue(input1, input2))
     end indexed
 
-    /** Executes an indexed loop with two state values.
+    /** Executes an indexed loop with three state values.
       *
-      * Maintains two independent state values between iterations along with an index counter. This enables complex stateful computations
-      * that need to track iteration count while managing multiple state values.
+      * Maintains three independent state values between iterations along with an index counter. This enables sophisticated stateful
+      * computations that need to track iteration count while managing multiple state values.
       *
       * @param input1
       *   The first initial state value
       * @param input2
       *   The second initial state value
+      * @param input3
+      *   The third initial state value
       * @param run
-      *   The function to execute for each iteration, receiving the current index and both states
+      *   The function to execute for each iteration, receiving the current index and all states
       * @return
       *   The final result after loop completion
       */
@@ -596,17 +608,21 @@ object Loop:
         loop(0)(Loop.continue(input1, input2, input3))
     end indexed
 
-    /** Executes an indexed loop with two state values.
+    /** Executes an indexed loop with four state values.
       *
-      * Maintains two independent state values between iterations along with an index counter. This enables complex stateful computations
-      * that need to track iteration count while managing multiple state values.
+      * The most complex indexed variant, maintaining four independent state values between iterations along with an index counter. This
+      * enables highly sophisticated stateful computations that need to track iteration count while managing multiple state values.
       *
       * @param input1
       *   The first initial state value
       * @param input2
       *   The second initial state value
+      * @param input3
+      *   The third initial state value
+      * @param input4
+      *   The fourth initial state value
       * @param run
-      *   The function to execute for each iteration, receiving the current index and both states
+      *   The function to execute for each iteration, receiving the current index and all states
       * @return
       *   The final result after loop completion
       */
@@ -638,9 +654,8 @@ object Loop:
       * @return
       *   Unit after the loop completes
       */
-    @nowarn("msg=anonymous")
     inline def foreach[A, S](inline run: Outcome[Unit, A] < S)(using inline _frame: Frame): A < S =
-
+        @nowarn("msg=anonymous")
         @tailrec def loop(step: Maybe[Arrow[Outcome[Unit, A], A, S]], v: Outcome[Unit, A] < S): A < S =
             v match
                 case next: Continue[Unit] @unchecked =>
@@ -665,11 +680,12 @@ object Loop:
                     Effect.defer(kyo, arrow, Arrow.id)
                 case res: Done[?] =>
                     res.value.asInstanceOf[A < S]
-                case res =>
-                    res.asInstanceOf[A < S]
+                case res => res.asInstanceOf[A < S]
         loop(Maybe.empty, Loop.continue)
     end foreach
 
+    // Diverges from main: repeat tests the body's answer for Pending, and evaluates the body exactly
+    // n times (main evaluates it once more and discards the answer).
     /** Repeats an operation a specified number of times.
       *
       * A simpler looping construct that executes an operation exactly n times. Unlike other loop variants, this doesn't maintain state or
@@ -688,7 +704,6 @@ object Loop:
         @tailrec def loop(i: Int): Unit < S =
             if i >= n then ()
             else
-
                 val v: Any < S = run
                 v match
                     case _: Pending[?, ?] =>
@@ -711,9 +726,8 @@ object Loop:
       * @return
       *   Nothing, as this loop runs forever unless interrupted
       */
-    @nowarn("msg=anonymous")
     inline def forever[S](inline run: Any < S)(using inline _frame: Frame): Nothing < S =
-
+        @nowarn("msg=anonymous")
         @tailrec def loop(step: Maybe[Arrow[Any, Nothing, S]], v: Any < S): Nothing < S =
             v match
                 case kyo: Pending[Any, S] @unchecked =>
@@ -749,11 +763,10 @@ object Loop:
       * @return
       *   Unit after the loop completes
       */
-    @nowarn("msg=anonymous")
     inline def whileTrue[S](inline condition: Boolean < S)(inline run: Unit < S)(
         using inline _frame: Frame
     ): Unit < S =
-
+        @nowarn("msg=anonymous")
         def loop(step: Maybe[Arrow[Any, Unit, S]], v: Unit < S): Unit < S =
             condition.map {
                 case true =>

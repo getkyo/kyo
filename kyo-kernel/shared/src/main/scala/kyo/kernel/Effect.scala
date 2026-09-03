@@ -4,12 +4,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kyo.Closed
 import kyo.Frame
 import kyo.Maybe
-import kyo.Result
 import kyo.Tag
-import kyo.kernel.Arrow
 import kyo.kernel.internal.*
-import kyo.kernel.internal.Pending.*
-import language.implicitConversions
 import scala.annotation.nowarn
 import scala.util.control.NonFatal
 
@@ -28,11 +24,10 @@ import scala.util.control.NonFatal
   */
 abstract class Effect private[kernel] ()
 
-// Diverges from main: `Effect.catching` is gone (D2), each handler carries a `recover` arm
-// instead. `bracket` with its Finalize region and Cell is new, as are the `defer` overloads that
-// build a Defer node around a value and its continuations; `deferInline` builds a DeferWith.
+// Diverges from main: `Effect.catching` is gone (D2), each handler carries a `recover` arm instead.
 object Effect:
 
+    // Not on main: `bracket`, the `Finalize` region it runs the use body under, and the `Cell` that runs the release exactly once.
     sealed private[kyo] trait Finalize extends ContextEffect[Cell]
 
     final private[kyo] class Cell(fin: Maybe[Throwable] => Unit) extends AtomicBoolean:
@@ -73,15 +68,16 @@ object Effect:
         defer(acquire).chain(ensure)
     end bracket
 
+    // Not on main: the `defer` overloads that build a `Pending.Defer` node around a value and the continuations that run after it.
     def defer[A, B, S](v: A < S, cont: Arrow[A, B, S]): B < S =
         cont match
             case cont: Arrow.Chain[A, x, B, S] @unchecked =>
-                new Defer[A, x, B, S]:
+                new Pending.Defer[A, x, B, S]:
                     def value = v
                     def contA = cont.a
                     def contB = cont.b
             case _ =>
-                new Defer[A, B, B, S]:
+                new Pending.Defer[A, B, B, S]:
                     def value = v
                     def contA = cont
                     def contB = Arrow.id
@@ -92,7 +88,7 @@ object Effect:
         else if cont2.isInstanceOf[Arrow.Id[?]] then
             defer(v, cont1.asInstanceOf[Arrow[A, C, S]])
         else
-            new Defer[A, B, C, S]:
+            new Pending.Defer[A, B, C, S]:
                 def value = v
                 def contA = cont1
                 def contB = cont2
@@ -109,6 +105,7 @@ object Effect:
         else
             defer(v, cont1, cont2.chain(cont3))
 
+    // Diverges from main: public, no `Safepoint ?=>` body since the evaluator polls the budget, and `deferInline` builds a `DeferWith`.
     def defer[A, S](f: => A < S)(using Frame): A < S =
         deferInline(f)
 

@@ -1,14 +1,10 @@
 package kyo.kernel
 
-import kyo.Frame
-import kyo.Maybe
-import kyo.Render
+import kyo.*
 import kyo.kernel.Arrow
-import kyo.kernel.Arrow.Step
-import kyo.kernel.Arrow.Transform
 import kyo.kernel.internal.*
-import language.implicitConversions
 import scala.annotation.nowarn
+import scala.language.implicitConversions
 
 /** Represents a computation that may perform effects before producing a value.
   *
@@ -46,10 +42,11 @@ import scala.annotation.nowarn
 // `Safepoint ?=>` context and no Safepoint evidence; `eval` and `flatten` go through Eval.
 opaque type <[+A, -S] = A | Pending[A, S]
 
+// Not on main: the lifts main defines in this object (lift, liftAnyVal, liftUnit, abortCastUnit
+// and the liftPureFunction overloads) live in internal.Implicits, which is mixed in here.
 object `<` extends Implicits:
-    implicit def fromKyo[A, S](kyo: Pending[A, S]): A < S = kyo
 
-    extension [A, S](inline self: A < S)
+    extension [A, S](inline v: A < S)
 
         /** Maps the value produced by this computation to a new computation and flattens the result. This is the monadic bind operation for
           * the pending type.
@@ -62,9 +59,8 @@ object `<` extends Implicits:
           * @return
           *   A new computation producing the transformed value
           */
-        @nowarn("msg=anonymous")
         inline def map[B, S2](inline f: A => B < S2)(using inline _frame: Frame): B < (S & S2) =
-            def run[C, S3](v: A < S3, cont: Arrow[B, C, S3]): C < (S2 & S3) =
+            @nowarn("msg=anonymous") def run[C, S3](v: A < S3, cont: Arrow[B, C, S3]): C < (S2 & S3) =
                 var slot: Safepoint.Slot = -1
                 val shouldDefer          = v.isInstanceOf[Pending[?, ?]] || { slot = Safepoint.get(); !Safepoint.enter(slot) }
                 if shouldDefer then
@@ -79,7 +75,7 @@ object `<` extends Implicits:
                     out
                 end if
             end run
-            run(self, Arrow.id)
+            run(v, Arrow.id)
         end map
 
         /** Maps the value produced by this computation to a new computation and flattens the result.
@@ -92,9 +88,8 @@ object `<` extends Implicits:
           * @return
           *   A computation producing the final result
           */
-        @nowarn("msg=anonymous")
         inline def flatMap[B, S2](inline f: A => B < S2)(using inline _frame: Frame): B < (S & S2) =
-            def run[C, S3](v: A < S3, cont: Arrow[B, C, S3]): C < (S2 & S3) =
+            @nowarn("msg=anonymous") def run[C, S3](v: A < S3, cont: Arrow[B, C, S3]): C < (S2 & S3) =
                 var slot: Safepoint.Slot = -1
                 val shouldDefer          = v.isInstanceOf[Pending[?, ?]] || { slot = Safepoint.get(); !Safepoint.enter(slot) }
                 if shouldDefer then
@@ -109,7 +104,7 @@ object `<` extends Implicits:
                     out
                 end if
             end run
-            run(self, Arrow.id)
+            run(v, Arrow.id)
         end flatMap
 
         /** Executes this computation, discards its result, and then executes another computation.
@@ -119,9 +114,8 @@ object `<` extends Implicits:
           * @return
           *   A computation producing the second result
           */
-        @nowarn("msg=anonymous")
         inline def andThen[B, S2](inline f: => B < S2)(using inline _frame: Frame): B < (S & S2) =
-            def run[C, S3](v: A < S3, cont: Arrow[B, C, S3]): C < (S2 & S3) =
+            @nowarn("msg=anonymous") def run[C, S3](v: A < S3, cont: Arrow[B, C, S3]): C < (S2 & S3) =
                 var slot: Safepoint.Slot = -1
                 val shouldDefer          = v.isInstanceOf[Pending[?, ?]] || { slot = Safepoint.get(); !Safepoint.enter(slot) }
                 if shouldDefer then
@@ -136,7 +130,7 @@ object `<` extends Implicits:
                     out
                 end if
             end run
-            run(self, Arrow.id)
+            run(v, Arrow.id)
         end andThen
 
         /** Executes this computation and discards its result.
@@ -144,9 +138,8 @@ object `<` extends Implicits:
           * @return
           *   A computation that produces Unit
           */
-        @nowarn("msg=anonymous")
         inline def unit(using inline _frame: Frame): Unit < S =
-            def run[C, S3](v: A < S3, cont: Arrow[Unit, C, S3]): C < S3 =
+            @nowarn("msg=anonymous") def run[C, S3](v: A < S3, cont: Arrow[Unit, C, S3]): C < S3 =
                 var slot: Safepoint.Slot = -1
                 val shouldDefer          = v.isInstanceOf[Pending[?, ?]] || { slot = Safepoint.get(); !Safepoint.enter(slot) }
                 if shouldDefer then
@@ -161,7 +154,7 @@ object `<` extends Implicits:
                     out
                 end if
             end run
-            run(self, Arrow.id)
+            run(v, Arrow.id)
         end unit
 
         /** Applies a transformation to this computation.
@@ -192,8 +185,8 @@ object `<` extends Implicits:
           *   The result of applying the transformation
           */
         inline def handle[B](inline f: (=> A < S) => B): B =
-            def h1 = self
-            f(h1)
+            def handle1 = v
+            f(handle1)
         end handle
 
         /** Applies two transformations to this computation in sequence.
@@ -203,10 +196,12 @@ object `<` extends Implicits:
           * @return
           *   The result after applying both transformations
           */
-        inline def handle[B, C](inline f1: (=> A < S) => B, inline f2: (=> B) => C): C =
-            def h1 = self
-            def h2 = f1(h1)
-            f2(h2)
+        inline def handle[B, C](
+            inline f1: A < S => B,
+            inline f2: (=> B) => C
+        ): C =
+            def handle2 = v.handle(f1)
+            f2(handle2)
         end handle
 
         /** Applies three transformations to this computation in sequence.
@@ -216,11 +211,13 @@ object `<` extends Implicits:
           * @return
           *   The result after applying all transformations in sequence
           */
-        inline def handle[B, C, D](inline f1: (=> A < S) => B, inline f2: (=> B) => C, inline f3: (=> C) => D): D =
-            def h1 = self
-            def h2 = f1(h1)
-            def h3 = f2(h2)
-            f3(h3)
+        inline def handle[B, C, D](
+            inline f1: A < S => B,
+            inline f2: (=> B) => C,
+            inline f3: (=> C) => D
+        ): D =
+            def handle3 = v.handle(f1, f2)
+            f3(handle3)
         end handle
 
         /** Applies four transformations to this computation in sequence.
@@ -231,16 +228,13 @@ object `<` extends Implicits:
           *   The result after applying all transformations in sequence
           */
         inline def handle[B, C, D, E](
-            inline f1: (=> A < S) => B,
+            inline f1: A < S => B,
             inline f2: (=> B) => C,
             inline f3: (=> C) => D,
             inline f4: (=> D) => E
         ): E =
-            def h1 = self
-            def h2 = f1(h1)
-            def h3 = f2(h2)
-            def h4 = f3(h3)
-            f4(h4)
+            def handle4 = v.handle(f1, f2, f3)
+            f4(handle4)
         end handle
 
         /** Applies five transformations to this computation in sequence.
@@ -251,18 +245,14 @@ object `<` extends Implicits:
           *   The result after applying all transformations in sequence
           */
         inline def handle[B, C, D, E, F](
-            inline f1: (=> A < S) => B,
+            inline f1: A < S => B,
             inline f2: (=> B) => C,
             inline f3: (=> C) => D,
             inline f4: (=> D) => E,
             inline f5: (=> E) => F
         ): F =
-            def h1 = self
-            def h2 = f1(h1)
-            def h3 = f2(h2)
-            def h4 = f3(h3)
-            def h5 = f4(h4)
-            f5(h5)
+            def handle5 = v.handle(f1, f2, f3, f4)
+            f5(handle5)
         end handle
 
         /** Applies six transformations to this computation in sequence.
@@ -273,26 +263,21 @@ object `<` extends Implicits:
           *   The result after applying all transformations in sequence
           */
         inline def handle[B, C, D, E, F, G](
-            inline f1: (=> A < S) => B,
+            inline f1: A < S => B,
             inline f2: (=> B) => C,
             inline f3: (=> C) => D,
             inline f4: (=> D) => E,
             inline f5: (=> E) => F,
             inline f6: (=> F) => G
         ): G =
-            def h1 = self
-            def h2 = f1(h1)
-            def h3 = f2(h2)
-            def h4 = f3(h3)
-            def h5 = f4(h4)
-            def h6 = f5(h5)
-            f6(h6)
+            def handle6 = v.handle(f1, f2, f3, f4, f5)
+            f6(handle6)
         end handle
 
         /** Applies a sequence of transformations to this computation.
           */
         inline def handle[B, C, D, E, F, G, H](
-            inline f1: (=> A < S) => B,
+            inline f1: A < S => B,
             inline f2: (=> B) => C,
             inline f3: (=> C) => D,
             inline f4: (=> D) => E,
@@ -300,20 +285,14 @@ object `<` extends Implicits:
             inline f6: (=> F) => G,
             inline f7: (=> G) => H
         ): H =
-            def h1 = self
-            def h2 = f1(h1)
-            def h3 = f2(h2)
-            def h4 = f3(h3)
-            def h5 = f4(h4)
-            def h6 = f5(h5)
-            def h7 = f6(h6)
-            f7(h7)
+            def handle7 = v.handle(f1, f2, f3, f4, f5, f6)
+            f7(handle7)
         end handle
 
         /** Applies a sequence of transformations to this computation.
           */
         inline def handle[B, C, D, E, F, G, H, I](
-            inline f1: (=> A < S) => B,
+            inline f1: A < S => B,
             inline f2: (=> B) => C,
             inline f3: (=> C) => D,
             inline f4: (=> D) => E,
@@ -322,21 +301,14 @@ object `<` extends Implicits:
             inline f7: (=> G) => H,
             inline f8: (=> H) => I
         ): I =
-            def h1 = self
-            def h2 = f1(h1)
-            def h3 = f2(h2)
-            def h4 = f3(h3)
-            def h5 = f4(h4)
-            def h6 = f5(h5)
-            def h7 = f6(h6)
-            def h8 = f7(h7)
-            f8(h8)
+            def handle8 = v.handle(f1, f2, f3, f4, f5, f6, f7)
+            f8(handle8)
         end handle
 
         /** Applies a sequence of transformations to this computation.
           */
         inline def handle[B, C, D, E, F, G, H, I, J](
-            inline f1: (=> A < S) => B,
+            inline f1: A < S => B,
             inline f2: (=> B) => C,
             inline f3: (=> C) => D,
             inline f4: (=> D) => E,
@@ -346,22 +318,14 @@ object `<` extends Implicits:
             inline f8: (=> H) => I,
             inline f9: (=> I) => J
         ): J =
-            def h1 = self
-            def h2 = f1(h1)
-            def h3 = f2(h2)
-            def h4 = f3(h3)
-            def h5 = f4(h4)
-            def h6 = f5(h5)
-            def h7 = f6(h6)
-            def h8 = f7(h7)
-            def h9 = f8(h8)
-            f9(h9)
+            def handle9 = v.handle(f1, f2, f3, f4, f5, f6, f7, f8)
+            f9(handle9)
         end handle
 
         /** Applies a sequence of transformations to this computation.
           */
         inline def handle[B, C, D, E, F, G, H, I, J, K](
-            inline f1: (=> A < S) => B,
+            inline f1: A < S => B,
             inline f2: (=> B) => C,
             inline f3: (=> C) => D,
             inline f4: (=> D) => E,
@@ -372,35 +336,25 @@ object `<` extends Implicits:
             inline f9: (=> I) => J,
             inline f10: (=> J) => K
         ): K =
-            def h1  = self
-            def h2  = f1(h1)
-            def h3  = f2(h2)
-            def h4  = f3(h3)
-            def h5  = f4(h4)
-            def h6  = f5(h5)
-            def h7  = f6(h6)
-            def h8  = f7(h7)
-            def h9  = f8(h8)
-            def h10 = f9(h9)
-            f10(h10)
+            def handle10 = v.handle(f1, f2, f3, f4, f5, f6, f7, f8, f9)
+            f10(handle10)
         end handle
 
         private[kyo] inline def evalNow: Maybe[A] =
-            val v = self
             v match
                 case _: Pending[?, ?] => Maybe.empty
-                case _                => Maybe(Nested.unnest(v))
-        end evalNow
+                case v                => Maybe(Nested.unnest(v))
+
     end extension
 
-    extension [A, S](self: A < S)
-
+    extension [A, S](v: A < S)
+        // Not on main: main's extension here is `unsafeGet`, whose role Nested.unnest now fills;
+        // `chain` applies an Arrow to a computation.
         def chain[B, S2](cont: Arrow[A, B, S2]): B < (S & S2) =
-            cont(self, Arrow.id)
+            cont(v, Arrow.id)
     end extension
 
-    extension [A, S, S2](self: A < S < S2)
-
+    extension [A, S, S2](v: A < S < S2)
         /** Flattens a nested pending computation into a single computation.
           *
           * @return
@@ -409,7 +363,7 @@ object `<` extends Implicits:
         @nowarn("msg=anonymous")
         def flatten(using _frame: Frame): A < (S & S2) =
             def arrow: Arrow[A < S, A, S] =
-                new Step[A < S, A, S]:
+                new Arrow.Step[A < S, A, S]:
                     def frame                                                = _frame
                     def apply[C, S3](v: (A < S) < S3, cont: Arrow[A, C, S3]) = run(v, cont)
             def run[C, S3](v: (A < S) < S3, cont: Arrow[A, C, S3]): C < (S & S3) =
@@ -425,7 +379,7 @@ object `<` extends Implicits:
                             Safepoint.exit(slot)
                             out
                         end if
-            run(self, Arrow.id)
+            run(v, Arrow.id)
         end flatten
     end extension
 
@@ -442,19 +396,25 @@ object `<` extends Implicits:
           *   if unhandled effects remain in the computation
           */
         inline def eval(using inline frame: Frame): A =
-
-            val v0 = v
-            v0 match
-                case _: Pending[?, ?] => Nested.unnest[A](Eval(v0.asInstanceOf[A < Any]))
-                case _                => Nested.unnest(v0)
+            v match
+                case kyo: Pending[?, ?] => Nested.unnest[A](Eval(kyo.asInstanceOf[A < Any]))
+                case v                  => Nested.unnest(v)
         end eval
     end extension
 
+    // Diverges from main: the conversion is from Pending, the union's second arm here, not Kyo, and it
+    // is public and not inline: an inline conversion binds a prefix proxy at every expansion site and a
+    // private one goes through an inline accessor, and both grow every suspension's expansion
+    // (pinned in ArrowEffectBytecodeTest).
+    implicit def fromKyo[A, S](v: Pending[A, S]): A < S = v
+
     given [A, S, APendingS <: A < S](using ra: Render[A]): Render[APendingS] with
-        def asString(value: APendingS): String =
-            value match
-                case kyo: Pending[?, ?] => kyo.toString
-                case nested: Nested[?]  => s"Kyo(${nested.value})"
-                case a: A @unchecked    => s"Kyo(${ra.asString(a)})"
+        // Not on main: a value lifted into a pending computation is wrapped in Nested, which is
+        // not a Pending here, so it needs its own case to render in the same Kyo(...) form.
+        def asString(value: APendingS): String = value match
+            case sus: Pending[?, ?] => sus.toString
+            case nested: Nested[?]  => s"Kyo(${nested.value})"
+            case a: A @unchecked    => s"Kyo(${ra.asString(a)})"
     end given
+
 end `<`

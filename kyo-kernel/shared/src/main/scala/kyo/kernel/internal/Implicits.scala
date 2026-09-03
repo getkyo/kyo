@@ -1,6 +1,6 @@
 package kyo.kernel.internal
 
-import kyo.kernel.<
+import kyo.<
 import scala.language.implicitConversions
 
 // Diverges from main: main's lift is a splice macro (LiftMacro.liftMacro) that nests an already
@@ -31,7 +31,7 @@ trait Implicits:
             case _ =>
                 Nested.nest(v).asInstanceOf[A < S]
 
-    implicit inline def abortCastUnit[S1, S2](inline v: Unit < S1): Unit < S2 = ${ LiftMacro.abortCastUnitMacro[S1, S2]('v) }
+    implicit inline def abortCastUnit[S1, S2](inline v: Unit < S1): Unit < S2 = ${ LiftMacro.abortCastUnitImpl[S1, S2]('v) }
 
     /** Converts a pure single-argument function to an effectful computation. */
     implicit inline def liftPureFunction1[A1, B](inline f: A1 => B)(

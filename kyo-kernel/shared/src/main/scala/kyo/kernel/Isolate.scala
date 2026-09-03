@@ -1,13 +1,10 @@
 package kyo.kernel
 
+import Isolate.internal.*
+import kyo.*
 import kyo.Ansi.*
-import kyo.Frame
-import kyo.Maybe
 import kyo.kernel.Arrow
-import kyo.kernel.internal.Handler
-import kyo.kernel.internal.Nested
-import kyo.kernel.internal.Pending
-import kyo.kernel.internal.Stack
+import kyo.kernel.internal.*
 import scala.quoted.*
 
 /** Provides mechanisms for handling pending effects when forking computations.
@@ -99,7 +96,7 @@ abstract class Isolate[Remove, -Keep, -Restore]:
       * @return
       *   Computation with Remove, Keep, and additional effects
       */
-    def capture[A, S](f: State => A < S)(using Frame): A < (Remove & S)
+    def capture[A, S](f: State => A < S)(using Frame): A < (Remove & Keep & S)
 
     /** Executes a computation with isolated state.
       *
@@ -142,6 +139,8 @@ abstract class Isolate[Remove, -Keep, -Restore]:
       */
     def nest[A, S](v: A < (Remove & S))(using Frame): A < Restore < (Remove & Keep & S) =
         capture { state =>
+            // Diverges from main: `Kyo.lift` is gone. `Nested.nest` is the lift that hides the
+            // restored computation's effects behind a `Nested` node.
             isolate(state, v).map(r => Nested.nest[A < Restore, Any](restore(r)))
         }
 
@@ -156,22 +155,14 @@ abstract class Isolate[Remove, -Keep, -Restore]:
       *   Result with original Remove effects handled and Restore effects available
       */
     final def run[A, S](v: A < (S & Remove))(using Frame): A < (S & Remove & Keep & Restore) =
-        capture(state => run(state, v))
+        capture(state => restore(isolate(state, v)))
 
-    /** Runs a computation with full state lifecycle management.
-      *
-      * Convenience method that composes all three phases: capture, isolate, and restore. This handles the complete isolation lifecycle in
-      * one call.
-      *
-      * @param v
-      *   The computation to run with isolation
-      * @return
-      *   Result with original Remove effects handled and Restore effects available
-      */
+    // Not on main: `run` for a state the caller already captured, and `apply`, which captures,
+    // runs the computation in isolation and hands the restored computation to `f` within the
+    // capture.
     def run[A, S](state: State, v: A < (S & Remove))(using Frame): A < (Keep & Restore & S) =
         restore(isolate(state, v))
 
-    /** Gets the Isolate instance for given effect types. */
     final def apply[A, S](v: A < (Remove & S))[B, S2](f: (A < (Restore & Keep & S)) => B < S2)(using
         Frame
     ): B < (Remove & Keep & S2) =
@@ -209,60 +200,20 @@ abstract class Isolate[Remove, -Keep, -Restore]:
       *   A new isolate handling both state managements
       */
     final def andThen[RM2, KP2, RS2](next: Isolate[RM2, KP2, RS2]): Isolate[Remove & RM2, Keep & KP2, Restore & RS2] =
+        // Diverges from main: no `Identity` short circuit, since main's `Identity` isolate is gone
+        // and `Contextual`, its replacement as the base case, is not a no-op.
         new Isolate[Remove & RM2, Keep & KP2, Restore & RS2]:
-            /** The type of state being managed */
-            type State = (self.State, next.State)
-
-            /** How state is transformed during isolated execution */
+            type State        = (self.State, next.State)
             type Transform[A] = self.Transform[next.Transform[A]]
-
-            /** Captures the current state for isolation.
-              *
-              * This is the first phase of isolation, obtaining the state that will be managed during the isolated execution. The computation
-              * continues with all original effects plus Keep effects available.
-              *
-              * @param f
-              *   Function that receives the captured state
-              * @return
-              *   Computation with Remove, Keep, and additional effects
-              */
             def capture[A, S](f: State => A < S)(using Frame) =
                 self.capture(s1 => next.capture(s2 => f((s1, s2))))
-
-            /** Executes a computation with isolated state.
-              *
-              * This is the second phase where the computation runs in an isolated context. Only Keep effects and additional effects S are available -
-              * Remove effects have been captured and isolated. The result is wrapped in Transform to track any state changes.
-              *
-              * @param state
-              *   The captured state from phase 1
-              * @param v
-              *   The computation to run in isolation
-              * @return
-              *   Transformed result with only Keep and additional effects
-              */
             def isolate[A, S](state: State, v: A < (S & (Remove & RM2)))(using Frame) =
                 self.isolate(state._1, next.isolate(state._2, v))
-
-            /** Restores state after isolated execution.
-              *
-              * This is the final phase that determines how the transformed state is propagated back. The Transform wrapper is unwrapped and Restore
-              * effects become available, which may differ from the original Remove effects.
-              *
-              * @param v
-              *   The transformed computation from phase 2
-              * @return
-              *   Final result with Restore and additional effects
-              */
             def restore[A, S](v: Transform[A] < S)(using Frame) =
                 next.restore(self.restore(v))
 
 end Isolate
 
-// Diverges from main: main's Identity isolate is gone. The stack-snapshot isolate (Contextual)
-// and the Forked handler wrapper under `internal` are new: an isolated computation runs over
-// a snapshot of the context regions, each region's fork and join strategy deciding what
-// crosses and what comes back.
 object Isolate:
 
     /** Gets the Isolate instance for given effect types. */
@@ -278,29 +229,22 @@ object Isolate:
       *   - Only derive if isolates exist for all non-Keep effects in Remove
       *   - Compose isolates using andThen in the order they appear
       */
-    inline def derive[Remove, Keep, Restore]: Isolate[Remove, Keep, Restore] = ${ internal.deriveImpl[Remove, Keep, Restore] }
+    inline def derive[Remove, Keep, Restore]: Isolate[Remove, Keep, Restore] = ${ deriveImpl[Remove, Keep, Restore] }
 
-    inline given [Remove, Keep, Restore <: Remove]: Isolate[Remove, Keep, Restore] = ${ internal.deriveImpl[Remove, Keep, Restore] }
+    // `Restore <: Remove` is used to help with implicit resolution. Without it, the compiler infers `Restore` as `Any` in some cases.
+    inline given [Remove, Keep, Restore <: Remove]: Isolate[Remove, Keep, Restore] = ${ deriveImpl[Remove, Keep, Restore] }
 
     private[kyo] object internal:
 
+        // Diverges from main: main's `Identity` isolate is gone, and so are the `runDetached` and
+        // `restoring` helpers that threaded a `Trace`, a `Context` and a `Safepoint` across a fork.
+        // `Contextual` takes Identity's place as the base case of composition: it snapshots the
+        // context regions, runs the isolated computation over a forked snapshot, and joins each
+        // region back through that region's own fork and join strategy.
         private[kernel] object Contextual extends Isolate[Any, Any, Any]:
-            /** The type of state being managed */
-            type State = Stack.Snapshot
-
-            /** How state is transformed during isolated execution */
+            type State        = Stack.Snapshot
             type Transform[A] = (Stack.Snapshot, Stack.Snapshot, A)
 
-            /** Captures the current state for isolation.
-              *
-              * This is the first phase of isolation, obtaining the state that will be managed during the isolated execution. The computation
-              * continues with all original effects plus Keep effects available.
-              *
-              * @param f
-              *   Function that receives the captured state
-              * @return
-              *   Computation with Remove, Keep, and additional effects
-              */
             def capture[A, S](f: Stack.Snapshot => A < S)(using _frame: Frame): A < S =
                 new Pending.SnapshotWith[A, S]:
                     override def frame = _frame
@@ -311,18 +255,6 @@ object Isolate:
                             case p: Pending[Stack, S2] @unchecked => Effect.defer(p, this, cont2)
                             case _                                => cont2(f(Nested.unnest[Stack](v).contextual()), Arrow.id)
 
-            /** Executes a computation with isolated state.
-              *
-              * This is the second phase where the computation runs in an isolated context. Only Keep effects and additional effects S are available -
-              * Remove effects have been captured and isolated. The result is wrapped in Transform to track any state changes.
-              *
-              * @param state
-              *   The captured state from phase 1
-              * @param v
-              *   The computation to run in isolation
-              * @return
-              *   Transformed result with only Keep and additional effects
-              */
             def isolate[A, S](state: Stack.Snapshot, v: A < S)(using Frame): (Stack.Snapshot, Stack.Snapshot, A) < S =
                 val forked                          = fork(state)
                 val inner: (Stack.Snapshot, A) < S  = v.map(a => capture(finals => (finals, a)))
@@ -330,16 +262,6 @@ object Isolate:
                 parked.map((finals, a) => (forked, finals, a))
             end isolate
 
-            /** Restores state after isolated execution.
-              *
-              * This is the final phase that determines how the transformed state is propagated back. The Transform wrapper is unwrapped and Restore
-              * effects become available, which may differ from the original Remove effects.
-              *
-              * @param v
-              *   The transformed computation from phase 2
-              * @return
-              *   Final result with Restore and additional effects
-              */
             def restore[A, S](v: (Stack.Snapshot, Stack.Snapshot, A) < S)(using _frame: Frame): A < S =
                 v.map { (forked, finals, a) =>
                     new Pending.SnapshotWith[A, S]:
@@ -355,6 +277,8 @@ object Isolate:
                                     cont2(av, Arrow.id)
                 }
 
+            // Not on main: `Forked` marks a region's handler as the fork of `origin`, so `join` can
+            // find the region it was forked from on the current stack.
             final private class Forked[State, E <: ContextEffect[State], A, S](val origin: Handler.ContextHandler[State, E, A, S])
                 extends Handler.ContextHandler[State, E, A, S]:
                 def tag = origin.tag
@@ -456,7 +380,7 @@ object Isolate:
                         |     }
                         |
                         |4. For custom state management:
-                        |   val isolate = new Isolate[MyEffect, Any, Any] {
+                        |   val isolate = new Isolate.Stateful[MyEffect, Any] {
                         |     type State = MyState        // Your effect's state
                         |     type Transform[A] = (State, A)
                         |     ...
@@ -472,6 +396,7 @@ object Isolate:
                 )
             end if
 
+            // Diverges from main: `Contextual` is the base case of the fold, where main used `Identity`.
             isolates.flatMap(_._2).foldLeft('{ Contextual.asInstanceOf[Isolate[Remove, Keep, Restore]] })((prev, next) =>
                 '{ $prev.andThen($next.asInstanceOf[Isolate[Remove, Keep, Restore]]) }
             )

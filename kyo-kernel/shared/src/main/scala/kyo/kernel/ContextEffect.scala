@@ -1,12 +1,8 @@
 package kyo.kernel
 
-import kyo.Frame
-import kyo.Maybe
-import kyo.Tag
+import kyo.*
 import kyo.kernel.Arrow
-import kyo.kernel.internal.Handler.ContextHandler
-import kyo.kernel.internal.Nested
-import kyo.kernel.internal.Pending
+import kyo.kernel.internal.*
 import scala.annotation.nowarn
 
 /** Represents the requirement for a value that will be provided later by a handler.
@@ -30,6 +26,9 @@ import scala.annotation.nowarn
 abstract class ContextEffect[+A] extends Effect
 
 object ContextEffect:
+
+    // Diverges from main: the `Noninheritable` marker is gone (D4, inheritance is a handler strategy below), and a suspension builds a
+    // `Pending.SuspendContext` node where main builds a `KyoDefer` that reads the `Context`.
 
     /** Creates a suspended computation that requests a value from a context effect. This establishes a requirement for a value that must be
       * satisfied by a handler higher up in the program. The requirement becomes part of the effect type, ensuring that handlers must
@@ -88,13 +87,16 @@ object ContextEffect:
     @nowarn("msg=anonymous")
     inline def suspend[A, E <: ContextEffect[A]](
         inline effectTag: Tag[E],
-        inline defaultValue: => A
+        inline default: => A
     )(using inline _frame: Frame): A < Any =
+        def defaultValue: A = default
         new Pending.SuspendContext[A, E, A, Any]:
             override def frame = _frame
             def tag            = effectTag
             def default        = Maybe(defaultValue)
             def cont           = Arrow.id
+        end new
+    end suspend
 
     /** Requests an optional context value and transforms it, using a default if no value is available. This combines requesting an optional
       * context value with immediate transformation. The transformation function receives either the context value if available or the
@@ -102,7 +104,7 @@ object ContextEffect:
       *
       * @param effectTag
       *   Identifies which context effect to request the value from
-      * @param defaultValue
+      * @param default
       *   The value to use when no handler provides one
       * @param f
       *   The transformation to apply to either the context or default value
@@ -112,10 +114,11 @@ object ContextEffect:
     @nowarn("msg=anonymous")
     inline def suspendWith[A, E <: ContextEffect[A], B, S](
         inline effectTag: Tag[E],
-        inline defaultValue: => A
+        inline default: => A
     )(
         inline f: A => B < S
     )(using inline _frame: Frame): B < S =
+        def defaultValue: A = default
         new Pending.SuspendContextWith[A, E, B, S]:
             override def frame = _frame
             def tag            = effectTag
@@ -125,15 +128,16 @@ object ContextEffect:
                 v match
                     case kyo: Pending[A, S2] @unchecked => Effect.defer(kyo, this, cont2)
                     case _                              => cont2(f(Nested.unnest[A](v)), Arrow.id)
+        end new
+    end suspendWith
 
-    // Diverges from main: main's `handle(tag, value)` and `handle(tag, ifUndefined, ifDefined)`
-    // inherit across async boundaries unless the effect mixes in the Noninheritable marker. Here
-    // inheritance is a per-handler strategy (D4): `handleInheritable` is main's default, and
-    // `handle` takes explicit fork and join strategies plus the optional done and release hooks.
+    // Diverges from main: main's `handle` inherits across async boundaries unless the effect mixes in the
+    // Noninheritable marker. Here inheritance is a per-handler strategy (D4): `handleInheritable` is main's
+    // default and `handle` takes explicit fork and join strategies plus the optional done and release hooks.
 
     /** Handles a context effect by providing a value for a specific computation scope. This satisfies suspend operations within that scope
       * by making the provided value available to them. The handler establishes a region where the context value is defined and can be
-      * accessed. The value is inherited across async boundaries: a forked computation sees the same value.
+      * accessed.
       *
       * @param effectTag
       *   Identifies which context effect to handle
@@ -152,7 +156,7 @@ object ContextEffect:
 
     /** Handles a context effect by either providing a new value or transforming an existing one. This allows for layered handling of
       * context values, where a handler can either establish a new value when none exists or modify a value that was provided by an outer
-      * handler. The value is inherited across async boundaries.
+      * handler.
       *
       * @param effectTag
       *   Identifies which context effect to handle
@@ -169,7 +173,9 @@ object ContextEffect:
         inline effectTag: Tag[E],
         inline ifUndefined: A,
         inline ifDefined: A => A
-    )(v: B < (E & S))(using inline _frame: Frame): B < S =
+    )(v: B < (E & S))(
+        using inline _frame: Frame
+    ): B < S =
         handleInheritable(effectTag)((outer: Maybe[A]) => outer.fold(ifUndefined)(ifDefined))(v)
 
     /** Handles a context effect by deriving the region's value from the outer one, if any. The value is inherited across async boundaries.
@@ -284,7 +290,7 @@ object ContextEffect:
         def completed(state: A): Unit               = done(state)
         def released(state: A, ex: Throwable): Unit = release(state, ex)
         val h =
-            new ContextHandler[A, E, B, S]:
+            new Handler.ContextHandler[A, E, B, S]:
                 def tag                                                    = effectTag
                 def derive(outer: Maybe[A])                                = derived(outer)
                 def fork(parent: A)                                        = forked(parent)
@@ -298,5 +304,4 @@ object ContextEffect:
             def handler        = h
         end new
     end handle
-
 end ContextEffect

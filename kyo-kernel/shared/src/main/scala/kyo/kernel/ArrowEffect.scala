@@ -1,20 +1,8 @@
 package kyo.kernel
 
-import kyo.Frame
-import kyo.Id
-import kyo.Maybe
-import kyo.Tag
+import kyo.*
 import kyo.kernel.Arrow
-import kyo.kernel.Arrow.Transform
-import kyo.kernel.Loop
-import kyo.kernel.internal.Eval
-import kyo.kernel.internal.Handler
-import kyo.kernel.internal.Handler.ContHandler
-import kyo.kernel.internal.Handler.ContOpHandler
-import kyo.kernel.internal.Handler.LoopHandler
-import kyo.kernel.internal.Nested
-import kyo.kernel.internal.Pending
-import kyo.kernel.internal.Safepoint
+import kyo.kernel.internal.*
 import scala.annotation.nowarn
 import scala.annotation.tailrec
 import scala.util.control.NonFatal
@@ -44,19 +32,23 @@ import scala.util.control.NonFatal
   * representing the remainder of the computation from the point where the effect was suspended to the point where it's being handled.
   *
   * ArrowEffect provides two main kinds of handling methods with distinct capabilities:
-  *   - handle: Basic handler that doesn't allow introducing new effects during handling
-  *   - handleLoop: Enhanced handler that explicitly allows introducing new effects (via S2 type parameter) during handling:
-  *     - Without state: When you need to add effects but not state between occurrences
-  *     - With state: When you need both new effects and state maintenance between occurrences
+  *   - handleCont: Basic handler that receives the continuation as an Arrow and may introduce new effects (via S2 type parameter)
+  *   - handleLoop: Enhanced handler that resumes the continuation through the Loop abstraction, to continue or terminate processing:
+  *     - Without state (handleLoop): When you need loop control but not state between occurrences
+  *     - With state (handleLoopState): When you need both loop control and state maintenance between occurrences
   *
   * When defining concrete effects, ArrowEffect is commonly used with two special type constructors: Const and Id. The Const[X] type
   * constructor ignores its type parameter and always returns X, while Id[X] simply returns X unchanged. For instance, an effect that needs
   * to fail with errors of type E would use Const[E] as its input type - it only needs the error value itself, not any type parameters.
   * Similarly, an effect for making choices among values would use Id as its output type - it passes through the chosen value unchanged.
   */
-abstract class ArrowEffect[-I[_], +O[_]] extends Effect
+abstract class ArrowEffect[-Input[_], +Output[_]] extends Effect
 
 object ArrowEffect:
+
+    // Diverges from main: suspensions and handled regions are arrow nodes (Pending.SuspendArrow,
+    // Pending.HandleArrow and the Handler instances built below) interpreted by Eval, where main
+    // built KyoSuspend/KyoContinue chains that every handler walked itself.
 
     /** Creates a suspended computation that requests a function implementation from an arrow effect. This establishes a requirement for a
       * function that must be satisfied by a handler higher up in the program. The requirement becomes part of the effect type, ensuring
@@ -70,17 +62,16 @@ object ArrowEffect:
       *   A computation that will receive the requested function when executed
       */
     @nowarn("msg=anonymous")
-    inline def suspend[C](
+    inline def suspend[A](
         using inline _frame: Frame
     )[I[_], O[_], E <: ArrowEffect[I, O]](
         inline effectTag: Tag[E],
-        inline effectInput: I[C]
-    ): O[C] < E =
-
-        new Pending.SuspendArrow[I, O, E, C, O[C], E]:
+        inline funcionInput: I[A]
+    ): O[A] < E =
+        new Pending.SuspendArrow[I, O, E, A, O[A], E]:
             override def frame = _frame
             def tag            = effectTag
-            def input          = effectInput
+            def input          = funcionInput
             def cont           = Arrow.id
 
     /** Creates a suspended computation that requests a function implementation and transforms its result immediately upon receipt. This
@@ -96,36 +87,55 @@ object ArrowEffect:
       *   A computation containing the transformed result
       */
     @nowarn("msg=anonymous")
-    inline def suspendWith[C](
+    inline def suspendWith[A](
         using inline _frame: Frame
     )[I[_], O[_], E <: ArrowEffect[I, O], B, S](
         inline effectTag: Tag[E],
-        inline effectInput: I[C]
+        inline funcionInput: I[A]
     )(
-        inline f: O[C] => B < S
-    ): B < (E & S) =
-
-        new Pending.SuspendArrowWith[I, O, E, C, B, E & S]:
+        inline f: O[A] => B < S
+    ): B < (S & E) =
+        new Pending.SuspendArrowWith[I, O, E, A, B, E & S]:
             override def frame = _frame
             def tag            = effectTag
-            def input          = effectInput
+            def input          = funcionInput
             def cont           = this
-            override def apply[D, S2](v: O[C] < S2, cont2: Arrow[B, D, S2]) =
+            override def apply[D, S2](v: O[A] < S2, cont2: Arrow[B, D, S2]) =
                 v match
-                    case kyo: Pending[O[C], S2] @unchecked => Effect.defer(kyo, this, cont2)
-                    case _                                 => cont2(f(Nested.unnest[O[C]](v)), Arrow.id)
+                    case kyo: Pending[O[A], S2] @unchecked => Effect.defer(kyo, this, cont2)
+                    case _                                 => cont2(f(Nested.unnest[O[A]](v)), Arrow.id)
 
-    // Diverges from main: main's `handle` is `handleCont` here (the clause receives the continuation as
-    // an Arrow and may introduce effects through S2), the two, three and four effect `handle` overloads
-    // are gone, the stateful `handleLoop` overloads are `handleLoopState`, every handler has a `recover`
-    // overload (D2), `handleContOperation` hands the clause the operation itself, and the `With` variants
-    // fuse a continuation into the region node. `Mask` lives in this object (D5).
+    // Diverges from main: main's `handle` is `handleCont` here, the clause receives the continuation
+    // as an Arrow and may introduce effects through S2, and the overloads below add `done` and
+    // `recover` (D2). Main's two, three and four effect `handle` overloads, its `handleCatching` and
+    // its `handlePartial` are gone.
 
     /** Handles an arrow effect by providing a handler function implementation.
       *
       * This is the basic form of effect handling where each effect occurrence is processed independently: the clause receives the
       * operation's input and the continuation from the suspension point, and answers by applying the continuation, possibly several times
       * or not at all. New effects may be introduced during handling through the S2 type parameter.
+      *
+      * @param effectTag
+      *   Identifies which arrow effect to handle
+      * @param v
+      *   The computation requiring the function implementation
+      * @param handle
+      *   The function implementation to provide
+      * @return
+      *   The computation result with the function implementation provided
+      */
+    inline def handleCont[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2](
+        inline effectTag: Tag[E],
+        v: A < (E & S)
+    )(
+        inline handle: [C] => (I[C], Arrow[O[C], A, E & S & S2]) => A < (E & S & S2)
+    )(using inline _frame: Frame): A < (S & S2) =
+        handleCont(effectTag, v)(handle, a => a)
+
+    /** Handles an arrow effect by providing a handler function implementation, transforming the final result.
+      *
+      * Like the variant without done, with one addition: when the handled computation completes, done transforms its result.
       *
       * @param effectTag
       *   Identifies which arrow effect to handle
@@ -150,7 +160,7 @@ object ArrowEffect:
         v match
             case _: Pending[?, ?] =>
                 val h =
-                    new ContHandler[I, O, E, A, B, S & S2]:
+                    new Handler.ContHandler[I, O, E, A, B, S & S2]:
                         def tag = effectTag
                         def run[X](input: I[X], next: Arrow[O[X], A, E & S & S2]) =
                             handle[X](input, next)
@@ -199,7 +209,7 @@ object ArrowEffect:
         v match
             case _: Pending[?, ?] =>
                 val h =
-                    new ContHandler[I, O, E, A, B, S & S2]:
+                    new Handler.ContHandler[I, O, E, A, B, S & S2]:
                         def tag = effectTag
                         def run[X](input: I[X], next: Arrow[O[X], A, E & S & S2]) =
                             handle[X](input, next)
@@ -214,95 +224,15 @@ object ArrowEffect:
                     def cont           = Arrow.id
                 end new
             case _ =>
-
                 try onDone(Nested.unnest(v))
                 catch
                     case ex if NonFatal(ex) => onRecover(ex).getOrElse(throw ex)
         end match
     end handleCont
 
-    /** Handles an arrow effect by providing a handler function implementation; the result is the handled computation's value.
-      *
-      * @param effectTag
-      *   Identifies which arrow effect to handle
-      * @param v
-      *   The computation requiring the function implementation
-      * @param handle
-      *   The function implementation to provide
-      * @return
-      *   The computation result with the function implementation provided
-      */
-    inline def handleCont[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2](
-        inline effectTag: Tag[E],
-        v: A < (E & S)
-    )(
-        inline handle: [C] => (I[C], Arrow[O[C], A, E & S & S2]) => A < (E & S & S2)
-    )(using inline _frame: Frame): A < (S & S2) =
-        handleCont(effectTag, v)(handle, a => a)
-
-    /** Handles an arrow effect by providing a handler that receives the suspended operation itself, as a computation in the effect, rather
-      * than its input. The continuation is the one from the suspension point, as in handleCont.
-      *
-      * @param effectTag
-      *   Identifies which arrow effect to handle
-      * @param v
-      *   The computation requiring the function implementation
-      * @param handle
-      *   The function implementation to provide, given the operation and the continuation
-      * @param done
-      *   The function to transform the final result
-      * @return
-      *   The computation result with the function implementation provided
-      */
-    @nowarn("msg=anonymous")
-    inline def handleContOperation[E <: ArrowEffect[?, ?], A, B, S, S2](
-        inline effectTag: Tag[E],
-        v: A < (E & S)
-    )(
-        inline handle: [X] => (X < E, Arrow[X, A, E & S & S2]) => A < (E & S & S2),
-        inline done: A => B < (S & S2)
-    )(using inline _frame: Frame): B < (S & S2) =
-        def onDone(v0: A): B < (S & S2) = done(v0)
-        v match
-            case _: Pending[?, ?] =>
-                val h =
-                    new ContOpHandler[E, A, B, S & S2]:
-                        def tag = effectTag
-                        def run[X](operation: X < E, next: Arrow[X, A, E & S & S2]) =
-                            handle[X](operation, next)
-                        def done(state: Unit, v0: A) = onDone(v0)
-
-                new Pending.HandleArrow[Unit, E, A, B, B, S & S2]:
-                    override def frame = _frame
-                    def value          = v
-                    def handler        = h
-                    def state          = ()
-                    def cont           = Arrow.id
-                end new
-            case _ => onDone(Nested.unnest(v))
-        end match
-    end handleContOperation
-
-    /** Handles an arrow effect by providing a handler that receives the suspended operation itself; the result is the handled
-      * computation's value.
-      *
-      * @param effectTag
-      *   Identifies which arrow effect to handle
-      * @param v
-      *   The computation requiring the function implementation
-      * @param handle
-      *   The function implementation to provide, given the operation and the continuation
-      * @return
-      *   The computation result with the function implementation provided
-      */
-    inline def handleContOperation[E <: ArrowEffect[?, ?], A, S, S2](
-        inline effectTag: Tag[E],
-        v: A < (E & S)
-    )(
-        inline handle: [X] => (X < E, Arrow[X, A, E & S & S2]) => A < (E & S & S2)
-    )(using inline _frame: Frame): A < (S & S2) =
-        handleContOperation(effectTag, v)(handle, a => a)
-
+    // Not on main: the first suspension is carried out of the region as a value, so handleFirst is a
+    // handleCont whose done arm answers it. FirstSuspended appears in that inline body, which is why
+    // both it and handleFirst are private[kyo].
     abstract private[kyo] class FirstSuspended[I[_], O[_], E <: ArrowEffect[I, O], A, S]:
         type C
         def input: I[C]
@@ -325,10 +255,7 @@ object ArrowEffect:
       *   The transformed computation result
       */
     @nowarn("msg=anonymous")
-    private[kyo] inline def handleFirst[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](
-        inline effectTag: Tag[E],
-        v: A < (E & S)
-    )(
+    private[kyo] inline def handleFirst[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](effectTag: Tag[E], v: A < (E & S))(
         inline handle: [C] => (I[C], Arrow[O[C], A, E & S]) => B < (S & S2),
         inline done: A => B < (S & S2)
     )(using inline _frame: Frame): B < (S & S2) =
@@ -338,18 +265,18 @@ object ArrowEffect:
                     new FirstSuspended[I, O, E, A, E & S]:
                         type C = C0
                         def input = input0
-
-                        def cont = cont0.asInstanceOf[Arrow[O[C0], A, E & S]]
+                        def cont  = cont0.asInstanceOf[Arrow[O[C0], A, E & S]]
             ,
             r =>
                 r match
                     case first: FirstSuspended[I, O, E, A, E & S] @unchecked =>
                         handle[first.C](first.input, first.cont)
                     case a =>
-
                         done(a.asInstanceOf[A])
         )
 
+    // Diverges from main: the head suspension can sit under handle, park and defer nodes, so this walks
+    // down to it instead of matching a single node. The walk is a real loop, so the method is not inline.
     /** Inspects the head suspension of `v`. If it matches `effectTag`, invokes `f` with the suspension's input;
       * otherwise does nothing. Unlike [[handleFirst]] this never enters the Safepoint, never executes the
       * continuation, and never schedules a continuation. It is intended for purely-inspecting handlers that
@@ -367,7 +294,6 @@ object ArrowEffect:
         @tailrec def loop(x: Any): Unit =
             x match
                 case kyo: Pending.SuspendArrow[I, O, E, c, ?, ?] @unchecked =>
-
                     if effectTag.erased <:< kyo.tag.erased then f[c](kyo.input)
                 case kyo: Pending.Handle[?, ?, ?, ?] => loop(kyo.value)
                 case kyo: Pending.Park[?, ?]         => loop(kyo.value)
@@ -375,6 +301,35 @@ object ArrowEffect:
                 case _                               => ()
         loop(v)
     end dispatchFirst
+
+    // Diverges from main: the clause is handed only the operation's input, the continuation reaching it
+    // through the Loop.Outcome2 it answers with, and the overloads below add `done` and `recover` (D2).
+
+    /** Handles an arrow effect with a loop-based approach for greater flexibility.
+      *
+      * This variant differs from basic handleCont in two ways:
+      *   1. The clause receives only the operation's input; the continuation is resumed through the Loop.Outcome2 it answers with
+      *   2. It provides control flow through the Loop abstraction to continue or terminate processing
+      *
+      * This non-stateful handleLoop is ideal when you need to perform effectful operations with access to new effects during handling, but
+      * don't need to maintain state between effect occurrences.
+      *
+      * @param effectTag
+      *   Identifies which arrow effect to handle
+      * @param v
+      *   The computation requiring the function implementation
+      * @param handle
+      *   The function implementation that returns a Loop.Outcome for each iteration
+      * @return
+      *   The computation result with the function implementation provided
+      */
+    inline def handleLoop[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2](
+        inline effectTag: Tag[E],
+        v: A < (E & S)
+    )(
+        inline handle: [C] => I[C] => Loop.Outcome2[Unit, O[C] < (E & S & S2), A < (S & S2)] < (S & S2)
+    )(using inline _frame: Frame): A < (S & S2) =
+        handleLoop(effectTag, v)(handle, a => a)
 
     /** Handles an arrow effect with a loop-based approach and custom completion handling.
       *
@@ -439,17 +394,23 @@ object ArrowEffect:
             (st, ex) => recover(ex)
         )
 
-    /** Handles an arrow effect with a loop-based approach for greater flexibility.
+    // Diverges from main: main's stateful `handleLoop` overloads are `handleLoopState` here, and the
+    // last overload adds `recover` (D2).
+
+    /** Handles an arrow effect with stateful loop-based approach for maximum flexibility.
       *
-      * This variant provides two key advantages over basic handle:
+      * This most powerful variant combines three key capabilities:
       *   1. It explicitly allows introducing new effects during handling via the S2 type parameter
       *   2. It provides control flow through the Loop abstraction to continue or terminate processing
+      *   3. It maintains state between effect occurrences through the State type
       *
-      * This non-stateful handleLoop is ideal when you need to perform effectful operations with access to new effects during handling, but
-      * don't need to maintain state between effect occurrences.
+      * The stateful handleLoop should be used when you need the full range of capabilities: introducing new effects during handling,
+      * maintaining state between occurrences, and controlling when to terminate processing.
       *
       * @param effectTag
       *   Identifies which arrow effect to handle
+      * @param state
+      *   The initial state value
       * @param v
       *   The computation requiring the function implementation
       * @param handle
@@ -457,13 +418,14 @@ object ArrowEffect:
       * @return
       *   The computation result with the function implementation provided
       */
-    inline def handleLoop[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2](
+    inline def handleLoopState[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2, State](
         inline effectTag: Tag[E],
+        state: State,
         v: A < (E & S)
     )(
-        inline handle: [C] => I[C] => Loop.Outcome2[Unit, O[C] < (E & S & S2), A < (S & S2)] < (S & S2)
+        inline handle: [C] => (State, I[C]) => Loop.Outcome2[State, O[C] < (E & S & S2), A < (S & S2)] < (S & S2)
     )(using inline _frame: Frame): A < (S & S2) =
-        handleLoop(effectTag, v)(handle, a => a)
+        handleLoopState(effectTag, state, v)(handle, (_, a) => a)
 
     /** Handles an arrow effect with stateful loop-based approach and custom completion handling.
       *
@@ -502,7 +464,7 @@ object ArrowEffect:
         v match
             case _: Pending[?, ?] =>
                 val h =
-                    new LoopHandler[State, I, O, E, A, B, S & S2]:
+                    new Handler.LoopHandler[State, I, O, E, A, B, S & S2]:
                         def tag = effectTag
                         def run[X](st: State, input: I[X]) =
                             handle[X](st, input)
@@ -573,7 +535,7 @@ object ArrowEffect:
         v match
             case _: Pending[?, ?] =>
                 val h =
-                    new LoopHandler[State, I, O, E, A, B, S & S2]:
+                    new Handler.LoopHandler[State, I, O, E, A, B, S & S2]:
                         def tag = effectTag
                         def run[X](st: State, input: I[X]) =
                             handle[X](st, input)
@@ -607,42 +569,80 @@ object ArrowEffect:
                     def cont           = Arrow.id
                 end new
             case _ =>
-
                 try onDone(state, Nested.unnest(v))
                 catch
                     case ex if NonFatal(ex) => onRecover(state, ex).getOrElse(throw ex)
         end match
     end handleLoopState
 
-    /** Handles an arrow effect with stateful loop-based approach for maximum flexibility.
-      *
-      * This most powerful variant combines three key capabilities:
-      *   1. It explicitly allows introducing new effects during handling via the S2 type parameter
-      *   2. It provides control flow through the Loop abstraction to continue or terminate processing
-      *   3. It maintains state between effect occurrences through the State type
-      *
-      * The stateful handleLoop should be used when you need the full range of capabilities: introducing new effects during handling,
-      * maintaining state between occurrences, and controlling when to terminate processing.
+    // Not on main: the clause is handed the suspended operation itself instead of its input, which is
+    // what lets Mask re-suspend an operation it cannot inspect.
+
+    /** Handles an arrow effect by providing a handler that receives the suspended operation itself; the result is the handled
+      * computation's value.
       *
       * @param effectTag
       *   Identifies which arrow effect to handle
-      * @param state
-      *   The initial state value
       * @param v
       *   The computation requiring the function implementation
       * @param handle
-      *   The function implementation that returns a Loop.Outcome for each iteration
+      *   The function implementation to provide, given the operation and the continuation
       * @return
       *   The computation result with the function implementation provided
       */
-    inline def handleLoopState[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2, State](
+    inline def handleContOperation[E <: ArrowEffect[?, ?], A, S, S2](
         inline effectTag: Tag[E],
-        state: State,
         v: A < (E & S)
     )(
-        inline handle: [C] => (State, I[C]) => Loop.Outcome2[State, O[C] < (E & S & S2), A < (S & S2)] < (S & S2)
+        inline handle: [X] => (X < E, Arrow[X, A, E & S & S2]) => A < (E & S & S2)
     )(using inline _frame: Frame): A < (S & S2) =
-        handleLoopState(effectTag, state, v)(handle, (_, a) => a)
+        handleContOperation(effectTag, v)(handle, a => a)
+
+    /** Handles an arrow effect by providing a handler that receives the suspended operation itself, as a computation in the effect, rather
+      * than its input. The continuation is the one from the suspension point, as in handleCont.
+      *
+      * @param effectTag
+      *   Identifies which arrow effect to handle
+      * @param v
+      *   The computation requiring the function implementation
+      * @param handle
+      *   The function implementation to provide, given the operation and the continuation
+      * @param done
+      *   The function to transform the final result
+      * @return
+      *   The computation result with the function implementation provided
+      */
+    @nowarn("msg=anonymous")
+    inline def handleContOperation[E <: ArrowEffect[?, ?], A, B, S, S2](
+        inline effectTag: Tag[E],
+        v: A < (E & S)
+    )(
+        inline handle: [X] => (X < E, Arrow[X, A, E & S & S2]) => A < (E & S & S2),
+        inline done: A => B < (S & S2)
+    )(using inline _frame: Frame): B < (S & S2) =
+        def onDone(v0: A): B < (S & S2) = done(v0)
+        v match
+            case _: Pending[?, ?] =>
+                val h =
+                    new Handler.ContOpHandler[E, A, B, S & S2]:
+                        def tag = effectTag
+                        def run[X](operation: X < E, next: Arrow[X, A, E & S & S2]) =
+                            handle[X](operation, next)
+                        def done(state: Unit, v0: A) = onDone(v0)
+
+                new Pending.HandleArrow[Unit, E, A, B, B, S & S2]:
+                    override def frame = _frame
+                    def value          = v
+                    def handler        = h
+                    def state          = ()
+                    def cont           = Arrow.id
+                end new
+            case _ => onDone(Nested.unnest(v))
+        end match
+    end handleContOperation
+
+    // Not on main: the `With` variants fuse the continuation into the region node, so the region's
+    // result flows into it without allocating a separate map node.
 
     /** handleCont with a continuation fused into the region node: the region's result flows into f without a separate map node.
       *
@@ -666,7 +666,7 @@ object ArrowEffect:
         v match
             case _: Pending[?, ?] =>
                 val h =
-                    new ContHandler[I, O, E, A, B, S & S2]:
+                    new Handler.ContHandler[I, O, E, A, B, S & S2]:
                         def tag = effectTag
                         def run[X](input: I[X], next: Arrow[O[X], A, E & S & S2]) =
                             handle[X](input, next)
@@ -731,7 +731,7 @@ object ArrowEffect:
         v match
             case _: Pending[?, ?] =>
                 val h =
-                    new LoopHandler[State, I, O, E, A, B, S & S2]:
+                    new Handler.LoopHandler[State, I, O, E, A, B, S & S2]:
                         def tag = effectTag
                         def run[X](st: State, input: I[X]) =
                             handle[X](st, input)
@@ -770,6 +770,8 @@ object ArrowEffect:
         end match
     end handleLoopStateWith
 
+    // Not on main: Mask lives in this object (D5), suspending each masked operation under a Mask tag so
+    // an enclosing handler cannot see it.
     sealed abstract class Mask[S] extends ArrowEffect[[A] =>> A < S, Id]
 
     object Mask:
@@ -782,7 +784,6 @@ object ArrowEffect:
             maskTag: Tag[Mask[E]]
         ): A < (Mask[E] & S) =
             handleContOperation(tag, v) {
-
                 [X] => (operation, cont) => suspend[X](maskTag, operation).map(cont(_))
             }
 

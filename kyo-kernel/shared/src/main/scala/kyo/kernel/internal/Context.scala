@@ -3,7 +3,7 @@ package kyo.kernel.internal
 import kyo.Maybe
 import kyo.Tag
 import kyo.bug
-import kyo.kernel.ContextEffect
+import kyo.kernel.*
 import scala.annotation.tailrec
 
 /** Storage for effect values used by ContextEffect.
@@ -15,7 +15,7 @@ import scala.annotation.tailrec
 // Diverges from main: main's Context is an opaque Map[Tag[Any], AnyRef] with a NoninheritableFlag
 // entry that `inherit` filters on at async boundaries. Here it is the stack's context regions in
 // order, and what crosses a boundary is decided by each ContextHandler's fork and join (D4).
-sealed abstract private[kernel] class Context:
+sealed abstract private[kyo] class Context:
 
     final def bind[A, E <: ContextEffect[A]](tag: Tag[E], value: A): Context =
         Context.Bound(tag.erased, value, this)
@@ -33,7 +33,7 @@ sealed abstract private[kernel] class Context:
 
 end Context
 
-private[kernel] object Context:
+private[kyo] object Context:
 
     val empty: Context = Empty
 
