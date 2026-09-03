@@ -89,17 +89,24 @@ class CompileLoadRoundTripTest extends kyo.test.Test[Any]:
       * ProcessBuilder so we don't drag in the sbt-scoped `CCompiler` utility from `kyo-ffi-plugin`.
       */
     private def compileCLibrary(baseDir: Path): Path =
-        val cSource = locateCSource("c/round_trip_add.c")
-        val osName  = java.lang.System.getProperty("os.name").toLowerCase
+        val cSource   = locateCSource("c/round_trip_add.c")
+        val osName    = java.lang.System.getProperty("os.name").toLowerCase
+        val isWindows = osName.contains("win")
         val (ext, sharedFlag) =
             if osName.contains("mac") then ("dylib", "-dynamiclib")
+            else if isWindows then ("dll", "-shared")
             else ("so", "-shared")
-        val outLib = baseDir.resolve(s"lib$libraryId.$ext")
-        val cmd    = List("cc", "-O2", "-fPIC", sharedFlag, "-o", outLib.toString, cSource.toString)
-        val pb     = new ProcessBuilder(cmd*).redirectErrorStream(true)
-        val proc   = pb.start()
-        val output = new String(proc.getInputStream.readAllBytes(), StandardCharsets.UTF_8)
-        val exit   = proc.waitFor()
+        // A Windows DLL carries no position-independent code, and clang targeting *-windows-msvc
+        // REJECTS -fPIC rather than ignoring it. MinGW gcc accepts it, which is why the x64 runner
+        // never noticed; the arm64 runner's `cc` is clang, because its gcc emits x64 objects.
+        val picFlags = if isWindows then Nil else List("-fPIC")
+        val prefix   = if isWindows then "" else "lib"
+        val outLib   = baseDir.resolve(s"$prefix$libraryId.$ext")
+        val cmd      = List("cc", "-O2") ++ picFlags ++ List(sharedFlag, "-o", outLib.toString, cSource.toString)
+        val pb       = new ProcessBuilder(cmd*).redirectErrorStream(true)
+        val proc     = pb.start()
+        val output   = new String(proc.getInputStream.readAllBytes(), StandardCharsets.UTF_8)
+        val exit     = proc.waitFor()
         if exit != 0 then
             // Setup failure (runs at suite instantiation, before any leaf scope exists), so surface it as a thrown
             // exception rather than the leaf-scoped `fail`.
