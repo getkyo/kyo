@@ -19,6 +19,15 @@ class PathCapabilityTest extends kyo.test.Test[Any]:
     val mixed: String < PathWrite                              = somePath.read.map(s => otherPath.write(s).andThen(s))
     val readRuns: String < (Sync & Abort[FileSystemException]) = Path.runReadOnly(readOnly)
     val writeRuns: Unit < (Sync & Abort[FileSystemException])  = Path.run(write)
+    // Async is in tryLock's row deliberately, and this ascription is what states it. It does not
+    // mean tryLock waits for a conflicting holder, which is still lock's job alone: it means the
+    // host backend may have to wait out the span in which a compatible same-process claim is being
+    // taken but is not yet shareable, since answering during it would report a conflict that does
+    // not exist.
+    val tryLockRow: Maybe[Path.Lock] < (PathRead & Sync & Async & Scope) =
+        somePath.tryLock(Path.LockMode.Shared)
+    val lockRow: Path.Lock < (PathRead & Async & Scope) =
+        somePath.lock(Path.LockMode.Exclusive, Path.LockWait.UntilAvailable)
 
     "the read-only runner leaves a write undischarged so its residual does not type-check" in {
         val errors = typeCheckErrors(
@@ -30,6 +39,40 @@ class PathCapabilityTest extends kyo.test.Test[Any]:
         )
         assert(errors.nonEmpty)
         assert(errors.exists(_.message.contains("PathWrite")))
+    }
+
+    "the removed FileLock and Boolean lock APIs do not type-check" in {
+        val fileLockErrors = typeCheckErrors("val lock: kyo.Path.FileLock = ???")
+        val booleanErrors = typeCheckErrors("""
+            given kyo.Frame = kyo.Frame.internal
+            kyo.Path("x").lock(true)
+            """)
+        assert(fileLockErrors.nonEmpty)
+        assert(booleanErrors.nonEmpty)
+    }
+
+    "internal lock suspensions retain their required handlers" in {
+        val tryLockErrors = typeCheckErrors(
+            """
+            given kyo.Frame = kyo.Frame.internal
+            val bad: kyo.Maybe[kyo.Path.Lock] < (kyo.PathRead & kyo.Scope) =
+                kyo.Path.suspendTryLock(kyo.Path("x"), kyo.Path.LockMode.Shared, kyo.Path.defaultLockSuffix)
+            """
+        )
+        val lockErrors = typeCheckErrors(
+            """
+            given kyo.Frame = kyo.Frame.internal
+            val bad: kyo.Path.Lock < (kyo.PathRead & kyo.Scope) =
+                kyo.Path.suspendLock(
+                    kyo.Path("x"),
+                    kyo.Path.LockMode.Exclusive,
+                    kyo.Path.LockWait.UntilAvailable,
+                    kyo.Path.defaultLockSuffix
+                )
+            """
+        )
+        assert(tryLockErrors.nonEmpty)
+        assert(lockErrors.nonEmpty)
     }
 
     "an explicit backend effect remains in the runner residual" in {

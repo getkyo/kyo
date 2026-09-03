@@ -244,6 +244,7 @@ object Path extends PathPlatformSpecific:
         case OpenRead(path: Path)                                                           extends Op[Path.ReadHandle]
         case OpenReadLines(path: Path, charset: Charset)                                    extends Op[Path.LineReadHandle]
         case OpenWalk(path: Path, maxDepth: Int, followLinks: Boolean)                      extends Op[Path.WalkHandle]
+        case CurrentReadService()                                                           extends Op[FileSystem.Read[Any]]
         case Raise(error: Result.Error[FileSystemException])                                extends Op[Nothing]
         // write-group (suspend under Tag[PathWrite])
         case Write(path: Path, value: String, options: WriteOptions)                extends Op[Unit]
@@ -392,6 +393,7 @@ object Path extends PathPlatformSpecific:
             case Op.OpenRead(p)               => service.openRead(p)
             case Op.OpenReadLines(p, c)       => service.openReadLines(p, c)
             case Op.OpenWalk(p, d, f)         => service.openWalk(p, d, f)
+            case Op.CurrentReadService()      => FileSystem.useReadErased(selected => selected)
             case Op.Raise(error)              => Abort.error(error)
             case Op.Write(p, v, cf)           => service.write(p, v, cf)
             case Op.WriteBytes(p, v, options) => service.writeBytes(p, v, options)
@@ -437,9 +439,34 @@ object Path extends PathPlatformSpecific:
             case Op.OpenRead(p)              => service.openRead(p)
             case Op.OpenReadLines(p, c)      => service.openReadLines(p, c)
             case Op.OpenWalk(p, d, f)        => service.openWalk(p, d, f)
+            case Op.CurrentReadService()     => FileSystem.useReadErased(selected => selected)
             case Op.Raise(error)             => Abort.error(error)
             case _ => Abort.panic[FileSystemException](new IllegalStateException("PathWrite operation reached the PathRead handler"))
     end dispatchRead
+
+    private def restoreRead[A, S](value: Result[FileSystemException, A] < S)(using Frame): A < (PathRead & S) =
+        value.map {
+            case Result.Success(result) => result
+            case Result.Failure(error)  => ArrowEffect.suspend(Tag[PathRead], Op.Raise(Result.Failure(error)))
+            case panic: Result.Panic    => ArrowEffect.suspend(Tag[PathRead], Op.Raise(panic))
+        }
+    end restoreRead
+
+    private[kyo] def suspendTryLock(path: Path, mode: LockMode, sentinelSuffix: String)(using
+        Frame
+    ): Maybe[Lock] < (PathRead & Sync & Async & Scope) =
+        ArrowEffect.suspend(Tag[PathRead], Op.CurrentReadService()).map { service =>
+            restoreRead(Abort.run[FileSystemException](service.tryLock(path, mode, sentinelSuffix)))
+        }
+    end suspendTryLock
+
+    private[kyo] def suspendLock(path: Path, mode: LockMode, wait: LockWait, sentinelSuffix: String)(using
+        Frame
+    ): Lock < (PathRead & Async & Scope) =
+        ArrowEffect.suspend(Tag[PathRead], Op.CurrentReadService()).map { service =>
+            restoreRead(Abort.run[FileSystemException](service.lock(path, mode, wait, sentinelSuffix)))
+        }
+    end suspendLock
 
     // --- Scoped temp file and temp directory ---
 
@@ -547,6 +574,61 @@ object Path extends PathPlatformSpecific:
       */
     trait ReadWriteChannel[S] extends ReadChannel[S] with WriteChannel[S]
 
+    /** Selects the compatibility of an advisory path lock. */
+    enum LockMode derives CanEqual:
+        case Shared
+        case Exclusive
+
+    /** Suffix of the sentinel sibling an advisory lock claims. The claim is never taken on the
+      * data file itself, so I/O on the locked path cannot disturb it; the suffix names the sibling
+      * and is part of the lock's identity, so claims under different suffixes are independent.
+      */
+    val defaultLockSuffix: String = ".kyo-lock"
+
+    /** Selects whether lock acquisition returns immediately or suspends until it can complete. */
+    enum LockWait derives CanEqual:
+        case Immediate
+        case UntilAvailable
+        case Until(deadline: Clock.Deadline)
+    end LockWait
+
+    /** Opaque identity of one acquired lock claim. */
+    private[kyo] opaque type LockOwnership = AnyRef
+
+    private[kyo] object LockOwnership:
+        given CanEqual[LockOwnership, LockOwnership]                 = CanEqual.derived
+        def fresh(): LockOwnership                                   = new AnyRef
+        def same(left: LockOwnership, right: LockOwnership): Boolean = left eq right
+    end LockOwnership
+
+    /** A Scope-managed advisory lock on a path.
+      *
+      * Shared locks coexist with other shared locks. Exclusive locks conflict with every other
+      * holder. The acquiring [[Scope]] owns an opaque token and releases only the matching claim
+      * when it closes. There is intentionally no public manual-release operation.
+      *
+      * Use [[check]] before a protected operation when the backend can lose external ownership.
+      * It raises [[FileLockOwnershipLostException]] if the claim no longer belongs to this handle.
+      *
+      * The claim is taken on a sentinel sibling of the path, never on the path itself, so holding
+      * a lock and reading or writing the locked path from the same process is safe on every
+      * platform. The sibling's suffix defaults to [[Path.defaultLockSuffix]] and is part of the
+      * lock's identity: claims under different suffixes are independent. The sentinel may remain
+      * on disk after the process exits; it is an empty artifact whose claim died with the process.
+      * The lock coordinates processes that use this API; it does not exclude a foreign process
+      * that locks the data file directly through the OS.
+      */
+    trait Lock:
+        /** The compatibility mode granted to this handle. */
+        def mode: LockMode
+
+        /** Verifies that this handle still owns its claim. */
+        def check(using Frame): Unit < (Sync & Abort[FileLockException])
+
+        private[kyo] def ownership: LockOwnership
+        private[kyo] def release(ownership: LockOwnership)(using Frame): Unit < (Sync & Abort[FileLockException])
+    end Lock
+
     // --- Safe extension methods ---
 
     extension (self: Path)
@@ -638,6 +720,28 @@ object Path extends PathPlatformSpecific:
           */
         inline def realPath(using inline frame: Frame): Path < PathRead =
             ArrowEffect.suspend(Tag[PathRead], Path.Op.RealPath(self))
+
+        /** Attempts to acquire a scoped advisory lock, returning `Absent` when an incompatible
+          * claim is already held.
+          *
+          * Never waits for that claim to be released, which is what [[lock]] is for. `Async` is in
+          * the row for a different reason: a backend that merges same-process claims onto one
+          * platform lock has a span in which a compatible claim is being taken but is not yet
+          * shareable, and answering during it would report a conflict that does not exist. Waiting
+          * out that span is bounded and needs no holder to release anything.
+          */
+        def tryLock(mode: LockMode, sentinelSuffix: String = Path.defaultLockSuffix)(using
+            Frame
+        ): Maybe[Lock] < (PathRead & Sync & Async & Scope) =
+            suspendTryLock(self, mode, sentinelSuffix)
+
+        /** Acquires a scoped advisory lock according to `wait`. */
+        def lock(
+            mode: LockMode,
+            wait: LockWait = LockWait.UntilAvailable,
+            sentinelSuffix: String = Path.defaultLockSuffix
+        )(using Frame): Lock < (PathRead & Async & Scope) =
+            suspendLock(self, mode, wait, sentinelSuffix)
 
         /** Returns this path resolved to its canonical real path, but only if that real path is contained
           * within `root` (after resolving `root`'s own symlinks).
@@ -1412,6 +1516,26 @@ object Path extends PathPlatformSpecific:
             Frame
         ): Result[FileReadException | FileWriteException | FileStructureException, Path.RawChannel]
 
+        /** Acquires a raw advisory lock for this path in `mode`, non-blocking (fails
+          * immediately if the lock is held incompatibly rather than waiting). The claim is
+          * taken on a sentinel sibling of the path, never on the path itself. Platform
+          * implementations provide the concrete lock.
+          */
+        def lock(mode: LockMode, sentinelSuffix: String)(using AllowUnsafe, Frame): Result[FileLockException, Path.RawLock]
+
+        /** Attempts the lock, distinguishing a conflict from an answer that is not settled yet.
+          *
+          * `lock` collapses both onto a failure, which is the right shape for a caller that cannot
+          * wait. A backend that merges same-process claims onto one platform lock has a span in
+          * which a compatible claim is being taken but is not yet shareable, and refusing there
+          * denies a lock the contract grants. Backends with no such span keep the default.
+          */
+        private[kyo] def lockAttempt(mode: LockMode, sentinelSuffix: String)(using AllowUnsafe, Frame): Path.LockAttempt =
+            lock(mode, sentinelSuffix) match
+                case Result.Success(raw)   => Path.LockAttempt.Acquired(raw)
+                case Result.Failure(error) => Path.LockAttempt.Failed(Result.Failure(error))
+                case panic: Result.Panic   => Path.LockAttempt.Failed(panic)
+
         /** Lifts this `Unsafe` value back into the safe `Path` opaque type. */
         def safe: Path = this
 
@@ -1580,5 +1704,41 @@ object Path extends PathPlatformSpecific:
         /** Closes the channel, releasing all OS resources. */
         def close()(using AllowUnsafe): Unit
     end RawChannel
+
+    // --- Raw lock -- platform-provided advisory lock backing Path.Lock ---
+
+    /** A raw advisory lock returned by `Path.Unsafe.lock`. Platform implementations provide the
+      * concrete class; `FileSystem` backends wrap it as the public [[Path.Lock]].
+      */
+    abstract private[kyo] class RawLock:
+        /** `true` when this lock excludes every other holder, including other shared holders. */
+        def isExclusive: Boolean
+
+        /** Verifies that the platform claim is still owned. */
+        def check()(using AllowUnsafe, Frame): Result[FileLockException, Unit]
+
+        /** Releases the lock, freeing it for another acquirer. */
+        def release()(using AllowUnsafe, Frame): Result[FileLockException, Unit]
+    end RawLock
+
+    /** The outcome of a single non-blocking lock attempt.
+      *
+      * Separates "no" from "not yet", which `Result` alone cannot carry. Only [[Pending]] is worth
+      * retrying on its own: a conflict clears when the holder releases, which is the waiting
+      * caller's concern, while a pending answer clears without anyone releasing anything.
+      */
+    private[kyo] enum LockAttempt derives CanEqual:
+        /** The platform claim was taken and is held. */
+        case Acquired(raw: RawLock)
+
+        /** A compatible claim is mid-acquisition, so the answer is not settled. Asking again once
+          * that acquisition finishes yields a real answer; the retry must be bounded, since an
+          * acquisition interrupted before it can withdraw leaves an entry nothing else clears.
+          */
+        case Pending
+
+        /** A definite answer: an incompatible holder, or the attempt failed outright. */
+        case Failed(error: Result[FileLockException, Nothing])
+    end LockAttempt
 
 end Path

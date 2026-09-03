@@ -5,9 +5,7 @@ package kyo
   * Implementations provide a fresh backend, a populated file, and its expected UTF-8 value for
   * each assertion.
   */
-abstract class FileSystemReadTestSuite extends kyo.test.Test[Any]:
-
-    private given Frame = Frame.internal
+abstract class FileSystemReadTest extends kyo.test.Test[Any]:
 
     protected def createFileSystem(using
         Frame
@@ -168,4 +166,4 @@ abstract class FileSystemReadTestSuite extends kyo.test.Test[Any]:
         }
     }
 
-end FileSystemReadTestSuite
+end FileSystemReadTest
