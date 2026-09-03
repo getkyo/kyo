@@ -1,5 +1,5 @@
 /*
- * kyo_aeron.c: fixed-arity shim over the Aeron 1.50.2 C client (aeronc.h) and embedded
+ * kyo_aeron.c: fixed-arity shim over the Aeron 1.51.1 C client (aeronc.h) and embedded
  * media driver (aeronmd.h), statically linked into the kyo_aeron shared library so the
  * artifact carries no runtime libaeron dependency.
  *
@@ -244,9 +244,8 @@ static void sub_list_remove(kyo_aeron_client_bundle* c, kyo_aeron_subscription_b
  *     heap-allocated token immediately.
  *   _poll: one aeron_async_add_publication_poll step, returning > 0 (done), 0 (awaiting), or
  *     < 0 (error). On the > 0 return Aeron writes the completed publication pointer into the
- *     out-param AND frees the async handle (aeron_async_cmd_free; see the
- *     AERON_CLIENT_REGISTERED_MEDIA_DRIVER case in aeron_client.c), so that pointer MUST be
- *     captured into the token there: the handle is consumed and can never be polled again.
+ *     out-param AND frees the async handle itself, so that pointer MUST be captured into the
+ *     token there: the handle is consumed and can never be polled again.
  *   _get: returns the stashed pointer wrapped in a bundle and frees the token. Never re-polls.
  *   _free: frees the token and releases the client refcount.
  *
@@ -638,8 +637,10 @@ void* kyo_aeron_async_add_publication(void* client, const char* uri, int32_t str
     kyo_aeron_async_pub_token* tok = (kyo_aeron_async_pub_token*)malloc(sizeof(kyo_aeron_async_pub_token));
     if (tok == NULL) {
         /* The conductor owns async_handle and reclaims it on registration failure or
-         * cancellation; the C Aeron client exposes no cancel-before-completion call, so leave
-         * it to the conductor (absence of a get call cancels the registration). */
+         * cancellation, so leaving it to the conductor is safe here. Since 1.51.0 the client
+         * also exposes aeron_async_add_publication_cancel, which would release the pending
+         * registration immediately rather than at client close; the interrupt path does not
+         * use it yet. */
         client_bundle_release(c);
         return NULL;
     }
@@ -665,7 +666,7 @@ int64_t kyo_aeron_async_add_publication_poll(void* async_token)
     aeron_publication_t* pub = NULL;
     int r = aeron_async_add_publication_poll(&pub, tok->async);
     if (r < 0) {
-        /* aeron_async_add_publication_poll already called aeron_async_cmd_free on the < 0 path
+        /* aeron_async_add_publication_poll already freed the async handle on the < 0 path
          * (after AERON_SET_ERR), so tok->async is dangling: clear it, then capture
          * errcode/errmsg from TLS before any other Aeron call on this thread can overwrite
          * them. The token stays alive for the Scala layer's single _free, so do NOT release the

@@ -240,7 +240,7 @@ fi'
         aeron_pkgs="build-essential git uuid-dev"
         # util-linux-dev is Alpine's libuuid: the Aeron driver links -luuid on Linux, musl included.
         apk_aeron_pkgs="build-base git util-linux-dev linux-headers cmake"
-        # Aeron 1.50.2's CMakeLists sets cmake_minimum_required(3.30) and noble's apt cmake is 3.28, so apt cannot satisfy it. GitHub
+        # Aeron 1.51.1's CMakeLists sets cmake_minimum_required(3.30) and noble's apt cmake is 3.28, so apt cannot satisfy it. GitHub
         # runners only avoid this because they preinstall a newer cmake; the setup action's apt fallback would hit the same wall.
         # Install the upstream binary unless the image already carries >= 3.30.
         aeron_setup='
@@ -258,7 +258,7 @@ if [ "$cmake_ok" != 1 ]; then
     if command -v apk >/dev/null 2>&1; then
         # Kitware ships glibc binaries only, so there is no upstream tarball to fall back to on musl.
         # Alpine'"'"'s own cmake is the only source; say so rather than installing something unrunnable.
-        echo "cmake >= 3.30 required for Aeron 1.50.2 and this musl image has $(cmake --version 2>/dev/null | head -1)." >&2
+        echo "cmake >= 3.30 required for Aeron 1.51.1 and this musl image has $(cmake --version 2>/dev/null | head -1)." >&2
         echo "Use an Alpine release whose apk cmake is >= 3.30." >&2
         exit 1
     fi
