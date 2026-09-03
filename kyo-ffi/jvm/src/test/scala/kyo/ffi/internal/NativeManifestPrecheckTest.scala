@@ -88,10 +88,11 @@ class NativeManifestPrecheckTest extends Test:
         assert(NativeManifestPrecheckTest.witnessElsewhereConstructed == false)
     }
 
-    "a -Dkyo.ffi.<id>.path override resolves a library the manifest declares for other platforms only" in {
-        // The demote-to-fallback path the pre-check must not break: the native is not bundled for this
-        // platform and never will be, and the operator supplies it out of band. Nothing is dlopened here;
-        // the pre-check asks whether the library is resolvable, and the override answers for it.
+    "a -Dkyo.ffi.<id>.path override lets the pre-check pass for a library declared for other platforms only" in {
+        // The out-of-band supply route the pre-check must not break: the native is not bundled for this
+        // platform and never will be, and an operator points at one. The pre-check asks only whether the
+        // override names an existing file, exactly as it does for a declared platform; opening it is the
+        // load's job, so this pins the route being honoured, not that the file is a loadable library.
         Ffi.unload[NativeManifestPrecheckTest.PrecheckElsewhereBinding]
         NativeManifestPrecheckTest.witnessElsewhereConstructed = false
 
@@ -105,6 +106,25 @@ class NativeManifestPrecheckTest extends Test:
         finally
             val _ = java.lang.System.clearProperty(key)
             val _ = java.nio.file.Files.deleteIfExists(supplied)
+            Ffi.unload[NativeManifestPrecheckTest.PrecheckElsewhereBinding]
+        end try
+    }
+    "an override naming a missing file fails, and a bundled resource elsewhere does not vouch for it" in {
+        // loadLocked uses an override unconditionally and consults no other route, so a set-but-missing
+        // override is a failure even where another route would have answered. Otherwise the pre-check
+        // passes and the load dies in the impl companion's initializer on the override it was given.
+        Ffi.unload[NativeManifestPrecheckTest.PrecheckElsewhereBinding]
+        NativeManifestPrecheckTest.witnessElsewhereConstructed = false
+
+        val key = "kyo.ffi.kyo_ffi_precheck_elsewhere.path"
+        java.lang.System.setProperty(key, "/nonexistent/kyo-ffi-precheck-elsewhere.so")
+        try
+            val ex = intercept[FfiLoadError.LibraryNotFound](Ffi.load[NativeManifestPrecheckTest.PrecheckElsewhereBinding])
+            assert(ex.libraryId == "kyo_ffi_precheck_elsewhere")
+            assert(ex.candidates.exists(_.contains("file missing")))
+            assert(NativeManifestPrecheckTest.witnessElsewhereConstructed == false)
+        finally
+            val _ = java.lang.System.clearProperty(key)
             Ffi.unload[NativeManifestPrecheckTest.PrecheckElsewhereBinding]
         end try
     }

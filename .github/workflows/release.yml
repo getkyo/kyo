@@ -14,9 +14,11 @@ permissions:
 # a v1.* tag) or a `/release` comment on a PR. Producers build ONE os-arch's classifier natives each
 # and upload only those; the publish job downloads all of them into ffiPrebuiltDir so the single JVM
 # ci-release slices every os-arch's classifier jars (DECISION-P2b) and the completeness guard runs as
-# the pre-sonaRelease belt. Windows publishes kyo-aeron's shim and kyo-net's posix/uring shim, whose C
-# defines every entry point on every target so the binding resolves there; only kyo-net's BoringSSL
-# shim declares itself out through osTargets, Windows being NIO + JDK TLS by ruling.
+# the pre-sonaRelease belt. Windows publishes kyo-aeron's shim and kyo-net's posix/uring shim: kyo_epoll.c
+# and kyo_uring.c define their entry points on every target, so those bindings resolve there and answer
+# ENOSYS (kyo_posix.c and kyo_net_resolve.c are _WIN32-guarded, and their bindings are reached only
+# behind an OS gate). Only kyo-net's BoringSSL shim declares itself out through osTargets, Windows
+# being NIO + JDK TLS by ruling.
 jobs:
   # macos-14 is arm64, and covers BOTH Mac targets: darwin-aarch64 is the host build; darwin-x86_64 is
   # a real cross-build on the same runner. build-boringssl.sh cross-builds the vendored BoringSSL with

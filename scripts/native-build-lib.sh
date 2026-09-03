@@ -38,7 +38,7 @@ native_host_os() {
 }
 
 # The architecture this script builds for by default, and the one a cross-arch request is checked
-# against. Shared with CCompiler.detectArch.
+# against. Off Windows this is the machine's, matching CCompiler.detectArch.
 #
 # On Windows this is deliberately NOT the machine's architecture. The kyo-ffi plugin invokes `cl`
 # with no target flag (CCompiler.scala), so the shim is built for whatever the ambient MSVC
@@ -173,8 +173,8 @@ native_assert_arch() {
         linux|linux-musl)
             # `file` on an ar archive reports the container, not the ISA, so inspect a member.
             if ! command -v ar >/dev/null 2>&1 || ! command -v file >/dev/null 2>&1; then
-                echo "note: ar/file unavailable, skipping arch assertion for $archive" >&2
-                return 0
+                echo "cannot verify $archive: this check needs 'ar' and 'file' (apt: binutils file; apk: binutils file)." >&2
+                return 1
             fi
             # head closes the pipe after line 1; under `set -o pipefail` the still-writing ar takes
             # SIGPIPE (busybox head on the Alpine/musl leg) and fails the build with 141. sed -n reads to EOF.
