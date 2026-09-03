@@ -129,7 +129,7 @@ object Scope:
     def run[A, S](closeParallelism: Int)(v: A < (Scope & S))(using frame: Frame): A < (Async & S) =
         Sync.Unsafe.defer {
             val finalizer = Finalizer.Awaitable.Unsafe.init(closeParallelism)
-            ContextEffect.handle(Tag[Scope], finalizer, _ => finalizer)(v)
+            ContextEffect.handleInheritable(Tag[Scope], finalizer, _ => finalizer)(v)
                 .handle(
                     Sync.ensure(finalizer.close),
                     Abort.run[Any]

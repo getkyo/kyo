@@ -5,7 +5,7 @@ import kyo.kernel.ArrowEffect
 import kyo.kernel.Effect
 import kyo.kernel.Isolate
 import kyo.kernel.internal.Eval
-import kyo.kernel.internal.Kyo
+import kyo.kernel.internal.Pending
 import kyo.kernel.internal.Safepoint
 import kyo.scheduler.IOTask.*
 import scala.annotation.tailrec
@@ -302,19 +302,19 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
             if fuel == 0 then Absent
             else
                 x match
-                    case s: Kyo.Suspend[?, ?, ?, ?, ?, ?] =>
+                    case s: Pending.Suspend[?, ?, ?, ?] =>
                         val f = s.frame
-                        if f eq Frame.internal then Absent else Present(f)
-                    case h: Kyo.Handle[?, ?, ?, ?, ?] => loop(h.value, fuel - 1)
-                    case p: Kyo.Park[?, ?]            => loop(p.value, fuel - 1)
-                    case d: Kyo.Defer[?, ?, ?, ?]     =>
+                        if f.eq(Frame.internal) then Absent else Present(f)
+                    case h: Pending.Handle[?, ?, ?, ?] => loop(h.value, fuel - 1)
+                    case p: Pending.Park[?, ?]         => loop(p.value, fuel - 1)
+                    case d: Pending.Defer[?, ?, ?, ?]  =>
                         // the deferral's applying arrow names the site that built it (a `Sync.defer` body's
                         // own file:line); the chained continuation is next, and only then the payload
                         val fa = d.contA.frame
-                        if !(fa eq Frame.internal) then Present(fa)
+                        if !fa.eq(Frame.internal) then Present(fa)
                         else
                             val fb = d.contB.frame
-                            if !(fb eq Frame.internal) then Present(fb)
+                            if !fb.eq(Frame.internal) then Present(fb)
                             else loop(d.value, fuel - 1)
                         end if
                     case _ => Absent
@@ -470,7 +470,7 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
         status = Done
         if !isNull(remainder) then
             ensureInterrupt(remainder)
-            remainder.finalizeResources
+            Eval.release(remainder, new KyoException("fiber abandoned")(using Frame.internal))
     end abandon
 
     // Drops the reference so a finished task does not retain the computation it ran. Never a signal: `curr`

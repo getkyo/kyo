@@ -77,8 +77,14 @@ object Sync:
     def acquireReleaseWith[A, S1](acquire: => A < (Sync & S1))(
         release: (A, Result[Any, Any]) => Any < (Sync & Abort[Throwable])
     )[B, S2](use: A => B < S2)(using Frame): B < (Sync & S1 & S2) =
-        Effect.bracket[A, B, Sync & S1 & S2](acquire)((resource, result) =>
-            Abort.runWith[Throwable](release(resource, result))(_.getOrThrow)
+        // Unsafe: the kernel's release is synchronous, so the effectful release runs to completion here,
+        // and only its own Abort surfaces, as a throw
+        Effect.bracket(acquire)((resource, outcome) =>
+            discard(Sync.Unsafe.evalOrThrow(release(resource, outcome.fold(Result.succeed(()))(Result.panic)))(
+                using
+                summon[Frame],
+                AllowUnsafe.embrace.danger
+            ))
         )(use)
 
     def acquireReleaseWith[A, S1](acquire: => A < (Sync & S1))(
@@ -86,8 +92,12 @@ object Sync:
     )[B, S2](use: A => B < S2)(using Frame): B < (Sync & S1 & S2) =
         // the kernel bracket is this operation: the scope installs the moment the acquire settles, with no
         // slice able to end in between, and it owns the release from there whether the use completes,
-        // throws, or is abandoned. Only the release's own Abort surfaces, as a throw
-        Effect.bracket(acquire)(resource => Abort.runWith[Throwable](release(resource))(_.getOrThrow))(use)
+        // throws, or is abandoned.
+        // Unsafe: the kernel's release is synchronous, so the effectful release runs to completion here,
+        // and only its own Abort surfaces, as a throw
+        Effect.bracket(acquire)((resource, _) =>
+            discard(Sync.Unsafe.evalOrThrow(release(resource))(using summon[Frame], AllowUnsafe.embrace.danger))
+        )(use)
 
     /** Ensures that a finalizer is run after the computation, regardless of success or failure.
       *
@@ -117,10 +127,14 @@ object Sync:
         inline frame: Frame
     ): A < (Sync & S) =
         // the kernel bracket owns the exactly-once guarantee and the outcome: Absent on success, the
-        // error when the computation aborts or throws, and the boundary's own error when a parked
-        // remainder is discarded. The finalizer runs in the ambient context, so locals bound around
-        // the ensure reach it; only its Abort surfaces as a throw, keeping the panic semantics
-        Effect.bracket(())((_, outcome: Result[Any, A]) => Abort.runWith[Throwable](f(outcome.error))(_.getOrThrow))(_ => v)
+        // failure when the computation throws, and the discard signal when the region is ended from
+        // outside or a parked remainder is abandoned. The finalizer runs in the ambient context, so
+        // locals bound around the ensure reach it.
+        // Unsafe: the kernel's release is synchronous, so the finalizer runs to completion here, and
+        // only its own Abort surfaces as a throw, keeping the panic semantics
+        Effect.bracket(())((_, outcome) =>
+            discard(Sync.Unsafe.evalOrThrow(f(outcome.map(Result.Panic(_))))(using summon[Frame], AllowUnsafe.embrace.danger))
+        )(_ => v)
 
     /** Retrieves a local value and applies a function that can perform side effects.
       *
