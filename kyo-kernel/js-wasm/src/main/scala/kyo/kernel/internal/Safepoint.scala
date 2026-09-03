@@ -91,9 +91,16 @@ object Safepoint:
     def deadline(d: Long): Unit =
         armedDeadline = d
 
-    private[kyo] def stop(thread: Thread): Boolean = false
+    // A stop stands until the slice boundary consumes it. Single-threaded, so the only slice that can be
+    // running is the caller's: a stop is always addressed to it, and there is no slice record to check it
+    // against, which is why beginSlice and endSlice carry nothing here.
+    private var stopRequested: Boolean = false
 
-    private[kyo] def stop(thread: Thread, slice: AnyRef): Boolean = false
+    private[kyo] def stop(thread: Thread): Boolean = stop(thread, null)
+
+    private[kyo] def stop(thread: Thread, slice: AnyRef): Boolean =
+        stopRequested = true
+        true
 
     private[kyo] def beginSlice(slot: Slot, slice: AnyRef): AnyRef = null
 
@@ -103,12 +110,13 @@ object Safepoint:
         armedDeadline != Long.MaxValue && java.lang.System.currentTimeMillis() >= armedDeadline
 
     private[kyo] def stopped(slot: Slot): Boolean =
-        expired()
+        stopRequested || expired()
 
     private[kyo] def consumeStopped(slot: Slot): Boolean =
-        if expired() then
-            armedDeadline = Long.MaxValue
-            true
-        else false
+        val pending = stopRequested || expired()
+        stopRequested = false
+        if expired() then armedDeadline = Long.MaxValue
+        pending
+    end consumeStopped
 
 end Safepoint

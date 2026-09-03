@@ -585,6 +585,31 @@ class EvalTest extends AnyFreeSpec:
             assert(clauseRuns == 2)
         }
 
+        "a stop alone, with no slice deadline, parks in front of a re-raise" in {
+            // the scheduler's join clause requests a stop and nothing else, so the stop has to be
+            // honored by itself on every platform, not only where a slice deadline backs it
+            var clauseRuns = 0
+            val handled: Int < Any = ArrowEffect.handleCont(Tag[Ask], ask.map(_ + 1))(
+                [C] =>
+                    (input, cont) =>
+                        clauseRuns += 1
+                        if clauseRuns > 8 then throw new IllegalStateException("re-dispatched without parking")
+                        if clauseRuns == 1 then
+                            discard(Safepoint.get())
+                            discard(Safepoint.stop(Thread.currentThread()))
+                            ArrowEffect.suspendWith[C](Tag[Ask], input)(r => cont(r))
+                        else cont(41)
+                        end if
+                ,
+                a => a
+            )
+            val parked = Eval.partial(handled)
+            assert(clauseRuns == 1)
+            assert(parked.isInstanceOf[Park[?, ?]])
+            assert(parked.eval == 42)
+            assert(clauseRuns == 2)
+        }
+
         "a stop already pending returns the input before the slice starts" in {
             var ran = false
             val input: Int < Any = Effect.defer {
