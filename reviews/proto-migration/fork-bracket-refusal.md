@@ -80,7 +80,8 @@ deadline: the re-raise was dispatched again and again until the stack ran out, t
 showed before its stop was honored. js-wasm now records the stop and honors it by itself, consumed
 at the slice boundary; EvalTest pins a clause that requests a stop and nothing else. The trace
 builder also skips a null frame, which on JS was an undefined-behavior error escaping the
-non-fatal catch. Kernel suites after the change: JVM 1459, JS 1403, Wasm 1403, all green. With it,
+non-fatal catch. Kernel suites after the change: JVM 1459, JS 1403, Wasm 1403, Native 1435 (after
+a clean of its target, which held NIR from a deleted HandlerTest), all green. With it,
 all 16 shared `kyo-preludeJS` suites are green one class per JVM, with the same counts as on the
 JVM. `kyo-preludeNative` is green in the same 16 suites the same way (ChoiceTest runs 30 there,
 one case being not-Native).
