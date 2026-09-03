@@ -973,8 +973,17 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
             }
         }
 
-        "Sync.ensure with take documents current behavior".ignore("Sync.ensure interaction with Stream.take is not yet specified") in {
-            ()
+        "Sync.ensure over an unbounded stream releases once when take ends it" in {
+            AtomicInt.init(0).map { released =>
+                val stream = Stream:
+                    Sync.ensure(released.incrementAndGet.unit):
+                        Loop(0)(i => Emit.valueWith(Chunk(i))(Loop.continue(i + 1)))
+                stream.take(3).run.map { taken =>
+                    released.get.map { r =>
+                        assert(taken == Chunk(0, 1, 2) && r == 1)
+                    }
+                }
+            }
         }
 
         "takeWhile early exit with scope ensure" in {
@@ -1002,6 +1011,25 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
                     Emit.run(cont(())).map { (rest, _) =>
                         released.get.map { r =>
                             assert(first == Maybe(Chunk(1)) && rest == Chunk(Chunk(2)) && r == 1)
+                        }
+                    }
+                }
+            }
+        }
+
+        "a Sync.ensure remainder from a peel is consumable afterwards" in {
+            // the same lane with the bare bracket: Scope.run is Sync.ensure underneath, so whatever the
+            // peel does to one it does to the other
+            AtomicInt.init(0).map { released =>
+                val stream = Stream:
+                    Sync.ensure(released.incrementAndGet.unit):
+                        Emit.valueWith(Chunk(1))(Emit.value(Chunk(2)))
+                Emit.runFirst(stream.emit).map { (first, cont) =>
+                    released.get.map { atPeel =>
+                        Emit.run(cont(())).map { (rest, _) =>
+                            released.get.map { r =>
+                                assert(first == Maybe(Chunk(1)) && atPeel == 0 && rest == Chunk(Chunk(2)) && r == 1)
+                            }
                         }
                     }
                 }
