@@ -1,0 +1,78 @@
+# A forked fiber is refused once its parent's bracket ends
+
+Status: open design fork, needs a ruling. Nothing in the kernel was changed for it.
+
+## Symptom
+
+Every multi-suite run of a kyo-test module hangs at the start of a later suite, with the JVM idle:
+the sbt task thread waits on the suite's future, the scheduler's workers are parked, no fiber is
+runnable. Seen on `kyo-preludeJVM/test` (stuck at the second or third suite), on
+`kyo-test-runnerJVM/test` (`SelfTestsRunnerTest`: the first `runToFuture` passes, the second never
+completes), and reproduced without the test runner by
+`kyo-test/runner/jvm/src/test/scala/kyo/HangScratchTest.scala` (a scratch, to be removed).
+
+A single suite per JVM passes: `kyo.AbortTest` alone is 159 green after the fixes in
+`3e3902d43e`.
+
+## Mechanism
+
+`LeafPool` forks its worker fibers with `Fiber.initUnscoped` from inside the first suite's
+pipeline, which runs under `Scope.run`, whose `Sync.ensure` is an `Effect.bracket` region. The
+scratch's dump shows what happens to those workers afterwards:
+
+```
+IOTask(id = 145044469, state = Done(result = Panic(kyo.Closed:
+  Bracket resource created at <internal>:0:0 is closed.)), status = Done, curr = null)
+```
+
+The chain, each link read in the source:
+
+1. `Isolate.internal.Contextual.capture` snapshots every context region on the stack
+   (`Stack.contextual()`), and `Effect.bracket`'s region is a `ContextHandler` (`Finalize`).
+2. `Contextual.fork` wraps each region as a `Forked` copy with `origin.fork(state)`; the bracket's
+   `fork(parent) = parent`, so the child carries the parent's live `Cell`.
+3. A `Forked` copy is silent to `done` and `release` (ruling S3) but forwards `reenter` to its
+   origin (ruling S8, commit `164eb68f47`), and the bracket's `reenter` throws `Closed` once the
+   cell was completed or drained.
+4. A worker that parks on `channel.take` and is resumed after the first suite completed
+   re-installs its regions (`Eval.installed` calls `reenter`), is refused, and completes with
+   the panic. Nobody observes a detached worker's result, so the pool silently loses a worker per
+   wake-up until no taker is left, and the next `put` has nobody to hand its work to.
+
+Timing explains why the second suite sometimes passes: a `put` that finds no parked taker buffers
+its work, and a worker that takes from the buffer never re-enters anything.
+
+## Why this is a ruling and not a fix
+
+S8 is deliberate: EffectBracketTest "a capture inside an isolated child, resumed after the bracket
+ended, is refused" pins that a continuation captured inside an isolated child under a bracket and
+resumed after the bracket ended must not run use code on a released resource. That ruling was made
+for same-fiber crossings. A fiber spawn goes through the same `Contextual.isolate`, so a detached
+fiber is treated as such a leaked continuation, and any fiber forked under `Scope.run`,
+`Sync.ensure`, or `Sync.acquireReleaseWith` dies on its first park-and-resume after the enclosing
+bracket ends. On main a child fiber never inherited `Sync.ensure` finalizers, so fibers outliving
+the block that forked them were ordinary.
+
+Both pins are individually right; they meet at the spawn. The question is what a forked fiber
+inherits from a bracket: nothing (main's semantics) or an inert copy that still refuses.
+
+## Options
+
+A. The spawn does not carry bracket regions into the child. The kernel needs one hook for it, since
+   only kyo-core knows a crossing is a fiber spawn: for instance a `ContextHandler` saying whether
+   its region crosses into a spawned fiber, or a spawn-specific fork in `Contextual` that skips
+   `Finalize` regions. S8 stays intact for same-fiber crossings, and fibers get main's semantics.
+   This is the recommendation.
+
+B. `Forked` stops forwarding `reenter`. One line, but it reverts S8 and its test goes red: a
+   leaked continuation from a child would run use code after the release again.
+
+C. Fork the pool's workers outside any bracket in kyo-test (`LeafPool` at object initialization).
+   Hides a kyo-core regression that reaches every user forking a background fiber inside a
+   resource scope. Rejected.
+
+## What runs meanwhile
+
+Prelude suites are being run one class per JVM (`scratchpad/prelude-per-class/summary.txt`), which
+sidesteps the pool. `kyo-test-runnerJVM`'s `SelfTestsRunnerTest` cannot pass until the ruling is
+applied, since it runs two suites through one pool by design.
