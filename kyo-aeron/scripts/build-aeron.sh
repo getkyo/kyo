@@ -14,7 +14,8 @@
 #   -DCMAKE_OSX_ARCHITECTURES). Cross-OS is rejected. Windows cross-arch is rejected too, even
 #   though MSVC itself could do it: the kyo-ffi plugin's shim compile has no per-invocation
 #   architecture flag for `cl`, so it targets whatever the ambient vcvars environment selected, and
-#   a cross-staged archive would pair with a host-arch shim.
+#   a cross-staged archive would pair with a host-arch shim. On Windows the request is therefore
+#   checked against the architecture that `cl` targets, not against the machine's.
 #
 # Requires cmake + a C toolchain on PATH (apt: cmake build-essential uuid-dev;
 # apk: cmake build-base util-linux-dev; brew: cmake; Windows: MSVC + cmake).

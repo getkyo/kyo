@@ -37,21 +37,42 @@ native_host_os() {
     esac
 }
 
-# The CPU architecture this script is running on. Shared with CCompiler.detectArch.
+# The architecture this script builds for by default, and the one a cross-arch request is checked
+# against. Shared with CCompiler.detectArch.
+#
+# On Windows this is deliberately NOT the machine's architecture. The kyo-ffi plugin invokes `cl`
+# with no target flag (CCompiler.scala), so the shim is built for whatever the ambient MSVC
+# environment selected, and what a staged archive has to match is that selection. The MSYS bash the
+# Windows runners provide answers x86_64 to `uname -m` even where vcvars has selected the ARM64
+# tools, so asking the shell produces a cross-arch rejection on the machine's own native build.
+# The MSVC toolset lays its binaries out as bin/Host<host>/<target>/cl.exe, so the `cl` that will do
+# the compiling names its own target.
 native_host_arch() {
-    # On Windows the machine is asked of the OS, not of the shell. Git Bash on an ARM64 host is an
-    # emulated x86_64 build of MSYS, so `uname -m` answers x86_64 there and the host looks like an x64
-    # machine, which turns a native aarch64 build into a rejected cross-arch request.
-    # PROCESSOR_ARCHITEW6432 is set when a 32-bit shell runs under WOW64; PROCESSOR_ARCHITECTURE is the
-    # plain case. Both name the real machine.
     local raw
     case "$(uname -s)" in
-        MINGW*|MSYS*|CYGWIN*) raw="${PROCESSOR_ARCHITEW6432:-${PROCESSOR_ARCHITECTURE:-$(uname -m)}}" ;;
-        *)                    raw="$(uname -m)" ;;
+        MINGW*|MSYS*|CYGWIN*)
+            local cl
+            cl="$(command -v cl.exe 2>/dev/null || command -v cl 2>/dev/null)"
+            if [ -z "$cl" ]; then
+                echo "MSVC environment not initialized: 'cl' is not on PATH." >&2
+                echo "Run vcvars64.bat or vcvarsarm64.bat first; this script needs cl and dumpbin, and takes its target from them." >&2
+                return 1
+            fi
+            local hostDir; hostDir="$(basename "$(dirname "$(dirname "$cl")")")"
+            case "$hostDir" in
+                Host*) ;;
+                *)
+                    echo "unexpected MSVC toolset layout for '$cl': expected .../bin/Host<host>/<target>/cl.exe" >&2
+                    return 1
+                    ;;
+            esac
+            raw="$(basename "$(dirname "$cl")")"
+            ;;
+        *) raw="$(uname -m)" ;;
     esac
     case "$raw" in
-        x86_64|amd64|AMD64)    echo x86_64 ;;
-        aarch64|arm64|ARM64)   echo aarch64 ;;
+        x86_64|amd64|AMD64|x64) echo x86_64 ;;
+        aarch64|arm64|ARM64)    echo aarch64 ;;
         *) echo "unsupported build host architecture: $raw" >&2; return 1 ;;
     esac
 }
@@ -178,8 +199,8 @@ native_assert_arch() {
             # `ar x` reports "no entry in archive" and writes nothing. dumpbin reads the archive its
             # own toolchain produced, and vcvars has already put it on PATH wherever this runs.
             if ! command -v dumpbin >/dev/null 2>&1; then
-                echo "note: dumpbin unavailable, skipping arch assertion for $archive" >&2
-                return 0
+                echo "cannot verify $archive: dumpbin is not on PATH (initialize the MSVC environment)." >&2
+                return 1
             fi
             local want
             case "$arch" in
@@ -190,8 +211,8 @@ native_assert_arch() {
             local got
             got="$(dumpbin //headers "$archive" | sed -n 's/.*machine (\([^)]*\)).*/\1/p' | sed -n '1p')"
             [ -n "$got" ] || {
-                echo "note: dumpbin reported no machine field for $archive; skipping assertion" >&2
-                return 0
+                echo "cannot verify $archive: dumpbin reported no machine field for it." >&2
+                return 1
             }
             [ "$got" = "$want" ] || {
                 echo "arch mismatch: $archive is machine '$got', expected '$want' for $os-$arch" >&2
