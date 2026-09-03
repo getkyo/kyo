@@ -268,7 +268,7 @@ import scala.util.control.NonFatal
                                     val handler = handler0.asInstanceOf[Handler.ArrowHandler[VX, EX, AX, Y, Any]]
                                     val result  = handler.done(stack.state(top).asInstanceOf[VX], Nested.unnest[AX](res))
                                     Debugger.onRegionExit(handler, result)
-                                    arrowExit(handler.handsOut)
+                                    arrowExit(handler)
                                     loop(result, next, Arrow.id, ctx)
                             end match
                     else
@@ -354,10 +354,10 @@ import scala.util.control.NonFatal
         // a region that hands its continuation out has not discarded what it owes: the debt moves to
         // the scope below, as it does for a region exiting with a pending outcome, and is settled by
         // identity when the remainder resumes or drained where that scope ends
-        def arrowExit(handsOut: Boolean): Unit =
+        def arrowExit(handler: Handler.ArrowHandler[?, ?, ?, ?, ?]): Unit =
             stack.pop()
             if stack.owesAny then
-                if handsOut then stack.oweBelow(stack.depth, stack.takePopped())
+                if handler.handsOut then stack.oweBelow(stack.depth, stack.takePopped())
                 else drainDiscarded(stack.takePopped())
         end arrowExit
 
