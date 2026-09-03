@@ -108,9 +108,13 @@ class CompileLoadRoundTripTest extends kyo.test.Test[Any]:
         val output   = new String(proc.getInputStream.readAllBytes(), StandardCharsets.UTF_8)
         val exit     = proc.waitFor()
         if exit != 0 then
-            // Setup failure (runs at suite instantiation, before any leaf scope exists), so surface it as a thrown
-            // exception rather than the leaf-scoped `fail`.
-            throw new RuntimeException(s"C compile failed (exit=$exit). Command: ${cmd.mkString(" ")}\nOutput:\n$output")
+            // Setup failure: this runs in a field initializer during reflective suite construction, so the
+            // runner reports only the InvocationTargetException wrapper and drops this exception's message.
+            // Print the diagnosis first, or a compile failure here is unreadable in a CI log.
+            val diagnosis = s"C compile failed (exit=$exit). Command: ${cmd.mkString(" ")}\nOutput:\n$output"
+            java.lang.System.err.println(s"[CompileLoadRoundTripTest] $diagnosis")
+            java.lang.System.err.flush()
+            throw new RuntimeException(diagnosis)
         end if
         outLib
     end compileCLibrary
