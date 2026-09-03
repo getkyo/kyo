@@ -22,6 +22,10 @@ import scala.util.control.NonFatal
   *
   * A bracket belongs to the computation that installed it and closes only with its own scope: an isolated child, a spawned fiber
   * included, gets an inert copy of the region that neither completes, releases, nor refuses.
+  *
+  * A bracket inside a remainder that a handler hands out as a value (the coroutine step the stream combinators are built on) travels
+  * with that remainder: it releases when the remainder completes, at the exit of the scope enclosing the handler when the remainder is
+  * never resumed, and it refuses a second resumption.
   */
 object Bracket:
 

@@ -504,7 +504,9 @@ class ContextEffectTest extends AnyFreeSpec:
             assert(log.toList == List("done cfg 1", "shot 2", "done cfg 1", "shot 3", "handler done"))
         }
 
-        "a handleFirst remainder re-enters a raw region the region's end already released" in {
+        "a handleFirst remainder re-enters the raw region it was handed, which ends once, with done" in {
+            // the region's end does not release what its remainder still carries: the raw region is owed
+            // to the scope below, re-installed when the remainder resumes, and completes with the value
             val log             = ListBuffer[String]()
             val body: Int < Ask = hooked(log, "cfg", 1)(ask.map(_ + 1))
             val first: Int < Ask = ArrowEffect.handleFirst[Const[Unit], Const[Int], Ask, Int, Int, Any, Ask](Tag[Ask], body)(
@@ -516,7 +518,7 @@ class ContextEffectTest extends AnyFreeSpec:
                 done = a => a
             )
             assert(answerAsk(0)(first).eval == 42)
-            assert(log.toList == List("clause", "release cfg 1", "done cfg 1"))
+            assert(log.toList == List("clause", "done cfg 1"))
         }
     }
 

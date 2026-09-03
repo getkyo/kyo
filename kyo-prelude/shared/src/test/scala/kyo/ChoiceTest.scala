@@ -398,9 +398,11 @@ class ChoiceTest extends kyo.test.Test[Any]:
             assert(log == Chunk("open1", "close1", "open2", "close2"))
         }
 
-        "a bracket around the choice, streamed, releases once after every branch" in {
+        "a bracket inside the streamed choice is one-shot: the first branch completes it, the next is refused" in {
             // runStream pulls each pending branch through a handleFirst region and continues it in its
-            // own loop, after that region ended, so the bracket spans the branches as a value
+            // own loop, so the bracket travels with each branch's remainder. Every branch is the same
+            // remainder replayed, and the bracket it carries completes on the first replay: the second
+            // re-enters a released bracket and is refused, the multi-shot law
             var log = Chunk.empty[String]
             val v =
                 Choice.runStream {
@@ -408,6 +410,25 @@ class ChoiceTest extends kyo.test.Test[Any]:
                         Choice.eval(1, 2, 3).map { n =>
                             log = log.append(s"branch$n"); n
                         }
+                    )((_, _) => log = log.append("release"))
+                }.run
+            discard(intercept[Closed](v.eval))
+            assert(log == Chunk("branch1", "release"))
+        }
+
+        "a bracket around the streamed choice releases once after every branch" in {
+            // the bracket sits below the region that replays, so it is not part of any branch's
+            // remainder: every branch runs against the live resource and the release runs once when the
+            // stream body completes
+            var log = Chunk.empty[String]
+            val v =
+                Stream {
+                    Bracket("res")(_ =>
+                        Choice.runStream(
+                            Choice.eval(1, 2, 3).map { n =>
+                                log = log.append(s"branch$n"); n
+                            }
+                        ).emit
                     )((_, _) => log = log.append("release"))
                 }.run
             assert(v.eval == Chunk(1, 2, 3))

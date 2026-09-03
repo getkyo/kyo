@@ -1067,6 +1067,16 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
             }
         }
 
+        "a mapPar stream, which emits from inside the brackets that own its channels, can be peeled" in {
+            // mapPar's body is Channel.use around Meter.useSemaphore around a Sync.ensure, and the
+            // emissions happen inside all three: a peel hands out a remainder carrying every one of them
+            Stream.init(1 to 6).mapPar(2)(i => Sync.defer(i + 1)).splitAt(2).map { (head, rest) =>
+                rest.run.map { tail =>
+                    assert(head == Chunk(2, 3) && tail == Chunk(4, 5, 6, 7))
+                }
+            }
+        }
+
         // The law: a stream that closes over its own Scope.run anchors the resource to whichever
         // evaluation runs it. A remainder handed across a fiber boundary loses the resource at the
         // peeling fiber's exit (the drain is the leak backstop), and consuming it afterwards panics

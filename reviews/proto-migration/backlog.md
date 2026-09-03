@@ -153,17 +153,29 @@ Each holds a known-red pin set in the proto suite until ruled; the pins are the 
   resume site rewrite a lexically inner one. The four pins now pin the proto's law
   (ContextEffectThreadingTest x2, IsolateTest "a restored crossing reads the binding it
   captured").
-- **Q4. `handleFirst` and brackets: RULED, the proto is the correct scoping**
-  (2026-09-01, "keep the proto behavior"). A bracket lives as long as the region that
-  answers the suspensions inside it. `handleFirst` ends that region with its
-  `FirstSuspended` token, and the exit drains what the region owes, so the remainder the
-  clause receives finds its brackets released: every branch is refused with `kyo.Closed`,
-  the first included. The kernel's alternative, the token carrying its owed dumps until
-  resumed or released, cannot rule out a holder dropping the token and leaking the
-  resource. The clause itself still runs inside the region, so it sees the resource open;
-  the region exits when the clause's value is delivered, and the remainder that value runs
-  is refused at its first branch. The pin asserts exactly that order (EffectBracketTest
-  "a handleFirst clause runs before the release its remainder runs after").
+- **Q4. `handleFirst` and brackets: REVISED, the remainder carries what it was handed**
+  (2026-09-03, superseding the 2026-09-01 ruling "keep the proto behavior"). The first
+  ruling drained what a `handleFirst` region owed at its exit, so the remainder the clause
+  received found its brackets released and every branch was refused with `kyo.Closed`. Its
+  objection to the alternative was that a token carrying its owed dumps could be dropped by
+  a holder and leak the resource. The revision, argued in
+  `handed-out-remainder-solutions.md`, is that custody never sits in the token: a region
+  whose value carries its continuation out (`ArrowHandler.handsOut`, true for the handler
+  `handleFirst` builds) passes what it owes to the scope below at its exit, exactly as a
+  region exiting with a pending outcome does. The scope below settles the debt by identity
+  when the remainder resumes, and drains it at its own exit or the eval's end if the
+  remainder is dropped, so a drop delays the release to the enclosing exit rather than
+  losing it. The remainder stays one-shot: a second resumption re-enters a completed cell
+  and is refused. Nothing crosses an eval; the cross-fiber lane is unchanged. Pins:
+  BracketTest "a handleFirst remainder carries the bracket it was handed: the first shot
+  completes it, the second is refused", "a handleFirst remainder that is never resumed
+  releases at the enclosing region's exit, as discarded", the two park pins beside them,
+  ContextEffectTest "a handleFirst remainder re-enters the raw region it was handed, which
+  ends once, with done", the four #1398 hand-out pins in StreamCoreExtensionsTest, and
+  ChoiceTest's pair (a bracket inside the streamed choice is refused at the second branch;
+  a bracket around it releases once after every branch). Prior art for the same custody
+  rule: fs2's scope tree and kernel2's `FirstSuspended` exemption
+  (`handed-out-remainder-prior-art.md`).
 - **Q5. EffectTrace fidelity: DONE, with one ruling** (2026-09-01). Every site that hands
   user code to the evaluator on a cold path attaches what it was applying: the cont and op
   handlers attach the continuation with the suspension node, the loop handler attaches the

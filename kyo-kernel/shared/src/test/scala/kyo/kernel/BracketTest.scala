@@ -1285,7 +1285,11 @@ class BracketTest extends AnyFreeSpec:
             assert(count == 1)
         }
 
-        "a handleFirst clause runs before the release its remainder runs after" in {
+        "a handleFirst remainder carries the bracket it was handed: the first shot completes it, the second is refused" in {
+            // the clause hands the continuation out as the region's value, so the bracket dumped into it
+            // is not released at the region's exit: it is owed to the scope below until the remainder
+            // resumes and completes it. The remainder is still one-shot: the second application finds the
+            // cell completed and is refused at the bracket
             var closed             = false
             var closedAtClause     = false
             var seen               = List.empty[String]
@@ -1309,7 +1313,75 @@ class BracketTest extends AnyFreeSpec:
             discard(intercept[kyo.Closed](answerAsk(0)(branches).eval))
             assert(!closedAtClause)
             assert(closed)
-            assert(seen == List())
+            assert(seen == List("branch 10"))
+        }
+
+        "a handleFirst remainder that is never resumed releases at the enclosing region's exit, as discarded" in {
+            // the clause drops the continuation: the bracket it carries is owed to the region below the
+            // handleFirst, still open while that region's body continues, and drained when it exits
+            var outcome        = Maybe.empty[Result[Nothing, Int]]
+            var closedAtClause = false
+            var closedAfter    = false
+            val v              = Bracket(Effect.defer(1))(r => ask.map(_ + r))((_, o) => outcome = Maybe(o))
+            val dropped: Int < Ask =
+                ArrowEffect.handleFirst(Tag[Ask], v)(
+                    handle = [C] =>
+                        (_, _) =>
+                            closedAtClause = outcome.nonEmpty
+                            0
+                    ,
+                    done = a => a
+                )
+            val r = answerAsk(0)(dropped.map { a =>
+                closedAfter = outcome.nonEmpty
+                a
+            })
+            assert(r.eval == 0)
+            assert(!closedAtClause)
+            assert(!closedAfter)
+            assert(outcome.exists(_.panic.exists(_.isInstanceOf[kyo.KyoException])))
+        }
+
+        "a park between the hand-out and the resume carries the remainder's debt" in {
+            var outcome = Maybe.empty[Result[Nothing, Int]]
+            val v       = Bracket(Effect.defer(1))(r => ask.map(_ + r))((_, o) => outcome = Maybe(o))
+            val first: Int < Ask =
+                ArrowEffect.handleFirst(Tag[Ask], v)(
+                    handle = [C] =>
+                        (_, cont) =>
+                            Effect.defer {
+                                requestStop()
+                                Effect.defer(cont(10))
+                            }
+                    ,
+                    done = a => a
+                )
+            val parked = Eval.partial(answerAsk(0)(first))
+            assert(parked.isInstanceOf[Pending.Park[?, ?]])
+            assert(outcome.isEmpty)
+            assert(parked.eval == 11)
+            assert(outcome.exists(_.isSuccess))
+        }
+
+        "a park between the hand-out and the resume, abandoned, releases the remainder's bracket" in {
+            var outcome = Maybe.empty[Result[Nothing, Int]]
+            val v       = Bracket(Effect.defer(1))(r => ask.map(_ + r))((_, o) => outcome = Maybe(o))
+            val first: Int < Ask =
+                ArrowEffect.handleFirst(Tag[Ask], v)(
+                    handle = [C] =>
+                        (_, cont) =>
+                            Effect.defer {
+                                requestStop()
+                                Effect.defer(cont(10))
+                            }
+                    ,
+                    done = a => a
+                )
+            val parked = Eval.partial(answerAsk(0)(first))
+            assert(parked.isInstanceOf[Pending.Park[?, ?]])
+            assert(outcome.isEmpty)
+            Eval.release(parked, Boom)
+            assert(outcome.exists(_.panic.exists(_ eq Boom)))
         }
 
         "branches of a multi-shot clause share the resource the use closed over" in {

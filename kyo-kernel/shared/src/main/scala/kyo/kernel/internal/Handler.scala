@@ -29,6 +29,14 @@ end Handler
         def done(state: State, v: A): B < S
 
         def recover(state: State, ex: Throwable): Maybe[B < S] = Absent
+
+        // A region whose value carries its own continuation out (handleFirst) has not finished with what
+        // it owes when it exits: the regions it dumped into that continuation are re-installed when the
+        // holder resumes it, so the debt moves to the scope below the region instead of draining at its
+        // exit, exactly as a region exiting with a pending outcome passes its debt down. The scope below
+        // settles the debt by identity when the continuation resumes, and drains it at its own exit
+        // otherwise, so a dropped remainder releases there rather than leaking.
+        def handsOut: Boolean = false
     end ArrowHandler
 
     abstract class ContHandler[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends ArrowHandler[Unit, E, A, B, S]:
