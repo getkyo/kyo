@@ -81,3 +81,12 @@ SinkTest 18, CheckTest 15, MemoTest 15, IsolatePreludeTest 11, MonadLawsTest 2).
 `kyo-test-runnerJVM`'s `SelfTestsRunnerTest` cannot pass until the ruling is applied, since it
 runs two suites through one pool by design. `kyo-test-apiJVM` passes as a module because its
 suites are plain ScalaTest classes that never touch the pool.
+
+The other kyo-test modules, one class per JVM: `kyo-test-snapshotJVM` is green in every one of its
+13 classes. `kyo-test-propJVM` is green in the 7 classes that run one suite (GenEdgeBiasTest 13,
+ShrinkTest 13, GenFilterBudgetTest 8, GenIntrospectionTest 5, GenSeedIndependenceTest 5,
+TreeZipWithTest 4, PropertyMaybeTest 1) and stalls in the 7 ScalaTest classes that drive several
+kyo-test fixture suites through the pool, each after its first fixture suite completed
+(ForAllSeededTest, GenChoiceShrinkTest, GenShrinkChunkTest, GenZipTest, IntegratedShrinkTest,
+PropTest, PropertyTestSelfTest). GenTest's first attempt was cut by the run guard while the
+server rebooted and is being rerun.
