@@ -96,7 +96,8 @@ abstract class Isolate[Remove, -Keep, -Restore]:
       * @return
       *   Computation with Remove, Keep, and additional effects
       */
-    def capture[A, S](f: State => A < S)(using Frame): A < (Remove & Keep & S)
+    // Diverges from main: the captured computation's row is `Remove & S`; the IOTask integration relies on it.
+    def capture[A, S](f: State => A < S)(using Frame): A < (Remove & S)
 
     /** Executes a computation with isolated state.
       *
@@ -155,7 +156,7 @@ abstract class Isolate[Remove, -Keep, -Restore]:
       *   Result with original Remove effects handled and Restore effects available
       */
     final def run[A, S](v: A < (S & Remove))(using Frame): A < (S & Remove & Keep & Restore) =
-        capture(state => restore(isolate(state, v)))
+        capture(state => run(state, v))
 
     // Not on main: `run` for a state the caller already captured, and `apply`, which captures,
     // runs the computation in isolation and hands the restored computation to `f` within the

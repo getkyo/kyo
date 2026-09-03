@@ -4,6 +4,7 @@ import kyo.*
 import kyo.kernel.Arrow
 import kyo.kernel.internal.*
 import scala.annotation.nowarn
+import scala.annotation.publicInBinary
 import scala.language.implicitConversions
 
 /** Represents a computation that may perform effects before producing a value.
@@ -403,10 +404,10 @@ object `<` extends Implicits:
     end extension
 
     // Diverges from main: the conversion is from Pending, the union's second arm here, not Kyo, and it
-    // is public and not inline: an inline conversion binds a prefix proxy at every expansion site and a
-    // private one goes through an inline accessor, and both grow every suspension's expansion
-    // (pinned in ArrowEffectBytecodeTest).
-    implicit def fromKyo[A, S](v: Pending[A, S]): A < S = v
+    // is not inline but public in binary: an inline conversion binds a prefix proxy at every expansion
+    // site and a private one goes through an inline accessor, and both grow every suspension's
+    // expansion (pinned in ArrowEffectBytecodeTest).
+    @publicInBinary implicit private[kernel] def fromKyo[A, S](v: Pending[A, S]): A < S = v
 
     given [A, S, APendingS <: A < S](using ra: Render[A]): Render[APendingS] with
         // Not on main: a value lifted into a pending computation is wrapped in Nested, which is
