@@ -19,9 +19,9 @@ import scala.annotation.nowarn
   * different handlers can provide different values in different scopes. The composition of effects automatically tracks these requirements
   * through the type system.
   *
-  * Context effects come in two varieties. By default, values are inherited across async boundaries when computations are suspended and
-  * resumed. Effects that mix the ContextEffect.Noninheritable trait do not cross async boundaries, requiring fresh values when computation
-  * resumes asynchronously. This isolation is useful for values that should remain within a single async context, like thread-local data.
+  * What a value does at an async boundary is decided by the handler that provides it. `handleInheritable` makes the value visible to
+  * forked computations as is; `handle` takes explicit fork and join strategies, which is how values that should remain within a single
+  * async context, like thread-local data, or values that must merge back after a fork are expressed.
   *
   * The polymorphic type parameter A defines what type of value is required:
   * @tparam A
@@ -96,13 +96,16 @@ object ContextEffect:
             def default        = Maybe(defaultValue)
             def cont           = Arrow.id
 
-    /** Creates a suspended computation that requests a context value and transforms it immediately upon receipt. This combines the
-      * operations of requesting and transforming a context value into a single step.
+    /** Requests an optional context value and transforms it, using a default if no value is available. This combines requesting an optional
+      * context value with immediate transformation. The transformation function receives either the context value if available or the
+      * default value if not.
       *
       * @param effectTag
       *   Identifies which context effect to request the value from
+      * @param defaultValue
+      *   The value to use when no handler provides one
       * @param f
-      *   The transformation to apply to the received value
+      *   The transformation to apply to either the context or default value
       * @return
       *   A computation containing the transformed value
       */
@@ -123,29 +126,14 @@ object ContextEffect:
                     case kyo: Pending[A, S2] @unchecked => Effect.defer(kyo, this, cont2)
                     case _                              => cont2(f(Nested.unnest[A](v)), Arrow.id)
 
-    inline def handleInheritable[A, E <: ContextEffect[A], B, S](
-        inline effectTag: Tag[E],
-        inline value: A
-    )(v: B < (E & S))(using inline _frame: Frame): B < S =
-        handleInheritable(effectTag)((_: Maybe[A]) => value)(v)
-
-    inline def handleInheritable[A, E <: ContextEffect[A], B, S](
-        inline effectTag: Tag[E],
-        inline ifUndefined: A,
-        inline ifDefined: A => A
-    )(v: B < (E & S))(using inline _frame: Frame): B < S =
-        handleInheritable(effectTag)((outer: Maybe[A]) => outer.fold(ifUndefined)(ifDefined))(v)
-
-    inline def handleInheritable[A, E <: ContextEffect[A], B, S](
-        inline effectTag: Tag[E]
-    )(
-        inline derive: Maybe[A] => A
-    )(v: B < (E & S))(using inline _frame: Frame): B < S =
-        handle(effectTag)(derive, (parent: A) => parent, (parent: A, _: A, _: A) => parent)(v)
+    // Diverges from main: main's `handle(tag, value)` and `handle(tag, ifUndefined, ifDefined)`
+    // inherit across async boundaries unless the effect mixes in the Noninheritable marker. Here
+    // inheritance is a per-handler strategy (D4): `handleInheritable` is main's default, and
+    // `handle` takes explicit fork and join strategies plus the optional done and release hooks.
 
     /** Handles a context effect by providing a value for a specific computation scope. This satisfies suspend operations within that scope
       * by making the provided value available to them. The handler establishes a region where the context value is defined and can be
-      * accessed.
+      * accessed. The value is inherited across async boundaries: a forked computation sees the same value.
       *
       * @param effectTag
       *   Identifies which context effect to handle
@@ -155,6 +143,69 @@ object ContextEffect:
       *   The computation requiring the context value
       * @return
       *   The computation result with the context value provided
+      */
+    inline def handleInheritable[A, E <: ContextEffect[A], B, S](
+        inline effectTag: Tag[E],
+        inline value: A
+    )(v: B < (E & S))(using inline _frame: Frame): B < S =
+        handleInheritable(effectTag)((_: Maybe[A]) => value)(v)
+
+    /** Handles a context effect by either providing a new value or transforming an existing one. This allows for layered handling of
+      * context values, where a handler can either establish a new value when none exists or modify a value that was provided by an outer
+      * handler. The value is inherited across async boundaries.
+      *
+      * @param effectTag
+      *   Identifies which context effect to handle
+      * @param ifUndefined
+      *   The value to use when no existing value is found
+      * @param ifDefined
+      *   The transformation to apply to any existing value
+      * @param v
+      *   The computation requiring the context value
+      * @return
+      *   The computation result with the context value handled
+      */
+    inline def handleInheritable[A, E <: ContextEffect[A], B, S](
+        inline effectTag: Tag[E],
+        inline ifUndefined: A,
+        inline ifDefined: A => A
+    )(v: B < (E & S))(using inline _frame: Frame): B < S =
+        handleInheritable(effectTag)((outer: Maybe[A]) => outer.fold(ifUndefined)(ifDefined))(v)
+
+    /** Handles a context effect by deriving the region's value from the outer one, if any. The value is inherited across async boundaries.
+      *
+      * @param effectTag
+      *   Identifies which context effect to handle
+      * @param derive
+      *   Computes the region's value from the outer value, absent when no outer handler provides one
+      * @param v
+      *   The computation requiring the context value
+      * @return
+      *   The computation result with the context value handled
+      */
+    inline def handleInheritable[A, E <: ContextEffect[A], B, S](
+        inline effectTag: Tag[E]
+    )(
+        inline derive: Maybe[A] => A
+    )(v: B < (E & S))(using inline _frame: Frame): B < S =
+        handle(effectTag)(derive, (parent: A) => parent, (parent: A, _: A, _: A) => parent)(v)
+
+    /** Handles a context effect with explicit strategies for what a forked computation sees and how its value comes back on join.
+      *
+      * @param effectTag
+      *   Identifies which context effect to handle
+      * @param ifUndefined
+      *   The value to use when no existing value is found
+      * @param ifDefined
+      *   The transformation to apply to any existing value
+      * @param fork
+      *   Computes the value a forked computation starts with from the parent's
+      * @param join
+      *   Computes the parent's value after a fork completes, from the parent's, the forked start and the forked end values
+      * @param v
+      *   The computation requiring the context value
+      * @return
+      *   The computation result with the context value handled
       */
     inline def handle[A, E <: ContextEffect[A], B, S](
         inline effectTag: Tag[E]
@@ -166,18 +217,25 @@ object ContextEffect:
     )(v: B < (E & S))(using inline _frame: Frame): B < S =
         handle(effectTag)((outer: Maybe[A]) => outer.fold(ifUndefined)(ifDefined), fork, join)(v)
 
-    /** Handles a context effect by providing a value for a specific computation scope. This satisfies suspend operations within that scope
-      * by making the provided value available to them. The handler establishes a region where the context value is defined and can be
-      * accessed.
+    /** Handles a context effect with explicit fork and join strategies and a release hook, called with the region's value when the region
+      * is abandoned or fails.
       *
       * @param effectTag
       *   Identifies which context effect to handle
-      * @param value
-      *   The value to provide to the computation
+      * @param ifUndefined
+      *   The value to use when no existing value is found
+      * @param ifDefined
+      *   The transformation to apply to any existing value
+      * @param fork
+      *   Computes the value a forked computation starts with from the parent's
+      * @param join
+      *   Computes the parent's value after a fork completes, from the parent's, the forked start and the forked end values
+      * @param release
+      *   Called with the region's value and the failure when the region does not complete normally
       * @param v
       *   The computation requiring the context value
       * @return
-      *   The computation result with the context value provided
+      *   The computation result with the context value handled
       */
     inline def handle[A, E <: ContextEffect[A], B, S](
         inline effectTag: Tag[E]
@@ -190,18 +248,25 @@ object ContextEffect:
     )(v: B < (E & S))(using inline _frame: Frame): B < S =
         handle(effectTag)((outer: Maybe[A]) => outer.fold(ifUndefined)(ifDefined), fork, join, release = release)(v)
 
-    /** Handles a context effect by providing a value for a specific computation scope. This satisfies suspend operations within that scope
-      * by making the provided value available to them. The handler establishes a region where the context value is defined and can be
-      * accessed.
+    /** Handles a context effect with the full set of strategies. The region's value is derived from the outer one at entry; fork and join
+      * decide what crosses a fork and what comes back; done runs with the value when the region completes and release when it does not.
       *
       * @param effectTag
       *   Identifies which context effect to handle
-      * @param value
-      *   The value to provide to the computation
+      * @param derive
+      *   Computes the region's value from the outer value, absent when no outer handler provides one
+      * @param fork
+      *   Computes the value a forked computation starts with from the parent's
+      * @param join
+      *   Computes the parent's value after a fork completes, from the parent's, the forked start and the forked end values
+      * @param done
+      *   Called with the region's value when the region completes normally
+      * @param release
+      *   Called with the region's value and the failure when the region does not complete normally
       * @param v
       *   The computation requiring the context value
       * @return
-      *   The computation result with the context value provided
+      *   The computation result with the context value handled
       */
     @nowarn("msg=anonymous")
     inline def handle[A, E <: ContextEffect[A], B, S](

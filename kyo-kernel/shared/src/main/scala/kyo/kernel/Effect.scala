@@ -28,6 +28,9 @@ import scala.util.control.NonFatal
   */
 abstract class Effect private[kernel] ()
 
+// Diverges from main: `Effect.catching` is gone (D2), each handler carries a `recover` arm
+// instead. `bracket` with its Finalize region and Cell is new, as are the `defer` overloads that
+// build a Defer node around a value and its continuations; `deferInline` builds a DeferWith.
 object Effect:
 
     sealed private[kyo] trait Finalize extends ContextEffect[Cell]

@@ -4,6 +4,7 @@ type <[+A, -S] = kernel.<[A, S]
 
 val Loop = kernel.Loop
 
+// Not on main: the continuation type is public here.
 export kernel.Arrow
 export kernel.Isolate
 
