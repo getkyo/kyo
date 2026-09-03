@@ -92,21 +92,28 @@ class CompileLoadRoundTripTest extends kyo.test.Test[Any]:
         val cSource   = locateCSource("c/round_trip_add.c")
         val osName    = java.lang.System.getProperty("os.name").toLowerCase
         val isWindows = osName.contains("win")
-        val (ext, sharedFlag) =
-            if osName.contains("mac") then ("dylib", "-dynamiclib")
-            else if isWindows then ("dll", "-shared")
-            else ("so", "-shared")
-        // A Windows DLL carries no position-independent code, and clang targeting *-windows-msvc
-        // REJECTS -fPIC rather than ignoring it. MinGW gcc accepts it, which is why the x64 runner
-        // never noticed; the arm64 runner's `cc` is clang, because its gcc emits x64 objects.
-        val picFlags = if isWindows then Nil else List("-fPIC")
-        val prefix   = if isWindows then "" else "lib"
-        val outLib   = baseDir.resolve(s"$prefix$libraryId.$ext")
-        val cmd      = List("cc", "-O2") ++ picFlags ++ List(sharedFlag, "-o", outLib.toString, cSource.toString)
-        val pb       = new ProcessBuilder(cmd*).redirectErrorStream(true)
-        val proc     = pb.start()
-        val output   = new String(proc.getInputStream.readAllBytes(), StandardCharsets.UTF_8)
-        val exit     = proc.waitFor()
+        // Honour CC the way the plugin does. Hardcoding `cc` meant this test compiled with whatever
+        // that name resolved to regardless of the toolchain the build selected, which on
+        // windows-arm64 is an MSVC-targeting clang whose DLL Windows refuses to open.
+        val cc     = Option(java.lang.System.getenv("CC")).map(_.trim).filter(_.nonEmpty).getOrElse("cc")
+        val isMsvc = cc.toLowerCase.stripSuffix(".exe").endsWith("cl")
+        val prefix = if isWindows then "" else "lib"
+        val ext    = if osName.contains("mac") then "dylib" else if isWindows then "dll" else "so"
+        val outLib = baseDir.resolve(s"$prefix$libraryId.$ext")
+        val cmd =
+            if isMsvc then
+                // cl builds a DLL with /LD and names it with /Fe:; it takes none of the gcc-style flags.
+                List(cc, "/LD", "/O2", s"/Fe:${outLib.toString}", cSource.toString)
+            else
+                // A Windows DLL carries no position-independent code, and clang targeting *-windows-msvc
+                // REJECTS -fPIC rather than ignoring it, where MinGW gcc accepts it silently.
+                val picFlags   = if isWindows then Nil else List("-fPIC")
+                val sharedFlag = if osName.contains("mac") then "-dynamiclib" else "-shared"
+                List(cc, "-O2") ++ picFlags ++ List(sharedFlag, "-o", outLib.toString, cSource.toString)
+        val pb     = new ProcessBuilder(cmd*).redirectErrorStream(true)
+        val proc   = pb.start()
+        val output = new String(proc.getInputStream.readAllBytes(), StandardCharsets.UTF_8)
+        val exit   = proc.waitFor()
         if exit != 0 then
             // Setup failure: this runs in a field initializer during reflective suite construction, so the
             // runner reports only the InvocationTargetException wrapper and drops this exception's message.
