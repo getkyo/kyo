@@ -92,6 +92,15 @@ object Pending:
             else s"Handle(${short(value)}, $handler, $state, ${if cont eq this then "this" else short(cont)})"
     end Handle
 
+    abstract class HandleContext[State, E <: ContextEffect[State], A, -S] extends Pending[A, S]:
+        Debugger.onAlloc(this)
+
+        def value: A < (E & S)
+        def handler: Handler.ContextHandler[State, E, A, S]
+
+        override def toString = s"HandleContext(${short(value)}, $handler)"
+    end HandleContext
+
     abstract class Snapshot[A, -S] extends Pending[A, S]:
         Debugger.onAlloc(this)
 

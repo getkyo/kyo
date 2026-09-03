@@ -2,6 +2,7 @@ package kyo.kernel
 
 import kyo.Const
 import kyo.Frame
+import kyo.Kyo
 import kyo.Maybe
 import kyo.Tag
 import kyo.kernel.<

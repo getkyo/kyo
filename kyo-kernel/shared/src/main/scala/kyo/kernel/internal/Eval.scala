@@ -163,20 +163,19 @@ import scala.util.control.NonFatal
                                 end match
                             end if
 
-                case kyo: Pending.Handle[?, CX, ?, ?, T, S2] @unchecked =>
-                    kyo.handler match
-                        case handler: Handler.ContextHandler[VX, CX, ?, ?] @unchecked =>
-                            val newState   = handler.derive(ctx.get(handler.tag))
-                            val newContext = ctx.bind(handler.tag, newState)
-                            Debugger.onContext(kyo, newContext)
-                            Debugger.onRegionEnter(kyo.handler, newState)
-                            stack.push(kyo.handler, newState, kyo.cont.chain(contA.chain(contB)))
-                            loop(kyo.value, Arrow.id, Arrow.id, newContext)
-                        case _ =>
-                            Debugger.onRegionEnter(kyo.handler, kyo.state)
-                            stack.push(kyo.handler, kyo.state, kyo.cont.chain(contA.chain(contB)))
-                            loop(kyo.value, Arrow.id, Arrow.id, ctx)
-                    end match
+                case kyo: Pending.Handle[?, ?, ?, ?, T, S2] @unchecked =>
+                    Debugger.onRegionEnter(kyo.handler, kyo.state)
+                    stack.push(kyo.handler, kyo.state, kyo.cont.chain(contA.chain(contB)))
+                    loop(kyo.value, Arrow.id, Arrow.id, ctx)
+
+                case kyo: Pending.HandleContext[VX, CX, T, S2] @unchecked =>
+                    val handler    = kyo.handler
+                    val newState   = handler.derive(ctx.get(handler.tag))
+                    val newContext = ctx.bind(handler.tag, newState)
+                    Debugger.onContext(kyo, newContext)
+                    Debugger.onRegionEnter(handler, newState)
+                    stack.push(handler, newState, contA.chain(contB))
+                    loop(kyo.value, Arrow.id, Arrow.id, newContext)
 
                 case kyo: Pending.Park[?, ?] if kyo.entries.isEmpty =>
                     stack.oweBelow(stack.depth, kyo.owed)
@@ -434,12 +433,11 @@ import scala.util.control.NonFatal
                         case kyo: Pending.Defer[?, ?, ?, ?] =>
                             collect(kyo.value)
                         case kyo: Pending.Handle[?, ?, ?, ?, ?, ?] =>
-                            kyo.handler match
-                                case hc: Handler.ContextHandler[?, ?, ?, ?] =>
-                                    collected += hc
-                                    collected += kyo.state.asInstanceOf[AnyRef]
-                                case _ => ()
-                            end match
+                            collect(kyo.value)
+                        case kyo: Pending.HandleContext[VX, CX, ?, ?] @unchecked =>
+                            val hc = kyo.handler
+                            collected += hc
+                            collected += hc.derive(Maybe.empty).asInstanceOf[AnyRef]
                             collect(kyo.value)
                         case kyo: Pending.Park[?, ?] =>
                             expandOwed(collected, kyo.owed)

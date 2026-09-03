@@ -48,12 +48,10 @@ object Effect:
                     override private[kyo] def reenter(state: Cell): Unit =
                         if state.get() then
                             throw new Closed("Bracket resource", _frame)(using _frame)
-                new Pending.Handle[Cell, Finalize, B, B, B, S1 & S2]:
+                new Pending.HandleContext[Cell, Finalize, B, S1 & S2]:
                     override def frame = _frame
                     def value          = body
                     def handler        = h
-                    def state          = cell
-                    def cont           = Arrow.id
                 end new
             end apply
         defer(acquire).chain(ensure)

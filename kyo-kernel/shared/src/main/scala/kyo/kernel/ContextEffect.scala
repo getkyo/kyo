@@ -130,12 +130,10 @@ object ContextEffect:
                 override private[kyo] def done(state: A)                   = completed(state)
                 override private[kyo] def release(state: A, ex: Throwable) = released(state, ex)
 
-        new Pending.Handle[A, E, B, B, B, S]:
+        new Pending.HandleContext[A, E, B, S]:
             override def frame = _frame
             def value          = v
             def handler        = h
-            val state          = h.derive(Maybe.empty)
-            def cont           = Arrow.id
         end new
     end handle
 

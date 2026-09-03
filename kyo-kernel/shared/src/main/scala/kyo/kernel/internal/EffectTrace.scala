@@ -213,6 +213,9 @@ private[kernel] object EffectTrace:
                                 push(h.cont)
                                 push(new Region(h.handler.tag))
                                 pushValue(h.value)
+                            case h: Pending.HandleContext[?, ?, ?, ?] =>
+                                push(new Region(h.handler.tag))
+                                pushValue(h.value)
                             case d: Pending.Defer[?, ?, ?, ?] =>
                                 push(d.contB)
                                 push(d.contA)
