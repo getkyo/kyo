@@ -1166,28 +1166,29 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
         // installed it must keep the resource until it completes, and the peeling scope's drain must
         // then find nothing to do. The first test below pins the order that works today; the second
         // asserts the order that must not release the resource under the consumer.
-        "a remainder completed in another fiber before the peeling scope exits releases once, with its value" in {
+        "a rest from splitAt run to completion in another fiber before the peeling scope exits releases once, with its value" in {
             AtomicRef.init(Chunk.empty[Maybe[Result.Error[Any]]]).map { seen =>
                 Latch.init(1).map { finished =>
-                    Promise.init[(Maybe[Chunk[Int]], Arrow[Unit, Unit, Emit[Chunk[Int]] & Async]), Any].map { handoff =>
+                    Promise.init[Stream[Int, Async], Any].map { handoff =>
                         val stream: Stream[Int, Async] = Stream:
                             Sync.ensure(o => seen.updateAndGet(_.append(o))):
                                 Emit.valueWith(Chunk(1))(Emit.value(Chunk(2)))
                         for
                             peeler <- Fiber.initUnscoped {
                                 Env.run(0) {
-                                    Emit.runFirst(stream.emit).map { r =>
-                                        handoff.complete(Result.succeed(r)).andThen(finished.await)
+                                    stream.splitAt(1).map { (head, rest) =>
+                                        handoff.complete(Result.succeed(rest)).andThen(finished.await).andThen(head)
                                     }
                                 }
                             }
-                            consumer <- Fiber.initUnscoped(handoff.get.map((_, cont) => Emit.run(cont(())).map(_._1)))
-                            rest     <- consumer.get
+                            consumer <- Fiber.initUnscoped(handoff.get.map(_.run))
+                            tail     <- consumer.get
                             _        <- finished.release
-                            _        <- peeler.get
+                            head     <- peeler.get
                             outcomes <- seen.get
                         yield
-                            assert(rest == Chunk(Chunk(2)))
+                            assert(head == Chunk(1))
+                            assert(tail == Chunk(2))
                             assert(outcomes == Chunk(Maybe.empty))
                         end for
                     }
@@ -1195,30 +1196,31 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
             }
         }
 
-        "a remainder resumed in another fiber is not released under it when the peeling scope exits" in {
+        "a rest from splitAt run in another fiber is not released under it when the peeling scope exits" in {
             AtomicInt.init(0).map { released =>
                 Latch.init(1).map { entered =>
                     Latch.init(1).map { gate =>
-                        Promise.init[(Maybe[Chunk[Int]], Arrow[Unit, Unit, Emit[Chunk[Int]] & Async]), Any].map { handoff =>
+                        Promise.init[Stream[Int, Async], Any].map { handoff =>
                             val stream: Stream[Int, Async] = Stream:
                                 Sync.ensure(released.incrementAndGet.unit):
                                     Emit.valueWith(Chunk(1))(entered.release.andThen(gate.await).andThen(Emit.value(Chunk(2))))
                             for
                                 peeler <- Fiber.initUnscoped {
                                     Env.run(0) {
-                                        Emit.runFirst(stream.emit).map { r =>
-                                            handoff.complete(Result.succeed(r)).andThen(entered.await)
+                                        stream.splitAt(1).map { (head, rest) =>
+                                            handoff.complete(Result.succeed(rest)).andThen(entered.await).andThen(head)
                                         }
                                     }
                                 }
-                                consumer <- Fiber.initUnscoped(handoff.get.map((_, cont) => Emit.run(cont(())).map(_._1)))
+                                consumer <- Fiber.initUnscoped(handoff.get.map(_.run))
                                 _        <- entered.await
-                                _        <- peeler.get
+                                head     <- peeler.get
                                 atExit   <- released.get
                                 _        <- gate.release
                                 res      <- consumer.getResult
                                 total    <- released.get
                             yield
+                                assert(head == Chunk(1))
                                 assert(atExit == 0)
                                 assert(res.isSuccess)
                                 assert(total == 1)
