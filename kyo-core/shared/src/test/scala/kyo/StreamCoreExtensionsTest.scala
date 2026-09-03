@@ -1036,6 +1036,21 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
             }
         }
 
+        "a Sync.ensure stream zipped with another releases once after both are consumed" in {
+            // zip pulls each side one emission at a time through a handleFirst region and evaluates
+            // the remainder in its own loop, after that region ended: no peel is visible to the user
+            AtomicInt.init(0).map { released =>
+                val left = Stream:
+                    Sync.ensure(released.incrementAndGet.unit):
+                        Emit.valueWith(Chunk(1))(Emit.value(Chunk(2)))
+                left.zip(Stream.init(Seq("a", "b"))).run.map { pairs =>
+                    released.get.map { r =>
+                        assert(pairs == Chunk((1, "a"), (2, "b")) && r == 1)
+                    }
+                }
+            }
+        }
+
         "splitAt hands out a rest stream that still owns its resource" in {
             AtomicInt.init(0).map { released =>
                 val stream = Stream:

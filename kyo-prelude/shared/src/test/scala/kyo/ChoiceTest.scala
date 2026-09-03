@@ -397,6 +397,22 @@ class ChoiceTest extends kyo.test.Test[Any]:
             assert(v.eval == Chunk(1, 2))
             assert(log == Chunk("open1", "close1", "open2", "close2"))
         }
+
+        "a bracket around the choice, streamed, releases once after every branch" in {
+            // runStream pulls each pending branch through a handleFirst region and continues it in its
+            // own loop, after that region ended, so the bracket spans the branches as a value
+            var log = Chunk.empty[String]
+            val v =
+                Choice.runStream {
+                    Bracket("res")(_ =>
+                        Choice.eval(1, 2, 3).map { n =>
+                            log = log.append(s"branch$n"); n
+                        }
+                    )((_, _) => log = log.append("release"))
+                }.run
+            assert(v.eval == Chunk(1, 2, 3))
+            assert(log == Chunk("branch1", "branch2", "branch3", "release"))
+        }
     }
 
 end ChoiceTest
