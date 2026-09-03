@@ -3,6 +3,10 @@ package kyo.kernel.internal
 import kyo.kernel.<
 import scala.language.implicitConversions
 
+// Diverges from main: main's lift is a splice macro (LiftMacro.liftMacro) that nests an already
+// pending value; here the lift is a plain implicit gated by CanLift, which rejects pending values
+// at the type level, and it lives in this trait mixed into the `<` companion. The function
+// liftings are kept as on main.
 trait Implicits:
 
     /** Implicitly converts a plain value to an effectful computation.

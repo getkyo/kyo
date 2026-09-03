@@ -24,6 +24,10 @@ import scala.annotation.targetName
   * The outcome of each iteration is represented by an Outcome type, which can either signal continuation with new state values or
   * completion with a final result.
   */
+// Diverges from main: the Outcome types are covariant in O and Done wraps a settled answer so
+// a pending outcome can be told from a continue; `continue` answers as a computation
+// (Outcome < Any) since a clause may suspend before continuing; repeat and indexed test the
+// body's answer for Pending; the Continue classes report to the debugger and print themselves.
 object Loop:
 
     /** Represents the state to be carried forward to the next iteration of a loop.

@@ -40,6 +40,10 @@ import scala.annotation.nowarn
   * `computation.handle(Abort.run, _.map(_ + 1))` handles `Abort` and then applies a transformation. While `handle` supports arbitrary
   * functions, it is primarily designed for effect handling .
   */
+// Diverges from main: the union's second arm is Pending (the node family in PendingInternal)
+// where main has Kyo, its suspension ADT. The combinators below build Arrow and Defer nodes and
+// leave the stack-depth budget to the evaluator, so their function parameters take no
+// `Safepoint ?=>` context and no Safepoint evidence; `eval` and `flatten` go through Eval.
 opaque type <[+A, -S] = A | Pending[A, S]
 
 object `<` extends Implicits:
