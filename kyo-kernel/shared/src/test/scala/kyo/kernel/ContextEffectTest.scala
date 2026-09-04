@@ -455,7 +455,7 @@ class ContextEffectTest extends AnyFreeSpec:
             val log             = ListBuffer[String]()
             val body: Int < Ask = hooked(log, "cfg", 1)(ask.map(_ + 1))
             val r: Int < Any = ArrowEffect.handleCont(Tag[Ask], body)(
-                [C] => (_, cont) => answerAsk(0)(cont(41)).eval + 1,
+                [C] => (_, cont) => Region.discharge(answerAsk(0)(cont(41))).eval + 1,
                 a => a
             )
             assert(r.eval == 43)
@@ -470,7 +470,7 @@ class ContextEffectTest extends AnyFreeSpec:
             val handled: (Int, Int) < Count = ArrowEffect.handleCont(Tag[Ask], inside)(
                 [C] =>
                     (_, cont) =>
-                        stash = Maybe(cont)
+                        stash = Maybe(Region.leak(cont))
                         (-1, -1)
                 ,
                 a => a

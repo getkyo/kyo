@@ -457,7 +457,7 @@ class IsolateTest extends Test:
             val r: Unit < Any = ArrowEffect.handleFirst(Tag[Fork], v)(
                 [C] =>
                     (_, cont) =>
-                        out = Maybe(cont)
+                        out = Maybe(Region.leak(cont))
                         ()
                 ,
                 _ => ()
@@ -828,7 +828,7 @@ class IsolateTest extends Test:
                 ArrowEffect.handleCont(Tag[Ask], child)(
                     [C] =>
                         (_, cont) =>
-                            stash = Maybe(cont)
+                            stash = Maybe(Region.leak(cont))
                             -1
                     ,
                     a => a

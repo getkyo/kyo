@@ -2,6 +2,7 @@ package kyo
 
 import kyo.Result.Error
 import kyo.Result.Panic
+import kyo.kernel.Bracket
 import kyo.kernel.ContextEffect
 
 /** A structured effect for safe acquisition and finalization of resources.
@@ -79,8 +80,20 @@ object Scope:
       */
     def acquireRelease[A, S](acquire: => A < S)(release: A => Any < (Async & Abort[Throwable]))(using Frame): A < (Scope & Sync & S) =
         Sync.defer {
-            acquire.map { resource =>
-                ensure(release(resource)).andThen(resource)
+            // Registering after the acquire would leave a window: the registration is a suspension, so an
+            // interrupt pending when the acquire completes parks the computation before it is dispatched,
+            // and the abandonment finds nothing registered for what the acquire produced. So the finalizer
+            // goes in first, releasing whatever the acquire managed to produce, and the bracket below is
+            // what records it: a bracket's region is installed as the acquire is applied rather than in a
+            // suspension after it, and its release runs whether the extent completes or is abandoned.
+            val acquired = new java.util.concurrent.atomic.AtomicReference[Maybe[A]](Absent)
+            ensure {
+                Sync.defer(acquired.get()).map {
+                    case Present(resource) => release(resource)
+                    case Absent            => ()
+                }
+            }.andThen {
+                Bracket(acquire)(resource => resource)((resource, _) => acquired.set(Maybe(resource)))
             }
         }
 

@@ -12,6 +12,7 @@ import kyo.kernel.ArrowEffect
 import kyo.kernel.Bracket
 import kyo.kernel.ContextEffect
 import kyo.kernel.Effect
+import kyo.kernel.Region
 import kyo.kernel.internal.Pending.Park
 import org.scalatest.freespec.AnyFreeSpec
 import scala.annotation.tailrec
@@ -494,7 +495,7 @@ class EvalTest extends AnyFreeSpec:
             val r: Int < Any = ArrowEffect.handleCont(Tag[Say], inner)(
                 [C] =>
                     (_, cont) =>
-                        stored = Maybe(cont(_))
+                        stored = Maybe(Region.leak(cont)(_))
                         -1
                 ,
                 a => a
@@ -512,7 +513,7 @@ class EvalTest extends AnyFreeSpec:
             val first: Int < Any = ArrowEffect.handleCont(Tag[Ask], body)(
                 [C] =>
                     (_, cont) =>
-                        stored = Maybe(cont(_))
+                        stored = Maybe(Region.leak(cont)(_))
                         -1
                 ,
                 a => a
@@ -528,7 +529,7 @@ class EvalTest extends AnyFreeSpec:
             val r: Int < Any = ArrowEffect.handleCont(Tag[Say], inner)(
                 [C] =>
                     (_, cont) =>
-                        val now = ArrowEffect.handleCont(Tag[Say], cont(()))([C] => (_, c2) => c2(()), a => a).eval
+                        val now = Region.discharge(ArrowEffect.handleCont(Tag[Say], cont(()))([C] => (_, c2) => c2(()), a => a)).eval
                         cont(()).map(later => now * 100 + later)
                 ,
                 a => a
@@ -1435,7 +1436,7 @@ class EvalTest extends AnyFreeSpec:
                 val first: Int < Any = ArrowEffect.handleCont(Tag[Ask], trailing(depth, runs))(
                     [C] =>
                         (_, cont) =>
-                            stored = Maybe(cont)
+                            stored = Maybe(Region.leak(cont))
                             -1
                     ,
                     a => a

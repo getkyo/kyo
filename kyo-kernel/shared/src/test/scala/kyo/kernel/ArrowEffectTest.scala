@@ -3,12 +3,11 @@ package kyo.kernel
 import kyo.*
 import kyo.kernel.*
 import kyo.kernel.internal.*
-import org.scalatest.freespec.AnyFreeSpec
 import scala.annotation.tailrec
 import scala.collection.mutable.ListBuffer
 import scala.compiletime.testing.typeCheckErrors
 
-class ArrowEffectTest extends AnyFreeSpec:
+class ArrowEffectTest extends Test:
 
     sealed trait TestEffect1 extends ArrowEffect[Const[Int], Const[String]]
     sealed trait TestEffect2 extends ArrowEffect[Const[String], Const[Int]]
@@ -1616,7 +1615,7 @@ class ArrowEffectTest extends AnyFreeSpec:
                                     ready = Maybe.Absent
                                     cont(r)
                                 case Maybe.Absent =>
-                                    stash = Maybe(cont(_))
+                                    stash = Maybe(Region.leak(cont)(_))
                                     -1
                             end match
                     ,
@@ -1642,7 +1641,7 @@ class ArrowEffectTest extends AnyFreeSpec:
                 ArrowEffect.handleCont(Tag[Ask], v)(
                     [C] =>
                         (_, cont) =>
-                            stash = Maybe(cont(_))
+                            stash = Maybe(Region.leak(cont)(_))
                             -1
                     ,
                     a => a
@@ -2022,7 +2021,7 @@ class ArrowEffectTest extends AnyFreeSpec:
 
         def firstOf(v: Int < Ask): First < Any =
             ArrowEffect.handleCont(Tag[Ask], v.map(a => First.Done(a): First))(
-                [C] => (_, cont) => First.Standing(cont),
+                [C] => (_, cont) => First.Standing(Region.leak(cont)),
                 a => a
             )
 
@@ -2990,7 +2989,7 @@ class ArrowEffectTest extends AnyFreeSpec:
             val coroutine: Int < AskBoxed = ArrowEffect.handleCont(Tag[Say], body)(
                 [C] =>
                     (_, cont) =>
-                        stash = Maybe(cont)
+                        stash = Maybe(Region.leak(cont))
                         -1
                 ,
                 a => a
@@ -3047,7 +3046,7 @@ class ArrowEffectTest extends AnyFreeSpec:
             val coroutine: Int < Ask = ArrowEffect.handleCont(Tag[Say], body)(
                 [C] =>
                     (_, cont) =>
-                        stash = Maybe(cont)
+                        stash = Maybe(Region.leak(cont))
                         -1
                 ,
                 a => a
@@ -3081,7 +3080,7 @@ class ArrowEffectTest extends AnyFreeSpec:
             val first: Int < Any = ArrowEffect.handleCont(Tag[Say], captured)(
                 [C] =>
                     (_, cont) =>
-                        stash = Maybe(cont)
+                        stash = Maybe(Region.leak(cont))
                         -1
                 ,
                 a => a
@@ -3121,7 +3120,7 @@ class ArrowEffectTest extends AnyFreeSpec:
                     ArrowEffect.handleCont(Tag[Say], captured)(
                         [C] =>
                             (_, cont) =>
-                                stash = Maybe(cont)
+                                stash = Maybe(Region.leak(cont))
                                 -1
                         ,
                         a => a
@@ -3143,7 +3142,7 @@ class ArrowEffectTest extends AnyFreeSpec:
                 ArrowEffect.handleCont(Tag[Ask], body)(
                     [C] =>
                         (_, cont) =>
-                            stash = Maybe(cont)
+                            stash = Maybe(Region.leak(cont))
                         0
                     ,
                     a => a
@@ -3225,7 +3224,7 @@ class ArrowEffectTest extends AnyFreeSpec:
                     (input, cont) =>
                         input match
                             case Maybe.Absent =>
-                                captured = Maybe(cont)
+                                captured = Maybe(Region.leak(cont))
                                 cont(0)
                             case Maybe.Present(n) => captured.get(n)
                 ,
@@ -3393,6 +3392,106 @@ class ArrowEffectTest extends AnyFreeSpec:
             val later: Int < Err  = caught.map(a => fail("later").map(_ => a + 1))
             assert(runErr(caught.map(_ + 1)).eval == Right(42))
             assert(runErr(later).eval == Left("later"))
+        }
+    }
+
+    // A continuation a clause receives is confined to the region: its row carries `Region.NoEscape`,
+    // which no handler accepts and no Isolate can be derived for. The kernel's notion of crossing to
+    // another fiber is an Isolate, so the gate is pinned here on a stand-in for a fork, with no
+    // scheduler involved: anything that demands an isolate for the continuation's row.
+    "no escape" - {
+        def cross[A, S, S2](v: A < S)(using Isolate[S, Any, S2]): A < S = v
+
+        val confined = "cannot leave the region that handed it out"
+
+        "a continuation resumed inside its clause compiles, and the region discharges the marker" in {
+            val r: Int < Any = ArrowEffect.handleCont(Tag[Ask], ask.map(_ + 1))([C] => (_, cont) => cont(41), a => a)
+            assert(r.eval == 42)
+        }
+
+        "a continuation applied more than once inside its clause compiles" in {
+            val r: Int < Any = ArrowEffect.handleCont(Tag[Ask], ask)([C] => (_, cont) => cont(1).map(a => cont(2).map(b => a + b)), a => a)
+            assert(r.eval == 3)
+        }
+
+        "a continuation cannot cross an isolate boundary" in {
+            typeCheckFailure(
+                """
+                ArrowEffect.handleCont(Tag[Ask], ask)([C] => (_, cont) => cross(cont(1)), (a: Int) => a)
+                """
+            )(confined)
+        }
+
+        "the refusal names the marker even when other effects in the row have no isolate either" in {
+            typeCheckFailure(
+                """
+                val body: Int < (Ask & Say) = say("s").map(_ => ask)
+                ArrowEffect.handleCont(Tag[Ask], body)([C] => (_, cont) => cross(cont(1)), (a: Int) => a)
+                """
+            )(confined)
+        }
+
+        "a row without the marker gets the ordinary isolate error, not the refusal" in {
+            // outside a clause: inside one, the expected type puts the marker on anything the clause
+            // builds, so every row there carries it
+            typeCheckFailure("cross(ask)")("This operation requires isolation for effects")
+        }
+
+        "a continuation cannot be stored in a holder typed without the marker" in {
+            typeCheckFailure(
+                """
+                var stash: Arrow[Unit, Int, Ask] = null
+                ArrowEffect.handleCont(Tag[Ask], ask)([C] => (_, cont) => { stash = cont; cont(1) }, (a: Int) => a)
+                """
+            )("NoEscape")
+        }
+
+        "a hand-written isolate for the marker does not open the gate" in {
+            typeCheckFailure(
+                """
+                ArrowEffect.handleCont(Tag[Ask], ask)(
+                    [C] => (_, cont) =>
+                        given Isolate[Region.NoEscape, Any, Any] =
+                            Isolate.internal.Contextual.asInstanceOf[Isolate[Region.NoEscape, Any, Any]]
+                        cross(cont(1)),
+                    (a: Int) => a
+                )
+                """
+            )(confined)
+        }
+
+        "a direct summon of the marker's isolate does not compile" in {
+            // an inline given that aborts is reported as a failed search rather than with its own text,
+            // so what a direct summon shows is the marker in the type it could not find an instance for
+            typeCheckFailure(
+                """
+                ArrowEffect.handleCont(Tag[Ask], ask)(
+                    [C] => (_, cont) =>
+                        summon[Isolate[Region.NoEscape, Any, Any]]
+                        cont(1),
+                    (a: Int) => a
+                )
+                """
+            )("NoEscape")
+        }
+
+        "the operation form confines its continuation the same way" in {
+            typeCheckFailure(
+                """
+                ArrowEffect.handleContOperation(Tag[Ask], ask)([X] => (op, next) => cross(op.map(next(_))), (a: Int) => a)
+                """
+            )(confined)
+        }
+
+        "a continuation from an enclosing clause can be resumed inside a nested clause on the same fiber" in {
+            val body: Int < (Ask & Say) = say("s").map(_ => ask)
+            val r: Int < Ask =
+                ArrowEffect.handleCont(Tag[Say], body)(
+                    [C] => (_, outer) => ArrowEffect.handleCont(Tag[Ask], outer(()))([C2] => (_, inner) => inner(5), a => a),
+                    a => a
+                )
+            val answered: Int < Any = ArrowEffect.handleCont(Tag[Ask], r)([C] => (_, cont) => cont(0), a => a)
+            assert(answered.eval == 5)
         }
     }
 

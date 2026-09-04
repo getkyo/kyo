@@ -269,7 +269,7 @@ class BracketTest extends AnyFreeSpec:
             val r: Int < Any = ArrowEffect.handleCont(Tag[Ask], body)(
                 [C] =>
                     (_, cont) =>
-                        leaked = Maybe(cont)
+                        leaked = Maybe(Region.leak(cont))
                         -1
                 ,
                 b => b
@@ -582,7 +582,7 @@ class BracketTest extends AnyFreeSpec:
             val first: Int < Any = ArrowEffect.handleCont(Tag[Ask], body)(
                 [C] =>
                     (_, cont) =>
-                        leaked = Maybe(cont)
+                        leaked = Maybe(Region.leak(cont))
                         -1
                 ,
                 a => a
@@ -616,7 +616,7 @@ class BracketTest extends AnyFreeSpec:
                     )(
                         [C] =>
                             (_, cont) =>
-                                leaked = Maybe(cont)
+                                leaked = Maybe(Region.leak(cont))
                                 -1
                         ,
                         b => b
@@ -665,7 +665,7 @@ class BracketTest extends AnyFreeSpec:
                     )(
                         [C] =>
                             (_, cont) =>
-                                stash = Maybe(cont)
+                                stash = Maybe(Region.leak(cont))
                                 -1
                         ,
                         a => a
@@ -1273,7 +1273,7 @@ class BracketTest extends AnyFreeSpec:
                 ArrowEffect.handleCont(Tag[Ask], v)(
                     [C] =>
                         (_, cont) =>
-                            stash = Maybe(cont)
+                            stash = Maybe(Region.leak(cont))
                             -1
                     ,
                     a => a
@@ -1483,7 +1483,7 @@ class BracketTest extends AnyFreeSpec:
                 ArrowEffect.handleCont(Tag[Ask], v)(
                     [C] =>
                         (_, cont) =>
-                            stash = Maybe(cont(10))
+                            stash = Maybe(Region.leak(cont)(10))
                             -1
                     ,
                     a => a

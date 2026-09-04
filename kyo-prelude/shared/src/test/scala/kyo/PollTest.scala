@@ -345,4 +345,24 @@ class PollTest extends kyo.test.Test[Any]:
 
     }
 
+    "runEmit stops the emitter when the poller completes" - {
+        // runEmit's contract is that the flow ends when the consumer completes, terminating
+        // consumption. The emitter's remainder is run to completion instead (Emit.runDiscard), so an
+        // unbounded emitter under a bracket neither terminates nor releases.
+        "the emitter is not continued after the poller completed".pendingUntilFixed(
+            "runEmit discards the emitter's remainder by running it, rather than ending it"
+        ) in {
+            var emitted = 0
+            val emitter =
+                Emit.valueWith(1) { emitted += 1; () }
+                    .andThen(Emit.valueWith(2) { emitted += 1; () })
+                    .andThen(Emit.valueWith(3) { emitted += 1; () })
+            val res = Poll.runEmit(emitter)(Poll.one[Int]).eval
+            assert(
+                res._2 == Maybe(1) && emitted == 1,
+                s"the emitter was continued after the poller completed: emitted $emitted times, $res"
+            )
+        }
+    }
+
 end PollTest

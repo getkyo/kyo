@@ -129,7 +129,7 @@ object ArrowEffect:
         inline effectTag: Tag[E],
         v: A < (E & S)
     )(
-        inline handle: [C] => (I[C], Arrow[O[C], A, E & S & S2]) => A < (E & S & S2)
+        inline handle: [C] => (I[C], Arrow[O[C], A, E & S & S2 & Region.NoEscape]) => A < (E & S & S2 & Region.NoEscape)
     )(using inline _frame: Frame): A < (S & S2) =
         handleCont(effectTag, v)(handle, a => a)
 
@@ -153,7 +153,7 @@ object ArrowEffect:
         inline effectTag: Tag[E],
         v: A < (E & S)
     )(
-        inline handle: [C] => (I[C], Arrow[O[C], A, E & S & S2]) => A < (E & S & S2),
+        inline handle: [C] => (I[C], Arrow[O[C], A, E & S & S2 & Region.NoEscape]) => A < (E & S & S2 & Region.NoEscape),
         inline done: A => B < (S & S2)
     )(using inline _frame: Frame): B < (S & S2) =
         def onDone(v0: A): B < (S & S2) = done(v0)
@@ -163,7 +163,7 @@ object ArrowEffect:
                     new Handler.ContHandler[I, O, E, A, B, S & S2]:
                         def tag = effectTag
                         def run[X](input: I[X], next: Arrow[O[X], A, E & S & S2]) =
-                            handle[X](input, next)
+                            Region.discharge(handle[X](input, next))
                         def done(state: Unit, v0: A) = onDone(v0)
 
                 new Pending.HandleArrow[Unit, E, A, B, B, S & S2]:
@@ -200,7 +200,7 @@ object ArrowEffect:
         inline effectTag: Tag[E],
         inline v: => A < (E & S)
     )(
-        inline handle: [C] => (I[C], Arrow[O[C], A, E & S & S2]) => A < (E & S & S2),
+        inline handle: [C] => (I[C], Arrow[O[C], A, E & S & S2 & Region.NoEscape]) => A < (E & S & S2 & Region.NoEscape),
         inline done: A => B < (S & S2),
         inline recover: Throwable => Maybe[B < (S & S2)]
     )(using inline _frame: Frame): B < (S & S2) =
@@ -217,7 +217,7 @@ object ArrowEffect:
                         new Handler.ContHandler[I, O, E, A, B, S & S2]:
                             def tag = effectTag
                             def run[X](input: I[X], next: Arrow[O[X], A, E & S & S2]) =
-                                handle[X](input, next)
+                                Region.discharge(handle[X](input, next))
                             def done(state: Unit, v0: A)                     = onDone(v0)
                             override def recover(state: Unit, ex: Throwable) = onRecover(ex)
 
@@ -701,7 +701,7 @@ object ArrowEffect:
         inline effectTag: Tag[E],
         v: A < (E & S)
     )(
-        inline handle: [X] => (X < E, Arrow[X, A, E & S & S2]) => A < (E & S & S2)
+        inline handle: [X] => (X < E, Arrow[X, A, E & S & S2 & Region.NoEscape]) => A < (E & S & S2 & Region.NoEscape)
     )(using inline _frame: Frame): A < (S & S2) =
         handleContOperation(effectTag, v)(handle, a => a)
 
@@ -724,7 +724,7 @@ object ArrowEffect:
         inline effectTag: Tag[E],
         v: A < (E & S)
     )(
-        inline handle: [X] => (X < E, Arrow[X, A, E & S & S2]) => A < (E & S & S2),
+        inline handle: [X] => (X < E, Arrow[X, A, E & S & S2 & Region.NoEscape]) => A < (E & S & S2 & Region.NoEscape),
         inline done: A => B < (S & S2)
     )(using inline _frame: Frame): B < (S & S2) =
         def onDone(v0: A): B < (S & S2) = done(v0)
@@ -734,7 +734,7 @@ object ArrowEffect:
                     new Handler.ContOpHandler[E, A, B, S & S2]:
                         def tag = effectTag
                         def run[X](operation: X < E, next: Arrow[X, A, E & S & S2]) =
-                            handle[X](operation, next)
+                            Region.discharge(handle[X](operation, next))
                         def done(state: Unit, v0: A) = onDone(v0)
 
                 new Pending.HandleArrow[Unit, E, A, B, B, S & S2]:
@@ -763,7 +763,7 @@ object ArrowEffect:
         inline effectTag: Tag[E],
         v: A < (E & S)
     )(
-        inline handle: [X] => (I[X], Arrow[O[X], A, E & S & S2]) => A < (E & S & S2),
+        inline handle: [X] => (I[X], Arrow[O[X], A, E & S & S2 & Region.NoEscape]) => A < (E & S & S2 & Region.NoEscape),
         inline done: A => B < (S & S2)
     )[C, S3](
         inline f: B => C < S3
@@ -776,7 +776,7 @@ object ArrowEffect:
                     new Handler.ContHandler[I, O, E, A, B, S & S2]:
                         def tag = effectTag
                         def run[X](input: I[X], next: Arrow[O[X], A, E & S & S2]) =
-                            handle[X](input, next)
+                            Region.discharge(handle[X](input, next))
                         def done(state: Unit, v0: A) = onDone(v0)
 
                 new Pending.HandleArrowWith[Unit, E, A, B, C, S & S2 & S3]:

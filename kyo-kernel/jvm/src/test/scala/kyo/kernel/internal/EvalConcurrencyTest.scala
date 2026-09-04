@@ -7,6 +7,7 @@ import kyo.Maybe
 import kyo.Tag
 import kyo.kernel.<
 import kyo.kernel.ArrowEffect
+import kyo.kernel.Region
 import org.scalatest.freespec.AnyFreeSpec
 
 class EvalConcurrencyTest extends AnyFreeSpec:
@@ -25,7 +26,7 @@ class EvalConcurrencyTest extends AnyFreeSpec:
         val r: Int < Any = ArrowEffect.handleCont(Tag[Say], inner)(
             [C] =>
                 (_, cont) =>
-                    stored = Maybe(cont(_))
+                    stored = Maybe(Region.leak(cont)(_))
                     -1
             ,
             a => a

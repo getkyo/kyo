@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.kernel.ArrowEffect
+import kyo.kernel.Bracket
 import scala.annotation.nowarn
 import scala.annotation.publicInBinary
 import scala.annotation.targetName
@@ -657,14 +658,31 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
             (state, _) => state.flattenChunk
         )
 
-    /** Split the stream into a chunk that contains the first n elements of the stream, and the rest of the stream as a new stream.
+    /** Splits the stream after the first n elements and hands the head and the rest to f.
+      *
+      * The rest is the remainder of this stream, and it carries whatever the stream had opened by then, a `Sync.ensure` or a
+      * `Channel.use` inside the stream's own body included. Those are released when f returns, so the rest is valid for the extent of f
+      * and its row says so: it carries `Region.NoEscape`, which cannot be forked, raced, timed out, or sent to another fiber, and cannot
+      * be stored where the marker is not in the type. Consume the rest inside f, or move its values across a boundary through a Channel.
       *
       * @param n
       *   The number of elements to take
+      * @param f
+      *   Receives the first n elements and the rest of the stream
       * @return
-      *   A tuple containing chunk of the first n elements and the rest of the stream
+      *   The result of f
       */
-    def splitAt[VV >: V](n: Int)(using tag: Tag[Emit[Chunk[VV]]], frame: Frame): (Chunk[VV], Stream[VV, S]) < S =
+    def splitAtWith[VV >: V, A, S2](n: Int)(
+        f: (Chunk[VV], Stream[VV, S & Region.NoEscape]) => A < (S2 & Region.NoEscape)
+    )(using tag: Tag[Emit[Chunk[VV]]], frame: Frame): A < (S & S2) =
+        // the bracket is the extent the rest belongs to: whatever it still carries is released here when f
+        // returns, rather than waiting for whichever region happens to enclose this call
+        Bracket(())(_ =>
+            splitAt[VV](n).map((head, rest) => Region.discharge[A, S & S2](f(head, rest)))
+        )((_, _) => ())
+    end splitAtWith
+
+    private[kyo] def splitAt[VV >: V](n: Int)(using tag: Tag[Emit[Chunk[VV]]], frame: Frame): (Chunk[VV], Stream[VV, S]) < S =
         Loop(emit: Unit < (Emit[Chunk[VV]] & S), Chunk.empty[VV]): (curEmit, curChunk) =>
             Emit.runFirst(curEmit).map:
                 case (Present(items), nextEmit) =>

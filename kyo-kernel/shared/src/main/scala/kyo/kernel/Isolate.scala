@@ -217,6 +217,14 @@ end Isolate
 
 object Isolate:
 
+    /** The effect that marks a computation as unable to cross an isolation boundary.
+      *
+      * A continuation a handler clause receives carries `Region.NoEscape`, which is this effect (see [[Region]]). No handler accepts it,
+      * and the derivation below refuses it with an explanation instead of looking for an instance, so forking, racing, timing out, or
+      * otherwise moving such a computation to another fiber does not compile.
+      */
+    sealed abstract class Disallowed extends Effect
+
     /** Gets the Isolate instance for given effect types. */
     def apply[Remove, Keep, Restore](using i: Isolate[Remove, Keep, Restore]): Isolate[Remove, Keep, Restore] = i
 
@@ -340,10 +348,29 @@ object Isolate:
                     case t if t =:= TypeRepr.of[Any] => Nil
                     case t                           => List(t)
 
-            val keep = flatten(TypeRepr.of[Keep])
+            val keep   = flatten(TypeRepr.of[Keep])
+            val remove = flatten(TypeRepr.of[Remove])
+
+            // before Keep is subtracted: naming the marker in Keep must not buy an isolate for it
+            remove.find(_ <:< TypeRepr.of[Isolate.Disallowed]).foreach { t =>
+                report.errorAndAbort(
+                    s"""|This computation cannot leave the region that handed it out:
+                        |
+                        |  ${t.show.red}
+                        |
+                        |It is the continuation a handler clause received, and it carries the regions that sat
+                        |between the handler and the suspension, a bracket included. The handler releases what
+                        |they carry when the clause returns, so the continuation is only valid on this fiber,
+                        |inside that clause. It cannot be forked, raced, timed out, or sent to another fiber.
+                        |
+                        |Answer with it here, or move its values across the boundary through a Channel and
+                        |consume them on this fiber.
+                        |""".stripMargin
+                )
+            }
 
             val isolates =
-                flatten(TypeRepr.of[Remove])
+                remove
                     .filterNot(t => keep.exists(t =:= _))
                     .filterNot(_ <:< TypeRepr.of[ContextEffect[Any]])
                     .map { t =>

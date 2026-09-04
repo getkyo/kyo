@@ -695,4 +695,18 @@ class EmitTest extends kyo.test.Test[Any]:
         }
 
     }
+
+    "runWhile stops the emitter when the predicate is false" - {
+        "the emitter is not continued after the predicate returned false".pendingUntilFixed(
+            "runWhile continues the emitter after a false result rather than ending it"
+        ) in {
+            var emitted = 0
+            val emitter =
+                Emit.valueWith(1) { emitted += 1; () }
+                    .andThen(Emit.valueWith(2) { emitted += 1; () })
+                    .andThen(Emit.valueWith(3) { emitted += 1; () })
+            discard(Emit.runWhile(emitter)(_ => false).eval)
+            assert(emitted == 1, s"the emitter was continued after the predicate returned false: emitted $emitted times")
+        }
+    }
 end EmitTest

@@ -29,6 +29,8 @@ class ArrowEffectBytecodeTest extends AnyFreeSpec:
         assert(sizes == Map("test" -> 14), sizes.toString)
     }
 
+    // Unchanged by the confinement: the marker is a type, so the method that handles carries nothing
+    // extra for it
     "handleCont" in {
         val sizes = methodBytecodeSize[TestHandleCont]
         assert(sizes == Map("test" -> 48), sizes.toString)

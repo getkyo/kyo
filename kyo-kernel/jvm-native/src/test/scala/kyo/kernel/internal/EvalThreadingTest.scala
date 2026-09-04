@@ -9,6 +9,7 @@ import kyo.Tag
 import kyo.discard
 import kyo.kernel.<
 import kyo.kernel.ArrowEffect
+import kyo.kernel.Region
 import org.scalatest.freespec.AnyFreeSpec
 
 class EvalThreadingTest extends AnyFreeSpec:
@@ -31,7 +32,7 @@ class EvalThreadingTest extends AnyFreeSpec:
         val r: Int < Any = ArrowEffect.handleCont(Tag[Say], inner)(
             [C] =>
                 (_, cont) =>
-                    stored = Maybe(cont)
+                    stored = Maybe(Region.leak(cont))
                     -1
             ,
             a => a
