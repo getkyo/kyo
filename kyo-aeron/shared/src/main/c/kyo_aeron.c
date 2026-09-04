@@ -725,12 +725,22 @@ void* kyo_aeron_async_add_publication_get(void* async_token)
 }
 
 /* Free the async token on fiber interrupt (the Sync.ensure path) or after a _poll < 0 error.
- * The Aeron conductor owns tok->async and will eventually complete or fail the registration on
- * its own; we release the client refcount and free the token. */
+ *
+ * A non-NULL tok->async means the registration never reached a terminal poll, since both the > 0
+ * and < 0 paths clear it: that is the interrupt case. Cancel it, or the conductor holds the
+ * pending registration until the client closes, which for a long-lived client is unbounded.
+ * Skipped while closing, where aeron_close reclaims it anyway and the handle must not be touched. */
 void kyo_aeron_async_add_publication_free(void* async_token)
 {
     if (async_token == NULL) return;
     kyo_aeron_async_pub_token* tok = (kyo_aeron_async_pub_token*)async_token;
+    if (tok->async != NULL) {
+        kyo_mutex_lock(&tok->client->close_mutex);
+        if (!tok->client->closing) {
+            aeron_async_add_publication_cancel(tok->client->client, tok->async);
+        }
+        kyo_mutex_unlock(&tok->client->close_mutex);
+    }
     client_bundle_release(tok->client);
     free(tok);
 }
@@ -957,11 +967,19 @@ void* kyo_aeron_async_add_subscription_get(void* async_token)
     return b;
 }
 
-/* Free the async subscription token on fiber interrupt or after a _poll < 0 error. */
+/* Free the async subscription token on fiber interrupt or after a _poll < 0 error. The pending
+ * registration is cancelled for the same reason as the publication path above. */
 void kyo_aeron_async_add_subscription_free(void* async_token)
 {
     if (async_token == NULL) return;
     kyo_aeron_async_sub_token* tok = (kyo_aeron_async_sub_token*)async_token;
+    if (tok->async != NULL) {
+        kyo_mutex_lock(&tok->client->close_mutex);
+        if (!tok->client->closing) {
+            aeron_async_add_subscription_cancel(tok->client->client, tok->async);
+        }
+        kyo_mutex_unlock(&tok->client->close_mutex);
+    }
     client_bundle_release(tok->client);
     free(tok);
 }
