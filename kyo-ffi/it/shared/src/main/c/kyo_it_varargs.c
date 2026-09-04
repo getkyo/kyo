@@ -1,3 +1,4 @@
+#include "kyo_it_api.h"
 #include <stdarg.h>
 #include <stdint.h>
 
@@ -11,7 +12,7 @@
  * the codegen directs users to when they hit the Native reject path.
  */
 
-int kyo_it_sum_varargs(int count, ...) {
+KYO_IT_API int kyo_it_sum_varargs(int count, ...) {
     va_list ap;
     va_start(ap, count);
     int total = 0;
@@ -26,6 +27,6 @@ int kyo_it_sum_varargs(int count, ...) {
  * workaround-pointer pattern the F8b codegen rejects variadic bindings with.
  * Named without an underscore before `3` so the default snake_case derivation
  * from `kyoItSumFixed3` produces the matching symbol. */
-int kyo_it_sum_fixed3(int a, int b, int c) {
+KYO_IT_API int kyo_it_sum_fixed3(int a, int b, int c) {
     return a + b + c;
 }

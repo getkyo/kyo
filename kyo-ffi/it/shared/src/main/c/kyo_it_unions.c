@@ -1,3 +1,4 @@
+#include "kyo_it_api.h"
 #include <stdint.h>
 
 /* IT union surface (F8c #26).
@@ -25,7 +26,7 @@ typedef union {
  * the FIRST variant (`asInt`) into the shared bytes and ignores the rest.
  * C reads `u->i`, should match the `asInt` value the Scala side passed in.
  */
-int32_t kyo_it_union_read_int(const kyo_it_int_float_union *u) {
+KYO_IT_API int32_t kyo_it_union_read_int(const kyo_it_int_float_union *u) {
     return u->i;
 }
 
@@ -34,7 +35,7 @@ int32_t kyo_it_union_read_int(const kyo_it_int_float_union *u) {
  * `u->f`, should yield 42.0f without any explicit conversion. This is the
  * cross-platform bit-reinterpretation assertion.
  */
-float kyo_it_union_read_float(const kyo_it_int_float_union *u) {
+KYO_IT_API float kyo_it_union_read_float(const kyo_it_int_float_union *u) {
     return u->f;
 }
 
@@ -50,18 +51,18 @@ typedef union {
 } kyo_it_int_point_union;
 
 /* Reads the x field of the struct (point) variant: the first 4 bytes. */
-int32_t kyo_it_union_struct_x(const kyo_it_int_point_union *u) {
+KYO_IT_API int32_t kyo_it_union_struct_x(const kyo_it_int_point_union *u) {
     return u->p.x;
 }
 
 /* Reads the y field of the struct (point) variant: the second 4 bytes. */
-int32_t kyo_it_union_struct_y(const kyo_it_int_point_union *u) {
+KYO_IT_API int32_t kyo_it_union_struct_y(const kyo_it_int_point_union *u) {
     return u->p.y;
 }
 
 /* Reads the int variant of the same union, proving the int variant still works
  * after the struct variant was added. */
-int32_t kyo_it_union_struct_i(const kyo_it_int_point_union *u) {
+KYO_IT_API int32_t kyo_it_union_struct_i(const kyo_it_int_point_union *u) {
     return u->i;
 }
 
@@ -76,12 +77,12 @@ typedef union {
 } kyo_it_int_holder_union;
 
 /* Reads the tag field of the holder (struct) variant. */
-int32_t kyo_it_union_holder_tag(const kyo_it_int_holder_union *u) {
+KYO_IT_API int32_t kyo_it_union_holder_tag(const kyo_it_int_holder_union *u) {
     return u->hh.tag;
 }
 
 /* Dereferences the handle field of the holder variant and reads its first int (the handle's stored value). */
-int32_t kyo_it_union_holder_value(const kyo_it_int_holder_union *u) {
+KYO_IT_API int32_t kyo_it_union_holder_value(const kyo_it_int_holder_union *u) {
     return *(const int32_t *)(u->hh.h);
 }
 
@@ -94,12 +95,12 @@ typedef union {
 } kyo_it_long_double_union;
 
 /* Reads the long view of the union: must equal the exact Long the caller passed via the Long variant. */
-int64_t kyo_it_union_long_view(const kyo_it_long_double_union *u) {
+KYO_IT_API int64_t kyo_it_union_long_view(const kyo_it_long_double_union *u) {
     return u->l;
 }
 
 /* Reads the double view of the union: confirms the Double variant still marshals (a plain setFloat64 write). */
-double kyo_it_union_double_view(const kyo_it_long_double_union *u) {
+KYO_IT_API double kyo_it_union_double_view(const kyo_it_long_double_union *u) {
     return u->d;
 }
 
@@ -115,17 +116,17 @@ typedef struct {
 } kyo_it_tagged;
 
 /* Reads the struct's plain `tag` field. */
-int32_t kyo_it_tagged_tag(const kyo_it_tagged *t) {
+KYO_IT_API int32_t kyo_it_tagged_tag(const kyo_it_tagged *t) {
     return t->tag;
 }
 
 /* Reads the int view of the struct's union field. */
-int32_t kyo_it_tagged_int(const kyo_it_tagged *t) {
+KYO_IT_API int32_t kyo_it_tagged_int(const kyo_it_tagged *t) {
     return t->data.i;
 }
 
 /* Reads the float view of the struct's union field. */
-float kyo_it_tagged_float(const kyo_it_tagged *t) {
+KYO_IT_API float kyo_it_tagged_float(const kyo_it_tagged *t) {
     return t->data.f;
 }
 
@@ -141,21 +142,21 @@ typedef struct {
 } kyo_it_boxed;
 
 /* Reads the plain `label` field. */
-int32_t kyo_it_boxed_label(const kyo_it_boxed *b) {
+KYO_IT_API int32_t kyo_it_boxed_label(const kyo_it_boxed *b) {
     return b->label;
 }
 
 /* Reads the int view of the union field. */
-int32_t kyo_it_boxed_int(const kyo_it_boxed *b) {
+KYO_IT_API int32_t kyo_it_boxed_int(const kyo_it_boxed *b) {
     return b->payload.i;
 }
 
 /* Reads the x field of the struct (point) variant of the union field. */
-int32_t kyo_it_boxed_x(const kyo_it_boxed *b) {
+KYO_IT_API int32_t kyo_it_boxed_x(const kyo_it_boxed *b) {
     return b->payload.p.x;
 }
 
 /* Reads the y field of the struct (point) variant of the union field. */
-int32_t kyo_it_boxed_y(const kyo_it_boxed *b) {
+KYO_IT_API int32_t kyo_it_boxed_y(const kyo_it_boxed *b) {
     return b->payload.p.y;
 }

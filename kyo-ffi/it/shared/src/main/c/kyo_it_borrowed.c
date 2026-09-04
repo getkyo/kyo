@@ -1,3 +1,4 @@
+#include "kyo_it_api.h"
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -17,7 +18,7 @@
  * for the borrowed String counterpart; the Buffer test covers the
  * non-null case with n = 16.
  */
-void *kyo_it_malloc_chunk(int64_t n) {
+KYO_IT_API void *kyo_it_malloc_chunk(int64_t n) {
     if (n <= 0) return 0;
     void *p = malloc((size_t)n);
     if (p == 0) return 0;
