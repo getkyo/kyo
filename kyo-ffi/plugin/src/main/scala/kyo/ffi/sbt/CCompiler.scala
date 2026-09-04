@@ -183,7 +183,15 @@ private[sbt] object CCompiler {
         case Msvc =>
             val translatedFlags = cFlags.flatMap(translateFlagMsvc)
             val includeFlags    = includes.map(d => "/I" + d.getAbsolutePath)
-            val staticFlag      = if (staticLink) Seq("/MT") else Nil
+            // A DLL shares CRT state (errno, the malloc heap, FILE*) with its loader only when both use
+            // the DYNAMIC CRT. cl defaults to the static one, which hands the library a private errno
+            // that the host's Panama capture cannot observe, so a failing call reports 0 instead of its
+            // real code. `staticLink` is about vendored third-party archives, not the CRT, and must not
+            // select /MT here: that conflation is what gave kyo_it_bundled a private CRT. A caller that
+            // genuinely needs a different model states it in cFlags and keeps it.
+            val crtFlag =
+                if (cFlags.exists(f => f == "/MD" || f == "/MT" || f == "/MDd" || f == "/MTd")) Nil
+                else Seq("/MD")
             val libDirFlags     = libDirs.map(d => "/LIBPATH:" + d.getAbsolutePath)
             val libFlags        = linkLibs.map(l => l + ".lib")
             val objectDirFlag   = "/Fo:" + outFile.getAbsoluteFile.getParentFile.getAbsolutePath + File.separator
@@ -193,7 +201,7 @@ private[sbt] object CCompiler {
             // the linker cannot find a vendored .lib (LNK1181). The libs found via the LIB env (winsock,
             // the CRT) resolve either way.
             val linkerArgs = linkFlags ++ libDirFlags ++ libFlags
-            splitCc(cc) ++ Seq("/LD") ++ translatedFlags ++ staticFlag ++ includeFlags ++
+            splitCc(cc) ++ Seq("/LD") ++ translatedFlags ++ crtFlag ++ includeFlags ++
                 sources.map(_.getAbsolutePath) ++
                 Seq(objectDirFlag, "/Fe:" + outFile.getAbsolutePath) ++
                 (if (linkerArgs.nonEmpty) Seq("/link") ++ linkerArgs else Nil)

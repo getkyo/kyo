@@ -94,6 +94,42 @@ class CCompilerTest extends AnyFunSuite with Matchers {
         cmd should contain("-pthread")
     }
 
+    test("buildCommand: an MSVC DLL gets the dynamic CRT, so it shares errno with its loader") {
+        // cl defaults to the static CRT, which gives the library a private errno the host's Panama
+        // capture cannot see. staticLink is about vendored archives and must not change this.
+        val cmd = CCompiler.buildCommand(
+            cc = "cl",
+            family = CCompiler.Msvc,
+            cFlags = Seq("-O2", "-Wall"),
+            linkFlags = Nil,
+            linkLibs = Nil,
+            sources = Seq(new File("/tmp/foo.c")),
+            includes = Nil,
+            outFile = new File("/tmp/foo.dll"),
+            staticLink = true,
+            os = "windows"
+        )
+        cmd should contain("/MD")
+        cmd should not contain "/MT"
+    }
+
+    test("buildCommand: an explicit CRT model in cFlags is kept, not overridden") {
+        val cmd = CCompiler.buildCommand(
+            cc = "cl",
+            family = CCompiler.Msvc,
+            cFlags = Seq("/MT", "-O2"),
+            linkFlags = Nil,
+            linkLibs = Nil,
+            sources = Seq(new File("/tmp/foo.c")),
+            includes = Nil,
+            outFile = new File("/tmp/foo.dll"),
+            staticLink = false,
+            os = "windows"
+        )
+        cmd should contain("/MT")
+        cmd.count(_ == "/MD") shouldBe 0
+    }
+
     test("buildCommand: a gcc-style Windows compile drops -fPIC, which clang-msvc rejects") {
         // The windows-arm64 producer compiles with clang, not MinGW gcc, because the image's gcc emits
         // x64 objects. clang targeting aarch64-pc-windows-msvc errors on -fPIC rather than ignoring it,
@@ -347,7 +383,11 @@ class CCompilerTest extends AnyFunSuite with Matchers {
         assert(bStatic >= 0 && luring > bStatic && bDyn > luring)
     }
 
-    test("staticLink: MSVC adds /MT") {
+    test("staticLink: MSVC does NOT let it pick the CRT model") {
+        // This pinned `staticLink -> /MT`, which conflated two different things: staticLink folds
+        // vendored third-party archives in, while /MT swaps the CRT. A DLL built with the static CRT
+        // gets a private errno and malloc heap, so kyo_it_bundled's failing calls reported errno 0 to
+        // a host reading the UCRT. The DLL keeps the dynamic CRT whatever staticLink says.
         val cmd = CCompiler.buildCommand(
             cc = "cl.exe",
             family = CCompiler.Msvc,
@@ -359,7 +399,8 @@ class CCompilerTest extends AnyFunSuite with Matchers {
             outFile = new File("C:/tmp/out.dll"),
             staticLink = true
         )
-        cmd should contain("/MT")
+        cmd should contain("/MD")
+        cmd should not contain "/MT"
     }
 
     test("staticLink: false produces no static flags (gcc)") {
