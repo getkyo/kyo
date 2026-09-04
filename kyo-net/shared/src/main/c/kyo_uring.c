@@ -220,7 +220,7 @@ KYO_NET_API void kyo_uring_prep_connect(struct io_uring_sqe* sqe, int fd, void* 
  * SQE is backed by an internal poll wait that close(2) alone does not complete: without
  * this the op never reaps, so no completion ever decrements the caller's in-flight count.
  */
-void kyo_uring_prep_cancel64(struct io_uring_sqe* sqe, long user_data, int flags) {
+KYO_NET_API void kyo_uring_prep_cancel64(struct io_uring_sqe* sqe, long user_data, int flags) {
     io_uring_prep_cancel64(sqe, (__u64)user_data, flags);
 }
 
@@ -236,7 +236,7 @@ void kyo_uring_prep_cancel64(struct io_uring_sqe* sqe, long user_data, int flags
  * a nop is what makes abandonment safe; the caller still has to set a user_data the
  * completion side recognises and drops.
  */
-void kyo_uring_prep_nop(struct io_uring_sqe* sqe) {
+KYO_NET_API void kyo_uring_prep_nop(struct io_uring_sqe* sqe) {
     io_uring_prep_nop(sqe);
 }
 
