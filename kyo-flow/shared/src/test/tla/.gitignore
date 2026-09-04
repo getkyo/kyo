@@ -1,0 +1,4 @@
+tla2tools.jar
+states/
+logs/
+*.old
