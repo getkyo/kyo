@@ -1449,7 +1449,10 @@ final private[kyo] class HttpContainerBackend(
       * were rejected; a 404 still means missing.
       *
       * Transport-level failures (no `HttpStatusException`) still go through `mapHttpError` regardless — they aren't registry denials,
-      * they're connection / protocol errors and shouldn't be silently relabelled as missing image.
+      * they're connection / protocol errors and shouldn't be silently relabelled as missing image. A registry that answers 5xx is in that
+      * same category and is excluded for the same reason: the conflation this branch exists to paper over is between "absent" and "needs
+      * credentials", and a server error asserts neither. Calling it missing is worse than unhelpful, because a missing image is the one
+      * classification callers treat as permanent, so a transient upstream fault lands in the bucket that is never retried.
       */
     private def normalizePullError(
         httpEx: HttpException,
@@ -1457,7 +1460,7 @@ final private[kyo] class HttpContainerBackend(
         auth: Maybe[ContainerImage.RegistryAuth]
     )(using Frame): Unit < (Sync & Abort[ContainerException]) =
         httpEx match
-            case _: HttpStatusException if auth.isEmpty =>
+            case e: HttpStatusException if auth.isEmpty && !isRegistryUnavailable(e) =>
                 Abort.fail(ContainerImageMissingException(image))
             case e: HttpStatusException if auth.isDefined && isAuthDenialBody(e) =>
                 // With auth supplied, a daemon response carrying registry-denial wording is
@@ -1472,6 +1475,22 @@ final private[kyo] class HttpContainerBackend(
             case _ =>
                 mapHttpError(httpEx, ResourceContext.Image(image.reference)).unit
     end normalizePullError
+
+    /** True when the daemon reports the registry itself as failing rather than answering about the image.
+      *
+      * A 5xx is the upstream saying it could not serve the request at all, which is transient and carries no claim about whether the image
+      * exists or whether credentials would help. A body naming a server-side status is treated the same way, since the daemon proxies the
+      * registry's own wording and reports it under its own status.
+      */
+    private def isRegistryUnavailable(e: HttpStatusException): Boolean =
+        e.status.code >= 500 ||
+            e.body.exists { body =>
+                val lower = body.toLowerCase
+                lower.contains("500 internal server error") ||
+                lower.contains("502 bad gateway") ||
+                lower.contains("503 service unavailable") ||
+                lower.contains("504 gateway timeout")
+            }
 
     /** True when the response status code OR body carries a registry-level auth-denial signal.
       *

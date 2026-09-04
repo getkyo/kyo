@@ -110,7 +110,19 @@ class MysqlSqlConfigTlsModeIntegrationTest extends SqlContainerTest:
             SqlTestContainers.initScoped(requireSslConfig, "mysql-require-secure-transport").flatMap { requireSslContainer =>
                 val mysql = new ContainerPredef.MySQL(requireSslContainer, requireSslPredef)
                 mysql.container.mappedPort(mysql.config.port).flatMap { port =>
-                    val url = s"mysql://${mysql.username}:${mysql.password}@${mysql.container.host}:$port/${mysql.database}?sslmode=allow"
+                    // No establish budget (`connectTimeout=0` reads back as `Duration.Infinity`), because this leaf is
+                    // shaped differently from every other one here. The pool applies ONE budget to the whole of
+                    // `factory.open`, and `allow` against a `--require-secure-transport=ON` server performs TWO
+                    // connect-plus-handshake rounds inside it: a plaintext connect and auth far enough to draw error
+                    // 3159, then a full TLS reconnect. Its siblings pay one, so the default is sized for one and this
+                    // leaf is the first to cross it on a loaded runner with a server still cold from its own container
+                    // start.
+                    // Any finite value here would be a second wall clock racing the first: too low and a slow runner is
+                    // indistinguishable from a broken upgrade, too high and it bounds nothing. The property under test
+                    // is that the upgrade COMPLETES, so the suite timeout is the failure detector and the Ssl_cipher
+                    // assertion below is the pass condition.
+                    val url =
+                        s"mysql://${mysql.username}:${mysql.password}@${mysql.container.host}:$port/${mysql.database}?sslmode=allow&connectTimeout=0"
                     MysqlClient.init(url).flatMap { client =>
                         DB.run(client) {
                             // The allow reconnect path fired and the connection is now over TLS.

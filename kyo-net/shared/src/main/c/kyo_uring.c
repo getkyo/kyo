@@ -214,6 +214,32 @@ KYO_NET_API void kyo_uring_prep_connect(struct io_uring_sqe* sqe, int fd, void* 
     io_uring_prep_connect(sqe, fd, (struct sockaddr*)addr, (socklen_t)addrlen);
 }
 
+/*
+ * io_uring_prep_cancel64: ask the kernel to cancel the in-flight op carrying user_data.
+ * The submission this targets is identified by its key, not by its fd, because a connect
+ * SQE is backed by an internal poll wait that close(2) alone does not complete: without
+ * this the op never reaps, so no completion ever decrements the caller's in-flight count.
+ */
+void kyo_uring_prep_cancel64(struct io_uring_sqe* sqe, long user_data, int flags) {
+    io_uring_prep_cancel64(sqe, (__u64)user_data, flags);
+}
+
+/*
+ * io_uring_prep_nop: make an already-acquired SQE into a no-op.
+ *
+ * io_uring_get_sqe advances the submission tail as it hands the entry out, so the
+ * slot is committed to the kernel from that moment: there is no way to give it back.
+ * A caller that acquires an SQE and then cannot use it (a marshalling failure, a
+ * rejected length) must therefore leave something WELL-DEFINED in the slot. liburing
+ * does not clear a reused SQE, so an abandoned one carries whatever the previous
+ * occupant wrote and would re-issue that stale opcode against a stale fd. Preparing
+ * a nop is what makes abandonment safe; the caller still has to set a user_data the
+ * completion side recognises and drops.
+ */
+void kyo_uring_prep_nop(struct io_uring_sqe* sqe) {
+    io_uring_prep_nop(sqe);
+}
+
 /* io_uring_sqe_set_data64: store the per-op key the completion is matched against. */
 KYO_NET_API void kyo_uring_sqe_set_data64(struct io_uring_sqe* sqe, long data) {
     io_uring_sqe_set_data64(sqe, (__u64)data);
@@ -403,6 +429,12 @@ KYO_NET_API int kyo_uring_poll_peer_closed(int fd) { (void)fd; return 0; }
 KYO_NET_API void kyo_uring_prep_connect(void* sqe, int fd, void* addr, int addrlen) {
     (void)sqe; (void)fd; (void)addr; (void)addrlen;
 }
+
+KYO_NET_API void kyo_uring_prep_cancel64(void* sqe, long user_data, int flags) {
+    (void)sqe; (void)user_data; (void)flags;
+}
+
+KYO_NET_API void kyo_uring_prep_nop(void* sqe) { (void)sqe; }
 
 KYO_NET_API void kyo_uring_sqe_set_data64(void* sqe, long data) { (void)sqe; (void)data; }
 

@@ -399,7 +399,15 @@ class SqlConfigTlsModeIntegrationTest extends SqlContainerTest:
         withRequireSslContainer { ctx =>
             // sslmode=allow: tries plaintext first → gets SQLSTATE 28000 → retries with TLS.
             // The reconnect succeeds because the container also has TLS certs (same as the main fixture).
-            val url = s"postgres://${ctx.user}:${ctx.password}@${ctx.host}:${ctx.port}/${ctx.db}?sslmode=allow"
+            // No establish budget (`connectTimeout=0` reads back as `Duration.Infinity`), for the same reason as the
+            // MySQL twin of this leaf. The pool applies ONE budget to the whole of `factory.open`, and `allow` against
+            // a server that refuses plaintext performs TWO connect-plus-handshake rounds inside it: a plaintext
+            // attempt far enough to draw SQLSTATE 28000, then a full TLS reconnect. Every sibling leaf pays one, so the
+            // default is sized for one and this is the first leaf to cross it under runner load.
+            // Any finite value here would be a second wall clock racing the first: too low and a slow runner is
+            // indistinguishable from a broken upgrade, too high and it bounds nothing. The property under test is that
+            // the upgrade COMPLETES, so the suite timeout is the failure detector.
+            val url = s"postgres://${ctx.user}:${ctx.password}@${ctx.host}:${ctx.port}/${ctx.db}?sslmode=allow&connectTimeout=0"
             Scope.run {
                 SqlClient.init(url).flatMap { client =>
                     DB.run(client) {
@@ -486,7 +494,10 @@ class SqlConfigTlsModeIntegrationTest extends SqlContainerTest:
         withRequireSslContainer { ctx =>
             // hostssl-only pg_hba.conf forces the allow upgrade.
             // After reconnect with TLS, every subsequent query on the connection is encrypted.
-            val url = s"postgres://${ctx.user}:${ctx.password}@${ctx.host}:${ctx.port}/${ctx.db}?sslmode=allow"
+            // No establish budget, for the reason given at the `sslmode=allow upgrades to TLS` leaf above: the forced upgrade spends TWO
+            // connect-plus-handshake rounds inside the ONE budget the pool applies to `factory.open`. This leaf is the more exposed of the
+            // two, because its three queries draw connections from the pool and each one that is established pays those two rounds again.
+            val url = s"postgres://${ctx.user}:${ctx.password}@${ctx.host}:${ctx.port}/${ctx.db}?sslmode=allow&connectTimeout=0"
             Scope.run {
                 SqlClient.init(url).flatMap { client =>
                     DB.run(client) {

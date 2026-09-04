@@ -54,8 +54,22 @@ object StreamPublisher:
                 channel.stream().foreach: subscriber =>
                     for
                         subscription <- publisher.getSubscription(subscriber)
-                        fiber        <- subscription.subscribe.andThen(subscription.consume)
-                        _            <- supervisor.onInterrupt(_ => fiber.interrupt(Result.Panic(Interrupted(summon[Frame]))))
+                        _            <- subscription.subscribe
+                        // Registered BEFORE the consuming fiber exists. Cancelling a subscription closes its request
+                        // channel, which is what ends that fiber, so a teardown arriving between here and the fiber's
+                        // creation still stops the subscription rather than stranding it with nothing to interrupt it.
+                        _     <- supervisor.onInterrupt(_ => Sync.defer(subscription.stopForPublisherTeardown()))
+                        fiber <- subscription.consume
+                        _     <- supervisor.onInterrupt(_ => fiber.interrupt(Result.Panic(Interrupted(summon[Frame]))))
+                        // Registering on an ALREADY-completed promise is silently dropped, so for a subscriber accepted
+                        // while the publisher was being torn down neither registration above ever runs. Re-read the
+                        // supervisor and stop this subscription directly when that is what happened. Both calls are
+                        // idempotent, so the ordinary path costs a single completed-promise read.
+                        _ <- supervisor.done.map: settled =>
+                            if !settled then Kyo.unit
+                            else
+                                Sync.defer(subscription.stopForPublisherTeardown())
+                                    .andThen(fiber.interrupt(Result.Panic(Interrupted(summon[Frame]))).unit)
                     yield ()
             )
 
