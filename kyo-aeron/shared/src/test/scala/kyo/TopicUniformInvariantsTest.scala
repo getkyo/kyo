@@ -1,6 +1,5 @@
 package kyo
 
-import kyo.internal.AeronPlatform
 import kyo.internal.AeronSentinels
 import kyo.internal.AeronTransport
 
@@ -105,34 +104,13 @@ class TopicUniformInvariantsTest extends Test:
         }
     }
 
-    /** Keeps an external Aeron driver running at `dir` for the duration of `body`.
-      *
-      * AeronPlatform.embedded(dir) launches a media driver (the "external" driver from run(aeronDir)'s
-      * perspective) plus a keepalive client, held open until the `release` latch fires. The driver lives
-      * in an unscoped fiber so run(aeronDir) inside `body` connects a second, independent client to the
-      * same dir.
-      */
-    private def withExternalDriver[A](dir: Path)(body: => A < (Async & Abort[TopicException] & Scope))(using
-        Frame
-    ): A < (Async & Abort[TopicException] & Scope) =
-        for
-            release <- Latch.init(1)
-            ready   <- Latch.init(1)
-            driverFiber <- Fiber.initUnscoped {
-                AeronPlatform.embedded(dir.unsafe.show).map { runtime =>
-                    // Signal readiness, then suspend on `release` so the driver stays alive for the body.
-                    ready.release.andThen(release.await).andThen(Sync.Unsafe.defer(runtime.close()))
-                }
-            }
-            _      <- ready.await
-            result <- Sync.ensure(release.release)(body)
-            _      <- driverFiber.get
-        yield result
-
     "Topic.run(aeronDir) present-driver round-trip: received == Chunk(a,b)" in {
         // Type-level invariant: run(aeronDir) carries Abort[TopicException].
         val _: Int < (Async & Abort[TopicException]) = Topic.run(Path("/nonexistent-type-probe"))(42)
-        Path.run(Path.tempDir("kyo-aeron-external-present")).map { dir =>
+        Path.run(Path.tempDir("kyo-aeron-external-present")).map { root =>
+            // The driver creates its own directory inside the temp one: Aeron deletes and recreates a driver
+            // directory that already exists, and the temp directory stays what the scope removes.
+            val dir = root / AeronDriver.mediaDirName
             withExternalDriver(dir) {
                 Topic.run(dir) {
                     for
@@ -166,7 +144,8 @@ class TopicUniformInvariantsTest extends Test:
                     received <- fiber.get
                 yield received
             }
-        Path.run(Path.tempDir("kyo-aeron-external-reuse")).map { dir =>
+        Path.run(Path.tempDir("kyo-aeron-external-reuse")).map { root =>
+            val dir = root / AeronDriver.mediaDirName
             withExternalDriver(dir) {
                 for
                     first  <- roundTrip(dir, Seq("a", "b"), 1)
@@ -235,7 +214,8 @@ class TopicUniformInvariantsTest extends Test:
                 Topic.run(c)(42)
         })
         val _: Int < (Async & Abort[TopicTransportFailedException]) = Topic.run(Path("/nonexistent-inv001-probe"))(42)
-        Path.run(Path.tempDir("kyo-aeron-inv001")).map { dir =>
+        Path.run(Path.tempDir("kyo-aeron-inv001")).map { root =>
+            val dir = root / AeronDriver.mediaDirName
             Scope.run {
                 withExternalDriver(dir) {
                     for

@@ -598,6 +598,54 @@ class ContainerTest extends BasePodTest:
     }
 
     // =========================================================================
+    // A failing registry is not a missing image.
+    //
+    // Docker Hub answered 500 to a manifest HEAD for an image that exists, and
+    // the pull path reported ContainerImageMissingException. That conflation is
+    // deliberate for a DENIAL (a registry answers the same way for "absent" and
+    // "needs credentials", and a caller with no credentials cannot act on the
+    // difference) but a server error asserts neither, and missing is the one
+    // classification callers treat as permanent and never retry.
+    // =========================================================================
+
+    "HttpContainerBackend.isRegistryUnavailable" - {
+        import kyo.internal.HttpContainerBackend.isRegistryUnavailable
+
+        // A real daemon response body: the daemon reports its own status and quotes the registry's, so the
+        // wire status alone does not carry the signal.
+        "the captured Docker Hub 500 is a registry fault" in {
+            val body =
+                """Error response from daemon: Head "https://registry-1.docker.io/v2/library/redis/manifests/7-alpine": """ +
+                    "received unexpected HTTP status: 500 Internal Server Error"
+            assert(isRegistryUnavailable(404, Present(body)))
+        }
+
+        "a 5xx wire status is a registry fault whatever the body says" in {
+            assert(isRegistryUnavailable(500, Absent))
+            assert(isRegistryUnavailable(502, Absent))
+            assert(isRegistryUnavailable(503, Present("""{"message":"no such image"}""")))
+        }
+
+        "proxied gateway wording is a registry fault" in {
+            assert(isRegistryUnavailable(404, Present("received unexpected HTTP status: 502 Bad Gateway")))
+            assert(isRegistryUnavailable(404, Present("received unexpected HTTP status: 503 Service Unavailable")))
+            assert(isRegistryUnavailable(404, Present("received unexpected HTTP status: 504 Gateway Timeout")))
+        }
+
+        // The other half of the contract: the auth/absent conflation this predicate guards must survive,
+        // so a genuine 404 and a genuine denial must NOT be read as registry faults.
+        "a genuinely absent image is not a registry fault" in {
+            assert(!isRegistryUnavailable(404, Absent))
+            assert(!isRegistryUnavailable(404, Present("""{"message":"manifest unknown for image foo"}""")))
+        }
+
+        "a registry denial is not a registry fault" in {
+            assert(!isRegistryUnavailable(403, Present("""{"message":"denied: requested access to the resource is denied"}""")))
+            assert(!isRegistryUnavailable(401, Present("""{"message":"unauthorized"}""")))
+        }
+    }
+
+    // =========================================================================
     // parseState — covers docker + podman state vocabularies.
     // =========================================================================
 

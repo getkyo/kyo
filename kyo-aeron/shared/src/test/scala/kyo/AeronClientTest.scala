@@ -6,25 +6,6 @@ import kyo.internal.AeronTransport
 
 class AeronClientTest extends Test:
 
-    /** Keeps an external Aeron driver running at `dir` for the duration of `body`. Mirrors the helper in
-      * TopicUniformInvariantsTest; duplicated to avoid depending on that class's private helper.
-      */
-    private def withExternalDriver[A](dir: Path)(body: => A < (Async & Abort[TopicException] & Scope))(using
-        Frame
-    ): A < (Async & Abort[TopicException] & Scope) =
-        for
-            release <- Latch.init(1)
-            ready   <- Latch.init(1)
-            driverFiber <- Fiber.initUnscoped {
-                AeronPlatform.embedded(dir.unsafe.show).map { runtime =>
-                    ready.release.andThen(release.await).andThen(Sync.Unsafe.defer(runtime.close()))
-                }
-            }
-            _      <- ready.await
-            result <- Sync.ensure(release.release)(body)
-            _      <- driverFiber.get
-        yield result
-
     /** Builds an AeronClient from a connected AeronRuntime, managing its lifecycle with
       * Scope.acquireRelease. Bypasses AeronClient.connect so the runtime can be wrapped in a
       * close-counting proxy.
@@ -47,7 +28,10 @@ class AeronClientTest extends Test:
         )(client => Sync.Unsafe.defer(client.unsafe.close()))
 
     "connect + single Topic.run(client) round-trip: received == Chunk(1L,2L)" in {
-        Path.run(Path.tempDir("kyo-aeron-client-l1")).map { dir =>
+        Path.run(Path.tempDir("kyo-aeron-client-l1")).map { root =>
+            // The driver creates its own directory inside the temp one: Aeron deletes and recreates a driver
+            // directory that already exists, and the temp directory stays what the scope removes.
+            val dir = root / AeronDriver.mediaDirName
             Scope.run {
                 withExternalDriver(dir) {
                     AeronClient.connect(dir).map { client =>
@@ -70,7 +54,8 @@ class AeronClientTest extends Test:
 
     // run(client) does NOT close the client, so one connect backs both scopes.
     "one shared client backs multiple run(client) scopes: Chunk(10L,20L)" in {
-        Path.run(Path.tempDir("kyo-aeron-client-l2")).map { dir =>
+        Path.run(Path.tempDir("kyo-aeron-client-l2")).map { root =>
+            val dir = root / AeronDriver.mediaDirName
             Scope.run {
                 withExternalDriver(dir) {
                     AeronClient.connect(dir).map { client =>
@@ -92,7 +77,8 @@ class AeronClientTest extends Test:
     }
 
     "client closes exactly once on normal Scope exit (close-count == 1)" in {
-        Path.run(Path.tempDir("kyo-aeron-client-l3")).map { dir =>
+        Path.run(Path.tempDir("kyo-aeron-client-l3")).map { root =>
+            val dir = root / AeronDriver.mediaDirName
             AtomicInt.init(0).map { closeCount =>
                 Scope.run {
                     withExternalDriver(dir) {
@@ -126,7 +112,8 @@ class AeronClientTest extends Test:
 
     // The timeout interrupts the stream; the Scope finalizer must still fire and close the client.
     "cancellation/timeout releases the client; close-count == 1" in {
-        Path.run(Path.tempDir("kyo-aeron-client-l4")).map { dir =>
+        Path.run(Path.tempDir("kyo-aeron-client-l4")).map { root =>
+            val dir = root / AeronDriver.mediaDirName
             AtomicInt.init(0).map { closeCount =>
                 Scope.run {
                     withExternalDriver(dir) {

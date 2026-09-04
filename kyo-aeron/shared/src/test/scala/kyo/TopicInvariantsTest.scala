@@ -61,9 +61,8 @@ class TopicInvariantsTest extends Test:
         }
     }
 
-    // Several structural invariants have no leaf here because the build already enforces them: io.aeron
-    // is a JVM-only dependency, so importing it in shared/src/main fails the JS/Native compile; a missing
-    // kyo_aeron_* C symbol fails Native nativeLink / JS ffiCompile; and the fragment handler staying
+    // Several structural invariants have no leaf here because the build already enforces them: a missing
+    // kyo_aeron_* C symbol fails Native nativeLink / JS ffiCompile, and the fragment handler staying
     // C-private is documented at its source site (kyo_aeron.c, kyo_aeron_fragment_handler).
 
     "MsgPack + Envelope wire round-trip" - {
@@ -107,9 +106,9 @@ class TopicInvariantsTest extends Test:
         }
     }
 
-    // `.onlyNative`: static linking is a Native-only mechanic (JVM uses the io.aeron Java client; JS
-    // dlopens the shim via koffi). Pins that kyo_aeron_* symbols are linked into the Native binary
-    // (aeron_driver_static) and resolve at runtime with no system libaeron.
+    // `.onlyNative`: static linking is a Native-only mechanic (the JVM reaches the same shim through
+    // Panama's library lookup, JS dlopens it via koffi). Pins that kyo_aeron_* symbols are linked into
+    // the Native binary (aeron_driver_static) and resolve at runtime with no system libaeron.
     "runtime: symbols resolve and driver starts without system libaeron".onlyNative in {
         withEmbeddedRuntime() { runtime =>
             Sync.Unsafe.defer {
