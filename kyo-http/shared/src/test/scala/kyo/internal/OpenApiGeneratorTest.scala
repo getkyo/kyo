@@ -197,5 +197,114 @@ class OpenApiGeneratorTest extends kyo.BaseHttpTest:
             assert(json.contains("Pet API"))
             assert(json.contains("petId"))
         }
+
+        "constraint forwarding" - {
+
+            "Str: minLength, maxLength, and pattern" in {
+                val js  = Json.JsonSchema.Str(minLength = Present(2), maxLength = Present(50), pattern = Present("[a-z]+"))
+                val obj = OpenApiGenerator.jsonSchemaToHttpOpenApi(js)
+                assert(obj.`type` == Some("string"))
+                assert(obj.minLength == Some(2))
+                assert(obj.maxLength == Some(50))
+                assert(obj.pattern == Some("[a-z]+"))
+                assert(obj.format == None)
+            }
+
+            "Str: format is still forwarded" in {
+                val js  = Json.JsonSchema.Str(format = Present("uuid"))
+                val obj = OpenApiGenerator.jsonSchemaToHttpOpenApi(js)
+                assert(obj.format == Some("uuid"))
+            }
+
+            "Str: description is forwarded" in {
+                val js  = Json.JsonSchema.Str(description = Present("a name"))
+                val obj = OpenApiGenerator.jsonSchemaToHttpOpenApi(js)
+                assert(obj.description == Some("a name"))
+            }
+
+            "Num: minimum and maximum" in {
+                val js  = Json.JsonSchema.Num(minimum = Present(0.0), maximum = Present(99.9))
+                val obj = OpenApiGenerator.jsonSchemaToHttpOpenApi(js)
+                assert(obj.`type` == Some("number"))
+                assert(obj.minimum == Some(0.0))
+                assert(obj.maximum == Some(99.9))
+                assert(obj.exclusiveMinimum == None)
+                assert(obj.exclusiveMaximum == None)
+            }
+
+            "Num: exclusiveMinimum and exclusiveMaximum" in {
+                val js  = Json.JsonSchema.Num(exclusiveMinimum = Present(0.0), exclusiveMaximum = Present(1.0))
+                val obj = OpenApiGenerator.jsonSchemaToHttpOpenApi(js)
+                assert(obj.exclusiveMinimum == Some(0.0))
+                assert(obj.exclusiveMaximum == Some(1.0))
+            }
+
+            "Integer: minimum and maximum forwarded as Double" in {
+                val js  = Json.JsonSchema.Integer(minimum = Present(0L), maximum = Present(100L))
+                val obj = OpenApiGenerator.jsonSchemaToHttpOpenApi(js)
+                assert(obj.`type` == Some("integer"))
+                assert(obj.minimum == Some(0.0))
+                assert(obj.maximum == Some(100.0))
+            }
+
+            "Arr: minItems, maxItems, and uniqueItems" in {
+                val js =
+                    Json.JsonSchema.Arr(Json.JsonSchema.Str(), minItems = Present(1), maxItems = Present(10), uniqueItems = Present(true))
+                val obj = OpenApiGenerator.jsonSchemaToHttpOpenApi(js)
+                assert(obj.`type` == Some("array"))
+                assert(obj.minItems == Some(1))
+                assert(obj.maxItems == Some(10))
+                assert(obj.uniqueItems == Some(true))
+            }
+
+            "Obj: description is forwarded" in {
+                val js  = Json.JsonSchema.Obj(List("x" -> Json.JsonSchema.Str()), List("x"), description = Present("my object"))
+                val obj = OpenApiGenerator.jsonSchemaToHttpOpenApi(js)
+                assert(obj.`type` == Some("object"))
+                assert(obj.description == Some("my object"))
+            }
+
+            "Bool: description is forwarded" in {
+                val js  = Json.JsonSchema.Bool(description = Present("a flag"))
+                val obj = OpenApiGenerator.jsonSchemaToHttpOpenApi(js)
+                assert(obj.`type` == Some("boolean"))
+                assert(obj.description == Some("a flag"))
+            }
+
+            "constraint fields are absent from JSON when empty" in {
+                val js  = Json.JsonSchema.Str()
+                val obj = OpenApiGenerator.jsonSchemaToHttpOpenApi(js)
+                val spec = HttpOpenApi(
+                    openapi = "3.0.0",
+                    info = HttpOpenApi.Info("T", "1", None),
+                    paths = Map.empty,
+                    components = Some(HttpOpenApi.Components(
+                        schemas = Some(Map("x" -> obj)),
+                        securitySchemes = None
+                    ))
+                )
+                val json = HttpOpenApi.toJson(spec)
+                assert(!json.contains("minLength"))
+                assert(!json.contains("maximum"))
+                assert(!json.contains("pattern"))
+            }
+
+            "constraint fields appear in serialized JSON when set" in {
+                val js  = Json.JsonSchema.Str(minLength = Present(1), pattern = Present("[a-z]+"))
+                val obj = OpenApiGenerator.jsonSchemaToHttpOpenApi(js)
+                val spec = HttpOpenApi(
+                    openapi = "3.0.0",
+                    info = HttpOpenApi.Info("T", "1", None),
+                    paths = Map.empty,
+                    components = Some(HttpOpenApi.Components(
+                        schemas = Some(Map("x" -> obj)),
+                        securitySchemes = None
+                    ))
+                )
+                val json = HttpOpenApi.toJson(spec)
+                assert(json.contains("minLength"))
+                assert(json.contains("[a-z]+"))
+            }
+        }
     }
 end OpenApiGeneratorTest
