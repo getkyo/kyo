@@ -115,6 +115,21 @@ scope.
 - `Create` opens an existing file or creates it.
 - `CreateNew` fails if any target already exists.
 
+## Locks
+
+Locks are advisory, scope-managed values. `Path.LockMode` selects shared or exclusive compatibility.
+`Path.LockWait` selects immediate, unbounded, or deadline-bounded acquisition. Fiber waiting must use
+`Async`; never block an OS thread. Ownership checks and cleanup failures remain typed.
+
+Every backend claims a sentinel sibling (`<resolved path>.kyo-lock` by default; the suffix is an
+optional parameter and part of the lock's identity), never the data file. POSIX
+`fcntl` record locks are process-wide and the OS releases every lock the process holds on a file
+when the process closes any handle to that file, silently and undetectably; locking a file the
+caller also reads or writes would therefore drop the claim on the first touch. The sentinel is a
+file data I/O never opens, which closes that hole by construction, and it is the convention the
+Node lockfile protocol already used. The lock does not exclude a foreign process that locks the
+data file directly through the OS.
+
 ## Error contracts
 
 `FileSystemException` is the umbrella. Concrete exceptions mix in only the marker traits for the
@@ -123,6 +138,7 @@ operations that can raise them:
 - `FileReadException`
 - `FileWriteException`
 - `FileStructureException`
+- `FileLockException`
 
 Use `FileIOException(path, operation, cause)` only when no more precise leaf describes the failure.
 Preserve `Result.Panic` as a panic. Do not translate interruption, programmer defects, or unexpected
@@ -148,12 +164,13 @@ source. Platform tests are reserved for genuine host integration differences.
 
 Use the reusable suites for backend laws:
 
-- `FileSystemReadTestSuite`
-- `FileSystemWriteTestSuite`
-- `FileSystemChannelTestSuite`
+- `FileSystemReadTest`
+- `FileSystemWriteTest`
+- `FileSystemChannelTest`
+- `FileSystemLockTest`
 
-Test capability rows with `typeCheck` and `typeCheckErrors`. Never use sleeps or blocking primitives
-to make scheduling tests pass.
+Test capability rows with `typeCheck` and `typeCheckErrors`. Use deterministic `Async` coordination
+for lock tests. Never use sleeps or blocking primitives to make scheduling tests pass.
 
 Before submission, run the affected module tests on all four platforms and the module doctest. Read
 formatted files again after sbt completes because compilation formats sources.

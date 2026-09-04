@@ -139,6 +139,14 @@ lazy val `kyo-settings` = Seq(
     // expansion reaches users as a broken build in their code, not ours. The Scala 2.13 cross-builds (the
     // kyo-scheduler family) do not have the flag.
     scalacOptions ++= (if (scalaVersion.value.startsWith("3")) Seq("-Xcheck-macros") else Nil),
+    // `KYO_RETAIN_TREES=true sbt <module>/test` compiles with `-Yretain-trees`, which changes what
+    // `Symbol.tree` returns: the retained source declaration instead of one the compiler fabricates
+    // from the symbol info. A macro that reads a declaration through that call sees a different tree
+    // shape under the flag, so a build that enables it (some do project-wide) can crash a derivation
+    // that compiles everywhere else. Kyo's macros must answer the same in both modes; this is how to
+    // check that. Off by default: retaining the trees of every dependency costs a few hundred MB per
+    // module, which CI does not have to spare.
+    scalacOptions ++= (if (sys.env.get("KYO_RETAIN_TREES").contains("true")) Seq("-Yretain-trees") else Nil),
     Test / scalacOptions --= scalacOptionTokens(Set(ScalacOptions.warnNonUnitStatement)).value,
     // Not in CI: parallel cross-version compilations of one module format the same shared
     // sources concurrently, and the loser logs "scalafmt: failed for 1 sources" on every

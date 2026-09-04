@@ -27,6 +27,16 @@ abstract class UITest extends kyo.test.Test[Any]:
     private val retrySchedule: Schedule =
         Schedule.exponentialBackoff(initial = 1.second, factor = 2, maxBackoff = 8.seconds).take(2)
 
+    /** The transient-browser-failure retry that [[withUI]] applies, for leaves that must bind their own server and so cannot go through it.
+      * Retry selects the two infrastructure failure types by their union, so assertion failures and every other BrowserException propagate
+      * immediately and are never masked. Without this a hand-rolled-server leaf turns a dropped CDP connection into a red where every sibling
+      * suite rides it out.
+      */
+    private[kyo] def withBrowserRetry[A, S](f: A < (Async & Abort[BrowserException] & S))(using
+        Frame
+    ): A < (Async & Abort[BrowserException] & S) =
+        Retry[BrowserConnectionLostException | BrowserSetupFailedException](retrySchedule)(f)
+
     /** Marker substring in the unsupported-platform setup failure (kyo.internal.ChromeDownloader). Keep in sync with kyo-browser's BrowserTest. */
     private val unsupportedPlatformMarker = "cannot auto-download chrome-headless-shell"
 
@@ -35,7 +45,7 @@ abstract class UITest extends kyo.test.Test[Any]:
       * canceled (skipped) rather than red failures that each burn the retry budget and push the job past its timeout. Mirrors kyo-browser's
       * BrowserTest.cancelOnUnsupportedPlatform; every other failure propagates unchanged.
       */
-    private def cancelOnUnsupportedPlatform[A, S](
+    private[kyo] def cancelOnUnsupportedPlatform[A, S](
         f: A < (Async & Scope & Abort[BrowserSetupException] & S)
     )(using Frame): A < (Async & Scope & Abort[BrowserSetupException] & S) =
         Abort.recover[BrowserSetupException] { (ex: BrowserSetupException) =>

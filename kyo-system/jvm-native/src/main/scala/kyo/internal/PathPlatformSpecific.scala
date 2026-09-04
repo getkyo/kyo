@@ -4,6 +4,7 @@ import java.io.InterruptedIOException
 import java.io.IOException
 import java.nio.channels.ClosedByInterruptException
 import java.nio.channels.FileChannel
+import java.nio.channels.OverlappingFileLockException
 import java.nio.charset.Charset
 import java.nio.charset.StandardCharsets
 import java.nio.file.AccessDeniedException
@@ -336,6 +337,115 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
     ): Result[FileReadException | FileWriteException | FileStructureException, Path.RawChannel] =
         catchChannelWrite(openRawChannel(Path.RawChannelAccess.ReadWrite(open)))
 
+    // --- Advisory lock ---
+
+    // POSIX advisory locks (fcntl, backing FileChannel.tryLock on Scala Native's javalib) do not
+    // exclude the owning process from reacquiring its own lock; a second same-process tryLock
+    // simply succeeds instead of throwing OverlappingFileLockException there (unlike the JVM's own
+    // in-process FileLockTable). NioPathLockRegistry enforces same-process exclusion explicitly on
+    // every platform, mirroring kyo.internal.FileJournalCore's heldRoots registry (kyo-eventlog);
+    // the platform tryLock call still provides genuine cross-process exclusion underneath it.
+    // The registry key has to name the file, not the route taken to it. Path.make already normalizes
+    // away "." and ".." segments, so the remaining way to reach one file under two names is a
+    // symbolic link, and an unresolved key gives each name an entry of its own. Two shared claims
+    // arriving under different names then open two channels to one file, which the JVM refuses as an
+    // overlapping claim: a lock the contract grants, denied.
+    //
+    // toRealPath resolves links but requires the file to exist. Falling back to the parent's real
+    // path plus the file name covers the not-yet-created case, since a link in the ancestry still
+    // collapses. When neither resolves, the normalized absolute path is the best name available.
+    private def registryKey(using AllowUnsafe): String =
+        val absolute = jpath.toAbsolutePath.normalize()
+        try absolute.toRealPath().toString
+        catch
+            case _: IOException =>
+                val parent = absolute.getParent
+                val name   = absolute.getFileName
+                if parent == null || name == null then absolute.toString
+                else
+                    try parent.toRealPath().resolve(name).toString
+                    catch case _: IOException => absolute.toString
+                end if
+        end try
+    end registryKey
+
+    // The claim is taken on a sentinel sibling, never on the data file. POSIX releases every fcntl
+    // lock a process holds on a file when the process closes any handle to that file, so a lock on
+    // the data file itself evaporates the moment the same process reads or writes it. The sentinel
+    // is a file data I/O never opens, which closes that hole by construction. The suffix matches
+    // the one the Node backend already claims, so every backend agrees on what is locked, and it
+    // hangs off the resolved registry key so two names for one data file still claim one sentinel.
+    // The sentinel may outlive the process as an empty artifact; the lock on it dies with the
+    // process, so a leftover file is inert.
+    private def sentinel(key: String, suffix: String): String = key + suffix
+
+    // Collapses the pending answer onto a failure, which is all a caller that cannot wait can do
+    // with it. Callers that can wait take lockAttempt instead.
+    def lock(mode: Path.LockMode, sentinelSuffix: String)(using AllowUnsafe, Frame): Result[FileLockException, Path.RawLock] =
+        lockAttempt(mode, sentinelSuffix) match
+            case Path.LockAttempt.Acquired(raw) => Result.succeed(raw)
+            case Path.LockAttempt.Pending       => Result.fail(FileLockUnavailableException(safe))
+            case Path.LockAttempt.Failed(error) => error
+
+    override private[kyo] def lockAttempt(mode: Path.LockMode, sentinelSuffix: String)(using AllowUnsafe, Frame): Path.LockAttempt =
+        val isExclusive = mode == Path.LockMode.Exclusive
+        // The suffix is part of the lock's identity: claims under different suffixes contend on
+        // different sentinel files, so the registry keys on the sentinel, not on the data path.
+        val key = sentinel(registryKey, sentinelSuffix)
+        def settled(result: Result[FileLockException, Path.RawLock]): Path.LockAttempt =
+            result match
+                case Result.Success(raw)   => Path.LockAttempt.Acquired(raw)
+                case Result.Failure(error) => Path.LockAttempt.Failed(Result.Failure(error))
+                case panic: Result.Panic   => Path.LockAttempt.Failed(panic)
+        NioPathLockRegistry.reserve(key, isExclusive) match
+            case NioPathLockRegistry.Reservation.Denied  => Path.LockAttempt.Failed(Result.fail(FileLockUnavailableException(safe)))
+            case NioPathLockRegistry.Reservation.Pending => Path.LockAttempt.Pending
+            case NioPathLockRegistry.Reservation.SharedExisting =>
+                Path.LockAttempt.Acquired(new NioRawLock(key, isExclusive))
+            case NioPathLockRegistry.Reservation.First =>
+                settled {
+                    try
+                        val sentinelPath = java.nio.file.Path.of(key)
+                        ensureParent(sentinelPath)
+                        val ch =
+                            FileChannel.open(sentinelPath, StandardOpenOption.CREATE, StandardOpenOption.READ, StandardOpenOption.WRITE)
+                        try
+                            val fl =
+                                try ch.tryLock(0L, Long.MaxValue, !isExclusive)
+                                catch case _: OverlappingFileLockException => null
+                            if fl == null then
+                                ch.close()
+                                NioPathLockRegistry.abort(key)
+                                Result.fail(FileLockUnavailableException(safe))
+                            else
+                                NioPathLockRegistry.install(key, fl, ch)
+                                Result.succeed(new NioRawLock(key, isExclusive))
+                            end if
+                        catch
+                            case e: IOException if NioExceptionBoundary.isInterrupted(e) =>
+                                discard(Result.catching[Throwable](ch.close()))
+                                NioPathLockRegistry.abort(key)
+                                Result.panic(e)
+                            case e: IOException =>
+                                ch.close()
+                                NioPathLockRegistry.abort(key)
+                                Result.fail(FileIOException(safe, FileSystemOperation.Lock, e))
+                        end try
+                    catch
+                        case e: IOException if NioExceptionBoundary.isInterrupted(e) =>
+                            NioPathLockRegistry.abort(key)
+                            Result.panic(e)
+                        case e: IOException =>
+                            NioPathLockRegistry.abort(key)
+                            Result.fail(FileIOException(safe, FileSystemOperation.Lock, e))
+                        case e: Throwable =>
+                            NioPathLockRegistry.abort(key)
+                            Result.panic(e)
+                    end try
+                }
+        end match
+    end lockAttempt
+
     // --- Helpers ---
 
     private def ensureParent(p: java.nio.file.Path): Unit =
@@ -545,6 +655,204 @@ final private[kyo] class NioRawChannel(channel: FileChannel, path: Path) extends
     def close()(using AllowUnsafe): Unit = channel.close()
 
 end NioRawChannel
+
+/** Concrete advisory lock backed by a `java.nio.channels.FileLock`. The backing `FileChannel` is
+  * opened solely to hold the lock and is closed on release, alongside the `FileLock` itself and
+  * this key's [[NioPathLockRegistry]] entry.
+  */
+final private[kyo] class NioRawLock(key: String, requestedExclusive: Boolean) extends Path.RawLock:
+    def isExclusive: Boolean = requestedExclusive
+
+    def check()(using AllowUnsafe, Frame): Result[FileLockException, Unit] =
+        if NioPathLockRegistry.isOwned(key, requestedExclusive) then Result.unit
+        else Result.fail(FileLockOwnershipLostException(Path(key)))
+
+    def release()(using AllowUnsafe, Frame): Result[FileLockException, Unit] =
+        NioPathLockRegistry.release(key, requestedExclusive)
+    end release
+end NioRawLock
+
+/** Process-wide registry of advisory-lock keys currently held, keyed by canonical path string.
+  * Enforces same-process exclusion explicitly (see the rationale on `NioPathUnsafe.lock`),
+  * mirroring `kyo.internal.FileJournalCore.heldRoots` (kyo-eventlog). `-1` means exclusively held;
+  * a positive count is the number of concurrent shared holders; absent means unlocked.
+  */
+private[kyo] object NioPathLockRegistry:
+    final private case class Resource(
+        lock: java.nio.channels.FileLock,
+        channel: FileChannel,
+        releaseLock: () => Unit,
+        closeChannel: () => Unit,
+        lockReleased: Boolean,
+        channelClosed: Boolean,
+        cleaning: Boolean
+    )
+
+    final private case class Entry(
+        isExclusive: Boolean,
+        count: Int,
+        resource: Maybe[Resource]
+    )
+
+    enum Reservation derives CanEqual:
+        case Denied
+        case First
+        case SharedExisting
+
+        /** A compatible acquisition holds the entry but has not installed its resource yet.
+          *
+          * Distinct from `Denied`, which reports a genuine conflict: this says the answer is not
+          * settled rather than negative, and the caller resolves it by asking again once the
+          * installer has either installed or aborted.
+          */
+        case Pending
+    end Reservation
+
+    // Unsafe: one process-wide registry must exist before any concurrent acquisition can race.
+    private val held: AtomicRef.Unsafe[Map[String, Entry]] =
+        import AllowUnsafe.embrace.danger
+        AtomicRef.Unsafe.init(Map.empty[String, Entry])
+
+    @scala.annotation.tailrec
+    private[kyo] def reserve(key: String, isExclusive: Boolean)(using AllowUnsafe): Reservation =
+        val snap = held.get()
+        snap.get(key) match
+            case None =>
+                val next = snap.updated(key, Entry(isExclusive, 1, Absent))
+                if held.compareAndSet(snap, next) then Reservation.First else reserve(key, isExclusive)
+            case Some(Entry(false, count, Present(resource))) if !isExclusive && !resource.cleaning =>
+                val next = snap.updated(key, Entry(false, count + 1, Present(resource)))
+                if held.compareAndSet(snap, next) then Reservation.SharedExisting else reserve(key, isExclusive)
+            // A shared acquisition holds the entry and is still opening its channel. This request is
+            // shared too, so the two are compatible and the contract grants both; the only reason an
+            // answer cannot be given yet is that the resource to share does not exist. Reported as
+            // pending rather than joined here: joining would hand back a claim on a lock that may
+            // still fail to be taken, leaving the joiner believing it holds cross-process exclusion
+            // it never had. The caller asks again once the installer has installed or aborted.
+            case Some(Entry(false, _, Absent)) if !isExclusive => Reservation.Pending
+            case _                                             => Reservation.Denied
+        end match
+    end reserve
+
+    private[kyo] def install(key: String, lock: java.nio.channels.FileLock, channel: FileChannel)(using AllowUnsafe): Unit =
+        install(key, lock, channel, () => lock.release(), () => channel.close())
+
+    @scala.annotation.tailrec
+    private[kyo] def install(
+        key: String,
+        lock: java.nio.channels.FileLock,
+        channel: FileChannel,
+        releaseLock: () => Unit,
+        closeChannel: () => Unit
+    )(using AllowUnsafe): Unit =
+        val snap = held.get()
+        snap.get(key) match
+            case Some(entry) if entry.resource.isEmpty =>
+                val resource = Resource(
+                    lock,
+                    channel,
+                    releaseLock,
+                    closeChannel,
+                    lockReleased = false,
+                    channelClosed = false,
+                    cleaning = false
+                )
+                val next = snap.updated(key, entry.copy(resource = Present(resource)))
+                if !held.compareAndSet(snap, next) then install(key, lock, channel, releaseLock, closeChannel)
+            case _ =>
+                discard(Result.catching[Throwable](lock.release()))
+                discard(Result.catching[Throwable](channel.close()))
+        end match
+    end install
+
+    @scala.annotation.tailrec
+    private[kyo] def abort(key: String)(using AllowUnsafe): Unit =
+        val snap = held.get()
+        if snap.contains(key) && !held.compareAndSet(snap, snap - key) then abort(key)
+    end abort
+
+    private[kyo] def isOwned(key: String, isExclusive: Boolean)(using AllowUnsafe): Boolean =
+        held.get().get(key).exists(entry =>
+            entry.isExclusive == isExclusive && entry.resource.exists(resource => !resource.lockReleased && resource.lock.isValid)
+        )
+
+    @scala.annotation.tailrec
+    private[kyo] def release(key: String, isExclusive: Boolean)(using AllowUnsafe, Frame): Result[FileLockException, Unit] =
+        val snap = held.get()
+        snap.get(key) match
+            case Some(entry) if entry.isExclusive == isExclusive =>
+                if entry.count > 1 then
+                    if held.compareAndSet(snap, snap.updated(key, entry.copy(count = entry.count - 1))) then Result.unit
+                    else release(key, isExclusive)
+                else
+                    entry.resource match
+                        case Present(resource) if resource.cleaning =>
+                            Result.fail(FileIOException(
+                                Path(key),
+                                FileSystemOperation.Lock,
+                                new IOException("lock release is already in progress")
+                            ))
+                        case Present(resource) =>
+                            val claimed = entry.copy(resource = Present(resource.copy(cleaning = true)))
+                            if !held.compareAndSet(snap, snap.updated(key, claimed)) then release(key, isExclusive)
+                            else cleanup(key, entry, resource.copy(cleaning = true))
+                        case Absent =>
+                            Result.fail(FileLockOwnershipLostException(Path(key)))
+            case _ => Result.fail(FileLockOwnershipLostException(Path(key)))
+        end match
+    end release
+
+    private def cleanup(key: String, entry: Entry, start: Resource)(using AllowUnsafe, Frame): Result[FileLockException, Unit] =
+        var resource = start
+        if !resource.lockReleased then
+            try
+                resource.releaseLock()
+                resource = resource.copy(lockReleased = true)
+            catch
+                case e: IOException =>
+                    restoreAfterFailure(key, entry, resource.copy(cleaning = false))
+                    return Result.fail(FileIOException(Path(key), FileSystemOperation.Lock, e))
+                case e: Throwable =>
+                    restoreAfterFailure(key, entry, resource.copy(cleaning = false))
+                    return Result.panic(e)
+        end if
+        if !resource.channelClosed then
+            try
+                resource.closeChannel()
+                resource = resource.copy(channelClosed = true)
+            catch
+                case e: IOException =>
+                    restoreAfterFailure(key, entry, resource.copy(cleaning = false))
+                    return Result.fail(FileIOException(Path(key), FileSystemOperation.Lock, e))
+                case e: Throwable =>
+                    restoreAfterFailure(key, entry, resource.copy(cleaning = false))
+                    return Result.panic(e)
+        end if
+        removeReleased(key, entry.isExclusive)
+        Result.unit
+    end cleanup
+
+    @scala.annotation.tailrec
+    private def restoreAfterFailure(key: String, original: Entry, resource: Resource)(using AllowUnsafe): Unit =
+        val snap = held.get()
+        snap.get(key) match
+            case Some(current) if current.isExclusive == original.isExclusive && current.count == original.count =>
+                if !held.compareAndSet(snap, snap.updated(key, current.copy(resource = Present(resource)))) then
+                    restoreAfterFailure(key, original, resource)
+            case _ => ()
+        end match
+    end restoreAfterFailure
+
+    @scala.annotation.tailrec
+    private def removeReleased(key: String, isExclusive: Boolean)(using AllowUnsafe): Unit =
+        val snap = held.get()
+        snap.get(key) match
+            case Some(entry) if entry.isExclusive == isExclusive =>
+                if !held.compareAndSet(snap, snap - key) then removeReleased(key, isExclusive)
+            case _ => ()
+        end match
+    end removeReleased
+end NioPathLockRegistry
 
 /** Concrete read handle backed by a `java.nio.channels.FileChannel`.
   *

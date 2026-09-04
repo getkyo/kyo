@@ -539,6 +539,34 @@ class SignalTest extends kyo.test.Test[Any]:
             yield assert(v1 == (0, 1) && v2 == (0, 2))
         }
 
+        /** Each barrier below reports itself while it waits.
+          *
+          * This leaf has hung to its budget on a loaded CI leg, and the harness's hang dump names the leaf but carries no fiber trace, so
+          * the run said only "stuck" and not WHICH barrier nor what it observed. `assertEventually` retries on a fixed interval with no
+          * message, so an unreachable condition is indistinguishable from a slow one in the log. Reporting the label and the live counts
+          * while waiting turns the next sighting into a diagnosis: a barrier pinned at a count that never moves says the condition became
+          * unreachable, and a barrier that never appears says the leaf hung somewhere else entirely.
+          *
+          * The reporting is on the retry path only, so a passing run prints nothing and the assertion is unchanged. Nothing here waits on
+          * the clock: the harness budget remains the only failure detector.
+          */
+        def awaitBarrier(label: String, refA: SignalRef[Int], refB: SignalRef[Int])(cond: (Int, Int) => Boolean)(using
+            Frame,
+            kyo.test.AssertScope
+        ) =
+            val attempts = new java.util.concurrent.atomic.AtomicInteger(0)
+            assertEventually {
+                Kyo.zip(refA.waiters, refB.waiters).map { (a, b) =>
+                    val ok = cond(a, b)
+                    // Roughly every two seconds at the retry interval, often enough to be unmissable in a hung leg and rare enough not to
+                    // flood a log that is already large.
+                    if !ok && (attempts.incrementAndGet() % 200) == 0 then
+                        println(s"SIGNAL-BARRIER: waiting on $label, refA.waiters=$a refB.waiters=$b")
+                    ok
+                }
+            }
+        end awaitBarrier
+
         "interleaved self,other,self,other produces four emits" in {
             for
                 refA <- Signal.initRef(0)
@@ -547,15 +575,15 @@ class SignalTest extends kyo.test.Test[Any]:
                 f <- Fiber.initUnscoped(cl.streamChanges.take(5).run)
                 // streamChanges re-subscribes by racing refA.next and refB.next, so fire each change only after its waiter
                 // re-arms (a set in the re-arm gap is dropped, hanging the take). The first re-subscription is clean, so both refs arm to exactly 1.
-                _ <- assertEventually(Kyo.zip(refA.waiters, refB.waiters).map { case (a, b) => a == 1 && b == 1 })
+                _ <- awaitBarrier("initial-arm", refA, refB)((a, b) => a == 1 && b == 1)
                 _ <- refA.set(1)
                 // awaitAny cancels its losing branch without unregistering, leaving a ghost waiter; the next re-subscription
                 // arms that signal to 2 (ghost + live), so >= 2 proves the live re-arm landed, not a match on the stale ghost.
-                _  <- assertEventually(refB.waiters.map(_ >= 2))
+                _  <- awaitBarrier("after-setA-1", refA, refB)((_, b) => b >= 2)
                 _  <- refB.set(1)
-                _  <- assertEventually(refA.waiters.map(_ >= 2))
+                _  <- awaitBarrier("after-setB-1", refA, refB)((a, _) => a >= 2)
                 _  <- refA.set(2)
-                _  <- assertEventually(refB.waiters.map(_ >= 2))
+                _  <- awaitBarrier("after-setA-2", refA, refB)((_, b) => b >= 2)
                 _  <- refB.set(2)
                 vs <- f.get
             yield assert(vs == Chunk((0, 0), (1, 0), (1, 1), (2, 1), (2, 2)))

@@ -17,6 +17,11 @@ final private[kyo] class StreamSubscription[V, S](
 
     private val requestChannel = Channel.Unsafe.init[Long](Int.MaxValue)
 
+    // Whether the publisher stopped this subscription rather than the subscriber cancelling it. The two look identical downstream, since
+    // both close the request channel, but they owe the subscriber opposite things: a subscriber that cancelled has asked not to be
+    // signalled again, while one the publisher stopped never asked for anything and is still waiting for a terminal event.
+    private val stoppedByPublisher = new java.util.concurrent.atomic.AtomicBoolean(false)
+
     override def request(n: Long): Unit =
         if n <= 0 then subscriber.onError(new IllegalArgumentException("non-positive subscription request"))
         discard(requestChannel.offer(n))
@@ -25,6 +30,17 @@ final private[kyo] class StreamSubscription[V, S](
     override def cancel(): Unit =
         discard(requestChannel.close())
     end cancel
+
+    /** Stop this subscription because the publisher is going away, not because the subscriber asked.
+      *
+      * Ends the drain the same way `cancel` does, and records why, so the completion handler delivers the terminal error a subscriber that
+      * never cancelled is owed. Publisher teardown previously reused `cancel` and therefore inherited its silence, leaving such a
+      * subscriber waiting for an event nobody would send.
+      */
+    private[interop] def stopForPublisherTeardown(): Unit =
+        stoppedByPublisher.set(true)
+        discard(requestChannel.close())
+    end stopForPublisherTeardown
 
     private[interop] def subscribe(using Frame): Unit < Sync = Sync.defer(subscriber.onSubscribe(this))
 
@@ -78,7 +94,12 @@ final private[kyo] class StreamSubscription[V, S](
                     x match
                         case Result.Success(StreamComplete) => Sync.defer(subscriber.onComplete())
                         case Result.Panic(e)                => Sync.defer(subscriber.onError(e))
-                        case Result.Failure(StreamCanceled) => Kyo.unit
+                        case Result.Failure(StreamCanceled) =>
+                            // Silence is correct only when the SUBSCRIBER cancelled: it asked not to be signalled again. A subscription the
+                            // publisher stopped owes its subscriber a terminal event, and nothing else will send one.
+                            if stoppedByPublisher.get() then
+                                Sync.defer(subscriber.onError(StreamSubscription.PublisherStopped()))
+                            else Kyo.unit
                     end match
                 }.andThen(fiber)
             }
@@ -92,6 +113,13 @@ object StreamSubscription:
     case object StreamComplete
     type StreamCanceled = StreamCanceled.type
     case object StreamCanceled
+
+    /** Delivered to a subscriber whose publisher went away while it was still subscribed.
+      *
+      * The subscriber did not cancel, so the specification's allowance for going silent after a cancellation does not apply to it: it is
+      * owed a terminal event, and this is that event.
+      */
+    final class PublisherStopped extends RuntimeException("the publisher was torn down while this subscription was active")
 
     def subscribe[V, S](
         using Isolate[S, Sync, Any]

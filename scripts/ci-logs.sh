@@ -13,6 +13,7 @@ set -uo pipefail
 #   runs   <branch> [n]             --full                entire cleaned log
 #   running [branch]                --tail <n>            last n lines (n=40)
 #   pr     <number>                  --steps               per-job step status
+#                                    --totals              per-leg suite totals, every job
 #   open-prs                         --metrics             ci-monitor.sh resource
 #                                                          lines (implies all-jobs)
 #                                    --all-jobs            apply to ALL jobs,
@@ -26,6 +27,8 @@ set -uo pipefail
 #   ci-logs.sh run 281...948 --grep 'OutOfMemory'  # grep failed jobs of a run
 #   ci-logs.sh run 281...948 --grep Timeout --all-jobs   # grep every job
 #   ci-logs.sh run 281...948 --steps               # which step failed, timings
+#   ci-logs.sh run 281...948 --totals              # read a GREEN run: per-leg suite totals and
+#                                                  # whether the two arch legs of each target agree
 #
 # WHY a dedicated "failures" view: both test frameworks here (ScalaTest and
 # kyo-test) print " *** FAILED ***" on every failing leaf, and kyo-test's runner
@@ -58,6 +61,7 @@ while [ $# -gt 0 ]; do
         --tail)     VIEW=tail; TAIL_N="${2:?--tail needs a count}"; shift ;;
         --steps)    VIEW=steps ;;
         --all-jobs) ALL_JOBS=1 ;;
+        --totals)   VIEW=totals; ALL_JOBS=1 ;;
         *)          POS+=("$1") ;;
     esac
     shift
@@ -71,7 +75,11 @@ set -- "${POS[@]:-}"
 export GH_REPO="$REPO"
 
 # Strip ANSI, CR, and the leading ISO-8601 job-log timestamp prefix.
-clean() { perl -pe 's/\e\[[0-9;]*m//g; s/\r$//; s/^\d{4}-\d{2}-\d{2}T[\d:.]+Z[ \t]*//'; }
+# The BOM strip comes first and is not optional: the log API emits a UTF-8 byte order mark at chunk
+# boundaries, mid-file, in front of a timestamp. Every pattern below anchors on the start of the line, so a
+# line that keeps its timestamp because the BOM blocked the strip matches nothing, and a genuine failure on
+# such a line is reported as no failure at all.
+clean() { perl -pe 's/^\x{EF}\x{BB}\x{BF}//; s/\e\[[0-9;]*m//g; s/\r$//; s/^\d{4}-\d{2}-\d{2}T[\d:.]+Z[ \t]*//'; }
 
 # --failures: print only sbt's authoritative real-failure lines. Exit 9 if none.
 extract() {
@@ -99,6 +107,22 @@ infra_tail() {
         | tail -6 | sed 's/^/  infra:       /'
 }
 
+# Per-suite totals for one job's cleaned log.
+#
+# The mandate this drive works under requires a green run to be read on its suite totals rather than its
+# conclusion field, and doing that by hand is how a UTF-8 BOM once turned one leg's count into a phantom
+# arch discrepancy. The match is deliberately NOT anchored to the start of the line, so a stray prefix
+# costs nothing even if the cleaner ever misses one.
+totals_of() {
+    perl -ne '
+        if (/(?:^|\s)--- \S+: (\d+) passed, (\d+) failed(?:, (\d+) cancelled)?/) {
+            $n++; $p += $1; $f += $2; $c += (defined $3 ? $3 : 0);
+        }
+        END { printf("  suites=%d passed=%d failed=%d cancelled=%d passed+cancelled=%d\n",
+                     $n, $p, $f, $c, $p + $c); }
+    '
+}
+
 # Apply the selected view to a job's cleaned log (read from a variable).
 show_log() {
     local log="$1"
@@ -108,6 +132,17 @@ show_log() {
         grep)     printf '%s\n' "$log" | grep -aiE "$GREP_RE" | sed 's/^/  /' || echo "  (no matches)" ;;
         full)     printf '%s\n' "$log" ;;
         tail)     printf '%s\n' "$log" | tail -n "$TAIL_N" | sed 's/^/  /' ;;
+        totals)
+            local tline
+            tline="$(printf '%s\n' "$log" | totals_of)"
+            printf '%s\n' "$tline"
+            if [ -n "${TOTALS_FILE:-}" ] && [ -n "${TOTALS_JOB:-}" ]; then
+                # "build (linux-x64) / build (Native)" reduces to "linux-x64/Native" so the pair is groupable.
+                printf '%s %s\n' \
+                    "$(printf '%s' "$TOTALS_JOB" | sed -E 's/build \(([^)]*)\) \/ build \(([^)]*)\)/\1\/\2/')" \
+                    "$(printf '%s' "$tline" | sed 's/^ *//')" >> "$TOTALS_FILE"
+            fi
+            ;;
     esac
 }
 
@@ -131,6 +166,35 @@ run_steps() {
             | "    step \(.number) \(.name): \(.status)/\(.conclusion // "running")")'
 }
 
+# The two arch legs of one target must agree on suites and on passed+cancelled. Their CANCELLED splits
+# differ legitimately (a leg that cannot host a browser cancels those leaves instead of running them), so
+# neither figure alone is comparable; the sum is. A disagreement means one arch silently skipped work that
+# the other ran, which no conclusion field ever reports.
+arch_check() {
+    local f="$1"
+    [ -s "$f" ] || return 0
+    echo "------------------------------------------------------------------"
+    echo "ARCH AGREEMENT (linux-x64 vs linux-arm64, per target)"
+    perl -ne '
+        next unless /^(\S+)\s+suites=(\d+).*passed\+cancelled=(\d+)/;
+        my ($job, $su, $pc) = ($1, $2, $3);
+        next unless $job =~ /^(linux-x64|linux-arm64)\/(\S+)$/;
+        $seen{$2}{$1} = "$su/$pc";
+        END {
+            my $bad = 0;
+            for my $t (sort keys %seen) {
+                my $x = $seen{$t}{"linux-x64"}; my $a = $seen{$t}{"linux-arm64"};
+                next unless defined $x && defined $a;
+                my $ok = ($x eq $a);
+                $bad++ unless $ok;
+                printf("  %-8s x64=%-14s arm64=%-14s %s\n", $t, $x, $a, $ok ? "AGREE" : "DISAGREE");
+            }
+            print "  (no arch pair present in this run)\n" unless keys %seen;
+            print "  a DISAGREE means one arch skipped suites the other ran; read that leg before trusting the run\n" if $bad;
+        }
+    ' "$f"
+}
+
 inspect_run() {
     local runid="$1" meta
     meta="$(gh run view "$runid" --json status,conclusion,displayTitle,headSha,workflowName 2>/dev/null)"
@@ -151,17 +215,33 @@ inspect_run() {
     running=$(gh run view "$runid" --json jobs \
         --jq '.jobs[] | select(.status=="in_progress" or .status=="queued") | .name' 2>/dev/null)
 
+    if [ "$VIEW" = totals ]; then
+        TOTALS_FILE="$(mktemp)"; export TOTALS_FILE
+        trap 'rm -f "$TOTALS_FILE"' RETURN
+    fi
+
     if [ -z "$jobs" ] && [ -z "$running" ]; then echo "  no failed jobs."; return; fi
     if [ -n "$jobs" ]; then
         while IFS=$'\t' read -r jid jname; do
             [ -z "$jid" ] && continue
             echo "------------------------------------------------------------------"
             echo "JOB: $jname  (db=$jid)"
-            inspect_job "$jid"
+            TOTALS_JOB="$jname" inspect_job "$jid"
         done <<< "$jobs"
     fi
     [ -n "$running" ] && { echo "------------------------------------------------------------------";
         echo "STILL RUNNING:"; printf '%s\n' "$running" | sed 's/^/  ... /'; }
+    # Only meaningful once every leg has finished: legs mid-run are simply at different points, and comparing
+    # them reports a disagreement that says nothing about what either leg will end up running.
+    if [ "$VIEW" = totals ]; then
+        if [ "$(jq -r .status <<<"$meta")" = completed ]; then
+            arch_check "$TOTALS_FILE"
+        else
+            echo "------------------------------------------------------------------"
+            echo "ARCH AGREEMENT: skipped, run still in progress (legs are at different points)"
+        fi
+    fi
+    return 0
 }
 
 as_id() { printf '%s' "$1" | grep -oE '[0-9]+' | tail -1; }

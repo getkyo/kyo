@@ -50,6 +50,7 @@ CI_MEMORY="${CI_MEMORY:-16g}"
 CI_CPUS="${CI_CPUS:-4}"
 CI_DRIVER_OPTS="-Xmx12G -Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8"
 CONTAINER_IMAGE="${KYO_BUILD_IMAGE:-ubuntu:noble}"
+apt_mirror="${KYO_APT_MIRROR:-}"
 
 ENV_KIND="direct"
 ARCH="native"
@@ -124,7 +125,17 @@ podman_platform() {
     case "$ARCH" in
         x86) echo "linux/amd64" ;;
         arm) echo "linux/arm64" ;;
-        *)   echo "" ;;
+        # A native run names the host's own platform rather than leaving the choice open. Without it podman resolves the image tag to
+        # whichever architecture happens to be cached, so a single cross-arch pull by anything on the machine silently turns every later
+        # native run into an emulated one. That failure is expensive to recognise: the run does not error, it slows down and then dies
+        # inside qemu on the JVM toolchain, far from the pull that caused it.
+        *)
+            case "$(host_arch)" in
+                x86) echo "linux/amd64" ;;
+                arm) echo "linux/arm64" ;;
+                *)   echo "" ;;
+            esac
+            ;;
     esac
 }
 
@@ -185,7 +196,11 @@ container_provision() {
     local sbt_version; sbt_version=$(sed -n 's/^sbt.version=//p' "$PROJECT_DIR/project/build.properties")
     # liburing-dev + libssl-dev: the kyo-net JVM FFI shims link the io_uring (-luring) and OpenSSL TLS data planes; without them
     # kyo-netJVM's ffiCompile fails (cannot find -luring). Small and always installed so any kyo-net command builds in the container.
-    local apt_pkgs="curl ca-certificates patch liburing-dev libssl-dev"
+    # openssl is the CLI, not the library libssl-dev provides, and the base image ships without it. The
+    # kyo-sql TLS suites generate their server cert and key by shelling out to it, so without it every
+    # such leaf fails as "SSL not ready" with a Postgres that started perfectly well and simply has no
+    # certificate, which reads like a TLS defect rather than a missing tool.
+    local apt_pkgs="curl ca-certificates patch liburing-dev libssl-dev openssl"
     local node_pkgs="" native_pkgs="" bssl_pkgs="" aeron_pkgs=""
     # Alpine equivalents, used when KYO_BUILD_IMAGE names a musl image. Alpine spells the OpenSSL and
     # libuuid development packages differently (openssl-dev, util-linux-dev) and has no separate
@@ -270,6 +285,16 @@ fi'
     cat <<PROVISION
 export DEBIAN_FRONTEND=noninteractive
 if command -v apt-get >/dev/null 2>&1; then
+    # Every run provisions from a bare image, so one unreachable Ubuntu mirror stalls the whole loop
+    # (ports.ubuntu.com has timed out for a stretch while the rest of the network was fine). KYO_APT_MIRROR
+    # points apt at a reachable mirror instead; unset, nothing changes. Both source formats are rewritten
+    # because noble ships deb822 while older images still use the one-line list.
+    if [ -n "${apt_mirror}" ]; then
+        for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list; do
+            [ -f "\$f" ] || continue
+            sed -i -e "s#https\\?://[a-z0-9.-]*/\\(ubuntu-ports\\|ubuntu\\)\\b#${apt_mirror}#g" "\$f"
+        done
+    fi
     apt-get update -qq >/dev/null
     apt-get install -y -qq -o Acquire::Retries=3 $apt_pkgs $node_pkgs $native_pkgs $bssl_pkgs $aeron_pkgs >/dev/null
 elif command -v apk >/dev/null 2>&1; then
@@ -330,6 +355,16 @@ run_in_container() {
     if [ -n "${KYO_BUILD_OUT:-}" ]; then
         mkdir -p "$KYO_BUILD_OUT"
         args+=(-v "$KYO_BUILD_OUT:/output")
+    fi
+    # A container starts with no dependency cache, so every run re-fetches the JDK and the whole dependency set before it can compile
+    # anything. That is slow on every run and fragile on all of them: one refused connection to the JDK host leaves the container with no
+    # `java` at all, and the run dies having produced no test output, which reads as an empty result rather than as a failed download.
+    # Persisting the cache on the host removes both problems, and it is safe to share across runs because coursier's layout is
+    # content-addressed. KYO_BUILD_NO_CACHE forces the cold path for anyone who wants to reproduce a from-scratch fetch.
+    if [ -z "${KYO_BUILD_NO_CACHE:-}" ]; then
+        local cache="${KYO_BUILD_CACHE:-$HOME/.cache/kyo-build-container}"
+        mkdir -p "$cache/coursier" "$cache/sbt" "$cache/ivy"
+        args+=(-v "$cache/coursier:/root/.cache/coursier" -v "$cache/sbt:/root/.sbt" -v "$cache/ivy:/root/.ivy2")
     fi
     local envs=()
     # Forward the leak-debug flag so the forked test JVM (which inherits the container env) runs leaves serially and attributes each leaked

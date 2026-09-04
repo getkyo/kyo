@@ -90,6 +90,18 @@ private[net] trait IoUringBindings extends Ffi:
     /** `io_uring_prep_connect(sqe, fd, addr, addrlen)`. */
     def kyo_uring_prep_connect(sqe: Ffi.Handle[IoUringSqe], fd: Int, addr: Buffer[Byte], addrlen: Int)(using AllowUnsafe): Unit
 
+    /** `io_uring_prep_cancel64(sqe, userData, flags)`: ask the kernel to cancel the in-flight op registered under `userData`.
+      *
+      * Targets the op by KEY rather than by descriptor, which is what makes it the only way to retire a connect. A connect submission is
+      * backed by an internal poll wait that neither `close(2)` nor a `shutdown(2)` on a socket still in SYN-SENT completes, so without a
+      * cancel its completion never arrives and any bookkeeping waiting on that completion waits forever.
+      *
+      * The cancel reports one of three outcomes and all of them are normal: success, `-ENOENT` when the target already completed and its
+      * completion is reaped or on its way, and `-EALREADY` when it is completing. In every case the target's OWN completion still arrives,
+      * so a caller must retire the target on that completion and never on this one.
+      */
+    def kyo_uring_prep_cancel64(sqe: Ffi.Handle[IoUringSqe], userData: Long, flags: Int)(using AllowUnsafe): Unit
+
     /** Multishot poll: `IORING_OP_POLL_ADD | IORING_POLL_ADD_MULTI`. One submission re-fires a CQE every time `fd` becomes ready for
       * `pollMask` (e.g. `POLLIN`), staying armed across completions (each carries `IORING_CQE_F_MORE`). Armed on the driver's wake eventfd so a
       * cross-carrier `kyo_uring_eventfd_write` returns the parked reap wait promptly instead of leaving the reap loop parked indefinitely.
@@ -98,6 +110,15 @@ private[net] trait IoUringBindings extends Ffi:
 
     /** Non-blocking `poll(2)` peer-close probe, off the ring (see kyo_uring.c for the POLLRDHUP rationale). Returns 1 peer gone, 0 open, -1 error. */
     def kyo_uring_poll_peer_closed(fd: Int)(using AllowUnsafe): Int
+
+    /** `io_uring_prep_nop(sqe)`. Turns an already-acquired SQE into a no-op.
+      *
+      * `io_uring_get_sqe` advances the submission tail as it hands the entry out, so the slot goes to the kernel whether or not the caller
+      * fills it in: acquiring is a commitment, not a reservation that can be released. liburing does not clear a reused SQE, so a slot left
+      * untouched still carries the previous occupant's opcode and would re-issue it against a stale descriptor. A caller that acquires an SQE
+      * and then cannot use it prepares a nop here and gives it a key the reap side recognises and discards.
+      */
+    def kyo_uring_prep_nop(sqe: Ffi.Handle[IoUringSqe])(using AllowUnsafe): Unit
 
     /** `io_uring_sqe_set_data64(sqe, data)`. Stores the per-op key the completion is matched against. */
     def kyo_uring_sqe_set_data64(sqe: Ffi.Handle[IoUringSqe], data: Long)(using AllowUnsafe): Unit
