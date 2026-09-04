@@ -94,6 +94,80 @@ class CCompilerTest extends AnyFunSuite with Matchers {
         cmd should contain("-pthread")
     }
 
+    test("buildCommand: an MSVC DLL gets the dynamic CRT, so it shares errno with its loader") {
+        // cl defaults to the static CRT, which gives the library a private errno the host's Panama
+        // capture cannot see. staticLink is about vendored archives and must not change this.
+        val cmd = CCompiler.buildCommand(
+            cc = "cl",
+            family = CCompiler.Msvc,
+            cFlags = Seq("-O2", "-Wall"),
+            linkFlags = Nil,
+            linkLibs = Nil,
+            sources = Seq(new File("/tmp/foo.c")),
+            includes = Nil,
+            outFile = new File("/tmp/foo.dll"),
+            staticLink = true,
+            os = "windows"
+        )
+        cmd should contain("/MD")
+        cmd should not contain "/MT"
+    }
+
+    test("buildCommand: an explicit CRT model in cFlags is kept, not overridden") {
+        val cmd = CCompiler.buildCommand(
+            cc = "cl",
+            family = CCompiler.Msvc,
+            cFlags = Seq("/MT", "-O2"),
+            linkFlags = Nil,
+            linkLibs = Nil,
+            sources = Seq(new File("/tmp/foo.c")),
+            includes = Nil,
+            outFile = new File("/tmp/foo.dll"),
+            staticLink = false,
+            os = "windows"
+        )
+        cmd should contain("/MT")
+        cmd.count(_ == "/MD") shouldBe 0
+    }
+
+    test("buildCommand: a gcc-style Windows compile drops -fPIC, which clang-msvc rejects") {
+        // A gcc-style compiler may target Windows: on aarch64 the image's MinGW gcc emits
+        // x64 objects. clang targeting aarch64-pc-windows-msvc errors on -fPIC rather than ignoring it,
+        // so a Windows DLL built through the gcc-style path must not carry it. cl gets the same result
+        // through translateFlagMsvc.
+        val cmd = CCompiler.buildCommand(
+            cc = "clang",
+            family = CCompiler.Gcc,
+            cFlags = Seq("-O2", "-fPIC", "-Wall"),
+            linkFlags = Nil,
+            linkLibs = Nil,
+            sources = Seq(new File("/tmp/foo.c")),
+            includes = Nil,
+            outFile = new File("/tmp/kyonet_posix_uring-windows-aarch64.dll"),
+            staticLink = false,
+            os = "windows"
+        )
+        cmd should not contain "-fPIC"
+        cmd should contain("-O2")
+        cmd should contain("-Wall")
+    }
+
+    test("buildCommand: a gcc-style non-Windows compile keeps -fPIC") {
+        val cmd = CCompiler.buildCommand(
+            cc = "gcc",
+            family = CCompiler.Gcc,
+            cFlags = Seq("-O2", "-fPIC", "-Wall"),
+            linkFlags = Nil,
+            linkLibs = Nil,
+            sources = Seq(new File("/tmp/foo.c")),
+            includes = Nil,
+            outFile = new File("/tmp/libfoo-linux-x86_64.so"),
+            staticLink = false,
+            os = "linux"
+        )
+        cmd should contain("-fPIC")
+    }
+
     test("buildCommand: MSVC routes /LIBPATH and libs through /link so the linker finds a vendored .lib") {
         // Regression: `/LIBPATH:` is a linker option cl silently ignores on the compiler command line,
         // so a vendored library named by linkLibs + libDirs (e.g. aeron_driver_static.lib staged under a
@@ -309,7 +383,10 @@ class CCompilerTest extends AnyFunSuite with Matchers {
         assert(bStatic >= 0 && luring > bStatic && bDyn > luring)
     }
 
-    test("staticLink: MSVC adds /MT") {
+    test("staticLink: MSVC does NOT let it pick the CRT model") {
+        // staticLink folds vendored third-party archives in; /MT swaps the CRT. They are different
+        // things, and a DLL built with the static CRT gets a private errno and malloc heap its loader
+        // cannot read. The DLL keeps the dynamic CRT whatever staticLink says.
         val cmd = CCompiler.buildCommand(
             cc = "cl.exe",
             family = CCompiler.Msvc,
@@ -321,7 +398,8 @@ class CCompilerTest extends AnyFunSuite with Matchers {
             outFile = new File("C:/tmp/out.dll"),
             staticLink = true
         )
-        cmd should contain("/MT")
+        cmd should contain("/MD")
+        cmd should not contain "/MT"
     }
 
     test("staticLink: false produces no static flags (gcc)") {

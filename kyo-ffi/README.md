@@ -903,7 +903,7 @@ FfiLibrary(id = "machine_macos", cSources = macSources, osTargets = Seq("darwin"
 FfiLibrary(id = "net_boringssl", cSources = tlsSources, osTargets = Seq("linux", "linux-musl", "darwin"))
 ```
 
-On a platform a library does not name, `Ffi.load` raises a catchable `FfiLoadError.LibraryNotFound` unless the native resolves from a `-Dkyo.ffi.<id>.path` override or a system install, so a consumer degrades with an ordinary `NonFatal` guard. Do not name `osTargets` for a library that must stay CALLABLE off its own platform: a shim whose C defines real entry points everywhere so an unsupported call answers an error code, rather than compiling to stubs nobody reaches, is relying on being loadable and must ship everywhere.
+On the JVM, where the native manifest is read, a platform a library does not name makes `Ffi.load` raise a catchable `FfiLoadError.LibraryNotFound` unless the native resolves from a `-Dkyo.ffi.<id>.path` override or a system install, so a consumer degrades with an ordinary `NonFatal` guard. JS ships no manifest and raises the same error from its own loader at the first binding call instead; Native links its C at build time and is unaffected. Do not name `osTargets` for a library that must stay CALLABLE off its own platform: a shim whose C defines real entry points everywhere so an unsupported call answers an error code, rather than compiling to stubs nobody reaches, is relying on being loadable and must ship everywhere.
 
 Scala Native is unaffected either way: it compiles every declared C source into the binary on every OS, which is what keeps the stub symbols resolvable there. `osTargets` governs the JVM and JS shared library only.
 

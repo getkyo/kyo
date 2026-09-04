@@ -200,14 +200,13 @@ container_provision() {
     # kyo-sql TLS suites generate their server cert and key by shelling out to it, so without it every
     # such leaf fails as "SSL not ready" with a Postgres that started perfectly well and simply has no
     # certificate, which reads like a TLS defect rather than a missing tool.
-    local apt_pkgs="curl ca-certificates patch liburing-dev libssl-dev openssl"
+    # file + binutils are not optional either: native_assert_arch reads a member of the staged archive
+    # to prove it is really for the target architecture, and fails when either tool is missing.
+    local apt_pkgs="curl ca-certificates patch liburing-dev libssl-dev openssl file binutils"
     local node_pkgs="" native_pkgs="" bssl_pkgs="" aeron_pkgs=""
     # Alpine equivalents, used when KYO_BUILD_IMAGE names a musl image. Alpine spells the OpenSSL and
     # libuuid development packages differently (openssl-dev, util-linux-dev) and has no separate
     # ca-certificates-for-curl split, so the lists are mapped rather than shared.
-    # `file` is not optional here: native_assert_arch's linux branch soft-skips its architecture
-    # assertion when ar or file is missing, so without it the local musl repro would silently check
-    # less than release.yml's Alpine legs, which apk-add both.
     local apk_pkgs="bash curl ca-certificates patch liburing-dev openssl-dev tar file binutils"
     local apk_node_pkgs="" apk_native_pkgs="" apk_bssl_pkgs="" apk_aeron_pkgs=""
     # "all" provisions the union (raw sbt mode may run any platform's command in the container).
@@ -255,7 +254,7 @@ fi'
         aeron_pkgs="build-essential git uuid-dev"
         # util-linux-dev is Alpine's libuuid: the Aeron driver links -luuid on Linux, musl included.
         apk_aeron_pkgs="build-base git util-linux-dev linux-headers cmake"
-        # Aeron 1.50.2's CMakeLists sets cmake_minimum_required(3.30) and noble's apt cmake is 3.28, so apt cannot satisfy it. GitHub
+        # Aeron 1.51.1's CMakeLists sets cmake_minimum_required(3.30) and noble's apt cmake is 3.28, so apt cannot satisfy it. GitHub
         # runners only avoid this because they preinstall a newer cmake; the setup action's apt fallback would hit the same wall.
         # Install the upstream binary unless the image already carries >= 3.30.
         aeron_setup='
@@ -273,7 +272,7 @@ if [ "$cmake_ok" != 1 ]; then
     if command -v apk >/dev/null 2>&1; then
         # Kitware ships glibc binaries only, so there is no upstream tarball to fall back to on musl.
         # Alpine'"'"'s own cmake is the only source; say so rather than installing something unrunnable.
-        echo "cmake >= 3.30 required for Aeron 1.50.2 and this musl image has $(cmake --version 2>/dev/null | head -1)." >&2
+        echo "cmake >= 3.30 required for Aeron 1.51.1 and this musl image has $(cmake --version 2>/dev/null | head -1)." >&2
         echo "Use an Alpine release whose apk cmake is >= 3.30." >&2
         exit 1
     fi

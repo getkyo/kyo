@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build the static Aeron C library (libaeron_driver_static.a, which embeds the full client) at the
-# pinned 1.50.2 tag and stage it per os-arch for kyo-aeron.
+# pinned 1.51.1 tag and stage it per os-arch for kyo-aeron.
 # Run once per runner os-arch before the kyo-aeron compile step; produced archives are
 # build artifacts (gitignored), consumed by the kyo_aeron FfiLibrary.
 #
@@ -29,7 +29,7 @@ here="$(cd "$(dirname "$0")" && pwd)"
 native_resolve_target "${1:-}" \
     "linux-x86_64 linux-aarch64 linux-musl-x86_64 linux-musl-aarch64 darwin-x86_64 darwin-aarch64 windows-x86_64 windows-aarch64"
 
-AERON_VERSION="1.50.2"
+AERON_VERSION="1.51.1"
 AERON_TAG="$AERON_VERSION"
 
 src="${AERON_SRC:-${TMPDIR:-/tmp}/kyo-aeron-src}"
@@ -51,11 +51,12 @@ mkdir -p "$dest/lib" "$dest/include/aeron" "$dest/include/aeronmd"
 # the second's name. Separate dirs also let both Mac arches be built on one runner without a wipe.
 build="$src/build-$osArch"
 
-# Aeron 1.50.2 only supports Windows under MSVC: its sources gate Windows compatibility on
-# `_MSC_VER` (e.g. the sys/uio.h shim), so MinGW cannot build it. On Windows the build therefore
-# uses cmake's default Visual Studio generator (which locates MSVC itself, no vcvars needed) and a
-# multi-config Release build; every other host keeps the single-config Unix Makefiles build with
-# PIC (required on Linux aarch64, harmless elsewhere).
+# Aeron only supports Windows under MSVC: its sources gate Windows compatibility on `_MSC_VER`
+# (e.g. the sys/uio.h shim), so MinGW cannot build it. On Windows the build therefore uses cmake's
+# default Visual Studio generator and a multi-config Release build; every other host keeps the
+# single-config Unix Makefiles build with PIC (required on Linux aarch64, harmless elsewhere).
+# The MSVC environment must already be initialized on Windows (vcvars64.bat / vcvarsarm64.bat):
+# the target architecture is read from the `cl` on PATH, and the archive check needs `dumpbin`.
 case "$os" in
     windows)
         # -A pins the target platform. Without it the generator picks its own default, which is the

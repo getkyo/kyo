@@ -30,7 +30,7 @@ import sys.process._
   *   - gcc / clang / zig: wrap the libs in `-Wl,-Bstatic <libs> -Wl,-Bdynamic` (the GNU ld /
   *     lld static toggle). A bare `-static` is NOT used: it forces libc.a into the `-shared`
   *     object and GNU ld then fails on `__fini_array_*` / `_dl_debug_state`.
-  *   - MSVC: link the named `.lib` and add `/MT` to statically link the CRT.
+  *   - MSVC: link the named `.lib`. The CRT model is chosen separately and is always dynamic.
   *   - With no `linkLibs`, `staticLink` is a no-op (nothing to fold). darwin's ld64 has no
   *     `-Bstatic`; the shims that use `staticLink` declare their static libs only on linux,
   *     so this toggle is only ever emitted under GNU ld / lld.
@@ -183,7 +183,15 @@ private[sbt] object CCompiler {
         case Msvc =>
             val translatedFlags = cFlags.flatMap(translateFlagMsvc)
             val includeFlags    = includes.map(d => "/I" + d.getAbsolutePath)
-            val staticFlag      = if (staticLink) Seq("/MT") else Nil
+            // A DLL shares CRT state (errno, the malloc heap, FILE*) with its loader only when both use
+            // the DYNAMIC CRT. cl defaults to the static one, which hands the library a private errno
+            // that the host's Panama capture cannot observe, so a failing call reports 0 instead of its
+            // real code. `staticLink` is about vendored third-party archives, not the CRT, and must not
+            // select /MT here. A caller that genuinely needs a different model states it in cFlags and
+            // keeps it.
+            val crtFlag =
+                if (cFlags.exists(f => f == "/MD" || f == "/MT" || f == "/MDd" || f == "/MTd")) Nil
+                else Seq("/MD")
             val libDirFlags     = libDirs.map(d => "/LIBPATH:" + d.getAbsolutePath)
             val libFlags        = linkLibs.map(l => l + ".lib")
             val objectDirFlag   = "/Fo:" + outFile.getAbsoluteFile.getParentFile.getAbsolutePath + File.separator
@@ -193,12 +201,18 @@ private[sbt] object CCompiler {
             // the linker cannot find a vendored .lib (LNK1181). The libs found via the LIB env (winsock,
             // the CRT) resolve either way.
             val linkerArgs = linkFlags ++ libDirFlags ++ libFlags
-            splitCc(cc) ++ Seq("/LD") ++ translatedFlags ++ staticFlag ++ includeFlags ++
+            splitCc(cc) ++ Seq("/LD") ++ translatedFlags ++ crtFlag ++ includeFlags ++
                 sources.map(_.getAbsolutePath) ++
                 Seq(objectDirFlag, "/Fe:" + outFile.getAbsolutePath) ++
                 (if (linkerArgs.nonEmpty) Seq("/link") ++ linkerArgs else Nil)
         case _ =>
             val includeFlags = includes.flatMap(d => Seq("-I", d.getAbsolutePath))
+            // A Windows DLL has no PIC, and clang targeting *-windows-msvc REJECTS -fPIC rather than
+            // ignoring it, so a gcc-style compile for Windows has to drop it the way translateFlagMsvc
+            // already does for cl. This is reachable because the windows-arm64 producer compiles with
+            // clang: the image's MinGW gcc emits x64 objects and cannot serve that pole.
+            val targetCFlags =
+                if (os == "windows") cFlags.filterNot(_ == "-fPIC") else cFlags
             // staticLink folds the named libs into the .so via the GNU ld / lld static toggle,
             // leaving libc + implicit libraries dynamic. A bare `-static` is invalid here: it
             // pulls libc.a into a `-shared` link and ld fails on `__fini_array_*`. With no
@@ -217,7 +231,7 @@ private[sbt] object CCompiler {
             // The Native archive link (ffiNativeLinkingOptions) already appends linkFlags after the
             // archives; this matches that order. linkFlags is empty for every other library, so the order
             // is a no-op there.
-            splitCc(cc) ++ Seq("-shared") ++ cFlags ++ includeFlags ++
+            splitCc(cc) ++ Seq("-shared") ++ targetCFlags ++ includeFlags ++
                 sources.map(_.getAbsolutePath) ++
                 Seq("-o", outFile.getAbsolutePath) ++
                 linkLibFlags ++ linkFlags

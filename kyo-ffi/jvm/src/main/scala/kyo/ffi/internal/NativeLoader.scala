@@ -210,12 +210,14 @@ object NativeLoader:
                     val declared =
                         if bundledPlatforms.isEmpty then "no platform"
                         else bundledPlatforms.toSeq.sorted.mkString(", ")
-                    val path = resourcePath(libraryId, os, arch)
-                    val candidates = Chunk(
-                        s"resource path: $path",
-                        s"override -Dkyo.ffi.$libraryId.path",
-                        s"system library: $libraryId"
-                    )
+                    val path   = resourcePath(libraryId, os, arch)
+                    val mapped = System.mapLibraryName(libraryId).nn
+                    val overrideCandidate = sys.props.get(s"kyo.ffi.$libraryId.path") match
+                        case Some(p) => s"override -Dkyo.ffi.$libraryId.path=$p (file missing)"
+                        case None    => s"override -Dkyo.ffi.$libraryId.path (unset)"
+                    val candidates =
+                        Chunk(s"resource path: $path", overrideCandidate, s"system library: $libraryId") ++
+                            (if mapped != libraryId then Chunk(s"system library: $mapped") else Chunk.empty)
                     val msg =
                         s"Native library '$libraryId' is not bundled for $osArch: the kyo-ffi native manifest " +
                             s"declares it for $declared. It did not resolve from the classpath, from a readable " +
@@ -226,12 +228,20 @@ object NativeLoader:
                 end if
             else
                 val overridePath = sys.props.get(s"kyo.ffi.$libraryId.path")
-                val overrideOk   = overridePath.exists(p => Files.exists(Paths.get(p)))
                 val path         = resourcePath(libraryId, os, arch)
-                val stream       = getClass.getResourceAsStream(path)
-                val resourceOk   = stream != null
-                if stream != null then stream.close()
-                if overrideOk || resourceOk then ()
+                // loadLocked uses an override unconditionally and consults nothing else, so when one is set
+                // its file decides: a resource on the classpath must not vouch for an override that is missing.
+                val accounted =
+                    overridePath match
+                        case Some(p) => Files.exists(Paths.get(p))
+                        case None =>
+                            val stream = getClass.getResourceAsStream(path)
+                            if stream != null then
+                                stream.close()
+                                true
+                            else false
+                            end if
+                if accounted then ()
                 else
                     val overrideCandidate = overridePath match
                         case Some(p) => s"override -Dkyo.ffi.$libraryId.path=$p (file missing)"
@@ -250,20 +260,27 @@ object NativeLoader:
 
     /** Whether `id` resolves without being bundled for this platform: a readable override, a bundled resource
       * that is present anyway, or a system install reachable by the literal or platform-mapped name.
+      *
+      * Follows `loadLocked`'s precedence rather than trying every route: an override, when set, is the only
+      * one the load will take.
       */
     private def resolvableOutsideBundle(id: String, os: Os, arch: Arch): Boolean =
-        val overridePath = sys.props.get(s"kyo.ffi.$id.path")
-        if overridePath.exists(p => Files.exists(Paths.get(p))) then true
-        else
-            val stream = getClass.getResourceAsStream(resourcePath(id, os, arch))
-            if stream != null then
-                stream.close()
-                true
-            else
-                val mapped = System.mapLibraryName(id).nn
-                tryLookup(id).isDefined || (mapped != id && tryLookup(mapped).isDefined)
-            end if
-        end if
+        sys.props.get(s"kyo.ffi.$id.path") match
+            case Some(p) => Files.exists(Paths.get(p))
+            case None =>
+                val stream = getClass.getResourceAsStream(resourcePath(id, os, arch))
+                if stream != null then
+                    stream.close()
+                    true
+                else
+                    // A probe, not the load. Any refusal means "not resolvable here", including a runtime that
+                    // denies native access outright (--illegal-native-access=deny), so this cannot make Ffi.load
+                    // raise an exception type it did not raise before.
+                    try
+                        val mapped = System.mapLibraryName(id).nn
+                        tryLookup(id).isDefined || (mapped != id && tryLookup(mapped).isDefined)
+                    catch case _: Throwable => false
+                end if
     end resolvableOutsideBundle
 
     /** `dlopen` `name` into the global arena, returning `None` when the platform linker rejects it. */

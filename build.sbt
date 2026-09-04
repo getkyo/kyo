@@ -1157,7 +1157,8 @@ lazy val `kyo-ffi-it` =
             ffiLibraries := Seq(
                 FfiLibrary(
                     id = "kyo_it_bundled",
-                    cSources = (baseDirectory.value / ".." / "shared" / "src" / "main" / "c" ** "*.c").get
+                    cSources = (baseDirectory.value / ".." / "shared" / "src" / "main" / "c" ** "*.c").get,
+                    cHeaders = (baseDirectory.value / ".." / "shared" / "src" / "main" / "c" ** "*.h").get
                 )
             )
         )
@@ -1963,6 +1964,7 @@ lazy val `kyo-net` =
                     FfiLibrary(
                         id = "kyonet_posix_uring",
                         cSources = (sharedBase / "src" / "main" / "c" ** "*.c").get,
+                        cHeaders = (sharedBase / "src" / "main" / "c" ** "*.h").get,
                         linkLibsByOs = Map("linux" -> Seq("uring")),
                         staticLink = true
                     ),
@@ -2183,8 +2185,8 @@ lazy val `kyo-aeron` =
                         linkFlags = linuxSystemLinkFlags,
                         // Aeron supports Windows only under MSVC (its sources gate on _MSC_VER) and forces
                         // the dynamic CRT (/MD), so on Windows the shim compiles with cl and /MD.
-                        // staticLink=true would add /MT (static CRT) and clash with aeron's /MD; the aeron
-                        // .lib is embedded by the link regardless, so Windows uses staticLink=false.
+                        // The aeron .lib is embedded by the link regardless, so Windows uses
+                        // staticLink=false; the /MD above states the CRT model the archive was built with.
                         cFlags = if (isWindows) Seq("/MD") else Nil,
                         compilerByOs = if (isWindows) Map("windows" -> "cl") else Map.empty,
                         staticLink = !isWindows

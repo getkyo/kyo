@@ -196,29 +196,39 @@ runs:
         # SBT_UPDATE_LIMIT=1: serialize dependency resolution; concurrent resolution
         # trips Windows file locking (see build.sbt concurrentRestrictions).
         # CC: the kyo-ffi plugin and kyo-ffi-it compile C libraries with `cc`, which the Windows
-        # images do not provide. On x64 that is MinGW gcc. On arm64 it cannot be: the image ships an
-        # x86_64-w64-mingw32 gcc, which would emit x64 objects for a native named aarch64, so that
-        # pole uses the image's LLVM clang, which targets the host.
+        # images do not provide. On x64 that is MinGW gcc, whose ld also auto-exports every symbol,
+        # which is what makes those DLLs usable without export annotations.
+        #
+        # arm64 has neither: the image's gcc is x86_64-w64-mingw32 and would emit x64 objects under an
+        # aarch64 name, and clang targeting aarch64-pc-windows-msvc produces a DLL Windows refuses to
+        # open at all ("Cannot open library" from SymbolLookup.libraryLookup). MSVC is the only native
+        # toolchain on that runner, the plugin has a full cl path (detectFamily -> Msvc), and cl is
+        # already what kyo_aeron compiles with on Windows, so it is the one proven to produce a
+        # loadable DLL. vcvarsarm64 below is what selects the arm64 cl and puts it on PATH.
         case "${{ inputs.os }}" in
-          windows-x64)   cc=gcc;   expect=x86_64 ;;
-          windows-arm64) cc=clang; expect=aarch64 ;;
+          windows-x64)   cc=gcc; expect=x86_64 ;;
+          windows-arm64) cc=cl;  expect=aarch64 ;;
         esac
         {
           echo "KYO_POD_RUNTIME=none"
           echo "SBT_UPDATE_LIMIT=1"
           echo "CC=$cc"
         } >> "$GITHUB_ENV"
-        "$cc" --version | head -1
-        # The artifact is NAMED for the runner's architecture, so a compiler targeting another one
-        # produces a mislabelled DLL that loads nowhere and that the packaging check catches only
-        # because it reads the PE machine field. Fail here instead, where the message is obvious.
-        target=$("$cc" -dumpmachine)
-        echo "$cc target: $target"
-        case "$target" in
-          "$expect"*) ;;
-          *) echo "$cc targets '$target' on a ${{ inputs.os }} runner; expected $expect-*." >&2
-             exit 1 ;;
-        esac
+        # cl takes neither --version nor -dumpmachine, and is not on PATH until the vcvars step below
+        # runs, so its target is asserted there instead, from the toolset path it resolves to.
+        if [ "$cc" != cl ]; then
+          "$cc" --version | head -1
+          # The artifact is NAMED for the runner's architecture, so a compiler targeting another one
+          # produces a mislabelled DLL that loads nowhere and that the packaging check catches only
+          # because it reads the PE machine field. Fail here instead, where the message is obvious.
+          target=$("$cc" -dumpmachine)
+          echo "$cc target: $target"
+          case "$target" in
+            "$expect"*) ;;
+            *) echo "$cc targets '$target' on a ${{ inputs.os }} runner; expected $expect-*." >&2
+               exit 1 ;;
+          esac
+        fi
 
     # kyo-aeron's C shim and libaeron build with MSVC on Windows (aeron supports Windows only under
     # MSVC). The kyo-ffi plugin invokes `cl` for that library, so cl plus its INCLUDE/LIB must be on
@@ -251,6 +261,31 @@ runs:
         >>"%GITHUB_ENV%" echo LIB=%LIB%
         >>"%GITHUB_ENV%" echo LIBPATH=%LIBPATH%
         where cl
+
+    # The MSVC toolset encodes its target in the binary's path (bin/Host<host>/<target>/cl.exe), and
+    # the vcvars script above is what selects it. Assert it here, after PATH is set: a DLL is NAMED for
+    # the pole's architecture, so the wrong vcvars would stage an artifact under a name it does not
+    # match. The publish-time check reads the PE machine field and would catch it, but far later and
+    # far less legibly than a failure here.
+    - name: Assert the MSVC toolset targets this pole
+      if: ${{ startsWith(inputs.os, 'windows') }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        cl=$(command -v cl.exe 2>/dev/null || command -v cl 2>/dev/null || true)
+        if [ -z "$cl" ]; then
+          echo "cl is not on PATH after the vcvars step." >&2
+          exit 1
+        fi
+        # The toolset spells the target directory ARM64 or arm64 depending on the VS version, so
+        # compare case-insensitively rather than pinning one spelling.
+        target=$(basename "$(dirname "$cl")")
+        lower=$(printf '%s' "$target" | tr '[:upper:]' '[:lower:]')
+        echo "cl target: $target ($cl)"
+        case "${{ inputs.os }}:$lower" in
+          windows-x64:x64|windows-arm64:arm64) ;;
+          *) echo "cl targets '$target' on a ${{ inputs.os }} runner." >&2; exit 1 ;;
+        esac
 
     # coursier/setup-action is fetched from codeload like any `uses:`, and the runner retries that
     # download only a few times with a short backoff, which a transient GitHub 429 (a rate-limit window

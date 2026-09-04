@@ -33,27 +33,38 @@ runs:
 
     # Every FFI library other than kyo-aeron's compiles with `cc`, which the Windows images do not
     # provide. On x64 that is MinGW gcc. On arm64 it cannot be: the image ships an
-    # x86_64-w64-mingw32 gcc, which would emit x64 objects for a native named aarch64, so that
-    # producer uses the image's LLVM clang, which targets the host. SBT_UPDATE_LIMIT=1 serializes
-    # dependency resolution, which concurrent resolution trips through Windows file locking.
+    # x86_64-w64-mingw32 gcc, which would emit x64 objects for a native named aarch64. clang is no
+    # use either: targeting aarch64-pc-windows-msvc it produces a DLL Windows refuses to open. MSVC
+    # is the only native toolchain on that runner, and the vcvars step above already selects and
+    # exports the arm64 cl. SBT_UPDATE_LIMIT=1 serializes dependency resolution, which concurrent
+    # resolution trips through Windows file locking.
     - name: Configure build environment
       shell: bash
       run: |
         case "${{ inputs.os-arch }}" in
-          windows-x86_64)  cc=gcc;   expect=x86_64 ;;
-          windows-aarch64) cc=clang; expect=aarch64 ;;
+          windows-x86_64)  cc=gcc; expect=x86_64 ;;
+          windows-aarch64) cc=cl;  expect=arm64 ;;
           *) echo "unknown os-arch '${{ inputs.os-arch }}'" >&2; exit 1 ;;
         esac
         {
           echo "SBT_UPDATE_LIMIT=1"
           echo "CC=$cc"
         } >> "$GITHUB_ENV"
-        "$cc" --version | head -1
         # The artifacts are NAMED for this producer's architecture, so a compiler targeting another
         # one uploads a mislabelled DLL into the shared pool. The publish-time check reads the PE
         # machine field and would catch it, but the message is far clearer here.
-        target=$("$cc" -dumpmachine)
-        echo "$cc target: $target"
+        if [ "$cc" = cl ]; then
+          # cl takes neither --version nor -dumpmachine. The MSVC toolset encodes its target in the
+          # binary's path (bin/Host<host>/<target>/cl.exe), spelled ARM64 or arm64 by VS version.
+          clPath=$(command -v cl.exe 2>/dev/null || command -v cl 2>/dev/null || true)
+          [ -n "$clPath" ] || { echo "cl is not on PATH after the vcvars step." >&2; exit 1; }
+          target=$(basename "$(dirname "$clPath")" | tr '[:upper:]' '[:lower:]')
+          echo "cl target: $target ($clPath)"
+        else
+          "$cc" --version | head -1
+          target=$("$cc" -dumpmachine)
+          echo "$cc target: $target"
+        fi
         case "$target" in
           "$expect"*) ;;
           *) echo "$cc targets '$target' on a ${{ inputs.os-arch }} runner; expected $expect-*." >&2

@@ -1270,7 +1270,11 @@ object KyoFfiPlugin extends AutoPlugin {
             val log     = streams.value.log
             val libs    = ffiLibrariesResolved.value
             val destDir = (Compile / resourceManaged).value / "scala-native"
-            val sources = libs.flatMap(_.cSources).distinct
+            // Headers travel with the sources: Scala Native compiles the copies in destDir, so a source
+            // that includes a project-local header cannot resolve it unless the header is copied too.
+            // Without this a `#include "kyo_net_api.h"` compiles everywhere except Native, where it
+            // fails with "fatal error: no such file".
+            val sources = (libs.flatMap(_.cSources) ++ libs.flatMap(_.cHeaders)).distinct
             if (sources.isEmpty) Seq.empty[File]
             else {
                 IO.createDirectory(destDir)
@@ -1498,8 +1502,9 @@ object KyoFfiPlugin extends AutoPlugin {
       *
       * `platforms` mirrors what `ffiPackagedNatives` stages: the resolved build target (`ffiTargetOsArch`,
       * defaulting to the host) for a locally-compiled library, plus each `ffiPrebuiltDir` native's own
-      * `<os>-<arch>`. An `absent` library (no C sources, no prebuilt) has an empty platform set; the pre-check
-      * treats a native not bundled for the current platform as a graceful demote-to-fallback, not an error.
+      * `<os>-<arch>`. An `absent` library (no C sources, no prebuilt) has an empty platform set. For a platform
+      * the set does not name, the pre-check asks whether the library resolves anyway, by override or system
+      * install, and raises `LibraryNotFound` when it does not.
       *
       * The trait index comes from the codegen (`ffiGenerate`), which knows each binding's `Ffi.Config.library`
       * at generation time and persists the pairs to `target`; this reads them so the manifest stays

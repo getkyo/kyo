@@ -29,6 +29,7 @@
  * had not been compiled. Only <unistd.h> and close(2) are POSIX-specific here, so
  * only those are guarded.
  */
+#include "kyo_net_api.h"
 
 #include <errno.h>
 
@@ -43,7 +44,7 @@
 #include <sys/eventfd.h>
 
 /* epoll_create1: create an epoll set. Returns the epoll fd or -1 with errno. */
-int kyo_epoll_create1(int flags) {
+KYO_NET_API int kyo_epoll_create1(int flags) {
     return epoll_create1(flags);
 }
 
@@ -52,7 +53,7 @@ int kyo_epoll_create1(int flags) {
  * epoll_event laid out by the Scala side (arch-aware: packed on x86_64, naturally
  * aligned on aarch64) and passed through as the raw pointer the kernel expects.
  */
-int kyo_epoll_ctl(int epfd, int op, int fd, void* event) {
+KYO_NET_API int kyo_epoll_ctl(int epfd, int op, int fd, void* event) {
     return epoll_ctl(epfd, op, fd, (struct epoll_event*)event);
 }
 
@@ -64,7 +65,7 @@ int kyo_epoll_ctl(int epfd, int op, int fd, void* event) {
  * so a negative would index out of bounds inside the kernel copy-out. Refuse it
  * at the C trust boundary (CWE-129) instead of letting it reach epoll_wait.
  */
-int kyo_epoll_wait(int epfd, void* events, int maxevents, int timeout) {
+KYO_NET_API int kyo_epoll_wait(int epfd, void* events, int maxevents, int timeout) {
     if (maxevents <= 0) {
         errno = EINVAL;
         return -1;
@@ -73,17 +74,17 @@ int kyo_epoll_wait(int epfd, void* events, int maxevents, int timeout) {
 }
 
 /* eventfd: create the poll-loop wakeup counter. Returns the fd or -1 with errno. */
-int kyo_epoll_eventfd(int initval, int flags) {
+KYO_NET_API int kyo_epoll_eventfd(int initval, int flags) {
     return eventfd((unsigned int)initval, flags);
 }
 
 /* eventfd_write: add `value` to the counter, waking a parked epoll_wait. */
-int kyo_epoll_eventfd_write(int fd, long value) {
+KYO_NET_API int kyo_epoll_eventfd_write(int fd, long value) {
     return eventfd_write(fd, (eventfd_t)value);
 }
 
 /* eventfd_read: read and clear the counter into the caller's 8-byte buffer. */
-int kyo_epoll_eventfd_read(int fd, void* value) {
+KYO_NET_API int kyo_epoll_eventfd_read(int fd, void* value) {
     return eventfd_read(fd, (eventfd_t*)value);
 }
 
@@ -95,13 +96,13 @@ int kyo_epoll_eventfd_read(int fd, void* value) {
  * link graph stayed whole; nothing on this platform depends on the result.
  */
 
-int kyo_epoll_create1(int flags) {
+KYO_NET_API int kyo_epoll_create1(int flags) {
     (void)flags;
     errno = ENOSYS;
     return -1;
 }
 
-int kyo_epoll_ctl(int epfd, int op, int fd, void* event) {
+KYO_NET_API int kyo_epoll_ctl(int epfd, int op, int fd, void* event) {
     (void)epfd;
     (void)op;
     (void)fd;
@@ -110,7 +111,7 @@ int kyo_epoll_ctl(int epfd, int op, int fd, void* event) {
     return -1;
 }
 
-int kyo_epoll_wait(int epfd, void* events, int maxevents, int timeout) {
+KYO_NET_API int kyo_epoll_wait(int epfd, void* events, int maxevents, int timeout) {
     (void)epfd;
     (void)events;
     (void)maxevents;
@@ -119,21 +120,21 @@ int kyo_epoll_wait(int epfd, void* events, int maxevents, int timeout) {
     return -1;
 }
 
-int kyo_epoll_eventfd(int initval, int flags) {
+KYO_NET_API int kyo_epoll_eventfd(int initval, int flags) {
     (void)initval;
     (void)flags;
     errno = ENOSYS;
     return -1;
 }
 
-int kyo_epoll_eventfd_write(int fd, long value) {
+KYO_NET_API int kyo_epoll_eventfd_write(int fd, long value) {
     (void)fd;
     (void)value;
     errno = ENOSYS;
     return -1;
 }
 
-int kyo_epoll_eventfd_read(int fd, void* value) {
+KYO_NET_API int kyo_epoll_eventfd_read(int fd, void* value) {
     (void)fd;
     (void)value;
     errno = ENOSYS;
@@ -150,13 +151,13 @@ int kyo_epoll_eventfd_read(int fd, void* value) {
  */
 #if !defined(_WIN32)
 
-int kyo_epoll_close(int fd) {
+KYO_NET_API int kyo_epoll_close(int fd) {
     return close(fd);
 }
 
 #else
 
-int kyo_epoll_close(int fd) {
+KYO_NET_API int kyo_epoll_close(int fd) {
     (void)fd;
     errno = ENOSYS;
     return -1;

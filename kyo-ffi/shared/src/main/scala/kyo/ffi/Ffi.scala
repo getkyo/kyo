@@ -329,15 +329,23 @@ object Ffi:
 
     /** Load and instantiate the generated impl for a binding trait `T`. Cached after the first call.
       *
-      * This resolves the native or throws. For a binding whose library the native manifest knows, `load` verifies the ABI floor and that the
-      * native is resolvable on this platform (bundled here, supplied by a `-Dkyo.ffi.<id>.path` override, or installed on the system) before
-      * instantiating anything, so `LibraryNotFound` and `AbiMismatch` surface HERE and a caller containing a load failure can wrap `load`
-      * alone. A library declared for other platforms only, which is what `FfiLibrary.osTargets` produces, fails here rather than in the impl
-      * companion's initializer at the first call, where a throw poisons the class.
+      * For a binding whose library the native manifest knows, `load` checks the kyo-ffi runtime floor and that the native is ACCOUNTED FOR on
+      * this platform, before instantiating anything. Accounted for means: the manifest declares this platform and the bundled resource or a
+      * readable `-Dkyo.ffi.<id>.path` override exists; or the manifest does not declare this platform and the library still resolves, by
+      * override, by a bundled resource, or as a system install. A library declared for other platforms only, which is what
+      * `FfiLibrary.osTargets` produces, therefore fails HERE with a catchable `LibraryNotFound` rather than in the impl companion's
+      * initializer at the first call, where a throw poisons the class. This is a JVM guarantee: JS ships no manifest and raises its own
+      * `LibraryNotFound` from the loader instead, and Native links its C at build time.
       *
-      * What still defers to the first call is symbol binding: the generated impl resolves its method handles when its companion initializes,
-      * so a library that loads but lacks an expected symbol surfaces then, not here. An id whose symbols live only in the native linker's
-      * default lookup is not treated as resolvable; declare it in `ffiSystemLibraries`, which carries no manifest entry and skips the check.
+      * It is NOT a guarantee that the library loads. A native the manifest declares and the classpath carries is not opened here, so one that
+      * is present but unloadable (bytes for another architecture, a missing transitive dependency, an override naming a file that is not a
+      * library) still fails at the first binding call. The generated impl also runs its own ABI checks and `NativeLoader.load` when its
+      * companion initializes, so `AbiMismatch` raised by the generated-impl or struct-layout checks surfaces there too, wrapped in
+      * `ExceptionInInitializerError`. A caller that must contain every load failure still guards the first binding call; what `load` now
+      * guarantees is that a native missing FOR THIS PLATFORM is not one of the failures it has to catch there.
+      *
+      * An id whose symbols live only in the native linker's default lookup is not treated as resolvable; declare it in `ffiSystemLibraries`,
+      * which carries no manifest entry and skips the check.
       *
       * @throws kyo.ffi.FfiLoadError
       *   on a documented load failure: `LibraryNotFound` (native library not resolvable), `AbiMismatch`, `Unsupported` (32-bit host,
