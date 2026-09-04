@@ -1270,7 +1270,11 @@ object KyoFfiPlugin extends AutoPlugin {
             val log     = streams.value.log
             val libs    = ffiLibrariesResolved.value
             val destDir = (Compile / resourceManaged).value / "scala-native"
-            val sources = libs.flatMap(_.cSources).distinct
+            // Headers travel with the sources: Scala Native compiles the copies in destDir, so a source
+            // that includes a project-local header cannot resolve it unless the header is copied too.
+            // Without this a `#include "kyo_net_api.h"` compiles everywhere except Native, where it
+            // fails with "fatal error: no such file".
+            val sources = (libs.flatMap(_.cSources) ++ libs.flatMap(_.cHeaders)).distinct
             if (sources.isEmpty) Seq.empty[File]
             else {
                 IO.createDirectory(destDir)

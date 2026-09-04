@@ -1149,7 +1149,8 @@ lazy val `kyo-ffi-it` =
             ffiLibraries := Seq(
                 FfiLibrary(
                     id = "kyo_it_bundled",
-                    cSources = (baseDirectory.value / ".." / "shared" / "src" / "main" / "c" ** "*.c").get
+                    cSources = (baseDirectory.value / ".." / "shared" / "src" / "main" / "c" ** "*.c").get,
+                    cHeaders = (baseDirectory.value / ".." / "shared" / "src" / "main" / "c" ** "*.h").get
                 )
             )
         )
@@ -1955,6 +1956,7 @@ lazy val `kyo-net` =
                     FfiLibrary(
                         id = "kyonet_posix_uring",
                         cSources = (sharedBase / "src" / "main" / "c" ** "*.c").get,
+                        cHeaders = (sharedBase / "src" / "main" / "c" ** "*.h").get,
                         linkLibsByOs = Map("linux" -> Seq("uring")),
                         staticLink = true
                     ),
