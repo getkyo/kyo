@@ -379,11 +379,9 @@ class PathWatchTest extends FileSystemWatchTestSuite:
 
     "watcher emits Overflow when its bounded queue loses changes" in {
         // Both writes land before the scan, so the one poll pass that follows sees both new files at
-        // once and folds them into a single Overflow. The read is issued only after the wall-clock-
-        // waiting advances settle that whole pass, deliberately not forked ahead of it: a reader
-        // already parked on take(1) can claim the batch's first successful offer (the plain Created)
-        // before the same pass reaches the offer that trips overflow, which is a real race against
-        // the scan, not an artifact of an uncontrolled clock.
+        // once and folds them into a single Overflow. The polling loop rearms its sleeper only after
+        // that scan publishes the whole batch, so waiting for the rearm proves the Overflow is queued
+        // before the read begins.
         Clock.withTimeControl { clock =>
             hostRoot("kyo-path-watch-overflow").map { dir =>
                 val fileSystem = FileSystem.host
@@ -396,8 +394,8 @@ class PathWatchTest extends FileSystemWatchTestSuite:
                                 watcher <- root.openWatcher(WatchOptions(capacity = 1))
                                 _       <- (root / "first").write("first")
                                 _       <- (root / "second").write("second")
-                                _       <- clock.advance(Duration.Zero, 10.millis)
-                                _       <- clock.advance(10.millis, 10.millis)
+                                _       <- clock.advance(10.millis)
+                                _       <- clock.awaitPendingSleepers(1)
                                 events  <- watcher.events.take(1).run
                             yield assert(events == Chunk(PathChange.Overflow(root)))
                         }
@@ -408,9 +406,8 @@ class PathWatchTest extends FileSystemWatchTestSuite:
     }
 
     "watch capacity is an exact logical bound" in {
-        // Same reasoning as the Overflow case above: the read is issued only after the scan settles,
-        // never forked ahead of it, so it cannot claim one of the batch's earlier successful offers
-        // before the same pass reaches the one that overflows.
+        // Same reasoning as the Overflow case above: waiting for the polling loop to rearm proves the
+        // scan has published the complete batch before the read begins.
         Clock.withTimeControl { clock =>
             hostRoot("kyo-path-watch-capacity").map { dir =>
                 val fileSystem = FileSystem.host
@@ -422,8 +419,8 @@ class PathWatchTest extends FileSystemWatchTestSuite:
                                 _       <- root.mkDir
                                 watcher <- root.openWatcher(WatchOptions(capacity = 3))
                                 _       <- Kyo.foreachDiscard(0 until 4)(index => (root / s"$index.txt").write(index.toString))
-                                _       <- clock.advance(Duration.Zero, 10.millis)
-                                _       <- clock.advance(10.millis, 10.millis)
+                                _       <- clock.advance(10.millis)
+                                _       <- clock.awaitPendingSleepers(1)
                                 events  <- watcher.events.take(1).run
                             yield assert(events == Chunk(PathChange.Overflow(root)))
                         }

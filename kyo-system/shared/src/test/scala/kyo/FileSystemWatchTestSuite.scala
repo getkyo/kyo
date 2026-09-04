@@ -26,8 +26,8 @@ abstract class FileSystemWatchTestSuite extends kyo.test.Test[Any]:
     private def takeQueued(clock: Clock.TimeControl, watcher: Path.Watcher, count: Int)(using
         Frame
     ): Chunk[PathChange] < (Async & Abort[FileWatchException]) =
-        clock.advance(Duration.Zero, 10.millis).andThen {
-            clock.advance(10.millis, 10.millis).andThen(Scope.run(watcher.events.take(count).run))
+        clock.advance(10.millis).andThen {
+            clock.awaitPendingSleepers(1).andThen(Scope.run(watcher.events.take(count).run))
         }
 
     private def glob(value: String): Glob =

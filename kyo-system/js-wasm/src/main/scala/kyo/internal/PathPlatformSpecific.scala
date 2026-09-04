@@ -73,6 +73,7 @@ trait NodeStats extends js.Object:
     def isSymbolicLink(): Boolean = js.native
     def size: Double              = js.native
     def mtimeMs: Double           = js.native
+    def birthtimeMs: Double       = js.native
     def dev: Double               = js.native
     def ino: Double               = js.native
 end NodeStats
@@ -649,8 +650,12 @@ final private[kyo] class NodePathUnsafe(raw: String) extends Path.Unsafe:
 
     private[kyo] def stableIdentity()(using AllowUnsafe, Frame): Result[FileReadException, Maybe[String]] =
         catchRead {
-            val s = NodeFs.statSync(pathStr)
-            Present(s"${s.dev.toString}:${s.ino.toString}")
+            val s         = NodeFs.statSync(pathStr)
+            val birthtime = s.birthtimeMs
+            // An inode can be reused as soon as an entry is deleted. Its birth time distinguishes
+            // that replacement from a rename, which preserves both values.
+            if birthtime.isNaN || birthtime <= 0 then Absent
+            else Present(s"${s.dev.toString}:${s.ino.toString}:${birthtime.toString}")
         }
 
     // --- Write ---
