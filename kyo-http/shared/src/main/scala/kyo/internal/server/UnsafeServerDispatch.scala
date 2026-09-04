@@ -644,29 +644,57 @@ private[kyo] object UnsafeServerDispatch:
                     )
                 case Result.Success(bodyBytes) =>
 
-                    // Decode + invoke via HttpHandler.serve* -- types resolved through endpoint, no casts
-                    val serveResult =
-                        if lookup.isStreamingRequest then
-                            val bodyStream =
-                                if bodyBytes.isEmpty then Stream.empty[Span[Byte]]
-                                else Stream.init(Seq(bodyBytes))
-                            endpoint.serveStreaming(captures, queryParam, headers, bodyStream, path, method)
-                        else
-                            endpoint.serveBuffered(captures, queryParam, headers, bodyBytes, path, method)
+                    // Decode + invoke via HttpHandler.serve* -- types resolved through endpoint, no casts.
+                    //
+                    // When several routes are registered on the same node and method
+                    // — `/block/{height}` and `/block/{hash}` differ only in what
+                    // their captures accept — a path that fails to decode is not an
+                    // error yet: it means this candidate did not match. Follow the
+                    // chain and try the next. The loop runs at most once per
+                    // registered alternative and only on a request that would
+                    // otherwise be rejected; the single-route case exits on the
+                    // first iteration having done one extra array read.
+                    @tailrec def serveCandidate(
+                        current: HttpHandler[?, ?, ?],
+                        currentCaptures: Dict[String, String]
+                    ): Unit < Async =
+                        val serveResult =
+                            if lookup.isStreamingRequest then
+                                val bodyStream =
+                                    if bodyBytes.isEmpty then Stream.empty[Span[Byte]]
+                                    else Stream.init(Seq(bodyBytes))
+                                current.serveStreaming(currentCaptures, queryParam, headers, bodyStream, path, method)
+                            else
+                                current.serveBuffered(currentCaptures, queryParam, headers, bodyBytes, path, method)
 
-                    serveResult match
-                        case Result.Failure(error) =>
-                            val status = error match
-                                case _: HttpUnsupportedMediaTypeException => HttpStatus(415)
-                                case _                                    => HttpStatus(400)
-                            writeDecodeError(streamCtx, status, error)
-                        case Result.Panic(e) =>
-                            Log.error("UnsafeServerDispatch: serve decode panic", e).andThen(
-                                Sync.Unsafe.defer(writeInternalError(streamCtx))
-                            )
-                        case Result.Success(handlerComputation) =>
-                            dispatchHandler(handlerComputation, endpoint, streamCtx, isHead)
-                    end match
+                        serveResult match
+                            case Result.Failure(error) =>
+                                // Only a *path* decode failure can mean "wrong
+                                // candidate". A bad query param, header or body is
+                                // a genuine client error on a route that did match,
+                                // and must not silently fall through to another.
+                                val pathMismatch = error match
+                                    case e: HttpFieldDecodeException => e.fieldType == "path"
+                                    case _                           => false
+                                if pathMismatch && router.advanceToNextCandidate(lookup) then
+                                    val next = router.endpoint(lookup)
+                                    serveCandidate(next, buildCaptures(request, lookup, router.captureNames(lookup)))
+                                else
+                                    val status = error match
+                                        case _: HttpUnsupportedMediaTypeException => HttpStatus(415)
+                                        case _                                    => HttpStatus(400)
+                                    writeDecodeError(streamCtx, status, error)
+                                end if
+                            case Result.Panic(e) =>
+                                Log.error("UnsafeServerDispatch: serve decode panic", e).andThen(
+                                    Sync.Unsafe.defer(writeInternalError(streamCtx))
+                                )
+                            case Result.Success(handlerComputation) =>
+                                dispatchHandler(handlerComputation, current, streamCtx, isHead)
+                        end match
+                    end serveCandidate
+
+                    serveCandidate(endpoint, captures)
             }
         end if
     end serveRequest

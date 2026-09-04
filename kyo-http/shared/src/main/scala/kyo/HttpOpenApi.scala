@@ -44,6 +44,11 @@ object HttpOpenApi:
         val json = toJson(openApi)
         java.nio.file.Files.writeString(java.nio.file.Path.of(path), json): Unit
 
+    /** The trailing fields are JSON Schema validation keywords. They are optional
+      * and default to `None`, so every existing positional construction keeps
+      * compiling; a codec that knows more about its values than its Scala type
+      * does can fill them in via [[HttpCodec.schema]] and have it published.
+      */
     case class SchemaObject(
         `type`: Option[String],
         format: Option[String],
@@ -53,7 +58,13 @@ object HttpOpenApi:
         additionalProperties: Option[SchemaObject],
         oneOf: Option[List[SchemaObject]],
         `enum`: Option[List[String]],
-        `$ref`: Option[String]
+        `$ref`: Option[String],
+        pattern: Option[String] = None,
+        minLength: Option[Int] = None,
+        maxLength: Option[Int] = None,
+        minimum: Option[Long] = None,
+        maximum: Option[Long] = None,
+        description: Option[String] = None
     ) derives Schema, CanEqual
 
     case class Info(
@@ -116,6 +127,15 @@ object HttpOpenApi:
         def obj: SchemaObject     = SchemaObject(Some("object"), None, None, None, None, None, None, None, None)
         def array(items: SchemaObject): SchemaObject =
             SchemaObject(Some("array"), None, Some(items), None, None, None, None, None, None)
+
+        /** A string constrained by a regular expression, published as `pattern`.
+          *
+          * Pair it with [[HttpCodec.pattern]] so the same expression both rejects
+          * bad input and appears in the document — a constraint that is only
+          * documented drifts from the one that is enforced.
+          */
+        def stringMatching(regex: String, description: Maybe[String] = Absent): SchemaObject =
+            string.copy(pattern = Some(regex), description = description.toOption)
     end SchemaObject
 
     case class Components(
