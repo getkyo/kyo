@@ -32,19 +32,19 @@ KYO_IT_API void *kyo_it_malloc_chunk(int64_t n) {
  * static storage, the caller treats it as borrowed (must not free). */
 static const char kyo_it_hello[] = "hello from C";
 
-const char *kyo_it_borrowed_string(void) {
+KYO_IT_API const char *kyo_it_borrowed_string(void) {
     return kyo_it_hello;
 }
 
 /* Returns NULL, exercises the null-through path for borrowed strings. */
-const char *kyo_it_borrowed_string_null(void) {
+KYO_IT_API const char *kyo_it_borrowed_string_null(void) {
     return 0;
 }
 
 /* Returns a pointer to an empty NUL-terminated string. */
 static const char kyo_it_empty[] = "";
 
-const char *kyo_it_borrowed_string_empty(void) {
+KYO_IT_API const char *kyo_it_borrowed_string_empty(void) {
     return kyo_it_empty;
 }
 
@@ -55,6 +55,6 @@ const char *kyo_it_borrowed_string_empty(void) {
  */
 static const char kyo_it_utf8[] = "\xC3\xA9\xE4\xB8\x96\xF0\x9F\x98\x80";
 
-const char *kyo_it_borrowed_string_utf8(void) {
+KYO_IT_API const char *kyo_it_borrowed_string_utf8(void) {
     return kyo_it_utf8;
 }
