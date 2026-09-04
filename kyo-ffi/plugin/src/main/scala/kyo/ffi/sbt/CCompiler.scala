@@ -192,9 +192,9 @@ private[sbt] object CCompiler {
             val crtFlag =
                 if (cFlags.exists(f => f == "/MD" || f == "/MT" || f == "/MDd" || f == "/MTd")) Nil
                 else Seq("/MD")
-            val libDirFlags     = libDirs.map(d => "/LIBPATH:" + d.getAbsolutePath)
-            val libFlags        = linkLibs.map(l => l + ".lib")
-            val objectDirFlag   = "/Fo:" + outFile.getAbsoluteFile.getParentFile.getAbsolutePath + File.separator
+            val libDirFlags   = libDirs.map(d => "/LIBPATH:" + d.getAbsolutePath)
+            val libFlags      = linkLibs.map(l => l + ".lib")
+            val objectDirFlag = "/Fo:" + outFile.getAbsoluteFile.getParentFile.getAbsolutePath + File.separator
             // cl.exe builds a DLL with /LD; /Fo: keeps intermediate objects beside the target DLL and
             // /Fe: sets its name. `/LIBPATH:` is a linker option: cl silently ignores it on the compiler
             // command line, so the search dirs and the named import libs must follow `/link`, otherwise
