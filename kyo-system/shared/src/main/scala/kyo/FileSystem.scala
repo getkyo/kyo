@@ -154,10 +154,10 @@ object FileSystem:
       * This tier is independent of [[Read]] and [[Write]]. A filesystem
       * advertises it only when it can provide the complete watch contract.
       */
-    trait Watch[S]:
+    trait Watch:
         def openWatcher(path: Path, options: WatchOptions)(using
             Frame
-        ): Path.Watcher < (S & Async & Scope & Abort[FileWatchException])
+        ): Path.Watcher < (Async & Scope & Abort[FileWatchException])
     end Watch
 
     abstract class Write[S] extends Read[S]:
@@ -238,8 +238,8 @@ object FileSystem:
         FileSystem.host.asInstanceOf[FileSystem.Read[Any]]
     )
 
-    private val watchLocal = Local.init[FileSystem.Watch[Any]](
-        FileSystem.host.asInstanceOf[FileSystem.Watch[Any]]
+    private val watchLocal = Local.init[FileSystem.Watch](
+        FileSystem.host
     )
 
     /** Runs `value` with `fileSystem` selected as the backend used by [[Path.run]] and
@@ -255,12 +255,12 @@ object FileSystem:
 
     /** Runs `value` with a coherent read, write, and watch backend selection. */
     @scala.annotation.targetName("letWatchable")
-    def let[A, S, FS](fileSystem: FileSystem.Write[FS] & FileSystem.Watch[FS])(value: A < S)(using
+    def let[A, S, FS](fileSystem: FileSystem.Write[FS] & FileSystem.Watch)(value: A < S)(using
         Frame
     ): A < (FS & S) =
         local.let(fileSystem.asInstanceOf[FileSystem.Write[Any]])(
             readLocal.let(fileSystem.asInstanceOf[FileSystem.Read[Any]])(
-                watchLocal.let(fileSystem.asInstanceOf[FileSystem.Watch[Any]])(value)
+                watchLocal.let(fileSystem)(value)
             )
         )
 
@@ -270,7 +270,7 @@ object FileSystem:
     private[kyo] def useReadErased[A, S](f: FileSystem.Read[Any] => A < S)(using Frame): A < S =
         readLocal.use(f)
 
-    private[kyo] def useWatchErased[A, S](f: FileSystem.Watch[Any] => A < S)(using Frame): A < S =
+    private[kyo] def useWatchErased[A, S](f: FileSystem.Watch => A < S)(using Frame): A < S =
         watchLocal.use(f)
 
     private[kyo] def letErased[A, S, FS](fileSystem: FileSystem.Write[FS])(value: A < S)(using Frame): A < S =
@@ -301,6 +301,6 @@ object FileSystem:
       * `Result[File*Exception, A]` into `Abort[FileSystemException]`, so it preserves current
       * `Path` behavior exactly.
       */
-    def host: FileSystem.Write[Sync] & FileSystem.Watch[Sync] = HostFileSystem()
+    def host: FileSystem.Write[Sync] & FileSystem.Watch = HostFileSystem()
 
 end FileSystem

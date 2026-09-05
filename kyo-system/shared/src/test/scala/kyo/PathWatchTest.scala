@@ -10,7 +10,7 @@ class PathWatchTest extends FileSystemWatchTestSuite:
     final private class CountingRead(
         delegate: FileSystem.Write[Sync],
         scans: AtomicInt
-    ) extends FileSystem.Read[Sync], FileSystem.Watch[Sync]:
+    ) extends FileSystem.Read[Sync], FileSystem.Watch:
         export delegate.{list as _, *}
 
         override def list(path: Path)(using Frame): Chunk[Path] < (Sync & Abort[FileReadException | FileStructureException]) =
@@ -31,7 +31,7 @@ class PathWatchTest extends FileSystemWatchTestSuite:
         delegate: FileSystem.Write[Sync],
         failList: AtomicBoolean,
         rootIsDirectory: AtomicBoolean
-    ) extends FileSystem.Read[Sync], FileSystem.Watch[Sync]:
+    ) extends FileSystem.Read[Sync], FileSystem.Watch:
         export delegate.{isDirectory as _, list as _, *}
 
         override def isDirectory(path: Path)(using Frame): Boolean < (Sync & Abort[FileReadException]) =
@@ -71,7 +71,7 @@ class PathWatchTest extends FileSystemWatchTestSuite:
         faults: AtomicBoolean,
         panicCheck: java.util.concurrent.atomic.AtomicBoolean,
         panic: Throwable
-    ) extends FileSystem.Read[Sync], FileSystem.Watch[Sync]:
+    ) extends FileSystem.Read[Sync], FileSystem.Watch:
         export delegate.{exists as _, stat as _, *}
 
         override def stat(path: Path)(using Frame): Path.PathStat < (Sync & Abort[FileReadException]) =
@@ -105,7 +105,7 @@ class PathWatchTest extends FileSystemWatchTestSuite:
     end RecoveryFaultRead
 
     protected def withFileSystem(
-        use: (FileSystem.Write[Sync] & FileSystem.Watch[Sync], Path) => Unit <
+        use: (FileSystem.Write[Sync] & FileSystem.Watch, Path) => Unit <
             (Async & Sync & Scope & Abort[FileSystemException])
     )(using Frame): Unit < (Async & Sync & Scope & Abort[FileSystemException]) =
         val fileSystem = FileSystem.host

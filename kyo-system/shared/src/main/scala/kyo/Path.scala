@@ -333,10 +333,10 @@ object Path extends PathPlatformSpecific:
         }
 
     /** Runs `program` against an explicit watch-capable filesystem, discharging [[PathWatch]]. */
-    def runWatchWith[A, S, FS](fileSystem: FileSystem.Watch[FS])(program: A < (PathWatch & S))(using
+    def runWatchWith[A, S](fileSystem: FileSystem.Watch)(program: A < (PathWatch & S))(using
         Frame
-    ): A < (FS & Async & Scope & Abort[FileWatchException] & S) =
-        ArrowEffect.handle[[A] =>> WatchOp[A], Id, PathWatch, A, S, FS & Async & Scope & Abort[FileWatchException]](
+    ): A < (Async & Scope & Abort[FileWatchException] & S) =
+        ArrowEffect.handle[[A] =>> WatchOp[A], Id, PathWatch, A, S, Async & Scope & Abort[FileWatchException]](
             Tag[PathWatch],
             program
         )(
@@ -409,7 +409,7 @@ object Path extends PathPlatformSpecific:
 
     /** Stateless isolation for watch operations. See [[isolateRead]]. */
     given isolateWatch: Isolate[PathWatch, Async, PathWatch] with
-        type State        = FileSystem.Watch[Any]
+        type State        = FileSystem.Watch
         type Transform[A] = Result[FileWatchException, A]
 
         def capture[A, S](f: State => A < S)(using Frame): A < (PathWatch & Async & S) =

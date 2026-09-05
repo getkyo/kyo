@@ -6,7 +6,7 @@ import kyo.internal.Platform
 
 private[kyo] object HostFileSystem:
 
-    def apply(): FileSystem.Write[Sync] & FileSystem.Watch[Sync] = new HostFileSystem
+    def apply(): FileSystem.Write[Sync] & FileSystem.Watch = new HostFileSystem
 
     // Fires inside the claim node in tryLock, once the OS lock is held and recorded and before
     // tryLock returns. Default no-op; private[kyo] so tests in this package can reach it, and
@@ -69,7 +69,7 @@ private[kyo] object HostFileSystem:
         }
     end probeCaseSensitivity
 
-    final class HostFileSystem extends FileSystem.Write[Sync], FileSystem.Watch[Sync]:
+    final class HostFileSystem extends FileSystem.Write[Sync], FileSystem.Watch:
 
         // Memo cell for the one-off volume probe below. A plain atomic rather than Kyo's: the cell
         // has to exist at construction, outside any Sync context, and it carries no effect of its

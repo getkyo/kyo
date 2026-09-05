@@ -6,12 +6,12 @@ abstract class FileSystemWatchTestSuite extends kyo.test.Test[Any]:
     private given Frame = Frame.internal
 
     protected def withFileSystem(
-        use: (FileSystem.Write[Sync] & FileSystem.Watch[Sync], Path) => Unit <
+        use: (FileSystem.Write[Sync] & FileSystem.Watch, Path) => Unit <
             (Async & Sync & Scope & Abort[FileSystemException])
     )(using Frame): Unit < (Async & Sync & Scope & Abort[FileSystemException])
 
     private def withControlledClock(
-        use: (FileSystem.Write[Sync] & FileSystem.Watch[Sync], Path, Clock.TimeControl) => Unit <
+        use: (FileSystem.Write[Sync] & FileSystem.Watch, Path, Clock.TimeControl) => Unit <
             (Async & Sync & Scope & Abort[FileSystemException])
     )(using Frame): Unit < (Async & Sync & Scope & Abort[FileSystemException]) =
         Clock.withTimeControl(clock => withFileSystem((fileSystem, root) => use(fileSystem, root, clock)))
@@ -199,7 +199,7 @@ end FileSystemWatchTestSuite
 
 class HostPathWatchTest extends FileSystemWatchTestSuite:
     protected def withFileSystem(
-        use: (FileSystem.Write[Sync] & FileSystem.Watch[Sync], Path) => Unit <
+        use: (FileSystem.Write[Sync] & FileSystem.Watch, Path) => Unit <
             (Async & Sync & Scope & Abort[FileSystemException])
     )(using Frame): Unit < (Async & Sync & Scope & Abort[FileSystemException]) =
         val fileSystem = FileSystem.host
