@@ -1,6 +1,7 @@
 package kyo
 
 import java.nio.charset.Charset
+import kyo.Path.WatchOptions
 
 /** Filesystem backend capabilities, effect-polymorphic in the backend effect `S`. [[Read]] exposes
   * inspection, content reads, channels, and locks. [[Write]] extends it with mutation and structure

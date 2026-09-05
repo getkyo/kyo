@@ -1,5 +1,8 @@
 package kyo
 
+import kyo.Path.Change as PathChange
+import kyo.Path.WatchOptions
+
 /** Cross-platform behavioral assertions represented by the stable filesystem snapshots. */
 class FileSystemSnapshotTest extends kyo.test.Test[Any]:
 

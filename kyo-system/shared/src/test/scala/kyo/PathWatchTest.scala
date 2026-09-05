@@ -1,5 +1,9 @@
 package kyo
 
+import kyo.Path.Change as PathChange
+import kyo.Path.MatchCase
+import kyo.Path.WatchDepth
+import kyo.Path.WatchOptions
 import scala.compiletime.testing.typeCheckErrors
 
 class PathWatchTest extends FileSystemWatchTestSuite:

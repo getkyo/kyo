@@ -2,6 +2,9 @@ package kyo
 
 import java.nio.file.Files
 import java.nio.file.Paths
+import kyo.Path.Change as PathChange
+import kyo.Path.WatchDepth
+import kyo.Path.WatchOptions
 
 class PathWatchJvmTest extends kyo.test.Test[Any]:
 

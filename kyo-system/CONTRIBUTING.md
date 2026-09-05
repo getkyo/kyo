@@ -133,7 +133,7 @@ Node lockfile protocol already used. The lock does not exclude a foreign process
 data file directly through the OS.
 
 Watchers use the independent `PathWatch` capability. Acquisition returns only after backend
-registration is active. Events are normalized as `PathChange`; overflow and root invalidation are
+registration is active. Events are normalized as `Path.Change`; overflow and root invalidation are
 stream values. Invalidation is terminal: emit it exactly once, close the stream, and release the
 registration.
 

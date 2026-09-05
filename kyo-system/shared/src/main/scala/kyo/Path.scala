@@ -91,6 +91,70 @@ object Path extends PathPlatformSpecific:
       */
     final case class PathStat(lastModifiedMs: Long, sizeBytes: Long) derives CanEqual
 
+    /** Selects how deeply a watcher observes a directory.
+      *
+      * [[Immediate]] observes only direct children of the watched root. [[Recursive]] also observes
+      * descendants at every depth. The watched root itself is not passed through the glob filter.
+      * Its disappearance is instead reported as [[Change.Invalidated]].
+      *
+      * Depth is applied before glob matching, and paths emitted by either mode retain their complete
+      * backend path.
+      */
+    enum WatchDepth derives CanEqual:
+        case Immediate
+        case Recursive
+    end WatchDepth
+
+    /** Selects the case policy used when matching a watch glob.
+      *
+      * [[FileSystemDefault]] delegates to the backend's native policy. [[Sensitive]] compares every
+      * glob component case sensitively. [[Insensitive]] compares every glob component without case.
+      *
+      * This setting changes only event selection. It does not rewrite the paths contained in emitted
+      * [[Change]] values.
+      */
+    enum MatchCase derives CanEqual:
+        case FileSystemDefault
+        case Sensitive
+        case Insensitive
+    end MatchCase
+
+    /** A normalized filesystem change emitted by a [[Watcher]].
+      *
+      * Creation, modification, and removal events identify one path. A move identifies both its former
+      * and current paths. Moves crossing a watch filter boundary are normalized to removal or creation.
+      * [[Overflow]] reports that bounded event delivery lost detail, while [[Invalidated]] reports that
+      * the watched root is no longer usable.
+      *
+      * Paths use the namespace of the filesystem that acquired the watcher.
+      */
+    enum Change derives CanEqual:
+        case Created(path: Path)
+        case Modified(path: Path)
+        case Removed(path: Path)
+        case Moved(from: Path, to: Path)
+        case Overflow(root: Path)
+        case Invalidated(root: Path)
+    end Change
+
+    /** Configures filesystem watching and event selection.
+      *
+      * `depth` controls traversal below the watched root. `glob` is matched against paths relative to
+      * that root using `caseSensitivity`. `capacity` bounds pending changes and must be positive. When
+      * it is exceeded, queued detail is replaced by [[Change.Overflow]]. `followLinks` controls whether
+      * linked directories and their targets participate in observation.
+      *
+      * The defaults observe direct children, match all names using the backend's case policy, retain 256
+      * pending changes, and do not follow links.
+      */
+    final case class WatchOptions(
+        depth: WatchDepth = WatchDepth.Immediate,
+        glob: Glob = Glob.all,
+        caseSensitivity: MatchCase = MatchCase.FileSystemDefault,
+        capacity: Int = 256,
+        followLinks: Boolean = false
+    ) derives CanEqual
+
     /** Where a byte-level read begins.
       *
       * `Start` reads the file from its first byte, so a follower replays existing content before emitting new content. `End` skips whatever
@@ -1211,10 +1275,10 @@ object Path extends PathPlatformSpecific:
       *
       * Backend failures are reported through [[FileWatchException]]. Event
       * loss and watched-root loss are values in the stream instead, represented
-      * by [[PathChange.Overflow]] and [[PathChange.Invalidated]].
+      * by [[Change.Overflow]] and [[Change.Invalidated]].
       */
     trait Watcher:
-        def events: Stream[PathChange, Async & Scope & Abort[FileWatchException]]
+        def events: Stream[Change, Async & Scope & Abort[FileWatchException]]
     end Watcher
 
     // --- System directories ---

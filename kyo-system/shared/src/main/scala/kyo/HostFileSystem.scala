@@ -2,6 +2,7 @@ package kyo
 
 import java.io.IOException
 import java.nio.charset.Charset
+import kyo.Path.WatchOptions
 import kyo.internal.Platform
 
 private[kyo] object HostFileSystem:

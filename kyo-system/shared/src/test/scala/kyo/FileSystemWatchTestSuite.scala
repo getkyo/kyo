@@ -1,5 +1,9 @@
 package kyo
 
+import kyo.Path.Change as PathChange
+import kyo.Path.WatchDepth
+import kyo.Path.WatchOptions
+
 /** Shared watch contract for mutable filesystem backends. */
 abstract class FileSystemWatchTestSuite extends kyo.test.Test[Any]:
 
