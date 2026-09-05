@@ -1,6 +1,13 @@
 # kyo.Closeable: interface exploration
 
-Status: exploration, no decision taken. Companion to `hierarchical-scopes-design.md` section 13,
+Status: **DEFERRED, 2026-09-05.** Not being built. Kept as the record of the interface exploration.
+
+The hierarchy does not need it: membership is `Set[Finalizer]`, and generalizing membership to
+"anything ownable" is what this type was for. Deferring it takes four open questions off the
+critical path (whether `Bracket.apply` consumes it, the reason type, trait versus abstract class,
+and whether `close` carries a reason at all) without changing what D2 and D3 require.
+
+Everything below is the exploration as it stood, unchanged. Companion to `hierarchical-scopes-design.md` section 13,
 which defers this question rather than answering it.
 
 The question is whether there should be a `kyo.Closeable`, whether it belongs in the kernel, and

@@ -386,6 +386,12 @@ kernel hooks are shared source, so JS and Native have to run before this is call
 
 ## 13. What the hierarchy makes expressible: held scopes and `Closeable`
 
+**Deferred, 2026-09-05.** `Closeable` is not being built, so membership is `Set[Finalizer]` rather
+than a set of closeables, and held scopes and `closeAwait` are out of scope for the first build.
+Nothing in sections 1 through 12 depends on this section; it describes what the hierarchy would
+additionally make possible, not what it needs.
+
+
 The phased close is worth more than the guarantee it was built for. Once a scope can signal its
 members and then wait for them, "interrupt and wait until the resources are actually freed" stops
 needing a primitive.
