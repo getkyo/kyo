@@ -1,6 +1,7 @@
 package kyo
 
 import java.nio.charset.Charset
+import kyo.Path.WatchOptions
 
 /** Filesystem backend capabilities, effect-polymorphic in the backend effect `S`. [[Read]] exposes
   * inspection, content reads, channels, and locks. [[Write]] extends it with mutation and structure
@@ -99,6 +100,7 @@ object FileSystem:
         def readLines(path: Path, charset: Charset)(using Frame): Chunk[String] < (S & Abort[FileReadException])
         def size(path: Path)(using Frame): Long < (S & Abort[FileReadException])
         def stat(path: Path)(using Frame): Path.PathStat < (S & Abort[FileReadException])
+        private[kyo] def stableIdentity(path: Path)(using Frame): Maybe[String] < (S & Abort[FileReadException]) = Absent
 
         // read handles (internal handle types; back the streaming reads and walk)
         def openRead(path: Path)(using Frame): Path.ReadHandle < (S & Abort[FileReadException])
@@ -142,6 +144,22 @@ object FileSystem:
             Frame
         ): (Path.ReadChannel[S], () => Unit < (Sync & S)) < (S & Abort[FileReadException])
     end Read
+
+    /** Optional filesystem tier for scoped change observation.
+      *
+      * Implementations register observation before returning a watcher,
+      * so mutations made immediately after acquisition remain visible.
+      * The returned watcher and its asynchronous stream are owned by the
+      * surrounding [[Scope]]. Closing that scope releases backend resources.
+      *
+      * This tier is independent of [[Read]] and [[Write]]. A filesystem
+      * advertises it only when it can provide the complete watch contract.
+      */
+    trait Watch:
+        def openWatcher(path: Path, options: WatchOptions)(using
+            Frame
+        ): Path.Watcher < (Async & Scope & Abort[FileWatchException])
+    end Watch
 
     abstract class Write[S] extends Read[S]:
 
@@ -221,6 +239,10 @@ object FileSystem:
         FileSystem.host.asInstanceOf[FileSystem.Read[Any]]
     )
 
+    private val watchLocal = Local.init[FileSystem.Watch](
+        FileSystem.host
+    )
+
     /** Runs `value` with `fileSystem` selected as the backend used by [[Path.run]] and
       * [[Path.runReadOnly]]. The selection is inherited by child fibers and restored when the
       * dynamic scope exits.
@@ -232,11 +254,25 @@ object FileSystem:
             readLocal.let(fileSystem.asInstanceOf[FileSystem.Read[Any]])(value)
         )
 
+    /** Runs `value` with a coherent read, write, and watch backend selection. */
+    @scala.annotation.targetName("letWatchable")
+    def let[A, S, FS](fileSystem: FileSystem.Write[FS] & FileSystem.Watch)(value: A < S)(using
+        Frame
+    ): A < (FS & S) =
+        local.let(fileSystem.asInstanceOf[FileSystem.Write[Any]])(
+            readLocal.let(fileSystem.asInstanceOf[FileSystem.Read[Any]])(
+                watchLocal.let(fileSystem)(value)
+            )
+        )
+
     private[kyo] def useErased[A, S](f: FileSystem.Write[Any] => A < S)(using Frame): A < S =
         local.use(f)
 
     private[kyo] def useReadErased[A, S](f: FileSystem.Read[Any] => A < S)(using Frame): A < S =
         readLocal.use(f)
+
+    private[kyo] def useWatchErased[A, S](f: FileSystem.Watch => A < S)(using Frame): A < S =
+        watchLocal.use(f)
 
     private[kyo] def letErased[A, S, FS](fileSystem: FileSystem.Write[FS])(value: A < S)(using Frame): A < S =
         local.let(fileSystem.asInstanceOf[FileSystem.Write[Any]])(
@@ -266,6 +302,6 @@ object FileSystem:
       * `Result[File*Exception, A]` into `Abort[FileSystemException]`, so it preserves current
       * `Path` behavior exactly.
       */
-    def host: FileSystem.Write[Sync] = HostFileSystem()
+    def host: FileSystem.Write[Sync] & FileSystem.Watch = HostFileSystem()
 
 end FileSystem

@@ -21,6 +21,7 @@ import java.nio.file.SimpleFileVisitor
 import java.nio.file.StandardCopyOption
 import java.nio.file.StandardOpenOption
 import java.nio.file.attribute.BasicFileAttributes
+import java.util.concurrent.TimeUnit
 import kyo.*
 import scala.collection.mutable.ListBuffer
 import scala.jdk.CollectionConverters.*
@@ -130,6 +131,20 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
         catchRead {
             val attrs = Files.readAttributes(jpath, classOf[BasicFileAttributes])
             kyo.Path.PathStat(attrs.lastModifiedTime.toMillis, attrs.size)
+        }
+
+    private[kyo] def stableIdentity()(using AllowUnsafe, Frame): Result[FileReadException, Maybe[String]] =
+        catchRead {
+            val attrs      = Files.readAttributes(jpath, classOf[BasicFileAttributes])
+            val key        = attrs.fileKey
+            val birthNanos = attrs.creationTime.to(TimeUnit.NANOSECONDS)
+            // An inode can be reused as soon as an entry is deleted. Its birth time distinguishes
+            // that replacement from a rename, which preserves both values. OpenJDK reports a null
+            // file key on Windows, where creation time is the stable identity available through
+            // BasicFileAttributes.
+            if birthNanos == 0L then Absent
+            else if key == null then Present(s"birth:$birthNanos")
+            else Present(s"key:${key.toString}:$birthNanos")
         }
 
     // --- Write ---
