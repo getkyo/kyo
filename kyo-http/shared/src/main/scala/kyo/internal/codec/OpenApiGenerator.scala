@@ -226,9 +226,9 @@ private[kyo] object OpenApiGenerator:
       *   - Nullable(inner) → recurse on inner (optionality is captured in the parent's required list).
       *   - OneOf(variants) → if all variants map to an empty Obj, emit enum with variant names; otherwise emit oneOf.
       */
-    private def jsonSchemaToHttpOpenApi(js: JsonSchema): HttpOpenApi.SchemaObject =
+    private[kyo] def jsonSchemaToHttpOpenApi(js: JsonSchema): HttpOpenApi.SchemaObject =
         js match
-            case JsonSchema.Obj(properties, required, additionalProperties, _, _, _) =>
+            case JsonSchema.Obj(properties, required, additionalProperties, description, _, _) =>
                 val propsMap =
                     if properties.isEmpty then None
                     else
@@ -247,36 +247,93 @@ private[kyo] object OpenApiGenerator:
                     additionalProperties = addProps,
                     oneOf = None,
                     `enum` = None,
-                    `$ref` = None
+                    `$ref` = None,
+                    description = description.toOption
                 )
 
-            case JsonSchema.Arr(items, _, _, _, _) =>
-                HttpOpenApi.SchemaObject.array(jsonSchemaToHttpOpenApi(items))
+            case JsonSchema.Arr(items, minItems, maxItems, uniqueItems, description) =>
+                HttpOpenApi.SchemaObject(
+                    `type` = Some("array"),
+                    format = None,
+                    items = Some(jsonSchemaToHttpOpenApi(items)),
+                    properties = None,
+                    required = None,
+                    additionalProperties = None,
+                    oneOf = None,
+                    `enum` = None,
+                    `$ref` = None,
+                    minItems = minItems.toOption,
+                    maxItems = maxItems.toOption,
+                    uniqueItems = uniqueItems.toOption,
+                    description = description.toOption
+                )
 
-            case JsonSchema.Str(_, _, _, format, _) =>
-                format match
-                    case Present(f) =>
-                        HttpOpenApi.SchemaObject(
-                            `type` = Some("string"),
-                            format = Some(f),
-                            items = None,
-                            properties = None,
-                            required = None,
-                            additionalProperties = None,
-                            oneOf = None,
-                            `enum` = None,
-                            `$ref` = None
-                        )
-                    case Absent => HttpOpenApi.SchemaObject.string
+            case JsonSchema.Str(minLength, maxLength, pattern, format, description) =>
+                HttpOpenApi.SchemaObject(
+                    `type` = Some("string"),
+                    format = format.toOption,
+                    items = None,
+                    properties = None,
+                    required = None,
+                    additionalProperties = None,
+                    oneOf = None,
+                    `enum` = None,
+                    `$ref` = None,
+                    minLength = minLength.toOption,
+                    maxLength = maxLength.toOption,
+                    pattern = pattern.toOption,
+                    description = description.toOption
+                )
 
-            case JsonSchema.Num(_, _, _, _, _) =>
-                HttpOpenApi.SchemaObject.number
+            case JsonSchema.Num(minimum, exclusiveMinimum, maximum, exclusiveMaximum, description) =>
+                HttpOpenApi.SchemaObject(
+                    `type` = Some("number"),
+                    format = Some("double"),
+                    items = None,
+                    properties = None,
+                    required = None,
+                    additionalProperties = None,
+                    oneOf = None,
+                    `enum` = None,
+                    `$ref` = None,
+                    minimum = minimum.toOption,
+                    exclusiveMinimum = exclusiveMinimum.toOption,
+                    maximum = maximum.toOption,
+                    exclusiveMaximum = exclusiveMaximum.toOption,
+                    description = description.toOption
+                )
 
-            case JsonSchema.Integer(_, _, _, _, _) =>
-                HttpOpenApi.SchemaObject.integer
+            case JsonSchema.Integer(minimum, exclusiveMinimum, maximum, exclusiveMaximum, description) =>
+                HttpOpenApi.SchemaObject(
+                    `type` = Some("integer"),
+                    format = Some("int32"),
+                    items = None,
+                    properties = None,
+                    required = None,
+                    additionalProperties = None,
+                    oneOf = None,
+                    `enum` = None,
+                    `$ref` = None,
+                    minimum = minimum.toOption.map(_.toDouble),
+                    exclusiveMinimum = exclusiveMinimum.toOption.map(_.toDouble),
+                    maximum = maximum.toOption.map(_.toDouble),
+                    exclusiveMaximum = exclusiveMaximum.toOption.map(_.toDouble),
+                    description = description.toOption
+                )
 
-            case JsonSchema.Bool(_) =>
-                HttpOpenApi.SchemaObject.boolean
+            case JsonSchema.Bool(description) =>
+                HttpOpenApi.SchemaObject(
+                    `type` = Some("boolean"),
+                    format = None,
+                    items = None,
+                    properties = None,
+                    required = None,
+                    additionalProperties = None,
+                    oneOf = None,
+                    `enum` = None,
+                    `$ref` = None,
+                    description = description.toOption
+                )
 
             case JsonSchema.Null(_) =>
                 HttpOpenApi.SchemaObject(
