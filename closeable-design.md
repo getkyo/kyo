@@ -208,12 +208,74 @@ scope a fiber runs in is the closeable; the fiber is not. This is the boundary t
   which is the "beyond parent/child" generalization.
 - `Bracket.apply`'s release could become a `Closeable`, which is the open question in section 4.
 
+## 8b. Safe and unsafe tiers
+
+The interface should be tiered the way every other kyo resource type is, with the unsafe tier
+gated by `AllowUnsafe`:
+
+```scala
+// kyo-core
+abstract class Closeable:
+    /** Signals the close and returns. Does not wait for anything to be released. */
+    def close(reason: Maybe[Error[Any]])(using Frame): Unit < Sync
+
+    /** Signals the close and waits until everything it owns has been released. */
+    def closeAwait(reason: Maybe[Error[Any]])(using Frame): Unit < Async
+
+    def unsafe: Closeable.Unsafe
+end Closeable
+
+object Closeable:
+    abstract class Unsafe:
+        def close(reason: Maybe[Throwable])(using AllowUnsafe): Unit
+        def onClosed(f: Maybe[Throwable] => Unit)(using AllowUnsafe): Unit
+        def closed(using AllowUnsafe): Boolean
+        def safe: Closeable
+    end Unsafe
+end Closeable
+```
+
+This does more than satisfy the convention. Section 3D put `onClosed` on the single type, and a raw
+callback is unidiomatic as a safe kyo API while being exactly right as an unsafe one. The tiering
+puts it where callbacks already live in this codebase.
+
+### It also settles the module question, mechanically
+
+The safe tier returns `Unit < Sync` and `Unit < Async`, so it must be `kyo-core`. A companion object
+must be declared in the same file as its trait, so `Closeable.Unsafe` is `kyo-core` too.
+
+So **`Closeable` is not in the kernel**, and `Bracket` keeps its `(A, Maybe[Throwable]) => Unit`.
+This supersedes section 4's tentative preference for `kyo-data`: that reasoning assumed a single
+untiered type, and tiering removes the option.
+
+The one route back to a kernel-visible version is the shape `Fiber` already uses: a separate
+low-level type at the bottom (`IOPromise`, `Fiber.scala:43`) that the core tiers are views over.
+Applied here it means a row-free closeable in the kernel with `Closeable` and `Closeable.Unsafe` as
+core views of it. That is worth its weight only if `Bracket.apply` consumes it, which turns open
+question 3 from incidental into the decision that drives the packaging.
+
+### The reason type disagrees between the tiers, and the tree already disagrees with itself
+
+The unsafe tier above takes `Maybe[Throwable]` and the safe tier takes `Maybe[Error[Any]]`, and that
+is not a slip. It reflects a split that exists in the code today:
+
+- the kernel bracket release is `(A, Maybe[Throwable]) => Unit`, deliberately, because only panics
+  reach the path it runs on;
+- `Scope.ensure` and `Finalizer.close` take `Maybe[Error[Any]]`, which carries typed failures too.
+
+"Unsafe tier mirrors safe tier" says the two should correspond, so either they differ and the bridge
+converts lossily in one direction (a typed failure has no `Throwable` to hand down), or one of the
+two is wrong. This has to be decided rather than absorbed, and it is now open question 4.
+
 ## 9. Recommendation
 
-Shape D: one `Closeable` below core carrying `close` plus an `onClosed` callback, with `closeAwait`
-derived in `kyo-core` as the safe tier. `kyo-data` rather than `kyo-kernel` as the home, unless
-`Bracket.apply` is changed to consume it. Result discarded. Idempotence owned by the base rather
-than promised in scaladoc. `Fiber` explicitly excluded.
+Shape D, tiered per section 8b: `Closeable` and `Closeable.Unsafe` both in `kyo-core`, the unsafe
+tier gated by `AllowUnsafe` and carrying the `onClosed` callback, the safe tier carrying `close` and
+`closeAwait`. Result discarded. Idempotence owned by the base rather than promised in scaladoc.
+`Fiber` explicitly excluded.
+
+The kernel does not get `Closeable` under this recommendation. Reopening that means adopting the
+`IOPromise` shape, and it should be reopened only by answering open question 3 first.
 
 ## 10. Open questions
 
@@ -223,5 +285,10 @@ than promised in scaladoc. `Fiber` explicitly excluded.
    carrying it, because the reason is what separates release from discharge, and that distinction
    was just built into the kernel deliberately.
 2. **Trait or abstract class** for the idempotence guard, per section 6.
-3. **Does `Bracket.apply` consume it?** This is what decides kernel versus data, and it should be
-   answered before the type is placed.
+3. **Does `Bracket.apply` consume it?** With the tiering in section 8b this is now the decision that
+   drives the packaging, not a detail: if the answer is no, `Closeable` is core-only and the kernel
+   keeps its function; if yes, the low-level type has to exist separately in the kernel with the two
+   core tiers as views over it, which is a materially larger change.
+4. **Which reason type?** `Maybe[Throwable]` in the unsafe tier and `Maybe[Error[Any]]` in the safe
+   tier mirrors the split that exists today, but breaks the rule that the tiers correspond, since a
+   typed failure has no `Throwable` to hand down. See section 8b.
