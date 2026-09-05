@@ -205,7 +205,11 @@ object Async extends AsyncPlatformSpecific:
                     // past that never fires. This rests on IOPromise.onComplete firing immediately on an already
                     // completed promise, so a sleep completing before the wiring below still interrupts at registration.
                     val sleepFiber = clock.unsafe.sleep(after)
-                    Fiber.internal.initUnscoped(v).map { task =>
+                    // `ensureMap` rather than `map`: the wiring below is the obligation the spawn has already
+                    // created, and `map` polls the safepoint before applying its function, so an interrupt
+                    // pending when the task arrives would park here and leave the task running with nothing
+                    // holding it. Applied as the value arrives, the spawn and its wiring are one step.
+                    Fiber.internal.initUnscoped(v).ensureMap { task =>
                         sleepFiber.onComplete(_ => discard(task.unsafe.interrupt(error)))
                         task.unsafe.onComplete(_ => discard(sleepFiber.interrupt()))
                         task.get
