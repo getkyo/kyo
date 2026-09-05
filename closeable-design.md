@@ -1,0 +1,185 @@
+# kyo.Closeable: interface exploration
+
+Status: exploration, no decision taken. Companion to `hierarchical-scopes-design.md` section 13,
+which defers this question rather than answering it.
+
+The question is whether there should be a `kyo.Closeable`, whether it belongs in the kernel, and
+what its interface is. There is no such type today.
+
+## 1. What has to be expressible
+
+Every existing close in the tree, with the three axes it varies on: whether it carries a reason,
+what it returns, and whether it has a wait.
+
+| site | signal | reason | result | wait | "already closed" reported by |
+|---|---|---|---|---|---|
+| `Bracket` release (`Bracket.scala:83`) | `(A, Maybe[Throwable]) => Unit` | yes | `Unit` | none | `Cell`'s CAS, internal |
+| `Scope.Finalizer.close` (`Scope.scala:202`) | `Maybe[Error[Any]] => Unit < Sync` | yes | `Unit` | `await: Unit < Async` | `queue.close()` returning `Absent` |
+| `Scope.ensure` finalizer (`Scope.scala:157`) | `Maybe[Error[Any]] => Any < (Async & Abort[Throwable])` | yes | `Any` | n/a | n/a |
+| `Channel.close` (`Channel.scala:218`) | `Unit < Sync` | no | `Maybe[Seq[A]]` | `closeAwaitEmpty` (see below) | `Maybe` being `Absent` |
+| `Queue.close` (`Queue.scala:123`) | `Unit < Sync` | no | `Maybe[Seq[A]]` | `closeAwaitEmpty` | `Maybe` |
+| `Hub.close` (`Hub.scala:98`) | `Unit < Sync` | no | `Maybe[Seq[A]]` | none | `Maybe` |
+| `Meter.close` (`Meter.scala:83`) | `Unit < Sync` | no | `Boolean` | none | `Boolean` |
+| `java.lang.AutoCloseable` | `close(): Unit` | no | `Unit` | none | nothing, and it throws |
+
+**A correction to make before building on this.** `Channel.closeAwaitEmpty` and
+`Queue.closeAwaitEmpty` are not the wait half of this interface. They wait until consumers have
+drained the collection, not until resources have been released. The naming pair is a precedent for
+how to spell the two operations; the semantics are not the same thing, and treating them as the
+same would be a mistake.
+
+## 2. The layering constraint decides most of it
+
+`Maybe`, `Result` and `Frame` are `kyo-data`. `AllowUnsafe` is `kyo-config`, a root module below
+everything. `Sync` and `Async` are `kyo-core`. `kyo-kernel` sits between data and prelude and has
+no effect row for side effects at all, which is exactly why `Bracket`'s release is a bare function:
+it runs on the abandonment path, where nothing is installed to answer for an effect.
+
+So:
+
+- an interface whose `close` is `Unit < Sync` cannot live in the kernel;
+- an interface with `await: Unit < Async` cannot live in the kernel or in prelude;
+- an interface the kernel can define carries no effect row at all.
+
+That rules out most of the shapes before taste enters.
+
+## 3. Four candidate interfaces
+
+### A. Kernel, no row
+
+```scala
+trait Closeable:
+    def close(reason: Maybe[Throwable]): Unit
+```
+
+Matches `Bracket`'s release exactly. Cannot express `Scope`'s async finalizers and has no wait, so
+`Scope` cannot use it for membership, which was the whole motivation.
+
+### B. Core, rowed pair
+
+```scala
+trait Closeable:
+    def close(using Frame): Unit < Sync
+    def closeAwait(using Frame): Unit < Async
+```
+
+Matches `Finalizer`. Cannot be in the kernel. `Channel`, `Queue`, `Hub` and `Meter` do not fit,
+because their close returns data.
+
+### C. Row-polymorphic
+
+```scala
+trait Closeable[-S]:
+    def close(using Frame): Unit < S
+```
+
+The kernel could define it and core instantiate it at `Sync`. But it does not give the
+signal/wait split that the phased close requires, and `Closeable[Async]` would let a phase-1
+signal block, which is the specific thing the phases exist to prevent.
+
+### D. Split across the layers
+
+```scala
+// the signal: no effect row, so it can sit below core
+trait Closeable:
+    def close(reason: Maybe[Throwable]): Unit
+
+// kyo-core: adds the wait
+trait Closeable.Awaitable extends Closeable:
+    def await(using Frame): Unit < Async
+```
+
+This is the only shape that matches the phase structure. Phase 1 calls `close` on every member
+without waiting on any, phase 2 calls `await` on each. It also matches the kernel constraint the
+hierarchy design already states: on the abandonment path a scope can fire its close but cannot
+await, so the two halves genuinely are separable and one of them genuinely is available lower down.
+
+## 4. Where the signal half belongs, and it is probably not the kernel
+
+The signal half needs only `Maybe`. It has no kernel dependency, so `kyo-data` can hold it and both
+kernel and core can see it.
+
+The test for putting it in the kernel is whether the kernel *consumes* it. Today the only candidate
+is `Cell`, which is `private[kyo]` and already has the shape as a function field
+(`fin: Maybe[Throwable] => Unit`, `Bracket.scala:43`). A trait whose only kernel use is to name a
+function the kernel already passes is a vocabulary word, not a capability, and the kernel's own rule
+is that a new type must earn itself against the ones already there.
+
+So the honest position:
+
+- if the goal is one vocabulary across the stack, `kyo-data` is the correct home;
+- `kyo-kernel` is correct only if `Bracket.apply` changes to take a `Closeable` instead of a
+  `(A, Maybe[Throwable]) => Unit`. That is a real proposal, but it needs its own justification, and
+  it costs an allocation per bracket unless `Cell` is made to implement the interface directly.
+
+I would put it in `kyo-data` unless someone names a kernel consumer.
+
+## 5. The result value should be discarded
+
+`Channel.close` returns `Maybe[Seq[A]]`, `Meter.close` returns `Boolean`, `Finalizer.close` returns
+`Unit`. A common `close: Unit` throws that away.
+
+The site that consumes the interface does not want it. Phase 1 signals and reads nothing. So the
+discarding form is the right one, and types with informative closes keep their own richer `close`
+and gain a `Closeable` view alongside it.
+
+Making it `Closeable[R]`, generic in the result, buys nothing at the only site that consumes the
+interface and infects every membership set with a type parameter it immediately discards.
+
+## 6. Idempotence belongs to the type, not to each implementer
+
+Every close in the survey reports "already closed" somehow, and `Cell` enforces exactly-once with a
+CAS. Under the hierarchy, phase 1 and the abandonment path can both fire the same close, so an
+implementer that gets this wrong produces a double release rather than a leak.
+
+A bare trait puts that burden on every implementer. `Cell` shows the alternative, which is to own
+the guard in the type:
+
+```scala
+abstract class Closeable extends AtomicBoolean:
+    protected def onClose(reason: Maybe[Throwable]): Unit
+    final def close(reason: Maybe[Throwable]): Unit =
+        if compareAndSet(false, true) then onClose(reason)
+```
+
+That is `Cell` generalized, and it makes the invariant true by construction rather than by every
+implementer remembering. The cost is that it is a class, so a type cannot be a `Closeable` and
+something else, which matters for `Channel` and `Queue`, which already have supertypes. A trait
+carrying its own `private var closed` plus an atomic field reference is the alternative and is worth
+weighing against it.
+
+This is a genuine fork and I do not think it can be settled without deciding question 4 first, since
+a `kyo-data` home makes the class form cheaper to adopt than a kernel home would.
+
+## 7. What must not be a Closeable
+
+**`Fiber`.** Interruption is a signal with no release guarantee: `Fiber.interrupt` is
+`Boolean < Sync` and says nothing about whether the fiber's resources have been freed. Giving
+`Fiber` a `Closeable.Awaitable` instance would promise backpressure the fiber does not provide. The
+scope a fiber runs in is the closeable; the fiber is not. This is the boundary that keeps
+`interruptAwait` a scope operation rather than a fiber one.
+
+## 8. What adopting it would change
+
+- `Scope.acquire` is pinned to `java.lang.AutoCloseable` (`Scope.scala:107`), whose `close()` is
+  synchronous and throws. It would accept a kyo-native `Closeable` as well, gaining a reason and an
+  async close.
+- `Scope`'s membership entries become `Closeable.Awaitable` rather than specifically child scopes,
+  which is the "beyond parent/child" generalization.
+- `Bracket.apply`'s release could become a `Closeable`, which is the open question in section 4.
+
+## 9. Recommendation
+
+Shape D, with the signal half in `kyo-data` rather than the kernel, the result discarded,
+idempotence owned by the base rather than promised in scaladoc, and `Fiber` explicitly excluded.
+
+## 10. Open questions
+
+1. **Does `close` carry the reason?** `Bracket` and `Finalizer` do; `Channel`, `Queue`, `Hub` and
+   `Meter` do not. Carrying it means every existing close needs an adapter that ignores it. Not
+   carrying it means `Bracket` cannot be expressed in terms of the interface at all. I lean to
+   carrying it, because the reason is what separates release from discharge, and that distinction
+   was just built into the kernel deliberately.
+2. **Trait or abstract class** for the idempotence guard, per section 6.
+3. **Does `Bracket.apply` consume it?** This is what decides kernel versus data, and it should be
+   answered before the type is placed.
