@@ -423,7 +423,7 @@ object KyoFfiPlugin extends AutoPlugin {
             val cDir = (Compile / sourceDirectory).value / "c"
             if (cDir.exists()) Seq(cDir) else Nil
         },
-        ffiLinkLibs        := Nil,
+        ffiLinkLibs := Nil,
         ffiReleasePlatforms := {
             val libs = ffiLibrariesResolved.value
             // buildsOn is the same predicate ffiCompile gates on, so what a release requires cannot drift
@@ -432,7 +432,7 @@ object KyoFfiPlugin extends AutoPlugin {
                 CCompiler.supportedOsArchTags.filter(key => lib.buildsOn(CCompiler.parseOsArch(key)._1))
             }.distinct.sorted
         },
-        ffiStubLibraries     := Nil,
+        ffiStubLibraries := Nil,
         // Load-bearing beyond its value: ffiCompileAll, ffiPackagingCheckAll and
         // ffiPackagingFormatCheckAll decide which projects enable this plugin by asking whether this
         // key resolves for the project, delegation included. That is exactly why a globalSettings
