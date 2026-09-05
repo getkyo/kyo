@@ -269,8 +269,12 @@ object KyoFfiPlugin extends AutoPlugin {
         }
         val (finalState, failed) =
             projects.foldLeft((state, Seq.empty[String])) { case ((st, bad), ref) =>
-                val ex      = Project.extract(st)
-                val withReq = ex.appendWithoutSession(Seq(ref / ffiRequiredPlatforms := Nil), st)
+                val ex = Project.extract(st)
+                // appendWithSession, not appendWithoutSession: the latter rebuilds from session.original
+                // and so drops every `set` the command line made, which is how the release workflow hands
+                // this check its prebuilt pool. Without it the check sees only the natives this host
+                // compiled and reports every other platform missing.
+                val withReq = ex.appendWithSession(Seq(ref / ffiRequiredPlatforms := Nil), st)
                 Project.runTask(ref / ffiPackagingCheck, withReq) match {
                     case Some((next, Value(_))) => (next, bad)
                     case Some((next, Inc(_)))   => (next, bad :+ ref.project)
@@ -333,7 +337,10 @@ object KyoFfiPlugin extends AutoPlugin {
                             (if (publishes) "(no library declares C sources)" else "(publish / skip)") +
                             "; checking staged artifact formats only."
                     )
-                val withReq = ex.appendWithoutSession(
+                // appendWithSession: see ffiPackagingFormatCheckAll. A `set ffiPrebuiltPool` on the
+                // command line is a session setting, and dropping it makes this check read only what
+                // this host compiled, which fails the release for every platform a producer supplied.
+                val withReq = ex.appendWithSession(
                     Seq(ref / ffiRequiredPlatforms := requiredKeys),
                     afterSkip
                 )

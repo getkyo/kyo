@@ -1,0 +1,15 @@
+# The release hands ffiPackagingCheckAll its downloaded pool on the command line, where it is a
+# session setting. A command that rebuilds the build from the settings without the session drops it,
+# and the check then reads only what this host compiled: every platform a producer supplied reports
+# as missing while the natives for it sit unread in the pool.
+
+# This host's own compile is well formed, so the check passes with no pool in play.
+> ffiPackagingCheckAll
+
+# The pool holds a malformed artifact for a declared id. Rejecting it is the only outcome available
+# to a check that can see the pool, so this failing is what proves the setting arrived.
+> set ThisBuild / ffiPrebuiltPool := Some(file("pool"))
+-> ffiPackagingCheckAll
+
+# The formats-only command reaches the same pool by the same route.
+-> ffiPackagingFormatCheckAll
