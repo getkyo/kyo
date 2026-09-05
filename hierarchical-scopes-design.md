@@ -358,7 +358,67 @@ Reproduce first, in this order:
 Cross-platform: everything in the live review so far is JVM only. `Scope`, `Isolate` and the
 kernel hooks are shared source, so JS and Native have to run before this is called done.
 
-## 13. Rejected alternatives
+## 13. What the hierarchy makes expressible: held scopes and `Closeable`
+
+The phased close is worth more than the guarantee it was built for. Once a scope can signal its
+members and then wait for them, "interrupt and wait until the resources are actually freed" stops
+needing a primitive.
+
+### `interruptAwait` is a scope operation, not a fiber one
+
+A fiber has no backpressure on closing and should not grow any: `interrupt` stays
+`Boolean < Sync`, fire and return. The waiting belongs to the scope the fiber was spawned into,
+because that is what knows when the resources are released.
+
+```scala
+val s = Scope.open()                  // a child of the current scope, handed back as a value
+val f = s.run(Fiber.init(body))       // f's interrupt is a phase-1 signal on s
+...
+s.closeAwait                          // 1 signal, 2 await members, 3 release own
+```
+
+Per-fiber granularity comes from giving the fiber its own scope, not from teaching `Fiber` to
+wait. Nothing joins a fiber and no kernel mechanism is added.
+
+### Why `close` and `closeAwait` are two operations
+
+This is forced by the phase structure rather than being a convenience. Phase 1 must signal every
+member without waiting on any, and phase 2 then waits. If closing a member always awaited it, the
+close would run depth-first and a scope with two children would wait the first out before
+signalling the second.
+
+The naming already exists in the codebase: `Channel.close` / `Channel.closeAwaitEmpty`, and the
+same pair on `Queue`.
+
+### Membership beyond parent/child
+
+Today the only way to obtain a scope is `Scope.run`, which ties it to a lexical block, so the only
+relationship available is enclosing/enclosed. A scope that is a *value* can be held, passed, and
+closed from outside the block that created it, and membership generalizes with it: an entry stops
+meaning "a scope I lexically contain" and starts meaning "something I own that can be signalled
+and awaited".
+
+That type does not exist yet. `Scope.acquire` is pinned to `java.lang.AutoCloseable`
+(`Scope.scala:107`), whose `close()` is synchronous and throws, while the kyo-native types spell
+the pair themselves (`Channel`, `Queue`, `Hub`, `Meter`). A `kyo.Closeable` carrying the signal
+and the await is the type a membership entry wants, and it would let `Scope.acquire` take a
+kyo-native resource with an async close rather than only a Java one.
+
+Whether to introduce it is a separate decision from the hierarchy, but the hierarchy is what makes
+it load-bearing rather than cosmetic, so it should be decided alongside.
+
+### Two hazards a held scope introduces
+
+- **A handle nobody closes** is exactly the manual resource management the effect exists to
+  remove. The repair is that `Scope.open` returns a child of the *current* scope, so forgetting is
+  safe (the enclosing scope closes it at phase 2) and closing early is an optimization rather than
+  an obligation.
+- **A cycle hangs.** Awaiting a scope that transitively awaits you is a deadlock, and held handles
+  make it reachable for the first time: passing a handle downward lets a child await its ancestor.
+  Lexical nesting cannot express that today, so the hazard arrives with the value form, not with
+  the hierarchy.
+
+## 14. Rejected alternatives
 
 **Tagging queue entries so interrupts sort first.** Fixes the deadlock and leaves the parent's
 own finalizers interleaved with waiting for children, so the use-after-release in section 5
