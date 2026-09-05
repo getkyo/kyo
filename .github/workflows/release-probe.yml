@@ -64,3 +64,12 @@ jobs:
         run: |
           sbt -Dplatform=JVM ffiPackagingFormatCheckAll
           sbt -Dplatform=JS  ffiPackagingFormatCheckAll
+      # The darwin producer cross-builds by prefixing ffiCompileAll with a build-level append, and no
+      # pull request runs that producer: release.yml triggers only on a main push, a tag, or a
+      # `/release` comment, and the comment path runs main's copy of the workflow rather than the
+      # branch's. The prefix resolves against the build's settings before any C is compiled, so an FFI
+      # setting that cannot take a build-level value fails the whole command here, on this host,
+      # whatever the target. The define is inert and only makes the append observable. Runs last so
+      # nothing above consumes natives built with it.
+      - name: Cross-build command shape (producer path)
+        run: sbt -Dplatform=JVM 'set ThisBuild / ffiCFlags ++= Seq("-DKYO_FFI_PROBE=1")' ffiCompileAll

@@ -1,0 +1,26 @@
+# The knobs that drive a build are settable once at ThisBuild, and every project sees them. A
+# project-scoped default shadows the build-level scope, which discards a `:=` with no error at all
+# and leaves a `++=` with no base value to append to. Both shapes are how a CI matrix leg names its
+# target and passes its cross-compilation flags, so a producer that silently builds the host's
+# architecture and names the artifact for another is what regressing this costs.
+
+# Every build-wide key resolves at ThisBuild, and the plugin-enablement probe still does not.
+> checkBuildLevelDefaults
+
+# Negative control: the source refuses to compile until the appended flag arrives.
+-> ffiCompile
+> set ThisBuild / ffiCFlags ++= Seq("-DKYO_FFI_BUILD_LEVEL=1")
+> checkCFlags
+> ffiCompile
+# ffiCompile creates target/ffi before it invokes the compiler, so the directory existing proves
+# nothing. The named artifact is what only a successful compile produces.
+> writeArtifactName
+$ exec sh -c 'set -eu; want=$(cat target/artifact.txt); test -f "target/ffi/$want" || { echo "no target/ffi/$want" >&2; ls target/ffi >&2; exit 1; }'
+
+# The empty append is the shape three of the four legs in the generated CI template use, and it
+# needs a base value just as much as a non-empty one does.
+> set ThisBuild / ffiLinkFlags ++= Nil
+
+# A `:=` at ThisBuild takes effect rather than being silently dropped.
+> set ThisBuild / ffiTargetOsArch := Some("linux-x86_64")
+> checkTargetOsArch

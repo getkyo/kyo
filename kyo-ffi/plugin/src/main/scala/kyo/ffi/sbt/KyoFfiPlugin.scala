@@ -353,27 +353,23 @@ object KyoFfiPlugin extends AutoPlugin {
         finalState
     }
 
+    /** The knobs that drive a build, defaulted here rather than in `projectSettings` so a build can
+      * set them once at `ThisBuild` (or `Global`) and have every project see it.
+      *
+      * A project-scoped default shadows the build-level scopes, which discards a `ThisBuild / key :=
+      * ...` with no error at all and leaves a `ThisBuild / key ++= ...` with no base value to append
+      * to. Those are the two shapes a CI matrix leg uses to name its target and pass its
+      * cross-compilation flags, so the keys it drives belong in build scope.
+      *
+      * The keys that describe what a project CONTAINS stay in `projectSettings`: its library id, its
+      * libraries and their link libs, its sources and includes, its stub libraries. A build-wide
+      * value for those would be meaningless, and `ffiLibraries` in particular must never move (see
+      * its definition).
+      */
     override lazy val globalSettings: Seq[Setting[?]] = Seq(
         commands += ffiCompileAllCommand,
         commands += ffiPackagingCheckAllCommand,
-        commands += ffiPackagingFormatCheckAllCommand
-    )
-
-    override lazy val projectSettings: Seq[Setting[?]] = Seq(
-        ffiLibraryId := "kyo_ffi",
-        ffiCSources := {
-            val cDir = (Compile / sourceDirectory).value / "c"
-            if (cDir.exists()) (cDir ** "*.c").get else Nil
-        },
-        ffiCHeaders := {
-            val cDir = (Compile / sourceDirectory).value / "c"
-            if (cDir.exists()) (cDir ** "*.h").get else Nil
-        },
-        ffiIncludes := {
-            val cDir = (Compile / sourceDirectory).value / "c"
-            if (cDir.exists()) Seq(cDir) else Nil
-        },
-        ffiLinkLibs        := Nil,
+        commands += ffiPackagingFormatCheckAllCommand,
         ffiCCompiler       := sys.env.getOrElse("CC", "cc"),
         ffiCFlags          := Seq("-O2", "-fPIC", "-Wall"),
         ffiLinkFlags       := Nil,
@@ -389,16 +385,10 @@ object KyoFfiPlugin extends AutoPlugin {
         ffiTargetOsArch := sys.props.get("kyo.ffi.targetOsArch"),
         ffiPrebuiltDir  := None,
         ffiPrebuiltPool := None,
-        ffiReleasePlatforms := {
-            val libs = ffiLibrariesResolved.value
-            // buildsOn is the same predicate ffiCompile gates on, so what a release requires cannot drift
-            // from what a producer would actually build.
-            libs.filter(_.cSources.nonEmpty).flatMap { lib =>
-                CCompiler.supportedOsArchTags.filter(key => lib.buildsOn(CCompiler.parseOsArch(key)._1))
-            }.distinct.sorted
-        },
+        // A release names the platforms every bundled library must have a native for, so a producer
+        // that did not run fails the publish instead of shipping a jar with a hole in it. That is a
+        // property of the release being cut, not of any one module.
         ffiRequiredPlatforms := Nil,
-        ffiStubLibraries     := Nil,
         // Common system libraries that bindings may reference without the plugin
         // producing or packaging an artifact for them. Users can extend this list
         // to whitelist additional system-provided libraries.
@@ -416,7 +406,37 @@ object KyoFfiPlugin extends AutoPlugin {
             "user32",
             "ws2_32",
             "advapi32"
-        ),
+        )
+    )
+
+    override lazy val projectSettings: Seq[Setting[?]] = Seq(
+        ffiLibraryId := "kyo_ffi",
+        ffiCSources := {
+            val cDir = (Compile / sourceDirectory).value / "c"
+            if (cDir.exists()) (cDir ** "*.c").get else Nil
+        },
+        ffiCHeaders := {
+            val cDir = (Compile / sourceDirectory).value / "c"
+            if (cDir.exists()) (cDir ** "*.h").get else Nil
+        },
+        ffiIncludes := {
+            val cDir = (Compile / sourceDirectory).value / "c"
+            if (cDir.exists()) Seq(cDir) else Nil
+        },
+        ffiLinkLibs        := Nil,
+        ffiReleasePlatforms := {
+            val libs = ffiLibrariesResolved.value
+            // buildsOn is the same predicate ffiCompile gates on, so what a release requires cannot drift
+            // from what a producer would actually build.
+            libs.filter(_.cSources.nonEmpty).flatMap { lib =>
+                CCompiler.supportedOsArchTags.filter(key => lib.buildsOn(CCompiler.parseOsArch(key)._1))
+            }.distinct.sorted
+        },
+        ffiStubLibraries     := Nil,
+        // Load-bearing beyond its value: ffiCompileAll, ffiPackagingCheckAll and
+        // ffiPackagingFormatCheckAll decide which projects enable this plugin by asking whether this
+        // key resolves for the project, delegation included. That is exactly why a globalSettings
+        // default would answer yes for every project in the build, so it stays here.
         ffiLibraries := Nil,
         // Resolve kyo-ffi-codegen (and its transitive Scala 3 toolchain) from the project's
         // resolvers, matched to this plugin's version. The in-repo integration test overrides this
