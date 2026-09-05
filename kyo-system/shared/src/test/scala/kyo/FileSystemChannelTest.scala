@@ -1,9 +1,7 @@
 package kyo
 
 /** Reusable contract for typed positioned channels on mutable backends. */
-abstract class FileSystemChannelTestSuite extends kyo.test.Test[Any]:
-
-    private given Frame = Frame.internal
+abstract class FileSystemChannelTest extends kyo.test.Test[Any]:
 
     protected def createFileSystem(using
         Frame
@@ -33,4 +31,4 @@ abstract class FileSystemChannelTestSuite extends kyo.test.Test[Any]:
         }
     }
 
-end FileSystemChannelTestSuite
+end FileSystemChannelTest

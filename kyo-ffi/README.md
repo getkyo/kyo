@@ -878,13 +878,34 @@ If a binding's `Ffi.Config(library = "...")` id is not declared in `ffiLibraries
 | `includeDirs` | extra `-I` directories (vendored headers) |
 | `libDirs` | `-L` directories holding vendored archives |
 | `linkLibs` | `-l<name>` link libraries |
-| `linkLibsByOs` | per-OS link additions, keyed by `<os>-<arch>` (e.g. `linux-aarch64`) |
+| `linkLibsByOs` | per-OS link additions, keyed by OS name (`linux`, `darwin`, `windows`); the `linux` key also covers `linux-musl` |
 | `cFlags` | extra C compiler flags for this library |
 | `linkFlags` | extra linker flags for this library |
 | `staticLink` | statically link this library's `linkLibs` |
 | `dependsOn` | other library ids this one must build after (build-order topological sort) |
+| `compilerByOs` | override the C compiler for one OS (e.g. `cl` on Windows) |
+| `osTargets` | the OS names this library is built and bundled for; empty (the default) means every OS |
 
 `FfiLibrary.resolvedLinkLibs(os)` returns the combined `linkLibs` plus the matching `linkLibsByOs` entries for the current OS.
+
+### Declaring the OS a library is for
+
+`osTargets` names the operating systems a library's shared library is built and bundled for. It exists because C that is `#ifdef`-guarded to same-signature stubs off its OS still *compiles* everywhere, so without it a build ships a working-looking artifact for a platform that can never call it, while the platform that can may have none at all.
+
+Entries are exact `linux`, `linux-musl`, `darwin` and `windows` names, validated when the library list resolves, and `linux` does **not** imply `linux-musl`: a library that builds on both names both. That is the opposite of `linkLibsByOs` and `compilerByOs`, which do fold musl onto the `linux` key, because a musl toolchain genuinely is "linux" for link-flag and compiler-selection purposes. Which platforms a native is *bundled* for is a different question from which flags build it.
+
+```scala doctest:expect=skipped
+// A Mach-only reader: compiled and bundled on macOS, absent everywhere else.
+FfiLibrary(id = "machine_macos", cSources = macSources, osTargets = Seq("darwin"))
+
+// A TLS shim the platform rules out: every consumer reaches it through a capability
+// probe, so a platform it is not declared for degrades to the JDK floor.
+FfiLibrary(id = "net_boringssl", cSources = tlsSources, osTargets = Seq("linux", "linux-musl", "darwin"))
+```
+
+On the JVM, where the native manifest is read, a platform a library does not name makes `Ffi.load` raise a catchable `FfiLoadError.LibraryNotFound` unless the native resolves from a `-Dkyo.ffi.<id>.path` override or a system install, so a consumer degrades with an ordinary `NonFatal` guard. JS ships no manifest and raises the same error from its own loader at the first binding call instead; Native links its C at build time and is unaffected. Do not name `osTargets` for a library that must stay CALLABLE off its own platform: a shim whose C defines real entry points everywhere so an unsupported call answers an error code, rather than compiling to stubs nobody reaches, is relying on being loadable and must ship everywhere.
+
+Scala Native is unaffected either way: it compiles every declared C source into the binary on every OS, which is what keeps the stub symbols resolvable there. `osTargets` governs the JVM and JS shared library only.
 
 ### Static linking vendored archives
 
@@ -997,6 +1018,19 @@ The teaching sections above cover when to reach for each knob. This is the looku
 | `ffiNpmBundleTemplate` | emit a `package.json` pinning `koffi` to `^2.7` (Scala.js) |
 | `ffiDumpCcCommand` | return the `cc` command-line that `ffiCompile` would invoke (diagnostic; does not run the compiler) |
 | `ffiNativeLinkingOptions` | compute the Native linking options to wire into `nativeConfig.linkingOptions` |
+| `ffiPackagingCheck` | verify each staged native matches the platform directory it sits in, and that every declared library has one for each `ffiRequiredPlatforms` entry |
+
+### Release commands
+
+A release builds each OS on its own runner and folds the results together, so no single host can see the finished set. These build-level commands cover every project that declares `ffiLibraries`, which is what keeps a new FFI module from needing a release-workflow edit:
+
+| Command | Purpose |
+|---------|---------|
+| `ffiCompileAll` | run `ffiCompile` on every FFI project. What a producer job invokes; a project whose libraries build nothing on this host is skipped rather than failed |
+| `ffiPackagingCheckAll` | run `ffiPackagingCheck` on every FFI project with the required platforms derived per library from its own `osTargets`. A `publish / skip` project requires no platform, since it ships no jar |
+| `ffiPackagingFormatCheckAll` | the same, minus the completeness half. One host has one os-arch, so this is the part a pull request can answer: every staged native must match the platform directory it sits in |
+
+`ffiPackagingCheck` reads each artifact's object header rather than trusting its path, so it catches a native that is right about its OS and wrong about its CPU, and a prebuilt misfiled by whichever producer supplied it. One case it cannot see: glibc and musl have identical ELF headers, so that distinction rests on each producer deriving its os-arch from the host it runs on.
 
 ### Compiler detection
 

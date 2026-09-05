@@ -180,13 +180,23 @@ object NativeLoader:
       * it returns the [[defaultLookupOrThrow]] wrapper and the error only fires on the first failed `find(symbol)`,
       * which happens deep inside the impl's `<clinit>` where a throw poisons the class.
       *
-      * Passes when the id is a system library (absence expected), when the manifest does not list the current
-      * platform among `bundledPlatforms` (the native was never meant to be here, a graceful demote-to-fallback),
-      * when a readable `-Dkyo.ffi.<id>.path` override is given, or when the bundled resource exists. Nothing else
-      * passes.
+      * Passes when the id is a system library (absence expected), when a readable `-Dkyo.ffi.<id>.path` override is
+      * given, when the bundled resource exists, or, for a platform the manifest does not list, when the library
+      * resolves as a system install. Nothing else passes.
+      *
+      * A platform absent from `bundledPlatforms` is a real state rather than a reason to defer: `osTargets`
+      * declares a library out of a platform, and a release may not build every one. The library can still be
+      * supplied out of band, so this asks whether it RESOLVES, not whether it was declared. When it does not, the
+      * caller gets this catchable error instead of an `ExceptionInInitializerError` from the companion's
+      * initializer at the first call, which is what the pre-check exists to prevent.
+      *
+      * The native linker's default lookup is deliberately not a resolution here: it is what
+      * `loadFromResourceOrSystem` falls back to, and it defers failure to the first unresolved symbol. An id whose
+      * symbols live in the process default lookup belongs in `ffiSystemLibraries`, which carries no manifest entry
+      * and skips this check.
       *
       * @throws kyo.ffi.FfiLoadError.LibraryNotFound
-      *   when the manifest claims the native is bundled here but neither the resource nor an override accounts for it.
+      *   when neither the resource, an override, nor a system install accounts for the native.
       */
     private[ffi] def assertBundledPresent(libraryId: String, bundledPlatforms: Set[String]): Unit =
         if SystemLibraries.isSystem(libraryId) then ()
@@ -194,15 +204,44 @@ object NativeLoader:
             val os     = detectOs
             val arch   = detectArch
             val osArch = s"${os.tagName}-${arch.tagName}"
-            if !bundledPlatforms.contains(osArch) then ()
+            if !bundledPlatforms.contains(osArch) then
+                if resolvableOutsideBundle(libraryId, os, arch) then ()
+                else
+                    val declared =
+                        if bundledPlatforms.isEmpty then "no platform"
+                        else bundledPlatforms.toSeq.sorted.mkString(", ")
+                    val path   = resourcePath(libraryId, os, arch)
+                    val mapped = System.mapLibraryName(libraryId).nn
+                    val overrideCandidate = sys.props.get(s"kyo.ffi.$libraryId.path") match
+                        case Some(p) => s"override -Dkyo.ffi.$libraryId.path=$p (file missing)"
+                        case None    => s"override -Dkyo.ffi.$libraryId.path (unset)"
+                    val candidates =
+                        Chunk(s"resource path: $path", overrideCandidate, s"system library: $libraryId") ++
+                            (if mapped != libraryId then Chunk(s"system library: $mapped") else Chunk.empty)
+                    val msg =
+                        s"Native library '$libraryId' is not bundled for $osArch: the kyo-ffi native manifest " +
+                            s"declares it for $declared. It did not resolve from the classpath, from a readable " +
+                            s"-Dkyo.ffi.$libraryId.path override, or as a system install. Add the platform " +
+                            s"classifier dependency if one exists for $osArch, install the native, or set " +
+                            s"-Dkyo.ffi.$libraryId.path=<absolute path>."
+                    throw new FfiLoadError.LibraryNotFound(libraryId, candidates, msg, null)
+                end if
             else
                 val overridePath = sys.props.get(s"kyo.ffi.$libraryId.path")
-                val overrideOk   = overridePath.exists(p => Files.exists(Paths.get(p)))
                 val path         = resourcePath(libraryId, os, arch)
-                val stream       = getClass.getResourceAsStream(path)
-                val resourceOk   = stream != null
-                if stream != null then stream.close()
-                if overrideOk || resourceOk then ()
+                // loadLocked uses an override unconditionally and consults nothing else, so when one is set
+                // its file decides: a resource on the classpath must not vouch for an override that is missing.
+                val accounted =
+                    overridePath match
+                        case Some(p) => Files.exists(Paths.get(p))
+                        case None =>
+                            val stream = getClass.getResourceAsStream(path)
+                            if stream != null then
+                                stream.close()
+                                true
+                            else false
+                            end if
+                if accounted then ()
                 else
                     val overrideCandidate = overridePath match
                         case Some(p) => s"override -Dkyo.ffi.$libraryId.path=$p (file missing)"
@@ -218,6 +257,31 @@ object NativeLoader:
             end if
         end if
     end assertBundledPresent
+
+    /** Whether `id` resolves without being bundled for this platform: a readable override, a bundled resource
+      * that is present anyway, or a system install reachable by the literal or platform-mapped name.
+      *
+      * Follows `loadLocked`'s precedence rather than trying every route: an override, when set, is the only
+      * one the load will take.
+      */
+    private def resolvableOutsideBundle(id: String, os: Os, arch: Arch): Boolean =
+        sys.props.get(s"kyo.ffi.$id.path") match
+            case Some(p) => Files.exists(Paths.get(p))
+            case None =>
+                val stream = getClass.getResourceAsStream(resourcePath(id, os, arch))
+                if stream != null then
+                    stream.close()
+                    true
+                else
+                    // A probe, not the load. Any refusal means "not resolvable here", including a runtime that
+                    // denies native access outright (--illegal-native-access=deny), so this cannot make Ffi.load
+                    // raise an exception type it did not raise before.
+                    try
+                        val mapped = System.mapLibraryName(id).nn
+                        tryLookup(id).isDefined || (mapped != id && tryLookup(mapped).isDefined)
+                    catch case _: Throwable => false
+                end if
+    end resolvableOutsideBundle
 
     /** `dlopen` `name` into the global arena, returning `None` when the platform linker rejects it. */
     private def tryLookup(name: String): Option[SymbolLookup] =

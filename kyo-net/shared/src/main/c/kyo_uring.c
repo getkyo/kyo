@@ -23,6 +23,7 @@
  * artifact. io_uring's absence stays a runtime answer, kyo_uring_probe_available
  * returning 0, and the backend probe reports it unavailable.
  */
+#include "kyo_net_api.h"
 
 #if defined(__linux__) && __has_include(<liburing.h>)
 
@@ -43,7 +44,7 @@
 /* ---- ring sizing ---- */
 
 /* sizeof(struct io_uring): byte size the caller allocates for the ring Buffer. */
-long kyo_uring_sizeof(void) {
+KYO_NET_API long kyo_uring_sizeof(void) {
     return (long)sizeof(struct io_uring);
 }
 
@@ -63,25 +64,25 @@ long kyo_uring_sizeof(void) {
  * would wrap to a huge unsigned ring depth at the cast, so both are refused at the C trust
  * boundary (CWE-190) and reported as -EINVAL, the negative-errno convention queue_init uses.
  */
-int kyo_uring_queue_init(int entries, struct io_uring* ring, int flags) {
+KYO_NET_API int kyo_uring_queue_init(int entries, struct io_uring* ring, int flags) {
     if (entries <= 0 || flags < 0) return -EINVAL;
     return io_uring_queue_init((unsigned)entries, ring, (unsigned)flags);
 }
 
 /* io_uring_queue_exit: tear the ring down and release its mapped queues. */
-void kyo_uring_queue_exit(struct io_uring* ring) {
+KYO_NET_API void kyo_uring_queue_exit(struct io_uring* ring) {
     io_uring_queue_exit(ring);
 }
 
 /* io_uring_submit: hand the prepared SQEs to the kernel. Returns the submitted count or -errno. */
-int kyo_uring_submit(struct io_uring* ring) {
+KYO_NET_API int kyo_uring_submit(struct io_uring* ring) {
     return io_uring_submit(ring);
 }
 
 /* ---- SQE acquisition + preparation ---- */
 
 /* io_uring_get_sqe: next free SQE, or NULL (Absent) when the submission queue is full. */
-struct io_uring_sqe* kyo_uring_get_sqe(struct io_uring* ring) {
+KYO_NET_API struct io_uring_sqe* kyo_uring_get_sqe(struct io_uring* ring) {
     return io_uring_get_sqe(ring);
 }
 
@@ -99,41 +100,41 @@ struct io_uring_sqe* kyo_uring_get_sqe(struct io_uring* ring) {
  * callers always pass a positive length, so this only guards against a future signedness bug.
  */
 
-int kyo_uring_prep_read(struct io_uring_sqe* sqe, int fd, void* buf, int nbytes, long offset) {
+KYO_NET_API int kyo_uring_prep_read(struct io_uring_sqe* sqe, int fd, void* buf, int nbytes, long offset) {
     if (nbytes < 0) return -1;
     io_uring_prep_read(sqe, fd, buf, (unsigned)nbytes, (__u64)offset);
     return 0;
 }
 
-int kyo_uring_prep_write(struct io_uring_sqe* sqe, int fd, void* buf, int nbytes, long offset) {
+KYO_NET_API int kyo_uring_prep_write(struct io_uring_sqe* sqe, int fd, void* buf, int nbytes, long offset) {
     if (nbytes < 0) return -1;
     io_uring_prep_write(sqe, fd, buf, (unsigned)nbytes, (__u64)offset);
     return 0;
 }
 
-int kyo_uring_prep_recv(struct io_uring_sqe* sqe, int fd, void* buf, long len, int flags) {
+KYO_NET_API int kyo_uring_prep_recv(struct io_uring_sqe* sqe, int fd, void* buf, long len, int flags) {
     if (len < 0) return -1;
     io_uring_prep_recv(sqe, fd, buf, (size_t)len, flags);
     return 0;
 }
 
-int kyo_uring_prep_send(struct io_uring_sqe* sqe, int fd, void* buf, long len, int flags) {
+KYO_NET_API int kyo_uring_prep_send(struct io_uring_sqe* sqe, int fd, void* buf, long len, int flags) {
     if (len < 0) return -1;
     io_uring_prep_send(sqe, fd, buf, (size_t)len, flags);
     return 0;
 }
 
-void kyo_uring_prep_accept(struct io_uring_sqe* sqe, int fd, void* addr, void* addrlen, int flags) {
+KYO_NET_API void kyo_uring_prep_accept(struct io_uring_sqe* sqe, int fd, void* addr, void* addrlen, int flags) {
     io_uring_prep_accept(sqe, fd, (struct sockaddr*)addr, (socklen_t*)addrlen, flags);
 }
 
 /* Multishot accept: IORING_OP_ACCEPT with IORING_ACCEPT_MULTISHOT. One submission re-fires an accept CQE per incoming connection. */
-void kyo_uring_prep_multishot_accept(struct io_uring_sqe* sqe, int fd, void* addr, void* addrlen, int flags) {
+KYO_NET_API void kyo_uring_prep_multishot_accept(struct io_uring_sqe* sqe, int fd, void* addr, void* addrlen, int flags) {
     io_uring_prep_multishot_accept(sqe, fd, (struct sockaddr*)addr, (socklen_t*)addrlen, flags);
 }
 
 /* Kernel version as major*1000+minor (e.g. 6.1 -> 6001) via uname(2). Returns 0 on failure. */
-int kyo_uring_kernel_version(void) {
+KYO_NET_API int kyo_uring_kernel_version(void) {
     struct utsname u;
     if (uname(&u) != 0) return 0;
     int major = 0, minor = 0;
@@ -145,17 +146,17 @@ int kyo_uring_kernel_version(void) {
  * IORING_FEAT_NODROP (bit 1, = 2, kernel >= 5.5): the kernel never drops a CQE; it applies backpressure on
  * submit instead. When set, the wake eventfd's multishot CQE cannot be lost under any load, making the
  * indefinite park safe by kernel contract. */
-unsigned int kyo_uring_get_features(struct io_uring* ring) {
+KYO_NET_API unsigned int kyo_uring_get_features(struct io_uring* ring) {
     return ring->features;
 }
 
 /* CQE flags word. IORING_CQE_F_MORE (= 2) set means more completions are coming on this key before it is removed. */
-int kyo_uring_cqe_get_flags(long cqe) {
+KYO_NET_API int kyo_uring_cqe_get_flags(long cqe) {
     return ((struct io_uring_cqe*)(intptr_t)cqe)->flags;
 }
 
 /* IORING_RECV_MULTISHOT flag value for kyo_uring_prep_recv's flags argument. */
-int kyo_uring_recv_multishot_flag(void) {
+KYO_NET_API int kyo_uring_recv_multishot_flag(void) {
     return IORING_RECV_MULTISHOT;
 }
 
@@ -168,7 +169,7 @@ int kyo_uring_recv_multishot_flag(void) {
  * We normalize: any non-negative ret means "CQE ready" and we return 0. Negative ret passes through
  * unchanged so -ETIME and real errors are still distinguishable.
  */
-int kyo_uring_submit_and_wait_timeout(struct io_uring* ring, void* cqePtr, long timeoutNs) {
+KYO_NET_API int kyo_uring_submit_and_wait_timeout(struct io_uring* ring, void* cqePtr, long timeoutNs) {
     struct __kernel_timespec ts;
     struct __kernel_timespec* tsp = NULL;
     /* timeoutNs < 0 => NULL timespec => wait indefinitely for at least one CQE (woken by a real completion or by the
@@ -188,7 +189,7 @@ int kyo_uring_submit_and_wait_timeout(struct io_uring* ring, void* cqePtr, long 
  * becomes readable for `poll_mask` (e.g. POLLIN), staying armed across completions (each carries IORING_CQE_F_MORE).
  * Used to arm a persistent watch on the driver's wake eventfd: a cross-carrier eventfd_write makes the eventfd
  * readable, the armed poll fires a CQE, and the parked submit_and_wait returns so the reap loop drains its queue. */
-void kyo_uring_prep_poll_multishot(struct io_uring_sqe* sqe, int fd, int poll_mask) {
+KYO_NET_API void kyo_uring_prep_poll_multishot(struct io_uring_sqe* sqe, int fd, int poll_mask) {
     io_uring_prep_poll_multishot(sqe, fd, (unsigned)poll_mask);
 }
 
@@ -198,7 +199,7 @@ void kyo_uring_prep_poll_multishot(struct io_uring_sqe* sqe, int fd, int poll_ma
  * FULL of undrained data (the FIN sits behind it, so a MSG_PEEK recv would return those bytes and never see the FIN). POLLHUP and POLLERR (e.g. RST)
  * are always reported in revents regardless of the events mask, hence the wider revents check. Returns 1 peer gone, 0 open, -1 on a poll error.
  */
-int kyo_uring_poll_peer_closed(int fd) {
+KYO_NET_API int kyo_uring_poll_peer_closed(int fd) {
     struct pollfd pfd;
     pfd.fd      = fd;
     pfd.events  = POLLRDHUP;
@@ -209,12 +210,38 @@ int kyo_uring_poll_peer_closed(int fd) {
     return (pfd.revents & (POLLRDHUP | POLLHUP | POLLERR)) != 0 ? 1 : 0;
 }
 
-void kyo_uring_prep_connect(struct io_uring_sqe* sqe, int fd, void* addr, int addrlen) {
+KYO_NET_API void kyo_uring_prep_connect(struct io_uring_sqe* sqe, int fd, void* addr, int addrlen) {
     io_uring_prep_connect(sqe, fd, (struct sockaddr*)addr, (socklen_t)addrlen);
 }
 
+/*
+ * io_uring_prep_cancel64: ask the kernel to cancel the in-flight op carrying user_data.
+ * The submission this targets is identified by its key, not by its fd, because a connect
+ * SQE is backed by an internal poll wait that close(2) alone does not complete: without
+ * this the op never reaps, so no completion ever decrements the caller's in-flight count.
+ */
+KYO_NET_API void kyo_uring_prep_cancel64(struct io_uring_sqe* sqe, long user_data, int flags) {
+    io_uring_prep_cancel64(sqe, (__u64)user_data, flags);
+}
+
+/*
+ * io_uring_prep_nop: make an already-acquired SQE into a no-op.
+ *
+ * io_uring_get_sqe advances the submission tail as it hands the entry out, so the
+ * slot is committed to the kernel from that moment: there is no way to give it back.
+ * A caller that acquires an SQE and then cannot use it (a marshalling failure, a
+ * rejected length) must therefore leave something WELL-DEFINED in the slot. liburing
+ * does not clear a reused SQE, so an abandoned one carries whatever the previous
+ * occupant wrote and would re-issue that stale opcode against a stale fd. Preparing
+ * a nop is what makes abandonment safe; the caller still has to set a user_data the
+ * completion side recognises and drops.
+ */
+KYO_NET_API void kyo_uring_prep_nop(struct io_uring_sqe* sqe) {
+    io_uring_prep_nop(sqe);
+}
+
 /* io_uring_sqe_set_data64: store the per-op key the completion is matched against. */
-void kyo_uring_sqe_set_data64(struct io_uring_sqe* sqe, long data) {
+KYO_NET_API void kyo_uring_sqe_set_data64(struct io_uring_sqe* sqe, long data) {
     io_uring_sqe_set_data64(sqe, (__u64)data);
 }
 
@@ -226,7 +253,7 @@ void kyo_uring_sqe_set_data64(struct io_uring_sqe* sqe, long data) {
  * the 1-element cqePtr buffer. Returns 0 on a ready CQE, -ETIME on timeout,
  * -errno otherwise (the negated return io_uring_wait_cqes already yields).
  */
-int kyo_uring_wait_cqe_timeout(struct io_uring* ring, void* cqePtr, long timeoutNs) {
+KYO_NET_API int kyo_uring_wait_cqe_timeout(struct io_uring* ring, void* cqePtr, long timeoutNs) {
     struct __kernel_timespec ts;
     ts.tv_sec  = (long long)(timeoutNs / 1000000000L);
     ts.tv_nsec = (long long)(timeoutNs % 1000000000L);
@@ -241,7 +268,7 @@ int kyo_uring_wait_cqe_timeout(struct io_uring* ring, void* cqePtr, long timeout
  * blocking. Returns 0 when one was placed, nonzero (-EAGAIN) when the completion
  * queue is empty.
  */
-int kyo_uring_peek_cqe(struct io_uring* ring, void* cqePtr) {
+KYO_NET_API int kyo_uring_peek_cqe(struct io_uring* ring, void* cqePtr) {
     struct io_uring_cqe* cqe = NULL;
     int ret = io_uring_peek_cqe(ring, &cqe);
     *((struct io_uring_cqe**)cqePtr) = cqe;
@@ -249,17 +276,17 @@ int kyo_uring_peek_cqe(struct io_uring* ring, void* cqePtr) {
 }
 
 /* io_uring_cqe_get_data64: read back the key set with kyo_uring_sqe_set_data64. */
-long kyo_uring_cqe_get_data64(long cqe) {
+KYO_NET_API long kyo_uring_cqe_get_data64(long cqe) {
     return (long)io_uring_cqe_get_data64((struct io_uring_cqe*)cqe);
 }
 
 /* CQE result: >= 0 is the byte count or accepted fd, < 0 is -errno. */
-int kyo_uring_cqe_res(long cqe) {
+KYO_NET_API int kyo_uring_cqe_res(long cqe) {
     return ((struct io_uring_cqe*)cqe)->res;
 }
 
 /* io_uring_cqe_seen: advance the completion queue past cqe. */
-void kyo_uring_cqe_seen(struct io_uring* ring, long cqe) {
+KYO_NET_API void kyo_uring_cqe_seen(struct io_uring* ring, long cqe) {
     io_uring_cqe_seen(ring, (struct io_uring_cqe*)cqe);
 }
 
@@ -272,24 +299,24 @@ void kyo_uring_cqe_seen(struct io_uring* ring, long cqe) {
  * fires a CQE, returning the parked submit_and_wait so the reap loop drains its queue. eventfd_write is atomic and safe
  * from any carrier without touching the SQ. Created EFD_NONBLOCK | EFD_CLOEXEC by the caller.
  */
-int kyo_uring_eventfd_create(int initval, int flags) {
+KYO_NET_API int kyo_uring_eventfd_create(int initval, int flags) {
     return eventfd((unsigned int)initval, flags);
 }
 
 /* Add 1 to the counter (thread-safe), making the eventfd readable so the armed multishot poll fires. Returns 0 or -1/errno. */
-int kyo_uring_eventfd_write(int fd) {
+KYO_NET_API int kyo_uring_eventfd_write(int fd) {
     return eventfd_write(fd, (eventfd_t)1);
 }
 
 /* Drain the counter back to 0 after a wake so the level-readable eventfd does not immediately re-fire the poll. With
  * EFD_NONBLOCK a single read returns the whole accumulated count, or -1/EAGAIN when already drained. Returns 0 or -1. */
-int kyo_uring_eventfd_read(int fd) {
+KYO_NET_API int kyo_uring_eventfd_read(int fd) {
     eventfd_t v;
     return eventfd_read(fd, &v);
 }
 
 /* close(2) the wake eventfd at ring teardown. Synchronous; returns 0 or -1/errno. */
-int kyo_uring_eventfd_close(int fd) {
+KYO_NET_API int kyo_uring_eventfd_close(int fd) {
     return close(fd);
 }
 
@@ -307,7 +334,7 @@ int kyo_uring_eventfd_close(int fd) {
  * real driver only for its production-depth queue_init to fail, so the probe must exercise the depth
  * the driver actually uses.
  */
-int kyo_uring_probe_available(int depth) {
+KYO_NET_API int kyo_uring_probe_available(int depth) {
     struct io_uring ring;
     int ret = io_uring_queue_init(depth, &ring, 0);
     if (ret != 0) return 0;
@@ -339,100 +366,106 @@ int kyo_uring_probe_available(int depth) {
 
 #include <errno.h>
 
-long kyo_uring_sizeof(void) { return 0; }
+KYO_NET_API long kyo_uring_sizeof(void) { return 0; }
 
-int kyo_uring_queue_init(int entries, void* ring, int flags) {
+KYO_NET_API int kyo_uring_queue_init(int entries, void* ring, int flags) {
     (void)entries; (void)ring; (void)flags;
     return -ENOSYS;
 }
 
-void kyo_uring_queue_exit(void* ring) { (void)ring; }
+KYO_NET_API void kyo_uring_queue_exit(void* ring) { (void)ring; }
 
-int kyo_uring_submit(void* ring) { (void)ring; return -ENOSYS; }
+KYO_NET_API int kyo_uring_submit(void* ring) { (void)ring; return -ENOSYS; }
 
-void* kyo_uring_get_sqe(void* ring) { (void)ring; return 0; }
+KYO_NET_API void* kyo_uring_get_sqe(void* ring) { (void)ring; return 0; }
 
-int kyo_uring_prep_read(void* sqe, int fd, void* buf, int nbytes, long offset) {
+KYO_NET_API int kyo_uring_prep_read(void* sqe, int fd, void* buf, int nbytes, long offset) {
     (void)sqe; (void)fd; (void)buf; (void)nbytes; (void)offset;
     return -1;
 }
 
-int kyo_uring_prep_write(void* sqe, int fd, void* buf, int nbytes, long offset) {
+KYO_NET_API int kyo_uring_prep_write(void* sqe, int fd, void* buf, int nbytes, long offset) {
     (void)sqe; (void)fd; (void)buf; (void)nbytes; (void)offset;
     return -1;
 }
 
-int kyo_uring_prep_recv(void* sqe, int fd, void* buf, long len, int flags) {
+KYO_NET_API int kyo_uring_prep_recv(void* sqe, int fd, void* buf, long len, int flags) {
     (void)sqe; (void)fd; (void)buf; (void)len; (void)flags;
     return -1;
 }
 
-int kyo_uring_prep_send(void* sqe, int fd, void* buf, long len, int flags) {
+KYO_NET_API int kyo_uring_prep_send(void* sqe, int fd, void* buf, long len, int flags) {
     (void)sqe; (void)fd; (void)buf; (void)len; (void)flags;
     return -1;
 }
 
-void kyo_uring_prep_accept(void* sqe, int fd, void* addr, void* addrlen, int flags) {
+KYO_NET_API void kyo_uring_prep_accept(void* sqe, int fd, void* addr, void* addrlen, int flags) {
     (void)sqe; (void)fd; (void)addr; (void)addrlen; (void)flags;
 }
 
-void kyo_uring_prep_multishot_accept(void* sqe, int fd, void* addr, void* addrlen, int flags) {
+KYO_NET_API void kyo_uring_prep_multishot_accept(void* sqe, int fd, void* addr, void* addrlen, int flags) {
     (void)sqe; (void)fd; (void)addr; (void)addrlen; (void)flags;
 }
 
-int kyo_uring_kernel_version(void) { return 0; }
+KYO_NET_API int kyo_uring_kernel_version(void) { return 0; }
 
-unsigned int kyo_uring_get_features(void* ring) { (void)ring; return 0; }
+KYO_NET_API unsigned int kyo_uring_get_features(void* ring) { (void)ring; return 0; }
 
-int kyo_uring_cqe_get_flags(long cqe) { (void)cqe; return 0; }
+KYO_NET_API int kyo_uring_cqe_get_flags(long cqe) { (void)cqe; return 0; }
 
-int kyo_uring_recv_multishot_flag(void) { return 0; }
+KYO_NET_API int kyo_uring_recv_multishot_flag(void) { return 0; }
 
-int kyo_uring_submit_and_wait_timeout(void* ring, void* cqePtr, long timeoutNs) {
+KYO_NET_API int kyo_uring_submit_and_wait_timeout(void* ring, void* cqePtr, long timeoutNs) {
     (void)ring; (void)cqePtr; (void)timeoutNs;
     return -ENOSYS;
 }
 
-void kyo_uring_prep_poll_multishot(void* sqe, int fd, int poll_mask) {
+KYO_NET_API void kyo_uring_prep_poll_multishot(void* sqe, int fd, int poll_mask) {
     (void)sqe; (void)fd; (void)poll_mask;
 }
 
-int kyo_uring_poll_peer_closed(int fd) { (void)fd; return 0; }
+KYO_NET_API int kyo_uring_poll_peer_closed(int fd) { (void)fd; return 0; }
 
-void kyo_uring_prep_connect(void* sqe, int fd, void* addr, int addrlen) {
+KYO_NET_API void kyo_uring_prep_connect(void* sqe, int fd, void* addr, int addrlen) {
     (void)sqe; (void)fd; (void)addr; (void)addrlen;
 }
 
-void kyo_uring_sqe_set_data64(void* sqe, long data) { (void)sqe; (void)data; }
+KYO_NET_API void kyo_uring_prep_cancel64(void* sqe, long user_data, int flags) {
+    (void)sqe; (void)user_data; (void)flags;
+}
 
-int kyo_uring_wait_cqe_timeout(void* ring, void* cqePtr, long timeoutNs) {
+KYO_NET_API void kyo_uring_prep_nop(void* sqe) { (void)sqe; }
+
+KYO_NET_API void kyo_uring_sqe_set_data64(void* sqe, long data) { (void)sqe; (void)data; }
+
+KYO_NET_API int kyo_uring_wait_cqe_timeout(void* ring, void* cqePtr, long timeoutNs) {
     (void)ring; (void)cqePtr; (void)timeoutNs;
     return -ENOSYS;
 }
 
-int kyo_uring_peek_cqe(void* ring, void* cqePtr) {
+KYO_NET_API int kyo_uring_peek_cqe(void* ring, void* cqePtr) {
     (void)ring; (void)cqePtr;
     return -ENOSYS;
 }
 
-long kyo_uring_cqe_get_data64(long cqe) { (void)cqe; return 0; }
+KYO_NET_API long kyo_uring_cqe_get_data64(long cqe) { (void)cqe; return 0; }
 
-int kyo_uring_cqe_res(long cqe) { (void)cqe; return -ENOSYS; }
+KYO_NET_API int kyo_uring_cqe_res(long cqe) { (void)cqe; return -ENOSYS; }
 
-void kyo_uring_cqe_seen(void* ring, long cqe) { (void)ring; (void)cqe; }
+KYO_NET_API void kyo_uring_cqe_seen(void* ring, long cqe) { (void)ring; (void)cqe; }
 
-int kyo_uring_eventfd_create(int initval, int flags) {
+KYO_NET_API int kyo_uring_eventfd_create(int initval, int flags) {
     (void)initval; (void)flags;
     errno = ENOSYS;
     return -1;
 }
 
-int kyo_uring_eventfd_write(int fd) { (void)fd; errno = ENOSYS; return -1; }
+KYO_NET_API int kyo_uring_eventfd_write(int fd) { (void)fd; errno = ENOSYS; return -1; }
 
-int kyo_uring_eventfd_read(int fd) { (void)fd; errno = ENOSYS; return -1; }
+KYO_NET_API int kyo_uring_eventfd_read(int fd) { (void)fd; errno = ENOSYS; return -1; }
 
-int kyo_uring_eventfd_close(int fd) { (void)fd; errno = ENOSYS; return -1; }
+KYO_NET_API int kyo_uring_eventfd_close(int fd) { (void)fd; errno = ENOSYS; return -1; }
 
-int kyo_uring_probe_available(int depth) { (void)depth; return 0; }
+KYO_NET_API int kyo_uring_probe_available(int depth) { (void)depth; return 0; }
 
 #endif

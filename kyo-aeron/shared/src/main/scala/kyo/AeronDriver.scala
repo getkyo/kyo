@@ -26,7 +26,8 @@ object AeronDriver:
     extension (self: AeronDriver)
         /** The directory this driver runs in, to connect clients to.
           *
-          * Allocated per driver, so concurrent drivers never collide on a CnC file.
+          * The driver creates it inside a temp directory allocated per launch, so concurrent drivers never
+          * collide on a CnC file.
           */
         def directory: Path = self.dir
 
@@ -113,6 +114,12 @@ object AeronDriver:
                 case Result.Success(dir) =>
                     // The directory outlives the start call, so a failed start removes it here rather
                     // than leaving an empty directory behind for the caller to notice.
+                    // The driver is handed a path INSIDE that directory which does not exist yet, and
+                    // creates it itself. Aeron deletes and recreates a driver directory that already
+                    // exists, so handing it one just created means making it, having Aeron destroy it,
+                    // and having Aeron make it again; on Windows that delete goes through the shell.
+                    // Nothing else is nested here: the temp directory stays the unit that gets removed.
+                    val aeronDir = dir / mediaDirName
                     Abort.recover[Nothing](
                         onFail = (never: Nothing) => never,
                         onPanic = (t: Throwable) =>
@@ -121,10 +128,10 @@ object AeronDriver:
                             Sync.Unsafe.defer(discard(dir.unsafe.removeAll())).andThen(Abort.panic(t))
                     ) {
                         AeronPlatform.driver(
-                            dir.unsafe.show,
+                            aeronDir.unsafe.show,
                             settings.clientLivenessTimeout.toNanos,
                             settings.publicationUnblockTimeout.toNanos
-                        ).map(runtime => Sync.Unsafe.defer(State(dir, runtime).asInstanceOf[AeronDriver]))
+                        ).map(runtime => Sync.Unsafe.defer(State(dir, aeronDir, runtime).asInstanceOf[AeronDriver]))
                     }
                 case Result.Failure(e) => Abort.panic(e)
                 case Result.Panic(t)   => Abort.panic(t)
@@ -132,10 +139,17 @@ object AeronDriver:
         end if
     end launchUnscoped
 
+    /** Name of the directory the driver creates for itself inside the temp directory a launch allocates. */
+    private[kyo] val mediaDirName = "media"
+
     /** Pairs the allocated directory with the running driver, so closing can stop the driver and
       * remove the directory in that order.
+      *
+      * `root` is the temp directory this launch allocated and removes; `dir` is the one inside it that the
+      * driver created and clients connect to. Removing `root` removes both.
       */
     final private[kyo] class State private[kyo] (
+        private[kyo] val root: Path,
         private[kyo] val dir: Path,
         private[kyo] val runtime: AeronDriverRuntime
     )(using Frame):
@@ -143,9 +157,10 @@ object AeronDriver:
             new Unsafe:
                 def close()(using AllowUnsafe): Unit =
                     // Stop the driver before removing the directory: the driver writes into it until
-                    // its conductor threads are joined.
+                    // its conductor threads are joined, and this removal is the only one, the driver
+                    // being configured not to delete its own directory on shutdown.
                     runtime.close()
-                    discard(dir.unsafe.removeAll())
+                    discard(root.unsafe.removeAll())
                 end close
                 def safe: AeronDriver = State.this.asInstanceOf[AeronDriver]
     end State

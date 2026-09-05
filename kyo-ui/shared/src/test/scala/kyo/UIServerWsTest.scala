@@ -25,6 +25,12 @@ import kyo.internal.UIServer
   */
 class UIServerWsTest extends kyo.test.Test[Any]:
 
+    /** Consumes the frames every session opens with: the `SessionReady` announcement the server sends before it renders, then the
+      * initial render itself. A leaf starts its interaction after this, so the frame it later takes is the one its own event produced.
+      */
+    private def awaitSessionStart(clientWs: HttpWebSocket)(using Frame): Unit < (Async & Abort[Closed]) =
+        clientWs.take().andThen(clientWs.take()).unit
+
     private def mediaType(value: String): Drag.MediaType = Drag.MediaType.parse(value).get
 
     private def dragText(representations: (String, String)*): Drag.Item.Text =
@@ -113,8 +119,7 @@ class UIServerWsTest extends kyo.test.Test[Any]:
                     (serverWs: HttpWebSocket) => UIServer.serveSession(serverWs, app),
                     (clientWs: HttpWebSocket) =>
                         for
-                            // Await the initial render frame to confirm the subscription is live.
-                            _ <- clientWs.take()
+                            _ <- awaitSessionStart(clientWs)
                             // Dispatch a Click on the button (path Seq("0"): first child of the div).
                             clickEvent = UIEvent.Click(Seq("0"), MouseEventData(UI.Modifiers.none, Absent))
                             _ <- clientWs.put(HttpWebSocket.Payload.Text(Json.encode[UIEvent](clickEvent)))
@@ -154,9 +159,8 @@ class UIServerWsTest extends kyo.test.Test[Any]:
                     (serverWs: HttpWebSocket) => Sync.ensure(serverEnded.set(true))(UIServer.serveSession(serverWs, app)),
                     (clientWs: HttpWebSocket) =>
                         for
-                            // Await the initial render frame, then confirm the server subscription is live: it parks on
-                            // the test-held leaf, so leafRef has exactly one waiter.
-                            _ <- clientWs.take()
+                            // Confirm the server subscription is live: it parks on the test-held leaf, so leafRef has exactly one waiter.
+                            _ <- awaitSessionStart(clientWs)
                             _ <- assertEventually(leafRef.waiters.map(_ == 1))
                             // Close the client: fires ws.onPeerClose on the server, ending the race and closing the
                             // connection's subscription Scope (cascade teardown).
@@ -749,7 +753,7 @@ class UIServerWsTest extends kyo.test.Test[Any]:
                     serverWs => UIServer.serveSession(serverWs, app),
                     clientWs =>
                         for
-                            _     <- clientWs.take()
+                            _     <- awaitSessionStart(clientWs)
                             _     <- clientWs.put(HttpWebSocket.Payload.Text(Json.encode[UIEvent](start)))
                             _     <- clientWs.put(HttpWebSocket.Payload.Text(Json.encode[UIEvent](drop)))
                             frame <- clientWs.take()
@@ -791,7 +795,7 @@ class UIServerWsTest extends kyo.test.Test[Any]:
                     serverWs => UIServer.serveSession(serverWs, app),
                     clientWs =>
                         for
-                            _ <- clientWs.take()
+                            _ <- awaitSessionStart(clientWs)
                             _ <- clientWs.put(HttpWebSocket.Payload.Text(Json.encode[UIEvent](invalidStart)))
                             click = UIEvent.Click(Seq("1"), MouseEventData(UI.Modifiers.none, Absent))
                             _     <- clientWs.put(HttpWebSocket.Payload.Text(Json.encode[UIEvent](click)))
@@ -825,8 +829,7 @@ class UIServerWsTest extends kyo.test.Test[Any]:
                     (serverWs: HttpWebSocket) => UIServer.serveSession(serverWs, app),
                     (clientWs: HttpWebSocket) =>
                         for
-                            // Await the initial render frame to confirm the subscription is live.
-                            _ <- clientWs.take()
+                            _ <- awaitSessionStart(clientWs)
                             clickEvent = UIEvent.Click(Seq("0"), MouseEventData(UI.Modifiers.none, Absent))
                             _     <- clientWs.put(HttpWebSocket.Payload.Text(Json.encode[UIEvent](clickEvent)))
                             frame <- clientWs.take()

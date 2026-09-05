@@ -23,7 +23,7 @@ on:
           - custom
         default: full
       oses:
-        description: 'Space-separated os poles to run (subset of linux-x64 linux-arm64 windows-x64).'
+        description: 'Space-separated os poles to run (subset of linux-x64 linux-arm64 windows-x64 windows-arm64).'
         type: string
         required: false
         default: 'linux-x64 linux-arm64 windows-x64'
@@ -39,6 +39,7 @@ on:
           - ubuntu-latest
           - ubuntu-24.04-arm
           - windows-latest
+          - windows-11-arm
         default: ubuntu-latest
       ref:
         description: 'Git ref (branch or sha) to check out and test. Defaults to the ref the workflow is dispatched on.'
@@ -73,13 +74,13 @@ jobs:
 
           for os in $oses; do
             case "$os" in
-              linux-x64|linux-arm64|windows-x64) ;;
-              *) echo "unknown os pole '$os' (expected a subset of: linux-x64 linux-arm64 windows-x64)" >&2; exit 1 ;;
+              linux-x64|linux-arm64|windows-x64|windows-arm64) ;;
+              *) echo "unknown os pole '$os' (expected a subset of: linux-x64 linux-arm64 windows-x64 windows-arm64)" >&2; exit 1 ;;
             esac
           done
 
           # One pole per requested os, carrying the intersection of the pole's supported
-          # targets with the requested targets (windows-x64 has no Native or Wasm). A
+          # targets with the requested targets (neither Windows pole has Native or Wasm). A
           # pole whose intersection is empty is dropped so the matrix never spawns a
           # no-op build.yml call.
           poles=$(jq -cn --arg oses "$oses" --arg targets "$targets" '
@@ -90,6 +91,7 @@ jobs:
             | map(
                 if . == "linux-x64" then {os: ., image: "ubuntu-latest", supported: ["JVM","JS","Native","Wasm"]}
                 elif . == "linux-arm64" then {os: ., image: "ubuntu-24.04-arm", supported: ["JVM","JS","Native","Wasm"]}
+                elif . == "windows-arm64" then {os: ., image: "windows-11-arm", supported: ["JVM","JS"]}
                 else {os: ., image: "windows-latest", supported: ["JVM","JS"]}
                 end
               )
@@ -143,10 +145,13 @@ jobs:
         env:
           RUNNER_LABEL: ${{ inputs.custom-runner }}
         run: |
+          # windows-11-arm must precede both wildcards: `windows-*` would hand it the x64 toolchain
+          # and `*-arm` would call it linux.
           case "$RUNNER_LABEL" in
-            windows-*) echo "os=windows-x64" >> "$GITHUB_OUTPUT" ;;
-            *-arm)     echo "os=linux-arm64" >> "$GITHUB_OUTPUT" ;;
-            *)         echo "os=linux-x64" >> "$GITHUB_OUTPUT" ;;
+            windows-11-arm) echo "os=windows-arm64" >> "$GITHUB_OUTPUT" ;;
+            windows-*)      echo "os=windows-x64" >> "$GITHUB_OUTPUT" ;;
+            *-arm)          echo "os=linux-arm64" >> "$GITHUB_OUTPUT" ;;
+            *)              echo "os=linux-x64" >> "$GITHUB_OUTPUT" ;;
           esac
       - uses: ./.github/actions/setup
         with:

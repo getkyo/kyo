@@ -218,8 +218,8 @@ private[kyo] object FlowRender:
         toBpmn(FlowGraph.build(flow))
 
     private def toBpmn(g: FlowGraph): String =
-        // BPMN needs a different node mapping than the graph structure.
-        // We iterate FlowGraph nodes/edges and produce BPMN XML elements using pure functions.
+        // BPMN needs a different node mapping than the graph structure, so the graph's nodes and edges are walked here and turned
+        // into BPMN XML elements by pure functions.
 
         // Generate BPMN elements from nodes
         val elements = g.nodes.flatMap { n =>
@@ -315,13 +315,14 @@ private[kyo] object FlowRender:
 
     private def statusColorFromName(status: String): String =
         status match
-            case "completed" => "#90EE90"
-            case "running"   => "#FFD700"
-            case "pending"   => "#D3D3D3"
-            case "waiting"   => "#87CEEB"
-            case "sleeping"  => "#DDA0DD"
-            case "failed"    => "#FF6B6B"
-            case _           => "#D3D3D3"
+            case "completed"   => "#90EE90"
+            case "running"     => "#FFD700"
+            case "pending"     => "#D3D3D3"
+            case "waiting"     => "#87CEEB"
+            case "compensated" => "#F4A460"
+            case "sleeping"    => "#DDA0DD"
+            case "failed"      => "#FF6B6B"
+            case _             => "#D3D3D3"
 
     private def escapeJson(s: String): String =
         s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r")

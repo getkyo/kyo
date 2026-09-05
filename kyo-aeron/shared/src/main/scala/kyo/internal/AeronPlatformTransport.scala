@@ -37,6 +37,21 @@ private[kyo] object AeronPlatformTransport:
                 client <- Sync.Unsafe.defer(bindings.clientConnect(dir)).flatMap(_.safe.get)
                 runtime <- Sync.Unsafe.defer {
                     val ffiTransport = new FfiAeronTransport(bindings, client)
+                    // Winning this CAS grants the right to close the driver, the same way FfiAeronTransport's own flag
+                    // grants the right to close the client. `kyo_aeron_driver_close` frees its bundle outright, so a
+                    // second close reads a freed pointer and faults inside the conductor-agent teardown. Guarding only
+                    // the client left the halves asymmetric: a runtime released on both an error path and its scope
+                    // exit survived the repeat on one half and took the process down on the other.
+                    val driverClosed = AtomicBoolean.Unsafe.init(false)
+                    // A live media driver holds descriptors (its CnC mapping and sockets), and the descriptor leak check
+                    // attaches the diagnostics dump to every survivor precisely so it names its owner instead of reporting
+                    // an opaque inode. Without an entry here an abandoned driver is exactly that opaque inode. Registering
+                    // no probe is deliberate: the probe's meaning is a parked LOOP that stopped making progress, which a
+                    // runtime has no notion of, so it reports through the dump alone and can never raise a stranded-op
+                    // finding of its own.
+                    val diagRegistration = kyo.internal.Diagnostics.register(
+                        "AeronRuntime@" + java.lang.System.identityHashCode(ffiTransport)
+                    )(dump = () => s"dir=$dir driverClosed=${driverClosed.get()}")
                     new AeronRuntime:
                         val transport: AeronTransport = ffiTransport
                         def close()(using AllowUnsafe): Unit =
@@ -46,7 +61,8 @@ private[kyo] object AeronPlatformTransport:
                             // and one-shot (it parks the carrier on the JVM and Native, briefly freezes the
                             // event loop on JS and Wasm), unlike the connect that @Ffi.blocking covers.
                             ffiTransport.closeClient()
-                            bindings.driverClose(driver)
+                            if driverClosed.compareAndSet(false, true) then bindings.driverClose(driver)
+                            diagRegistration.close()
                         end close
                     end new
                 }
@@ -65,8 +81,18 @@ private[kyo] object AeronPlatformTransport:
             Sync.Unsafe.defer(bindings.driverStart(dir, clientLivenessNs, publicationUnblockNs)).flatMap(_.safe.get).map {
                 started =>
                     Sync.Unsafe.defer {
+                        // Same one-shot ownership as the embedded runtime above: the shim's driver close frees the
+                        // bundle, so only the caller that wins the flag may perform it.
+                        val driverClosed = AtomicBoolean.Unsafe.init(false)
+                        // Named in the diagnostics dump for the same reason as the embedded runtime: an abandoned driver
+                        // holds descriptors, and the leak check reports them by inode unless something claims them.
+                        val diagRegistration = kyo.internal.Diagnostics.register(
+                            "AeronDriverRuntime@" + java.lang.System.identityHashCode(started)
+                        )(dump = () => s"dir=$dir driverClosed=${driverClosed.get()}")
                         new AeronDriverRuntime:
-                            def close()(using AllowUnsafe): Unit = bindings.driverClose(started)
+                            def close()(using AllowUnsafe): Unit =
+                                if driverClosed.compareAndSet(false, true) then bindings.driverClose(started)
+                                diagRegistration.close()
                         end new
                     }
             }

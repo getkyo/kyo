@@ -1872,6 +1872,26 @@ class AsyncTest extends kyo.test.Test[Any]:
                 assert(count == 1)
         }
 
+        "interrupting a timeout interrupts the computation it guards" in {
+            // Liveness: the finalizer completes only if the guarded computation was actually reached by the interrupt. A timeout that
+            // spawned its computation without wiring the interrupt through would leave it parked here forever.
+            for
+                started     <- Promise.init[Unit, Any]
+                interrupted <- Promise.init[Unit, Any]
+                // The deadline is far beyond any run, so it cannot be what ends the computation. Only the caller's interrupt reaching
+                // through the timeout can complete the finalizer below, and the harness budget is what reports it if nothing does.
+                fiber <- Fiber.initUnscoped(Async.timeout(1.hour)(
+                    Sync.ensure(interrupted.completeUnitDiscard)(
+                        started.completeUnitDiscard.andThen(Async.never)
+                    )
+                ))
+                _ <- started.get
+                _ <- fiber.interrupt
+                _ <- interrupted.get
+            yield succeed("the guarded computation was interrupted with its caller")
+            end for
+        }
+
         "Duration.Zero timeout still interrupts (#1339)".onlyJvm in {
             for
                 result <- Abort.run[Timeout] {

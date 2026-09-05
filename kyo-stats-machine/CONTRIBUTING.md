@@ -227,8 +227,9 @@ impl catches to `Absent`.
   `Buffer.get` calls. The whole shim is `#ifdef __APPLE__`-guarded: the
   `#else` branch provides same-signature stubs returning failure codes
   (`machine_macos.c:128-140`), so the file compiles and every symbol resolves
-  on a non-macOS build host (the Linux-only CI compiles this on the BUILD
-  HOST for JVM/JS/Wasm; Scala Native compiles it into the binary on every OS). The
+  wherever it is compiled, which on Scala Native is every OS. The JVM/JS shared
+  library is bundled for darwin only (`osTargets`), and off darwin `Ffi.load`
+  raises a catchable `LibraryNotFound` that the reader degrades to `Absent`. The
   module's `build.sbt` registers it via `nativeBundled` plus an explicit
   `FfiLibrary` entry naming the C source
   (`build.sbt:1123-1125`), since `library = "machine_macos"` is not a system

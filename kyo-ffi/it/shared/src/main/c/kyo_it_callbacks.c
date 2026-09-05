@@ -1,3 +1,4 @@
+#include "kyo_it_api.h"
 #include <stdint.h>
 #include <stdlib.h>
 #include <stddef.h>
@@ -27,7 +28,7 @@ static int kyo_it_qsort_adaptor(const void *a, const void *b) {
     return (int)r;
 }
 
-void kyo_it_sort_ints(int32_t *arr, int32_t n, kyo_it_cmp_t cmp) {
+KYO_IT_API void kyo_it_sort_ints(int32_t *arr, int32_t n, kyo_it_cmp_t cmp) {
     g_kyo_it_cmp = cmp;
     qsort(arr, (size_t)n, sizeof(int32_t), kyo_it_qsort_adaptor);
 }
@@ -38,10 +39,10 @@ typedef void (*kyo_it_listener_t)(int32_t);
 
 static kyo_it_listener_t g_kyo_it_listener;
 
-void kyo_it_register_listener(kyo_it_listener_t cb) {
+KYO_IT_API void kyo_it_register_listener(kyo_it_listener_t cb) {
     g_kyo_it_listener = cb;
 }
 
-void kyo_it_fire_listener(int32_t arg) {
+KYO_IT_API void kyo_it_fire_listener(int32_t arg) {
     if (g_kyo_it_listener != NULL) g_kyo_it_listener(arg);
 }

@@ -110,7 +110,19 @@ class MysqlSqlConfigTlsModeIntegrationTest extends SqlContainerTest:
             SqlTestContainers.initScoped(requireSslConfig, "mysql-require-secure-transport").flatMap { requireSslContainer =>
                 val mysql = new ContainerPredef.MySQL(requireSslContainer, requireSslPredef)
                 mysql.container.mappedPort(mysql.config.port).flatMap { port =>
-                    val url = s"mysql://${mysql.username}:${mysql.password}@${mysql.container.host}:$port/${mysql.database}?sslmode=allow"
+                    // No establish budget (`connectTimeout=0` reads back as `Duration.Infinity`), because this leaf is
+                    // shaped differently from every other one here. The pool applies ONE budget to the whole of
+                    // `factory.open`, and `allow` against a `--require-secure-transport=ON` server performs TWO
+                    // connect-plus-handshake rounds inside it: a plaintext connect and auth far enough to draw error
+                    // 3159, then a full TLS reconnect. Its siblings pay one, so the default is sized for one and this
+                    // leaf is the first to cross it on a loaded runner with a server still cold from its own container
+                    // start.
+                    // Any finite value here would be a second wall clock racing the first: too low and a slow runner is
+                    // indistinguishable from a broken upgrade, too high and it bounds nothing. The property under test
+                    // is that the upgrade COMPLETES, so the suite timeout is the failure detector and the Ssl_cipher
+                    // assertion below is the pass condition.
+                    val url =
+                        s"mysql://${mysql.username}:${mysql.password}@${mysql.container.host}:$port/${mysql.database}?sslmode=allow&connectTimeout=0"
                     MysqlClient.init(url).flatMap { client =>
                         DB.run(client) {
                             // The allow reconnect path fired and the connection is now over TLS.
@@ -495,7 +507,17 @@ object MysqlSqlConfigTlsModeIntegrationTest:
                             Abort.run[Throwable](Command("cp", s"$tempDir/server.crt", s"$tempDir/ca.pem").text).flatMap {
                                 case Result.Failure(e) => Abort.fail(ContainerBackendException(s"ca.pem copy failed: ${e.getMessage}"))
                                 case Result.Panic(t)   => Abort.fail(ContainerBackendException(s"ca.pem copy panic: ${t.getMessage}"))
-                                case Result.Success(_) => startCertContainer(tempDirPath)
+                                case Result.Success(_) =>
+                                    // 0700 from tempDirUnscoped is unreadable to the container that bind-mounts it,
+                                    // whose entrypoint then exits before the health check runs. Throwaway self-signed
+                                    // material, and the entrypoint re-restricts the copy it makes inside the container.
+                                    Abort.run[Throwable](Command("chmod", "-R", "a+rX", tempDir).text).flatMap {
+                                        case Result.Failure(e) =>
+                                            Abort.fail(ContainerBackendException(s"cert directory chmod failed: ${e.getMessage}"))
+                                        case Result.Panic(t) =>
+                                            Abort.fail(ContainerBackendException(s"cert directory chmod panic: ${t.getMessage}"))
+                                        case Result.Success(_) => startCertContainer(tempDirPath)
+                                    }
                             }
                         }
                     }

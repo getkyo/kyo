@@ -179,6 +179,127 @@ class ContainerPredefTest extends BasePodTest:
         }
     }
 
+    "retryableExecFailure" - {
+
+        // A daemon that failed the exec is a different signal from a probe that ran and reported the service down.
+        // Only the first is worth another attempt, and only while the container is still alive to answer it.
+        "a running container with budget left is retried" in {
+            assert(ContainerPredef.retryableExecFailure(Result.Success(Container.State.Running), 1))
+        }
+
+        // A container that died mid-boot fails every later exec for the same reason, so retrying only delays the report.
+        "a container that is no longer running is terminal" in {
+            assert(ContainerPredef.retryableExecFailure(Result.Success(Container.State.Dead), 1) == false)
+            assert(ContainerPredef.retryableExecFailure(Result.Success(Container.State.Stopped), 1) == false)
+            assert(ContainerPredef.retryableExecFailure(Result.Success(Container.State.Created), 1) == false)
+        }
+
+        // The bound is what keeps a health check from becoming a poll; every host exec leaves a conmon behind for minutes.
+        "a running container with no budget left is terminal" in {
+            assert(ContainerPredef.retryableExecFailure(Result.Success(Container.State.Running), 0) == false)
+        }
+    }
+
+    // The leaves above pin the POLICY in isolation; these pin that the loop obeys it. Driving `readinessAttempt` with scripted outcomes
+    // counts the attempts it actually makes, which asserting the predicate alone cannot: a loop that never consulted it would still leave
+    // those leaves green.
+    "readinessAttempt" - {
+
+        val ok     = Container.ExecResult(ExitCode(0), "", "")
+        val notOk  = Container.ExecResult(ExitCode(1), "", "service down")
+        val daemon = ContainerBackendException("exec failed")
+
+        /** Runs the loop over a scripted sequence of probe outcomes, reporting how many attempts were consumed and which terminal branch
+          * (if any) the loop took.
+          */
+        def drive(
+            probes: Seq[Result[ContainerException, Container.ExecResult]],
+            state: Result[ContainerException, Container.State],
+            retries: Int = 1
+        )(using Frame) =
+            for
+                attempts <- AtomicInt.init(0)
+                down     <- AtomicInt.init(0)
+                failed   <- AtomicInt.init(0)
+                _ <- Abort.run[ContainerException](ContainerPredef.readinessAttempt(
+                    () => attempts.getAndIncrement.map(i => probes(math.min(i, probes.size - 1))),
+                    () => state,
+                    _ => down.incrementAndGet.unit,
+                    _ => failed.incrementAndGet.unit,
+                    retries
+                ))
+                a <- attempts.get
+                d <- down.get
+                f <- failed.get
+            yield (a, d, f)
+
+        "a probe that passes runs once and reports nothing" in {
+            drive(Seq(Result.succeed(ok)), Result.Success(Container.State.Running)).map { case (a, d, f) =>
+                assert((a, d, f) == (1, 0, 0), s"expected one attempt and no failure report; got attempts=$a down=$d failed=$f")
+            }
+        }
+
+        // The retry the policy allows must actually be taken: a daemon-failed exec against a live container gets a second attempt.
+        "a daemon-failed exec against a running container is retried once, then succeeds" in {
+            drive(Seq(Result.fail(daemon), Result.succeed(ok)), Result.Success(Container.State.Running)).map { case (a, d, f) =>
+                assert((a, d, f) == (2, 0, 0), s"expected the retry to be taken and to succeed; got attempts=$a down=$d failed=$f")
+            }
+        }
+
+        // And it must stop there rather than becoming a poll.
+        "a daemon-failed exec is retried at most once, then reported" in {
+            drive(Seq(Result.fail(daemon)), Result.Success(Container.State.Running)).map { case (a, d, f) =>
+                assert(
+                    (a, d, f) == (2, 0, 1),
+                    s"expected exactly two attempts then an exec-failed report; got attempts=$a down=$d failed=$f"
+                )
+            }
+        }
+
+        // A container that died mid-boot fails every later exec for the same reason, so the loop must not spend the retry on it.
+        "a daemon-failed exec against a dead container is not retried" in {
+            drive(Seq(Result.fail(daemon)), Result.Success(Container.State.Dead)).map { case (a, d, f) =>
+                assert((a, d, f) == (1, 0, 1), s"expected no retry for a dead container; got attempts=$a down=$d failed=$f")
+            }
+        }
+
+        // The service's own verdict is terminal: a probe that RAN and said "down" must never be retried, or the loop would mask exactly
+        // the failure the health check exists to report.
+        "a probe that ran and reported the service down is never retried" in {
+            drive(Seq(Result.succeed(notOk)), Result.Success(Container.State.Running)).map { case (a, d, f) =>
+                assert((a, d, f) == (1, 1, 0), s"expected one attempt and a probe-down report; got attempts=$a down=$d failed=$f")
+            }
+        }
+
+        // Asking the daemon what happened is itself code that can be defective. That defect belongs to the state query, so reporting it
+        // as the exec's failure would blame the service under test for a bug in the machinery inspecting it.
+        "a panic from the state query propagates instead of being reported as an exec failure" in {
+            val boom = new RuntimeException("state query defect")
+            for
+                attempts <- AtomicInt.init(0)
+                failed   <- AtomicInt.init(0)
+                outcome <- Abort.run[ContainerException](ContainerPredef.readinessAttempt(
+                    () => attempts.getAndIncrement.andThen(Result.fail(daemon)),
+                    () => Result.panic(boom),
+                    _ => Kyo.unit,
+                    _ => failed.incrementAndGet.unit,
+                    1
+                ))
+                a <- attempts.get
+                f <- failed.get
+            yield
+                assert(
+                    outcome match
+                        case Result.Panic(t) => t eq boom
+                        case _               => false
+                    ,
+                    s"expected the state-query panic to propagate unchanged; got $outcome"
+                )
+                assert((a, f) == (1, 0), s"expected one attempt and no exec-failed report; got attempts=$a failed=$f")
+            end for
+        }
+    }
+
     "readinessScript" - {
         "embeds the configured budget as the loop deadline" in {
             // The generated shell loop computes its end as `date +%s` plus the budget in seconds, so a fixture's

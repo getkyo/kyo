@@ -61,9 +61,8 @@ class TopicInvariantsTest extends Test:
         }
     }
 
-    // Several structural invariants have no leaf here because the build already enforces them: io.aeron
-    // is a JVM-only dependency, so importing it in shared/src/main fails the JS/Native compile; a missing
-    // kyo_aeron_* C symbol fails Native nativeLink / JS ffiCompile; and the fragment handler staying
+    // Several structural invariants have no leaf here because the build already enforces them: a missing
+    // kyo_aeron_* C symbol fails Native nativeLink / JS ffiCompile, and the fragment handler staying
     // C-private is documented at its source site (kyo_aeron.c, kyo_aeron_fragment_handler).
 
     "MsgPack + Envelope wire round-trip" - {
@@ -107,21 +106,17 @@ class TopicInvariantsTest extends Test:
         }
     }
 
-    // `.onlyNative`: static linking is a Native-only mechanic (JVM uses the io.aeron Java client; JS
-    // dlopens the shim via koffi). Pins that kyo_aeron_* symbols are linked into the Native binary
-    // (aeron_driver_static) and resolve at runtime with no system libaeron.
+    // `.onlyNative`: static linking is a Native-only mechanic (the JVM reaches the same shim through
+    // Panama's library lookup, JS dlopens it via koffi). Pins that kyo_aeron_* symbols are linked into
+    // the Native binary (aeron_driver_static) and resolve at runtime with no system libaeron.
     "runtime: symbols resolve and driver starts without system libaeron".onlyNative in {
-        for
-            dir     <- Path.run(Path.tempDir("kyo-aeron-embedded-test"))
-            runtime <- AeronPlatform.embedded(dir.unsafe.show)
-            result <- Sync.Unsafe.defer {
+        withEmbeddedRuntime() { runtime =>
+            Sync.Unsafe.defer {
                 assert(runtime.transport != null, "runtime.transport is null after embedded()")
                 runtime.close()
                 succeed
             }
-            _ <- Path.run(dir.removeAll)
-        yield result
-        end for
+        }
     }
 
     // The offer-sentinel classification itself is cross-platform and lives in AeronTransportTest
@@ -172,38 +167,36 @@ class TopicInvariantsTest extends Test:
     // generated binding converts via .toString.toLong, so a negative sentinel like NotConnected (-1L)
     // must survive with its sign intact; JVM/Native never exercise that path (primitive long / C long).
     "JS koffi int64 sentinel marshalling: negative offer sentinel survives BigInt round-trip".onlyJs in {
-        for
-            dir <- Path.run(Path.tempDir("kyo-aeron-embedded-test"))
-            rt  <- AeronPlatform.embedded(dir.unsafe.show)
-            transport = rt.transport
-            pubMaybeR <- Abort.run[TopicTransportException] {
-                Topic.addPublicationDeadline(transport, "aeron:ipc", 78, 10.seconds)
-            }
-            // Do NOT interpolate pubMaybeR: on Scala.js a Result holding an FFI Handle (an opaque
-            // koffi pointer) throws "TypeError: Cannot convert object to primitive value" on string
-            // coercion. Report only the failure's class name.
-            _ = assert(
-                pubMaybeR.isSuccess,
-                s"addPublicationDeadline failed: ${pubMaybeR.failure.map(_.getClass.getSimpleName)}"
-            )
-            pubMaybe = pubMaybeR.getOrThrow
-            _        = assert(pubMaybe.isDefined, "addPublicationDeadline returned Absent on a live client")
-            pub      = pubMaybe.get
-            payload  = Array[Byte](0)
-            result <- Sync.Unsafe.defer(transport.offer(pub, payload))
-            _ <- Sync.Unsafe.defer {
-                transport.closePublication(pub)
-                rt.close()
-            }
-            _ <- Path.run(dir.removeAll)
-        yield
-            assert(result < 0, s"Expected a negative sentinel from a not-connected JS FFI publication; got $result")
-            assert(
-                result == AeronSentinels.NotConnected || result == AeronSentinels.BackPressured,
-                s"Expected NotConnected (-1L) or BackPressured (-2L) but got $result; " +
-                    "this indicates the koffi BigInt->Long conversion does not preserve the sign of negative int64 values"
-            )
-        end for
+        withEmbeddedRuntime("kyo-aeron-embedded-test") { rt =>
+            val transport = rt.transport
+            for
+                pubMaybeR <- Abort.run[TopicTransportException] {
+                    Topic.addPublicationDeadline(transport, "aeron:ipc", 78, 10.seconds)
+                }
+                // Do NOT interpolate pubMaybeR: on Scala.js a Result holding an FFI Handle (an opaque
+                // koffi pointer) throws "TypeError: Cannot convert object to primitive value" on string
+                // coercion. Report only the failure's class name.
+                _ = assert(
+                    pubMaybeR.isSuccess,
+                    s"addPublicationDeadline failed: ${pubMaybeR.failure.map(_.getClass.getSimpleName)}"
+                )
+                pubMaybe = pubMaybeR.getOrThrow
+                _        = assert(pubMaybe.isDefined, "addPublicationDeadline returned Absent on a live client")
+                pub      = pubMaybe.get
+                payload  = Array[Byte](0)
+                result <- Sync.Unsafe.defer(transport.offer(pub, payload))
+                _ <- Sync.Unsafe.defer {
+                    transport.closePublication(pub)
+                }
+            yield
+                assert(result < 0, s"Expected a negative sentinel from a not-connected JS FFI publication; got $result")
+                assert(
+                    result == AeronSentinels.NotConnected || result == AeronSentinels.BackPressured,
+                    s"Expected NotConnected (-1L) or BackPressured (-2L) but got $result; " +
+                        "this indicates the koffi BigInt->Long conversion does not preserve the sign of negative int64 values"
+                )
+            end for
+        }
     }
 
     // Behavioral guard: an Envelope with empty payload still encodes to a non-empty byte sequence, since

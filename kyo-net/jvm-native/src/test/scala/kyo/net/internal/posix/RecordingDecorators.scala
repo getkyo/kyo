@@ -356,6 +356,12 @@ class RecordingIoUringBindings(real: IoUringBindings, realRing: Buffer[Byte]) ex
     def kyo_uring_prep_connect(sqe: Ffi.Handle[IoUringSqe], fd: Int, addr: Buffer[Byte], addrlen: Int)(using AllowUnsafe): Unit =
         real.kyo_uring_prep_connect(sqe, fd, addr, addrlen)
 
+    def kyo_uring_prep_cancel64(sqe: Ffi.Handle[IoUringSqe], userData: Long, flags: Int)(using AllowUnsafe): Unit =
+        real.kyo_uring_prep_cancel64(sqe, userData, flags)
+
+    def kyo_uring_prep_nop(sqe: Ffi.Handle[IoUringSqe])(using AllowUnsafe): Unit =
+        real.kyo_uring_prep_nop(sqe)
+
     def kyo_uring_sqe_set_data64(sqe: Ffi.Handle[IoUringSqe], data: Long)(using AllowUnsafe): Unit =
         discard(submittedKeys.add(data))
         real.kyo_uring_sqe_set_data64(sqe, data)
@@ -960,6 +966,13 @@ final class RecordingIoDriver(real: IoDriver[PosixHandle]) extends IoDriver[Posi
     def handleLabel(handle: PosixHandle): String =
         real.handleLabel(handle)
 
+    // Delegate rather than inherit the trait default. The default runs the op INLINE, which is right only for a backend that is already
+    // single-owner; a decorated IoUringDriver owns a submission ring whose ops must run on its reap carrier. Inheriting the default here
+    // silently replaces the wrapped driver's ordering with a different one, so a deferral this decorator is meant to observe would never
+    // happen and a leaf written to catch it would pass against the very regression it targets.
+    override def submitEngineOp(op: () => Unit)(using AllowUnsafe, Frame): Unit =
+        real.submitEngineOp(op)
+
     def start()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
         if throwOnStart then throw new RuntimeException(s"driver start failed (throwOnStart=true)")
         real.start()
@@ -992,9 +1005,17 @@ final class RecordingIoDriver(real: IoDriver[PosixHandle]) extends IoDriver[Posi
     // and a driver carrier that never gets scheduled.
     @volatile var stallConnect: Boolean = false
 
+    // Callback fired with the connecting handle, before the stall decision and before any delegation, on the caller's thread. A connect
+    // handle's fd is otherwise invisible to a test driving the public transport surface, and asserting on that fd's disposition is the
+    // only way to tell a reclaimed connect from a leaked one. null means no hook set.
+    @volatile var onAwaitConnect: PosixHandle => Unit = null
+
     def awaitConnect(handle: PosixHandle, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
+        val hook = onAwaitConnect
+        if hook ne null then hook(handle)
         if stallConnect then ()
         else real.awaitConnect(handle, promise)
+    end awaitConnect
 
     def awaitAccept(handle: PosixHandle, promise: Promise.Unsafe[Int, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
         real.awaitAccept(handle, promise)

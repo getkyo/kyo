@@ -20,6 +20,16 @@ set -uo pipefail
 #
 # Every env delegates the WHAT to the same ci-test.sh, so a local run and a CI
 # run execute identical runner code.
+#
+# Env knobs the podman envs read:
+#   KYO_BUILD_IMAGE   container image (default ubuntu:noble). Point it at a musl JDK image
+#                     (e.g. eclipse-temurin:25-jdk-alpine) to reproduce the release's Alpine
+#                     legs; provisioning switches to apk and takes sbt from the release tarball,
+#                     because both staging scripts refuse a cross-OS build and the linux-musl-*
+#                     natives can only be produced on a genuine musl host.
+#   STAGE_BORINGSSL=1 build the vendored BoringSSL before the command (kyo-net TLS).
+#   STAGE_AERON=1     build the pinned Aeron C library before the command (kyo-aeron).
+#                     Both derive their os-arch from the container's own host, musl included.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
@@ -40,6 +50,7 @@ CI_MEMORY="${CI_MEMORY:-16g}"
 CI_CPUS="${CI_CPUS:-4}"
 CI_DRIVER_OPTS="-Xmx12G -Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8"
 CONTAINER_IMAGE="${KYO_BUILD_IMAGE:-ubuntu:noble}"
+apt_mirror="${KYO_APT_MIRROR:-}"
 
 ENV_KIND="direct"
 ARCH="native"
@@ -114,7 +125,17 @@ podman_platform() {
     case "$ARCH" in
         x86) echo "linux/amd64" ;;
         arm) echo "linux/arm64" ;;
-        *)   echo "" ;;
+        # A native run names the host's own platform rather than leaving the choice open. Without it podman resolves the image tag to
+        # whichever architecture happens to be cached, so a single cross-arch pull by anything on the machine silently turns every later
+        # native run into an emulated one. That failure is expensive to recognise: the run does not error, it slows down and then dies
+        # inside qemu on the JVM toolchain, far from the pull that caused it.
+        *)
+            case "$(host_arch)" in
+                x86) echo "linux/amd64" ;;
+                arm) echo "linux/arm64" ;;
+                *)   echo "" ;;
+            esac
+            ;;
     esac
 }
 
@@ -171,20 +192,36 @@ ci_cmd() { "$SCRIPT_DIR/ci-test.sh" "$1" "$ACTION"; }
 # a shell prelude run inside the already-launched container, quiet and idempotent.
 container_provision() {
     local platform="$1"
+    # Read host-side: the musl branch installs sbt before the source snapshot is extracted.
+    local sbt_version; sbt_version=$(sed -n 's/^sbt.version=//p' "$PROJECT_DIR/project/build.properties")
     # liburing-dev + libssl-dev: the kyo-net JVM FFI shims link the io_uring (-luring) and OpenSSL TLS data planes; without them
     # kyo-netJVM's ffiCompile fails (cannot find -luring). Small and always installed so any kyo-net command builds in the container.
-    local apt_pkgs="curl ca-certificates patch liburing-dev libssl-dev"
+    # openssl is the CLI, not the library libssl-dev provides, and the base image ships without it. The
+    # kyo-sql TLS suites generate their server cert and key by shelling out to it, so without it every
+    # such leaf fails as "SSL not ready" with a Postgres that started perfectly well and simply has no
+    # certificate, which reads like a TLS defect rather than a missing tool.
+    # file + binutils are not optional either: native_assert_arch reads a member of the staged archive
+    # to prove it is really for the target architecture, and fails when either tool is missing.
+    local apt_pkgs="curl ca-certificates patch liburing-dev libssl-dev openssl file binutils"
     local node_pkgs="" native_pkgs="" bssl_pkgs="" aeron_pkgs=""
+    # Alpine equivalents, used when KYO_BUILD_IMAGE names a musl image. Alpine spells the OpenSSL and
+    # libuuid development packages differently (openssl-dev, util-linux-dev) and has no separate
+    # ca-certificates-for-curl split, so the lists are mapped rather than shared.
+    local apk_pkgs="bash curl ca-certificates patch liburing-dev openssl-dev tar file binutils"
+    local apk_node_pkgs="" apk_native_pkgs="" apk_bssl_pkgs="" apk_aeron_pkgs=""
     # "all" provisions the union (raw sbt mode may run any platform's command in the container).
     case "$platform" in
-        JS|Wasm|all) node_pkgs="nodejs npm" ;;
+        JS|Wasm|all) node_pkgs="nodejs npm"; apk_node_pkgs="nodejs npm" ;;
     esac
     case "$platform" in
         # clang, cc (build-essential), and libssl-dev are preinstalled on GitHub runners,
         # so the CI setup action never lists them; a bare container needs them explicitly
         # (scala-native drives clang, kyo-ffi-it's bundled lib builds with cc, and the
         # openssl-linked modules need -lssl -lcrypto).
-        Native|all) native_pkgs="clang build-essential libssl-dev libcurl4-openssl-dev libidn2-dev libh2o-evloop-dev=2.2.5+dfsg2-8.1ubuntu3 libgc-dev" ;;
+        Native|all) native_pkgs="clang build-essential libssl-dev libcurl4-openssl-dev libidn2-dev libh2o-evloop-dev=2.2.5+dfsg2-8.1ubuntu3 libgc-dev"
+                    # No libh2o on Alpine; the Native leg is not a musl target, and the musl legs the
+                    # release actually runs are JVM-only native staging.
+                    apk_native_pkgs="clang build-base openssl-dev curl-dev libidn2-dev gc-dev" ;;
     esac
     # Node 24, matching the workflow's setup-node pin. noble's apt `nodejs` is 18, and jsdom@30 declares
     # engines >= 22, so a DOM-backed suite installs and then fails to load it, reporting "jsdom is not
@@ -208,13 +245,16 @@ fi'
     # BoringSSL build toolchain (cmake + Go + a C toolchain), only when STAGE_BORINGSSL=1 builds the vendored BoringSSL so kyo-net's
     # TLS tests run against real libssl/libcrypto instead of cancelling. Heavy, so off by default.
     [ "${STAGE_BORINGSSL:-}" = 1 ] && bssl_pkgs="cmake golang-go build-essential git clang libunwind-dev"
+    [ "${STAGE_BORINGSSL:-}" = 1 ] && apk_bssl_pkgs="cmake go build-base git clang libunwind-dev linux-headers perl"
     # Aeron build toolchain (a C toolchain + git for the pinned clone), only when STAGE_AERON=1 stages the static Aeron C library so
     # kyo-aeron's shim has an archive to link. uuid-dev supplies the libuuid.so link target the driver needs and that no base image
     # preinstalls. The staged tree is gitignored, so any container command touching kyo-aeron needs this. Heavy, so off by default.
     local aeron_setup=""
     if [ "${STAGE_AERON:-}" = 1 ]; then
         aeron_pkgs="build-essential git uuid-dev"
-        # Aeron 1.50.2's CMakeLists sets cmake_minimum_required(3.30) and noble's apt cmake is 3.28, so apt cannot satisfy it. GitHub
+        # util-linux-dev is Alpine's libuuid: the Aeron driver links -luuid on Linux, musl included.
+        apk_aeron_pkgs="build-base git util-linux-dev linux-headers cmake"
+        # Aeron 1.51.1's CMakeLists sets cmake_minimum_required(3.30) and noble's apt cmake is 3.28, so apt cannot satisfy it. GitHub
         # runners only avoid this because they preinstall a newer cmake; the setup action's apt fallback would hit the same wall.
         # Install the upstream binary unless the image already carries >= 3.30.
         aeron_setup='
@@ -229,6 +269,13 @@ if command -v cmake >/dev/null 2>&1; then
     fi
 fi
 if [ "$cmake_ok" != 1 ]; then
+    if command -v apk >/dev/null 2>&1; then
+        # Kitware ships glibc binaries only, so there is no upstream tarball to fall back to on musl.
+        # Alpine'"'"'s own cmake is the only source; say so rather than installing something unrunnable.
+        echo "cmake >= 3.30 required for Aeron 1.51.1 and this musl image has $(cmake --version 2>/dev/null | head -1)." >&2
+        echo "Use an Alpine release whose apk cmake is >= 3.30." >&2
+        exit 1
+    fi
     case $(uname -m) in aarch64) cmake_arch=linux-aarch64 ;; *) cmake_arch=linux-x86_64 ;; esac
     curl -fsSL "https://github.com/Kitware/CMake/releases/download/v3.31.6/cmake-3.31.6-${cmake_arch}.tar.gz" \
         | tar xz -C /usr/local --strip-components=1
@@ -237,12 +284,37 @@ fi'
     cat <<PROVISION
 export DEBIAN_FRONTEND=noninteractive
 if command -v apt-get >/dev/null 2>&1; then
+    # Every run provisions from a bare image, so one unreachable Ubuntu mirror stalls the whole loop
+    # (ports.ubuntu.com has timed out for a stretch while the rest of the network was fine). KYO_APT_MIRROR
+    # points apt at a reachable mirror instead; unset, nothing changes. Both source formats are rewritten
+    # because noble ships deb822 while older images still use the one-line list.
+    if [ -n "${apt_mirror}" ]; then
+        for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list; do
+            [ -f "\$f" ] || continue
+            sed -i -e "s#https\\?://[a-z0-9.-]*/\\(ubuntu-ports\\|ubuntu\\)\\b#${apt_mirror}#g" "\$f"
+        done
+    fi
     apt-get update -qq >/dev/null
     apt-get install -y -qq -o Acquire::Retries=3 $apt_pkgs $node_pkgs $native_pkgs $bssl_pkgs $aeron_pkgs >/dev/null
+elif command -v apk >/dev/null 2>&1; then
+    # musl path, reached via KYO_BUILD_IMAGE=<a musl jdk image>. Both staging scripts refuse a
+    # cross-OS build, so the release builds its linux-musl-* natives on a genuine musl host; this is
+    # how that leg is reproduced locally.
+    apk add --no-cache $apk_pkgs $apk_node_pkgs $apk_native_pkgs $apk_bssl_pkgs $apk_aeron_pkgs >/dev/null
 fi
 $node_setup
 export COURSIER_CACHE=/root/.cache/coursier
-if ! command -v cs >/dev/null 2>&1; then
+if command -v apk >/dev/null 2>&1; then
+    # The coursier launchers below are glibc binaries, so a musl image brings its own JDK and takes
+    # sbt from the release tarball (a JAR the musl JDK runs), exactly as release.yml's Alpine legs do.
+    command -v java >/dev/null 2>&1 || { echo "musl image must carry a JDK (use a *-jdk-alpine image)" >&2; exit 1; }
+    if ! command -v sbt >/dev/null 2>&1; then
+        # The version comes from the host: provisioning runs before the source snapshot is
+        # extracted, so project/build.properties is not readable here yet.
+        curl -fsSL "https://github.com/sbt/sbt/releases/download/v$sbt_version/sbt-$sbt_version.tgz" | tar -xz -C /opt
+    fi
+    export PATH="/opt/sbt/bin:\$PATH"
+elif ! command -v cs >/dev/null 2>&1; then
     # Linux aarch64 launchers are published by VirtusLab's coursier-m1 releases, not
     # by coursier/coursier (whose latest release has no aarch64-pc-linux asset).
     arch=\$(uname -m)
@@ -253,9 +325,11 @@ if ! command -v cs >/dev/null 2>&1; then
     fi
     curl -fsSL "\$cs_url" | gzip -d > /usr/local/bin/cs && chmod +x /usr/local/bin/cs
 fi
-eval "\$(cs java --jvm corretto:25 --env)"
-command -v sbt >/dev/null 2>&1 || cs install sbt >/dev/null
-export PATH="/root/.local/share/coursier/bin:\$PATH"
+if command -v cs >/dev/null 2>&1; then
+    eval "\$(cs java --jvm corretto:25 --env)"
+    command -v sbt >/dev/null 2>&1 || cs install sbt >/dev/null
+    export PATH="/root/.local/share/coursier/bin:\$PATH"
+fi
 $aeron_setup
 PROVISION
 }
@@ -281,7 +355,21 @@ run_in_container() {
         mkdir -p "$KYO_BUILD_OUT"
         args+=(-v "$KYO_BUILD_OUT:/output")
     fi
+    # A container starts with no dependency cache, so every run re-fetches the JDK and the whole dependency set before it can compile
+    # anything. That is slow on every run and fragile on all of them: one refused connection to the JDK host leaves the container with no
+    # `java` at all, and the run dies having produced no test output, which reads as an empty result rather than as a failed download.
+    # Persisting the cache on the host removes both problems, and it is safe to share across runs because coursier's layout is
+    # content-addressed. KYO_BUILD_NO_CACHE forces the cold path for anyone who wants to reproduce a from-scratch fetch.
+    if [ -z "${KYO_BUILD_NO_CACHE:-}" ]; then
+        local cache="${KYO_BUILD_CACHE:-$HOME/.cache/kyo-build-container}"
+        mkdir -p "$cache/coursier" "$cache/sbt" "$cache/ivy"
+        args+=(-v "$cache/coursier:/root/.cache/coursier" -v "$cache/sbt:/root/.sbt" -v "$cache/ivy:/root/.ivy2")
+    fi
     local envs=()
+    # A UTF-8 locale, because the image defaults to POSIX and the JDK then derives an ASCII
+    # sun.jnu.encoding: a test that names a file with non-ASCII characters fails to encode the path at all
+    # (InvalidPathException: unmappable characters) rather than exercising anything.
+    envs+=(-e LANG=C.UTF-8 -e LC_ALL=C.UTF-8)
     # Forward the leak-debug flag so the forked test JVM (which inherits the container env) runs leaves serially and attributes each leaked
     # descriptor to the test that opened it (see kyo.test.runner.internal.LeakDebug). Unset by default, so a normal run is unaffected.
     [ -n "${KYO_TEST_LEAK_DEBUG:-}" ] && envs+=(-e "KYO_TEST_LEAK_DEBUG=$KYO_TEST_LEAK_DEBUG")
@@ -302,7 +390,8 @@ run_in_container() {
     # against real libssl/libcrypto instead of cancelling.
     [ -n "${STAGE_BORINGSSL:-}" ] && envs+=(-e "STAGE_BORINGSSL=$STAGE_BORINGSSL")
     # Forward the libaeron-staging flag; when set the container builds the pinned Aeron C library before the command so kyo-aeron's
-    # ffiCompile finds the staged archive instead of failing to link.
+    # ffiCompile finds the staged archive instead of failing to link. Both staging scripts derive the os-arch from the container's
+    # own host (musl included), so neither is passed one here: a hand-computed "linux-$(uname -m)" is wrong on an Alpine image.
     [ -n "${STAGE_AERON:-}" ] && envs+=(-e "STAGE_AERON=$STAGE_AERON")
     # Forward the kyo-net per-backend test isolation flag (KYO_NET_ONLY=<backend>), the per-TLS-provider isolation flag
     # (KYO_NET_TLS_ONLY=<provider>), and the success-leaves-only flag (KYO_NET_SUCCESS_ONLY=1) so a podman run can
@@ -358,13 +447,17 @@ run_in_container() {
     fi
     envs+=(-e "STAGE_JSDOM=$stage_jsdom")
     local provision; provision=$(container_provision "$platform")
+    # `sh`, not `bash`: a musl JDK image ships busybox sh and no bash, and provisioning is what
+    # installs bash there, so a bash entrypoint cannot get far enough to install it. This prelude is
+    # POSIX throughout; the two staging scripts genuinely need bash and are invoked as `bash <script>`
+    # below, by which point the package step has provided it.
     podman "${args[@]}" "${envs[@]}" "$CONTAINER_IMAGE" \
-        bash -c "set -e
+        sh -c "set -e
 $provision
 mkdir -p /work && cd /work && tar xf /build-input/src.tar \
     && if [ -s /build-input/changes.patch ]; then patch -p1 < /build-input/changes.patch; fi \
     && if [ \"\${STAGE_BORINGSSL:-}\" = 1 ]; then bash kyo-net/build/boringssl/build-boringssl.sh; fi \
-    && if [ \"\${STAGE_AERON:-}\" = 1 ]; then bash kyo-aeron/scripts/build-aeron.sh \"linux-\$(uname -m)\"; fi \
+    && if [ \"\${STAGE_AERON:-}\" = 1 ]; then bash kyo-aeron/scripts/build-aeron.sh; fi \
     && if [ \"\${STAGE_JSDOM:-}\" = 1 ]; then npm install --no-save --no-fund --no-audit jsdom@^30; fi
 if $inner; then __rc=0; else __rc=\$?; fi
 if [ -d /output ]; then find . -type d \\( -name scoverage-report -o -name scoverage-data \\) -exec cp -r --parents {} /output/ \\; 2>/dev/null || true; fi

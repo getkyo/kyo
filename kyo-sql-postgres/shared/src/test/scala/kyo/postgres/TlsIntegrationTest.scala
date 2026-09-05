@@ -77,7 +77,13 @@ class TlsIntegrationTest extends SqlContainerTest:
                 s"$tempDir/server.key",
                 "-out",
                 s"$tempDir/server.crt"
-            ).text.andThen {
+            ).text.andThen(
+                // The directory Path.tempDirUnscoped creates is 0700, and the container that bind-mounts it reads the
+                // material as its own user, so without this its entrypoint fails on "can't stat ... Permission denied"
+                // and it exits before the health check can run. The material is a throwaway self-signed pair, and the
+                // entrypoint re-restricts the copy it makes inside the container.
+                Command("chmod", "-R", "a+rX", tempDir).text
+            ).andThen {
                 // Step 2 & 3: start container with bind mount + entrypoint wrapper
                 val wrapperScript =
                     "cp /etc/ssl-pg/server.crt /tmp/server.crt && " +
@@ -99,6 +105,10 @@ class TlsIntegrationTest extends SqlContainerTest:
                     .copy(image = ContainerImage("postgres:16-alpine"))
                     .envAll(Dict.from(baseEnv))
                     .port(5432, 0)
+                    // A database fixture must prove its published port is SERVED, not merely bound: the daemon records
+                    // the binding before its forwarder dials the container, so a caller handed the port on the binding
+                    // alone gets a refused connect. Every ContainerPredef fixture sets this; a hand-rolled one must say so.
+                    .requireService(true)
                     .bind(tempDirPath, Path("/etc/ssl-pg"), readOnly = true)
                     .command("sh", "-c", wrapperScript)
                     .healthCheck(Container.HealthCheck.exec(
