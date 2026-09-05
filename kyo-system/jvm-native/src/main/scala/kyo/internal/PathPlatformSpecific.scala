@@ -139,9 +139,12 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
             val key        = attrs.fileKey
             val birthNanos = attrs.creationTime.to(TimeUnit.NANOSECONDS)
             // An inode can be reused as soon as an entry is deleted. Its birth time distinguishes
-            // that replacement from a rename, which preserves both values.
-            if key == null || birthNanos == 0L then Absent
-            else Present(s"${key.toString}:$birthNanos")
+            // that replacement from a rename, which preserves both values. OpenJDK reports a null
+            // file key on Windows, where creation time is the stable identity available through
+            // BasicFileAttributes.
+            if birthNanos == 0L then Absent
+            else if key == null then Present(s"birth:$birthNanos")
+            else Present(s"key:${key.toString}:$birthNanos")
         }
 
     // --- Write ---
