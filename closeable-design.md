@@ -267,6 +267,35 @@ is not a slip. It reflects a split that exists in the code today:
 converts lossily in one direction (a typed failure has no `Throwable` to hand down), or one of the
 two is wrong. This has to be decided rather than absorbed, and it is now open question 4.
 
+## 8c. Naming: what consolidates to `close`, and what does not
+
+`close` should be the one word for "signal, do not wait", and phase 1 should not know what kind of
+thing it is signalling. That much consolidates, and `Closeable.close` is the carrier.
+
+`Fiber.interrupt` does not, and the test that decides it is what `close(Absent)` would mean:
+
+- for a resource it is meaningful and ordinary, "end this, no failure";
+- for a fiber it is meaningless, because a running computation cannot be made to succeed from
+  outside. `interrupt` always injects a failure, and the fiber completes with
+  `Panic(Interrupted(frame))` (`Fiber.scala:458`); the overload takes the error explicitly.
+
+So the two do not share an honest signature, and a shared name would conceal that one of them can
+only fail its target. It would also put `Fiber` in the vocabulary of the type section 7 excludes it
+from, inviting the exact misread that exclusion exists to prevent: a reader who sees `fiber.close`
+looks for `fiber.closeAwait` and expects it to wait for release.
+
+The consolidation to take:
+
+- `close` and `closeAwait` are what users see, on scopes and resources;
+- `interrupt` stays the fiber-level mechanism that a scope's phase 1 invokes;
+- `Fiber.init` registering `fiber.interruptDiscard` as a scope signal is the bridge, and it reads
+  correctly: the scope closes, and closing it interrupts what it owns.
+
+The shape similarity that motivates the question is real and worth stating, since it is what
+`Closeable` captures: `Fiber.interrupt`, `Meter.close` and `Channel.close` are all idempotent
+signals that report whether this call was the one that fired. Sharing a shape does not require
+sharing a name.
+
 ## 9. Recommendation
 
 Shape D, tiered per section 8b: `Closeable` and `Closeable.Unsafe` both in `kyo-core`, the unsafe
