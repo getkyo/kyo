@@ -34,21 +34,39 @@ handleInheritable(effectTag)(derive)(v) =
 //                            very same object       discard the fork's
 ```
 
-and `Scope.run` calls exactly that, with a `derive` that ignores the outer scope as well
-(`Scope.scala:143`):
+and `Scope.run` calls exactly that (`Scope.scala:143`):
 
 ```scala
 ContextEffect.handleInheritable(Tag[Scope], finalizer, _ => finalizer)(v)
 ```
 
-So a nested `Scope.run` is an island, and a forked computation shares the parent's registry
-object rather than getting a scope of its own. Both symptoms follow directly:
+Read the `derive` carefully, because it is easy to misread. `handleInheritable(tag, ifUndefined,
+ifDefined)` expands to `outer.fold(finalizer)(_ => finalizer)`, and both arms are the fresh
+finalizer this call just built. So a nested `Scope.run` does get a scope of its own. What it does
+not get is a *link* to the enclosing one: the two registries do not know about each other.
 
-- the parent has nothing to wait for, because no child scope exists to complete, which is D3;
-- registering from a fork that outlives the parent hits a closed queue, which is why the
-  message at `Scope.scala:195-200` exists at all: "This finalizer is already closed. This may
-  happen if a background fiber escapes the scope of a 'Scope.run' call." With a real child
-  scope that is not an error, it is the thing the parent waits on.
+On the normal path that link is redundant, which is why its absence has never shown up as a bug.
+The inner run closes and awaits inline before returning (`Scope.scala:147-151`), and
+`Abort.run[Any]` routes every completion including an abort through there, so the inner's
+resources are released before the outer sees control again. Containment comes from sequencing
+rather than from bookkeeping.
+
+It is the two cases where sequencing does not hold that are broken:
+
+- **A fork.** `fork(parent) = parent` hands a spawned computation the parent's own registry
+  instead of a scope of its own. Nothing in the parent's control flow waits for it, and nothing
+  knows to. That is D3, and it is why registering from a fork that outlives the parent hits a
+  closed queue: the message at `Scope.scala:195-200` reads "This finalizer is already closed.
+  This may happen if a background fiber escapes the scope of a 'Scope.run' call." With a real
+  child scope that is not an error, it is the thing the parent waits on.
+- **The unwind path of a nested run.** `Sync.ensure(finalizer.close)` (`Scope.scala:145`) fires
+  `close` without `await`, and cannot await, because the kernel bracket release is synchronous.
+  `close` spawns a fiber for the finalizer tasks and returns, so on an interrupt the inner's
+  finalizers are still running when the outer proceeds, and the outer's own ensure behaves the
+  same way. Nothing in the chain waits for anything.
+
+The second case is why the nested run needs registering too, and not only for symmetry: a parent
+that holds its children is the only thing that can cover the path where sequencing fails.
 
 ## 2. The shape
 
@@ -79,13 +97,13 @@ The completion promise stays the coordination channel, and it is already there.
 
 ## 3. Membership is created at the two entry hooks
 
-`ContextHandler` has an entry hook for each of the two ways a scope is born, and today both
-are flat:
+`ContextHandler` has an entry hook for each of the two ways a scope is born. Today `fork` is flat
+and `derive` builds a real scope but links it to nothing:
 
-| | entry | exit |
-|---|---|---|
-| nested `Scope.run` | `derive(outer)` | `done` / `release` |
-| forked scope | `fork(parent)` | `done` / `release` on the forked region, and `join` when it restores |
+| | entry | exit | today |
+|---|---|---|---|
+| nested `Scope.run` | `derive(outer)` | `done` / `release` | own scope, unlinked |
+| forked scope | `fork(parent)` | `done` / `release` on the forked region, and `join` when it restores | no scope at all |
 
 Both entry hooks create a child and link it into the parent:
 
@@ -99,11 +117,12 @@ ContextEffect.handle(Tag[Scope])(
 )(v)
 ```
 
-`derive` is what makes `Actor.run`'s internal `Scope.run` a child instead of an island.
-`fork` is what gives a spawned fiber a scope of its own instead of a share in the parent's
-registry, the same non-trivial choice `Bracket` already makes.
+`fork` is the larger change: it gives a spawned fiber a scope of its own instead of a share in
+the parent's registry, the same non-trivial choice `Bracket` already makes. `derive` is the
+smaller one: the scope it returns is already correct, and all that is added is the link, which is
+what lets a parent cover the unwind path its child cannot await on its own.
 
-### `derive` must stay idempotent
+### `derive` must stay pure
 
 This is a trap worth naming, because it would be found at runtime rather than by the compiler.
 `derive` is not called once per region. The abandonment walk calls it to reconstruct the state
@@ -311,7 +330,9 @@ cheap to answer:
   nothing owns their lifetime; a child scope per crossing is that owner.
 - The `Closed` message at `Scope.scala:195-200` stops describing an error and starts describing a
   child, which removes the failure it names rather than reporting it better.
-- The nested and forked cases stop being two accidental rules and become one.
+- The unwind path of a nested `Scope.run`, where `Sync.ensure` fires `close` without `await` and
+  no one in the chain waits. Sequencing covers the normal path already; membership is what covers
+  this one.
 
 It does **not** remove `Bracket`, and the divergence between the two fork policies is deliberate
 and should be written down where both can be read: `Bracket` hands a fork an inert cell so a
@@ -326,7 +347,9 @@ Reproduce first, in this order:
    until that resource is released. This is the existing D3 pin at `ScopeInterruptTest:135`,
    which should stop being order-dependent once the guarantee is real.
 2. A pin per D2 site: `merge`, `mergeHaltingLeft`, `collectAll`, `mapPar`.
-3. A pin that a nested `Scope.run` inside `Actor.run` is a child, not an island.
+3. A pin that an interrupted outer `Scope.run` does not return before a nested `Scope.run`'s
+   finalizers have finished. This is the unwind path, and it should fail today for the right
+   reason: the inner's `close` is fired but never awaited.
 4. A pin for invariant 3: a spawn abandoned before it runs still closes its child scope.
 5. A pin that a child finalizer failure does not prevent the parent's phase 3 from running,
    whichever way decision 2 in section 9 goes.
