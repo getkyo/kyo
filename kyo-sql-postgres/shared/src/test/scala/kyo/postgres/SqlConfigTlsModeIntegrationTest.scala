@@ -734,7 +734,21 @@ object SqlConfigTlsModeIntegrationTest:
                                         case Result.Panic(t) =>
                                             Abort.fail(ContainerBackendException(s"ca.pem copy panic: ${t.getMessage}"))
                                         case Result.Success(_) =>
-                                            startTlsContainer(tempDirPath)
+                                            // 0700 from tempDirUnscoped is unreadable to the container that
+                                            // bind-mounts it, whose entrypoint then exits before the health check
+                                            // runs. Throwaway self-signed material.
+                                            Abort.run[Throwable](Command("chmod", "-R", "a+rX", tempDir).text).flatMap {
+                                                case Result.Failure(e) =>
+                                                    Abort.fail(ContainerBackendException(
+                                                        s"cert directory chmod failed: ${e.getMessage}"
+                                                    ))
+                                                case Result.Panic(t) =>
+                                                    Abort.fail(ContainerBackendException(
+                                                        s"cert directory chmod panic: ${t.getMessage}"
+                                                    ))
+                                                case Result.Success(_) =>
+                                                    startTlsContainer(tempDirPath)
+                                            }
                                     }
                             }
                     }
@@ -764,6 +778,10 @@ object SqlConfigTlsModeIntegrationTest:
                 "POSTGRES_DB"       -> database
             )))
             .port(5432, 0)
+            // A database fixture must prove its published port is SERVED, not merely bound: the daemon records
+            // the binding before its forwarder dials the container, so a caller handed the port on the binding
+            // alone gets a refused connect. Every ContainerPredef fixture sets this; a hand-rolled one must say so.
+            .requireService(true)
             .bind(tempDirPath, Path("/etc/ssl-pg"), readOnly = true)
             .command("sh", "-c", wrapperScript)
             .healthCheck(Container.HealthCheck.exec(
@@ -818,6 +836,10 @@ object SqlConfigTlsModeIntegrationTest:
                 "POSTGRES_DB"       -> database
             )))
             .port(5432, 0)
+            // A database fixture must prove its published port is SERVED, not merely bound: the daemon records
+            // the binding before its forwarder dials the container, so a caller handed the port on the binding
+            // alone gets a refused connect. Every ContainerPredef fixture sets this; a hand-rolled one must say so.
+            .requireService(true)
             .bind(certsDir, Path("/etc/ssl-pg"), readOnly = true)
             .command("sh", "-c", wrapperScript)
             .healthCheck(Container.HealthCheck.exec(

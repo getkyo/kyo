@@ -111,18 +111,26 @@ object Topic:
         Scope.run {
             Abort.run[FileSystemException](Path.run(Path.tempDir("kyo-aeron-embedded"))).map {
                 case Result.Success(dir) =>
-                    AeronPlatform.embedded(dir.unsafe.show, clientLivenessNs, publicationUnblockNs).map { runtime =>
-                        // The driver deletes its own directory on close, once its conductor has
-                        // stopped. The scope that owns the temp dir is the backstop for the paths
-                        // that leaves behind: a driver that failed to launch, or one whose close did
-                        // not complete. Path.tempDir registers a recursive removal that discards its
-                        // outcome, so the backstop finding nothing is not an error and cannot replace
-                        // the result of the body it guards.
+                    // The driver gets a path inside the temp directory that does not exist yet and creates
+                    // it itself: Aeron deletes and recreates a driver directory that already exists, and on
+                    // Windows that delete goes through the shell. The temp directory stays the unit the
+                    // scope removes, so nesting costs nothing.
+                    val aeronDir = dir / AeronDriver.mediaDirName
+                    AeronPlatform.embedded(aeronDir.unsafe.show, clientLivenessNs, publicationUnblockNs).map { runtime =>
+                        // Two removals, because neither mechanism reaches every edge and the driver is
+                        // configured to delete nothing itself. This one rides the runtime close, so it covers
+                        // the interrupt and panic exits that a Scope finalizer can be lost on; the
+                        // recursive removal Path.tempDir registers with the scope covers the typed-abort
+                        // exit that Sync.ensure misses. Both discard their outcome, so whichever runs
+                        // second finds nothing and that is not an error.
                         //
-                        // Closing the runtime from inside the scope is what orders the two: the
-                        // client and driver are shut down on the way out, and only then does the
-                        // scope remove the directory underneath them.
-                        Sync.ensure(Sync.Unsafe.defer(runtime.close())) {
+                        // Removing here is safe for the same reason the ordering is: driver close joins
+                        // the conductor, sender and receiver threads before returning, so nothing is
+                        // writing into the directory by the time either removal runs.
+                        Sync.ensure(Sync.Unsafe.defer {
+                            runtime.close()
+                            discard(dir.unsafe.removeAll())
+                        }) {
                             runWith(runtime.transport)(v)
                         }
                     }
@@ -445,7 +453,15 @@ object Topic:
                                                     else
                                                         dl.isOverdue.map { over =>
                                                             if over then
-                                                                Abort.fail(TopicAddTimeoutException(aeronUri, streamId, timeout))
+                                                                // Freed here rather than left to the finalizer: this exit is a typed
+                                                                // Abort, and Sync.ensure does not run its finalizer on that edge, so
+                                                                // relying on it leaks the token on every add that reaches its deadline.
+                                                                // The finalizer still covers the interrupt and panic exits, and
+                                                                // tokOwned keeps the two from freeing twice.
+                                                                Sync.Unsafe.defer {
+                                                                    transport.freeAsyncPub(tok)
+                                                                    tokOwned = false
+                                                                }.andThen(Abort.fail(TopicAddTimeoutException(aeronUri, streamId, timeout)))
                                                             else Async.sleep(addBackoff).andThen(Loop.continue)
                                                         }
                                                 }
@@ -508,7 +524,13 @@ object Topic:
                                                     else
                                                         dl.isOverdue.map { over =>
                                                             if over then
-                                                                Abort.fail(TopicAddTimeoutException(aeronUri, streamId, timeout))
+                                                                // Same reason as the publication side: a typed Abort skips the
+                                                                // finalizer, so the token is freed here and tokOwned keeps the
+                                                                // finalizer's interrupt and panic coverage from freeing twice.
+                                                                Sync.Unsafe.defer {
+                                                                    transport.freeAsyncSub(tok)
+                                                                    tokOwned = false
+                                                                }.andThen(Abort.fail(TopicAddTimeoutException(aeronUri, streamId, timeout)))
                                                             else Async.sleep(addBackoff).andThen(Loop.continue)
                                                         }
                                                 }

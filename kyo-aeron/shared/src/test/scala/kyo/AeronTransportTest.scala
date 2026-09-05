@@ -4,7 +4,6 @@ import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.internal.AeronBindings
 import kyo.internal.AeronClientHandle
-import kyo.internal.AeronPlatform
 import kyo.internal.AeronPublication
 import kyo.internal.AeronRuntime
 import kyo.internal.AeronSentinels
@@ -256,10 +255,16 @@ class AeronTransportTest extends Test:
         type Subscription = Int
         type AsyncPub     = Int
         type AsyncSub     = Int
+
+        /** Counts token frees. The C layer does not free a token that never confirmed, so the add loop owes exactly one
+          * free on every exit that abandons the registration, and a counter is the only way to see that from here.
+          */
+        val pubFrees = new java.util.concurrent.atomic.AtomicInteger(0)
+        val subFrees = new java.util.concurrent.atomic.AtomicInteger(0)
         def asyncAddPublication(uri: String, streamId: Int)(using AllowUnsafe): Maybe[AsyncPub] = Present(streamId)
         def pollAddPublication(async: AsyncPub)(using AllowUnsafe): AeronTransport.AddPoll[Publication] =
             AeronTransport.AddPoll.Awaiting
-        def freeAsyncPub(async: AsyncPub)(using AllowUnsafe): Unit                               = ()
+        def freeAsyncPub(async: AsyncPub)(using AllowUnsafe): Unit                               = discard(pubFrees.incrementAndGet())
         def publicationIsConnected(pub: Publication)(using AllowUnsafe): Boolean                 = false
         def offer(pub: Publication, message: Array[Byte])(using AllowUnsafe): Long               = 0L
         def maxMessageLength(pub: Publication)(using AllowUnsafe): Int                           = 0
@@ -267,7 +272,7 @@ class AeronTransportTest extends Test:
         def asyncAddSubscription(uri: String, streamId: Int)(using AllowUnsafe): Maybe[AsyncSub] = Present(streamId)
         def pollAddSubscription(async: AsyncSub)(using AllowUnsafe): AeronTransport.AddPoll[Subscription] =
             AeronTransport.AddPoll.Awaiting
-        def freeAsyncSub(async: AsyncSub)(using AllowUnsafe): Unit                 = ()
+        def freeAsyncSub(async: AsyncSub)(using AllowUnsafe): Unit                 = discard(subFrees.incrementAndGet())
         def subscriptionIsConnected(sub: Subscription)(using AllowUnsafe): Boolean = false
         def pollOne(sub: Subscription)(using AllowUnsafe): Maybe[Array[Byte]]      = Absent
         def closeSubscription(sub: Subscription)(using AllowUnsafe): Unit          = ()
@@ -655,23 +660,21 @@ class AeronTransportTest extends Test:
         Loop.indexed { i =>
             if i >= 20 then Loop.done(succeed)
             else
-                Path.run(Path.tempDir("kyo-aeron-embedded-test")).flatMap { dir =>
-                    AeronPlatform.embedded(dir.unsafe.show).map { rt =>
-                        Sync.Unsafe.defer {
-                            val transport = rt.transport
-                            rt.close()
-                            // After close: the global registry check returns NULL -> Absent.
-                            val pubResult = transport.asyncAddPublication(ipcUri, addTimeoutStreamId)
-                            val subResult = transport.asyncAddSubscription(ipcUri, addTimeoutStreamId)
-                            assert(
-                                pubResult.isEmpty,
-                                s"iteration $i: asyncAddPublication on closed client must return Absent; got $pubResult"
-                            )
-                            assert(
-                                subResult.isEmpty,
-                                s"iteration $i: asyncAddSubscription on closed client must return Absent; got $subResult"
-                            )
-                        }
+                withEmbeddedRuntime() { rt =>
+                    Sync.Unsafe.defer {
+                        val transport = rt.transport
+                        rt.close()
+                        // After close: the global registry check returns NULL -> Absent.
+                        val pubResult = transport.asyncAddPublication(ipcUri, addTimeoutStreamId)
+                        val subResult = transport.asyncAddSubscription(ipcUri, addTimeoutStreamId)
+                        assert(
+                            pubResult.isEmpty,
+                            s"iteration $i: asyncAddPublication on closed client must return Absent; got $pubResult"
+                        )
+                        assert(
+                            subResult.isEmpty,
+                            s"iteration $i: asyncAddSubscription on closed client must return Absent; got $subResult"
+                        )
                     }
                 }.andThen(Loop.continue)
         }
@@ -758,6 +761,36 @@ class AeronTransportTest extends Test:
         }
     }
 
+    /** An external driver must be released when the body ABORTS, not only when it panics.
+      *
+      * withExternalDriver parks its driver fiber on a latch that the caller releases, and running that
+      * release as a step of the comprehension made it conditional on the body reaching the step. A typed
+      * Abort skips every remaining step, so the fiber stayed parked and its C media driver and conductor
+      * thread outlived the leaf. Registering the release as a scope finalizer covers that path, and the
+      * counter is what proves it: whether a finalizer runs is a fact about execution.
+      */
+    "an external driver is released even when the body aborts" in {
+        val before = externalDriverReleases.get()
+        Path.run(Path.tempDir("kyo-aeron-external-abort")).map { root =>
+            // The driver creates its own directory inside the temp one: Aeron deletes and recreates a driver
+            // directory that already exists, and the temp directory stays what the scope removes.
+            val dir = root / AeronDriver.mediaDirName
+            Abort.run[TopicException](
+                Scope.run(
+                    withExternalDriver(dir) {
+                        Abort.fail(TopicTransportFailedException("the body aborts after the driver is up"))
+                    }
+                )
+            ).map { result =>
+                assert(result.isFailure, s"the fixture must abort for this to prove anything, got $result")
+                assert(
+                    externalDriverReleases.get() == before + 1,
+                    s"the external driver was not released: releases went from $before to ${externalDriverReleases.get()}"
+                )
+            }
+        }
+    }
+
     /** A live driver must name itself where a descriptor leak is reported.
       *
       * The leak check attaches the diagnostics dump to every surviving descriptor so the survivor says who
@@ -795,6 +828,12 @@ class AeronTransportTest extends Test:
                 assert(
                     t.aeronUri == ipcUri && t.streamId == addTimeoutStreamId && t.timeout == deadline,
                     s"TopicAddTimeoutException carried wrong detail: uri=${t.aeronUri} streamId=${t.streamId} timeout=${t.timeout}"
+                )
+                // The registration is abandoned here, so its token is this side's to free: the C layer frees one only on a
+                // confirmed add. Aborting without freeing leaks the token on every add that reaches its deadline.
+                assert(
+                    transport.pubFrees.get() == 1,
+                    s"the add token was not freed when the deadline aborted: ${transport.pubFrees.get()} frees"
                 )
             case Result.Failure(_: Timeout) =>
                 fail("addPublicationDeadline hung past the watchdog instead of aborting with TopicAddTimeoutException")
@@ -879,6 +918,12 @@ class AeronTransportTest extends Test:
             _ = addResult match
                 case Result.Failure(_: TopicAddTimeoutException) => ()
                 case other => fail(s"pending add did not abort with TopicAddTimeoutException: ${describeAddFailure(other)}")
+            // Same token-free obligation as the deadline leaf, checked here too because this add runs in a forked
+            // fiber: the abort unwinds a fiber rather than the caller, and the token is owed a free either way.
+            _ = assert(
+                transport.pubFrees.get() == 1,
+                s"the add token was not freed when the deadline aborted in a forked fiber: ${transport.pubFrees.get()} frees"
+            )
             _ <- tickerFiber.get
         yield succeed
         end for
@@ -1020,10 +1065,13 @@ class AeronTransportTest extends Test:
             // A unique per-instance dir rather than null, which would route to Aeron's single
             // shared default directory and risk colliding with a concurrent run.
             dir <- Path.run(Path.tempDir("kyo-aeron-uaf-reads"))
+            // The driver creates its own directory inside that one, matching every other caller: Aeron
+            // deletes and recreates a driver directory that already exists.
+            aeronDir = (dir / AeronDriver.mediaDirName).unsafe.show
             // driverStart/clientConnect are @Ffi.blocking, so each yields a Fiber.Unsafe bridged
             // via .safe.get.
-            driver   <- Sync.Unsafe.defer(bindings.driverStart(dir.unsafe.show, 0L, 0L)).flatMap(_.safe.get)
-            client   <- Sync.Unsafe.defer(bindings.clientConnect(dir.unsafe.show)).flatMap(_.safe.get)
+            driver   <- Sync.Unsafe.defer(bindings.driverStart(aeronDir, 0L, 0L)).flatMap(_.safe.get)
+            client   <- Sync.Unsafe.defer(bindings.clientConnect(aeronDir)).flatMap(_.safe.get)
             pubMaybe <- addPublicationRaw(bindings, client, ipcUri, uafStreamId, 5000)
             subMaybe <- addSubscriptionRaw(bindings, client, ipcUri, uafStreamId, 5000)
             _   = assert(pubMaybe.isDefined, "addPublication never returned Done within 5000 attempts")

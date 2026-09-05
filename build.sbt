@@ -2745,6 +2745,16 @@ lazy val `kyo-pod` =
         .dependsOn(`kyo-system`)
         .withKyoTest
         .settings(
+            // The container-leak check in BasePodTest diffs `Container.list(all = true)` around each leaf, so it
+            // attributes to that leaf any container created while it ran. That is exact only while one container
+            // operation is in flight per daemon, which `runBackends` documents and which sequential leaves give
+            // WITHIN a suite. Across suites it does not hold: ContainerItTest forks per runtime while the
+            // orchestration and predef suites auto-detect, so two of them target the same daemon at once and each
+            // reports the other's containers as its own leak. Serial suites make the invariant the check relies on
+            // actually true; a parallel module run reports seventeen such failures and a serial one reports none.
+            Test / parallelExecution := false
+        )
+        .settings(
             `kyo-settings`
         )
         .jvmSettings(

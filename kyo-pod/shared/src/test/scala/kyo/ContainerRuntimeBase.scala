@@ -30,6 +30,20 @@ private[kyo] trait ContainerRuntimeBase:
     private[kyo] def getHome(using AllowUnsafe): String =
         kyo.System.live.unsafe.property("user.home").getOrElse("")
 
+    /** The daemon socket named by `CONTAINER_HOST`, classified to a runtime by its path.
+      *
+      * That variable is how a caller points kyo-pod at a daemon that sits at no standard path: a socket bind-mounted
+      * into a container, or one reached across a machine boundary. `Container`'s own backend honours it, so a helper
+      * that consults only the standard paths reports NO runtime available on a host where every operation in fact
+      * works, and the suites that gate on availability then register no leaves while the run still reports success.
+      * The path decides which runtime it is, the same way `HttpContainerBackend` names its own.
+      */
+    private[kyo] def envSocket(rt: String)(using AllowUnsafe): Maybe[String] =
+        getEnv("CONTAINER_HOST")
+            .map(_.stripPrefix("unix://"))
+            .filter(_.nonEmpty)
+            .filter(path => if rt == "podman" then path.contains("podman") else !path.contains("podman"))
+
     // --- Memoized detection — lazy vals capture AllowUnsafe internally so they stay parameter-free ---
 
     lazy val hasPodman: Boolean =
@@ -37,12 +51,13 @@ private[kyo] trait ContainerRuntimeBase:
         val sock = getEnv("XDG_RUNTIME_DIR")
             .map(xdg => s"$xdg/podman/podman.sock")
             .getOrElse("/run/podman/podman.sock")
-        socketExists(sock) || cliExists("podman")
+        envSocket("podman").exists(socketExists) || socketExists(sock) || cliExists("podman")
     end hasPodman
 
     lazy val hasDocker: Boolean =
         import AllowUnsafe.embrace.danger
         val home = getHome
+        envSocket("docker").exists(socketExists) ||
         socketExists(s"$home/.docker/run/docker.sock") || socketExists("/var/run/docker.sock") || cliExists("docker")
     end hasDocker
 
@@ -81,7 +96,7 @@ private[kyo] trait ContainerRuntimeBase:
                     .getOrElse(Seq.empty)
                 xdgSockets ++ podmanMachineSockets ++ Seq("/run/podman/podman.sock")
             case _ => Seq("/var/run/docker.sock")
-        candidates.find(socketExists)
+        (envSocket(rt).toOption.toSeq ++ candidates).find(socketExists)
     end findSocket
 
 end ContainerRuntimeBase

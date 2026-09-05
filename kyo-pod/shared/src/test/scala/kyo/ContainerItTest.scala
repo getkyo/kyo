@@ -55,6 +55,7 @@ class ContainerItTest extends BasePodTest:
         }
 
         "withBackendConfig(_.Shell) uses shell backend" - runRuntimes { runtime =>
+            requireRuntimeCli(runtime)
             Container.withBackendConfig(_.Shell(runtime)) {
                 assertRuns(alpine)
             }
@@ -82,6 +83,7 @@ class ContainerItTest extends BasePodTest:
 
         "auto-detect passes meter to backend" - runRuntimes { runtime =>
             Meter.initSemaphore(4).map { meter =>
+                requireRuntimeCli(runtime)
                 Container.withBackendConfig(_.Shell(runtime, meter)) {
                     Container.init(alpine).map { c =>
                         Kyo.foreach((1 to 4).toSeq) { i =>
@@ -98,6 +100,7 @@ class ContainerItTest extends BasePodTest:
 
         "Shell with explicit command path" - runRuntimes { runtime =>
             val cmd = if runtime == "docker" then "docker" else "podman"
+            requireRuntimeCli(runtime)
             Container.withBackendConfig(_.Shell(cmd)) {
                 assertRuns(alpine)
             }
@@ -184,6 +187,7 @@ class ContainerItTest extends BasePodTest:
         }
 
         "nested withBackendConfig overrides outer backend" - runRuntimes { runtime =>
+            requireRuntimeCli(runtime)
             Container.withBackendConfig(_.Shell(runtime)) {
                 val socketOpt = ContainerRuntime.findSocket(runtime)
                 if socketOpt.isEmpty then
@@ -748,7 +752,7 @@ class ContainerItTest extends BasePodTest:
                 .requireService(true)
                 .portMappingTimeout(60.seconds)
                 .healthCheck(Container.HealthCheck.port(80, Schedule.fixed(200.millis).take(30)))
-            ContainerImage.ensure(img).andThen {
+            ensureImage(img).andThen {
                 Container.init(config).map { c =>
                     c.mappedPort(80).map(hp => assert(hp > 0, s"expected a bound host port, got $hp"))
                 }
@@ -1854,7 +1858,7 @@ class ContainerItTest extends BasePodTest:
                 case Result.Failure(_: ContainerImageMissingException) =>
                     // Registry may be unreachable (TLS cert, network, etc.)
                     // Verify the image is at least available locally via ensure
-                    ContainerImage.ensure(img).andThen {
+                    ensureImage(img).andThen {
                         ContainerImage.inspect(img).map { imgInfo =>
                             assert(imgInfo.repoTags.exists(_.reference.contains("alpine")))
                         }
@@ -1888,7 +1892,7 @@ class ContainerItTest extends BasePodTest:
             val img = ContainerImage("alpine", "latest")
             // ensure short-circuits on the local image; pull re-contacts the registry even when the image is present,
             // surfacing progress events ("Already exists", digest, "up to date") whose presence witnesses the contact.
-            ContainerImage.ensure(img).andThen {
+            ensureImage(img).andThen {
                 Scope.run {
                     Abort.run[ContainerException](ContainerImage.pullWithProgress(img).run).map {
                         case Result.Success(events) =>
@@ -1942,7 +1946,7 @@ class ContainerItTest extends BasePodTest:
     "ContainerImage.pullWithProgress" - {
         "streams progress events with status" - runBackends {
             val img = ContainerImage("alpine", "latest")
-            ContainerImage.ensure(img).andThen {
+            ensureImage(img).andThen {
                 Scope.run {
                     ContainerImage.pullWithProgress(img).run.map { events =>
                         assert(events.nonEmpty)
@@ -1967,7 +1971,7 @@ class ContainerItTest extends BasePodTest:
     "ContainerImage.list" - {
         "lists local images including alpine" - runBackends {
             for
-                _      <- ContainerImage.ensure(ContainerImage("alpine", "latest"))
+                _      <- ensureImage(ContainerImage("alpine", "latest"))
                 images <- ContainerImage.list
             yield
                 assert(images.nonEmpty)
@@ -1979,7 +1983,7 @@ class ContainerItTest extends BasePodTest:
         "returns image metadata with architecture and OS" - runBackends {
             val img = ContainerImage("alpine", "latest")
             for
-                _ <- ContainerImage.ensure(img)
+                _ <- ensureImage(img)
                 i <- ContainerImage.inspect(img)
             yield
                 assert(i.id.value.nonEmpty)
@@ -2006,7 +2010,7 @@ class ContainerItTest extends BasePodTest:
             val tagName = uniqueName("kyo-rm")
             val img     = ContainerImage("alpine", "latest")
             for
-                _     <- ContainerImage.ensure(img)
+                _     <- ensureImage(img)
                 _     <- ContainerImage.tag(img, tagName, "v1")
                 r     <- ContainerImage.remove(ContainerImage(tagName, "v1"))
                 check <- Abort.run[ContainerException](ContainerImage.inspect(ContainerImage(tagName, "v1")))
@@ -2024,7 +2028,7 @@ class ContainerItTest extends BasePodTest:
             val tagName = uniqueName("kyo-tag")
             val img     = ContainerImage("alpine", "latest")
             for
-                _ <- ContainerImage.ensure(img)
+                _ <- ensureImage(img)
                 _ <- ContainerImage.tag(img, tagName, "v1")
                 i <- ContainerImage.inspect(ContainerImage(tagName, "v1"))
                 _ <- ContainerImage.remove(ContainerImage(tagName, "v1"))
@@ -2038,8 +2042,8 @@ class ContainerItTest extends BasePodTest:
             val alpine   = ContainerImage("alpine", "latest")
             val busybox  = ContainerImage("busybox", "latest")
             for
-                _ <- ContainerImage.ensure(alpine)
-                _ <- ContainerImage.ensure(busybox)
+                _ <- ensureImage(alpine)
+                _ <- ensureImage(busybox)
                 // Tag alpine as repoName:v1 — first assignment
                 _  <- ContainerImage.tag(alpine, repoName, "v1")
                 i1 <- ContainerImage.inspect(ContainerImage(repoName, "v1"))
@@ -2261,7 +2265,7 @@ class ContainerItTest extends BasePodTest:
         "returns layer history with created-by commands" - runBackends {
             val img = ContainerImage("alpine", "latest")
             for
-                _       <- ContainerImage.ensure(img)
+                _       <- ensureImage(img)
                 history <- ContainerImage.history(img)
             yield
                 assert(history.nonEmpty)
@@ -3318,6 +3322,7 @@ class ContainerItTest extends BasePodTest:
         // Volume.remove(force=true) with attached stopped container — Shell-only (consistent behavior)
         // — Shell backend must skip the pre-check and pass --force when force=true.
         "Volume.remove(force=true) with attached stopped container — Shell backend honors force flag" - runRuntimes { runtime =>
+            requireRuntimeCli(runtime)
             Container.withBackendConfig(_.Shell(runtime)) {
                 val volName = Container.Volume.Id(uniqueName("kyo-vol-force"))
                 Scope.run {
@@ -3353,7 +3358,7 @@ class ContainerItTest extends BasePodTest:
     "image pull edge cases" - {
         "pull progress tracks per-layer by id" - runBackends {
             val img = ContainerImage("alpine", "latest")
-            ContainerImage.ensure(img).andThen {
+            ensureImage(img).andThen {
                 Scope.run {
                     ContainerImage.pullWithProgress(img).run.map { events =>
                         val layerIds = events.flatMap(_.id.toList).distinct
@@ -3592,6 +3597,7 @@ class ContainerItTest extends BasePodTest:
     "NotFound references container id, not rename target (shell backend)" - runRuntimes { runtime =>
         // Force shell backend. The HTTP backend passes ids explicitly to its error-mapping layer;
         // only the shell backend uses args.lastOption in mapError.
+        requireRuntimeCli(runtime)
         Container.withBackendConfig(_.Shell(runtime)) {
             Scope.run {
                 Container.initWith(alpinePersistent(alpine)) { c =>
@@ -3703,6 +3709,7 @@ class ContainerItTest extends BasePodTest:
         // The line-splitting must handle lines that straddle chunk boundaries —
         // splitting on \n per chunk would produce multiple partial LogEntry entries
         // instead of one.
+        requireRuntimeCli(runtime)
         Container.withBackendConfig(_.Shell(runtime)) {
             val config = Container.Config("alpine")
                 .command(
@@ -3777,7 +3784,7 @@ class ContainerItTest extends BasePodTest:
                 ))
                 .stopTimeout(0.seconds)
             assert(config.command.isEmpty)
-            ContainerImage.ensure(redisImage).andThen {
+            ensureImage(redisImage).andThen {
                 Container.init(config).map { c =>
                     c.isHealthy.map(h => assert(h, "Expected redis to be healthy via image default CMD"))
                 }
@@ -3792,7 +3799,7 @@ class ContainerItTest extends BasePodTest:
     "HealthCheck.port /dev/tcp" - {
         "HealthCheck.port via /dev/tcp on nginx" - runBackends {
             val img = ContainerImage("nginx:alpine")
-            ContainerImage.ensure(img).andThen {
+            ensureImage(img).andThen {
                 Container.initWith(Container.Config.default.copy(
                     image = img,
                     healthCheck = Container.HealthCheck.port(80, Schedule.fixed(200.millis).take(30))
