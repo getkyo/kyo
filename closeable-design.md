@@ -41,7 +41,9 @@ So:
 - an interface with `await: Unit < Async` cannot live in the kernel or in prelude;
 - an interface the kernel can define carries no effect row at all.
 
-That rules out most of the shapes before taste enters.
+That rules out most of the shapes before taste enters. It does not, however, rule out expressing
+the *wait*: a callback is a function and carries no row, so the constraint bites on `Async` rather
+than on waiting itself. Shape D below takes that route.
 
 ## 3. Four candidate interfaces
 
@@ -77,22 +79,60 @@ The kernel could define it and core instantiate it at `Sync`. But it does not gi
 signal/wait split that the phased close requires, and `Closeable[Async]` would let a phase-1
 signal block, which is the specific thing the phases exist to prevent.
 
-### D. Split across the layers
+### D. One type below core, with the wait as a callback
+
+`Async` cannot go below core, but a callback is a function and carries no row at all. That is
+enough to express the wait, and it removes the need for a second trait:
 
 ```scala
-// the signal: no effect row, so it can sit below core
 trait Closeable:
     def close(reason: Maybe[Throwable]): Unit
-
-// kyo-core: adds the wait
-trait Closeable.Awaitable extends Closeable:
-    def await(using Frame): Unit < Async
+    def onClosed(f: Maybe[Throwable] => Unit): Unit
 ```
 
-This is the only shape that matches the phase structure. Phase 1 calls `close` on every member
-without waiting on any, phase 2 calls `await` on each. It also matches the kernel constraint the
-hierarchy design already states: on the abandonment path a scope can fire its close but cannot
-await, so the two halves genuinely are separable and one of them genuinely is available lower down.
+`kyo-core` then derives the safe form rather than declaring a new type, by registering a promise
+completion as the listener:
+
+```scala
+extension (self: Closeable)
+    def closeAwait(reason: Maybe[Error[Any]])(using Frame): Unit < Async =
+        Promise.init[Nothing, Unit].map { p =>
+            Sync.Unsafe.defer(self.onClosed(_ => discard(p.unsafe.completeUnit())))
+                .andThen(self.close(...))
+                .andThen(p.get)
+        }
+```
+
+This is the existing tier convention, not a new idea. `IOPromise.onComplete(f: Result[E, A] => Any)`
+is a raw callback with no row (`IOPromise.scala:158`), `Fiber.Unsafe.onComplete` takes
+`AllowUnsafe` (`Fiber.scala:455`), and `Fiber.onComplete` is `Unit < Sync` (`Fiber.scala:284`). The
+callback is the raw tier and `closeAwait` is the safe tier built on it, exactly as CONTRIBUTING's
+"unsafe tier mirrors safe tier" rule describes.
+
+It also still matches the phase structure, which is what shape B and C fail at: phase 1 calls
+`close` on every member without waiting on any, and phase 2 waits on each. And it matches the
+kernel constraint the hierarchy design already states, that on the abandonment path a scope can
+fire its close but cannot await.
+
+#### The callback contract
+
+Four things have to be pinned, and the first is the one that would actually bite.
+
+1. **Registering after the close has already completed fires immediately.** Phase 2 registers on a
+   child that may have closed between phase 1 and phase 2. A lost wakeup there hangs the parent,
+   which is the worst failure this design can produce, and it is invisible in any test where the
+   child happens to be slower than the loop.
+2. **Multiple listeners.** A scope can be awaited by its parent and by a held handle at the same
+   time, which is what "beyond parent/child" requires. A single-slot callback would silently drop
+   one of them.
+3. **`onClosed` fires on close completion, not on the signal arriving.** These are two different
+   events (phase 1 received versus phase 3 finished) and the parent wants the second. Naming it
+   `onClosed` rather than `onClose` is deliberate.
+4. **The listener runs on whoever completed the close.** So it must not block, and a listener that
+   throws must not corrupt the closer or prevent the remaining listeners from running.
+
+Points 1 and 2 are both already solved by `IOPromise`, which is the reason to model this on it
+rather than invent a listener list.
 
 ## 4. Where the signal half belongs, and it is probably not the kernel
 
@@ -170,8 +210,10 @@ scope a fiber runs in is the closeable; the fiber is not. This is the boundary t
 
 ## 9. Recommendation
 
-Shape D, with the signal half in `kyo-data` rather than the kernel, the result discarded,
-idempotence owned by the base rather than promised in scaladoc, and `Fiber` explicitly excluded.
+Shape D: one `Closeable` below core carrying `close` plus an `onClosed` callback, with `closeAwait`
+derived in `kyo-core` as the safe tier. `kyo-data` rather than `kyo-kernel` as the home, unless
+`Bracket.apply` is changed to consume it. Result discarded. Idempotence owned by the base rather
+than promised in scaladoc. `Fiber` explicitly excluded.
 
 ## 10. Open questions
 
