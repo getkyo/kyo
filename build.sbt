@@ -1157,7 +1157,8 @@ lazy val `kyo-ffi-it` =
             ffiLibraries := Seq(
                 FfiLibrary(
                     id = "kyo_it_bundled",
-                    cSources = (baseDirectory.value / ".." / "shared" / "src" / "main" / "c" ** "*.c").get
+                    cSources = (baseDirectory.value / ".." / "shared" / "src" / "main" / "c" ** "*.c").get,
+                    cHeaders = (baseDirectory.value / ".." / "shared" / "src" / "main" / "c" ** "*.h").get
                 )
             )
         )
@@ -1280,7 +1281,15 @@ lazy val `kyo-ffi-plugin` =
                     Seq(
                         "-Xmx1024M",
                         "-Dplugin.version=" + version.value,
-                        "-Dkyo.version=" + version.value
+                        "-Dkyo.version=" + version.value,
+                        // The sub-builds link against kyo artifacts this build publishLocal'd, so their
+                        // Scala.js and Scala Native plugins must be the ones those artifacts were built
+                        // with. Pinning the versions here rather than in each fixture's plugins.sbt
+                        // keeps the two from drifting: a stale sbt-scala-native fails at nativeLink on
+                        // an undefined runtime symbol, a stale sbt-scalajs at fastLinkJS on an IR
+                        // version it cannot read. Mirrors kyo-doctest-plugin's scalaVersion pin.
+                        "-Dscalajs.version=" + scalaJSVersion,
+                        "-Dscalanative.version=" + nativeVersion
                     )
             },
             scriptedBufferLog                      := false,
@@ -1321,6 +1330,19 @@ lazy val `kyo-ffi-plugin` =
                 val d0 = (`kyo-ffi-codegen` / publishLocal).value
                 scriptedDependencies.value
             },
+            // Run the scripted suite as part of the plugin's regular test task so CI gates it via
+            // `kyo-ffi-plugin/test`, as kyo-compat-plugin, kyo-doctest-plugin and kyo-test-sbt-publish
+            // already do. No workflow invokes `scripted` directly, so without this binding these
+            // suites run nowhere.
+            Test / test := (Test / test).dependsOn(Def.taskDyn {
+                // Skipped on Windows: sbt's scripted framework boots a nested sbt whose Win32
+                // named-pipe boot-server lock flakily fails to create (error 1336), failing the batch
+                // reload before any test runs (sbt/sbt#6777). Same exemption the sibling plugins take.
+                if (sys.props.getOrElse("os.name", "").toLowerCase.contains("win"))
+                    Def.task(streams.value.log.info("scripted skipped on Windows (sbt#6777 boot-server named-pipe flake)"))
+                else
+                    Def.task((scripted.toTask("")).value)
+            }).value,
             publish   := {},
             publishM2 := {}
         )
@@ -1538,7 +1560,14 @@ lazy val `kyo-stats-machine` =
             ffiLibraries := Seq(
                 FfiLibrary(
                     id = "machine_macos",
-                    cSources = Seq((baseDirectory.value / ".." / "shared" / "src" / "main" / "c" / "machine_macos.c").getAbsoluteFile)
+                    cSources = Seq((baseDirectory.value / ".." / "shared" / "src" / "main" / "c" / "machine_macos.c").getAbsoluteFile),
+                    // Mach calls only, so the JVM/JS shared library is built and bundled for darwin alone.
+                    // Without this the release built on Linux shipped a Linux artifact for a binding no Linux
+                    // process ever loads, while shipping no darwin artifact at all. Off darwin, Ffi.load raises
+                    // a catchable LibraryNotFound that MachineMacos degrades to Absent. Scala Native still
+                    // compiles the C into the binary on every OS, which is what the file's #ifdef stubs keep
+                    // resolvable; osTargets governs the JVM/JS shared library only.
+                    osTargets = Seq("darwin")
                 )
             )
         )
@@ -1701,6 +1730,16 @@ def npmCommand: String =
 // packaged into META-INF/native/linux-musl-x86_64/, so a musl leg that staged BoringSSL under its
 // runtime-correct name was not found here and the build silently fell back to the TLS stub.
 def hostOsArch: String = ffiHostOsArch
+
+// The OS targets kyo-net's BoringSSL shim is built and bundled for. Windows ships no BoringSSL native
+// by ruling (NIO + the JDK's TLS), so bundling it there packages a DLL that can only ever report
+// unavailable. Every consumer reaches it through a capability probe or a staged-bundle gate, so a
+// platform it is not declared for degrades to the JDK floor rather than failing.
+//
+// kyonet_posix_uring declares no osTargets. kyo_epoll.c and kyo_uring.c define every entry point on
+// every target, Windows included, so the binding resolves wherever the library loads and epoll's
+// absence is an errno rather than a missing symbol.
+def kyoNetBoringSslOsTargets: Seq[String] = Seq("linux", "linux-musl", "darwin")
 
 // The staged BoringSSL tree for the host os-arch, present only after build-boringssl.sh ran.
 def boringSslStagedDir(baseDir: File): File =
@@ -1889,12 +1928,14 @@ lazy val `kyo-net` =
                             libDirs = Seq(stagedDir / "lib"),
                             linkLibs = Seq("ssl", "crypto"),
                             linkFlags = boringSslCxxRuntimeFlags,
-                            staticLink = true
+                            staticLink = true,
+                            osTargets = kyoNetBoringSslOsTargets
                         )
                     else
                         FfiLibrary(
                             id = "kyonet_boringssl",
-                            cSources = (sharedBase / "src" / "main" / "c-boringssl-stub" ** "*.c").get
+                            cSources = (sharedBase / "src" / "main" / "c-boringssl-stub" ** "*.c").get,
+                            osTargets = kyoNetBoringSslOsTargets
                         )
                 // System OpenSSL (kyonet_openssl): the kyo_net_openssl.c shim, registered only in the Native TLS registry
                 // (SystemOpenSslProvider). On Native its C sources are declared UNCONDITIONALLY, because whether the system
@@ -1923,6 +1964,7 @@ lazy val `kyo-net` =
                     FfiLibrary(
                         id = "kyonet_posix_uring",
                         cSources = (sharedBase / "src" / "main" / "c" ** "*.c").get,
+                        cHeaders = (sharedBase / "src" / "main" / "c" ** "*.h").get,
                         linkLibsByOs = Map("linux" -> Seq("uring")),
                         staticLink = true
                     ),
@@ -2143,8 +2185,8 @@ lazy val `kyo-aeron` =
                         linkFlags = linuxSystemLinkFlags,
                         // Aeron supports Windows only under MSVC (its sources gate on _MSC_VER) and forces
                         // the dynamic CRT (/MD), so on Windows the shim compiles with cl and /MD.
-                        // staticLink=true would add /MT (static CRT) and clash with aeron's /MD; the aeron
-                        // .lib is embedded by the link regardless, so Windows uses staticLink=false.
+                        // The aeron .lib is embedded by the link regardless, so Windows uses
+                        // staticLink=false; the /MD above states the CRT model the archive was built with.
                         cFlags = if (isWindows) Seq("/MD") else Nil,
                         compilerByOs = if (isWindows) Map("windows" -> "cl") else Map.empty,
                         staticLink = !isWindows

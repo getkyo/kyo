@@ -6,6 +6,8 @@
  * kyo_bssl_* symbol surface the @extern BoringSslBindings reference, so the kyonet_boringssl library
  * still links: on JVM the loadable lib loads but every call reports "unavailable"; on Native the
  * symbols resolve at link time with no staged libssl/libcrypto archive (the real shim needs them).
+ * Windows is the exception: kyonet_boringssl names osTargets and is not bundled there at all, so
+ * nothing loads this stub on that platform and the capability probe reports the library NotBundled.
  *
  * Every function reports the bundle absent: kyo_bssl_probe_available returns 0 (false), the rest
  * return the same not-available sentinel their real counterparts use on failure (0 / NULL-as-0 / -1).

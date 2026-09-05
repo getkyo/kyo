@@ -16,6 +16,7 @@
  * the translation unit empty on non-POSIX hosts (e.g. Windows) so the build does not fail where
  * netdb.h is absent.
  */
+#include "kyo_net_api.h"
 
 /* getaddrinfo, freeaddrinfo, struct addrinfo, and the EAI_* codes are POSIX.1-2001. On glibc they are
  * declared in <netdb.h> only when a feature-test macro requests at least that level, so it must be
@@ -74,7 +75,7 @@ static int copy_addr(const struct addrinfo* cur, unsigned char* out_addr, int* o
  * than reading an uninitialized buffer. freeaddrinfo is always called on a successful getaddrinfo,
  * so the recursive list never leaks.
  */
-int kyo_net_resolve(const char* host, int family_hint, unsigned char* out_addr, int* out_family) {
+KYO_NET_API int kyo_net_resolve(const char* host, int family_hint, unsigned char* out_addr, int* out_family) {
     struct addrinfo hints;
     struct addrinfo* res = NULL;
     struct addrinfo* cur = NULL;

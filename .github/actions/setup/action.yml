@@ -195,39 +195,125 @@ runs:
         # empty-string KYO_POD_RUNTIME would disable the suites on the Linux poles too.
         # SBT_UPDATE_LIMIT=1: serialize dependency resolution; concurrent resolution
         # trips Windows file locking (see build.sbt concurrentRestrictions).
-        # CC=gcc: the kyo-ffi plugin and kyo-ffi-it compile C test libraries with `cc`,
-        # which the Windows image does not provide; MinGW gcc does. The version print
-        # doubles as a fail-fast presence check.
+        # CC: the kyo-ffi plugin and kyo-ffi-it compile C libraries with `cc`, which the Windows
+        # images do not provide. On x64 that is MinGW gcc, whose ld also auto-exports every symbol,
+        # which is what makes those DLLs usable without export annotations.
+        #
+        # arm64 has neither: the image's gcc is x86_64-w64-mingw32 and would emit x64 objects under an
+        # aarch64 name, and clang targeting aarch64-pc-windows-msvc produces a DLL Windows refuses to
+        # open at all ("Cannot open library" from SymbolLookup.libraryLookup). MSVC is the only native
+        # toolchain on that runner, the plugin has a full cl path (detectFamily -> Msvc), and cl is
+        # already what kyo_aeron compiles with on Windows, so it is the one proven to produce a
+        # loadable DLL. vcvarsarm64 below is what selects the arm64 cl and puts it on PATH.
+        case "${{ inputs.os }}" in
+          windows-x64)   cc=gcc; expect=x86_64 ;;
+          windows-arm64) cc=cl;  expect=aarch64 ;;
+        esac
         {
           echo "KYO_POD_RUNTIME=none"
           echo "SBT_UPDATE_LIMIT=1"
-          echo "CC=gcc"
+          echo "CC=$cc"
         } >> "$GITHUB_ENV"
-        gcc --version | head -1
+        # cl takes neither --version nor -dumpmachine, and is not on PATH until the vcvars step below
+        # runs, so its target is asserted there instead, from the toolset path it resolves to.
+        if [ "$cc" != cl ]; then
+          "$cc" --version | head -1
+          # The artifact is NAMED for the runner's architecture, so a compiler targeting another one
+          # produces a mislabelled DLL that loads nowhere and that the packaging check catches only
+          # because it reads the PE machine field. Fail here instead, where the message is obvious.
+          target=$("$cc" -dumpmachine)
+          echo "$cc target: $target"
+          case "$target" in
+            "$expect"*) ;;
+            *) echo "$cc targets '$target' on a ${{ inputs.os }} runner; expected $expect-*." >&2
+               exit 1 ;;
+          esac
+        fi
 
     # kyo-aeron's C shim and libaeron build with MSVC on Windows (aeron supports Windows only under
     # MSVC). The kyo-ffi plugin invokes `cl` for that library, so cl plus its INCLUDE/LIB must be on
     # the build step's environment. vcvars64 augments PATH/INCLUDE/LIB/LIBPATH; exporting them to
     # GITHUB_ENV makes them available to the later sbt build. gcc (used for every other C library)
     # ignores INCLUDE/LIB and keeps resolving to MinGW, so the two toolchains coexist.
-    - name: Set up MSVC environment (Windows)
-      if: ${{ contains(inputs.os, 'windows') }}
+    # cl has no per-invocation target flag in the plugin's model: it builds for whatever architecture
+    # the ambient environment selected, so the vcvars script IS the arch selection for both libaeron
+    # and the shim. vcvars64 is the x64 toolchain; an arm64 runner needs vcvarsarm64, or it produces
+    # x64 objects that would be staged and published under an aarch64 name.
+    - name: Set up MSVC environment (Windows x64)
+      if: ${{ inputs.os == 'windows-x64' }}
       shell: cmd
       run: |
         for /f "usebackq delims=" %%i in (`"C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath`) do set "VSROOT=%%i"
         call "%VSROOT%\VC\Auxiliary\Build\vcvars64.bat" || exit /b 1
-        echo PATH=%PATH%>>"%GITHUB_ENV%"
-        echo INCLUDE=%INCLUDE%>>"%GITHUB_ENV%"
-        echo LIB=%LIB%>>"%GITHUB_ENV%"
-        echo LIBPATH=%LIBPATH%>>"%GITHUB_ENV%"
+        >>"%GITHUB_ENV%" echo PATH=%PATH%
+        >>"%GITHUB_ENV%" echo INCLUDE=%INCLUDE%
+        >>"%GITHUB_ENV%" echo LIB=%LIB%
+        >>"%GITHUB_ENV%" echo LIBPATH=%LIBPATH%
         where cl
+    - name: Set up MSVC environment (Windows arm64)
+      if: ${{ inputs.os == 'windows-arm64' }}
+      shell: cmd
+      run: |
+        for /f "usebackq delims=" %%i in (`"C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath`) do set "VSROOT=%%i"
+        call "%VSROOT%\VC\Auxiliary\Build\vcvarsarm64.bat" || exit /b 1
+        >>"%GITHUB_ENV%" echo PATH=%PATH%
+        >>"%GITHUB_ENV%" echo INCLUDE=%INCLUDE%
+        >>"%GITHUB_ENV%" echo LIB=%LIB%
+        >>"%GITHUB_ENV%" echo LIBPATH=%LIBPATH%
+        where cl
+
+    # The MSVC toolset encodes its target in the binary's path (bin/Host<host>/<target>/cl.exe), and
+    # the vcvars script above is what selects it. Assert it here, after PATH is set: a DLL is NAMED for
+    # the pole's architecture, so the wrong vcvars would stage an artifact under a name it does not
+    # match. The publish-time check reads the PE machine field and would catch it, but far later and
+    # far less legibly than a failure here.
+    - name: Assert the MSVC toolset targets this pole
+      if: ${{ startsWith(inputs.os, 'windows') }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        cl=$(command -v cl.exe 2>/dev/null || command -v cl 2>/dev/null || true)
+        if [ -z "$cl" ]; then
+          echo "cl is not on PATH after the vcvars step." >&2
+          exit 1
+        fi
+        # The toolset spells the target directory ARM64 or arm64 depending on the VS version, so
+        # compare case-insensitively rather than pinning one spelling.
+        target=$(basename "$(dirname "$cl")")
+        lower=$(printf '%s' "$target" | tr '[:upper:]' '[:lower:]')
+        echo "cl target: $target ($cl)"
+        case "${{ inputs.os }}:$lower" in
+          windows-x64:x64|windows-arm64:arm64) ;;
+          *) echo "cl targets '$target' on a ${{ inputs.os }} runner." >&2; exit 1 ;;
+        esac
 
     # coursier/setup-action is fetched from codeload like any `uses:`, and the runner retries that
     # download only a few times with a short backoff, which a transient GitHub 429 (a rate-limit window
     # of tens of seconds) outlasts, failing setup before any test runs. nick-fields/retry wraps `run:`
     # commands, not a `uses:` action, so retry the action through wretry: it re-runs coursier/setup-action
     # up to attempt_limit times with attempt_delay ms between attempts, riding out a throttled download.
+    # Amazon ships no Corretto for Windows on ARM: its platform list is Linux x64/aarch64, Windows
+    # x64 ONLY, macOS x64/aarch64 and Alpine x64/aarch64, and coursier's JVM index agrees (corretto
+    # is absent from windows/arm64 entirely). Temurin is in that index for windows/arm64 but tops out
+    # well below 25, so it is not the escape either. Microsoft's build owns the platform and is
+    # current there, so windows-arm64 alone takes it; every other pole stays on Corretto so the
+    # exception remains visible rather than becoming the norm.
+    #
+    # This is load-bearing, not cosmetic: hostOsArch comes from the RUNNING JVM's os.arch, so an
+    # emulated x64 JDK on an arm64 runner would name every artifact windows-x86_64.
+    # Windows on ARM takes setup-java, not coursier: coursier publishes no aarch64-pc-win32 launcher, so
+    # setup-action 404s trying to install itself there. sbt is preinstalled on that image, and the JDK it
+    # ships is 21, so only the JDK needs replacing. Microsoft's build is used for the same reason it is
+    # elsewhere: Amazon ships no Corretto for Windows on ARM.
+    - name: Set up JDK (Windows arm64)
+      if: ${{ inputs.os == 'windows-arm64' }}
+      uses: actions/setup-java@v5
+      with:
+        distribution: microsoft
+        java-version: '25'
+
     - name: Set up JDK + sbt (coursier)
+      if: ${{ inputs.os != 'windows-arm64' }}
       uses: Wandalen/wretry.action@v3.8.0
       with:
         action: coursier/setup-action@v3.0.0
@@ -305,10 +391,11 @@ runs:
       shell: bash
       run: |
         case "${{ inputs.os }}" in
-          linux-x64)    OS_ARCH=linux-x86_64 ;;
-          linux-arm64)  OS_ARCH=linux-aarch64 ;;
-          macos-arm64)  OS_ARCH=darwin-aarch64 ;;
-          windows-x64)  OS_ARCH=windows-x86_64 ;;
+          linux-x64)     OS_ARCH=linux-x86_64 ;;
+          linux-arm64)   OS_ARCH=linux-aarch64 ;;
+          macos-arm64)   OS_ARCH=darwin-aarch64 ;;
+          windows-x64)   OS_ARCH=windows-x86_64 ;;
+          windows-arm64) OS_ARCH=windows-aarch64 ;;
           *) echo "libaeron not staged for ${{ inputs.os }} (unsupported os-arch); skipping" && exit 0 ;;
         esac
         if [[ "${{ inputs.os }}" == linux-* ]]; then
