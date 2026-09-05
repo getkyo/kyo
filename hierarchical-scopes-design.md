@@ -323,11 +323,37 @@ cheap to answer:
    not pay for machinery it does not use. Lazy allocation of the membership set and the signal
    list keeps that case at roughly today's cost.
 
+## 10b. Scope of applicability: it only helps where a `Scope` is installed
+
+Found by an external audit of this doc against `KERNEL-BRACKET-SCOPE-REPORT.md`, and it qualifies
+everything in section 11.
+
+`Isolate.Contextual.fork` walks the regions present in the stack snapshot (`Isolate.scala:302-311`)
+and calls `origin.fork(...)` once per region. If no `Scope` region is installed when a crossing
+happens, there is no entry for it, so no child scope is created and nothing is owned. The hierarchy
+therefore changes nothing for a spawn that occurs outside any `Scope.run`.
+
+The concrete case is `Async.timeout`, whose row is `A < (Abort[E | Timeout] & Async & S)`
+(`Async.scala:174-176`) and carries no `Scope`. Its orphan (`Async.scala:207-212`) is defect 4 in
+that report, and this design does not reach it unless the caller happens to be inside a `Scope.run`.
+
+Three conditions have to hold together for the hierarchy to own a given spawn:
+
+1. a `Scope` region is installed in the caller at the moment of the crossing;
+2. the `Forked` forwarding gap in section 4 is fixed, so the forked region receives `done`/`release`;
+3. the abandonment path reaches a spawn whose task has not run yet, which section 8 already lists as
+   unconfirmed.
+
+Only the first is new here, and it is the one that cannot be fixed inside this design: it is a
+property of the call site, not of the mechanism. Anything that must be owned regardless of caller
+context needs its own bracket at the spawn, which is the `ensureMap` fix, not this.
+
 ## 11. What this closes
 
 - **D3** directly: `Scope.run` waiting on member scopes is the missing guarantee.
 - **D2**: `merge`, `mergeHaltingLeft`, `collectAll*` and `mapPar` orphan internal fibers because
-  nothing owns their lifetime; a child scope per crossing is that owner.
+  nothing owns their lifetime; a child scope per crossing is that owner, subject to section 10b:
+  only where a `Scope` is installed at the crossing.
 - The `Closed` message at `Scope.scala:195-200` stops describing an error and starts describing a
   child, which removes the failure it names rather than reporting it better.
 - The unwind path of a nested `Scope.run`, where `Sync.ensure` fires `close` without `await` and
