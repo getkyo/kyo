@@ -50,28 +50,35 @@ object StreamPublisher:
             channel: Channel[Subscriber[? >: V]],
             supervisor: Fiber.Promise[Nothing, Unit]
         ): Unit < (Async & S) =
+            // Taking a subscriber out of the channel and setting it up is one indivisible step. In between, the subscriber
+            // holds a live subscription that nothing is yet committed to ending, so an interrupt landing there strands it.
+            // Masking the pair leaves an interrupt only two places to land: before the subscriber leaves the channel, where
+            // the channel's own close discards it, or after the registrations below, which stop it. Taking INSIDE the mask
+            // is what stops a subscriber from being out of the channel and not yet in a subscription at the same time.
+            def setUpOne: Unit < (Abort[Closed] & Async & S) =
+                for
+                    subscriber   <- channel.take
+                    subscription <- publisher.getSubscription(subscriber)
+                    _            <- subscription.subscribe
+                    _            <- supervisor.onInterrupt(_ => Sync.defer(subscription.stop()))
+                    _            <- subscription.consume
+                    // Registering on an ALREADY-settled promise is silently dropped, so a subscription set up while the
+                    // publisher was being torn down would keep no registration at all. Re-reading the supervisor covers
+                    // that. `stop` is idempotent and total, so the ordinary path costs one completed-promise read.
+                    _ <- supervisor.done.map: settled =>
+                        if settled then Sync.defer(subscription.stop())
+                        else Kyo.unit
+                yield ()
+
             Abort.recover[Closed](_ => supervisor.interrupt.unit)(
-                channel.stream().foreach: subscriber =>
-                    for
-                        subscription <- publisher.getSubscription(subscriber)
-                        _            <- subscription.subscribe
-                        // Registered BEFORE the consuming fiber exists. Cancelling a subscription closes its request
-                        // channel, which is what ends that fiber, so a teardown arriving between here and the fiber's
-                        // creation still stops the subscription rather than stranding it with nothing to interrupt it.
-                        _     <- supervisor.onInterrupt(_ => Sync.defer(subscription.stopForPublisherTeardown()))
-                        fiber <- subscription.consume
-                        _     <- supervisor.onInterrupt(_ => fiber.interrupt(Result.Panic(Interrupted(summon[Frame]))))
-                        // Registering on an ALREADY-completed promise is silently dropped, so for a subscriber accepted
-                        // while the publisher was being torn down neither registration above ever runs. Re-read the
-                        // supervisor and stop this subscription directly when that is what happened. Both calls are
-                        // idempotent, so the ordinary path costs a single completed-promise read.
-                        _ <- supervisor.done.map: settled =>
-                            if !settled then Kyo.unit
-                            else
-                                Sync.defer(subscription.stopForPublisherTeardown())
-                                    .andThen(fiber.interrupt(Result.Panic(Interrupted(summon[Frame]))).unit)
-                    yield ()
+                Loop.foreach(
+                    Fiber.initUnscoped[Closed, Unit, S, Any](setUpOne)
+                        .map(_.mask)
+                        .map(_.get)
+                        .andThen(Loop.continue)
+                )
             )
+        end consumeChannel
 
         for
             channel <-

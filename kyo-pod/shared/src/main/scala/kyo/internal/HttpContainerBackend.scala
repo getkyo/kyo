@@ -93,7 +93,18 @@ final private[kyo] class HttpContainerBackend(
                                             case ResourceContext.Container(id) => Abort.fail(ContainerAlreadyStoppedException(id))
                                             case _ => Abort.fail(ContainerBackendException(s"Unexpected HTTP 304 for ${ctx.describe}", e))
                                     case 404 =>
-                                        Abort.fail(missingExceptionFor(ctx, e))
+                                        // A daemon that answers 404 while quoting an upstream 5xx is relaying a registry that could
+                                        // not answer, not asserting the resource is absent. Missing is the one classification callers
+                                        // treat as permanent, so it takes an actual absence claim in the body to reach it. Which status
+                                        // a daemon picks for a failing registry is not something kyo-pod can rely on, so the body is
+                                        // what decides here.
+                                        if HttpContainerBackend.bodyNamesServerError(e.body) && !HttpContainerBackend.claimsAbsence(e.body)
+                                        then
+                                            Abort.fail(ContainerOperationException(
+                                                s"Registry unavailable for ${ctx.describe}${e.body.map(b => s": $b").getOrElse("")}",
+                                                e
+                                            ))
+                                        else Abort.fail(missingExceptionFor(ctx, e))
                                     case 409 =>
                                         Abort.fail(conflictExceptionFor(ctx))
                                     case _ =>
@@ -1454,7 +1465,7 @@ final private[kyo] class HttpContainerBackend(
       * credentials", and a server error asserts neither. Calling it missing is worse than unhelpful, because a missing image is the one
       * classification callers treat as permanent, so a transient upstream fault lands in the bucket that is never retried.
       */
-    private def normalizePullError(
+    private[internal] def normalizePullError(
         httpEx: HttpException,
         image: ContainerImage,
         auth: Maybe[ContainerImage.RegistryAuth]
@@ -1476,21 +1487,9 @@ final private[kyo] class HttpContainerBackend(
                 mapHttpError(httpEx, ResourceContext.Image(image.reference)).unit
     end normalizePullError
 
-    /** True when the daemon reports the registry itself as failing rather than answering about the image.
-      *
-      * A 5xx is the upstream saying it could not serve the request at all, which is transient and carries no claim about whether the image
-      * exists or whether credentials would help. A body naming a server-side status is treated the same way, since the daemon proxies the
-      * registry's own wording and reports it under its own status.
-      */
+    /** Instance-side shim around [[HttpContainerBackend.isRegistryUnavailable]]; see that method for the rationale. */
     private def isRegistryUnavailable(e: HttpStatusException): Boolean =
-        e.status.code >= 500 ||
-            e.body.exists { body =>
-                val lower = body.toLowerCase
-                lower.contains("500 internal server error") ||
-                lower.contains("502 bad gateway") ||
-                lower.contains("503 service unavailable") ||
-                lower.contains("504 gateway timeout")
-            }
+        HttpContainerBackend.isRegistryUnavailable(e.status.code, e.body)
 
     /** True when the response status code OR body carries a registry-level auth-denial signal.
       *
@@ -2879,6 +2878,43 @@ private[kyo] object HttpContainerBackend:
                     case Result.Panic(_) =>
                         httpStatus
             case Absent => httpStatus
+
+    /** True when the daemon reports the registry itself as failing rather than answering about the image.
+      *
+      * A 5xx is the upstream saying it could not serve the request at all, which is transient and carries no claim about whether the image
+      * exists or whether credentials would help. A body naming a server-side status is treated the same way, since the daemon proxies the
+      * registry's own wording and reports it under its own status: a `docker pull` that hits a failing Docker Hub surfaces as a 200-level
+      * daemon reply whose body quotes `received unexpected HTTP status: 500 Internal Server Error`.
+      *
+      * The distinction is load-bearing rather than cosmetic. A missing image is the one classification callers treat as permanent, so a
+      * registry fault classified that way lands in the bucket nothing retries.
+      */
+    private[kyo] def isRegistryUnavailable(httpStatus: Int, body: Maybe[String]): Boolean =
+        httpStatus >= 500 || bodyNamesServerError(body)
+
+    /** True when the body quotes a server-side status, which the daemon proxies verbatim from the registry.
+      *
+      * Separate from [[isRegistryUnavailable]] because the status-code half is not usable everywhere: by the time a response has been
+      * mapped to a canonical status, the wire status has already been consumed, and only the body still carries the registry's own answer.
+      */
+    private[kyo] def bodyNamesServerError(body: Maybe[String]): Boolean =
+        body.exists { b =>
+            val lower = b.toLowerCase
+            lower.contains("500 internal server error") ||
+            lower.contains("502 bad gateway") ||
+            lower.contains("503 service unavailable") ||
+            lower.contains("504 gateway timeout")
+        }
+
+    /** True when the body itself claims the resource is absent, in the vocabulary both daemons use.
+      *
+      * A body that says so is a direct answer about the resource and outranks any transport wording next to it.
+      */
+    private[kyo] def claimsAbsence(body: Maybe[String]): Boolean =
+        body.exists { b =>
+            val lower = b.toLowerCase
+            (DaemonErrorPhrases.NoSuchImage ++ DaemonErrorPhrases.NoSuchContainer).exists(lower.contains)
+        }
 
     /** Pattern-match the cause/message fields against the daemon error vocabulary. Both libpod and docker emit a small, stable set of
       * English phrases for the conditions kyo-pod cares about — matching them is the only way to recover the canonical status when the

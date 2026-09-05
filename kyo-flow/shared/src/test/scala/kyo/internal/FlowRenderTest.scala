@@ -31,8 +31,8 @@ class FlowRenderTest extends kyo.test.Test[Any]:
         .step("log")(ctx => ())
         .sleep("wait", 1.hour)
 
-    def sampleProgress(completed: Set[String], status: Flow.Status): FlowEngine.Progress =
-        FlowEngine.Progress.build(sampleFlow, completed, status)
+    def sampleProgress(completed: Set[String], waits: Dict[String, Flow.Wake]): FlowEngine.Progress =
+        FlowEngine.Progress.build(sampleFlow, completed, Flow.Status.Running, waits)
 
     // =============================================================
     // ELK JSON
@@ -84,7 +84,7 @@ class FlowRenderTest extends kyo.test.Test[Any]:
     }
 
     // =============================================================
-    // JSON -- deserialized structural assertions
+    // JSON, deserialized structural assertions
     // =============================================================
 
     "json" - {
@@ -222,7 +222,7 @@ class FlowRenderTest extends kyo.test.Test[Any]:
     "mermaid with progress" - {
 
         "completed nodes get green style" in {
-            val progress = sampleProgress(Set("x", "y", "log", "wait"), Flow.Status.Completed)
+            val progress = sampleProgress(Set("x", "y", "log", "wait"), Dict.empty)
             val result   = FlowRender.renderMermaid(sampleFlow, progress)
             assert(result.startsWith("graph LR"))
             val greenCount = "#90EE90".r.findAllIn(result).length
@@ -230,14 +230,14 @@ class FlowRenderTest extends kyo.test.Test[Any]:
         }
 
         "waiting input gets blue, rest pending grey" in {
-            val progress = sampleProgress(Set.empty, Flow.Status.WaitingForInput("x"))
+            val progress = sampleProgress(Set.empty, Dict("x" -> Flow.Wake.OnField("x")))
             val result   = FlowRender.renderMermaid(sampleFlow, progress)
             assert(result.contains("#87CEEB")) // blue for waiting
             assert(result.contains("#D3D3D3")) // grey for pending
         }
 
         "sleeping node gets purple" in {
-            val progress = sampleProgress(Set("x", "y", "log"), Flow.Status.Sleeping("wait", Instant.Epoch + 1.hour))
+            val progress = sampleProgress(Set("x", "y", "log"), Dict("wait" -> Flow.Wake.At(Instant.Epoch + 1.hour)))
             val result   = FlowRender.renderMermaid(sampleFlow, progress)
             assert(result.contains("#DDA0DD")) // purple for sleeping
         }
@@ -250,7 +250,7 @@ class FlowRenderTest extends kyo.test.Test[Any]:
     "dot with progress" - {
 
         "completed nodes get green fillcolor" in {
-            val progress = sampleProgress(Set("x", "y", "log", "wait"), Flow.Status.Completed)
+            val progress = sampleProgress(Set("x", "y", "log", "wait"), Dict.empty)
             val result   = FlowRender.renderDot(sampleFlow, progress)
             assert(result.startsWith("digraph flow"))
             assert(result.contains("fillcolor=\"#90EE90\""))
@@ -258,7 +258,7 @@ class FlowRenderTest extends kyo.test.Test[Any]:
         }
 
         "running node gets yellow fillcolor" in {
-            val progress = sampleProgress(Set.empty, Flow.Status.Running)
+            val progress = sampleProgress(Set.empty, Dict.empty)
             val result   = FlowRender.renderDot(sampleFlow, progress)
             assert(result.contains("fillcolor=\"#FFD700\""))
         }
@@ -271,47 +271,47 @@ class FlowRenderTest extends kyo.test.Test[Any]:
     "elk with progress" - {
 
         "all completed shows completed status" in {
-            val progress       = sampleProgress(Set("x", "y", "log", "wait"), Flow.Status.Completed)
+            val progress       = sampleProgress(Set("x", "y", "log", "wait"), Dict.empty)
             val result         = FlowRender.renderElk(sampleFlow, progress)
             val completedCount = "\"status\":\"completed\"".r.findAllIn(result).length
             assert(completedCount == 4, s"Expected 4 completed statuses, got $completedCount")
         }
 
         "waiting node shows waiting status" in {
-            val progress = sampleProgress(Set.empty, Flow.Status.WaitingForInput("x"))
+            val progress = sampleProgress(Set.empty, Dict("x" -> Flow.Wake.OnField("x")))
             val result   = FlowRender.renderElk(sampleFlow, progress)
             assert(result.contains("\"status\":\"waiting\""))
             assert(result.contains("\"status\":\"pending\""))
         }
 
         "sleeping node shows sleeping status" in {
-            val progress = sampleProgress(Set("x", "y", "log"), Flow.Status.Sleeping("wait", Instant.Epoch + 1.hour))
+            val progress = sampleProgress(Set("x", "y", "log"), Dict("wait" -> Flow.Wake.At(Instant.Epoch + 1.hour)))
             val result   = FlowRender.renderElk(sampleFlow, progress)
             assert(result.contains("\"status\":\"sleeping\""))
         }
 
         "has layout options" in {
-            val progress = sampleProgress(Set.empty, Flow.Status.Running)
+            val progress = sampleProgress(Set.empty, Dict.empty)
             val result   = FlowRender.renderElk(sampleFlow, progress)
             assert(result.contains("\"layoutOptions\""))
         }
     }
 
     // =============================================================
-    // JSON with progress -- deserialized structural assertions
+    // JSON with progress, deserialized structural assertions
     // =============================================================
 
     "json with progress" - {
 
         "all completed nodes have completed status" in {
-            val progress = sampleProgress(Set("x", "y", "log", "wait"), Flow.Status.Completed)
+            val progress = sampleProgress(Set("x", "y", "log", "wait"), Dict.empty)
             val graph    = parseJson(FlowRender.renderJson(sampleFlow, progress))
             assert(graph.nodes.length == 4)
             assert(graph.nodes.forall(_.status == Some("completed")))
         }
 
         "running status: first node Running, rest Pending" in {
-            val progress = sampleProgress(Set.empty, Flow.Status.Running)
+            val progress = sampleProgress(Set.empty, Dict.empty)
             val graph    = parseJson(FlowRender.renderJson(sampleFlow, progress))
             assert(graph.nodes(0).status == Some("running"))
             assert(graph.nodes(1).status == Some("pending"))
@@ -320,13 +320,13 @@ class FlowRenderTest extends kyo.test.Test[Any]:
         }
 
         "waiting status on correct node" in {
-            val progress = sampleProgress(Set.empty, Flow.Status.WaitingForInput("x"))
+            val progress = sampleProgress(Set.empty, Dict("x" -> Flow.Wake.OnField("x")))
             val graph    = parseJson(FlowRender.renderJson(sampleFlow, progress))
             assert(graph.nodes.find(_.name == "x").get.status == Some("waiting"))
         }
 
         "mixed: completed + running + pending" in {
-            val progress = sampleProgress(Set("x"), Flow.Status.Running)
+            val progress = sampleProgress(Set("x"), Dict.empty)
             val graph    = parseJson(FlowRender.renderJson(sampleFlow, progress))
             assert(graph.nodes.find(_.name == "x").get.status == Some("completed"))
             assert(graph.nodes.find(_.name == "y").get.status == Some("running"))
@@ -335,7 +335,7 @@ class FlowRenderTest extends kyo.test.Test[Any]:
         }
 
         "preserves edge structure" in {
-            val progress = sampleProgress(Set.empty, Flow.Status.Running)
+            val progress = sampleProgress(Set.empty, Dict.empty)
             val graph    = parseJson(FlowRender.renderJson(sampleFlow, progress))
             assert(graph.edges.length == 3)
             // Edges chain consecutive nodes
@@ -345,7 +345,7 @@ class FlowRenderTest extends kyo.test.Test[Any]:
 
         "different-named nodes get independent status" in {
             val flow     = Flow.input[Int]("a").output("b")(ctx => ctx.a + 1)
-            val progress = FlowEngine.Progress.build(flow, Set("a"), Flow.Status.Running)
+            val progress = FlowEngine.Progress.build(flow, Set("a"), Flow.Status.Running, Dict.empty)
             val graph    = parseJson(FlowRender.renderJson(flow, progress))
             assert(graph.nodes.find(_.name == "a").get.status == Some("completed"))
             assert(graph.nodes.find(_.name == "b").get.status == Some("running"))
@@ -354,17 +354,17 @@ class FlowRenderTest extends kyo.test.Test[Any]:
         "duplicate names: both get status from their positional progress entry" in {
             // Both named "x" but at different positions in the flow
             val flow     = Flow.input[Int]("x").output("x")(ctx => ctx.x + 1)
-            val progress = FlowEngine.Progress.build(flow, Set("x"), Flow.Status.Running)
+            val progress = FlowEngine.Progress.build(flow, Set("x"), Flow.Status.Running, Dict.empty)
             val graph    = parseJson(FlowRender.renderJson(flow, progress))
             // Both are "completed" because completedSteps.contains("x") is true for both
-            // This is inherent to name-based tracking -- FlowLint warns about duplicate names
+            // This is inherent to name-based tracking; FlowLint warns about duplicate names
             assert(graph.nodes.length == 2)
             assert(graph.nodes.forall(_.status == Some("completed")))
         }
     }
 
     // =============================================================
-    // New node types rendering
+    // forEach, race, gather, and subflow rendering
     // =============================================================
 
     "foreach rendering" - {

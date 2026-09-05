@@ -387,14 +387,22 @@ void* kyo_aeron_driver_start(const char* dir, int64_t client_liveness_ns, int64_
         aeron_driver_context_set_client_liveness_timeout_ns(ctx, (uint64_t)client_liveness_ns);
     if (publication_unblock_ns > 0)
         aeron_driver_context_set_publication_unblock_timeout_ns(ctx, (uint64_t)publication_unblock_ns);
-    /* Delete the Aeron directory on start so successive driver_start() calls initialize from a
-     * clean state (no stale CnC file), and on shutdown so the driver removes the directory it owns
-     * once its conductor has stopped. The driver is the only party that knows when nothing will
-     * write into the directory again, so deleting it from the outside races whatever the conductor
-     * has yet to flush; the Scala finalizer's removeAll stays only as a backstop for a driver that
-     * failed to launch or whose close did not complete. */
+    /* Delete on start, so a directory handed in with a stale CnC file initializes clean.
+     *
+     * NOT on shutdown: the caller removes the directory itself, and by the time it does so nothing
+     * can still be writing into it. kyo_aeron_driver_close calls aeron_driver_close, which joins the
+     * conductor/sender/receiver threads, before the caller's finalizer runs, so the ordering that
+     * would make an outside delete race a flush does not arise. Two deletes of the same directory
+     * one after the other is not a safety net, it is the second one finding nothing.
+     *
+     * The shutdown delete is also the more expensive one to keep. It runs inside
+     * aeron_driver_context_close, on whichever thread called it, which here is a caller thread
+     * inside a foreign-function downcall. On Windows Aeron implements the delete with
+     * SHFileOperation, a shell32 API that expects a COM-initialized thread; that call is the only
+     * thing in this shim that reaches the Windows shell at all, and it is why the build has to link
+     * shell32. Dropping it keeps the teardown path in plain file syscalls on every platform. */
     aeron_driver_context_set_dir_delete_on_start(ctx, true);
-    aeron_driver_context_set_dir_delete_on_shutdown(ctx, true);
+    aeron_driver_context_set_dir_delete_on_shutdown(ctx, false);
     /* Run all driver agents (conductor/sender/receiver) in ONE thread (SHARED), not the DEDICATED default of three.
      * The zero-config embedded driver Topic.run starts must be frugal: three DEDICATED agent threads busy-spinning
      * under load, plus the client conductor, starve the kyo carriers and the conductor on a few-core or emulated CI
@@ -722,12 +730,14 @@ void* kyo_aeron_async_add_publication_get(void* async_token)
     return b;
 }
 
-/* Free the async token on fiber interrupt (the Sync.ensure path) or after a _poll < 0 error.
+/* Free the async token: on fiber interrupt (the Sync.ensure path), on the deadline exit, or after a
+ * _poll < 0 error.
  *
- * A non-NULL tok->async means the registration never reached a terminal poll, since both the > 0
- * and < 0 paths clear it: that is the interrupt case. Cancel it, or the conductor holds the
- * pending registration until the client closes, which for a long-lived client is unbounded.
- * Skipped while closing, where aeron_close reclaims it anyway and the handle must not be touched. */
+ * A non-NULL tok->async means the registration never reached a terminal poll, since both the > 0 and
+ * < 0 paths clear it: the caller abandoned it, by interrupt or by deadline. Cancel it, or the
+ * conductor holds the pending registration until the client closes, which for a long-lived client is
+ * unbounded. Skipped while closing, where aeron_close reclaims it anyway and the handle must not be
+ * touched. */
 void kyo_aeron_async_add_publication_free(void* async_token)
 {
     if (async_token == NULL) return;
@@ -970,8 +980,8 @@ void* kyo_aeron_async_add_subscription_get(void* async_token)
     return b;
 }
 
-/* Free the async subscription token on fiber interrupt or after a _poll < 0 error. The pending
- * registration is cancelled for the same reason as the publication path above. */
+/* Free the async subscription token on the same three edges as the publication path above. The
+ * pending registration is cancelled for the same reason. */
 void kyo_aeron_async_add_subscription_free(void* async_token)
 {
     if (async_token == NULL) return;

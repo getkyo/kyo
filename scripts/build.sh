@@ -366,6 +366,10 @@ run_in_container() {
         args+=(-v "$cache/coursier:/root/.cache/coursier" -v "$cache/sbt:/root/.sbt" -v "$cache/ivy:/root/.ivy2")
     fi
     local envs=()
+    # A UTF-8 locale, because the image defaults to POSIX and the JDK then derives an ASCII
+    # sun.jnu.encoding: a test that names a file with non-ASCII characters fails to encode the path at all
+    # (InvalidPathException: unmappable characters) rather than exercising anything.
+    envs+=(-e LANG=C.UTF-8 -e LC_ALL=C.UTF-8)
     # Forward the leak-debug flag so the forked test JVM (which inherits the container env) runs leaves serially and attributes each leaked
     # descriptor to the test that opened it (see kyo.test.runner.internal.LeakDebug). Unset by default, so a normal run is unaffected.
     [ -n "${KYO_TEST_LEAK_DEBUG:-}" ] && envs+=(-e "KYO_TEST_LEAK_DEBUG=$KYO_TEST_LEAK_DEBUG")

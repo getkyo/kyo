@@ -39,24 +39,78 @@ class SslLibProviderOwnershipTest extends Test:
         var unmatchableCalls  = 0
         var connectStateCalls = 0
 
-        def ctxNew(isServer: Int)(using AllowUnsafe): Long =
-            ctxNewCalls += 1; ctxNewResult
-        def ctxFree(ctx: Long)(using AllowUnsafe): Unit = ctxFreeCalls += 1
-        def sslNew(ctx: Long, hostname: String)(using AllowUnsafe): Long =
-            sslNewCalls += 1; sslNewResult
-        def sslFree(ssl: Long)(using AllowUnsafe): Unit = sslFreeCalls += 1
+        /** Handles still outstanding, by identity. Counting news against frees would accept a build that freed the same handle twice while
+          * stranding another, which is the shape both native lifetime bugs in this module have taken.
+          */
+        val liveCtxs   = scala.collection.mutable.Set.empty[Long]
+        val liveSsls   = scala.collection.mutable.Set.empty[Long]
+        var strayFrees = 0
 
-        def sslSetVerifyName(ssl: Long, hostname: String)(using AllowUnsafe): Int = verifyNameResult
+        /** Fails the `failAt`-th fallible binding call, whatever that call happens to be.
+          *
+          * Indexing by call ORDER rather than by method name is what lets the sweep cover construction exhaustively without a table of
+          * known failure points: a fallible call added to engine construction later becomes one more index the sweep visits, with nothing
+          * to remember to register.
+          */
+        var failAt: Int = 0
+
+        private var handles       = 0L
+        private var fallibleCalls = 0
+
+        def fallibleCallCount: Int = fallibleCalls
+
+        private def fallible[A](failure: A)(ok: => A): A =
+            fallibleCalls += 1
+            if fallibleCalls == failAt then failure else ok
+
+        private def freshHandle(): Long =
+            handles += 1
+            handles
+
+        def ctxNew(isServer: Int)(using AllowUnsafe): Long =
+            ctxNewCalls += 1
+            fallible(0L) {
+                if ctxNewResult == 0L then 0L
+                else
+                    val h = freshHandle()
+                    liveCtxs += h
+                    h
+                end if
+            }
+        end ctxNew
+
+        def ctxFree(ctx: Long)(using AllowUnsafe): Unit =
+            ctxFreeCalls += 1
+            if !liveCtxs.remove(ctx) then strayFrees += 1
+
+        def sslNew(ctx: Long, hostname: String)(using AllowUnsafe): Long =
+            sslNewCalls += 1
+            fallible(0L) {
+                if sslNewResult == 0L then 0L
+                else
+                    val h = freshHandle()
+                    liveSsls += h
+                    h
+                end if
+            }
+        end sslNew
+
+        def sslFree(ssl: Long)(using AllowUnsafe): Unit =
+            sslFreeCalls += 1
+            if !liveSsls.remove(ssl) then strayFrees += 1
+
+        def sslSetVerifyName(ssl: Long, hostname: String)(using AllowUnsafe): Int = fallible(0)(verifyNameResult)
         def sslRequireUnmatchableIdentity(ssl: Long)(using AllowUnsafe): Int =
-            unmatchableCalls += 1; unmatchableResult
+            unmatchableCalls += 1
+            fallible(0)(unmatchableResult)
         def sslSetConnectState(ssl: Long)(using AllowUnsafe): Unit = connectStateCalls += 1
         def sslSetAcceptState(ssl: Long)(using AllowUnsafe): Unit  = ()
 
-        def ctxSetCert(ctx: Long, certPem: String, keyPem: String)(using AllowUnsafe): Int = 0
+        def ctxSetCert(ctx: Long, certPem: String, keyPem: String)(using AllowUnsafe): Int = fallible(-1)(0)
         def ctxSetVerifyMode(ctx: Long, mode: Int)(using AllowUnsafe): Unit                = ()
-        def ctxLoadCa(ctx: Long, caPem: String)(using AllowUnsafe): Int                    = 1
-        def ctxLoadSystemCa(ctx: Long)(using AllowUnsafe): Int                             = systemCaResult
-        def ctxSetMinMaxVersion(ctx: Long, min: Int, max: Int)(using AllowUnsafe): Int     = minMaxVersionResult
+        def ctxLoadCa(ctx: Long, caPem: String)(using AllowUnsafe): Int                    = fallible(0)(1)
+        def ctxLoadSystemCa(ctx: Long)(using AllowUnsafe): Int                             = fallible(0)(systemCaResult)
+        def ctxSetMinMaxVersion(ctx: Long, min: Int, max: Int)(using AllowUnsafe): Int     = fallible(-1)(minMaxVersionResult)
 
         def doHandshakeStep(ssl: Long)(using AllowUnsafe): Int                                   = 1
         def feedCiphertext(ssl: Long, buf: Buffer[Byte], len: Int)(using AllowUnsafe): Int       = len
@@ -128,6 +182,81 @@ class SslLibProviderOwnershipTest extends Test:
         assert(bindings.unmatchableCalls == 0, "a host that bound needs no unmatchable fallback")
         assert(bindings.connectStateCalls == 1, "the client role should have been selected")
         engine.free()
+    }
+
+    /** Sweeps every fallible call in engine construction and asserts the same ownership invariant on all of them.
+      *
+      * The leaves above pin four paths that someone thought to write down, and the context leak this suite exists for lived on a fifth,
+      * the successful one. Six more throwing paths carry no leaf at all: the two PEM reads, the configured CA load, the certificate and
+      * key load, the system-trust load, and a reference identity that fails to bind and then fails again on the fallback. Rather than add
+      * six more hand-written cases, this drives construction once per fallible call, failing that call and no other, and asserts that
+      * whatever happened, nothing native is left outstanding.
+      *
+      * The invariant is uniform because it has to hold on every path: the context and the SSL are either owned by a returned engine, and
+      * released when it is freed, or released by construction itself. There is no third outcome, and a failure that produces one is a leak
+      * whether or not anyone predicted the path.
+      */
+    "every fallible call in engine construction leaves nothing outstanding" in {
+        Scope.run(Path.run(Path.tempDir("kyo-tls-ownership").map { dir =>
+            val material = dir / "material.pem"
+            // The stub never parses it; the file only has to be readable, because readPem fails closed on a path it cannot read and that
+            // is one of the construction failures under test.
+            material.write("stub material, never parsed").andThen {
+                val configured = Present(material.unsafe.show)
+                // Three shapes, chosen so that between them construction reaches every fallible call: a verifying client with a host
+                // reaches the system trust load and the reference identity, the same client with no host reaches the fail-closed
+                // fallback, and the configured client reaches the CA load and the certificate load.
+                val shapes = Seq(
+                    ("verifying client", NetTlsConfig(), "example.com"),
+                    ("verifying client with no host", NetTlsConfig(), ""),
+                    (
+                        "client with a configured CA and certificate",
+                        NetTlsConfig(caCertPath = configured, certChainPath = configured, privateKeyPath = configured),
+                        "example.com"
+                    )
+                )
+
+                // Returns whether construction failed. A NetTlsConfigException is the expected shape of every construction failure, so
+                // anything else escapes and fails the leaf rather than being counted as a covered path.
+                def buildAndRelease(bindings: StubBindings, config: NetTlsConfig, hostname: String): Boolean =
+                    try
+                        StubProvider(bindings).createEngine(config, hostname, isServer = false).free()
+                        false
+                    catch case _: NetTlsConfigException => true
+
+                val plans = shapes.map { (label, config, hostname) =>
+                    val counting = StubBindings()
+                    discard(buildAndRelease(counting, config, hostname))
+                    (label, config, hostname, counting.fallibleCallCount)
+                }
+
+                val runs = plans.flatMap { (label, config, hostname, calls) =>
+                    (1 to calls).map { n =>
+                        val bindings = StubBindings()
+                        bindings.failAt = n
+                        val failed = buildAndRelease(bindings, config, hostname)
+                        val problems =
+                            (if bindings.liveCtxs.nonEmpty then
+                                 Seq(s"$label, failing call $n: ${bindings.liveCtxs.size} context(s) stranded")
+                             else Seq.empty) ++
+                                (if bindings.liveSsls.nonEmpty then
+                                     Seq(s"$label, failing call $n: ${bindings.liveSsls.size} SSL(s) stranded")
+                                 else Seq.empty) ++
+                                (if bindings.strayFrees > 0 then
+                                     Seq(s"$label, failing call $n: freed ${bindings.strayFrees} handle(s) that were not outstanding")
+                                 else Seq.empty)
+                        (failed, problems)
+                    }
+                }
+
+                // Fixture check before the negative is trusted: a sweep that never made construction fail, or that visited no calls at
+                // all, would report clean for the same reason a broken injector would.
+                assert(plans.forall(_._4 > 0), s"construction made no fallible calls: ${plans.map(p => p._1 -> p._4)}")
+                assert(runs.exists(_._1), "no injected failure ever failed a build, so the sweep proves nothing")
+                val problems = runs.flatMap(_._2)
+                assert(problems.isEmpty, problems.mkString("; "))
+            }
+        }))
     }
 
 end SslLibProviderOwnershipTest

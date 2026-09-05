@@ -23,7 +23,7 @@ private[kyo] object FlowGraph:
 
     case class Edge(id: String, source: String, target: String, label: String = "", style: String = "")
 
-    // Internal result type for building the graph -- captures start/end for linking
+    // Internal result type for building the graph: captures start/end for linking
     private case class SubGraph(
         nodes: Seq[Node],
         edges: Seq[Edge],
@@ -32,7 +32,7 @@ private[kyo] object FlowGraph:
     )
 
     // State-threading builder: takes a counter, returns (SubGraph, nextCounter).
-    // This is the pure State monad pattern encoded as a function — no mutable state.
+    // This is the pure State monad pattern encoded as a function, holding no mutable state.
     private type Builder = Int => (SubGraph, Int)
 
     private def nextId(counter: Int): (String, Int) =
@@ -104,7 +104,7 @@ private[kyo] object FlowGraph:
                     )
             end onSleep
 
-            def onDispatch(name: String, branchInfos: Seq[Flow.BranchInfo], frame: Frame, meta: Flow.Meta) =
+            def onDispatch[V](name: String, branchInfos: Seq[Flow.BranchInfo], frame: Frame, meta: Flow.Meta)(using Tag[V], Schema[V]) =
                 (counter: Int) =>
                     val (did, c1) = nextId(counter)
                     val (jid, c2) = nextId(c1)
@@ -131,7 +131,7 @@ private[kyo] object FlowGraph:
                     )
             end onDispatch
 
-            def onLoop(name: String, frame: Frame, meta: Flow.Meta) =
+            def onLoop[V, State](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Schema[V], Tag[State], Schema[State]) =
                 (counter: Int) =>
                     val (lid, c1) = nextId(counter)
                     val (eid, c2) = nextId(c1)
@@ -146,7 +146,7 @@ private[kyo] object FlowGraph:
                     )
             end onLoop
 
-            def onForEach(name: String, concurrency: Int, frame: Frame, meta: Flow.Meta) =
+            def onForEach[V](name: String, concurrency: Int, frame: Frame, meta: Flow.Meta)(using Tag[V], Schema[V]) =
                 (counter: Int) =>
                     val (id, c) = nextId(counter)
                     (
@@ -189,7 +189,9 @@ private[kyo] object FlowGraph:
                     )
             end onRace
 
-            def onSubflow(name: String, childFlow: Flow[?, ?, ?], frame: Frame, meta: Flow.Meta) =
+            // A subflow is drawn as one node: the diagram is of the parent's shape, and a child's own nodes belong to the child's
+            // diagram, which is why the child's builder is not used here.
+            def onSubflow(name: String, childFlow: Flow[?, ?, ?], child: Builder, frame: Frame, meta: Flow.Meta) =
                 (counter: Int) =>
                     val (id, c) = nextId(counter)
                     (SubGraph(Seq(Node(id, name, "subflow", meta)), Seq.empty, id, id), c)
@@ -284,6 +286,7 @@ private[kyo] object FlowGraph:
             case FlowEngine.Progress.NodeStatus.Running         => "running"
             case FlowEngine.Progress.NodeStatus.Pending         => "pending"
             case FlowEngine.Progress.NodeStatus.WaitingForInput => "waiting"
+            case FlowEngine.Progress.NodeStatus.Compensated     => "compensated"
             case FlowEngine.Progress.NodeStatus.Sleeping(_)     => "sleeping"
             case FlowEngine.Progress.NodeStatus.Failed(_)       => "failed"
 

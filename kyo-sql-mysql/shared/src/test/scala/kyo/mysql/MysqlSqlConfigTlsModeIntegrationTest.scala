@@ -507,7 +507,17 @@ object MysqlSqlConfigTlsModeIntegrationTest:
                             Abort.run[Throwable](Command("cp", s"$tempDir/server.crt", s"$tempDir/ca.pem").text).flatMap {
                                 case Result.Failure(e) => Abort.fail(ContainerBackendException(s"ca.pem copy failed: ${e.getMessage}"))
                                 case Result.Panic(t)   => Abort.fail(ContainerBackendException(s"ca.pem copy panic: ${t.getMessage}"))
-                                case Result.Success(_) => startCertContainer(tempDirPath)
+                                case Result.Success(_) =>
+                                    // 0700 from tempDirUnscoped is unreadable to the container that bind-mounts it,
+                                    // whose entrypoint then exits before the health check runs. Throwaway self-signed
+                                    // material, and the entrypoint re-restricts the copy it makes inside the container.
+                                    Abort.run[Throwable](Command("chmod", "-R", "a+rX", tempDir).text).flatMap {
+                                        case Result.Failure(e) =>
+                                            Abort.fail(ContainerBackendException(s"cert directory chmod failed: ${e.getMessage}"))
+                                        case Result.Panic(t) =>
+                                            Abort.fail(ContainerBackendException(s"cert directory chmod panic: ${t.getMessage}"))
+                                        case Result.Success(_) => startCertContainer(tempDirPath)
+                                    }
                             }
                         }
                     }

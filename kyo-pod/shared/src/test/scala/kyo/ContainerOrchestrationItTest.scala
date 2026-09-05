@@ -481,7 +481,7 @@ class ContainerOrchestrationItTest extends BasePodTest:
 
     "scope cleanup delivers stopSignal before force-removing when stopSignal is Present" - runBackend {
         // The container traps its stopSignal to write a host marker on receipt, so the marker is a clock-free witness the signal arrived.
-        // Async.timeout is the completion valve: a kill path that hung on waitForExit trips it. stopTimeout is 10s, generous enough that a
+        // The suite's per-leaf cap is the completion valve: a kill path that hangs on waitForExit trips it. stopTimeout is 10s, generous enough that a
         // rootless/emulated podman signal+trap+mount-write lands well inside it (the original 1s was too tight under load, so the marker was
         // sometimes not flushed before teardown). The trap then sleeps only 3s and the shell exits, so the container self-exits inside the leaf.
         // deviation: this drives the graceful-stop path (self-exit after the signal), not the force-remove-after-timeout fallback. A container
@@ -490,8 +490,12 @@ class ContainerOrchestrationItTest extends BasePodTest:
         // with sleeping command past timeout returns Signaled(15)" leaf; here the marker alone is the witness the stopSignal was delivered.
         val hostDir = Path("/tmp/" + uniqueName("kyo-stopsig"))
         val marker  = hostDir / "sig"
+        // Written by the container once its trap is armed. It is both the barrier (the leaf never signals a shell that has not
+        // installed its USR1 handler yet) and the discriminator when `sig` is missing: no `ready` at all means the bind mount was
+        // never visible to the container, so the signal was never testable; `ready` without `sig` means the signal did not arrive.
+        val ready = hostDir / "ready"
         val config = Container.Config("alpine")
-            .command("sh", "-c", "trap 'touch /m/sig; sleep 3' USR1; sleep infinity & wait")
+            .command("sh", "-c", "trap 'touch /m/sig; sleep 3' USR1; touch /m/ready; sleep infinity & wait")
             .bind(hostDir, Path("/m"))
             .stopSignal(Container.Signal.SIGUSR1)
             .stopTimeout(10.seconds)
@@ -500,14 +504,26 @@ class ContainerOrchestrationItTest extends BasePodTest:
             for
                 _ <- hostDir.mkDir
                 // Scope.run runs the container and tears it down (stopSignal, then the graceful self-exit). Its completion is the barrier; a cleanup
-                // that hangs is caught by the suite's per-leaf cap.
-                _         <- Scope.run(Container.init(config).unit)
+                // that hangs is caught by the suite's per-leaf cap. The body waits for the readiness marker so teardown cannot signal an unarmed shell.
+                armed <- Scope.run {
+                    Container.init(config).andThen {
+                        Loop.indexed { i =>
+                            ready.exists.map {
+                                case true             => Loop.done(true)
+                                case false if i < 200 => Async.sleep(50.millis).andThen(Loop.continue)
+                                case false            => Loop.done(false)
+                            }
+                        }
+                    }
+                }
                 delivered <- marker.exists
                 // The cleanup runs its own runner so a removal failure is reported here rather than failing the test.
                 _ <- Abort.run[FileSystemException](Path.run(hostDir.removeAll))
             yield assert(
                 delivered,
-                "scope cleanup completed but the stopSignal never reached the container; the trap left no marker on the host"
+                if armed then "scope cleanup completed but the stopSignal never reached the container's armed trap; no marker on the host"
+                else
+                    "the container never wrote its readiness marker, so the bind mount was not visible to it and the stopSignal was never testable"
             )
             end for
         }
@@ -545,7 +561,7 @@ class ContainerOrchestrationItTest extends BasePodTest:
 
         "runOnce with command that exits cleanly under timeout returns its exitCode" - runBackend {
             // Pre-pull alpine so cold-pull doesn't eat the timeout budget.
-            ContainerImage.ensure(ContainerImage("alpine", "latest")).andThen {
+            ensureImage(ContainerImage("alpine", "latest")).andThen {
                 Container.runOnce(
                     image = ContainerImage("alpine", "latest"),
                     command = Command("sh", "-c", "exit 42"),

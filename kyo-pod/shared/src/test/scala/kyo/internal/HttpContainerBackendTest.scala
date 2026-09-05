@@ -124,4 +124,98 @@ class HttpContainerBackendTest extends BasePodTest:
             })
         }
     }
+
+    /** A failing registry must not be reported as a missing image.
+      *
+      * The pull path deliberately collapses every no-credentials failure into
+      * `ContainerImageMissingException`, because a registry answers the same way for "does not exist" and
+      * "needs credentials" and a caller with no credentials cannot act on the difference. A server error
+      * asserts neither, and missing is the one classification callers treat as permanent: `Container.init`
+      * scopes its retry to it while treating the up-front ensure as fail-fast, so a transient upstream
+      * fault landed in the bucket nothing retries. Docker Hub answered 500 to a manifest HEAD for an image
+      * that exists and the pull reported the image as gone.
+      */
+    "pull error classification" - {
+        val pullImage = ContainerImage("redis", "7-alpine")
+
+        def classify(
+            status: Int,
+            body: String,
+            auth: Maybe[ContainerImage.RegistryAuth] = Absent
+        )(using Frame): Result[ContainerException, Unit] < Sync =
+            val backend = new HttpContainerBackend("/unused.sock")
+            Abort.run[ContainerException](
+                backend.normalizePullError(
+                    HttpStatusException(HttpStatus(status), "POST", "http+unix://unused/images/create", body),
+                    pullImage,
+                    auth
+                )
+            )
+        end classify
+
+        // A real daemon response body, quoting the registry's own status.
+        val hubFailure =
+            """Error response from daemon: Head "https://registry-1.docker.io/v2/library/redis/manifests/7-alpine": """ +
+                "received unexpected HTTP status: 500 Internal Server Error"
+
+        "the captured Docker Hub 500 is not a missing image" in {
+            classify(404, hubFailure).map { result =>
+                assert(
+                    !result.failure.exists(_.isInstanceOf[ContainerImageMissingException]),
+                    s"a registry fault must not be classified as a missing image, got $result"
+                )
+                assert(result.failure.exists(_.isInstanceOf[ContainerOperationException]), s"expected an operation error, got $result")
+            }
+        }
+
+        "a 5xx from the daemon itself is not a missing image" in {
+            classify(500, """{"message":"internal error"}""").map { result =>
+                assert(
+                    !result.failure.exists(_.isInstanceOf[ContainerImageMissingException]),
+                    s"a 5xx must not be classified as a missing image, got $result"
+                )
+            }
+        }
+
+        // The conflation the branch exists for must survive: with no credentials, a denial and a 404 both
+        // still read as missing, which is what callers can actually act on.
+        "a denial with no credentials is still a missing image" in {
+            classify(403, """{"message":"denied: requested access to the resource is denied"}""").map { result =>
+                assert(
+                    result.failure.exists(_.isInstanceOf[ContainerImageMissingException]),
+                    s"expected the no-credentials conflation to hold, got $result"
+                )
+            }
+        }
+
+        // An absence claim in the body outranks transport wording next to it: the daemon answered about the
+        // image, so the classification follows that answer rather than the 5xx it also mentions.
+        "an absence claim in the body wins over quoted server-error wording" in {
+            classify(404, """{"message":"manifest unknown: received unexpected HTTP status: 500 Internal Server Error"}""").map { result =>
+                assert(
+                    result.failure.exists(_.isInstanceOf[ContainerImageMissingException]),
+                    s"an explicit absence claim must still read as missing, got $result"
+                )
+            }
+        }
+
+        "a 404 with no credentials is still a missing image" in {
+            classify(404, """{"message":"manifest unknown"}""").map { result =>
+                assert(
+                    result.failure.exists(_.isInstanceOf[ContainerImageMissingException]),
+                    s"expected a missing image, got $result"
+                )
+            }
+        }
+
+        // With credentials supplied the daemon's own signal is authoritative, and a denial body means the
+        // supplied credentials were rejected whatever status carries it.
+        "a denial with credentials supplied is an auth failure" in {
+            classify(500, """{"message":"unauthorized: authentication required"}""", Present(ContainerImage.RegistryAuth(Dict.empty))).map {
+                result =>
+                    assert(result.failure.exists(_.isInstanceOf[ContainerAuthException]), s"expected an auth failure, got $result")
+            }
+        }
+    }
+
 end HttpContainerBackendTest
