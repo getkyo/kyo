@@ -1146,11 +1146,14 @@ object SqlClient:
             def inc(using Frame): Unit < Sync          = ()
             def add(v: Long)(using Frame): Unit < Sync = ()
 
-        /** No-op histogram: every method does nothing. Used when `metricsEnabled = false`. */
+        /** No-op histogram: observations are discarded, and `summary` reports the empty distribution. Used when `metricsEnabled = false`. */
         private[Metrics] val noopHistogram: Histogram = new Histogram:
             val unsafe                                       = new kyo.stats.internal.UnsafeHistogram(Array.empty[Double])
             def observe(v: Long)(using Frame): Unit < Sync   = ()
             def observe(v: Double)(using Frame): Unit < Sync = ()
+            // Reads the backing instrument rather than a hand-built zero: nothing ever observes into it, so it
+            // answers count/min/max/sum of 0 with empty buckets, and that stays true if Summary gains a field.
+            def summary(using Frame): kyo.stats.internal.Summary < Sync = Sync.Unsafe.defer(unsafe.summary())
 
         /** No-op gauge: always reports zero. Used when `metricsEnabled = false`. */
         private[Metrics] val noopGauge: Gauge = new Gauge:
