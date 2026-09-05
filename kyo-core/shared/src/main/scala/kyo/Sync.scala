@@ -79,16 +79,33 @@ object Sync:
         release: (A, Result[Any, Any]) => Any < (Sync & Abort[Throwable])
     )[B, E, S2](use: A => B < (Abort[E] & S2))(using ConcreteTag[E], Frame): B < (Sync & S1 & Abort[E] & S2) =
         // the one bracket in this file, which every other ensure and acquireReleaseWith lands on. The
-        // kernel bracket owns the exactly-once guarantee and tells the release how the extent ended:
-        // the value the use completed with, the failure an unwind carried through it, or the signal
-        // that the remainder holding it was discarded. An abort is none of those to the kernel, which
-        // does not know Abort, so the use runs under its own Abort region: the failure reaches the
-        // release inside the completed value, and is raised again past the bracket, typed as it came.
+        // kernel bracket owns the exactly-once guarantee and tells the release how the extent ended: the
+        // failure an unwind carried through it, the signal that the remainder holding it was discarded,
+        // or Absent for an ending that ran to completion. An abort is none of those to the kernel, which
+        // does not know Abort, so the use runs under its own Abort region and this method routes the
+        // failure to the release itself, raising it again past the bracket, typed as it came.
+        //
+        // First failure wins, because a handler that replays ends the extent once per resumption: a
+        // branch that aborted must not be overwritten by a later branch that succeeded, or a release
+        // that commits on success would commit over it.
+        val aborted = new java.util.concurrent.atomic.AtomicReference[Maybe[Result.Error[Any]]](Absent)
         // Unsafe: the kernel's release is synchronous, so the effectful release runs to completion here,
         // and only its own Abort surfaces, as a throw
-        Bracket(acquire)(resource => Abort.run[E](use(resource)))((resource, outcome) =>
-            discard(Sync.Unsafe.evalOrThrow(release(resource, outcome.flatten))(using summon[Frame], AllowUnsafe.embrace.danger))
-        ).map(result => Abort.get(result))
+        Bracket(acquire) { resource =>
+            Abort.run[E](use(resource)).map { result =>
+                result.foldError(_ => (), e => discard(aborted.compareAndSet(Absent, Maybe(e))))
+                result
+            }
+        } { (resource, failure) =>
+            val outcome: Result[Any, Any] =
+                failure match
+                    // constructed rather than built through `Result.Panic.apply`, which refuses to hold a fatal:
+                    // the release is owed the failure that ended its extent whatever it is
+                    case Present(ex) => new Result.Panic(ex)
+                    case Absent      => aborted.get().getOrElse(Result.unit)
+            discard(Sync.Unsafe.evalOrThrow(release(resource, outcome))(using summon[Frame], AllowUnsafe.embrace.danger))
+        }.map(result => Abort.get(result))
+    end acquireReleaseWith
 
     def acquireReleaseWith[A, S1](acquire: => A < (Sync & S1))(
         release: A => Any < (Sync & Abort[Throwable])

@@ -197,14 +197,6 @@ class ProtoKernelTest extends AnyFreeSpec:
             assert(v.eval == 30)
         }
 
-        "handleContOperation" in {
-            val v: Int < Any = ArrowEffect.handleContOperation(Tag[Ask], ask.map(_ + 1))(
-                [X] => (_, cont) => cont(1.asInstanceOf[X]),
-                a => a
-            )
-            assert(v.eval == 2)
-        }
-
         "handleLoop" in {
             val v = ArrowEffect.handleLoop(Tag[Ask], ask.map(_ + 1))([C] => _ => Loop.continue(3))
             assert(v.eval == 4)

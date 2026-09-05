@@ -155,4 +155,43 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
         end for
     }
 
+    // Fiber.init routes through Scope.acquireRelease and so is covered by the pins above. Fiber.use does
+    // not: it is `initUnscoped(v).map(fiber => Sync.ensure(fiber.interrupt)(f(fiber)))`, so the fiber is
+    // already running while the ensure that would interrupt it is still one dispatch away. An interrupt
+    // landing in that gap leaves nothing behind to interrupt the child, and nothing an abandonment can
+    // walk either, since the ensure's region does not exist until the map runs.
+    //
+    // The gap is inside kyo's own spawn, so it cannot be held open the way the acquire thunks above are.
+    // It is raced instead: each round interrupts the parent as close to the spawn as possible, and the
+    // round fails only if a child is left running with nobody to stop it. One escape is a real one, so
+    // the assertion is on the count, not on a proportion.
+    "Fiber.use interrupts the fiber it spawned when an interrupt lands on the spawn" in {
+        val rounds = 40
+        for
+            orphaned <- AtomicInt.init(0)
+            _ <- Kyo.foreachDiscard(1 to rounds) { _ =>
+                for
+                    started    <- Latch.init(1)
+                    torn       <- Latch.init(1)
+                    gate       <- Latch.init(1)
+                    childAlive <- AtomicBoolean.init(false)
+                    child = (Sync.ensure(childAlive.set(false).andThen(torn.release)) {
+                        childAlive.set(true).andThen(started.release).andThen(gate.await)
+                    }: Unit < (Sync & Async))
+                    parent <- Fiber.initUnscoped(Fiber.use[Nothing, Unit, Any, Any](child)(_ => started.await))
+                    _      <- parent.interrupt
+                    _      <- parent.getResult
+                    // the child is torn down asynchronously, so wait for it rather than sampling
+                    out  <- Abort.run[Timeout](Async.timeout(300.millis)(torn.await))
+                    left <- childAlive.get
+                    _    <- gate.release
+                    _    <- if out.isFailure && left then orphaned.incrementAndGet.unit else Kyo.unit
+                yield ()
+                end for
+            }
+            leaked <- orphaned.get
+        yield assert(leaked == 0, s"$leaked of $rounds rounds left the spawned fiber running with nothing to interrupt it")
+        end for
+    }
+
 end ScopeInterruptTest

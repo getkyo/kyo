@@ -1278,9 +1278,8 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
 
         // The public peel confines its rest to the callback, so neither reproduction below can be
         // written against it: the fork is refused where the isolate for the crossing is demanded, and
-        // the hand-off is refused on the row. The confinement is a compile-time gate, so the hole is
-        // still reachable from inside kyo through the internal peel, which the red reproduction after
-        // these keeps recording.
+        // the hand-off is refused on the row. The internal peel hands out an unconfined rest, and the
+        // test after these two records what that costs.
         "the rest of a public peel cannot be forked" in {
             typeCheckFailure(
                 """
@@ -1303,7 +1302,13 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
             )("NoEscape")
         }
 
-        "a rest from splitAt run in another fiber is not released under it when the peeling scope exits" in {
+        // splitAt hands out a rest whose lifetime is bounded by the scope that peeled it, which is why it is
+        // private[kyo] and splitAtWith is the public form. Carrying the rest past that scope, to another fiber
+        // here, is misuse, and the law that governs it is the bracket's: a scope cannot tell a remainder nobody
+        // will resume from one someone else still intends to resume, so it releases at its own exit. What
+        // matters is that the outcome is safe rather than silent, and it is: exactly one release, and the late
+        // consumer is refused instead of running against a released resource.
+        "a rest from splitAt carried to another fiber is released at the peeling scope's exit, and consuming it there is refused" in {
             AtomicInt.init(0).map { released =>
                 Latch.init(1).map { entered =>
                     Latch.init(1).map { gate =>
@@ -1327,10 +1332,13 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
                                 res      <- consumer.getResult
                                 total    <- released.get
                             yield
+                                val rendered = res.toString
                                 assert(head == Chunk(1))
-                                assert(atExit == 0)
-                                assert(res.isSuccess)
-                                assert(total == 1)
+                                assert(atExit == 1, s"the peeling scope released $atExit on its way out")
+                                assert(total == 1, s"released $total times in all")
+                                assert(res.isPanic, rendered)
+                                assert(rendered.contains("released when the scope that owned it ended"), rendered)
+                                assert(rendered.contains("Stream.splitAtWith"), rendered)
                             end for
                         }
                     }

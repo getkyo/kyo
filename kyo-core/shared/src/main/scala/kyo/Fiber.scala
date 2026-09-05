@@ -151,8 +151,12 @@ object Fiber:
     )(
         v: => A < (Abort[E] & Async & S)
     )[B, S3](f: Fiber[A, reduce.SReduced & S2] => B < S3): B < (Sync & S & S3) =
-        initUnscoped[E, A, S, S2](v).map: fiber =>
-            Sync.ensure(fiber.interrupt)(f(fiber))
+        // Mapping the spawn and installing the interrupt in the mapped function would leave a window: the
+        // fiber is already running while the region that would interrupt it is still one dispatch away, so
+        // an interrupt landing in between leaves the child with nothing to stop it, and nothing an
+        // abandonment can walk either. A bracket's region is built as the acquire is applied instead, which
+        // puts the spawn and its interrupt on the same side of any interrupt.
+        Sync.acquireReleaseWith(initUnscoped[E, A, S, S2](v))(_.interrupt)(f)
 
     /** Runs an asynchronous computation in a new Fiber without guaranteeing interruption.
       *

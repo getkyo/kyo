@@ -20,6 +20,24 @@ import scala.annotation.publicInBinary
 sealed abstract private[kernel] class Handler[E <: Effect, A, -S]:
     def tag: Tag[E]
 
+    /** Whether this handler's clause resumes the continuation it is given more than once.
+      *
+      * Answering a suspension dumps the regions between this handler and that suspension into the continuation. A
+      * region that discharges exactly once, a bracket's release, cannot be left to answer for itself when the same
+      * continuation can be resumed again: whichever resumption ends its extent first would fire the release under the
+      * rest. Declaring this holds those regions, so an ending records its outcome and the debt is discharged once,
+      * where this handler ends.
+      */
+    def repeated: Boolean = false
+
+    /** Whether this handler's clause hands the continuation out of the clause as a value.
+      *
+      * Such a clause has not finished with what it owes when its answer settles: the remainder is still live in
+      * whoever holds it. So the debt moves to the scope below rather than being discharged here, to be settled when
+      * the remainder resumes and drained at that scope's exit if it never does.
+      */
+    def escaping: Boolean = false
+
     override def toString = s"Handler(${tag.show})"
 end Handler
 
@@ -29,14 +47,6 @@ end Handler
         def done(state: State, v: A): B < S
 
         def recover(state: State, ex: Throwable): Maybe[B < S] = Absent
-
-        // A region whose value carries its own continuation out (handleFirst) has not finished with what
-        // it owes when it exits: the regions it dumped into that continuation are re-installed when the
-        // holder resumes it, so the debt moves to the scope below the region instead of draining at its
-        // exit, exactly as a region exiting with a pending outcome passes its debt down. The scope below
-        // settles the debt by identity when the continuation resumes, and drains it at its own exit
-        // otherwise, so a dropped remainder releases there rather than leaking.
-        def handsOut: Boolean = false
     end ArrowHandler
 
     abstract class ContHandler[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends ArrowHandler[Unit, E, A, B, S]:
@@ -203,9 +213,21 @@ end Handler
 
         private[kyo] def done(state: State, value: A): Unit = ()
 
+        /** Takes custody of this region because the handler that dumped it will resume the continuation again. */
+        private[kyo] def borrow(state: State): Unit = ()
+
+        /** Whether this region is under custody and must not be handed back its own answerability on resumption. */
+        private[kyo] def defers(state: State): Boolean = false
+
         private[kyo] def reenter(state: State): Unit = ()
 
         private[kyo] def release(state: State, ex: Throwable): Unit = ()
+
+        /** Discharges this region where its owner ends normally, as opposed to [[release]], which reports a failure that
+          * unwound it. A held region records the outcome of each ending, so this is where that record is finally acted
+          * on; `ex` is the discard signal, used only when nothing was ever recorded.
+          */
+        private[kyo] def discharge(state: State, ex: Throwable): Unit = release(state, ex)
     end ContextHandler
 
     // TODO can we move this to Eval?

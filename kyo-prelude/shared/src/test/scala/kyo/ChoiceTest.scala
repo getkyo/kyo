@@ -398,11 +398,12 @@ class ChoiceTest extends kyo.test.Test[Any]:
             assert(log == Chunk("open1", "close1", "open2", "close2"))
         }
 
-        "a bracket inside the streamed choice is one-shot: the first branch completes it, the next is refused" in {
+        "a bracket inside the streamed choice is held across every branch and released once" in {
             // runStream pulls each pending branch through a handleFirst region and continues it in its
-            // own loop, so the bracket travels with each branch's remainder. Every branch is the same
-            // remainder replayed, and the bracket it carries completes on the first replay: the second
-            // re-enters a released bracket and is refused, the multi-shot law
+            // own loop, so the bracket travels with each branch's remainder, and every branch is the same
+            // remainder applied again. The region declares both, escaping and repeated, so the bracket is
+            // held across all of them: no branch's ending releases it, and the scope it was handed down
+            // to discharges it once, after the last one
             var log = Chunk.empty[String]
             val v =
                 Choice.runStream {
@@ -412,8 +413,8 @@ class ChoiceTest extends kyo.test.Test[Any]:
                         }
                     )((_, _) => log = log.append("release"))
                 }.run
-            discard(intercept[Closed](v.eval))
-            assert(log == Chunk("branch1", "release"))
+            assert(v.eval == Chunk(1, 2, 3))
+            assert(log == Chunk("branch1", "branch2", "branch3", "release"))
         }
 
         "a bracket around the streamed choice releases once after every branch" in {

@@ -156,7 +156,8 @@ class EmitTest extends kyo.test.Test[Any]:
                     }
                 }.eval
             assert(seen == List(0, 1, 2, 3, 4))
-            assert(result == (5, ()))
+            // the predicate went false at 4, which ends the emitter, so it never produced its value
+            assert(result == (5, Absent))
         }
 
         "early termination" in {
@@ -697,16 +698,26 @@ class EmitTest extends kyo.test.Test[Any]:
     }
 
     "runWhile stops the emitter when the predicate is false" - {
-        "the emitter is not continued after the predicate returned false".pendingUntilFixed(
-            "runWhile continues the emitter after a false result rather than ending it"
-        ) in {
+        // The side effect of each `valueWith` runs in the emitter's continuation, so a predicate that
+        // refuses the very first value leaves none of them running: the continuation is never resumed.
+        "the emitter is not continued after the predicate returned false" in {
             var emitted = 0
             val emitter =
                 Emit.valueWith(1) { emitted += 1; () }
                     .andThen(Emit.valueWith(2) { emitted += 1; () })
                     .andThen(Emit.valueWith(3) { emitted += 1; () })
-            discard(Emit.runWhile(emitter)(_ => false).eval)
-            assert(emitted == 1, s"the emitter was continued after the predicate returned false: emitted $emitted times")
+            assert(Emit.runWhile(emitter)(_ => false).eval == Absent)
+            assert(emitted == 0, s"the emitter was continued after the predicate returned false: emitted $emitted times")
+        }
+
+        "a predicate that goes false partway stops the emitter there" in {
+            var emitted = 0
+            val emitter =
+                Emit.valueWith(1) { emitted += 1; () }
+                    .andThen(Emit.valueWith(2) { emitted += 1; () })
+                    .andThen(Emit.valueWith(3) { emitted += 1; () })
+            assert(Emit.runWhile(emitter)(v => v < 2).eval == Absent)
+            assert(emitted == 1, s"expected the emitter to advance once and stop: emitted $emitted times")
         }
     }
 end EmitTest

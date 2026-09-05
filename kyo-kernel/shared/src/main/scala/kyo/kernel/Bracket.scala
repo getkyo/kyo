@@ -1,9 +1,11 @@
 package kyo.kernel
 
 import java.util.concurrent.atomic.AtomicBoolean
+import kyo.Absent
 import kyo.Closed
 import kyo.Frame
 import kyo.Maybe
+import kyo.Present
 import kyo.Result
 import kyo.Tag
 import kyo.kernel.internal.*
@@ -13,9 +15,12 @@ import scala.util.control.NonFatal
   *
   * `Bracket(acquire)(use)(release)` evaluates `acquire`, runs `use` on its result under a region that owns the release, and runs
   * `release` exactly once: when `use` completes, when it throws, or when a parked remainder still holding the region is abandoned.
-  * The release is told what it is releasing and how the extent ended: the value the use completed with as a `Success`, and otherwise
-  * a `Panic` holding the failure the unwind carried through the region, or the signal that the remainder holding it was discarded.
-  * That is what lets one commit on success and roll back otherwise.
+  * The release is told what it is releasing and how the extent ended: `Absent` when it ran to an end, and otherwise the failure the
+  * unwind carried through the region, or the signal that the remainder holding it was discarded. That is what lets one commit on
+  * success and roll back otherwise. It is deliberately not told what the use produced: an extent that a handler replays ends more
+  * than once, with more than one value, and there is no principled way to choose between them, whereas "did any ending fail" has an
+  * answer whatever the number of endings. A caller that needs to interpret its own failures, `Sync.acquireReleaseWith` reifying an
+  * `Abort` for instance, knows how to read them and routes them itself.
   *
   * The release takes no effects because it has to be able to run where nothing is installed to answer for it, which is all an
   * interpreter that is ending can offer, and its result is discarded for the same reason.
@@ -31,30 +36,56 @@ object Bracket:
 
     // Not on main: the `Finalize` region a bracket runs its use body under, and the `Cell` that is the region's state and the
     // exactly-once guard on the release.
-    sealed private[kyo] trait Finalize extends ContextEffect[Cell[Any]]
+    sealed private[kyo] trait Finalize extends ContextEffect[Cell]
 
-    // Contravariant in the use value: a cell that accepts any value stands in for one of a narrower value, which is what lets the
-    // one inert cell be handed to every fork.
-    final private[kyo] class Cell[-B](fin: Result[Nothing, B] => Unit) extends AtomicBoolean:
-        private[kyo] def complete(value: B): Unit = if compareAndSet(false, true) then fin(Result.succeed(value))
-        // constructed rather than built through `Result.Panic.apply`, which refuses to hold a fatal: the release is owed the
-        // failure that unwound its extent whatever it is, and the fatal itself keeps propagating
-        private[kyo] def drain(ex: Throwable): Unit = if compareAndSet(false, true) then fin(new Result.Panic(ex))
+    // The cell is no longer parameterised by the use value: the release is told how the extent ended, not what it
+    // produced, so there is nothing about the value left to carry.
+    final private[kyo] class Cell(fin: Maybe[Throwable] => Unit) extends AtomicBoolean:
+        // Set when the region is re-installed from a continuation the handler above dumped, which is the one situation
+        // where the extent ending is not the last word: the same continuation can be resumed again, and a release fired
+        // at the first ending would run under the resumptions that follow. While it is set, an ending only records that
+        // it happened, and the handler that owes this region fires the release when that handler ends.
+        @volatile private var borrowed = false
+        // whether any ending of the extent ran to completion, which is what a later discharge reports, and what tells a
+        // refused re-entry which of the two ways this cell fired
+        @volatile private var ended = false
+
+        private[kyo] def borrow(): Unit      = borrowed = true
+        private[kyo] def isBorrowed: Boolean = borrowed
+
+        private[kyo] def complete(): Unit =
+            ended = true
+            if !borrowed && compareAndSet(false, true) then fin(Absent)
+
+        // The release is owed the failure that unwound its extent whatever it is, and the fatal itself keeps
+        // propagating. An unwind wins over any ending that already ran: the extent is being abandoned, and a release
+        // that commits on success would commit over a failure.
+        private[kyo] def drain(ex: Throwable): Unit =
+            if compareAndSet(false, true) then fin(Maybe(ex))
+
+        // the owner ended normally, so the extent's own endings are final. None of them means the extent never ran to
+        // an ending at all, and the discard signal is what the release is owed.
+        private[kyo] def discharge(ex: Throwable): Unit =
+            if compareAndSet(false, true) then
+                if ended then fin(Absent)
+                else fin(Maybe(ex))
+
+        private[kyo] def endedItsExtent: Boolean = ended
     end Cell
 
     private[kyo] object Cell:
         // the state a bracket hands to an isolated child: nothing completes or drains it, so a copy
         // holding it never runs a release and never refuses a re-entry
-        val inert: Cell[Any] = new Cell(_ => ())
+        val inert: Cell = new Cell(_ => ())
     end Cell
 
     def apply[A, S1](acquire: A < S1)[B, S2](use: A => B < S2)(
-        release: (A, Result[Nothing, B]) => Unit
+        release: (A, Maybe[Throwable]) => Unit
     )(using _frame: Frame): B < (S1 & S2) =
         val ensure = new Arrow.Ensure[A, B, S1 & S2]:
             def frame = _frame
             override def apply(a: A) =
-                val cell = new Cell[B](outcome => release(a, outcome))
+                val cell = new Cell(outcome => release(a, outcome))
                 val body =
                     try use(a)
                     catch
@@ -62,19 +93,45 @@ object Bracket:
                             try cell.drain(ex)
                             catch case t if NonFatal(t) && (t ne ex) => ex.addSuppressed(t)
                             throw ex
-                val h = new Handler.ContextHandler[Cell[B], Finalize, B, S1 & S2]:
-                    def tag                           = Tag[Finalize]
-                    def derive(outer: Maybe[Cell[B]]) = cell
+                val h = new Handler.ContextHandler[Cell, Finalize, B, S1 & S2]:
+                    def tag                        = Tag[Finalize]
+                    def derive(outer: Maybe[Cell]) = cell
                     // the bracket belongs to the computation that installed it and closes only with
                     // its own scope: an isolated child, a spawned fiber included, gets an inert copy
-                    def fork(parent: Cell[B])                                              = Cell.inert
-                    def join(parent: Cell[B], fk: Cell[B], child: Cell[B])                 = parent
-                    override private[kyo] def done(state: Cell[B], value: B): Unit         = state.complete(value)
-                    override private[kyo] def release(state: Cell[B], ex: Throwable): Unit = state.drain(ex)
-                    override private[kyo] def reenter(state: Cell[B]): Unit =
+                    def fork(parent: Cell)                                              = Cell.inert
+                    def join(parent: Cell, fk: Cell, child: Cell)                       = parent
+                    override private[kyo] def borrow(state: Cell): Unit                 = state.borrow()
+                    override private[kyo] def defers(state: Cell): Boolean              = state.isBorrowed
+                    override private[kyo] def done(state: Cell, value: B): Unit         = state.complete()
+                    override private[kyo] def release(state: Cell, ex: Throwable): Unit = state.drain(ex)
+                    override private[kyo] def discharge(state: Cell, ex: Throwable): Unit =
+                        state.discharge(ex)
+                    override private[kyo] def reenter(state: Cell): Unit =
                         if state.get() then
-                            throw new Closed("Bracket resource", _frame)(using _frame)
-                new Pending.HandleContext[Cell[B], Finalize, B, S1 & S2]:
+                            // the two ways a released bracket gets re-entered want different advice, and guessing
+                            // wrong sends the reader after the wrong cause
+                            val why =
+                                if state.endedItsExtent then
+                                    "Its extent already ran to an end, which is what released it, and this is a later " +
+                                        "resumption of a continuation that re-enters it. A handler that resumes the same " +
+                                        "continuation more than once, as Choice does, has that effect whenever the bracket " +
+                                        "sits between the handler and the suspension it answers: the first resumption ends " +
+                                        "the extent and releases. Acquire inside the branch, so each resumption gets a " +
+                                        "resource of its own, or put the bracket outside the handler, so its extent is not " +
+                                        "what gets replayed."
+                                else
+                                    "It was released when the scope that owned it ended, without its extent ever running to " +
+                                        "an end. That is what happens to a remainder handed out by a peel, such as " +
+                                        "Stream.splitAt, Emit.runFirst or Batch.capture, when it is consumed after the " +
+                                        "computation that peeled it has finished, on another fiber included: that scope " +
+                                        "cannot tell a remainder nobody will resume from one someone else still intends to " +
+                                        "resume, so it releases at its own exit. Consume the remainder inside the scope " +
+                                        "that peeled it, or use the confined form, Stream.splitAtWith, whose callback the " +
+                                        "remainder cannot escape."
+                            throw new Closed("Bracket resource", _frame, why)(using _frame)
+                        end if
+                    end reenter
+                new Pending.HandleContext[Cell, Finalize, B, S1 & S2]:
                     override def frame = _frame
                     def value          = body
                     def handler        = h

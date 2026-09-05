@@ -157,27 +157,27 @@ object Emit:
 
     /** Runs an Emit effect, allowing custom handling of each emitted value with a boolean result determining whether to continue.
       *
+      * A false result ends the emitter rather than merely stopping the calls to `f`: its continuation is never resumed, so nothing it
+      * would have done afterwards happens, and an unbounded emitter terminates. That is why the result is a `Maybe`: an emitter that
+      * was ended never produced a value, and `Absent` says so rather than inventing one.
+      *
       * @param v
       *   The computation with Emit effect
       * @param f
-      *   A function to process each emitted value
+      *   A function to process each emitted value, returning whether to keep emitting
       * @return
-      *   The result of the computation
+      *   The result of the computation, or `Absent` if `f` ended it first
       */
     def runWhile[V](using
         Frame
     )[A, VR, S, S2](v: A < (Emit[V] & Emit[VR] & S))(f: V => Boolean < S2)(using
         tag: Tag[Emit[V]],
         reduce: Reducible[Emit[VR]]
-    ): A < (reduce.SReduced & S & S2) =
+    ): Maybe[A] < (reduce.SReduced & S & S2) =
         reduce:
-            ArrowEffect.handleLoopState(tag, true, v)(
-                [C] =>
-                    (cond, input) =>
-                        if cond then
-                            f(input).map(c => Loop.continue(c, ()))
-                        else
-                            Loop.continue(cond, ())
+            ArrowEffect.handleLoop(tag, v)(
+                [C] => input => f(input).map(c => if c then Loop.continue(()) else Loop.done(Absent)),
+                done = a => Present(a)
             )
 
     /** Runs an Emit effect, capturing only the first emitted value and returning a continuation.

@@ -2676,7 +2676,7 @@ class ArrowEffectTest extends Test:
                 var sawPanic = false
                 val body: Int < Ask =
                     Bracket(Effect.defer(1))(_ => ask.map(_ + 1))((_, r) =>
-                        sawPanic = r.panic.exists(_.getMessage == "clause-boom")
+                        sawPanic = r.exists(_.getMessage == "clause-boom")
                     )
                 val out =
                     try handle(body).eval

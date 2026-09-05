@@ -2,7 +2,6 @@ package kyo
 
 import kyo.Result.Error
 import kyo.Result.Panic
-import kyo.kernel.Bracket
 import kyo.kernel.ContextEffect
 
 /** A structured effect for safe acquisition and finalization of resources.
@@ -78,22 +77,21 @@ object Scope:
       * @return
       *   The acquired resource wrapped in Resource, Sync, and S effects.
       */
-    def acquireRelease[A, S](acquire: => A < S)(release: A => Any < (Async & Abort[Throwable]))(using Frame): A < (Scope & Sync & S) =
-        Sync.defer {
-            // Registering after the acquire would leave a window: the registration is a suspension, so an
-            // interrupt pending when the acquire completes parks the computation before it is dispatched,
-            // and the abandonment finds nothing registered for what the acquire produced. So the finalizer
-            // goes in first, releasing whatever the acquire managed to produce, and the bracket below is
-            // what records it: a bracket's region is installed as the acquire is applied rather than in a
-            // suspension after it, and its release runs whether the extent completes or is abandoned.
-            val acquired = new java.util.concurrent.atomic.AtomicReference[Maybe[A]](Absent)
-            ensure {
-                Sync.defer(acquired.get()).map {
-                    case Present(resource) => release(resource)
-                    case Absent            => ()
-                }
-            }.andThen {
-                Bracket(acquire)(resource => resource)((resource, _) => acquired.set(Maybe(resource)))
+    def acquireRelease[A, S](acquire: => A < S)(release: A => Any < (Async & Abort[Throwable]))(using
+        frame: Frame
+    ): A < (Scope & Sync & S) =
+        ContextEffect.suspendWith(Tag[Scope]) { finalizer =>
+            // The finalizer is read before the acquire runs, and the registration is a plain call rather than a
+            // suspension, so `ensureMap` can put the acquire's completion and that registration in one step. Mapping
+            // with `map` instead would leave a window: the registration would be a suspension of its own, and an
+            // interrupt pending when the acquire completes parks the computation before that suspension is dispatched,
+            // leaving the abandonment nothing to release the acquired value with.
+            Sync.defer(acquire).ensureMap { resource =>
+                // Unsafe: the registration has to complete in the same step the acquire's value arrives in, which
+                // rules out returning it as an effect for the evaluator to dispatch later.
+                import AllowUnsafe.embrace.danger
+                finalizer.ensureUnsafe(_ => release(resource))
+                resource
             }
         }
 
@@ -158,6 +156,15 @@ object Scope:
     sealed abstract class Finalizer:
         def ensure(v: Maybe[Error[Any]] => Any < (Async & Abort[Throwable]))(using Frame): Unit < Sync
 
+        /** Registers a finalizer without suspending, for the one caller that cannot afford a suspension.
+          *
+          * `acquireRelease` has to record the release in the same step the acquire's value arrives in, because a
+          * suspension there could be parked by an interrupt and the acquired value would never be released. Every
+          * other caller wants [[ensure]].
+          */
+        private[kyo] def ensureUnsafe(v: Maybe[Error[Any]] => Any < (Async & Abort[Throwable]))(using Frame, AllowUnsafe): Unit
+    end Finalizer
+
     object Finalizer:
         sealed abstract class Awaitable extends Finalizer:
             def close(ex: Maybe[Error[Any]])(using Frame): Unit < Sync
@@ -174,15 +181,23 @@ object Scope:
 
                         def ensure(v: Maybe[Error[Any]] => Any < (Async & Abort[Throwable]))(using Frame): Unit < Sync =
                             Sync.Unsafe.defer {
-                                if !queue.offer(v).contains(true) then
-                                    Abort.panic(new Closed(
-                                        "Finalizer",
-                                        frame,
-                                        "This finalizer is already closed. This may happen if a background fiber escapes the scope of a 'Scope.run' call."
-                                    ))
+                                if !queue.offer(v).contains(true) then Abort.panic(closed)
                                 else ()
                             }
-                        end ensure
+
+                        private[kyo] def ensureUnsafe(v: Maybe[Error[Any]] => Any < (Async & Abort[Throwable]))(
+                            using
+                            Frame,
+                            AllowUnsafe
+                        ): Unit =
+                            if !queue.offer(v).contains(true) then throw closed
+
+                        private def closed(using Frame) =
+                            new Closed(
+                                "Finalizer",
+                                frame,
+                                "This finalizer is already closed. This may happen if a background fiber escapes the scope of a 'Scope.run' call."
+                            )
 
                         def close(ex: Maybe[Error[Any]])(using Frame): Unit < Sync =
                             Sync.Unsafe.defer {

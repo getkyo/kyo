@@ -206,7 +206,7 @@ object Poll:
         reduceEmit: Reducible[Emit[VRE]],
         reducePoll: Reducible[Poll[VRP]],
         frame: Frame
-    ): (A, B) < (reduceEmit.SReduced & reducePoll.SReduced & S & S2) =
+    ): (Maybe[A], B) < (reduceEmit.SReduced & reducePoll.SReduced & S & S2) =
         reduceEmit:
             reducePoll:
                 // Start by handling the first emission
@@ -226,14 +226,17 @@ object Poll:
                                             Loop.continue(emitCont(()), pollCont(Maybe(emitted))),
                                     // Poll.run(emitCont(ack))(pollCont(Maybe(emitted))),
                                     done = b =>
-                                        // Poller completed early (e.g., received all needed values)
-                                        // Discard remaining emit operations
-                                        Emit.runDiscard[V](emitCont(())).map(a => Loop.done((a, b)))
+                                        // Poller completed, which terminates consumption: the emitter's
+                                        // continuation is dropped rather than run to completion, so
+                                        // nothing it would have emitted afterwards happens and an
+                                        // unbounded emitter ends here. It produced no value, which is
+                                        // what Absent reports.
+                                        Loop.done((Maybe.empty[A], b))
                             ),
                         done = a =>
                             // Emitter completed (no more values to emit)
                             // Run remaining poll operations with empty chunk to signal completion
-                            Poll.run[V](Chunk.empty)(poll).map(b => Loop.done((a, b)))
+                            Poll.run[V](Chunk.empty)(poll).map(b => Loop.done((Present(a), b)))
                     )
                 }
     end runEmit

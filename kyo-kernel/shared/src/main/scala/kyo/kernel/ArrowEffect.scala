@@ -177,6 +177,47 @@ object ArrowEffect:
         end match
     end handleCont
 
+    /** Handles an arrow effect with a clause that may resume its continuation more than once.
+      *
+      * The same as [[handleCont]] except that the region holds the regions it dumps into the continuation it hands the
+      * clause. A region that discharges exactly once, a bracket's release, would otherwise fire when the first
+      * resumption ends its extent, leaving every later resumption running against something already released. Held, it
+      * is discharged where this region ends instead, once, after every resumption has run.
+      *
+      * Only a clause that really does resume more than once should use this: holding keeps the obligation longer than
+      * the clause does, so a single-shot handler would release later than it needs to for nothing. A clause that
+      * resumes more than once without using this is refused at the bracket it re-enters, with a message saying so.
+      */
+    @nowarn("msg=anonymous")
+    inline def handleContRepeated[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](
+        inline effectTag: Tag[E],
+        v: A < (E & S)
+    )(
+        inline handle: [C] => (I[C], Arrow[O[C], A, E & S & S2 & Region.NoEscape]) => A < (E & S & S2 & Region.NoEscape),
+        inline done: A => B < (S & S2)
+    )(using inline _frame: Frame): B < (S & S2) =
+        def onDone(v0: A): B < (S & S2) = done(v0)
+        v match
+            case _: Pending[?, ?] =>
+                val h =
+                    new Handler.ContHandler[I, O, E, A, B, S & S2]:
+                        def tag = effectTag
+                        def run[X](input: I[X], next: Arrow[O[X], A, E & S & S2]) =
+                            Region.discharge(handle[X](input, next))
+                        def done(state: Unit, v0: A) = onDone(v0)
+                        override def repeated        = true
+
+                new Pending.HandleArrow[Unit, E, A, B, B, S & S2]:
+                    override def frame = _frame
+                    def value          = v
+                    def handler        = h
+                    def state          = ()
+                    def cont           = Arrow.id
+                end new
+            case _ => onDone(Nested.unnest(v))
+        end match
+    end handleContRepeated
+
     /** Handles an arrow effect by providing a handler function implementation, with a recover arm.
       *
       * Like the variant without recover, with one addition: when the handled computation fails, recover is offered the failure and may
@@ -235,100 +276,6 @@ object ArrowEffect:
             case ex if NonFatal(ex) => onRecover(ex).getOrElse(throw ex)
         end try
     end handleCont
-
-    // Not on main: the first suspension is carried out of the region as a value, so handleFirst is a
-    // handleCont whose done arm answers it. FirstSuspended appears in that inline body, which is why
-    // both it and handleFirst are private[kyo].
-    abstract private[kyo] class FirstSuspended[I[_], O[_], E <: ArrowEffect[I, O], A, S]:
-        type C
-        def input: I[C]
-        def cont: Arrow[O[C], A, E & S]
-    end FirstSuspended
-
-    /** Handles the first occurrence of an arrow effect and transforms the final result. This is useful when you want to handle just the
-      * first instance of an effect and transform its result into a different type, while leaving any subsequent occurrences of the effect
-      * unhandled.
-      *
-      * The continuation handed to `handle` is the remainder of `v`, and it carries every region that sat between this handler and the
-      * operation, a bracket included. Those regions are re-installed when the holder resumes the continuation, so a bracket inside the
-      * remainder releases when the remainder completes, once. A remainder that is never resumed releases at the exit of the scope
-      * enclosing this handler, or at the end of the evaluation, with the discard outcome. A remainder resumed a second time is refused
-      * at the bracket it re-enters.
-      *
-      * @param effectTag
-      *   Identifies which arrow effect to handle
-      * @param v
-      *   The computation containing the effect to handle
-      * @param handle
-      *   Function to handle the first occurrence of the effect and transform its result
-      * @param done
-      *   Function to transform the final result if no effect is found
-      * @return
-      *   The transformed computation result
-      */
-    @nowarn("msg=anonymous")
-    private[kyo] inline def handleFirst[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](inline effectTag: Tag[E], v: A < (E & S))(
-        inline handle: [C] => (I[C], Arrow[O[C], A, E & S]) => B < (S & S2),
-        inline done: A => B < (S & S2)
-    )(using inline _frame: Frame): B < (S & S2) =
-        type First = FirstSuspended[I, O, E, A, E & S]
-        def onDone(r: A | First): B < (S & S2) =
-            r match
-                case first: First @unchecked => handle[first.C](first.input, first.cont)
-                case a                       => done(a.asInstanceOf[A])
-        v match
-            case _: Pending[?, ?] =>
-                val h =
-                    new Handler.ContHandler[I, O, E, A | First, B, S & S2]:
-                        def tag = effectTag
-                        def run[X](input0: I[X], cont0: Arrow[O[X], A | First, E & S & S2]) =
-                            new FirstSuspended[I, O, E, A, E & S]:
-                                type C = X
-                                def input = input0
-                                def cont  = cont0.asInstanceOf[Arrow[O[X], A, E & S]]
-                        def done(state: Unit, r: A | First) = onDone(r)
-                        // the token carries the region's continuation out, so what the region owes at
-                        // its exit is not orphaned: it belongs to the scope below until the holder
-                        // resumes or drops the remainder
-                        override def handsOut = true
-
-                new Pending.HandleArrow[Unit, E, A | First, B, B, S & S2]:
-                    override def frame = _frame
-                    def value          = v
-                    def handler        = h
-                    def state          = ()
-                    def cont           = Arrow.id
-                end new
-            case _ => done(Nested.unnest(v))
-        end match
-    end handleFirst
-
-    // Diverges from main: the head suspension can sit under handle, park and defer nodes, so this walks
-    // down to it instead of matching a single node. The walk is a real loop, so the method is not inline.
-    /** Inspects the head suspension of `v`. If it matches `effectTag`, invokes `f` with the suspension's input;
-      * otherwise does nothing. Unlike [[handleFirst]] this never enters the Safepoint, never executes the
-      * continuation, and never schedules a continuation. It is intended for purely-inspecting handlers that
-      * read the input as a value and produce side effects directly (e.g. registering an interrupt cascade
-      * link). Used by `IOTask.ensureInterrupt` to walk a stalled `curr` after the fiber's promise has already
-      * been completed (e.g. by an interrupt), so the Safepoint preempt flag would otherwise short-circuit the
-      * walk.
-      */
-    private[kyo] def dispatchFirst[I[_], O[_], E <: ArrowEffect[I, O], A, S](
-        effectTag: Tag[E],
-        v: A < (E & S)
-    )(
-        f: [C] => I[C] => Unit
-    ): Unit =
-        @tailrec def loop(x: Any): Unit =
-            x match
-                case kyo: Pending.SuspendArrow[I, O, E, c, ?, ?] @unchecked =>
-                    if effectTag.erased <:< kyo.tag.erased then f[c](kyo.input)
-                case kyo: Pending.Handle[?, ?, ?, ?] => loop(kyo.value)
-                case kyo: Pending.Park[?, ?]         => loop(kyo.value)
-                case kyo: Pending.Defer[?, ?, ?, ?]  => loop(kyo.value)
-                case _                               => ()
-        loop(v)
-    end dispatchFirst
 
     // Diverges from main: the clause is handed only the operation's input, the continuation reaching it
     // through the Loop.Outcome2 it answers with, and the overloads below add `done` and `recover` (D2).
@@ -682,72 +629,6 @@ object ArrowEffect:
         end try
     end handleLoopState
 
-    // Not on main: the clause is handed the suspended operation itself instead of its input, which is
-    // what lets Mask re-suspend an operation it cannot inspect.
-
-    /** Handles an arrow effect by providing a handler that receives the suspended operation itself; the result is the handled
-      * computation's value.
-      *
-      * @param effectTag
-      *   Identifies which arrow effect to handle
-      * @param v
-      *   The computation requiring the function implementation
-      * @param handle
-      *   The function implementation to provide, given the operation and the continuation
-      * @return
-      *   The computation result with the function implementation provided
-      */
-    inline def handleContOperation[E <: ArrowEffect[?, ?], A, S, S2](
-        inline effectTag: Tag[E],
-        v: A < (E & S)
-    )(
-        inline handle: [X] => (X < E, Arrow[X, A, E & S & S2 & Region.NoEscape]) => A < (E & S & S2 & Region.NoEscape)
-    )(using inline _frame: Frame): A < (S & S2) =
-        handleContOperation(effectTag, v)(handle, a => a)
-
-    /** Handles an arrow effect by providing a handler that receives the suspended operation itself, as a computation in the effect, rather
-      * than its input. The continuation is the one from the suspension point, as in handleCont.
-      *
-      * @param effectTag
-      *   Identifies which arrow effect to handle
-      * @param v
-      *   The computation requiring the function implementation
-      * @param handle
-      *   The function implementation to provide, given the operation and the continuation
-      * @param done
-      *   The function to transform the final result
-      * @return
-      *   The computation result with the function implementation provided
-      */
-    @nowarn("msg=anonymous")
-    inline def handleContOperation[E <: ArrowEffect[?, ?], A, B, S, S2](
-        inline effectTag: Tag[E],
-        v: A < (E & S)
-    )(
-        inline handle: [X] => (X < E, Arrow[X, A, E & S & S2 & Region.NoEscape]) => A < (E & S & S2 & Region.NoEscape),
-        inline done: A => B < (S & S2)
-    )(using inline _frame: Frame): B < (S & S2) =
-        def onDone(v0: A): B < (S & S2) = done(v0)
-        v match
-            case _: Pending[?, ?] =>
-                val h =
-                    new Handler.ContOpHandler[E, A, B, S & S2]:
-                        def tag = effectTag
-                        def run[X](operation: X < E, next: Arrow[X, A, E & S & S2]) =
-                            Region.discharge(handle[X](operation, next))
-                        def done(state: Unit, v0: A) = onDone(v0)
-
-                new Pending.HandleArrow[Unit, E, A, B, B, S & S2]:
-                    override def frame = _frame
-                    def value          = v
-                    def handler        = h
-                    def state          = ()
-                    def cont           = Arrow.id
-                end new
-            case _ => onDone(Nested.unnest(v))
-        end match
-    end handleContOperation
-
     // Not on main: the `With` variants fuse the continuation into the region node, so the region's
     // result flows into it without allocating a separate map node.
 
@@ -937,5 +818,212 @@ object ArrowEffect:
                 [C] => (input, cont) => input.map(cont(_))
             }
     end Mask
+
+    // Not on main: the first suspension is carried out of the region as a value, so handleFirst is a
+    // handleCont whose done arm answers it. FirstSuspended appears in that inline body, which is why
+    // both it and handleFirst are private[kyo].
+    abstract private[kyo] class FirstSuspended[I[_], O[_], E <: ArrowEffect[I, O], A, S]:
+        type C
+        def input: I[C]
+        def cont: Arrow[O[C], A, E & S]
+    end FirstSuspended
+
+    /** Handles the first occurrence of an arrow effect and transforms the final result. This is useful when you want to handle just the
+      * first instance of an effect and transform its result into a different type, while leaving any subsequent occurrences of the effect
+      * unhandled.
+      *
+      * The continuation handed to `handle` is the remainder of `v`, and it carries every region that sat between this handler and the
+      * operation, a bracket included. Those regions are re-installed when the holder resumes the continuation, so a bracket inside the
+      * remainder releases when the remainder completes, once. A remainder that is never resumed releases at the exit of the scope
+      * enclosing this handler, or at the end of the evaluation, with the discard outcome. A remainder resumed a second time is refused
+      * at the bracket it re-enters.
+      *
+      * @param effectTag
+      *   Identifies which arrow effect to handle
+      * @param v
+      *   The computation containing the effect to handle
+      * @param handle
+      *   Function to handle the first occurrence of the effect and transform its result
+      * @param done
+      *   Function to transform the final result if no effect is found
+      * @return
+      *   The transformed computation result
+      */
+    @nowarn("msg=anonymous")
+    private[kyo] inline def handleFirst[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](inline effectTag: Tag[E], v: A < (E & S))(
+        inline handle: [C] => (I[C], Arrow[O[C], A, E & S]) => B < (S & S2),
+        inline done: A => B < (S & S2)
+    )(using inline _frame: Frame): B < (S & S2) =
+        type First = FirstSuspended[I, O, E, A, E & S]
+        def onDone(r: A | First): B < (S & S2) =
+            r match
+                case first: First @unchecked => handle[first.C](first.input, first.cont)
+                case a                       => done(a.asInstanceOf[A])
+        v match
+            case _: Pending[?, ?] =>
+                val h =
+                    new Handler.ContHandler[I, O, E, A | First, B, S & S2]:
+                        def tag = effectTag
+                        def run[X](input0: I[X], cont0: Arrow[O[X], A | First, E & S & S2]) =
+                            new FirstSuspended[I, O, E, A, E & S]:
+                                type C = X
+                                def input = input0
+                                def cont  = cont0.asInstanceOf[Arrow[O[X], A, E & S]]
+                        def done(state: Unit, r: A | First) = onDone(r)
+                        // the token carries the region's continuation out, so what the region owes at
+                        // its exit is not orphaned: it belongs to the scope below until the holder
+                        // resumes or drops the remainder
+                        override def escaping = true
+
+                new Pending.HandleArrow[Unit, E, A | First, B, B, S & S2]:
+                    override def frame = _frame
+                    def value          = v
+                    def handler        = h
+                    def state          = ()
+                    def cont           = Arrow.id
+                end new
+            case _ => done(Nested.unnest(v))
+        end match
+    end handleFirst
+
+    /** [[handleFirst]] for a clause that applies the continuation it peels more than once.
+      *
+      * The remainder is handed out as usual and, on top of that, held across every application, so a bracket
+      * travelling with it is not released by whichever application finishes first. `Choice.runStream` is the shape: it
+      * applies the peeled continuation once per branch and drives the results outside the clause.
+      */
+    @nowarn("msg=anonymous")
+    private[kyo] inline def handleFirstRepeated[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](
+        inline effectTag: Tag[E],
+        v: A < (E & S)
+    )(
+        inline handle: [C] => (I[C], Arrow[O[C], A, E & S]) => B < (S & S2),
+        inline done: A => B < (S & S2)
+    )(using inline _frame: Frame): B < (S & S2) =
+        type First = FirstSuspended[I, O, E, A, E & S]
+        def onDone(r: A | First): B < (S & S2) =
+            r match
+                case first: First @unchecked => handle[first.C](first.input, first.cont)
+                case a                       => done(a.asInstanceOf[A])
+        v match
+            case _: Pending[?, ?] =>
+                val h =
+                    new Handler.ContHandler[I, O, E, A | First, B, S & S2]:
+                        def tag = effectTag
+                        def run[X](input0: I[X], cont0: Arrow[O[X], A | First, E & S & S2]) =
+                            new FirstSuspended[I, O, E, A, E & S]:
+                                type C = X
+                                def input = input0
+                                def cont  = cont0.asInstanceOf[Arrow[O[X], A, E & S]]
+                        def done(state: Unit, r: A | First) = onDone(r)
+                        // as handleFirst, and held on top of that: the holder applies the remainder more
+                        // than once, so what the region owes belongs to the scope below AND must survive
+                        // each application rather than being settled by the first
+                        override def escaping = true
+                        override def repeated = true
+
+                new Pending.HandleArrow[Unit, E, A | First, B, B, S & S2]:
+                    override def frame = _frame
+                    def value          = v
+                    def handler        = h
+                    def state          = ()
+                    def cont           = Arrow.id
+                end new
+            case _ => done(Nested.unnest(v))
+        end match
+    end handleFirstRepeated
+
+    // Diverges from main: the head suspension can sit under handle, park and defer nodes, so this walks
+    // down to it instead of matching a single node. The walk is a real loop, so the method is not inline.
+    /** Inspects the head suspension of `v`. If it matches `effectTag`, invokes `f` with the suspension's input;
+      * otherwise does nothing. Unlike [[handleFirst]] this never enters the Safepoint, never executes the
+      * continuation, and never schedules a continuation. It is intended for purely-inspecting handlers that
+      * read the input as a value and produce side effects directly (e.g. registering an interrupt cascade
+      * link). Used by `IOTask.ensureInterrupt` to walk a stalled `curr` after the fiber's promise has already
+      * been completed (e.g. by an interrupt), so the Safepoint preempt flag would otherwise short-circuit the
+      * walk.
+      */
+    private[kyo] def dispatchFirst[I[_], O[_], E <: ArrowEffect[I, O], A, S](
+        effectTag: Tag[E],
+        v: A < (E & S)
+    )(
+        f: [C] => I[C] => Unit
+    ): Unit =
+        @tailrec def loop(x: Any): Unit =
+            x match
+                case kyo: Pending.SuspendArrow[I, O, E, c, ?, ?] @unchecked =>
+                    if effectTag.erased <:< kyo.tag.erased then f[c](kyo.input)
+                case kyo: Pending.Handle[?, ?, ?, ?] => loop(kyo.value)
+                case kyo: Pending.Park[?, ?]         => loop(kyo.value)
+                case kyo: Pending.Defer[?, ?, ?, ?]  => loop(kyo.value)
+                case _                               => ()
+        loop(v)
+    end dispatchFirst
+
+    // Not on main: the clause is handed the suspended operation itself instead of its input, which is
+    // what lets Mask re-suspend an operation it cannot inspect.
+
+    /** Handles an arrow effect by providing a handler that receives the suspended operation itself; the result is the handled
+      * computation's value.
+      *
+      * @param effectTag
+      *   Identifies which arrow effect to handle
+      * @param v
+      *   The computation requiring the function implementation
+      * @param handle
+      *   The function implementation to provide, given the operation and the continuation
+      * @return
+      *   The computation result with the function implementation provided
+      */
+    private[kyo] inline def handleContOperation[E <: ArrowEffect[?, ?], A, S, S2](
+        inline effectTag: Tag[E],
+        v: A < (E & S)
+    )(
+        inline handle: [X] => (X < E, Arrow[X, A, E & S & S2 & Region.NoEscape]) => A < (E & S & S2 & Region.NoEscape)
+    )(using inline _frame: Frame): A < (S & S2) =
+        handleContOperation(effectTag, v)(handle, a => a)
+
+    /** Handles an arrow effect by providing a handler that receives the suspended operation itself, as a computation in the effect, rather
+      * than its input. The continuation is the one from the suspension point, as in handleCont.
+      *
+      * @param effectTag
+      *   Identifies which arrow effect to handle
+      * @param v
+      *   The computation requiring the function implementation
+      * @param handle
+      *   The function implementation to provide, given the operation and the continuation
+      * @param done
+      *   The function to transform the final result
+      * @return
+      *   The computation result with the function implementation provided
+      */
+    @nowarn("msg=anonymous")
+    private[kyo] inline def handleContOperation[E <: ArrowEffect[?, ?], A, B, S, S2](
+        inline effectTag: Tag[E],
+        v: A < (E & S)
+    )(
+        inline handle: [X] => (X < E, Arrow[X, A, E & S & S2 & Region.NoEscape]) => A < (E & S & S2 & Region.NoEscape),
+        inline done: A => B < (S & S2)
+    )(using inline _frame: Frame): B < (S & S2) =
+        def onDone(v0: A): B < (S & S2) = done(v0)
+        v match
+            case _: Pending[?, ?] =>
+                val h =
+                    new Handler.ContOpHandler[E, A, B, S & S2]:
+                        def tag = effectTag
+                        def run[X](operation: X < E, next: Arrow[X, A, E & S & S2]) =
+                            Region.discharge(handle[X](operation, next))
+                        def done(state: Unit, v0: A) = onDone(v0)
+
+                new Pending.HandleArrow[Unit, E, A, B, B, S & S2]:
+                    override def frame = _frame
+                    def value          = v
+                    def handler        = h
+                    def state          = ()
+                    def cont           = Arrow.id
+                end new
+            case _ => onDone(Nested.unnest(v))
+        end match
+    end handleContOperation
 
 end ArrowEffect

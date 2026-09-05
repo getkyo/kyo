@@ -83,6 +83,22 @@ object `<` extends Implicits:
             run(v, Arrow.id)
         end map
 
+        /** Maps the value this computation produces, with no preemption point between the value arriving and `f` running.
+          *
+          * `map` polls the safepoint before applying its function, so an interrupt pending when the value arrives parks the
+          * computation and `f` is never reached. That is the right default. It is wrong where `f` records an obligation the
+          * value has already created, a resource that is now open and whose finalizer is not yet registered: the park drops
+          * the registration and the value leaks. This variant applies `f` as the value arrives instead, so the two are one
+          * step and an interrupt lands on either side of the pair rather than between them.
+          */
+        inline def ensureMap[B, S2](inline f: A => B < S2)(using inline _frame: Frame): B < (S & S2) =
+            @nowarn("msg=anonymous") def step: Arrow.Ensure[A, B, S2] =
+                new Arrow.Ensure[A, B, S2]:
+                    def frame                = _frame
+                    override def apply(a: A) = f(a)
+            v.chain(step)
+        end ensureMap
+
         /** Maps the value produced by this computation to a new computation and flattens the result.
           *
           * This method exists to support for-comprehension syntax in Scala. It is identical to `map` and `map` should be preferred when not

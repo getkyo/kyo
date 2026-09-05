@@ -302,20 +302,26 @@ import scala.util.control.NonFatal
         def installed(kyo: Pending.Park[?, ?], resume: Arrow[Any, Any, Any], ctx: Context): Context =
             val entries = kyo.entries
             var ri      = 0
+            var defers  = false
             while ri < entries.regions do
                 entries.handler(ri) match
                     case hc: Handler.ContextHandler[VX, CX, ?, ?] @unchecked =>
+                        if hc.defers(entries.state(ri).asInstanceOf[VX]) then defers = true
                         try hc.reenter(entries.state(ri).asInstanceOf[VX])
                         catch
                             case ex if NonFatal(ex) =>
                                 release(kyo, ex)
                                 throw ex
+                        end try
                     case _ => ()
                 end match
                 ri += 1
             end while
 
-            stack.settle(entries)
+            // Settling hands each region back its own answerability, which a region that discharges exactly once
+            // cannot take while the continuation can be resumed again. Leaving the debt where it is keeps the
+            // obligation with the handler that dumped it, to be discharged where that handler ends.
+            if !defers then stack.settle(entries)
             stack.oweBelow(stack.depth, kyo.owed)
 
             @tailrec def install(i: Int, c: Context): Context =
@@ -357,7 +363,7 @@ import scala.util.control.NonFatal
         def arrowExit(handler: Handler.ArrowHandler[?, ?, ?, ?, ?]): Unit =
             stack.pop()
             if stack.owesAny then
-                if handler.handsOut then stack.oweBelow(stack.depth, stack.takePopped())
+                if handler.escaping then stack.oweBelow(stack.depth, stack.takePopped())
                 else drainDiscarded(stack.takePopped())
         end arrowExit
 
@@ -460,6 +466,10 @@ import scala.util.control.NonFatal
 
     private[kernel] def dumped(stack: Stack, idx: Int, kyo: Pending.Suspend[?, ?, ?, ?]): Stack.Snapshot =
         val entries = stack.dump(idx + 1)
+        // This continuation can be resumed more than once, either here or wherever it is handed to, so the regions
+        // going into it must not discharge themselves when the first resumption ends their extents. Held out of
+        // line: every answer passes through here, and only the declaring handlers walk the regions.
+        if stack.handler(idx).repeated then held(entries)
         Debugger.whenEnabled {
             var i = entries.regions - 1
             while i >= 0 do
@@ -469,10 +479,24 @@ import scala.util.control.NonFatal
         entries
     end dumped
 
+    // The regions a held continuation carries, marked so that the first resumption to end their extents records
+    // its outcome rather than discharging them; whoever owes them discharges them when it ends.
+    private def held(entries: Stack.Snapshot): Unit =
+        var i = 0
+        while i < entries.regions do
+            entries.handler(i) match
+                case hc: Handler.ContextHandler[Any, ?, ?, ?] @unchecked => hc.borrow(entries.state(i))
+                case _                                                   => ()
+            i += 1
+        end while
+    end held
+
     private def drainDiscarded(owed: Chunk[Stack.Snapshot]): Unit =
         if !owed.isEmpty then
             val signal = new KyoException("remainder discarded")(using Frame.internal)
-            drainOwed(owed, signal)
+            // the owner is ending normally, so a held region's recorded outcome is what its release is owed; the
+            // signal only stands in for a region that never ran to an ending
+            drainOwed(owed, signal, discharging = true)
             if signal.getSuppressed.length != 0 then Report.unhandled(signal)
 
     private def rebound(entries: Stack.Snapshot, ctx: Context): Context =
@@ -485,9 +509,15 @@ import scala.util.control.NonFatal
         c
     end rebound
 
-    private def released(handler: Handler.ContextHandler[?, ?, ?, ?], state: Any, ex: Throwable): Unit =
+    private def released(
+        handler: Handler.ContextHandler[?, ?, ?, ?],
+        state: Any,
+        ex: Throwable,
+        discharging: Boolean = false
+    ): Unit =
         Debugger.onRelease(handler, ex)
-        try handler.asInstanceOf[Handler.ContextHandler[Any, ContextEffect[Any], Any, Any]].release(state, ex)
+        val hc = handler.asInstanceOf[Handler.ContextHandler[Any, ContextEffect[Any], Any, Any]]
+        try if discharging then hc.discharge(state, ex) else hc.release(state, ex)
         catch
             case t if NonFatal(t) && (t ne ex) => ex.addSuppressed(t)
             case t if NonFatal(t)              => ()
@@ -552,18 +582,18 @@ import scala.util.control.NonFatal
             end while
     end expandOwed
 
-    private def releaseCollected(collected: ArrayBuffer[AnyRef], ex: Throwable): Unit =
+    private def releaseCollected(collected: ArrayBuffer[AnyRef], ex: Throwable, discharging: Boolean = false): Unit =
         var i = collected.length - 2
         while i >= 0 do
-            released(collected(i).asInstanceOf[Handler.ContextHandler[?, ?, ?, ?]], collected(i + 1), ex)
+            released(collected(i).asInstanceOf[Handler.ContextHandler[?, ?, ?, ?]], collected(i + 1), ex, discharging)
             i -= 2
         end while
     end releaseCollected
 
-    private def drainOwed(owed: Chunk[Stack.Snapshot], ex: Throwable): Unit =
+    private def drainOwed(owed: Chunk[Stack.Snapshot], ex: Throwable, discharging: Boolean = false): Unit =
         val collected = ArrayBuffer.empty[AnyRef]
         expandOwed(collected, owed)
-        releaseCollected(collected, ex)
+        releaseCollected(collected, ex, discharging)
     end drainOwed
 
     type IX[_]

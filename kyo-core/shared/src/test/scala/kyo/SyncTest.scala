@@ -6,6 +6,8 @@ import scala.util.Try
 
 class SyncTest extends kyo.test.Test[Any]:
 
+    sealed private trait Replayed extends kyo.kernel.ArrowEffect[Const[Unit], Const[Int]]
+
     "lazyRun" - {
         "execution" in {
             var called = false
@@ -232,6 +234,89 @@ class SyncTest extends kyo.test.Test[Any]:
                     assert(sideEffect)
                     assert(result == 42)
                 }
+            }
+        }
+
+        // A handler that resumes the same continuation more than once replays whatever regions that
+        // continuation carries. A bracket is one of them, and its extent is over once the first
+        // resumption completes it, so the release would have already run when the next resumption
+        // arrives. What decides the outcome is where the bracket sits, not which handler replays.
+        "under a handler that replays" - {
+
+            "every branch of a replaying handler runs against the live resource, released once after all of them" in {
+                for
+                    released <- AtomicInt.init(0)
+                    seen     <- AtomicRef.init(Chunk.empty[(Int, Int)])
+                    body = Sync.ensure(released.incrementAndGet.unit) {
+                        Choice.eval(1, 2).map(n => released.get.map(r => seen.updateAndGet(_.append((n, r))).andThen(n)))
+                    }
+                    res <- Abort.run[Closed](Choice.run(body))
+                    r   <- released.get
+                    s   <- seen.get
+                yield
+                    assert(res == Result.succeed(Chunk(1, 2)), s"$res")
+                    assert(r == 1, s"released $r")
+                    assert(s == Chunk((1, 0), (2, 0)), s"a branch did not run against a live resource: $s")
+                end for
+            }
+
+            // Holding is the handler's to ask for. A clause that resumes twice without declaring it
+            // still gets the refusal, and the refusal still has to say what happened.
+            "a handler that replays without declaring it is still refused, and the refusal says why" in {
+                import kyo.kernel.ArrowEffect
+                for
+                    released <- AtomicInt.init(0)
+                    body = (Sync.ensure(released.incrementAndGet.unit) {
+                        ArrowEffect.suspend[Any](Tag[Replayed], ())
+                    }: Int < (Replayed & Sync))
+                    res <- Abort.run[Closed] {
+                        ArrowEffect.handleCont[Const[Unit], Const[Int], Replayed, Int, Int, Sync, Any](Tag[Replayed], body)(
+                            [C] => (_, cont) => cont(1).map(a => cont(2).map(b => a + b)),
+                            a => a
+                        )
+                    }
+                yield
+                    val message = res.failure.map(_.getMessage).getOrElse("")
+                    assert(message.contains("resumption of a continuation that re-enters it"), message)
+                    assert(message.contains("Acquire inside the branch"), message)
+                end for
+            }
+
+            "a bracket acquired inside each branch gives every branch a live resource of its own" in {
+                for
+                    released <- AtomicInt.init(0)
+                    seen     <- AtomicRef.init(Chunk.empty[(Int, Int)])
+                    body = Choice.eval(1, 2).map { n =>
+                        Sync.ensure(released.incrementAndGet.unit)(released.get.map(r => seen.updateAndGet(_.append((n, r))).andThen(n)))
+                    }
+                    res <- Abort.run[Closed](Choice.run(body))
+                    r   <- released.get
+                    s   <- seen.get
+                yield
+                    assert(res == Result.succeed(Chunk(1, 2)), s"$res")
+                    assert(r == 2, s"released $r")
+                    assert(s == Chunk((1, 0), (2, 1)), s"a branch did not get its own resource: $s")
+                end for
+            }
+
+            // The bracket's extent is the suspension itself, so it ends the moment the choice is
+            // answered. Held, that ending only records: the release runs once, after every branch, so
+            // no branch reads its own resource as already gone.
+            "a bracket whose extent ends at the choice point still outlives every branch" in {
+                for
+                    released <- AtomicInt.init(0)
+                    seen     <- AtomicRef.init(Chunk.empty[(Int, Int)])
+                    body = Sync.ensure(released.incrementAndGet.unit)(Choice.eval(1, 2)).map { n =>
+                        released.get.map(r => seen.updateAndGet(_.append((n, r))).andThen(n))
+                    }
+                    res <- Abort.run[Closed](Choice.run(body))
+                    r   <- released.get
+                    s   <- seen.get
+                yield
+                    assert(r == 1, s"released $r")
+                    assert(s == Chunk((1, 0), (2, 0)), s"a branch observed its resource already released: $s")
+                    assert(res == Result.succeed(Chunk(1, 2)), s"$res")
+                end for
             }
         }
     }
