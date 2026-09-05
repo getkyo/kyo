@@ -296,6 +296,41 @@ The shape similarity that motivates the question is real and worth stating, sinc
 signals that report whether this call was the one that fired. Sharing a shape does not require
 sharing a name.
 
+## 8d. Relation to the hierarchical scope protocol
+
+`Closeable` is the type of a membership entry in `hierarchical-scopes-design.md`. The mapping:
+
+| protocol step | member used |
+|---|---|
+| `derive` / `fork` link a child | the child is constructed as a `Closeable` |
+| phase 1, signal every member | `close(reason)`, no waiting |
+| phase 2, wait for every member | `onClosed` listeners, aggregated into `closeAwait` |
+| unlink on completion | the child registers `onClosed` on itself |
+| recursion into a child scope | a scope is a `Closeable`, so phase 1 on it runs that child's own phased close |
+
+The important direction is that the protocol constrains the interface rather than the reverse. Five
+of the six items in the section 3D contract exist only because the protocol needs them:
+
+- the **signal/wait split** is forced: if `close` always waited, phase 1 would run depth-first and a
+  scope with two children would wait the first out before signalling the second;
+- **firing `onClosed` immediately when already closed** is required because phase 2 registers after
+  phase 1 and a child can finish in between, which is the lost-wakeup hang;
+- **multiple listeners** are required because a child is awaited by its parent's phase 2, by its own
+  unlink listener, and by any held handle, at the same time;
+- **idempotence** is required because phase 1 and the abandonment path can both fire the same close;
+- **the reason type** (open question 4) is a question only because phase 1 propagates the parent's
+  reason downward, where the kernel's abandonment path has only a `Throwable` to offer.
+
+What the interface gives back is the generalization the hierarchy design asks for in its section 13:
+membership stops meaning "child scopes" and starts meaning "closeables I own", so a resource with an
+async close can be a member directly rather than through a wrapper scope, and held handles become
+expressible.
+
+One deliberate misalignment: `Scope.Finalizer` would be a `Closeable`, but the kernel's `Cell`
+cannot be, since section 8b places `Closeable` in core. The two bracketing mechanisms stay typed
+differently, which is consistent with them already differing on purpose: `Bracket` forks inert,
+`Scope` forks live.
+
 ## 9. Recommendation
 
 Shape D, tiered per section 8b: `Closeable` and `Closeable.Unsafe` both in `kyo-core`, the unsafe
