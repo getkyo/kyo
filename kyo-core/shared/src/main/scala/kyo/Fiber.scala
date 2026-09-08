@@ -4,7 +4,6 @@ import java.lang.invoke.VarHandle
 import java.util.Arrays
 import kyo.Result.Panic
 import kyo.internal.Reducible
-import kyo.kernel.ContextEffect
 import kyo.kernel.Isolate
 import kyo.kernel.internal.Safepoint
 import kyo.scheduler.IOPromise
@@ -139,17 +138,18 @@ object Fiber:
         // held. It cannot wait on the fiber itself: `IOPromise.interrupt` completes that promise at the moment
         // of interrupt, before the body has released anything.
         //
-        // The body runs under a region whose only purpose is to report its end, through the region lifecycle
-        // rather than a bracket. A bracket would be missed in the one case that matters most: a fiber
-        // interrupted before its first slice never applies it, and the abandonment walk only descends into a
-        // node's value, so an unapplied `Arrow.Ensure` sitting in a continuation is never found and nothing
-        // would ever complete the promise. A region is collected by that walk whether or not it was ever
-        // installed, so all three endings report: normal completion, an unwind, and a fiber that never ran.
+        // `Sync.ensure` is what reports that end, and it reports all three: normal completion, an unwind, and
+        // a fiber interrupted before its first slice ever ran. That last one is why it is `ensure` rather
+        // than a bracket over the body. A bracket has nothing installed until its acquire's value arrives,
+        // so a fiber abandoned before then would leave this promise pending forever and the enclosing scope
+        // waiting on it, while `ensure` installs its region as a node that the abandonment walk finds
+        // whether or not a step ever ran.
         //
-        // Its own effect rather than `Scope`, so nothing about where a resource acquired inside the fiber
-        // belongs changes: that still binds to the scope this call was made in.
+        // Reporting the end is all it does. Where a resource acquired inside the fiber belongs is unchanged:
+        // that still binds to the scope this call was made in.
         Sync.Unsafe.defer(IOPromise[Nothing, Unit]()).map { released =>
-            Scope.acquireRelease(initUnscoped[E, A, S, S2](Fiber.internal.reporting(released)(v))) { fiber =>
+            val reporting = Sync.ensure(Sync.Unsafe.defer(released.completeDiscard(Result.unit)))(v)
+            Scope.acquireRelease(initUnscoped[E, A, S, S2](reporting)) { fiber =>
                 fiber.interrupt.andThen(Async.useResult(released)(_ => ()))
             }
         }
@@ -758,27 +758,6 @@ object Fiber:
         internal.gather(max)(iterable)
 
     private[kyo] object internal:
-
-        /** A region whose only purpose is to report the end of the body it encloses.
-          *
-          * The state is the promise to complete, so the abandonment walk, which reconstructs a region's state
-          * with `derive(Absent)` for a region that was never installed, reaches the same promise a running one
-          * would. That is why this is a region rather than a bracket: a fiber interrupted before its first
-          * slice never applies a bracket, and the walk only descends into a node's value, so an unapplied one
-          * is never found and the promise would stay pending forever.
-          */
-        sealed private trait Reported extends ContextEffect[IOPromise[Nothing, Unit]]
-
-        def reporting[A, S](released: IOPromise[Nothing, Unit])(v: => A < S)(using Frame): A < S =
-            type P = IOPromise[Nothing, Unit]
-            ContextEffect.handle(Tag[Reported])(
-                derive = (_: Maybe[P]) => released,
-                fork = (parent: P) => parent,
-                join = (parent: P, _: P, _: P) => parent,
-                done = (state: P) => state.completeDiscard(Result.unit),
-                release = (state: P, _: Throwable) => state.completeDiscard(Result.unit)
-            )(v)
-        end reporting
 
         // the public initUnscoped with the internal Keep policy: the async-rowed combinators admit async
         // isolates, and capture answers at `Remove & S`, so the spawn itself stays Sync
