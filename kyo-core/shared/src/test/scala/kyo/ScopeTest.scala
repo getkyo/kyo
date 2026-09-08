@@ -571,6 +571,26 @@ class ScopeTest extends kyo.test.Test[Any]:
             end for
         }
 
+        // An interrupt completes a fiber's promise at once, but the body it was running still has to unwind
+        // for what it bracketed to be released, and a parked fiber has no slice in flight to notice. The
+        // task is rescheduled for exactly that reason, so the release happens; this pins it, because
+        // nothing else covers a fiber interrupted while parked rather than while running.
+        "an interrupted parked fiber runs its brackets" in {
+            for
+                ran     <- AtomicInt.init(0)
+                started <- Latch.init(1)
+                p       <- Promise.init[Int, Any]
+                fiber <- Fiber.initUnscoped(
+                    Sync.ensure(ran.incrementAndGet.unit)(started.release.andThen(p.get))
+                )
+                _ <- started.await
+                _ <- fiber.interrupt
+                _ <- Async.sleep(500.millis)
+                n <- ran.get
+            yield assert(n == 1, s"bracket ran $n times")
+            end for
+        }
+
         "multiple fibers in scope all interrupted" in {
             for
                 counter  <- AtomicInt.init(0)

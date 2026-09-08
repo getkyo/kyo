@@ -1,6 +1,5 @@
 package kyo
 
-import java.util.concurrent.ConcurrentHashMap
 import kyo.Result.Error
 import kyo.Result.Panic
 import kyo.kernel.ContextEffect
@@ -141,23 +140,31 @@ object Scope:
     def run[A, S](closeParallelism: Int)(v: A < (Scope & S))(using frame: Frame): A < (Async & S) =
         Sync.Unsafe.defer {
             val finalizer = Finalizer.Unsafe.init(closeParallelism)
-            // The three hooks are the whole hierarchy. `derive` runs when this region installs, so a run
-            // nested inside another joins its parent there; `fork` gives a computation crossing an isolation
-            // boundary a scope of its own, already a member of the one it left; `join` closes that scope when
-            // the crossing returns. Nothing reports upward: a parent reaches down through its membership.
+            // A scope is closed at the end of the `Scope.run` that opened it, and nowhere else.
+            //
+            // A run nested inside another registers one finalizer in the enclosing scope: wait for me. That is
+            // the whole relationship. A nested run always closes itself, inline when it returns and through
+            // the `Sync.ensure` below when it is interrupted, so an enclosing scope never has to close it, only
+            // to wait, and the unwind path is where waiting matters because a synchronous bracket release
+            // cannot await. Being an ordinary finalizer it also takes its place in the existing LIFO order.
+            //
+            // Tolerantly, because the enclosing scope may already be closed: a fiber that outlived it carries
+            // its binding, and a nested run there has nobody to wait for it. Nothing leaks, so nothing raises.
+            //
+            // A crossing gets no scope of its own. It shares the one it left, which is what binds a forked
+            // computation's resources to the caller's ambient scope: the lifetime of a resource must not
+            // depend on whether a combinator happened to fork internally. `groupedWithin` states the same
+            // rule at its own spawn, and `StreamCoreExtensionsTest:890` pins it.
             ContextEffect.handle(Tag[Scope])(
                 derive = (outer: Maybe[Finalizer]) =>
-                    outer.foreach(_.addChild(finalizer))
+                    outer.foreach { enclosing =>
+                        import AllowUnsafe.embrace.danger
+                        enclosing.ensureIfOpen(_ => finalizer.await)
+                    }
                     finalizer
                 ,
-                fork = (parent: Finalizer) => parent.newChild(),
-                join = (parent: Finalizer, _: Finalizer, child: Finalizer) =>
-                    // The crossing returned, so the child's extent is over and what it acquired is released
-                    // now rather than at the end of the scope it left. It stays in membership until that
-                    // release finishes, so a parent closing meanwhile still waits for it.
-                    import AllowUnsafe.embrace.danger
-                    child.closeUnsafe(Absent)
-                    parent
+                fork = (parent: Finalizer) => parent,
+                join = (parent: Finalizer, _: Finalizer, _: Finalizer) => parent
             )(v)
                 .handle(
                     Sync.ensure(finalizer.close),
@@ -170,12 +177,10 @@ object Scope:
                 }
         }
 
-    /** A node in the scope hierarchy: the finalizers registered against one scope, and the scopes derived or
-      * forked from it.
+    /** The finalizers registered against one scope, run in reverse registration order when it closes.
       *
-      * A scope's children are the scopes born under it, and closing one closes its children first and does not
-      * run its own finalizers until they have finished. That is what makes a scope's release cover everything
-      * that ran inside it rather than only what it registered directly.
+      * A run nested inside another registers a single finalizer in the enclosing scope, waiting on this one's
+      * [[await]], so an enclosing scope releases nothing until the runs inside it have finished releasing.
       */
     sealed abstract class Finalizer:
         def ensure(v: Maybe[Error[Any]] => Any < (Async & Abort[Throwable]))(using Frame): Unit < Sync
@@ -188,25 +193,20 @@ object Scope:
           */
         private[kyo] def ensureUnsafe(v: Maybe[Error[Any]] => Any < (Async & Abort[Throwable]))(using Frame, AllowUnsafe): Unit
 
-        /** Takes a scope born under this one into membership. Idempotent: the same child added twice is one member. */
-        private[kyo] def addChild(child: Finalizer)(using AllowUnsafe): Unit
+        /** Registers `v` if this scope is still open, and does nothing if it is not.
+          *
+          * [[ensureUnsafe]] raises on a closed scope because a release that cannot be registered is a resource
+          * that will never be freed. This is for the registration where failing is not a leak: a nested run
+          * asking to be waited for. If the enclosing scope has already closed there is nobody left to wait, and
+          * the nested run still closes itself. That happens whenever a fiber outlives the scope it captured,
+          * which is the case the raised message describes.
+          */
+        private[kyo] def ensureIfOpen(v: Maybe[Error[Any]] => Any < (Async & Abort[Throwable]))(using Frame, AllowUnsafe): Unit
 
-        /** Drops a child whose release has finished, so a scope that outlives many of them does not accumulate. */
-        private[kyo] def removeChild(child: Finalizer)(using AllowUnsafe): Unit
-
-        /** Builds the scope for a computation crossing an isolation boundary, already a member of this one. */
-        private[kyo] def newChild()(using Frame, AllowUnsafe): Finalizer
-
-        /** Runs `f` once this scope has finished releasing. */
-        private[kyo] def onClosed(f: () => Unit)(using AllowUnsafe): Unit
-
-        /** Closes this scope without waiting, for the caller that has no effect context to wait in. */
-        private[kyo] def closeUnsafe(ex: Maybe[Error[Any]])(using Frame, AllowUnsafe): Unit
-
-        /** Closes this scope: children first, then this scope's own finalizers once they have finished. */
+        /** Closes this scope, running its finalizers in reverse registration order. */
         def close(ex: Maybe[Error[Any]])(using Frame): Unit < Sync
 
-        /** Completes when this scope and everything under it has finished releasing. */
+        /** Completes when this scope has finished releasing. */
         def await(using Frame): Unit < Async
     end Finalizer
 
@@ -219,10 +219,6 @@ object Scope:
                         Access.MultiProducerSingleConsumer
                     )
                     val promise = Promise.Unsafe.init[Unit, Any]().safe
-
-                    // Membership. A set rather than a count, because closing reaches down through it and a
-                    // count could only be waited on. Removal is why it is not the finalizer queue.
-                    val children = ConcurrentHashMap.newKeySet[Finalizer]()
 
                     def ensure(v: Maybe[Error[Any]] => Any < (Async & Abort[Throwable]))(using Frame): Unit < Sync =
                         Sync.Unsafe.defer {
@@ -237,27 +233,12 @@ object Scope:
                     ): Unit =
                         if !queue.offer(v).contains(true) then throw closed
 
-                    private[kyo] def addChild(child: Finalizer)(using AllowUnsafe): Unit =
-                        discard(children.add(child))
-
-                    private[kyo] def removeChild(child: Finalizer)(using AllowUnsafe): Unit =
-                        discard(children.remove(child))
-
-                    private[kyo] def newChild()(using Frame, AllowUnsafe): Finalizer =
-                        val child = Finalizer.Unsafe.init(parallelism)
-                        addChild(child)
-                        // Membership ends when the child has finished releasing, not when its extent ends. A
-                        // child dropped at the end of its extent would still be running its finalizers, and
-                        // this scope would stop waiting for releases that had not happened.
-                        child.onClosed(() => discard(children.remove(child)))
-                        child
-                    end newChild
-
-                    private[kyo] def onClosed(f: () => Unit)(using AllowUnsafe): Unit =
-                        promise.unsafe.onComplete(_ => f())
-
-                    private[kyo] def closeUnsafe(ex: Maybe[Error[Any]])(using Frame, AllowUnsafe): Unit =
-                        Sync.Unsafe.evalOrThrow(close(ex))
+                    private[kyo] def ensureIfOpen(v: Maybe[Error[Any]] => Any < (Async & Abort[Throwable]))(
+                        using
+                        Frame,
+                        AllowUnsafe
+                    ): Unit =
+                        discard(queue.offer(v))
 
                     private def closed(using Frame) =
                         new Closed(
@@ -269,28 +250,20 @@ object Scope:
                     def close(ex: Maybe[Error[Any]])(using Frame): Unit < Sync =
                         Sync.Unsafe.defer {
                             queue.close() match
-                                case Absent         => ()
+                                case Absent => ()
                                 case Present(tasks) =>
-                                    // Snapshot before closing: a child linked after this point belongs to a
-                                    // computation that escaped, and its own registration already fails.
-                                    val kids = Chunk.from(children.toArray(Array.empty[Finalizer]))
-                                    // Children first and their releases awaited, so this scope never releases
-                                    // something a scope under it may still hold. Own finalizers stay LIFO.
-                                    Kyo.foreachDiscard(kids)(_.close(ex))
-                                        .andThen(Kyo.foreachDiscard(kids)(_.await))
-                                        .andThen {
-                                            if tasks.isEmpty then Kyo.unit
-                                            else
-                                                Async.foreachDiscard(tasks.reverse, parallelism) { task =>
-                                                    Abort.run[Throwable](task(ex))
-                                                        .map(_.foldError(
-                                                            _ => (),
-                                                            ex => Log.error("Scope finalizer failed", ex.exception)
-                                                        ))
-                                                }
+                                    if tasks.isEmpty then
+                                        promise.completeUnitDiscard
+                                    else
+                                        Async.foreachDiscard(tasks.reverse, parallelism) { task =>
+                                            Abort.run[Throwable](task(ex))
+                                                .map(_.foldError(
+                                                    _ => (),
+                                                    ex => Log.error("Scope finalizer failed", ex.exception)
+                                                ))
                                         }
-                                        .handle(Fiber.initUnscoped[Nothing, Unit, Any, Any])
-                                        .map(promise.becomeDiscard)
+                                            .handle(Fiber.initUnscoped[Nothing, Unit, Any, Any])
+                                            .map(promise.becomeDiscard)
                         }
 
                     def await(using Frame): Unit < Async = promise.get
