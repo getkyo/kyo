@@ -140,7 +140,39 @@ object Sync:
         ct: ConcreteTag[E],
         inline frame: Frame
     ): A < (Sync & Abort[E] & S) =
-        acquireReleaseWith(())((_, outcome) => f(outcome.error))(_ => v)
+        // `Bracket.ensuring` rather than a bracket over a `()` acquire, because there is a difference between
+        // the two that this method needs. A bracket cannot install its region until the acquire's value
+        // arrives, so a computation abandoned before it ever ran has no region and the finalizer does not
+        // run: right for a bracket, since nothing was acquired, and wrong here, where the caller asked for
+        // cleanup that always occurs and may well be closing over something acquired outside. `ensuring`
+        // installs the region as a node, which the abandonment walk finds whether or not a step ever ran.
+        //
+        // The kernel does not know `Abort`, so it cannot tell the finalizer that the body aborted. It does
+        // not have to: `Abort` is a suspension, so `Abort.run` hands the outcome back as a value, and the
+        // finalizer is called from there with the failure typed as it came. What is left for the kernel to
+        // answer for is the extent ending without that value ever arriving, which is an unwind or an
+        // abandonment, and either is a panic.
+        //
+        // The call sits inside the region rather than after it. After it there is a dispatch boundary
+        // between the region's exit and the call, and an interrupt landing in it would park a computation
+        // whose region has already ended, leaving the finalizer to nobody.
+        //
+        // Unsafe at both call sites: the finalizer runs where nothing is installed to answer for it, which
+        // is all an interpreter that is ending can offer, so it runs to completion and only its own Abort
+        // surfaces, as a throw.
+        Bracket.ensuring {
+            // constructed rather than through `Result.Panic.apply`, which refuses to hold a fatal
+            case Present(ex) =>
+                discard(Sync.Unsafe.evalOrThrow(f(Present(new Result.Panic(ex))))(using summon[Frame], AllowUnsafe.embrace.danger))
+            // the body produced its outcome and the map below already ran the finalizer with it
+            case Absent => ()
+        } {
+            Abort.run[E](v).map { result =>
+                discard(Sync.Unsafe.evalOrThrow(f(result.error))(using summon[Frame], AllowUnsafe.embrace.danger))
+                result
+            }
+        }.map(result => Abort.get(result))
+    end ensure
 
     /** Retrieves a local value and applies a function that can perform side effects.
       *

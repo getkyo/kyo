@@ -93,50 +93,77 @@ object Bracket:
                             try cell.drain(ex)
                             catch case t if NonFatal(t) && (t ne ex) => ex.addSuppressed(t)
                             throw ex
-                val h = new Handler.ContextHandler[Cell, Finalize, B, S1 & S2]:
-                    def tag                        = Tag[Finalize]
-                    def derive(outer: Maybe[Cell]) = cell
-                    // the bracket belongs to the computation that installed it and closes only with
-                    // its own scope: an isolated child, a spawned fiber included, gets an inert copy
-                    def fork(parent: Cell)                                              = Cell.inert
-                    def join(parent: Cell, fk: Cell, child: Cell)                       = parent
-                    override private[kyo] def borrow(state: Cell): Unit                 = state.borrow()
-                    override private[kyo] def defers(state: Cell): Boolean              = state.isBorrowed
-                    override private[kyo] def done(state: Cell, value: B): Unit         = state.complete()
-                    override private[kyo] def release(state: Cell, ex: Throwable): Unit = state.drain(ex)
-                    override private[kyo] def discharge(state: Cell, ex: Throwable): Unit =
-                        state.discharge(ex)
-                    override private[kyo] def reenter(state: Cell): Unit =
-                        if state.get() then
-                            // the two ways a released bracket gets re-entered want different advice, and guessing
-                            // wrong sends the reader after the wrong cause
-                            val why =
-                                if state.endedItsExtent then
-                                    "Its extent already ran to an end, which is what released it, and this is a later " +
-                                        "resumption of a continuation that re-enters it. A handler that resumes the same " +
-                                        "continuation more than once, as Choice does, has that effect whenever the bracket " +
-                                        "sits between the handler and the suspension it answers: the first resumption ends " +
-                                        "the extent and releases. Acquire inside the branch, so each resumption gets a " +
-                                        "resource of its own, or put the bracket outside the handler, so its extent is not " +
-                                        "what gets replayed."
-                                else
-                                    "It was released when the scope that owned it ended, without its extent ever running to " +
-                                        "an end. That is what happens to a remainder handed out by a peel, such as " +
-                                        "Stream.splitAt, Emit.runFirst or Batch.capture, when it is consumed after the " +
-                                        "computation that peeled it has finished, on another fiber included: that scope " +
-                                        "cannot tell a remainder nobody will resume from one someone else still intends to " +
-                                        "resume, so it releases at its own exit. Consume the remainder inside the scope " +
-                                        "that peeled it, or use the confined form, Stream.splitAtWith, whose callback the " +
-                                        "remainder cannot escape."
-                            throw new Closed("Bracket resource", _frame, why)(using _frame)
-                        end if
-                    end reenter
-                new Pending.HandleContext[Cell, Finalize, B, S1 & S2]:
-                    override def frame = _frame
-                    def value          = body
-                    def handler        = h
-                end new
+                region(cell, body)
             end apply
         Effect.defer(acquire).chain(ensure)
     end apply
+
+    /** Runs `release` when `body`'s extent ends, with nothing to acquire first.
+      *
+      * [[apply]] cannot install its region until the acquire's value arrives, because the release is owed that
+      * value, so a computation abandoned before it ever ran has no region and nothing to release, which is
+      * right: nothing was acquired. Here there is nothing to wait for, so the region is a node from the start
+      * and the abandonment walk finds it whether or not a single step ever ran. That is the difference between
+      * "release what I acquired" and "run this however the extent ends", and only the second can promise to run
+      * for a computation that never started.
+      */
+    def ensuring[B, S](release: Maybe[Throwable] => Unit)(body: => B < S)(using _frame: Frame): B < S =
+        val cell = new Cell(release)
+        val b =
+            try body
+            catch
+                case ex =>
+                    try cell.drain(ex)
+                    catch case t if NonFatal(t) && (t ne ex) => ex.addSuppressed(t)
+                    throw ex
+        region(cell, b)
+    end ensuring
+
+    // The region both entry points install: the same cell, the same custody, so a bracket and an `ensuring`
+    // behave identically once installed and differ only in when that happens.
+    private def region[B, S](cell: Cell, body: B < S)(using _frame: Frame): B < S =
+        val h = new Handler.ContextHandler[Cell, Finalize, B, S]:
+            def tag                        = Tag[Finalize]
+            def derive(outer: Maybe[Cell]) = cell
+            // the bracket belongs to the computation that installed it and closes only with
+            // its own scope: an isolated child, a spawned fiber included, gets an inert copy
+            def fork(parent: Cell)                                              = Cell.inert
+            def join(parent: Cell, fk: Cell, child: Cell)                       = parent
+            override private[kyo] def borrow(state: Cell): Unit                 = state.borrow()
+            override private[kyo] def defers(state: Cell): Boolean              = state.isBorrowed
+            override private[kyo] def done(state: Cell, value: B): Unit         = state.complete()
+            override private[kyo] def release(state: Cell, ex: Throwable): Unit = state.drain(ex)
+            override private[kyo] def discharge(state: Cell, ex: Throwable): Unit =
+                state.discharge(ex)
+            override private[kyo] def reenter(state: Cell): Unit =
+                if state.get() then
+                    // the two ways a released bracket gets re-entered want different advice, and guessing
+                    // wrong sends the reader after the wrong cause
+                    val why =
+                        if state.endedItsExtent then
+                            "Its extent already ran to an end, which is what released it, and this is a later " +
+                                "resumption of a continuation that re-enters it. A handler that resumes the same " +
+                                "continuation more than once, as Choice does, has that effect whenever the bracket " +
+                                "sits between the handler and the suspension it answers: the first resumption ends " +
+                                "the extent and releases. Acquire inside the branch, so each resumption gets a " +
+                                "resource of its own, or put the bracket outside the handler, so its extent is not " +
+                                "what gets replayed."
+                        else
+                            "It was released when the scope that owned it ended, without its extent ever running to " +
+                                "an end. That is what happens to a remainder handed out by a peel, such as " +
+                                "Stream.splitAt, Emit.runFirst or Batch.capture, when it is consumed after the " +
+                                "computation that peeled it has finished, on another fiber included: that scope " +
+                                "cannot tell a remainder nobody will resume from one someone else still intends to " +
+                                "resume, so it releases at its own exit. Consume the remainder inside the scope " +
+                                "that peeled it, or use the confined form, Stream.splitAtWith, whose callback the " +
+                                "remainder cannot escape."
+                    throw new Closed("Bracket resource", _frame, why)(using _frame)
+                end if
+            end reenter
+        new Pending.HandleContext[Cell, Finalize, B, S]:
+            override def frame = _frame
+            def value          = body
+            def handler        = h
+        end new
+    end region
 end Bracket
