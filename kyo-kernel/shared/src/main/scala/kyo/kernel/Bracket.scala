@@ -108,20 +108,28 @@ object Bracket:
       * for a computation that never started.
       */
     def ensuring[B, S](release: Maybe[Throwable] => Unit)(body: => B < S)(using _frame: Frame): B < S =
-        val cell = new Cell(release)
-        val b =
-            try body
-            catch
-                case ex =>
-                    try cell.drain(ex)
-                    catch case t if NonFatal(t) && (t ne ex) => ex.addSuppressed(t)
-                    throw ex
-        region(cell, b)
+        // The cell is minted by `derive`, which the evaluator calls once per evaluation of this node, so a
+        // value used twice gets a guard of its own rather than the second use re-entering a released one.
+        // The body is deferred for the same reason: `Effect.defer` runs it on application, so each
+        // evaluation runs it again, which is what a by-name body promises its caller.
+        //
+        // The deferral is also what keeps the abandonment walk off it. That walk descends into a node's
+        // `value`, and a `DeferWith`'s value is a stable unit, so the body is reached by applying the arrow
+        // and never by walking it. A body held directly here would run the caller's side effect during a
+        // walk that only meant to find what to release.
+        //
+        // No try/catch around the body, unlike [[apply]]: the evaluator installs the region before it
+        // evaluates the node's value, so a throw from the body unwinds with the region already on the
+        // stack and reaches the release that way. [[apply]] cannot rely on that, because its use runs as
+        // the acquire's value arrives, which is before its region exists.
+        region(new Cell(release), Effect.defer(body))
     end ensuring
 
-    // The region both entry points install: the same cell, the same custody, so a bracket and an `ensuring`
-    // behave identically once installed and differ only in when that happens.
-    private def region[B, S](cell: Cell, body: B < S)(using _frame: Frame): B < S =
+    // The region both entry points install: the same custody, so a bracket and an `ensuring` behave
+    // identically once installed and differ only in when that happens, and in where the cell comes from.
+    // A bracket's cell closes over the acquired value and is made once per application, so it hands the
+    // same one back; an `ensuring` has nothing to close over and mints one per evaluation.
+    private def region[B, S](cell: => Cell, body: B < S)(using _frame: Frame): B < S =
         val h = new Handler.ContextHandler[Cell, Finalize, B, S]:
             def tag                        = Tag[Finalize]
             def derive(outer: Maybe[Cell]) = cell
