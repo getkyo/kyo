@@ -88,12 +88,15 @@ object Sync:
         // First failure wins, because a handler that replays ends the extent once per resumption: a
         // branch that aborted must not be overwritten by a later branch that succeeded, or a release
         // that commits on success would commit over it.
-        val aborted = new java.util.concurrent.atomic.AtomicReference[Maybe[Result.Error[Any]]](Absent)
+        val aborted = AtomicRef.Unsafe.init[Maybe[Result.Error[Any]]](Absent)(using AllowUnsafe.embrace.danger)
         // Unsafe: the kernel's release is synchronous, so the effectful release runs to completion here,
         // and only its own Abort surfaces, as a throw
         Bracket(acquire) { resource =>
             Abort.run[E](use(resource)).map { result =>
-                result.foldError(_ => (), e => discard(aborted.compareAndSet(Absent, Maybe(e))))
+                result.foldError(
+                    _ => (),
+                    e => discard(aborted.compareAndSet(Absent, Maybe(e))(using AllowUnsafe.embrace.danger))
+                )
                 result
             }
         } { (resource, failure) =>
@@ -102,7 +105,7 @@ object Sync:
                     // constructed rather than built through `Result.Panic.apply`, which refuses to hold a fatal:
                     // the release is owed the failure that ended its extent whatever it is
                     case Present(ex) => new Result.Panic(ex)
-                    case Absent      => aborted.get().getOrElse(Result.unit)
+                    case Absent      => aborted.get()(using AllowUnsafe.embrace.danger).getOrElse(Result.unit)
             discard(Sync.Unsafe.evalOrThrow(release(resource, outcome))(using summon[Frame], AllowUnsafe.embrace.danger))
         }.map(result => Abort.get(result))
     end acquireReleaseWith
@@ -147,28 +150,35 @@ object Sync:
         // cleanup that always occurs and may well be closing over something acquired outside. `ensuring`
         // installs the region as a node, which the abandonment walk finds whether or not a step ever ran.
         //
-        // The kernel does not know `Abort`, so it cannot tell the finalizer that the body aborted. It does
-        // not have to: `Abort` is a suspension, so `Abort.run` hands the outcome back as a value, and the
-        // finalizer is called from there with the failure typed as it came. What is left for the kernel to
-        // answer for is the extent ending without that value ever arriving, which is an unwind or an
-        // abandonment, and either is a panic.
+        // The abort routing below is the same as `acquireReleaseWith`'s and is here for the same reason: the
+        // kernel does not know `Abort`, so without it the finalizer would still run on a typed abort but
+        // would be told the discard signal rather than the failure the caller raised.
         //
-        // The call sits inside the region rather than after it. After it there is a dispatch boundary
-        // between the region's exit and the call, and an interrupt landing in it would park a computation
-        // whose region has already ended, leaving the finalizer to nobody.
+        // The finalizer has exactly one call site, the release, because that is the only place that knows
+        // whether this ending fires now or is held: under a handler that replays, an ending only records
+        // and the release runs once after every branch. Calling the finalizer from the body instead, where
+        // the outcome is already in hand, closes the resource at the first branch's ending and the branches
+        // after it run against a resource that is gone. So the body leaves the failure here and the release
+        // reads it, rather than calling the finalizer itself.
         //
-        // Unsafe at both call sites: the finalizer runs where nothing is installed to answer for it, which
-        // is all an interpreter that is ending can offer, so it runs to completion and only its own Abort
-        // surfaces, as a throw.
-        Bracket.ensuring {
-            // constructed rather than through `Result.Panic.apply`, which refuses to hold a fatal
-            case Present(ex) =>
-                discard(Sync.Unsafe.evalOrThrow(f(Present(new Result.Panic(ex))))(using summon[Frame], AllowUnsafe.embrace.danger))
-            // the body produced its outcome and the map below already ran the finalizer with it
-            case Absent => ()
+        // First failure wins, because a handler that replays ends the extent once per resumption: a branch
+        // that aborted must not be overwritten by a later branch that succeeded, or a release that commits
+        // on success would commit over it.
+        val aborted = AtomicRef.Unsafe.init[Maybe[Result.Error[Any]]](Absent)(using AllowUnsafe.embrace.danger)
+        Bracket.ensuring { failure =>
+            val outcome: Maybe[Result.Error[Any]] =
+                failure match
+                    // constructed rather than through `Result.Panic.apply`, which refuses to hold a fatal
+                    case Present(ex) => Present(new Result.Panic(ex))
+                    case Absent      => aborted.get()(using AllowUnsafe.embrace.danger)
+            // Unsafe: the kernel's release is synchronous, so the effectful finalizer runs to completion here
+            discard(Sync.Unsafe.evalOrThrow(f(outcome))(using summon[Frame], AllowUnsafe.embrace.danger))
         } {
             Abort.run[E](v).map { result =>
-                discard(Sync.Unsafe.evalOrThrow(f(result.error))(using summon[Frame], AllowUnsafe.embrace.danger))
+                result.foldError(
+                    _ => (),
+                    e => discard(aborted.compareAndSet(Absent, Maybe(e))(using AllowUnsafe.embrace.danger))
+                )
                 result
             }
         }.map(result => Abort.get(result))
