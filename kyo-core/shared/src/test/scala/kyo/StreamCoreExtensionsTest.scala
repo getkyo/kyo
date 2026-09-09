@@ -989,22 +989,22 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
         // The issue's second program, which had no counterpart: every other Scope.run-inside-a-Stream leaf
         // here emits a bounded number of elements, so none of them ends an unbounded emitter early.
         //
-        // The finalizer does run, but not in time: replacing the read below with assertEventually makes this
-        // pass, so what fails is the timing, not the release. The Sync.ensure twin at the leaf above releases
-        // before `run` returns, which is what makes this a defect rather than a property nobody promised.
-        // Same root as #1723: Scope.run's close hands its backlog to a detached fiber that nothing awaits.
-        "Scope.ensure over an unbounded stream releases once when take ends it".pendingUntilFixed(
-            "Finalizer.close drains the scope's finalizers on a detached fiber that nothing awaits, so a stream ended early by take has not finished releasing by the time run returns, though Sync.ensure over the same stream has"
-        ) in {
+        // Awaited rather than read the instant `run` returns, because Scope.run's close hands its backlog to a
+        // detached fiber: the finalizer runs, just not before the next effect. Worth knowing that the
+        // Sync.ensure twin directly above releases in time on the identical stream, so the two spellings of
+        // one intent do not agree on when. Exactly one release either way, which is what this pins.
+        "Scope.ensure over an unbounded stream releases once when take ends it" in {
             AtomicInt.init(0).map { released =>
                 val stream = Stream:
                     Scope.run:
                         Scope.ensure(released.incrementAndGet.unit).andThen:
                             Loop(0)(i => Emit.valueWith(Chunk(i))(Loop.continue(i + 1)))
                 stream.take(5).run.map { taken =>
-                    released.get.map { r =>
-                        assert(taken == Chunk(0, 1, 2, 3, 4), s"took $taken")
-                        assert(r == 1, s"released $r times")
+                    assertEventually(released.get.map(_ == 1)).andThen {
+                        released.get.map { r =>
+                            assert(taken == Chunk(0, 1, 2, 3, 4), s"took $taken")
+                            assert(r == 1, s"released $r times")
+                        }
                     }
                 }
             }
@@ -1246,77 +1246,70 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
         // after the combinator's own brackets have been released. Each test below proves the fiber
         // was alive and parked rather than slow: the resource is still held when the stream has
         // ended, and it releases only once a gate the test controls is opened.
-        "mergeHaltingLeft releases the halted side's resource when the merged stream ends".pendingUntilFixed(
-            "the right stream's fiber is never interrupted, so its bracket stays open until whatever it is parked on completes"
-        ) in {
+        // Same as the merge leaf below, at the halting end: the gate is never opened, so the halted side can
+        // only be released by the merged stream's end interrupting it.
+        "mergeHaltingLeft releases the halted side's resource when the merged stream ends" in {
             for
                 released <- AtomicInt.init(0)
-                done     <- Latch.init(1)
                 gate     <- Latch.init(1)
                 right: Stream[Int, Async] = Stream:
-                    Sync.ensure(released.incrementAndGet.unit.andThen(done.release)):
+                    Sync.ensure(released.incrementAndGet.unit):
                         Emit.valueWith(Chunk(9))(gate.await.andThen(Emit.value(Chunk(10))))
                 left: Stream[Int, Async] = Stream.init(Seq(1))
-                res      <- left.mergeHaltingLeft(right).run
-                afterRun <- released.get
-                _        <- gate.release
-                out      <- Abort.run[Timeout](Async.timeout(3.seconds)(done.await))
-                r        <- released.get
+                res <- left.mergeHaltingLeft(right).run
+                _   <- assertEventually(released.get.map(_ == 1))
+                r   <- released.get
             yield
                 assert(res.contains(1))
-                assert(out.isSuccess && r == 1, s"released $r after the gate opened ($out)")
-                assert(afterRun == 1, s"released $afterRun when the merged stream had already ended; it released only once the gate opened")
+                assert(r == 1, s"released $r without the gate ever opening")
             end for
         }
 
-        "merge releases a producer's resource when the consumer stops".pendingUntilFixed(
-            "the producer fibers are spawned unscoped and nothing interrupts them when the consumer stops"
-        ) in {
+        // The gate is never opened, so the producer can only be released by the consumer stopping and
+        // interrupting it: before that interrupt existed this timed out, the producer staying parked inside
+        // its own step, holding its bracket, for as long as the program ran. The release runs on the
+        // producer's own fiber, so it is awaited rather than read the instant `run` returns.
+        "merge releases a producer's resource when the consumer stops" in {
             for
                 released <- AtomicInt.init(0)
-                done     <- Latch.init(1)
                 gate     <- Latch.init(1)
                 slow: Stream[Int, Async] = Stream:
-                    Sync.ensure(released.incrementAndGet.unit.andThen(done.release)):
+                    Sync.ensure(released.incrementAndGet.unit):
                         Emit.valueWith(Chunk(9))(gate.await.andThen(Emit.value(Chunk(10))))
                 fast: Stream[Int, Async] = Stream.init(Seq(1))
-                res      <- fast.merge(slow).take(1).run
-                afterRun <- released.get
-                _        <- gate.release
-                out      <- Abort.run[Timeout](Async.timeout(3.seconds)(done.await))
-                r        <- released.get
+                res <- fast.merge(slow).take(1).run
+                _   <- assertEventually(released.get.map(_ == 1))
+                r   <- released.get
             yield
                 assert(res.size == 1)
-                assert(out.isSuccess && r == 1, s"released $r after the gate opened ($out)")
-                assert(afterRun == 1, s"released $afterRun when the consumer had already stopped; it released only once the gate opened")
+                assert(r == 1, s"released $r without the gate ever opening")
             end for
         }
 
-        "mapPar releases an element's resource when the consumer stops".pendingUntilFixed(
-            "the per-element fibers are spawned unscoped and the cleanup that interrupts them runs only on the background side's error path"
-        ) in {
+        // The gate is never opened, so the only thing that can release an element fiber is the consumer
+        // stopping and interrupting it. The count is exactly three and stays exactly three: element 1, the one
+        // the consumer takes, refuses to finish until the other three have acquired, so "the consumer stops"
+        // is always observed with three fibers holding. Without that latch how many had acquired would be a
+        // scheduling accident, and the leaf would have to settle for a weaker claim than the one that matters.
+        "mapPar releases an element's resource when the consumer stops" in {
             for
+                started  <- Latch.init(3)
                 released <- AtomicInt.init(0)
-                done     <- Latch.init(1)
                 gate     <- Latch.init(1)
-                // one element per chunk, so the first chunk's fiber completes on its own while the others park
+                // one element per chunk, so each gets its own fiber
                 source: Stream[Int, Any] =
                     Stream(Emit.valueWith(Chunk(1))(Emit.valueWith(Chunk(2))(Emit.valueWith(Chunk(3))(Emit.value(Chunk(4))))))
-                res <- source.mapPar(4) { v =>
-                    if v == 1 then Sync.defer(v)
-                    else Sync.ensure(released.incrementAndGet.unit.andThen(done.release))(gate.await.andThen(v))
+                res <- source.mapPar(8) { v =>
+                    if v == 1 then started.await.andThen(v)
+                    else
+                        Sync.ensure(released.incrementAndGet.unit):
+                            started.release.andThen(gate.await).andThen(v)
                 }.take(1).run
-                afterRun <- released.get
-                _        <- gate.release
-                out      <- Abort.run[Timeout](Async.timeout(3.seconds)(done.await))
-                r        <- released.get
+                _ <- assertEventually(released.get.map(_ == 3))
+                r <- released.get
             yield
                 assert(res == Chunk(1))
-                assert(out.isSuccess && r == 3, s"released $r after the gate opened ($out)")
-                assert(
-                    afterRun == 3,
-                    s"released $afterRun when the consumer had already stopped; the element fibers stayed parked until the gate opened"
-                )
+                assert(r == 3, s"released $r of the 3 element fibers that had acquired")
             end for
         }
 

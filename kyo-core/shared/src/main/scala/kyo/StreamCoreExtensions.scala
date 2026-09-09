@@ -8,6 +8,13 @@ import scala.util.NotGiven
 object StreamCoreExtensions:
     val defaultAsyncStreamBufferSize = 1024
 
+    /** Emits what the producers put on `channel`, until one of them signals the end.
+      *
+      * Every caller pairs this with `Sync.ensure(producers.interrupt)`, because the consumer is free to stop
+      * before the producers do, a `take` downstream being the ordinary way, and closing the channel does not
+      * reach a producer parked inside a source stream's own step. Without the interrupt such a producer stays
+      * parked for as long as the program runs, holding whatever its source acquired.
+      */
     private def emitMaybeChunksFromChannel[V](channel: Channel[Maybe[Chunk[V]]])(using Tag[Emit[Chunk[V]]], Frame) =
         val emit = Loop.foreach:
             channel.take.map:
@@ -135,12 +142,12 @@ object StreamCoreExtensions:
             Stream:
                 Channel.use[Maybe[Chunk[V]]](bufferSize, Access.MultiProducerMultiConsumer): channel =>
                     for
-                        _ <- Fiber.initUnscoped(Abort.run {
+                        producers <- Fiber.initUnscoped(Abort.run {
                             Async.foreachDiscard(streams)(
                                 _.foreachChunk(c => channel.put(Present(c)))
                             )
                         }.andThen(Abort.run(channel.put(Absent)).unit))
-                        _ <- emitMaybeChunksFromChannel(channel)
+                        _ <- Sync.ensure(producers.interrupt.unit)(emitMaybeChunksFromChannel(channel))
                     yield ()
 
         /** Creates a stream from an iterator.
@@ -267,14 +274,14 @@ object StreamCoreExtensions:
             Stream:
                 Channel.use[Maybe[Chunk[V]]](bufferSize, Access.MultiProducerMultiConsumer): channel =>
                     for
-                        _ <- Fiber.initUnscoped(Abort.run(
+                        producers <- Fiber.initUnscoped(Abort.run(
                             Async
                                 .foreachDiscard(streams)(
                                     _.foreachChunk(c => channel.put(Present(c)))
                                         .andThen(Abort.run(channel.put(Absent)))
                                 )
                         ))
-                        _ <- emitMaybeChunksFromChannel(channel)
+                        _ <- Sync.ensure(producers.interrupt.unit)(emitMaybeChunksFromChannel(channel))
                     yield ()
 
     end extension
@@ -344,14 +351,14 @@ object StreamCoreExtensions:
             Stream:
                 Channel.use[Maybe[Chunk[V]]](bufferSize, Access.MultiProducerMultiConsumer): channel =>
                     for
-                        _ <- Fiber.initUnscoped(
+                        producers <- Fiber.initUnscoped(
                             Async.gather(
                                 stream.foreachChunk(c => channel.put(Present(c)))
                                     .andThen(channel.put(Absent)),
                                 other.foreachChunk(c => channel.put(Present(c)))
                             ).andThen(channel.put(Absent))
                         )
-                        _ <- emitMaybeChunksFromChannel(channel)
+                        _ <- Sync.ensure(producers.interrupt.unit)(emitMaybeChunksFromChannel(channel))
                     yield ()
 
         /** Merges with another stream. Stream stops when other stream has completed or when both streams have completed.
@@ -449,7 +456,12 @@ object StreamCoreExtensions:
                                             case Result.Failure(e) =>
                                                 // Not Closed, must be E
                                                 fiberError.set(Present(Right(e)))
-                                Sync.ensure(channelOut.closeDiscard):
+                                // The consumer's exit is where the element fibers have to be stopped. Closing the
+                                // channel alone discards whatever is still in it, leaving those fibers running with
+                                // everything they hold, so the drain-and-interrupt the background's error paths
+                                // already use runs here too. It also stops the background forking elements nobody
+                                // will consume, which is why fewer of them acquire at all.
+                                Sync.ensure(cleanup.unit):
                                     Abort.run[Closed](emit).unit
                                 .andThen(fiberError)
                         end emitResults
@@ -671,7 +683,12 @@ object StreamCoreExtensions:
                                             case Result.Failure(e) =>
                                                 // Not Closed, must be E
                                                 fiberError.set(Present(Right(e)))
-                                Sync.ensure(channelOut.closeDiscard):
+                                // The consumer's exit is where the element fibers have to be stopped. Closing the
+                                // channel alone discards whatever is still in it, leaving those fibers running with
+                                // everything they hold, so the drain-and-interrupt the background's error paths
+                                // already use runs here too. It also stops the background forking elements nobody
+                                // will consume, which is why fewer of them acquire at all.
+                                Sync.ensure(cleanup.unit):
                                     Abort.run[Closed](emit).unit
                                 .andThen(fiberError)
                         end emitResults
