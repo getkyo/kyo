@@ -525,21 +525,32 @@ import scala.util.control.NonFatal
         end try
     end released
 
+    /** Releases the regions `v` still holds, running nothing.
+      *
+      * A deferral is walked rather than evaluated, so what it holds stays unreached. That is what a caller
+      * releasing a continuation it has just refused needs: the refusal exists to stop that continuation
+      * from running, and a walk that evaluated it would run the very thing being refused.
+      */
     def release[A, S](v: A < S, ex: Throwable): Unit =
-        release(v, ex, Absent, _ => ())
+        release(v, ex, Absent, _ => (), 0)
 
     /** Releases the regions `v` still holds, and hands `f` the input of the first operation under them that
       * `effectTag` answers, so a caller that owes something to an operation the computation never reached
       * can settle it without walking the computation a second time. `f` runs before anything is released.
+      *
+      * An operation under a deferral exists only once the deferral has run, so this evaluates them to reach
+      * it, bounded. That is for a caller abandoning a computation whole, where running a little of what was
+      * about to run is the price of not stranding what it was about to wait on. A caller releasing a
+      * continuation it refused wants [[release]] above, which evaluates nothing.
       */
     def release[I[_], O[_], E <: ArrowEffect[I, O], A, S](v: A < S, ex: Throwable, effectTag: Tag[E])(
         f: [C] => I[C] => Unit
     ): Unit =
         // Erasure-forced: the operation's state type is existential here, and `f` is the polymorphic
         // function that takes it back at that type.
-        release(v, ex, Present(effectTag.erased), input => f[Any](input.asInstanceOf[I[Any]]))
+        release(v, ex, Present(effectTag.erased), input => f[Any](input.asInstanceOf[I[Any]]), 16)
 
-    private def release[A, S](v: A < S, ex: Throwable, effectTag: Maybe[Tag[Any]], f: Any => Unit): Unit =
+    private def release[A, S](v: A < S, ex: Throwable, effectTag: Maybe[Tag[Any]], f: Any => Unit, fuel: Int): Unit =
         val collected = ArrayBuffer.empty[AnyRef]
         @tailrec def collect(v: Any, fuel: Int): Unit =
             v match
@@ -575,7 +586,7 @@ import scala.util.control.NonFatal
                         case _: Pending.Suspend[?, ?, ?, ?] => ()
                         case _: Pending.Snapshot[?, ?]      => ()
                 case _ => ()
-        collect(v, 16)
+        collect(v, fuel)
         releaseCollected(collected, ex)
     end release
 
