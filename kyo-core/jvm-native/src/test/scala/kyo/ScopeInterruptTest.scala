@@ -144,24 +144,24 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
     // parent would otherwise have exited, so the order below is the scope's guarantee, not a race:
     // signalling alone would let the scope record its exit first.
     "Scope.run waits for a scoped fiber to release the bracket it is inside" in {
-        // The scope exits only once the child is inside its hold. Signalling before the hold, as a latch released
-        // ahead of it would, leaves a window where an interrupt lands before the child ever holds anything: the
-        // bracket then releases at once, the order comes out right for the wrong reason, and this pin reports the
-        // bug fixed when it is not. Observed doing exactly that under a full-suite run.
+        // The child has to be holding the bracket when the scope starts exiting, or the release happens for the
+        // wrong reason and this reports the bug fixed when it is not. It parks rather than spinning: the region is
+        // installed before the body runs, so the bracket is held from the first instant either way, and a park
+        // ends when the scope's exit interrupts it. Spinning cost five seconds a run, because that hold could only
+        // end at its own deadline: the flag that would have released it early is set after `Scope.run` returns,
+        // and `Scope.run` does not return until the child has released.
         for
-            flag     <- AtomicBoolean.init(false)
             entered  <- AtomicBoolean.init(false)
             log      <- AtomicRef.init(Chunk.empty[String])
             released <- Latch.init(1)
             _ <- Scope.run {
                 Fiber.init {
                     Sync.ensure(log.updateAndGet(_.append("released")).andThen(released.release)) {
-                        Sync.defer(untilInterrupted(flag, Present(entered))).andThen(Sync.defer(()))
+                        entered.set(true).andThen(Async.never)
                     }
                 }.andThen(assertEventually(entered.get))
             }
             _   <- log.updateAndGet(_.append("scope exited"))
-            _   <- flag.set(true)
             _   <- released.await
             seq <- log.get
         yield assert(seq == Chunk("released", "scope exited"), s"order was $seq")
@@ -181,29 +181,48 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
     "Fiber.use interrupts the fiber it spawned when an interrupt lands on the spawn" in {
         val rounds = 40
         for
-            orphaned <- AtomicInt.init(0)
-            _ <- Kyo.foreachDiscard(1 to rounds) { _ =>
+            exercised <- AtomicInt.init(0)
+            orphaned  <- AtomicInt.init(0)
+            // Half the rounds wait for the child to be running before interrupting, and half interrupt at the
+            // spawn. Racing alone proved nothing: under a full-suite run the child never won the race once in
+            // forty rounds, so the leaf passed having orphaned nothing because it had started nothing. The
+            // waiting half guarantees the orphan property is actually exercised; the racing half still probes
+            // the window between the spawn and the cleanup that interrupts it.
+            _ <- Kyo.foreachDiscard(1 to rounds) { round =>
                 for
-                    started    <- Latch.init(1)
+                    started    <- Promise.init[Unit, Any]
                     torn       <- Latch.init(1)
                     gate       <- Latch.init(1)
                     childAlive <- AtomicBoolean.init(false)
                     child = (Sync.ensure(childAlive.set(false).andThen(torn.release)) {
-                        childAlive.set(true).andThen(started.release).andThen(gate.await)
+                        childAlive.set(true).andThen(started.completeUnitDiscard).andThen(gate.await)
                     }: Unit < (Sync & Async))
-                    parent <- Fiber.initUnscoped(Fiber.use[Nothing, Unit, Any, Any](child)(_ => started.await))
+                    parent <- Fiber.initUnscoped(Fiber.use[Nothing, Unit, Any, Any](child)(_ => started.get))
+                    _      <- if round % 2 == 0 then started.get else Kyo.unit
                     _      <- parent.interrupt
                     _      <- parent.getResult
-                    // the child is torn down asynchronously, so wait for it rather than sampling
-                    out  <- Abort.run[Timeout](Async.timeout(300.millis)(torn.await))
+                    // Most rounds interrupt the parent before the child ever runs, and a child that never started
+                    // holds nothing and tears nothing down, so waiting for `torn` there only pays the timeout: the
+                    // whole leaf spent 40 of them, twelve seconds, on rounds proving nothing. Only a round whose
+                    // child actually started has a teardown to wait for.
+                    ran <- started.done
+                    out <- (
+                        if ran then Abort.run[Timeout](Async.timeout(300.millis)(torn.await))
+                        else Result.succeed(())
+                    ): Result[Timeout, Unit] < Async
                     left <- childAlive.get
                     _    <- gate.release
+                    _    <- if ran then exercised.incrementAndGet.unit else Kyo.unit
                     _    <- if out.isFailure && left then orphaned.incrementAndGet.unit else Kyo.unit
                 yield ()
                 end for
             }
             leaked <- orphaned.get
-        yield assert(leaked == 0, s"$leaked of $rounds rounds left the spawned fiber running with nothing to interrupt it")
+            hit    <- exercised.get
+        yield
+            assert(leaked == 0, s"$leaked of $rounds rounds left the spawned fiber running with nothing to interrupt it")
+            // A round whose child never started proves nothing, so the leaf has to know the race lands sometimes.
+            assert(hit > 0, s"none of the $rounds rounds got the child running, so nothing was raced against the spawn")
         end for
     }
 
@@ -213,29 +232,44 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
     "Fiber.init interrupts and awaits the fiber it spawned when the interrupt lands on the spawn" in {
         val rounds = 40
         for
-            orphaned <- AtomicInt.init(0)
-            _ <- Kyo.foreachDiscard(1 to rounds) { _ =>
+            exercised <- AtomicInt.init(0)
+            orphaned  <- AtomicInt.init(0)
+            // Half the rounds wait for the child to be running before interrupting, and half interrupt at the
+            // spawn. Racing alone proved nothing: under a full-suite run the child never won the race once in
+            // forty rounds, so the leaf passed having orphaned nothing because it had started nothing. The
+            // waiting half guarantees the orphan property is actually exercised; the racing half still probes
+            // the window between the spawn and the cleanup that interrupts it.
+            _ <- Kyo.foreachDiscard(1 to rounds) { round =>
                 for
-                    started    <- Latch.init(1)
+                    started    <- Promise.init[Unit, Any]
                     torn       <- Latch.init(1)
                     gate       <- Latch.init(1)
                     childAlive <- AtomicBoolean.init(false)
                     child = (Sync.ensure(childAlive.set(false).andThen(torn.release)) {
-                        childAlive.set(true).andThen(started.release).andThen(gate.await)
+                        childAlive.set(true).andThen(started.completeUnitDiscard).andThen(gate.await)
                     }: Unit < (Sync & Async))
-                    parent <- Fiber.initUnscoped(Scope.run(Fiber.init(child).andThen(started.await)))
+                    parent <- Fiber.initUnscoped(Scope.run(Fiber.init(child).andThen(started.get)))
+                    _      <- if round % 2 == 0 then started.get else Kyo.unit
                     _      <- parent.interrupt
                     _      <- parent.getResult
-                    // the child is torn down asynchronously, so wait for it rather than sampling
-                    out  <- Abort.run[Timeout](Async.timeout(300.millis)(torn.await))
+                    // Only a round whose child actually started has a teardown to wait for; see the leaf above.
+                    ran <- started.done
+                    out <- (
+                        if ran then Abort.run[Timeout](Async.timeout(300.millis)(torn.await))
+                        else Result.succeed(())
+                    ): Result[Timeout, Unit] < Async
                     left <- childAlive.get
                     _    <- gate.release
+                    _    <- if ran then exercised.incrementAndGet.unit else Kyo.unit
                     _    <- if out.isFailure && left then orphaned.incrementAndGet.unit else Kyo.unit
                 yield ()
                 end for
             }
             leaked <- orphaned.get
-        yield assert(leaked == 0, s"$leaked of $rounds rounds left the spawned fiber running with nothing to interrupt it")
+            hit    <- exercised.get
+        yield
+            assert(leaked == 0, s"$leaked of $rounds rounds left the spawned fiber running with nothing to interrupt it")
+            assert(hit > 0, s"none of the $rounds rounds got the child running, so nothing was raced against the spawn")
         end for
     }
 

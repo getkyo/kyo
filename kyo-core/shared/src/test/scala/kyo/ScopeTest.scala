@@ -1080,47 +1080,83 @@ class ScopeTest extends kyo.test.Test[Any]:
 
     "hierarchical scopes (#1131)" - {
 
-        // The half of the issue that did not land. A nested run registers an await-me finalizer in the
-        // enclosing scope, so a parent no longer exits while a child is still releasing; but fork and join
-        // are the identity, so a parent cannot close a child that is still running. Here the child parks and
-        // the parent exits, which leaves the child's resource open with nothing to close it.
+        // The relationship the issue asks for, on the fiber that has one: a scoped fiber is interrupted by the
+        // scope it was spawned in, and the run nested inside it releases before that scope releases anything of
+        // its own. The mailbox in the issue's actor example closes on the parent's close by this route.
         //
-        // This is also what hangs kyo-ui's ReactiveUITeardownTest, all seven of its leaves. The design 2338ac9fa8
-        // settled on rests on "a nested run always closes itself, so an enclosing scope only ever has to wait",
-        // and there the nested run cannot: its work is blocked, and what would stop it is a finalizer in the
-        // PARENT's queue, drained in reverse order behind the wait for that very child. Parent waits for child,
-        // child waits for an interrupt the parent will only issue after the wait returns. Traced with the close
-        // running (3 closes, 3 backlog handovers, 2 finalizers started, 0 finished) and the observer still parked
-        // a second after the interrupt; not the abandonment walk's fuel, which changes nothing at 4096.
+        // The parent is what ends the child here, which is why the child can park for good: `Fiber.init`
+        // interrupts it and then waits for it to have released.
+        "a scoped fiber's nested run releases when the scope it was spawned in closes" in {
+            for
+                released <- AtomicInt.init(0)
+                started  <- Latch.init(1)
+                _ <- Scope.run {
+                    Fiber.init {
+                        Scope.run {
+                            Scope.acquireRelease(Sync.defer("child"))(_ => released.incrementAndGet.unit)
+                                .andThen(started.release)
+                                .andThen(Async.never)
+                        }
+                    }.map(fiber => started.await.andThen(fiber))
+                }
+                _ <- assertEventually(released.get.map(_ == 1))
+                r <- released.get
+            yield assert(r == 1, s"the child's resource was released $r times")
+            end for
+        }
+
+        // The other half of the same rule, and the one a fork decides: a run opened inside a fork is a root,
+        // because the enclosing scope is not what ends the fiber carrying it. Closing it from there takes a
+        // resource away from an owner still using it.
         //
-        // Ordering the two by hand fixes the hang and breaks ReactiveUITeardownTest's nested-finalizer leaf
-        // instead, because a stop must precede a wait while a release must follow it. Splitting registrations
-        // into stops and releases makes callers classify an ordering they cannot see, so what this needs is the
-        // scope knowing what runs under it and cancelling it, which is the half of this issue that never landed.
-        "closing a scope releases the resources of a nested scope still running under it".pendingUntilFixed(
-            "a parent scope waits for a nested run but cannot close it: fork and join are the identity, so closing a scope does not stop the computation running under it"
-        ) in {
+        // This is the shape of a service started lazily under `Fiber.initUnscoped` inside whatever scope first
+        // asked for it, holding its scope open with a park. kyo-browser's shared Chrome is one: launched once
+        // per run and shared by every test, it was destroyed by the close of the first test scope to touch it,
+        // and the next test reconnected to a dead port. Registration still reaches the scope the fork was made
+        // in, which `StreamCoreExtensionsTest:890` pins; membership is what a fork withholds.
+        "a run opened inside an unscoped fiber outlives the scope the fiber was spawned in" in {
             for
                 released <- AtomicInt.init(0)
                 started  <- Latch.init(1)
                 gate     <- Latch.init(1)
-                child <- Scope.run {
+                service <- Scope.run {
                     Fiber.initUnscoped {
                         Scope.run {
-                            Scope.acquireRelease(Sync.defer("child"))(_ => released.incrementAndGet.unit)
+                            Scope.acquireRelease(Sync.defer("service"))(_ => released.incrementAndGet.unit)
                                 .andThen(started.release)
                                 .andThen(gate.await)
                         }
                     }.map(fiber => started.await.andThen(fiber))
                 }
-                // the parent has exited; the child is still parked holding its resource
-                out <- Abort.run[Timeout](Async.timeout(3.seconds)(assertEventually(released.get.map(_ == 1))))
-                _   <- gate.release
-                _   <- child.getResult
-                r   <- released.get
+                // the scope that spawned the fiber has closed; the service is still parked holding its resource
+                onParentExit <- released.get
+                _            <- gate.release
+                _            <- service.getResult
+                onOwnExit    <- released.get
             yield
-                assert(out.isSuccess, "the parent scope exited without releasing the live child's resource")
-                assert(r == 1, s"the child's own exit released a second time: released=$r")
+                assert(onParentExit == 0, s"the enclosing scope released the unscoped fiber's resource: released=$onParentExit")
+                assert(onOwnExit == 1, s"the fiber's own exit did not release its resource: released=$onOwnExit")
+            end for
+        }
+
+        // What membership is for, and the path that needs it. On an unwind only `Sync.ensure` runs, and `close`
+        // hands the drain to a detached fiber without waiting for it, so without the child link the enclosing
+        // scope's own finalizers would run alongside the nested run's rather than after them.
+        "a nested run releases before the enclosing scope's own finalizers when the enclosing run is aborted" in {
+            for
+                order <- AtomicRef.init(Chunk.empty[String])
+                _ <- Abort.run[String] {
+                    Scope.run {
+                        Scope.ensure(order.updateAndGet(_.append("outer")).unit).andThen {
+                            Scope.run {
+                                Scope.ensure(order.updateAndGet(_.append("inner")).unit)
+                                    .andThen(Abort.fail("boom"))
+                            }
+                        }
+                    }
+                }
+                seq <- order.get
+            yield assert(seq == Chunk("inner", "outer"), s"order was $seq")
             end for
         }
     }

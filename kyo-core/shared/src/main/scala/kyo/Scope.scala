@@ -142,11 +142,17 @@ object Scope:
             val finalizer = Finalizer.Unsafe.init(closeParallelism)
             // A scope is closed at the end of the `Scope.run` that opened it, and nowhere else.
             //
-            // A run nested inside another registers one finalizer in the enclosing scope: wait for me. That is
-            // the whole relationship. A nested run always closes itself, inline when it returns and through
-            // the `Sync.ensure` below when it is interrupted, so an enclosing scope never has to close it, only
-            // to wait, and the unwind path is where waiting matters because a synchronous bracket release
-            // cannot await. Being an ordinary finalizer it also takes its place in the existing LIFO order.
+            // A run nested inside another joins it as a child, and an enclosing scope closes its children and
+            // waits for them before releasing anything of its own, which is what puts an inner resource's
+            // release before an outer one's. The unwind path is where that does the work: there only
+            // `Sync.ensure` runs, and `close` hands the drain to a detached fiber without waiting for it, so
+            // the enclosing scope's own finalizers would otherwise run alongside the child's.
+            //
+            // Closing them rather than only waiting, because "a nested run always closes itself" holds only
+            // while the computation carrying it can still get there. One blocked inside a handler closes when
+            // something ends that handler, and that something is often a finalizer of the enclosing scope: as a
+            // queued wait it could sit ahead of the finalizer that would release it, and the close waited on
+            // itself. Holding the child's finalizer settles it either way.
             //
             // Tolerantly, because the enclosing scope may already be closed: a fiber that outlived it carries
             // its binding, and a nested run there has nobody to wait for it. Nothing leaks, so nothing raises.
@@ -155,15 +161,23 @@ object Scope:
             // computation's resources to the caller's ambient scope: the lifetime of a resource must not
             // depend on whether a combinator happened to fork internally. `groupedWithin` states the same
             // rule at its own spawn, and `StreamCoreExtensionsTest:890` pins it.
+            //
+            // What a crossing does not share is membership, which is what `forked` withholds. A run opened
+            // inside a fork is a root of its own, because this scope is not what ends the fiber carrying it:
+            // a scoped fiber is interrupted and then awaited by the `Fiber.init` that spawned it, which is
+            // what releases a nested run inside it, and an unscoped one is unparented by construction and
+            // belongs to whoever spawned it. Closing either from here takes a resource away from an owner
+            // still using it, which is how a service started lazily inside the first scope that asked for it
+            // loses the thing it was holding open.
             ContextEffect.handle(Tag[Scope])(
                 derive = (outer: Maybe[Finalizer]) =>
                     outer.foreach { enclosing =>
                         import AllowUnsafe.embrace.danger
-                        enclosing.ensureIfOpen(_ => finalizer.await)
+                        enclosing.addChild(finalizer)
                     }
                     finalizer
                 ,
-                fork = (parent: Finalizer) => parent,
+                fork = (parent: Finalizer) => parent.forked,
                 join = (parent: Finalizer, _: Finalizer, _: Finalizer) => parent
             )(v)
                 .handle(
@@ -179,8 +193,9 @@ object Scope:
 
     /** The finalizers registered against one scope, run in reverse registration order when it closes.
       *
-      * A run nested inside another registers a single finalizer in the enclosing scope, waiting on this one's
-      * [[await]], so an enclosing scope releases nothing until the runs inside it have finished releasing.
+      * A run nested inside another joins it as a child through [[addChild]], and closing a scope closes its
+      * children and waits for them before releasing anything of its own, so an inner resource's release comes
+      * before an outer one's. What a fork carries is registration without membership; see [[forked]].
       */
     sealed abstract class Finalizer:
         def ensure(v: Maybe[Error[Any]] => Any < (Async & Abort[Throwable]))(using Frame): Unit < Sync
@@ -203,7 +218,28 @@ object Scope:
           */
         private[kyo] def ensureIfOpen(v: Maybe[Error[Any]] => Any < (Async & Abort[Throwable]))(using Frame, AllowUnsafe): Unit
 
-        /** Closes this scope, running its finalizers in reverse registration order. */
+        /** Records a run nested in this one, as the scope it opened rather than as a wait for it.
+          *
+          * The difference is what closing can do about it. A wait can only be satisfied by the nested run closing
+          * itself, which needs the computation carrying it to end, and that computation is often ended by one of
+          * THIS scope's finalizers: reverse order can put the wait ahead of the finalizer that would end it, and
+          * the close waits on itself. Holding the child's finalizer instead lets this scope close it, which runs
+          * the child's own finalizers and settles it whether or not its computation ever gets to finish.
+          */
+        private[kyo] def addChild(child: Finalizer)(using Frame, AllowUnsafe): Unit
+
+        /** This scope as a forked computation sees it: registrations still land here, and a run opened inside the
+          * fork is a root rather than a child of this one.
+          *
+          * A resource acquired in a fork belongs to the scope the fork was made in, so registration is shared. What
+          * is not shared is membership: a fork carries a fiber this scope does not end, so a run opened there can
+          * still be live after this one closes, and closing it from here would release what its owner is using.
+          */
+        private[kyo] def forked: Finalizer
+
+        /** Closes this scope: closes the runs nested in it and waits for them, then releases its own resources in
+          * reverse registration order.
+          */
         def close(ex: Maybe[Error[Any]])(using Frame): Unit < Sync
 
         /** Completes when this scope has finished releasing. */
@@ -212,13 +248,44 @@ object Scope:
 
     object Finalizer:
 
+        /** One scope seen from inside a fork: everything delegates, and only [[Finalizer.addChild]] does not.
+          * See [[Finalizer.forked]] for why membership is the one thing a crossing withholds.
+          */
+        final private class Forked(origin: Finalizer) extends Finalizer:
+            def ensure(v: Maybe[Error[Any]] => Any < (Async & Abort[Throwable]))(using Frame): Unit < Sync =
+                origin.ensure(v)
+
+            private[kyo] def ensureUnsafe(v: Maybe[Error[Any]] => Any < (Async & Abort[Throwable]))(
+                using
+                Frame,
+                AllowUnsafe
+            ): Unit =
+                origin.ensureUnsafe(v)
+
+            private[kyo] def ensureIfOpen(v: Maybe[Error[Any]] => Any < (Async & Abort[Throwable]))(
+                using
+                Frame,
+                AllowUnsafe
+            ): Unit =
+                origin.ensureIfOpen(v)
+
+            private[kyo] def addChild(child: Finalizer)(using Frame, AllowUnsafe): Unit = ()
+
+            private[kyo] def forked: Finalizer = this
+
+            def close(ex: Maybe[Error[Any]])(using Frame): Unit < Sync = origin.close(ex)
+
+            def await(using Frame): Unit < Async = origin.await
+        end Forked
+
         object Unsafe:
             def init(parallelism: Int)(using frame: Frame, u: AllowUnsafe): Finalizer =
                 new Finalizer:
                     val queue = Queue.Unbounded.Unsafe.init[Maybe[Error[Any]] => Any < (Async & Abort[Throwable])](
                         Access.MultiProducerSingleConsumer
                     )
-                    val promise = Promise.Unsafe.init[Unit, Any]().safe
+                    val children = Queue.Unbounded.Unsafe.init[Finalizer](Access.MultiProducerSingleConsumer)
+                    val promise  = Promise.Unsafe.init[Unit, Any]().safe
 
                     // Delegates rather than repeating the offer, so a closed scope answers both registration paths
                     // the same way: the finalizer runs, and the caller still learns it is not scoped. Answering
@@ -260,6 +327,11 @@ object Scope:
                     ): Unit =
                         discard(queue.offer(v))
 
+                    private[kyo] def addChild(child: Finalizer)(using Frame, AllowUnsafe): Unit =
+                        discard(children.offer(child))
+
+                    private[kyo] val forked: Finalizer = new Forked(this)
+
                     private def closed(using Frame) =
                         new Closed(
                             "Finalizer",
@@ -277,20 +349,33 @@ object Scope:
                             queue.close().safe.onComplete { backlog =>
                                 backlog.foldError(
                                     _.map {
-                                        case Absent => Kyo.unit
+                                        case Absent         => Kyo.unit
                                         case Present(tasks) =>
-                                            if tasks.isEmpty then
-                                                promise.completeUnitDiscard
-                                            else
-                                                Async.foreachDiscard(tasks.reverse, parallelism) { task =>
-                                                    Abort.run[Throwable](task(ex))
-                                                        .map(_.foldError(
-                                                            _ => (),
-                                                            ex => Log.error("Scope finalizer failed", ex.exception)
-                                                        ))
+                                            // The runs nested in this one are closed and waited for first, so their
+                                            // resources are released before this scope's own, and closing them rather
+                                            // than waiting for them to close themselves is what keeps a child whose
+                                            // computation is blocked from holding this close open. See `addChild`.
+                                            val nested =
+                                                Sync.Unsafe.defer(children.close()).map(_.safe.get).map {
+                                                    case Present(cs) =>
+                                                        Async.foreachDiscard(cs) { child =>
+                                                            child.close(ex).andThen(child.await)
+                                                        }
+                                                    case Absent => Kyo.unit
                                                 }
-                                                    .handle(Fiber.initUnscoped[Nothing, Unit, Any, Any])
-                                                    .map(promise.becomeDiscard)
+                                            val own =
+                                                if tasks.isEmpty then Kyo.unit
+                                                else
+                                                    Async.foreachDiscard(tasks.reverse, parallelism) { task =>
+                                                        Abort.run[Throwable](task(ex))
+                                                            .map(_.foldError(
+                                                                _ => (),
+                                                                ex => Log.error("Scope finalizer failed", ex.exception)
+                                                            ))
+                                                    }
+                                            nested.andThen(own)
+                                                .handle(Fiber.initUnscoped[Nothing, Unit, Any, Any])
+                                                .map(promise.becomeDiscard)
                                     },
                                     // The backlog handover is completed with a success by whoever wins the drain, so this is
                                     // unreachable; leaving `promise` alone lets `await` surface the real failure.
