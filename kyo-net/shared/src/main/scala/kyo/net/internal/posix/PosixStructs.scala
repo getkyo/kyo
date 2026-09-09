@@ -142,7 +142,7 @@ private[net] object KEvent:
       */
     def addFlags(buf: Buffer[Byte], slot: Int, extra: Short)(using AllowUnsafe): Unit =
         val offset = slot * size + 10
-        putShortLe(buf, offset, (getShortLe(buf, offset) | extra).toShort)
+        buf.setShortAt(offset, (buf.getShortAt(offset) | extra).toShort)
     end addFlags
 
     /** Write a one-element `EVFILT_USER` changelist at element 0 of `buf` with explicit `fflags`. Used by the kqueue poll-loop wakeup: the
