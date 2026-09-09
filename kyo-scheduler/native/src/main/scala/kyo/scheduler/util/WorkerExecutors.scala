@@ -47,12 +47,11 @@ private[scheduler] object WorkerExecutors {
     def worker(factory: ThreadFactory, coreWorkers: Int, maxWorkers: Int): ExecutorService = {
         val core = Math.max(1, coreWorkers)
         // Unbounded, like the JVM's cached pool: the scheduler's `Worker.wakeup()` calls `execute()` with no
-        // fallback, so a bounded pool that rejected on saturation would leave the worker CAS'd Idle->Running
-        // with a queued task and no thread to run it, a permanent strand. Growth still flows through the
-        // gated factory, so any thread born under load still serializes its `MutatorThread_init`. The pool
-        // does not accumulate: an idle worker parks in the `SynchronousQueue` and is reused for the next
-        // mount, so the live thread count tracks concurrent demand (bounded by the scheduler's own worker
-        // count) rather than growing without bound.
+        // fallback, so a bounded pool that rejected on saturation would leave a worker dispatched with a queued
+        // task and no thread to run it. Growth still flows through the gated factory, so any thread born under
+        // load still serializes its `MutatorThread_init`. The pool does not accumulate: an idle worker parks in
+        // the `SynchronousQueue` and is reused for the next mount, so the live thread count tracks concurrent
+        // demand (bounded by the scheduler's own worker count) rather than growing without bound.
         val exec = new ThreadPoolExecutor(
             core,
             Integer.MAX_VALUE,
@@ -63,7 +62,8 @@ private[scheduler] object WorkerExecutors {
         )
         exec.allowCoreThreadTimeOut(false)
         exec.prestartAllCoreThreads()
-        exec
+        // The retry watchdog is one more scheduler thread, so it goes through the same init gate as the pool's.
+        new HandoffRetryExecutor(exec, gated(factory))
     }
 
     def clock(factory: ThreadFactory): ExecutorService =

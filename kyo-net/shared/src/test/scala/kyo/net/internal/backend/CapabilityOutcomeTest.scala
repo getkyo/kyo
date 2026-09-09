@@ -2,48 +2,31 @@ package kyo.net.internal.backend
 
 import kyo.net.Test
 
-/** What a probe reports, and what a reader gets out of it. The gate selection reads is one bit, but the rest of the type exists so the
-  * degrade a host actually hit is recoverable from a log line or an exception message: these leaves pin that each case keeps its own payload
-  * and that the three non-applicable cases stay distinguishable rather than collapsing back into one "unavailable".
+/** Pins what a demoted backend's one line tells the reader.
+  *
+  * `describe` is the whole of the demotion warning a reader ever sees, so a wording that describes the symptom without naming the remedy
+  * sends them looking in the wrong place. "native library 'kyonet_posix_uring' is not bundled for darwin-aarch64" read as a statement about
+  * kyo's release contents, and the reader concluded macOS was not a supported host. It was a missing line in their build: kyo-net publishes
+  * each platform's native as a classifier artifact, and the message already knew the classifier string it needed.
   */
 class CapabilityOutcomeTest extends Test:
 
-    "only Available gates a candidate in" in {
-        assert(CapabilityOutcome.Available.isAvailable)
-        assert(!CapabilityOutcome.UnsupportedOS.isAvailable)
-        assert(!CapabilityOutcome.Unavailable("old kernel").isAvailable)
-        assert(!CapabilityOutcome.NotBundled("kyonet_posix_uring", "linux-x86_64").isAvailable)
-        assert(!CapabilityOutcome.VersionTooOld("1.0", "2.0").isAvailable)
-        assert(!CapabilityOutcome.ProbeFailed(new RuntimeException("boom")).isAvailable)
-    }
+    "describe" - {
 
-    "the three degrades a host can hit are distinct values, not one collapsed 'unavailable'" in {
-        // The distinction is the whole point of replacing the Boolean channel: a kernel that cannot serve, a candidate belonging to another
-        // OS, and a native that was never staged are three different things to do about it.
-        val unavailable = CapabilityOutcome.Unavailable("kernel does not provide io_uring")
-        val notBundled  = CapabilityOutcome.NotBundled("kyonet_posix_uring", "linux-x86_64")
-        assert(unavailable != notBundled)
-        assert(unavailable != CapabilityOutcome.UnsupportedOS)
-        assert(notBundled != CapabilityOutcome.UnsupportedOS)
-        assert(unavailable == CapabilityOutcome.Unavailable("kernel does not provide io_uring"))
-        assert(notBundled == CapabilityOutcome.NotBundled("kyonet_posix_uring", "linux-x86_64"))
-    }
+        "NotBundled names the classifier line that fixes it" in {
+            val described = CapabilityOutcome.NotBundled("kyonet_posix_uring", "darwin-aarch64").describe
+            assert(described.contains("kyonet_posix_uring"))
+            // The classifier string appears as the value of the `classifier` argument, not only as a platform tag in prose.
+            assert(described.contains("""classifier "darwin-aarch64""""))
+            assert(described.contains(""""io.getkyo" %% "kyo-net""""))
+        }
 
-    "describe carries each case's own payload into the report line" in {
-        assert(CapabilityOutcome.Available.describe == "available")
-        assert(
-            CapabilityOutcome.UnsupportedOS.describe.contains("OS/runtime"),
-            s"got ${CapabilityOutcome.UnsupportedOS.describe}"
-        )
-        val unavailable = CapabilityOutcome.Unavailable("kernel does not provide io_uring").describe
-        assert(unavailable.contains("kernel does not provide io_uring"), s"got $unavailable")
-        val notBundled = CapabilityOutcome.NotBundled("kyonet_posix_uring", "linux-x86_64").describe
-        assert(notBundled.contains("kyonet_posix_uring"), s"got $notBundled")
-        assert(notBundled.contains("linux-x86_64"), s"got $notBundled")
-        val versionTooOld = CapabilityOutcome.VersionTooOld("1.0", "2.0").describe
-        assert(versionTooOld.contains("1.0") && versionTooOld.contains("2.0"), s"got $versionTooOld")
-        val probeFailed = CapabilityOutcome.ProbeFailed(new RuntimeException("the ring blew up")).describe
-        assert(probeFailed.contains("the ring blew up"), s"got $probeFailed")
+        "the other outcomes stay one short line each" in {
+            assert(CapabilityOutcome.Available.describe == "available")
+            assert(CapabilityOutcome.UnsupportedOS.describe == "not applicable to this OS/runtime")
+            assert(CapabilityOutcome.Unavailable("the kernel is too old").describe == "unavailable (the kernel is too old)")
+            assert(CapabilityOutcome.VersionTooOld("1.0", "2.0").describe == "native version 1.0 is below the required 2.0")
+        }
     }
 
 end CapabilityOutcomeTest

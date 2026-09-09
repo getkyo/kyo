@@ -23,4 +23,9 @@ object UUIDCoreExtensions:
     end extension
 end UUIDCoreExtensions
 
-export UUIDCoreExtensions.*
+// Exported by name. A wildcard emits one forwarder per member in an order the compiler does not fix, so two clean builds of identical
+// sources produce different artifacts.
+export UUIDCoreExtensions.let
+export UUIDCoreExtensions.v4
+export UUIDCoreExtensions.v4String
+export UUIDCoreExtensions.v7

@@ -7,9 +7,13 @@ import sbt.testing.SubclassFingerprint
 
 /** sbt test-interface Framework entry point for kyo-test.
   *
-  * Discovered by sbt via the META-INF/services/sbt.testing.Framework service-loader file. sbt uses [[fingerprints]] to scan the test
-  * classpath for classes that extend `kyo.test.Test` and have a no-arg constructor, then passes each match to [[runner]] as a
+  * sbt finds this class by name from `Test / testFrameworks`, not through a service loader; the META-INF/services/sbt.testing.Framework
+  * file in this jar serves tools that do discover by SPI, such as scala-cli's test runner. Once loaded, sbt uses [[fingerprints]] to scan
+  * the test classpath for classes that extend `kyo.test.Test` and have a no-arg constructor, then passes each match to [[runner]] as a
   * [[sbt.testing.TaskDef]].
+  *
+  * A framework sbt cannot find contributes no fingerprints, so a wiring mistake surfaces as zero tests and a successful exit rather than
+  * as an error.
   */
 class SbtFramework extends Framework:
 

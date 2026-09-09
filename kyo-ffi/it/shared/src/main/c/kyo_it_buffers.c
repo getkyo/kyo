@@ -1,3 +1,4 @@
+#include "kyo_it_api.h"
 #include <stdint.h>
 
 /* Bundled buffer surface.
@@ -12,16 +13,16 @@
  * emits `Buffer[Int]` parameters on every target.
  */
 
-int64_t kyo_it_sum_ints(const int32_t *buf, int64_t n) {
+KYO_IT_API int64_t kyo_it_sum_ints(const int32_t *buf, int64_t n) {
     int64_t total = 0;
     for (int64_t i = 0; i < n; i++) total += (int64_t)buf[i];
     return total;
 }
 
-void kyo_it_fill_ints(int32_t *buf, int64_t n, int32_t value) {
+KYO_IT_API void kyo_it_fill_ints(int32_t *buf, int64_t n, int32_t value) {
     for (int64_t i = 0; i < n; i++) buf[i] = value;
 }
 
-void kyo_it_copy_ints(int32_t *dst, const int32_t *src, int64_t n) {
+KYO_IT_API void kyo_it_copy_ints(int32_t *dst, const int32_t *src, int64_t n) {
     for (int64_t i = 0; i < n; i++) dst[i] = src[i];
 }

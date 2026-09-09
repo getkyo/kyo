@@ -381,7 +381,7 @@ class DecoderFidelity5Phase04Test extends kyo.test.Test[Any]:
 
     "evictOlderThan on empty cache dir completes without error" in {
         Scope.run {
-            Path.tempDir("kyo-df5-evict-empty").map { dir =>
+            Path.run(Path.tempDir("kyo-df5-evict-empty")).map { dir =>
                 Abort.run[TastyError](Tasty.evictOlderThan(dir.toString, 1.millis)).map {
                     case Result.Success(_) => succeed
                     case Result.Failure(e) => fail(s"Unexpected error: $e")
@@ -414,7 +414,7 @@ class DecoderFidelity5Phase04Test extends kyo.test.Test[Any]:
         val d    = Duration.fromJava(jDur)
         assert(d.toMillis == 5000L, s"Duration.toMillis mismatch: ${d.toMillis}")
         Scope.run {
-            Path.tempDir("kyo-df5-evict-dur").map { dir =>
+            Path.run(Path.tempDir("kyo-df5-evict-dur")).map { dir =>
                 Abort.run[TastyError](Tasty.evictOlderThan(dir.toString, d)).map {
                     case Result.Success(_) => succeed
                     case Result.Failure(e) => fail(s"Unexpected error: $e")

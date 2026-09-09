@@ -9,6 +9,23 @@ import scala.scalajs.js
 /** Scala.js UI backend. Mounts a UI into the browser DOM. */
 private[kyo] object DomBackend:
 
+    private[kyo] trait MountDiagnostics:
+        def channelClosed(): Unit
+        def drainInterrupting(): Unit
+        def drainJoined(): Unit
+        def dragRuntimeInstalled(runtime: DomDragRuntime.Handle): Unit = ()
+        def dragEventQueued(event: UIEvent): Unit                      = ()
+        def dragEventHandled(event: UIEvent): Unit                     = ()
+        def drainInstalled(drain: Fiber[Unit, Any]): Unit              = ()
+        def drainStarted(): Unit                                       = ()
+    end MountDiagnostics
+
+    private object NoMountDiagnostics extends MountDiagnostics:
+        def channelClosed(): Unit     = ()
+        def drainInterrupting(): Unit = ()
+        def drainJoined(): Unit       = ()
+    end NoMountDiagnostics
+
     /** One seeded `data-kyo-focus-auto` element and where focus should go when it leaves the document.
       *
       * @param path
@@ -27,14 +44,20 @@ private[kyo] object DomBackend:
 
     /** Mount a UI into the page body. */
     def mount(ui: UI)(using Frame): Unit < (Async & Scope) =
-        mountInto(ui, document.body)
+        mountInto(ui, document.body, NoMountDiagnostics)
+
+    private[kyo] def mount(ui: UI, diagnostics: MountDiagnostics)(using Frame): Unit < (Async & Scope) =
+        mountInto(ui, document.body, diagnostics)
 
     /** Mount a UI into a specific DOM element selected by CSS selector. */
     def mount(ui: UI, selector: String)(using Frame): Unit < (Async & Scope) =
+        mount(ui, selector, NoMountDiagnostics)
+
+    private[kyo] def mount(ui: UI, selector: String, diagnostics: MountDiagnostics)(using Frame): Unit < (Async & Scope) =
         Sync.defer {
             val target = document.querySelector(selector)
             if target == null then Abort.panic(UIException(s"Element not found: $selector"))
-            else mountInto(ui, target.asInstanceOf[dom.Element])
+            else mountInto(ui, target.asInstanceOf[dom.Element], diagnostics)
         }
     end mount
 
@@ -51,34 +74,64 @@ private[kyo] object DomBackend:
     private[kyo] def injectStylesheet(sheet: Stylesheet)(using Frame): Unit < Sync =
         DomStyleSheet.injectBase().andThen(Sync.defer(DomStyleSheet.injectStylesheet(sheet.render)))
 
-    private def mountInto(ui: UI, container: dom.Element)(using Frame): Unit < (Async & Scope) =
+    private def mountInto(ui: UI, container: dom.Element, diagnostics: MountDiagnostics)(using Frame): Unit < (Async & Scope) =
         for
-            _    <- DomStyleSheet.injectBase()
-            root <- ReactiveUI.normalize(ui, Seq.empty)
-            html <- HtmlRenderer.render(ui, Seq.empty)
-            _    <- Sync.defer(container.innerHTML = html)
-            _    <- applyJsProps(container)
-            _    <- Sync.defer(seedEnter(container, Set.empty))
-            _    <- Sync.defer(seedFocusAuto(container, Set.empty))
-            _    <- Sync.defer(beginAnimationsSync(container))
-            _    <- setupInputMasking()
-            exchange = LocalExchange(root)
+            _       <- DomStyleSheet.injectBase()
+            root    <- ReactiveUI.normalize(ui, Seq.empty)
+            html    <- HtmlRenderer.render(ui, Seq.empty)
+            _       <- Sync.defer(container.innerHTML = html)
+            regions <- DomReactiveRegions.init(container)
+            _       <- applyJsProps(container)
+            _       <- Sync.defer(seedEnter(container, Set.empty))
+            _       <- Sync.defer(seedFocusAuto(container, Set.empty))
+            _       <- Sync.defer(beginAnimationsSync(container))
+            exchange = LocalExchange(regions)
             dispatch <- ReactiveUI.subscribe(root, exchange)
-            // Single-consumer drain owned by the ambient page Scope: every JS event effect is run by a
-            // Fiber.init consumer (interrupted on page teardown). The single consumer preserves event ordering
-            // and is scoped, so page teardown interrupt propagates to the drain via the ambient Scope.
+            // A subscription interrupt is asynchronous. Stop accepting publications before the Scope begins
+            // interrupting region fibers, so an already-woken observer cannot publish into the registry after its
+            // close finalizer has run.
+            _ <- Scope.ensure(exchange.close)
+            // Single-consumer drain owned by the ambient page Scope. The single consumer preserves event ordering.
             events <- Channel.init[Unit < Async](256)
             // runPartial captures only the Closed failure (the channel closed on page teardown -> stop draining); a
             // Panic propagates rather than being silently swallowed as a clean drain end.
             // The drain carries the session's scroll sink: a handler calling UI.scrollIntoView scrolls the
             // local document, the browser-mount counterpart of the server session's WebSocket op.
-            _ <- Fiber.init(UICommands.scrollSink.let(Present(scrollLocal)) {
-                Loop.foreach(Abort.runPartial[Closed](events.take).map {
-                    case Result.Success(eff) => eff.andThen(Loop.continue)
-                    case Result.Failure(_)   => Loop.done
+            drain <- Scope.acquireRelease(
+                Fiber.initUnscoped(UICommands.scrollSink.let(Present(scrollLocal)) {
+                    DragCommands.resolveSink.let(Present(resolveLocal)) {
+                        Sync.defer(diagnostics.drainStarted()).andThen(
+                            Loop.foreach(Abort.runPartial[Closed](events.take).map {
+                                case Result.Success(eff) => eff.andThen(Loop.continue)
+                                case Result.Failure(_)   => Loop.done
+                            })
+                        )
+                    }
                 })
-            })
+            )(drain =>
+                Sync.defer(diagnostics.drainInterrupting()).andThen(drain.interrupt).andThen(drain.getResult).andThen {
+                    Sync.defer(diagnostics.drainJoined())
+                }
+            )
+            _ <- Sync.defer(diagnostics.drainInstalled(drain))
+            // Finalizers are LIFO. Register the drain first, then the channel, then listeners, so teardown
+            // removes callbacks before closing their queue and finally interrupts and joins the drain.
+            _ <- Scope.ensure(events.close.andThen(Sync.defer(diagnostics.channelClosed())).unit)
             _ <- setupEventDelegation(dispatch.handle, events)
+            _ <- setupInputMasking()
+            dragRuntime <- DomDragRuntime.install(
+                container,
+                event =>
+                    diagnostics.dragEventQueued(event)
+                    fireFromJs(
+                        events,
+                        dispatch.handle(event.path, event).map { result =>
+                            diagnostics.dragEventHandled(event)
+                            result
+                        }.unit
+                    )
+            )
+            _ <- Sync.defer(diagnostics.dragRuntimeInstalled(dragRuntime))
             _ <- Async.never
         yield ()
         end for
@@ -94,64 +147,169 @@ private[kyo] object DomBackend:
                 discard(el.asInstanceOf[js.Dynamic].scrollIntoView(js.Dynamic.literal(behavior = "smooth", block = "start")))
         }
 
+    /** Publishes a typed drag resolution for the local drag runtime without retaining listeners or
+      * session state. DomDragRuntime consumes this reserved document event.
+      */
+    private def resolveLocal(sessionId: String, decision: Drag.Decision)(using Frame): Unit < Async =
+        Sync.defer {
+            val detail = Json.encode[HtmlOp](HtmlOp.ResolveDrag(sessionId, decision))
+            val publish = () =>
+                val event = js.Dynamic.newInstance(dom.window.asInstanceOf[js.Dynamic].CustomEvent)(
+                    "kyo:resolve-drag",
+                    js.Dynamic.literal(detail = detail)
+                )
+                discard(document.asInstanceOf[js.Dynamic].dispatchEvent(event))
+            discard(dom.window.setTimeout(publish, 0))
+        }
+
+    final private case class RangePatchState(
+        active: Maybe[RangeFocus],
+        selectionStart: Maybe[Int],
+        selectionEnd: Maybe[Int],
+        oldEnter: Set[String],
+        ghosts: Seq[(dom.Element, String)],
+        oldFocusAuto: Set[String]
+    )
+
+    final private case class RangeFocus(path: Maybe[String], rootIndex: Int, childIndexes: Seq[Int])
+
     /** Exchange that renders UI to HTML and applies directly to the DOM. */
-    private class LocalExchange(root: ReactiveUI) extends UIExchange:
-        private def svgContextAt(path: Seq[String]): Boolean =
-            ReactiveUI.findNode(root, path).map(_.svgContext).getOrElse(false)
+    private class LocalExchange(regions: DomReactiveRegions) extends UIExchange:
+
+        private var open = true
+
+        private[kyo] def close(using Frame): Unit < Sync = Sync.defer { open = false }
 
         // In-process: the update is a DOM write, not bytes on a wire, so this replaces the region whole
-        // rather than diffing it. `previous` is what the server-side exchange uses to send only what moved.
-        def onChange(path: Seq[String], previous: Maybe[UI], ui: UI)(using Frame): Unit < Async =
-            HtmlRenderer.render(ui, path).map { html =>
-                // Always wrap the rendered html in the reactive boundary element so the node carrying
-                // data-kyo-path=path survives subsequent replacements. A Fragment, Text, or RawHtml value
-                // renders without a path-carrying root, so an unwrapped replace would drop the marker and
-                // the next update could not locate the node. In SVG context the boundary is a <g> (a <span>
-                // is invalid inside <svg>); otherwise a <span> (CSS sets `display: contents` so it is layout-
-                // transparent).
-                val tag       = if svgContextAt(path) then "g" else "span"
-                val pathAttr  = path.mkString(".")
-                val finalHtml = s"""<$tag data-kyo-path="$pathAttr" data-kyo-reactive>$html</$tag>"""
-                Sync.defer {
-                    val el = document.querySelector(s"""[data-kyo-path="$pathAttr"]""")
-                    if el != null && el.outerHTML != finalHtml then
-                        // Capture focus and caret of the active element inside the replaced region,
-                        // keyed on data-kyo-path identity (mirrors HtmlRenderer.clientJs:576-583 on
-                        // the JS DOM API). Plain DOM inside the already-suspended Sync.defer; no new
-                        // AllowUnsafe crossing.
-                        val ae = document.activeElement
-                        val insideRegion = ae != null && (ae ne document.body) &&
-                            (ae.getAttribute("data-kyo-path") == pathAttr || el.contains(ae))
-                        // Use the active element's own data-kyo-path when it carries one (nested
-                        // reactive region), otherwise fall back to pathAttr so the region wrapper
-                        // itself is queried (common case: value-bound input inside the region has
-                        // no data-kyo-path of its own).
-                        val activePath =
-                            if insideRegion then
-                                if ae.hasAttribute("data-kyo-path") then ae.getAttribute("data-kyo-path")
-                                else pathAttr
-                            else null
-                        val (selStart, selEnd) = if insideRegion then readSelection(ae) else (Absent, Absent)
-                        val oldEnter           = enterPaths(el)
-                        val ghosts             = prepareLeaveGhosts(el, leaveSurvSet(finalHtml))
-                        val oldFocusAuto       = focusAutoPaths(el)
-                        el.outerHTML = finalHtml
-                        val updated = document.querySelector(s"""[data-kyo-path="$pathAttr"]""")
-                        if updated != null then
-                            applyJsPropsSync(updated)
-                            beginAnimationsSync(updated)
-                        if activePath != null then
-                            restoreFocus(activePath, selStart, selEnd)
-                        if updated != null then
-                            seedEnter(updated, oldEnter)
-                            // Seed AFTER restoreFocus so a newly-appeared focus-auto element wins over restore-to-trigger.
-                            seedFocusAuto(updated, oldFocusAuto)
-                        end if
-                        spawnGhosts(ghosts)
-                        sweepFocusAuto()
-                    end if
-                }
+        // (morphing where it can) rather than diffing it. `previous` is what the server-side exchange
+        // uses to send only what moved.
+        def onChange(
+            region: ReactiveRegion,
+            path: Seq[String],
+            contentContext: ReactiveRegion.RegionIdentity,
+            parentContext: ReactiveRegion.ParentContext,
+            previous: Maybe[UI],
+            ui: UI
+        )(using Frame): Unit < Async =
+            Sync.defer(open).flatMap { isOpen =>
+                if !isOpen then Kyo.unit
+                else
+                    val boundaryMode =
+                        if ReactiveRegion.owns(region, contentContext) then ReactiveRegion.BoundaryMode.Suppress
+                        else ReactiveRegion.BoundaryMode.Emit
+                    HtmlRenderer.renderRegion(ui, path, contentContext, region, parentContext, boundaryMode).flatMap { html =>
+                        Sync.defer(open).flatMap { stillOpen =>
+                            if !stillOpen then Kyo.unit
+                            else
+                                region match
+                                    case ReactiveRegion.HtmlRange(regionId) =>
+                                        regions.replaceWith(regionId, html)(tryMorphRange)(prepareRangePatch)(finishRangePatch)
+                                    case svgRegion: ReactiveRegion.SvgElement =>
+                                        replaceSvg(svgRegion, html)
+                                end match
+                        }
+                    }
             }
+        end onChange
+
+        private def tryMorphRange(
+            oldElements: Seq[dom.Element],
+            newElements: Seq[dom.Element],
+            incomingRangesEmpty: Boolean
+        ): Boolean =
+            val active = document.activeElement
+            if active == null ||
+                (active eq document.body) ||
+                oldElements.size != 1 ||
+                newElements.size != 1 ||
+                (active ne oldElements.head) ||
+                !incomingRangesEmpty
+            then false
+            else
+                val fresh = newElements.head
+                if (active.tagName != "INPUT" && active.tagName != "TEXTAREA") || active.tagName != fresh.tagName then false
+                else
+                    var i = 0
+                    while i < fresh.attributes.length do
+                        val attribute = fresh.attributes(i)
+                        if active.getAttribute(attribute.name) != attribute.value then
+                            active.setAttribute(attribute.name, attribute.value)
+                        i += 1
+                    end while
+                    i = active.attributes.length - 1
+                    while i >= 0 do
+                        val name = active.attributes(i).name
+                        if !fresh.hasAttribute(name) then active.removeAttribute(name)
+                        i -= 1
+                    end while
+                    val value =
+                        if active.tagName == "TEXTAREA" then fresh.textContent
+                        else Maybe(fresh.getAttribute("value")).getOrElse("")
+                    val dynamic = active.asInstanceOf[scalajs.js.Dynamic]
+                    if dynamic.value.asInstanceOf[String] != value then dynamic.value = value
+                    applyJsPropsSync(active)
+                    true
+                end if
+            end if
+        end tryMorphRange
+
+        private def prepareRangePatch(oldElements: Seq[dom.Element], newElements: Seq[dom.Element]): RangePatchState =
+            val active = Maybe(document.activeElement).filter(el => (el ne document.body) && containsAny(oldElements, el))
+            val (selectionStart, selectionEnd) = active.map(readSelection).getOrElse((Absent, Absent))
+            RangePatchState(
+                active.flatMap(focusLocator(oldElements, _)),
+                selectionStart,
+                selectionEnd,
+                enterPaths(oldElements),
+                prepareLeaveGhosts(oldElements, leavePaths(newElements)),
+                focusAutoPaths(oldElements)
+            )
+        end prepareRangePatch
+
+        private def finishRangePatch(state: RangePatchState, newElements: Seq[dom.Element]): Unit =
+            newElements.foreach { element =>
+                applyJsPropsSync(element)
+                beginAnimationsSync(element)
+            }
+            state.active.flatMap(resolveFocus(newElements, _)).foreach { target =>
+                discard(target.asInstanceOf[scalajs.js.Dynamic].focus())
+                (state.selectionStart, state.selectionEnd) match
+                    case (Present(start), Present(end)) => setSelection(target, start, end)
+                    case _                              => ()
+            }
+            seedEnter(newElements, state.oldEnter)
+            // Seed after focus restoration so a newly appeared focus-auto element wins over the trigger.
+            seedFocusAuto(newElements, state.oldFocusAuto)
+            spawnGhosts(state.ghosts)
+            sweepFocusAuto()
+        end finishRangePatch
+
+        private def replaceSvg(region: ReactiveRegion.SvgElement, html: String)(using Frame): Unit < Sync =
+            Sync.defer {
+                val pathAttr  = region.path.mkString(".")
+                val finalHtml = HtmlRenderer.wrapReactiveRegion(region, html)
+                val element   = document.querySelector(s"""[data-kyo-path="$pathAttr"]""")
+                if element != null && element.outerHTML != finalHtml then
+                    val active = Maybe(document.activeElement).filter(el => (el ne document.body) && element.contains(el))
+                    val (selectionStart, selectionEnd) = active.map(readSelection).getOrElse((Absent, Absent))
+                    val activePath                     = active.flatMap(el => Maybe(el.getAttribute("data-kyo-path")))
+                    val oldEnter                       = enterPaths(Seq(element))
+                    val ghosts                         = prepareLeaveGhosts(Seq(element), leaveSurvSet(finalHtml))
+                    val oldFocus                       = focusAutoPaths(Seq(element))
+                    element.outerHTML = finalHtml
+                    val updated = Maybe(document.querySelector(s"""[data-kyo-path="$pathAttr"]""")).toList
+                    updated.foreach { newElement =>
+                        applyJsPropsSync(newElement)
+                        beginAnimationsSync(newElement)
+                    }
+                    activePath.foreach(path => restoreSvgFocus(path, selectionStart, selectionEnd))
+                    seedEnter(updated, oldEnter)
+                    seedFocusAuto(updated, oldFocus)
+                    spawnGhosts(ghosts)
+                    sweepFocusAuto()
+                end if
+            }
+        end replaceSvg
     end LocalExchange
 
     private def readSelection(el: dom.Element): (Maybe[Int], Maybe[Int]) =
@@ -161,20 +319,15 @@ private[kyo] object DomBackend:
         (asInt(dyn.selectionStart), asInt(dyn.selectionEnd))
     end readSelection
 
-    private def restoreFocus(capturedPath: String, selStart: Maybe[Int], selEnd: Maybe[Int]): Unit =
+    private def restoreSvgFocus(capturedPath: String, selStart: Maybe[Int], selEnd: Maybe[Int]): Unit =
         val located = document.querySelector(s"""[data-kyo-path="$capturedPath"]""")
         if located != null then
-            val focusTarget =
-                if located.hasAttribute("data-kyo-reactive") then
-                    val inner = located.querySelector("input,textarea,select,[contenteditable]")
-                    if inner != null then inner else located
-                else located
-            val _ = focusTarget.asInstanceOf[scalajs.js.Dynamic].focus()
+            val _ = located.asInstanceOf[scalajs.js.Dynamic].focus()
             (selStart, selEnd) match
-                case (Present(s), Present(e)) => setSelection(focusTarget, s, e)
+                case (Present(s), Present(e)) => setSelection(located, s, e)
                 case _                        => ()
         end if
-    end restoreFocus
+    end restoreSvgFocus
 
     /** The set of `data-kyo-path` values of every `data-kyo-focus-auto` element inside `root`, `root` itself included.
       *
@@ -191,16 +344,23 @@ private[kyo] object DomBackend:
         else descendants
     end focusAutoPaths
 
+    private def focusAutoPaths(roots: Seq[dom.Element]): Set[String] =
+        roots.iterator.flatMap(focusAutoPaths).toSet
+
     /** Seed the FIRST `data-kyo-focus-auto` element under `newRoot` whose path is not in `oldSet` (i.e. it newly
       * appeared): record the previously focused element's path plus the focus-restore flag on the stack, then call
       * `.focus()` on it. On the initial mount `oldSet` is empty, so any focus-auto element is seeded, like native
       * `autofocus`. Mirrors `seedFocusAuto` in HtmlRenderer.clientJs.
       */
     private def seedFocusAuto(newRoot: dom.Element, oldSet: Set[String]): Unit =
-        val els = newRoot.querySelectorAll("[data-kyo-focus-auto]")
-        val candidates =
+        seedFocusAuto(Seq(newRoot), oldSet)
+
+    private def seedFocusAuto(newRoots: Seq[dom.Element], oldSet: Set[String]): Unit =
+        val candidates = newRoots.flatMap { newRoot =>
+            val els = newRoot.querySelectorAll("[data-kyo-focus-auto]")
             (if newRoot.hasAttribute("data-kyo-focus-auto") then Seq(newRoot) else Seq.empty) ++
                 (0 until els.length).map(els(_).asInstanceOf[dom.Element])
+        }
         candidates.find { el =>
             val p = el.getAttribute("data-kyo-path")
             p != null && !oldSet.contains(p)
@@ -216,6 +376,53 @@ private[kyo] object DomBackend:
             discard(el.asInstanceOf[scalajs.js.Dynamic].focus())
         }
     end seedFocusAuto
+
+    private def containsAny(roots: Seq[dom.Element], element: dom.Element): Boolean =
+        roots.exists(root => (root eq element) || root.contains(element))
+
+    private def focusLocator(roots: Seq[dom.Element], active: dom.Element): Maybe[RangeFocus] =
+        Maybe.fromOption(roots.indexWhere(root => (root eq active) || root.contains(active)) match
+            case -1    => None
+            case index => Some(index)).map { rootIndex =>
+            val indexes = scala.collection.mutable.ArrayBuffer.empty[Int]
+            var current = active
+            val root    = roots(rootIndex)
+            while current ne root do
+                val parent = current.parentNode.asInstanceOf[dom.Element]
+                var index  = 0
+                while index < parent.children.length && (parent.children(index) ne current) do index += 1
+                indexes.prepend(index)
+                current = parent
+            end while
+            RangeFocus(Maybe(active.getAttribute("data-kyo-path")), rootIndex, indexes.toSeq)
+        }
+    end focusLocator
+
+    private def resolveFocus(roots: Seq[dom.Element], locator: RangeFocus): Maybe[dom.Element] =
+        val byPath = locator.path.flatMap { path =>
+            Maybe.fromOption(roots.iterator.flatMap { root =>
+                val descendants = root.querySelectorAll("[data-kyo-path]")
+                val candidates =
+                    Iterator.single(root) ++ (0 until descendants.length).iterator.map { i =>
+                        descendants(i).asInstanceOf[dom.Element]
+                    }
+                candidates.find(_.getAttribute("data-kyo-path") == path)
+            }.nextOption())
+        }
+        byPath.orElse {
+            Maybe.fromOption(roots.lift(locator.rootIndex)).flatMap { root =>
+                var current: dom.Element = root
+                var valid                = true
+                val indexes              = locator.childIndexes.iterator
+                while valid && indexes.hasNext do
+                    val index = indexes.next()
+                    if index >= current.children.length then valid = false
+                    else current = current.children(index).asInstanceOf[dom.Element]
+                end while
+                if valid then Present(current) else Absent
+            }
+        }
+    end resolveFocus
 
     /** Unwind stack entries whose seeded focus-auto element left the document, returning focus at most once.
       *
@@ -285,28 +492,30 @@ private[kyo] object DomBackend:
     private def applyJsPropsSync(root: dom.Element): Unit =
         val propPrefix = "data-kyo-prop-"
         // CSS has no attribute-name-prefix selector, so `[data-kyo-prop-*]` is not a valid selector and
-        // throws SyntaxError. Collect the root plus every descendant and keep those carrying any
-        // data-kyo-prop-* attribute; the apply loop reads the prop name off each attribute.
-        val elements = root.querySelectorAll("*")
-        val self =
-            if hasAnyKyoProp(root) then
-                Seq(root)
-            else
-                Seq.empty
-        (self ++ (0 until elements.length).map(elements(_).asInstanceOf[dom.Element])).foreach { el =>
-            val attrNames = (0 until el.attributes.length).map(el.attributes(_).name)
-            val toRemove  = attrNames.filter(_.startsWith(propPrefix))
-            toRemove.foreach { attrName =>
-                val propName = attrName.stripPrefix(propPrefix)
-                val value    = el.getAttribute(attrName)
-                el.asInstanceOf[scalajs.js.Dynamic].updateDynamic(propName)(value)
-            }
-            toRemove.foreach(el.removeAttribute)
-        }
-    end applyJsPropsSync
+        // throws SyntaxError. Visit the root and every descendant, reading property names directly from
+        // the live attribute map.
+        def applyElement(el: dom.Element): Unit =
+            var i = el.attributes.length - 1
+            while i >= 0 do
+                val attrName = el.attributes(i).name
+                if attrName.startsWith(propPrefix) then
+                    val propName = attrName.stripPrefix(propPrefix)
+                    val value    = el.getAttribute(attrName)
+                    el.asInstanceOf[scalajs.js.Dynamic].updateDynamic(propName)(value)
+                    el.removeAttribute(attrName)
+                end if
+                i -= 1
+            end while
+        end applyElement
 
-    private def hasAnyKyoProp(el: dom.Element): Boolean =
-        (0 until el.attributes.length).exists(i => el.attributes(i).name.startsWith("data-kyo-prop-"))
+        applyElement(root)
+        val elements = root.querySelectorAll("*")
+        var i        = 0
+        while i < elements.length do
+            applyElement(elements(i).asInstanceOf[dom.Element])
+            i += 1
+        end while
+    end applyJsPropsSync
 
     /** Start every freshly-inserted SMIL animation under `root`.
       *
@@ -351,10 +560,54 @@ private[kyo] object DomBackend:
         found
     end declaredInChain
 
+    private def addScopedListener(
+        eventType: String,
+        listener: scalajs.js.Function1[dom.Event, Unit],
+        capture: Boolean
+    )(using Frame): Unit < (Scope & Sync) =
+        final case class Installed(
+            target: dom.EventTarget,
+            eventType: String,
+            listener: scalajs.js.Function1[dom.Event, Unit],
+            capture: Boolean
+        )
+        Scope.acquireRelease {
+            Sync.defer {
+                val target = document.body
+                target.addEventListener(eventType, listener, capture)
+                Installed(target, eventType, listener, capture)
+            }
+        }(installed =>
+            Sync.defer(installed.target.removeEventListener(installed.eventType, installed.listener, installed.capture))
+        ).unit
+    end addScopedListener
+
+    private def addScopedListener(
+        eventType: String,
+        listener: scalajs.js.Function1[dom.Event, Unit],
+        options: dom.EventListenerOptions
+    )(using Frame): Unit < (Scope & Sync) =
+        final case class Installed(
+            target: dom.EventTarget,
+            eventType: String,
+            listener: scalajs.js.Function1[dom.Event, Unit],
+            options: dom.EventListenerOptions
+        )
+        Scope.acquireRelease {
+            Sync.defer {
+                val target = document.body
+                target.addEventListener(eventType, listener, options)
+                Installed(target, eventType, listener, options)
+            }
+        }(installed =>
+            Sync.defer(installed.target.removeEventListener(installed.eventType, installed.listener, installed.options))
+        ).unit
+    end addScopedListener
+
     /** Set up capture-phase event delegation on document.body. */
     private def setupEventDelegation(dispatch: (Seq[String], UIEvent) => Boolean < Async, events: Channel[Unit < Async])(using
         Frame
-    ): Unit < Sync = Sync.defer {
+    ): Unit < (Scope & Sync) =
         final class ChainTypes(target: dom.Element):
             def contains(t: String): Boolean = declaredInChain(target, t)
 
@@ -499,15 +752,21 @@ private[kyo] object DomBackend:
             }
         end handler
 
-        Seq("click", "input", "change", "submit", "keydown", "keyup", "focus", "blur", "mouseover", "mouseout").foreach { t =>
-            document.body.addEventListener(t, handler, true)
-        }
-        document.body.addEventListener(
-            "wheel",
-            handler,
-            js.Dynamic.literal(capture = true, passive = false).asInstanceOf[dom.EventListenerOptions]
-        )
-    }
+        val wheelOptions = js.Dynamic.literal(capture = true, passive = false).asInstanceOf[dom.EventListenerOptions]
+        for
+            _ <- addScopedListener("click", handler, true)
+            _ <- addScopedListener("input", handler, true)
+            _ <- addScopedListener("change", handler, true)
+            _ <- addScopedListener("submit", handler, true)
+            _ <- addScopedListener("keydown", handler, true)
+            _ <- addScopedListener("keyup", handler, true)
+            _ <- addScopedListener("focus", handler, true)
+            _ <- addScopedListener("blur", handler, true)
+            _ <- addScopedListener("mouseover", handler, true)
+            _ <- addScopedListener("mouseout", handler, true)
+            _ <- addScopedListener("wheel", handler, wheelOptions)
+        yield ()
+        end for
     end setupEventDelegation
 
     private def findPathElement(el: dom.Element): Maybe[dom.Element] =
@@ -535,32 +794,46 @@ private[kyo] object DomBackend:
         else ds
     end enterPaths
 
+    private def enterPaths(roots: Seq[dom.Element]): Set[String] =
+        roots.iterator.flatMap(enterPaths).toSet
+
     /** Animate every `data-kyo-enter` element under `newRoot` (root included) whose path is not in `oldSet`: add the enter
       * classes, force a reflow, then remove them next frame so the CSS transition runs from the enter-from state.
       */
     private def seedEnter(newRoot: dom.Element, oldSet: Set[String]): Unit =
-        val els = newRoot.querySelectorAll("[data-kyo-enter]")
-        val cand =
-            (if newRoot.hasAttribute("data-kyo-enter") then Seq(newRoot) else Seq.empty) ++
-                (0 until els.length).map(els(_).asInstanceOf[dom.Element])
-        cand.foreach { el =>
-            val p = el.getAttribute("data-kyo-path")
-            if p != null && !oldSet.contains(p) then
-                val cls     = el.getAttribute("data-kyo-enter").split("\\s+").filter(_.nonEmpty)
-                val clsList = el.asInstanceOf[scalajs.js.Dynamic].classList
-                cls.foreach(c => clsList.add(c))
-                val _ = el.asInstanceOf[scalajs.js.Dynamic].offsetWidth // force reflow
-                discard(dom.window.requestAnimationFrame { (_: Double) =>
-                    cls.foreach(c => clsList.remove(c))
-                })
-            end if
+        seedEnter(Seq(newRoot), oldSet)
+
+    private def seedEnter(newRoots: Seq[dom.Element], oldSet: Set[String]): Unit =
+        newRoots.foreach { newRoot =>
+            val els = newRoot.querySelectorAll("[data-kyo-enter]")
+            val cand =
+                (if newRoot.hasAttribute("data-kyo-enter") then Seq(newRoot) else Seq.empty) ++
+                    (0 until els.length).map(els(_).asInstanceOf[dom.Element])
+            cand.foreach { el =>
+                val p = el.getAttribute("data-kyo-path")
+                if p != null && !oldSet.contains(p) then
+                    val cls     = el.getAttribute("data-kyo-enter").split("\\s+").filter(_.nonEmpty)
+                    val clsList = el.asInstanceOf[scalajs.js.Dynamic].classList
+                    cls.foreach(c => clsList.add(c))
+                    val _ = el.asInstanceOf[scalajs.js.Dynamic].offsetWidth // force reflow
+                    discard(dom.window.requestAnimationFrame { (_: Double) =>
+                        cls.foreach(c => clsList.remove(c))
+                    })
+                end if
+            }
         }
     end seedEnter
 
-    /** The set of paths of `data-kyo-leave` elements in an HTML fragment (which leave-elements survive a region
-      * replace). Keyed on leave-carrying elements, NOT all `data-kyo-path`: a reactive wrapper span shares its path
-      * with the (leaving) element it wraps, so an all-path set would wrongly report the element as surviving.
-      */
+    private def leavePaths(roots: Seq[dom.Element]): Set[String] =
+        roots.iterator.flatMap { root =>
+            val descendants = root.querySelectorAll("[data-kyo-leave]")
+            val elements =
+                (if root.hasAttribute("data-kyo-leave") then Iterator.single(root) else Iterator.empty) ++
+                    (0 until descendants.length).iterator.map(descendants(_).asInstanceOf[dom.Element])
+            elements.flatMap(element => Maybe(element.getAttribute("data-kyo-path")).toList)
+        }.toSet
+
+    /** The set of paths of `data-kyo-leave` elements in an HTML fragment that survive an element replacement. */
     private def leaveSurvSet(html: String): Set[String] =
         val tpl = document.createElement("template").asInstanceOf[scalajs.js.Dynamic]
         tpl.innerHTML = html
@@ -588,10 +861,14 @@ private[kyo] object DomBackend:
       * Captures rect + clone WHILE the node is still in the DOM; returns (ghostNode, leaveClasses) descriptors.
       */
     private def prepareLeaveGhosts(root: dom.Element, surv: Set[String]): Seq[(dom.Element, String)] =
-        val els = root.querySelectorAll("[data-kyo-leave]")
-        val cand =
+        prepareLeaveGhosts(Seq(root), surv)
+
+    private def prepareLeaveGhosts(roots: Seq[dom.Element], surv: Set[String]): Seq[(dom.Element, String)] =
+        val cand = roots.flatMap { root =>
+            val els = root.querySelectorAll("[data-kyo-leave]")
             (if root.getAttribute("data-kyo-leave") != null then Seq(root) else Seq.empty) ++
                 (0 until els.length).map(els(_).asInstanceOf[dom.Element])
+        }
         val removed = cand.filter { e =>
             val p = e.getAttribute("data-kyo-path")
             p == null || !surv.contains(p)
@@ -659,7 +936,7 @@ private[kyo] object DomBackend:
         dispatchInput(t)
     end setFilteredAt
 
-    private def setupInputMasking()(using Frame): Unit < Sync = Sync.defer {
+    private def setupInputMasking()(using Frame): Unit < (Scope & Sync) =
         val handler: scalajs.js.Function1[dom.Event, Unit] = (e: dom.Event) =>
             val tRaw = e.target
             if tRaw != null then
@@ -734,9 +1011,9 @@ private[kyo] object DomBackend:
                     end if
                 end if
             end if
-        document.body.addEventListener("beforeinput", handler, true)
-        document.body.addEventListener("compositionend", compositionEndHandler, true)
-    }
+        addScopedListener("beforeinput", handler, true).andThen {
+            addScopedListener("compositionend", compositionEndHandler, true)
+        }
     end setupInputMasking
 
     /** Corrects the whole value once a composition finishes.
@@ -770,8 +1047,15 @@ private[kyo] object DomBackend:
       * Horizontal/edge keys are exempt for any text-editable target, so a filter input keeps caret movement.
       */
     private def scrollKeyPrevented(key: String, target: dom.Element): Boolean =
-        val tag              = target.tagName
-        def contentEditable  = target.asInstanceOf[scalajs.js.Dynamic].isContentEditable.asInstanceOf[Boolean]
+        val tag = target.tagName
+        // `isContentEditable` is an HTMLElement member: an SVG target does not carry it, and jsdom implements
+        // contentEditable on no element at all, so the property reads as undefined. Casting undefined straight to
+        // Boolean throws a ClassCastException out of the keydown listener, which takes the whole delegation path
+        // down with it. Read the property defensively and treat an absent one as "not editable".
+        def contentEditable =
+            val value = target.asInstanceOf[scalajs.js.Dynamic].isContentEditable
+            !scalajs.js.isUndefined(value) && value != null && value.asInstanceOf[Boolean]
+        end contentEditable
         def editable         = tag == "INPUT" || tag == "TEXTAREA" || tag == "SELECT" || contentEditable
         def verticalConsumer = tag == "TEXTAREA" || tag == "SELECT" || contentEditable
         key match

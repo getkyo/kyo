@@ -180,6 +180,16 @@ final private[net] class PosixHandle private (
     /** Claim the socket-fd close: returns `true` for the single caller that should issue `close(fd)`, `false` for every later caller. */
     private[posix] def claimFdClose()(using AllowUnsafe): Boolean = fdCloseClaimed.compareAndSet(false, true)
 
+    /** Whether some path has already taken responsibility for closing this handle's fd, without consuming the claim the way
+      * [[claimFdClose]] does.
+      *
+      * This is the state that moves at the same instant the fd number does, which is what makes it the right thing to test before arming a
+      * new operation against [[writeFd]]. [[isClosing]] is not: a connection handle's guard bit is set by the driver's deferred discharge,
+      * on a different carrier and strictly after the close-phase paths have already issued `close(fd)` on the caller's, so a check against it
+      * reads `false` for exactly the window in which the number may already name somebody else's socket.
+      */
+    private[posix] def fdCloseIsClaimed(using AllowUnsafe): Boolean = fdCloseClaimed.get()
+
     /** Record that a [[claimFdClose]] win was spent guarding [[IoUringDriver.registerDeferredClose]]'s deferred `shutdown(SHUT_RD)`, not the
       * real `close(fd)` syscall: that call still owes the actual close once the in-flight recv drains, but its own `claimFdClose()` attempt
       * would lose (the claim is already spent). Set by the winner right after winning; consumed exactly once via [[consumeDeferredFdClose]].
@@ -652,10 +662,11 @@ private[net] object PosixHandle:
     def socket(fd: Int, bufSize: Int, connectTarget: Maybe[(Buffer[Byte], Int)], createdAt: Frame)(using
         AllowUnsafe
     ): PosixHandle =
+        val hid = HandleId.next(fd)
         new PosixHandle(
             fd,
             fd,
-            HandleId.next(fd),
+            hid,
             Buffer.alloc[Byte](bufSize),
             bufSize,
             Absent,
@@ -668,6 +679,7 @@ private[net] object PosixHandle:
             lastPlaintextRead = AtomicRef.Unsafe.init(Absent),
             createdAt = createdAt
         )
+    end socket
 
     /** stdio handle: split fds, read end 0 and write end 1 (the split-fd case). */
     def stdio(bufSize: Int, createdAt: Frame)(using AllowUnsafe): PosixHandle =

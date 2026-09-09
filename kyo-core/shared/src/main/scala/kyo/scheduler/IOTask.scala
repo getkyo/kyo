@@ -498,6 +498,10 @@ object IOTask:
     private val _frame                = Frame.internal
     private inline given frame: Frame = _frame
 
+    // Install the scheduler's Diagnostics dumper at kyo-core's first touch of the scheduler: this object initializes when the first
+    // fiber task is created, so a leaf that later hangs has the scheduler's live worker state in its Diagnostics.dumpAll() instead of blank.
+    SchedulerDiagnostics.init()
+
     /** The fiber running on this thread, or null where none is.
       *
       * The boundary needs the fiber whose slice it is running in: to register an interrupt cascade on it, to

@@ -666,10 +666,14 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
                 Structure.Value.Null
             case _ =>
                 val numStr = readNumber()
-                if numStr.indexOf('.') >= 0 || numStr.indexOf('e') >= 0 || numStr.indexOf('E') >= 0 then
-                    Structure.Value.Decimal(numStr.toDouble)
+                val exact  = BigDecimal(numStr)
+                if numStr.indexOf('.') < 0 && numStr.indexOf('e') < 0 && numStr.indexOf('E') < 0 then
+                    if exact.isValidLong then Structure.Value.Integer(exact.toLong)
+                    else Structure.Value.BigNum(exact)
                 else
-                    Structure.Value.Integer(numStr.toLong)
+                    val decimal = numStr.toDouble
+                    if decimal.isFinite && BigDecimal(decimal.toString) == exact then Structure.Value.Decimal(decimal)
+                    else Structure.Value.BigNum(exact)
                 end if
         end match
     end readStructure

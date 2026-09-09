@@ -15,47 +15,18 @@
 #   -DCMAKE_OSX_ARCHITECTURES). A cross-OS build would need a CMake toolchain file and is rejected
 #   rather than built as the host's, which is what would silently ship the wrong platform.
 #
+# Host detection, target validation, cross rejection and the arch assertion are shared with
+# kyo-aeron's build-aeron.sh; see scripts/native-build-lib.sh for why they live in one place.
+#
 # Requires cmake + go + a C/C++ toolchain on PATH (apt: cmake golang build-essential; brew: cmake go).
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
 
-# The host this script runs on. The musl probe mirrors CCompiler.detectOsWith (kyo-ffi plugin) and
-# NativeLoader.detectOs (kyo-ffi/jvm): on Alpine the staged tree must be named linux-musl-<arch>,
-# because that is where both the sbt build and the runtime look for it.
-case "$(uname -s)" in
-    Darwin) hostOs=darwin ;;
-    Linux)
-        if [ -e /lib/ld-musl-x86_64.so.1 ] || [ -e /lib/ld-musl-aarch64.so.1 ]; then hostOs=linux-musl; else hostOs=linux; fi
-        ;;
-    *) echo "unsupported build host: $(uname -s)" >&2; exit 1 ;;
-esac
-case "$(uname -m)" in
-    x86_64|amd64)  hostArch=x86_64 ;;
-    aarch64|arm64) hostArch=aarch64 ;;
-    *) echo "unsupported build host architecture: $(uname -m)" >&2; exit 1 ;;
-esac
+. "$(cd "$here/../../.." && pwd)/scripts/native-build-lib.sh"
 
-osArch="${1:-$hostOs-$hostArch}"
-# Split at the LAST hyphen: the os itself carries one (linux-musl-x86_64 is linux-musl + x86_64).
-arch="${osArch##*-}"
-os="${osArch%-*}"
-case "$os-$arch" in
-    linux-x86_64|linux-aarch64|linux-musl-x86_64|linux-musl-aarch64|darwin-x86_64|darwin-aarch64) ;;
-    *)
-        echo "unsupported os-arch '$osArch' (supported: linux-x86_64 linux-aarch64 linux-musl-x86_64 linux-musl-aarch64 darwin-x86_64 darwin-aarch64)" >&2
-        exit 1
-        ;;
-esac
-if [ "$os" != "$hostOs" ]; then
-    echo "cannot build '$osArch' on a '$hostOs-$hostArch' host: only a darwin arch cross-build is supported." >&2
-    echo "Run this on a '$os' runner/container, or omit the argument to build for the host ($hostOs-$hostArch)." >&2
-    exit 1
-fi
-if [ "$os" != darwin ] && [ "$arch" != "$hostArch" ]; then
-    echo "cannot build '$osArch' on a '$hostOs-$hostArch' host: cross-arch is supported on darwin only." >&2
-    exit 1
-fi
+native_resolve_target "${1:-}" \
+    "linux-x86_64 linux-aarch64 linux-musl-x86_64 linux-musl-aarch64 darwin-x86_64 darwin-aarch64"
 
 commit="$(grep -vE '^[[:space:]]*#' "$here/BORINGSSL_COMMIT" | head -n1 | tr -d '[:space:]')"
 [ "${#commit}" -eq 40 ] || { echo "BORINGSSL_COMMIT is not a 40-char commit: '$commit'" >&2; exit 1; }
@@ -99,13 +70,9 @@ build="$src/build-$osArch"
 # shared-object link needs and the Native archive link tolerates. Harmless on darwin (already PIC there).
 cmakeArgs=(-DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DCMAKE_POSITION_INDEPENDENT_CODE=ON)
 if [ "$os" = darwin ]; then
-    # Apple spells aarch64 "arm64". This is the flag that makes the cross-build real: without it the
-    # argument only renamed the staging directory and arm64 archives shipped as darwin-x86_64.
-    case "$arch" in
-        x86_64)  osxArch=x86_64 ;;
-        aarch64) osxArch=arm64 ;;
-    esac
-    cmakeArgs+=(-DCMAKE_OSX_ARCHITECTURES="$osxArch")
+    # This is the flag that makes the cross-build real: without it the argument only renamed the
+    # staging directory and arm64 archives shipped as darwin-x86_64.
+    cmakeArgs+=(-DCMAKE_OSX_ARCHITECTURES="$(native_osx_architecture "$arch")")
 fi
 
 # BoringSSL's Go tooling: no GOARCH is set, and none is needed. The pinned commit ships checked-in
@@ -120,50 +87,8 @@ cmake --build "$build" --target ssl crypto -j"$(getconf _NPROCESSORS_ONLN 2>/dev
 # The staged name is a promise every consumer trusts (the sbt build links it, the plugin packages the
 # resulting shim as <os-arch>). Assert the archives really are the requested arch, so a cross flag that
 # was ignored fails here loudly instead of at some consumer's link, or at their runtime.
-assert_arch() {
-    # Absolute, because the linux arm inspects a member from a temp cwd.
-    archive="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
-    case "$os" in
-        darwin)
-            case "$arch" in
-                x86_64)  want=x86_64 ;;
-                aarch64) want=arm64 ;;
-            esac
-            got="$(lipo -archs "$archive")"
-            case " $got " in
-                *" $want "*) ;;
-                *)
-                    echo "arch mismatch: $archive contains '$got', expected '$want' for $osArch" >&2
-                    exit 1
-                    ;;
-            esac
-            ;;
-        linux|linux-musl)
-            # `file` on an ar archive reports the container, not the ISA, so inspect a member.
-            if ! command -v ar >/dev/null 2>&1 || ! command -v file >/dev/null 2>&1; then
-                echo "note: ar/file unavailable, skipping arch assertion for $archive" >&2
-                return 0
-            fi
-            # head closes the pipe after line 1; under `set -o pipefail` the still-writing ar takes
-            # SIGPIPE (busybox head on the Alpine/musl leg) and fails the build with 141. sed -n reads to EOF.
-            member="$(ar t "$archive" | sed -n '1p')"
-            tmp="$(mktemp -d)"
-            ( cd "$tmp" && ar x "$archive" "$member" )
-            desc="$(file -b "$tmp/$member")"
-            rm -rf "$tmp"
-            case "$arch" in
-                x86_64)  pattern='x86-64' ;;
-                aarch64) pattern='aarch64|ARM aarch64' ;;
-            esac
-            echo "$desc" | grep -qE "$pattern" || {
-                echo "arch mismatch: $archive member '$member' is '$desc', expected $arch for $osArch" >&2
-                exit 1
-            }
-            ;;
-    esac
-}
-assert_arch "$build/libssl.a"
-assert_arch "$build/libcrypto.a"
+native_assert_arch "$build/libssl.a" "$os" "$arch"
+native_assert_arch "$build/libcrypto.a" "$os" "$arch"
 
 dest="$here/staged/$osArch"
 rm -rf "$dest"

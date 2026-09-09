@@ -75,7 +75,7 @@ object Maybe:
       *   a Maybe instance containing the value if the condition is true, or Absent otherwise
       */
     inline def when[A](cond: Boolean)(inline v: => A): Maybe[A] =
-        if cond then v else Absent
+        if cond then widen(Present(v)) else Absent
 
     /** Represents a defined value in a Maybe. */
     opaque type Present[+A] = A | PresentAbsent
@@ -217,7 +217,7 @@ object Maybe:
           *   a new Maybe containing the result of the function if defined, or Absent if empty
           */
         inline def map[B](inline f: A => B): Maybe[B] =
-            if isEmpty then Absent else f(get)
+            if isEmpty then Absent else widen(Present(f(get)))
 
         /** Applies a function that returns a Maybe to the contained value if defined.
           *
@@ -326,7 +326,9 @@ object Maybe:
           */
         inline def collect[B](pf: PartialFunction[A, B]): Maybe[B] =
             if isEmpty then Absent
-            else pf.applyOrElse(get, constAbsent)
+            else
+                val v = get
+                if pf.isDefinedAt(v) then widen(Present(pf(v))) else Absent
 
         /** Returns this Maybe if defined, or an alternative Maybe if empty.
           *
@@ -350,7 +352,7 @@ object Maybe:
           *   a new Maybe containing a tuple of both values if both are defined, or Absent if either is empty
           */
         def zip[B](that: Maybe[B]): Maybe[(A, B)] =
-            if isEmpty || that.isEmpty then Absent else (get, that.get)
+            if isEmpty || that.isEmpty then Absent else widen(Present((get, that.get)))
 
         /** Creates an iterator over the contained value.
           *
@@ -444,6 +446,16 @@ object Maybe:
                     new PresentAbsent(depth)
         end PresentAbsent
 
-        val constAbsent: Any => Absent = _ => Absent
+        /** Widens a `Present[A]` built by `Present.apply` to the `Maybe[A]` its constructor returns.
+          *
+          * `Present[A] <: Maybe[A]` holds by construction and needs no cast where the opaque types are
+          * transparent. It needs one where they are not: when an inline body below is expanded into user
+          * code and re-checked under `-Xcheck-macros`, the compiler sees `Present` through one inline
+          * proxy and `Maybe` through another, and does not substitute the proxy across the nesting, so
+          * `Maybe[A]` unfolds to a union naming the un-proxied `Present` and the conformance is rejected.
+          * The cast is erased, both sides being the same representation, and can go once the compiler
+          * expands the proxies of nested opaque types consistently.
+          */
+        inline def widen[A](inline v: Present[A]): Maybe[A] = v.asInstanceOf[Maybe[A]]
     end internal
 end Maybe

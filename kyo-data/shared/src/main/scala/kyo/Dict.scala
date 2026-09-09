@@ -439,7 +439,7 @@ object Dict:
                 span =>
                     val n   = Span.size(span) / 2
                     val src = Span.toArrayUnsafe(span)
-                    val arr = new Array[Any](n * 2).asInstanceOf[Array[K | V]]
+                    val arr = new Array[Any](n * 2)
                     var j   = 0
                     var i   = 0
                     while i < n do
@@ -490,7 +490,7 @@ object Dict:
                     while i < n do
                         arr(n + i) = fn(Span.apply(span)(n + i).asInstanceOf[V])
                         i += 1
-                    Span.fromUnsafe(arr.asInstanceOf[Array[K | V2]]).asInstanceOf[Dict[K, V2]]
+                    Span.fromUnsafe(arr).asInstanceOf[Dict[K, V2]]
                 ,
                 map =>
                     val b = DictBuilder.initTransform[K, V, K, V2] { (b, k, v) =>
@@ -609,12 +609,26 @@ object Dict:
         /** Formats all entries as a concatenated string with no separator. */
         def mkString: String = mkString("")
 
+        /** Which representation this Dict has, handed to the branch that knows how to read it.
+          *
+          * '''The small branch is handed a `Span[Any]`, and an inline body must never narrow it.''' The backing store under the
+          * threshold is an `Object[]`, whatever K and V are, since `DictBuilder` allocates it as one. `Span[A]` is `Array[? <: A]`,
+          * so naming the array as `Span[K | V]` compiles to a checkcast against the ERASED lub of K and V. Inside this file that lub
+          * is `Object` and the cast is a no-op; at an INLINED call site K and V are the caller's concrete types, and the moment the
+          * two share a supertype the emitted checkcast names it and fails. `Dict[String, <a case class>]` is enough, since `String`
+          * and every case class are `Serializable`, and every inline operation routed through here threw
+          * `[Ljava.lang.Object; cannot be cast to [Ljava.io.Serializable;` on one.
+          *
+          * So the element type is `Any` here and each body casts what it reads, element by element, which is what they already did.
+          * The same rule binds anything an inline body allocates: keep it `Array[Any]` and let the non-inline helpers, compiled once
+          * against the abstract parameters, do the narrowing.
+          */
         private inline def reduce[B](
-            inline small: Span[K | V] => B,
+            inline small: Span[Any] => B,
             inline large: HashMap[K, V] => B
         ): B =
             if self.isInstanceOf[HashMap[?, ?]] then large(self.asInstanceOf[HashMap[K, V]])
-            else small(self.asInstanceOf[Span[K | V]])
+            else small(self.asInstanceOf[Span[Any]])
 
     end extension
 
@@ -624,7 +638,8 @@ object Dict:
     private[kyo] def fromHashMap[K, V](map: HashMap[K, V]): Dict[K, V] =
         map
 
-    private def trimFiltered[K, V](original: Dict[K, V], arr: Array[K | V], n: Int, j: Int): Dict[K, V] =
+    /** The kept half of a filter's scratch array, narrowed here rather than in the inline body that produced it. */
+    private def trimFiltered[K, V](original: Dict[K, V], arr: Array[Any], n: Int, j: Int): Dict[K, V] =
         if j == n then original
         else if j == 0 then empty
         else

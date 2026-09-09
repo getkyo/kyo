@@ -22,7 +22,7 @@ class WebsiteSpaSmokeTest extends kyo.test.Test[Any]:
     // In-Chrome SPA navigation. Cross-platform gate; needs the served-bundle Chrome harness.
     "click-to-navigate swaps content without reload (cross-platform gate)".ignore in {
         // Gate: mount the docs app in the browser harness, click a sidebar link, assert:
-        // - The content area (data-kyo-reactive span) changes to the new route's article.
+        // - The content area (the reactive comment range) changes to the new route's article.
         // - UILocation.current reflects the new route.
         // - The <head> stylesheet is still present (not clobbered by the content swap).
         // - window.location.href did NOT change (no full page reload).

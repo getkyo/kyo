@@ -354,7 +354,14 @@ private[runner] object LeakCheck:
                     res
                 catch case _: Throwable => Maybe.empty
             scanTcp("/proc/net/tcp").orElse(scanTcp("/proc/net/tcp6")).orElse(scanUnix())
-                .getOrElse(" [no /proc/net row: CLOSED-state TCP fd or closed Unix-domain socket]")
+                // Say what the absence proves, which is only that no row matched. Three different sockets produce it: one that was
+                // connected and has since closed, one that was created and never dialed, and a closed Unix-domain socket. They have
+                // opposite diagnoses, since the first points at a close path that ran too late and the second at a connect that never
+                // happened, so a label naming just one of them sends the reader the wrong way. A socket still mid-handshake does NOT
+                // land here: SYN_SENT carries a row.
+                .getOrElse(
+                    " [no /proc/net row: closed after use, never dialed, or a closed Unix-domain socket; these are indistinguishable here]"
+                )
     end describeSocket
 
     /** Leak-debug attribution: descriptor target -> the leaf path that first left it open. Populated only in leak-debug mode (see

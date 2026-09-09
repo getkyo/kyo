@@ -182,7 +182,7 @@ class ChromeParityTest extends WebsiteTest:
             version = WebsiteVersion("latest", "latest", true)
         )
 
-    "docs body SSG runRenderPage contains data-kyo-reactive wrapping article" in {
+    "docs body SSG runRenderPage wraps the article in a reactive range" in {
         val src = "## Scope\n\nSome text.\n"
         for
             rendered <- DocsMarkdownRender.transpile(src)
@@ -193,8 +193,11 @@ class ChromeParityTest extends WebsiteTest:
                 DocsApp.body(docsContent, "latest", route, Map(routeStr -> rendered.headings), reactive, Signal.initConst(false))
             html <- UI.runRenderPage(testHead)(view).take(1).run.map(_.headMaybe.getOrElse(""))
         yield
-            assert(html.contains("data-kyo-reactive"), s"data-kyo-reactive not found: $html")
             assert(html.contains("<h2"), s"transpiled h2 not found: $html")
+            assert(
+                enclosingReactiveRange(html, "<h2").isDefined,
+                s"the transpiled article must render inside a reactive range: $html"
+            )
         end for
     }
 

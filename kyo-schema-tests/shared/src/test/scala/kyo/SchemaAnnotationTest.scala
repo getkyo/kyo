@@ -41,6 +41,9 @@ case class SA14bV2(z: Int)              extends SA14bSum derives Schema
 // SA15: @rename on a product field
 case class SA15Prod(@rename("first_name") firstName: String) derives Schema
 
+// SA15b: @rename on a Maybe field, whose schema is built from a tag for an opaque type
+case class SA15bProd(@rename("middle_name") middleName: Maybe[String]) derives Schema
+
 // SA16: @discriminator on sealed trait, @rename on a variant
 @discriminator("type") sealed trait SA16Sum derives Schema
 @rename("para") case class SA16V1(x: Int) extends SA16Sum derives Schema
@@ -355,6 +358,18 @@ class SchemaAnnotationTest extends kyo.test.Test[Any]:
         assert(enc == """{"first_name":"ada"}""", s"@rename must emit the wire name: $enc")
         val dec = Json.decode[SA15Prod]("""{"first_name":"ada"}""")
         assert(dec == Result.succeed(SA15Prod("ada")), s"round-trip must succeed: $dec")
+    }
+
+    "@rename on a Maybe field changes the wire key" in {
+        val enc = Json.encode(SA15bProd(Present("ada")))
+        assert(enc == """{"middle_name":"ada"}""", s"@rename must emit the wire name for a Maybe field: $enc")
+        val dec = Json.decode[SA15bProd]("""{"middle_name":"ada"}""")
+        assert(dec == Result.succeed(SA15bProd(Present("ada"))), s"round-trip must succeed: $dec")
+        val byScalaName = Json.decode[SA15bProd]("""{"middleName":"ada"}""")
+        assert(
+            byScalaName == Result.succeed(SA15bProd(Absent)),
+            s"the Scala name must no longer be read once renamed, leaving the field absent: $byScalaName"
+        )
     }
 
     "@rename on a variant changes the wire tag" in {

@@ -640,4 +640,27 @@ addSbtPlugin("io.getkyo" % "sbt-kyo-test-publish" % "<version>")
 lazy val myProject = project.enablePlugins(SbtKyoTestPlugin)
 ```
 
+The plugin resolves the right `kyo-test-runner` artifact for the project's platform and registers the
+matching framework class. To wire it by hand instead, do both yourself:
+
+```scala doctest:expect=skipped
+// JVM
+libraryDependencies += "io.getkyo" %% "kyo-test-runner" % "<version>" % Test
+Test / testFrameworks += new TestFramework("kyo.test.runner.SbtFramework")
+
+// Scala.js and Scala Native (%%% comes from the platform's own sbt plugin)
+libraryDependencies += "io.getkyo" %%% "kyo-test-runner" % "<version>" % Test
+Test / testFrameworks += new TestFramework("kyo.test.runner.JsFramework")     // Scala.js
+Test / testFrameworks += new TestFramework("kyo.test.runner.NativeFramework") // Scala Native
+```
+
+Use `%%` on the JVM: `%%%` is contributed by the Scala.js and Scala Native sbt plugins, so it does not
+exist in a JVM-only build. Use `+=` rather than `:=` for `testFrameworks`, since `:=` drops ScalaTest,
+JUnit, MUnit, and every other framework the project registers.
+
+> **Note:** sbt discovers a framework only through `Test / testFrameworks`, by class name. If the name
+> is wrong, or the artifact for the platform is missing, sbt finds no fingerprints and reports
+> `Total 0` with no error and a successful exit. Zero tests with a green build is the signature of a
+> wiring problem, not of a suite that has nothing to run.
+
 > **Note:** suite discovery from the command-line runner is JVM-only (it reads the `META-INF/services/kyo.test.Test` service-loader file); on JS and Native the CLI discovers nothing, so run those platforms through sbt, whose own fingerprint-based discovery finds every `Test` subclass. `JUnitXmlReporter` is JVM-only as well.

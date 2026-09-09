@@ -42,7 +42,7 @@ jobs:
           apps: sbt
       # The site reaches kyo-net through kyo-http, so rendering it compiles kyo-net's C shims. This
       # workflow does not use .github/actions/setup, so the native build deps are installed here, as
-      # readme.yml does for the same reason.
+      # checks.yml does for the same reason.
       #
       # liburing (build-time only): the io_uring shim (kyo_uring.c) statically links -luring.
       - name: Install liburing (Linux)

@@ -1,7 +1,6 @@
 package kyo.net.internal.posix
 
 import kyo.AllowUnsafe
-import kyo.Chunk
 import kyo.Fiber
 import kyo.Maybe
 import kyo.ffi.Buffer
@@ -23,10 +22,13 @@ private[net] class IoUringSqe
   * Most of liburing's hot path (`io_uring_get_sqe`, every `io_uring_prep_*`, the `set_data64` / `cqe_get_data64` / `cqe_seen` accessors, and
   * `io_uring_wait_cqe` itself) is `static inline` in `<liburing.h>` with no exported symbol, so it is unreachable by Panama's
   * `SymbolLookup.libraryLookup` on JVM or Scala Native's `@link`. Those calls route through one-line `kyo_uring_*` C wrappers the shim
-  * exports. The four real liburing exports are bound directly.
+  * exports. The three real liburing exports are wrapped too, so that every symbol this trait names is one `kyo_uring.c` defines.
   *
-  * The shim and its statically-linked liburing are built by the kyo-net build; this trait binds the contract the C must satisfy. Header-gated on
-  * `liburing.h`: on a host without liburing the generator emits stubs and the io_uring backend probe reports unavailable.
+  * The shim and its statically-linked liburing are built by the kyo-net build; this trait binds the contract the C must satisfy. The shim is
+  * compiled on the machine that LINKS the binary, so its `#if defined(__linux__) && __has_include(<liburing.h>)` guard decides against the
+  * target platform: on a host without liburing every entry point is a stub, `kyo_uring_probe_available` returns 0, and the io_uring backend
+  * probe reports unavailable. Gating on the trait's declared headers instead would freeze the decision at the moment kyo was compiled and
+  * leave the symbols undefined at a macOS Scala Native link of an artifact published from Linux.
   *
   * Every method is part of the unsafe FFI tier and takes a trailing `(using AllowUnsafe)` clause. The one `@Ffi.blocking` method
   * (`kyo_uring_wait_cqe_timeout`) returns a `Fiber.Unsafe[<value>, Any]`: on JVM/Native the bounded wait runs synchronously on the calling
@@ -35,7 +37,7 @@ private[net] class IoUringSqe
   */
 private[net] trait IoUringBindings extends Ffi:
 
-    // --- real liburing exports, bound directly (no shim) ---
+    // --- real liburing exports, wrapped one-for-one by the shim so the symbol is kyo-owned on every platform ---
 
     /** `int io_uring_queue_init(unsigned entries, struct io_uring* ring, unsigned flags)`. Sets up the ring in the caller's `Buffer[Byte]`.
       * Returns 0 on success, `-errno` on failure. Raw signed rc, not clamped to -1.
@@ -88,6 +90,18 @@ private[net] trait IoUringBindings extends Ffi:
     /** `io_uring_prep_connect(sqe, fd, addr, addrlen)`. */
     def kyo_uring_prep_connect(sqe: Ffi.Handle[IoUringSqe], fd: Int, addr: Buffer[Byte], addrlen: Int)(using AllowUnsafe): Unit
 
+    /** `io_uring_prep_cancel64(sqe, userData, flags)`: ask the kernel to cancel the in-flight op registered under `userData`.
+      *
+      * Targets the op by KEY rather than by descriptor, which is what makes it the only way to retire a connect. A connect submission is
+      * backed by an internal poll wait that neither `close(2)` nor a `shutdown(2)` on a socket still in SYN-SENT completes, so without a
+      * cancel its completion never arrives and any bookkeeping waiting on that completion waits forever.
+      *
+      * The cancel reports one of three outcomes and all of them are normal: success, `-ENOENT` when the target already completed and its
+      * completion is reaped or on its way, and `-EALREADY` when it is completing. In every case the target's OWN completion still arrives,
+      * so a caller must retire the target on that completion and never on this one.
+      */
+    def kyo_uring_prep_cancel64(sqe: Ffi.Handle[IoUringSqe], userData: Long, flags: Int)(using AllowUnsafe): Unit
+
     /** Multishot poll: `IORING_OP_POLL_ADD | IORING_POLL_ADD_MULTI`. One submission re-fires a CQE every time `fd` becomes ready for
       * `pollMask` (e.g. `POLLIN`), staying armed across completions (each carries `IORING_CQE_F_MORE`). Armed on the driver's wake eventfd so a
       * cross-carrier `kyo_uring_eventfd_write` returns the parked reap wait promptly instead of leaving the reap loop parked indefinitely.
@@ -96,6 +110,15 @@ private[net] trait IoUringBindings extends Ffi:
 
     /** Non-blocking `poll(2)` peer-close probe, off the ring (see kyo_uring.c for the POLLRDHUP rationale). Returns 1 peer gone, 0 open, -1 error. */
     def kyo_uring_poll_peer_closed(fd: Int)(using AllowUnsafe): Int
+
+    /** `io_uring_prep_nop(sqe)`. Turns an already-acquired SQE into a no-op.
+      *
+      * `io_uring_get_sqe` advances the submission tail as it hands the entry out, so the slot goes to the kernel whether or not the caller
+      * fills it in: acquiring is a commitment, not a reservation that can be released. liburing does not clear a reused SQE, so a slot left
+      * untouched still carries the previous occupant's opcode and would re-issue it against a stale descriptor. A caller that acquires an SQE
+      * and then cannot use it prepares a nop here and gives it a key the reap side recognises and discards.
+      */
+    def kyo_uring_prep_nop(sqe: Ffi.Handle[IoUringSqe])(using AllowUnsafe): Unit
 
     /** `io_uring_sqe_set_data64(sqe, data)`. Stores the per-op key the completion is matched against. */
     def kyo_uring_sqe_set_data64(sqe: Ffi.Handle[IoUringSqe], data: Long)(using AllowUnsafe): Unit
@@ -192,7 +215,16 @@ end IoUringBindings
 
 private[net] object IoUringBindings extends Ffi.Config(
         library = "kyonet_posix_uring",
-        headers = Chunk("liburing.h"),
+        // `io_uring_queue_init` / `queue_exit` / `submit` are real exported liburing symbols, so binding them by name would work on
+        // Linux; they are routed through kyo-owned wrappers so that EVERY symbol this trait names is defined by `kyo_uring.c` on every
+        // platform. The binding is emitted when kyo is COMPILED but linked on the consumer's host, so a direct `io_uring_*` extern
+        // becomes an undefined symbol at a macOS Scala Native link. No `headers` entry either, for the same reason: the codegen's header
+        // probe runs on the BUILD host and would emit throw-stubs off Linux, baking that host's platform into the published artifact.
+        symbols = Map(
+            "io_uring_queue_init" -> "kyo_uring_queue_init",
+            "io_uring_queue_exit" -> "kyo_uring_queue_exit",
+            "io_uring_submit"     -> "kyo_uring_submit"
+        ),
         // The io_uring shim (kyo_uring.c) is compiled INTO the Scala Native binary (copied under
         // `resources/scala-native` by KyoFfiPlugin), so the generated Native binding must NOT emit
         // `@link("kyonet_posix_uring")` (there is no such shared library to find a `-l` for). The

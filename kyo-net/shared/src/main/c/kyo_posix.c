@@ -15,6 +15,7 @@
  * The guard keeps the translation unit empty on non-POSIX hosts (e.g. Windows) so
  * the build does not fail where fcntl.h is absent.
  */
+#include "kyo_net_api.h"
 
 #if !defined(_WIN32)
 
@@ -27,7 +28,7 @@
  * failure. Uses two correct variadic calls to fcntl so no argument is passed in the
  * wrong register on any architecture.
  */
-int kyo_posix_set_nonblocking(int fd) {
+KYO_NET_API int kyo_posix_set_nonblocking(int fd) {
     int flags = fcntl(fd, F_GETFL, 0);
     if (flags < 0) return -1;
     return fcntl(fd, F_SETFL, flags | O_NONBLOCK);
@@ -38,7 +39,7 @@ int kyo_posix_set_nonblocking(int fd) {
  * flags on success (>= 0), -1 on failure. Wraps the variadic fcntl call correctly so
  * the result is reliable on arm64 as well as x86_64.
  */
-int kyo_posix_get_flags(int fd) {
+KYO_NET_API int kyo_posix_get_flags(int fd) {
     return fcntl(fd, F_GETFL, 0);
 }
 
@@ -53,7 +54,7 @@ int kyo_posix_get_flags(int fd) {
  * (O_RDONLY and friends) are passed in by the caller so the OS-specific numeric values
  * stay in PosixConstants rather than being baked into the shim.
  */
-int kyo_posix_open(const char* path, int flags) {
+KYO_NET_API int kyo_posix_open(const char* path, int flags) {
     return open(path, flags);
 }
 
@@ -63,7 +64,7 @@ int kyo_posix_open(const char* path, int flags) {
  * the shim closes it through the matching shim symbol without reaching for a separate
  * binding.
  */
-int kyo_posix_close(int fd) {
+KYO_NET_API int kyo_posix_close(int fd) {
     return close(fd);
 }
 

@@ -62,6 +62,26 @@ class EpollBindingsTest extends Test:
     end loopbackPair
 
     "EpollBindings" - {
+        // Reproduces the RC6 macOS/arm64 Native link failure. The binding is generated when kyo is COMPILED but linked on the
+        // consumer's host, so an artifact published from Linux used to carry `@extern` declarations for `epoll_create1`, `epoll_ctl`,
+        // `epoll_wait`, `eventfd`, `eventfd_read` and `eventfd_write`, and a macOS `nativeLink` of it died with "ld: symbol(s) not
+        // found for architecture arm64". Building kyo on macOS produced the mirror-image artifact: a throwing Scala stub. Both are the
+        // same defect, the build host deciding a target-platform question. With every method routed through `kyo_epoll.c`, which is
+        // compiled where the link happens, the call resolves on every platform and answers with a value: an epoll fd on Linux, ENOSYS
+        // off it. Off Linux this case FAILED before the fix (UnsupportedOperationException from the generated stub on Native, a symbol
+        // lookup failure on the JVM), and the whole Native test binary failed to link when the bindings were emitted for real.
+        "is callable on every platform: epoll's absence is an errno, not a missing symbol" in {
+            val created = ep.epoll_create1(0)
+            if PosixConstants.isLinux then
+                assert(created.value >= 0, s"epoll_create1 failed on Linux errno=${created.errorCode}")
+                ep.close(created.value).safe.get.map(rc => assert(rc == 0))
+            else
+                assert(created.value == -1)
+                assert(created.errorCode == PosixConstants.ENOSYS)
+                succeed
+            end if
+        }
+
         "epoll_create1 + ctl(ADD) + wait reports readability with the registered key" in {
             assumeEpoll()
             val epfd = ep.epoll_create1(0)

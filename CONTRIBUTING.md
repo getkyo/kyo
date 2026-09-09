@@ -26,6 +26,7 @@ Thank you for considering contributing to this project! We welcome all contribut
     - [Markdown Formatting](#markdown-formatting)
     - [Inline Comments](#inline-comments)
   - [File Organization](#file-organization)
+  - [Macros](#macros)
 - [Module READMEs](#module-readmes)
   - [Structure](#structure)
   - [Writing Style](#writing-style)
@@ -389,8 +390,8 @@ This is guidance for new and changed code. Existing APIs that thread byte counts
 
 | Kyo primitive         | Purpose                | Notes                                                                                   |
 | --------------------- | ---------------------- | --------------------------------------------------------------------------------------- |
-| `Path`                | File system operations | Immutable, cross-platform; construct with `/`, effect-tracked read/write                  |
-| `FileSystem`          | Pluggable backend      | Filesystem service, with a host implementation over the platform backends                 |
+| `Path`                | File system operations | Immutable, cross-platform; construct with `/`, reads carry `PathRead`, writes `PathWrite` |
+| `FileSystem`          | Pluggable backend      | Host filesystem service the runners install                                               |
 | `Command`             | OS process launch      | Builds and runs external processes; `spawn`, `text`, `waitFor`                            |
 | `Process`             | Running process handle | `stdout`, `stderr`, `waitFor`, `destroy`                                                  |
 | `System`              | Environment/properties | Type-safe access with custom `Parser`s                                                    |
@@ -755,6 +756,24 @@ export Fiber.Promise   // makes kyo.Promise available without Fiber. prefix
 
 Use sparingly — only for types that users reference frequently enough that qualification would be noisy.
 
+### Macros
+
+**Never read a type's declaration through `Symbol.tree`.** What that call returns depends on `-Yretain-trees`, a flag the user's build sets and the library does not control. Without it the compiler fabricates a declaration from the symbol info; with it the retained source declaration comes back instead. For a type member the two carry different things: the fabricated one carries the bounds, the real one carries the right-hand side as written, which for an opaque type is its alias and never mentions the bounds. A macro that matches on one shape crashes or answers differently under the other, and the tag or schema it derives stops agreeing with the one every other build derives.
+
+Ask the symbol instead. `kyo.internal.DeclaredBounds` reads a type member's declared bounds through the node's own prefix, which answers the same in both modes, and substitutes the node's own type arguments into a parameterized bound.
+
+Whether that call is stable is a per-symbol question, not a global one, because `Symbols.retainsDefTree` decides it as a disjunction: the flag is one disjunct, `denot.owner.isTerm` is another. For a type local to a term (a method's type parameter) the second holds unconditionally, since such a symbol dies with its term and cannot leak across runs, so both modes read the same declaration and reading it is sound. That case also has no prefix to be a member of, so it is the one place `DeclaredBounds` reads a tree, and it already handles it. For every other symbol the flag is the deciding disjunct, which is exactly what makes the general read unstable.
+
+Reading a *term* definition's body (`ValDef.rhs`, a `given`'s right-hand side) is different: those trees exist only under the flag, so such a macro must degrade gracefully rather than depend on them.
+
+To check a macro answers the same in both modes:
+
+```sh
+KYO_RETAIN_TREES=true sbt 'kyo-dataJVM/test'
+```
+
+The flag is never set in CI. Retaining the trees of every dependency costs a few hundred MB per module (measured at +18% peak live heap on kyo-data's test compile), which the runners do not have to spare, so this is a local check to run when touching a macro that inspects types.
+
 ---
 
 ## Module READMEs
@@ -821,12 +840,30 @@ Kyo achieves zero-cost abstractions through opaque types. When designing a new t
 - Factory methods in the companion validate input: `Maybe(null)` returns `Absent`, `Duration.fromNanos` clamps negatives
 - Internal code accesses the underlying value via pattern matching on union members or direct use within the opaque boundary
 - Avoid exposing the underlying representation; if escape hatches are needed, use `private[kyo]`
+- Code inside the type's own scope cannot summon a `Tag` for the type or derive one mentioning its underlying type; it passes `Tag.derive[X]` explicitly. See [Tags inside an opaque type's scope](#tags-inside-an-opaque-types-scope)
 
 **Given instances for new types** — provide as applicable:
 - `CanEqual` — required if the type supports `==`/`!=` (strict equality is enabled project-wide)
 - `Render` — for human-readable display
 - `Ordering` — if the type is naturally sortable
-- `Tag` — automatically derived; only customize if the type has special encoding
+- `Tag` — automatically derived; never declare a `given Tag[X]` inside `X`'s own scope (below)
+
+#### Tags inside an opaque type's scope
+
+Inside the template that declares an opaque type, and inside its companion, the compiler substitutes the underlying type for the opaque one wherever it has to infer, and it does so before any macro runs. `Env.get[X]` written there reaches the `Tag` macro as the underlying type, so the tag derived inside describes something different from the tag every call site outside derives, and a value stored under one is not found under the other.
+
+Nothing at that point can say which type was meant, so the macro refuses any derivation whose type mentions the underlying type of an opaque type transparent there (`[Tag.opaque.collapsed]`), whether it was inferred or written. Naming the opaque type in `Tag.derive[X]` always survives the substitution and derives the same tag as anywhere else. An implicit query may or may not survive depending on how the compiler resolves it (the `Emit.value(x)` from #1367 does, a summoned `Tag[X]` does not); when it does not, the derivation is refused rather than misnamed, and the tag is passed explicitly:
+
+```scala
+opaque type Meters = Long
+
+object Meters:
+    def get: Meters < Env[Meters] = Env.get[Meters](using Tag.derive[Meters])
+```
+
+A `given Tag[X]` must not be defined inside `X`'s scope (`[Tag.opaque.given]`): there it is also a `Tag` for the underlying type and would answer every such query with `X`'s tag, silently. The same holds for an imported given or an `inline given`, which the macro cannot see; do not define them.
+
+Refusal is per site, so a type like `opaque type Count = Int` refuses every `Int` on a tag surface in its own template. A scope that needs the underlying type on a tag surface keeps the opaque type in an object of its own.
 
 **Sealed trait vs opaque type:**
 - Use **opaque type** when you want zero-cost wrapping of an existing representation
@@ -931,7 +968,13 @@ Common conversions:
 
 **Deviations.** Some tests exercise a seam virtual time cannot cover: the platform clock itself, a real OS socket or kernel poller, a spawned subprocess, raw threads below the effect system. The absence of a virtual-time seam is not a license to keep a timing assertion: the pass/fail must still assert a state, event, structure, or monotonicity, never measured elapsed. A timeout is legitimate only as a hang-canary ceiling, never the pass condition. Before any magnitude bound, prove no ordering, bracketing, or state proxy exists; only then does a catastrophic-only bound survive (so wide that only a genuine defect trips it), written at the site as `// deviation: <reason>` and reported to the maintainer. A test that deliberately wedges the scheduler (a livelock repro) cannot rely on the per-leaf timeout, which runs on that same scheduler; a raw watchdog thread is then legitimate only if its firing is gated on a completion latch the test releases when it finishes, so a slow-but-correct run releases the latch first and is never disturbed.
 
-Checklist before adding a timing-touching test: does the assertion depend on real elapsed time (if so, move it under `withTimeControl`); is a `Thread.sleep` or bare `Async.sleep` used to coordinate (replace with a barrier); is a duration or timeout the pass condition (assert the state or event it produces instead); if the real clock is unavoidable, is the deviation commented and reported.
+**The per-leaf timeout already guards hangs.** Every `kyo.test.Test` suite caps each leaf: `TestBase.timeout` defaults to 120s (Infinity only when a debugger is attached), and a suite may tighten it (`kyo.net.Test` uses 60s). An in-test `Async.timeout(d)(op)` added only to turn a hang into a failure duplicates that cap, and a too-tight one is itself a flake: it fires on a slow-but-progressing run. Keep an in-test timeout only when its value is the tested behavior (an asserted deadline), the test asserts the window expires, or the suite is raw ScalaTest with no framework cap, which then needs its own catastrophic watchdog, latch-gated as above.
+
+**A test's timers are a system: widen them together.** When a test keeps multiple real deadlines (a production deadline plus the ceiling that observes it, a pacer plus the await that watches its reap), they form one system. Widening one alone breaks the ordering the discrimination depends on: a ceiling shorter than the deadline it observes races the very event it exists to catch, and a "must complete before X" budget left tight while X is widened deletes the coverage. Scale them together, preserving every `a < b` the test relies on.
+
+**The production-deadline race.** A recurring flake shape: a test arms a short production deadline (a handshake or connect timeout, a cancel budget, a container stop-timeout, an fd-drain window) and then its own setup or observation must win a race against that live timer, measuring no elapsed time, so a textual scan misses it. Fix with one of: (a) a barrier on the event the deadline produces (a reap completion, a close promise, a marker file); (b) the production deadline scaled far above the operation's real cost so it fires only on a genuine hang, a documented catastrophic margin; (c) virtual time, when the deadline is engine-internal and Clock-driven. Virtual time is preferred but not always reachable: when the deadline is reset across a seam with no sleep to fence, a `withTimeControl` advancer races past it, and the coupled-margin fallback (b) is correct. Confirm which one holds by running the converted leaf, never by reasoning alone.
+
+Checklist before adding a timing-touching test: does the assertion depend on real elapsed time (if so, move it under `withTimeControl`); is a `Thread.sleep` or bare `Async.sleep` used to coordinate (replace with a barrier); is a duration or timeout the pass condition (assert the state or event it produces instead); is an in-test timeout there only to catch a hang on a `kyo.test.Test` suite (remove it, the per-leaf cap already does that); if the real clock is unavoidable, is the deviation commented and reported.
 
 ### Framework
 

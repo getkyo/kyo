@@ -30,6 +30,19 @@
  * Opaque `SSL_CTX*` / `SSL*` cross the FFI boundary as pointers (carried as `long`). The caller never
  * dereferences them; it only round-trips them back into these functions.
  */
+/*
+ * Header gate: this translation unit is compiled on the machine that LINKS the binary, not on the one
+ * that published the artifact, so the presence of the system OpenSSL headers is a question about the
+ * TARGET. Compiling unconditionally froze the publisher's answer into the shipped C: an artifact
+ * released from a Linux runner carried a shim referencing 64 raw SSL_*, BIO_*, EVP_*, ERR_* and PEM_*
+ * symbols, and a macOS consumer's Scala Native link failed on every one of them, whether or not their
+ * program used TLS at all. Off a host with the headers the #else branch below defines the same
+ * kyo_ossl_* surface as stubs, so the link stays whole and kyo_ossl_probe_available reports 0, which
+ * is what makes SystemOpenSslProvider demote at selection instead of at the first connection. This
+ * mirrors the BoringSSL shim's staged / stub pair and kyo_uring.c's Linux / non-Linux pair.
+ */
+#if __has_include(<openssl/ssl.h>)
+
 #include <openssl/ssl.h>
 #include <openssl/bio.h>
 #include <openssl/x509.h>
@@ -92,3 +105,127 @@ int kyo_ossl_shutdown_step(long ssl_ptr) { return kyo_ossl_shutdown_step_impl(ss
 int kyo_ossl_peer_cert_sha256(long ssl_ptr, unsigned char *out_buf, int out_len) {
     return kyo_ossl_peer_cert_sha256_impl(ssl_ptr, out_buf, out_len);
 }
+
+#else
+
+/*
+ * No system OpenSSL headers on this host. Every entry point reports the library absent, using the same
+ * sentinels the real wrappers return on failure (0 / NULL-as-0 / -1), so a caller that reaches one gets
+ * a clean refusal rather than a crash. Nothing should reach one: kyo_ossl_probe_available returns 0, so
+ * SystemOpenSslProvider.isAvailable is false and the TLS registry falls through. Signatures MUST match
+ * the real wrappers above byte for byte, since the @extern OpenSslBindings names them either way.
+ */
+
+int kyo_ossl_probe_available(void) { return 0; }
+
+long kyo_ossl_ctx_new(int isServer) {
+    (void)isServer;
+    return 0; /* allocation-failure sentinel: no live context */
+}
+
+void kyo_ossl_ctx_free(long ctx_ptr) { (void)ctx_ptr; }
+
+int kyo_ossl_ctx_set_cert(long ctx_ptr, const char *cert_pem, const char *key_pem) {
+    (void)ctx_ptr;
+    (void)cert_pem;
+    (void)key_pem;
+    return -1;
+}
+
+void kyo_ossl_ctx_set_verify_mode(long ctx_ptr, int mode) {
+    (void)ctx_ptr;
+    (void)mode;
+}
+
+int kyo_ossl_ctx_load_ca(long ctx_ptr, const char *ca_pem) {
+    (void)ctx_ptr;
+    (void)ca_pem;
+    return -1;
+}
+
+int kyo_ossl_ctx_load_system_ca(long ctx_ptr) {
+    (void)ctx_ptr;
+    return 0;
+}
+
+int kyo_ossl_ctx_set_min_max_version(long ctx_ptr, int min, int max) {
+    (void)ctx_ptr;
+    (void)min;
+    (void)max;
+    return -1;
+}
+
+long kyo_ossl_ssl_new(long ctx_ptr, const char *hostname) {
+    (void)ctx_ptr;
+    (void)hostname;
+    return 0;
+}
+
+int kyo_ossl_ssl_set_verify_name(long ssl_ptr, const char *hostname) {
+    (void)ssl_ptr;
+    (void)hostname;
+    return -1;
+}
+
+int kyo_ossl_ssl_require_unmatchable_identity(long ssl_ptr) {
+    (void)ssl_ptr;
+    return -1;
+}
+
+void kyo_ossl_ssl_set_connect_state(long ssl_ptr) { (void)ssl_ptr; }
+
+void kyo_ossl_ssl_set_accept_state(long ssl_ptr) { (void)ssl_ptr; }
+
+void kyo_ossl_ssl_free(long ssl_ptr) { (void)ssl_ptr; }
+
+int kyo_ossl_do_handshake_step(long ssl_ptr) {
+    (void)ssl_ptr;
+    return -1;
+}
+
+int kyo_ossl_feed_ciphertext(long ssl_ptr, const unsigned char *buf, int len) {
+    (void)ssl_ptr;
+    (void)buf;
+    (void)len;
+    return -1;
+}
+
+int kyo_ossl_drain_ciphertext(long ssl_ptr, unsigned char *buf, int len) {
+    (void)ssl_ptr;
+    (void)buf;
+    (void)len;
+    return -1;
+}
+
+int kyo_ossl_read_plain(long ssl_ptr, unsigned char *buf, int len) {
+    (void)ssl_ptr;
+    (void)buf;
+    (void)len;
+    return -1;
+}
+
+int kyo_ossl_write_plain(long ssl_ptr, const unsigned char *buf, int len) {
+    (void)ssl_ptr;
+    (void)buf;
+    (void)len;
+    return -1;
+}
+
+int kyo_ossl_pending(long ssl_ptr) {
+    (void)ssl_ptr;
+    return 0;
+}
+
+int kyo_ossl_shutdown_step(long ssl_ptr) {
+    (void)ssl_ptr;
+    return -1;
+}
+
+int kyo_ossl_peer_cert_sha256(long ssl_ptr, unsigned char *out_buf, int out_len) {
+    (void)ssl_ptr;
+    (void)out_buf;
+    (void)out_len;
+    return -1;
+}
+
+#endif

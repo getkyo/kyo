@@ -264,6 +264,33 @@ class MaybeTest extends kyo.test.Test[Any]:
             assert(Present(Absent).map(_ => Present(2)) == Present(Present(2)))
         }
 
+        "map to an absent value should nest it" in {
+            val nested = Present(1).map(_ => Maybe.empty[Int])
+            assert(nested == Present(Absent))
+            assert(!nested.isEmpty)
+            assert(nested.get == Absent)
+        }
+
+        "collect to an absent value should nest it" in {
+            val nested = Present(1).collect { case _ => Maybe.empty[Int] }
+            assert(nested == Present(Absent))
+            assert(!nested.isEmpty)
+            assert(nested.get == Absent)
+        }
+
+        "when with an absent value should nest it" in {
+            val nested = Maybe.when(true)(Maybe.empty[Int])
+            assert(nested == Present(Absent))
+            assert(!nested.isEmpty)
+            assert(nested.get == Absent)
+        }
+
+        "zip should keep an absent side nested" in {
+            val zipped = Present(Maybe.empty[Int]).zip(Present(1))
+            assert(zipped == Present((Absent, 1)))
+            assert(zipped.get == ((Absent, 1)))
+        }
+
         "filter should apply the predicate to the nested Maybe" in {
             assert(Present(Present(1)).filter(_.contains(1)) == Present(Present(1)))
             assert(Present(Present(1)).filter(_.contains(2)) == Absent)

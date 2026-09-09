@@ -9,12 +9,12 @@ import scala.language.implicitConversions
   * The app nests a value-bound input inside an OUTER reactive region (driven by a separate signal). The
   * input is typed into (a real input event, so the bound signal holds "kyo") and the caret is placed at
   * position 2. Bumping the outer signal then re-renders the WHOLE region: the input's `data-kyo-path`
-  * differs from the region's path, so the client's morph-in-place fast path (which only fires for an
-  * input echoing its OWN value, where the paths match) does NOT apply. The region is therefore replaced
-  * via `outerHTML`, detaching the focused input. This is the structural variant of the originating bug
-  * (a reactive input losing focus and caret on each surrounding re-render).
+  * differs from the region's path, so the HTML range's morph-in-place fast path (which only fires for an input
+  * echoing its own value at the range root) does not apply. `ReplaceRange` therefore replaces the outer logical
+  * region between its comment anchors, detaching the focused input. This is the structural variant of the originating
+  * bug (a reactive input losing focus and caret on each surrounding re-render).
   *
-  * Without the focus capture/restore around the `outerHTML` replace, `document.activeElement` falls back
+  * Without the focus capture/restore around the range replace, `document.activeElement` falls back
   * to `body` and the observation reads `":null"`. With the fix, the new input is re-focused with the
   * caret restored, and the observation reads `"focus-input:2"`.
   *

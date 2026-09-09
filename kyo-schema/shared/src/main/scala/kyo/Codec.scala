@@ -93,6 +93,21 @@ object Codec:
         private[kyo] var maxCollectionSize: Int = DefaultMaxCollectionSize
         private var _depth: Int                 = 0
 
+        private var _schemaTransformOverrides: List[Schema[?]] = Nil
+
+        /** Innermost-first stack of configured schemas active for the current read.
+          *
+          * A schema with structural transforms (discriminator, variant naming, field renames)
+          * registers itself here for the duration of its transformed read, so a raw Product or Sum
+          * schema of the same nominal type reached deeper in the same operation delegates to the
+          * configured schema instead of its raw read. This is what makes fluent configuration apply
+          * to recursive occurrences of the type. Wrapper readers override both accessors to share
+          * the wrapped reader's stack.
+          */
+        private[kyo] def schemaTransformOverrides: List[Schema[?]] = _schemaTransformOverrides
+        private[kyo] def schemaTransformOverrides_=(next: List[Schema[?]]): Unit =
+            _schemaTransformOverrides = next
+
         /** Fails unless everything left after the decoded root value is insignificant.
           *
           * Decoding a value is not the same as decoding the input. A reader that stops at the end of
@@ -285,6 +300,22 @@ object Codec:
       *   [[kyo.Codec]] for the factory that pairs a Writer with a Reader
       */
     abstract class Writer:
+
+        private var _schemaTransformOverrides: List[Schema[?]] = Nil
+
+        /** Innermost-first stack of configured schemas active for the current write.
+          *
+          * A schema with structural transforms (discriminator, variant naming, field renames)
+          * registers itself here for the duration of its transformed write, so a raw Product or Sum
+          * schema of the same nominal type reached deeper in the same operation delegates to the
+          * configured schema instead of its raw write. This is what makes fluent configuration apply
+          * to recursive occurrences of the type. Wrapper writers override both accessors to share
+          * the wrapped writer's stack.
+          */
+        private[kyo] def schemaTransformOverrides: List[Schema[?]] = _schemaTransformOverrides
+        private[kyo] def schemaTransformOverrides_=(next: List[Schema[?]]): Unit =
+            _schemaTransformOverrides = next
+
         def objectStart(name: String, size: Int): Unit
         def objectEnd(): Unit
         def arrayStart(size: Int): Unit
@@ -343,6 +374,14 @@ object Codec:
         def bytes(value: Span[Byte]): Unit
         def bigInt(value: BigInt): Unit
         def bigDecimal(value: BigDecimal): Unit
+
+        /** Writes an arbitrary-precision numeric scalar.
+          *
+          * The default delegates to [[bigDecimal]] so existing codecs retain their wire representation. Self-describing codecs whose
+          * native number representation differs from their typed `BigDecimal` representation can override this hook.
+          */
+        def bigNumber(value: BigDecimal): Unit = bigDecimal(value)
+
         def instant(value: java.time.Instant): Unit
         def duration(value: java.time.Duration): Unit
         def result(): Span[Byte]

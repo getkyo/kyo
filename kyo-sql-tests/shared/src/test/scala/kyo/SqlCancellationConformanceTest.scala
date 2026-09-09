@@ -30,8 +30,10 @@ class SqlCancellationConformanceTest extends SqlBackendTest:
     private val cancelConfig = SqlConfig(
         maxConnections = 1,
         minConnections = 1,
-        acquireTimeout = 10.seconds,
-        cancelTimeout = 2.seconds,
+        // acquireTimeout stays above cancelTimeout: the single-slot follow-up query is the reclaim barrier, and it must be allowed to wait out a
+        // cancel that runs its full (widened) deadline under CI load. Both are widened together so the ordering holds.
+        acquireTimeout = 30.seconds,
+        cancelTimeout = 15.seconds,
         metricsScope = Present("kyo.sql.conformance.cancellation")
     )
 

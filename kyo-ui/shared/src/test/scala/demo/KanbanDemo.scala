@@ -11,17 +11,27 @@ import kyo.UI.Ast.HtmlContent
   * is pushed to the browser as a fine-grained DOM diff over SSE. No JavaScript build step is involved: open the printed URL and the page is
   * driven entirely by the server.
   *
-  * Run via `sbt 'kyo-uiJVM/runMain demo.Kanban'` (optional port as the first argument). Add a card with the form, then walk a card across the
-  * three columns with the ◀/▶ buttons or remove it with ✕.
+  * Run via `sbt 'kyo-uiJVM/Test/runMain demo.KanbanDemo'` (optional port as the first argument). Add a card with the form, then drag a card
+  * between the three columns, walk it with the ◀/▶ buttons, or remove it with ✕. Ticking the checkbox on several cards moves them together
+  * on the next drag or arrow press, in board-visible order.
   *
-  * Demonstrates: `UI.runHandlers` server-push deployment, a single `SignalRef[Board]` as the source of truth, three derived per-column
-  * `Signal[Chunk[Card]]`s via `.map`, keyed list rendering with `foreachKeyed` (so moving one card never disturbs the others), a reactive
-  * per-column count, `when` empty-state placeholders, two-way `value` binding on the new-card input, and flex-row/column layout via `Style`.
+  * Demonstrates: `Drag.Source.sortable`/`Drag.Target.sortable`/`onSortMove` wiring over one `SignalRef[Board]` source of truth, a
+  * single total [[applyMove]] reducer built on [[kyo.Sortable.moveGroups]] and [[kyo.Sortable.expandSelection]] (drag, keyboard, and
+  * the arrow fallback controls all route through it via [[Drag.Decision.fromResult]]), a `SignalRef[Set[String]]` multi-selection,
+  * keyed list rendering with `foreachKeyed`, reactive per-column counts, `when` empty-state placeholders, and two-way `value` binding
+  * on the new-card input.
   */
 object KanbanDemo extends KyoApp:
 
     case class Card(id: String, title: String) derives CanEqual
     case class Board(todo: Chunk[Card], doing: Chunk[Card], done: Chunk[Card]) derives CanEqual
+
+    /** Lane ids double as the sortable collection names carried by [[Drag.Location]]. */
+    val TodoLane  = "todo"
+    val DoingLane = "doing"
+    val DoneLane  = "done"
+
+    private val laneIds = Chunk(TodoLane, DoingLane, DoneLane)
 
     private val seed = Board(
         todo = Chunk(Card("1", "Design the API"), Card("2", "Write the README")),
@@ -29,32 +39,63 @@ object KanbanDemo extends KyoApp:
         done = Chunk(Card("4", "Set up CI"))
     )
 
-    /** Remove a card from whichever column holds it. */
-    private def removeCard(b: Board, id: String): Board =
-        Board(b.todo.filterNot(_.id == id), b.doing.filterNot(_.id == id), b.done.filterNot(_.id == id))
+    /** Cards of one lane, empty for an unknown lane id. */
+    def laneCards(b: Board, lane: String): Chunk[Card] =
+        lane match
+            case TodoLane  => b.todo
+            case DoingLane => b.doing
+            case DoneLane  => b.done
+            case _         => Chunk.empty
 
-    /** Shift a card one column toward `dir` (-1 left, +1 right), clamped to the ends. */
-    private def shift(b: Board, c: Card, dir: Int): Board =
-        val cols = Chunk(b.todo, b.doing, b.done)
-        val idx  = cols.indexWhere(_.exists(_.id == c.id))
-        if idx < 0 then b
+    private def visibleCards(b: Board): Chunk[Card] =
+        b.todo.concat(b.doing).concat(b.done)
+
+    /** The one total move reducer: drag, keyboard, and the arrow controls all commit through it.
+      *
+      * [[kyo.Sortable.expandSelection]] moves the whole selection in board-visible order when every dragged card is
+      * selected, and [[kyo.Sortable.moveGroups]] locates cards across lanes and lands a selection spanning lanes
+      * contiguously at the destination anchor. Invalid moves return a typed rejection and the board is untouched.
+      */
+    def applyMove(board: Board, selected: Set[String], move: Drag.Move): Result[Drag.Rejection, Board] =
+        if move.operation != Drag.Operation.Move then Result.fail(Drag.Rejection.Application("Kanban cards only move."))
         else
-            val target = (idx + dir).max(0).min(2)
-            if target == idx then b
+            val cardsById = visibleCards(board).map(c => c.id -> c).toMap
+            val effective = Sortable.expandSelection(visibleCards(board).map(_.id), selected, move.keys)
+            val lanes     = laneIds.map(lane => lane -> laneCards(board, lane).map(_.id))
+            Sortable.moveGroups(lanes, move.copy(keys = effective)).map { updated =>
+                val byLane = updated.toMap
+                Board(byLane(TodoLane).map(cardsById), byLane(DoingLane).map(cardsById), byLane(DoneLane).map(cardsById))
+            }
+    end applyMove
+
+    /** The [[Drag.Move]] the ◀/▶ controls issue: one lane toward `dir` (-1 left, +1 right), `Absent` when already at the end. */
+    def shiftMove(board: Board, id: String, dir: Int): Maybe[Drag.Move] =
+        val idx = laneIds.indexWhere(lane => laneCards(board, lane).exists(_.id == id))
+        if idx < 0 then Absent
+        else
+            val target = (idx + dir).max(0).min(laneIds.size - 1)
+            if target == idx then Absent
             else
-                val cleaned = cols.updated(idx, cols(idx).filterNot(_.id == c.id))
-                val moved   = cleaned.updated(target, cleaned(target) :+ c)
-                Board(moved(0), moved(1), moved(2))
+                Present(Drag.Move(
+                    Chunk(id),
+                    Drag.Location(laneIds(idx)),
+                    Drag.Location(laneIds(target)),
+                    Absent,
+                    Drag.Position.After,
+                    Drag.Operation.Move
+                ))
             end if
         end if
-    end shift
+    end shiftMove
 
     private val pageStyle  = Style.padding(24.px).fontFamily(FontFamily.SansSerif).gap(16.px)
     private val barStyle   = Style.row.gap(8.px).align(Alignment.center)
     private val boardStyle = Style.row.gap(16.px)
     private val colStyle =
         Style.column.gap(8.px).padding(12.px).bg(Color.slate).rounded(10.px).flexGrow(1).flexBasis(0.px).minHeight(420.px)
-    private val cardListStyle = Style.column.gap(10.px)
+    // minHeight keeps a drained lane hittable: the sensor runtime resolves the drop target from the pointer
+    // position, and a zero-height list can never contain it, so an empty lane would reject every drop.
+    private val cardListStyle = Style.column.gap(10.px).minHeight(44.px)
     private val headerStyle   = Style.row.gap(8.px).align(Alignment.center).padding(0.px, 0.px, 4.px, 0.px)
     private val titleStyle    = Style.color(Color.white).bold.fontSize(16.px).flexGrow(1)
     private val badgeStyle =
@@ -66,22 +107,29 @@ object KanbanDemo extends KyoApp:
 
     private def cardRow(
         c: Card,
+        selection: SignalRef[Set[String]],
         left: Maybe[Card => Any < Async],
         right: Maybe[Card => Any < Async],
         delete: Card => Any < Async
     ): HtmlContent =
-        li.style(cardStyle)(
-            span(c.title).style(cardTextStyle),
-            div.style(actionsStyle)(
-                if left.isDefined then button("◀").id(s"left-${c.id}").onClick(left.get(c)) else UI.empty,
-                if right.isDefined then button("▶").id(s"right-${c.id}").onClick(right.get(c)) else UI.empty,
-                button("✕").id(s"del-${c.id}").onClick(delete(c))
+        li.style(cardStyle)
+            .dragSource(Drag.Source.sortable(c.id, Present(c.title)))(
+                checkbox.id(s"select-${c.id}")
+                    .onChange(on => selection.updateAndGet(s => if on then s + c.id else s - c.id).unit)
+                    .checked(selection.map(_.contains(c.id))),
+                span(c.title).style(cardTextStyle),
+                div.style(actionsStyle)(
+                    if left.isDefined then button("◀").id(s"left-${c.id}").onClick(left.get(c)) else UI.empty,
+                    if right.isDefined then button("▶").id(s"right-${c.id}").onClick(right.get(c)) else UI.empty,
+                    button("✕").id(s"del-${c.id}").onClick(delete(c))
+                )
             )
-        )
 
     private def column(
+        lane: String,
         title: String,
         cards: Signal[Chunk[Card]],
+        selection: SignalRef[Set[String]],
         left: Maybe[Card => Any < Async],
         right: Maybe[Card => Any < Async],
         delete: Card => Any < Async
@@ -92,15 +140,49 @@ object KanbanDemo extends KyoApp:
                 cards.render(cs => span(cs.size.toString).style(badgeStyle))
             ),
             when(cards.map(_.isEmpty))(p("Nothing here").style(Style.color(Color.white).italic.fontSize(13.px))),
-            ul.style(cardListStyle)(cards.foreachKeyed(_.id)(c => cardRow(c, left, right, delete)))
+            ul.style(cardListStyle)
+                .dropTarget(Drag.Target.sortable(lane, Present(title)))(
+                    cards.foreachKeyed(_.id)(c => cardRow(c, selection, left, right, delete))
+                )
         )
+
+    /** The reusable sortable board view over the two state refs; `boardUI` and the drag scenario tests share it. */
+    def boardView(state: SignalRef[Board], selection: SignalRef[Set[String]])(using Frame): UI =
+        val commit: Drag.Move => Drag.Decision < Async = move =>
+            for
+                sel      <- selection.get
+                current  <- state.get
+                decision <- Drag.Decision.fromResult(applyMove(current, sel, move))(next => state.set(next))
+            yield decision
+        // The arrow controls route through the same commit function as drags, so a rejected move
+        // follows the same decision path instead of being silently swallowed.
+        val shiftVia = (dir: Int) =>
+            (c: Card) =>
+                state.get.map { current =>
+                    shiftMove(current, c.id, dir).fold[Unit < Async](())(move => commit(move).unit)
+                }
+        val delete = (c: Card) =>
+            state.updateAndGet(b =>
+                Board(
+                    b.todo.filterNot(_.id == c.id),
+                    b.doing.filterNot(_.id == c.id),
+                    b.done.filterNot(_.id == c.id)
+                )
+            ).andThen(selection.updateAndGet(_ - c.id)).unit
+        div.style(boardStyle).onSortMove(commit)(
+            column(TodoLane, "To Do", state.map(_.todo), selection, Absent, Present(shiftVia(1)), delete),
+            column(DoingLane, "In Progress", state.map(_.doing), selection, Present(shiftVia(-1)), Present(shiftVia(1)), delete),
+            column(DoneLane, "Done", state.map(_.done), selection, Present(shiftVia(-1)), Absent, delete)
+        )
+    end boardView
 
     /** Build a fresh board UI for one client. `runHandlers` re-runs this per connection. */
     private def boardUI: UI < Async =
         for
-            state  <- Signal.initRef(seed)
-            draft  <- Signal.initRef("")
-            nextId <- Signal.initRef(100)
+            state     <- Signal.initRef(seed)
+            selection <- Signal.initRef(Set.empty[String])
+            draft     <- Signal.initRef("")
+            nextId    <- Signal.initRef(100)
             add =
                 draft.get.map { raw =>
                     val title = raw.trim
@@ -112,9 +194,6 @@ object KanbanDemo extends KyoApp:
                         }
                     end if
                 }
-            moveLeft  = (c: Card) => state.updateAndGet(b => shift(b, c, -1)).unit
-            moveRight = (c: Card) => state.updateAndGet(b => shift(b, c, +1)).unit
-            delete    = (c: Card) => state.updateAndGet(b => removeCard(b, c.id)).unit
         yield UI.main.style(pageStyle)(
             h1("Kanban"),
             form.id("new").onSubmit(add)(
@@ -123,11 +202,7 @@ object KanbanDemo extends KyoApp:
                     button("Add").id("add")
                 )
             ),
-            div.style(boardStyle)(
-                column("To Do", state.map(_.todo), Absent, Present(moveRight), delete),
-                column("In Progress", state.map(_.doing), Present(moveLeft), Present(moveRight), delete),
-                column("Done", state.map(_.done), Present(moveLeft), Absent, delete)
-            )
+            boardView(state, selection)
         )
 
     run {

@@ -83,15 +83,20 @@ class PosixTest extends ItTestBase:
             assert(posix.time(0L) > 0L)
         }
 
-        "reads the same epoch clock as java.lang.System (bracketed)" in {
+        "reads the same epoch clock as java.lang.System" in {
             assumePosixSymbols()
             val posix = Ffi.load[PosixBindings]
-            // Bracket the C read between two Java reads: a same-clock value falls within [before, after]
-            // however slow the host, and a broken binding (wrong unit/epoch/garbage) falls outside. No tolerance.
+            // Bracket the C read between two Java reads, with a second of slack. The bracket absorbs host slowness
+            // structurally: however long the process stalls between the reads, a same-clock value still lands inside
+            // it. The slack absorbs the one real cross-clock difference, that on Scala.js `java.lang.System` reads
+            // V8's Date.now while `posix.time` is a genuine time(2) downcall, so the two can round across a second
+            // boundary differently. A binding with the wrong unit, the wrong epoch, or garbage misses by orders of
+            // magnitude and still fails here, and unlike a magnitude window this also catches one that is merely off
+            // by an hour or a day. Ordering and positivity are asserted independently by the other leaves.
             val jBefore = java.lang.System.currentTimeMillis() / 1000L
             val cSecs   = posix.time(0L)
             val jAfter  = java.lang.System.currentTimeMillis() / 1000L
-            assert(jBefore <= cSecs && cSecs <= jAfter, s"time()=$cSecs not in [$jBefore, $jAfter]")
+            assert(cSecs >= jBefore - 1 && cSecs <= jAfter + 1, s"time()=$cSecs not within a second of [$jBefore, $jAfter]")
         }
 
         "two calls are monotonic non-decreasing" in {
@@ -131,9 +136,11 @@ class PosixTest extends ItTestBase:
             last
         }
 
-        "each rapid read stays bracketed by java.lang.System reads" in {
+        "each rapid read stays within a second of java.lang.System" in {
             assumePosixSymbols()
-            // Same bracketing across a 32-call burst: every read falls within its own [before, after] Java pair.
+            // The single-read leaf's bracket applied to every call in a 32-call burst, so a binding that drifts only
+            // under repeated calls is caught too. Each read gets its own surrounding pair rather than one pair around
+            // the whole loop, which would widen the window by the loop's duration and weaken every iteration.
             val posix      = Ffi.load[PosixBindings]
             var i          = 0
             var last: Unit = succeed
@@ -141,7 +148,7 @@ class PosixTest extends ItTestBase:
                 val jBefore = java.lang.System.currentTimeMillis() / 1000L
                 val cur     = posix.time(0L)
                 val jAfter  = java.lang.System.currentTimeMillis() / 1000L
-                last = assert(jBefore <= cur && cur <= jAfter, s"time()=$cur not in [$jBefore, $jAfter]")
+                last = assert(cur >= jBefore - 1 && cur <= jAfter + 1, s"time()=$cur not within a second of [$jBefore, $jAfter]")
                 i += 1
             end while
             last

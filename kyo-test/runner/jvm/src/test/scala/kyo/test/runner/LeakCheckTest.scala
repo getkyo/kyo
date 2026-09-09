@@ -387,20 +387,29 @@ class LeakCheckTest extends AnyFunSuite with NonImplicitAssertions:
         // Wait for the PERSISTENT recursion frame (the `.map` call site, `LeakCheckTest.kyoBusyLoop(...)`), not merely any
         // non-empty trace: a transient startup frame is the newest line early on but does not survive once the 16-slot
         // ring fills with the steady-state recursion frame, so a token taken from it would not match a later detect render.
-        val observed = awaitTrue(2000)(Scheduler.get.busyFiberTraces().exists(_.fiberTrace.contains("LeakCheckTest.kyoBusyLoop(")))
+        // The token is derived inside the wait, not after it. busyFiberTraces is a live sample of whichever workers are busy at the
+        // instant it is called, so a frame present in one call can be absent from the next: awaiting the frame and then re-sampling to
+        // extract it leaves the extraction racing the sampler, and a miss yields an empty token rather than a retry.
+        var steadyLine = ""
+        val observed = awaitTrue(2000) {
+            steadyLine = Scheduler.get.busyFiberTraces().iterator
+                .flatMap(_.fiberTrace.linesIterator)
+                .find(_.contains("LeakCheckTest.kyoBusyLoop("))
+                .getOrElse("")
+            steadyLine.nonEmpty
+        }
         // Reproduce the Busy branch's allowlist match text against the REAL busy fiber: per worker, its rendered kyo
         // trace joined with its JVM stack. The token is the ` @ <class>.<caller>(File:line)` fragment of the recursion
         // frame: a JVM StackTraceElement carries no ` @ ` separator, so the token appears ONLY in the kyo trace, never in
         // the JVM stack. The padded snippet (before ` @ `) and the trailing ` (xN)` repeat-count suffix are dropped (the
         // count grows as the ring fills, so a count-bearing token would not match a later render).
-        val busy       = Scheduler.get.busyFiberTraces()
-        val jvmStacks  = busy.map(w => LeakCheck.stackOfThread(w.mount).getOrElse("")).mkString("\n")
-        val matchText  = busy.map(w => w.fiberTrace + "\n" + LeakCheck.stackOfThread(w.mount).getOrElse("")).mkString("\n")
-        val steadyLine = busy.iterator.flatMap(_.fiberTrace.linesIterator).find(_.contains("LeakCheckTest.kyoBusyLoop(")).getOrElse("")
-        val atIdx      = steadyLine.indexOf(" @ ")
-        val afterAt    = if atIdx >= 0 then steadyLine.substring(atIdx) else steadyLine
-        val xIdx       = afterAt.indexOf(" (x")
-        val kyoOnly    = if xIdx >= 0 then afterAt.substring(0, xIdx) else afterAt
+        val busy      = Scheduler.get.busyFiberTraces()
+        val jvmStacks = busy.map(w => LeakCheck.stackOfThread(w.mount).getOrElse("")).mkString("\n")
+        val matchText = busy.map(w => w.fiberTrace + "\n" + LeakCheck.stackOfThread(w.mount).getOrElse("")).mkString("\n")
+        val atIdx     = steadyLine.indexOf(" @ ")
+        val afterAt   = if atIdx >= 0 then steadyLine.substring(atIdx) else steadyLine
+        val xIdx      = afterAt.indexOf(" (x")
+        val kyoOnly   = if xIdx >= 0 then afterAt.substring(0, xIdx) else afterAt
         // End-to-end: ONE detect with the kyo-trace token suppresses the finding (a single Busy probe, as reliable as
         // the kyo-trace-frame arm above; a second back-to-back probe races the first probe's System.gc() and is avoided).
         val suppressed = detectFiberReport(Chunk(kyoOnly))

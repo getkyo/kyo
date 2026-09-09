@@ -374,7 +374,7 @@ case class Order(id: Long, customerId: Long, items: Chunk[Item], total: BigDecim
 case class Item(sku: String, qty: Int, price: BigDecimal)
 val channel: Channel[Order] = ???
 
-val remaining: Maybe[Seq[Order]] < Sync = channel.close
+val remaining: Maybe[Seq[Order]] < Async = channel.close
 ```
 
 `closeAwaitEmpty` closes the channel to new producers and waits until all buffered elements have been consumed:
@@ -789,6 +789,12 @@ val withTimeout: Result[Timeout, Int] < (Async & Sync) =
 ```
 
 `Async.timeoutWithError(d, error)(v)` lets you raise a domain-specific error on expiry instead.
+
+## Files, processes, and the OS
+
+> **File system, processes, and environment:** `Path`, `Command`, `Process`, `System`, and the
+> `FileSystemException` hierarchy live in [`kyo-system`](../kyo-system/README.md); add it to your
+> dependencies to use them.
 
 ## Ambient services
 

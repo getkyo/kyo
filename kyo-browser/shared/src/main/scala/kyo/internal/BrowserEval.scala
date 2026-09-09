@@ -139,6 +139,57 @@ private[kyo] object BrowserEval:
 
     // ---- Mouse-event dispatch ----
 
+    /** Records the page's current click tally as the baseline a following [[clickDelivery]] compares against.
+      *
+      * The listener goes on `window` in the CAPTURE phase, which is the first node an event visits and the only placement that survives a
+      * page suppressing its own clicks: `stopPropagation` blocks the next node, never the remaining listeners on the node already being
+      * visited, so an app that swallows clicks at window capture is still counted here. On `document` it would not be, and a legitimate
+      * page would be reported as having lost a click it actually received.
+      *
+      * What it deliberately cannot observe is an event the browser never delivered, which is the case this exists to name. It counts
+      * delivery only, never that a handler ran, so an element nobody listens to is still a real click. A navigation wipes `window`, so the
+      * next arm re-installs against the fresh document. A page calling `stopImmediatePropagation` from a window-capture listener
+      * registered before this one is the one blind spot, and it suppresses every observer, not just this probe.
+      */
+    private[kyo] def armClickProbe(using Frame): Unit < (Browser & Abort[BrowserReadException]) =
+        evalJs(
+            """(function(){var w=window;if(!w.__kyoClickProbe){w.__kyoClickProbe={count:0};""" +
+                """w.addEventListener('click',function(){w.__kyoClickProbe.count++;},true);}""" +
+                """w.__kyoClickProbe.baseline=w.__kyoClickProbe.count;return 'armed';})()"""
+        ).unit
+
+    /** What the page reports about a dispatched click, read back after [[armClickProbe]]. */
+    private[kyo] enum ClickDelivery derives CanEqual:
+        /** The window-capture tally advanced, so the event reached the document. */
+        case Received
+
+        /** The tally is intact and did not move, so the browser never delivered the event. */
+        case Missed
+
+        /** The probe object itself is gone, which is what a navigation between arming and reading does to it. Delivery is then neither
+          * confirmed nor refuted, and the two are worth distinguishing: a caller must never be failed on a lost-click claim we cannot
+          * substantiate, but an unconfirmed click must also not be indistinguishable from a confirmed one when a later assertion fails on
+          * the state that click was supposed to produce.
+          */
+        case Unsubstantiated
+    end ClickDelivery
+
+    /** Reads the probe tally armed by [[armClickProbe]] and classifies the dispatch as [[ClickDelivery]]. */
+    private[kyo] def clickDelivery(using Frame): ClickDelivery < (Browser & Abort[BrowserReadException]) =
+        evalJs(
+            """(function(){var p=window.__kyoClickProbe;""" +
+                """return !p?'absent':(p.count>p.baseline?'received':'missed');})()"""
+        ).map {
+            case "received" => ClickDelivery.Received
+            case "missed"   => ClickDelivery.Missed
+            case "absent"   => ClickDelivery.Unsubstantiated
+            case other      =>
+                // An unrecognised reading means the template and this consumer have drifted apart. Treat it the way an absent probe is
+                // treated, since neither substantiates a loss, and name the reading so the drift is findable.
+                Log.warn(s"clickDelivery: unrecognised probe reading '$other'; treating the dispatch as unsubstantiated")
+                    .andThen(ClickDelivery.Unsubstantiated)
+        }
+
     /** Dispatches a click at pre-resolved coordinates. Called from the Actionability-gated interaction paths; the gate has already produced
       * the center, so there is no need to re-evaluate the element's rect.
       */

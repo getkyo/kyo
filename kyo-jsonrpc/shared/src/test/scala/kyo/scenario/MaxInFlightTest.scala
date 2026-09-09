@@ -363,22 +363,23 @@ class MaxInFlightTest extends JsonRpcTest:
     "progressResetsTimeout = true: progress notifications reset the deadline" in {
         case class ProgressMsg(pct: Int) derives Schema, CanEqual
 
-        // A 1-second timeout: without resets it would fire before the handler completes.
-        // The handler sends 4 progress notifications at 300ms intervals (total ~1.2s).
-        // With progressResetsTimeout = true, each notification resets the 1-second clock.
-        // This is the one timing test deliberately kept on real Async.sleep: the reset-deadline monitor runs in
-        // a fiber forked at the unsafe callWithProgress entry, which does not observe Clock.withTimeControl, so
-        // the reset cadence can only be exercised with real elapsed time. The 300ms-vs-1s margin is wide, so it
-        // is robust; production reads the ambient clock (Clock.live) correctly.
+        // The handler sends 4 progress notifications at 1.5s intervals (total ~6s), each resetting the deadline. requestTimeout is 5s: without
+        // progressResetsTimeout the initial 5s deadline fires before the ~6s handler completes, so a broken reset surfaces as a timeout failure
+        // here, while a working reset keeps the deadline ahead of the handler.
+        // deviation: this leaf cannot use virtual time. The deadline is reset by the CALLER when a progress notification arrives across the
+        // in-memory transport, a cross-endpoint hand-off with no sleep to fence, so a Clock.withTimeControl advancer races virtual time past the
+        // deadline before the reset settles (empirically the call is cancelled). Instead the timers are a coupled system widened together: the
+        // 1.5s cadence stays far below the 5s deadline so resets always win, and the 5s deadline stays far below the handler's ~6s total so a
+        // broken reset always times out, with several seconds of absolute slack so CI scheduling jitter cannot close the first gap.
         val longTask = JsonRpcRoute.request[PingReq, PingResp]("longTask") { (req, ctx) =>
             val progressValue = Structure.Value.Record(Chunk("pct" -> Structure.Value.Integer(25L)))
-            Async.sleep(300.millis).andThen {
+            Async.sleep(1500.millis).andThen {
                 Abort.run[Closed](ctx.progress(progressValue)).andThen {
-                    Async.sleep(300.millis).andThen {
+                    Async.sleep(1500.millis).andThen {
                         Abort.run[Closed](ctx.progress(progressValue)).andThen {
-                            Async.sleep(300.millis).andThen {
+                            Async.sleep(1500.millis).andThen {
                                 Abort.run[Closed](ctx.progress(progressValue)).andThen {
-                                    Async.sleep(300.millis).andThen {
+                                    Async.sleep(1500.millis).andThen {
                                         Abort.run[Closed](ctx.progress(progressValue)).andThen {
                                             PingResp(req.n)
                                         }
@@ -394,7 +395,7 @@ class MaxInFlightTest extends JsonRpcTest:
         // cancelMethod="$/cancelRequest", expectReply=true; progressMethod="$/progress", workDoneToken style
         case class CancelByIdParamsB(id: JsonRpcId) derives Schema, CanEqual
         val cfg = JsonRpcHandler.Config(
-            requestTimeout = 1.second,
+            requestTimeout = 5.seconds,
             progress = Present(JsonRpcProgressPolicy(
                 progressMethod = "$/progress",
                 extractInboundToken = p => JsonRpcProgressPolicy.field(p, "token"),

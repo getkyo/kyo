@@ -51,8 +51,8 @@ class NativeLoaderForkStressTest extends Test:
         val payload = ("F11-fork-stress-payload-" + java.util.UUID.randomUUID()).getBytes()
         val libId   = s"forkstress_${java.lang.System.currentTimeMillis()}"
         val hex     = hexEncode(payload)
-        // Path.tempDir carries Sync & Scope & Abort[FileStructureException].
-        Abort.run[FileStructureException](Path.tempDir("kyo-ffi-fork-")).map {
+        // Path.tempDir carries PathWrite & Sync & Scope; Path.run discharges PathWrite and adds Abort[FileSystemException].
+        Abort.run[FileSystemException](Path.run(Path.tempDir("kyo-ffi-fork-"))).map {
             case Result.Success(dir) =>
                 val pool                   = Executors.newFixedThreadPool(forkN).nn
                 given ec: ExecutionContext = ExecutionContext.fromExecutorService(pool)

@@ -2,6 +2,8 @@ package kyo.internal
 
 import kyo.*
 import kyo.Sql.*
+import scala.compiletime.constValue
+import scala.compiletime.erasedValue
 import scala.compiletime.summonFrom
 
 /** Macro-facing helpers for [[kyo.Sql]].
@@ -40,18 +42,37 @@ private[kyo] object SqlAstInternal:
         )
     end resolveSqlName
 
-    transparent inline def buildColumns[T, N <: String & Singleton](alias: N)(using Fields[T]) =
-        alias ~ Record.stageNamed[T] {
-            [n <: String & Singleton, v] =>
-                (g: Field[n, v]) =>
-                    Column[n & String, v](alias, g.name, resolveSqlName[T](g.name))
-        }
+    /** Builds the per-field column dictionary the two entry points below wrap in a `Record`.
+      *
+      * Written as an inline recursion over the field tuple rather than through `Record.stageNamed`, whose
+      * API is a staging function. The compiler reduces the per-field application of such a function by
+      * binding its type parameters and its argument, and the inline chain above then moves those bindings
+      * without re-owning them. Every `.run` on a query reads this tree back through `FromExprDerived`, and
+      * reading a tree with a mis-owned definition in it fails under `-Xcheck-macros`. Constructing the
+      * columns directly leaves no definitions in the tree to be moved, and the static-SQL lift reads
+      * `Column.apply` straight off it rather than beta-reducing a closure first.
+      */
+    private[kyo] inline def columnsDict[T, Fs <: Tuple](alias: String): Dict[String, Any] =
+        inline erasedValue[Fs] match
+            case _: EmptyTuple        => Dict.empty[String, Any]
+            case _: ((n ~ v) *: rest) =>
+                // The name is spelled out at each use rather than bound to a val: `constValue` folds to the
+                // same literal at each, and a binding here is a definition the inline chain above would
+                // move without re-owning, which is the whole point of building the columns this way.
+                columnsDict[T, rest](alias) ++
+                    Dict[String, Any](
+                        constValue[n & String & Singleton] ->
+                            Column[n & String & Singleton, v](
+                                alias,
+                                constValue[n & String & Singleton],
+                                resolveSqlName[T](constValue[n & String & Singleton])
+                            )
+                    )
 
-    transparent inline def buildRowColumns[T](using Fields[T]) =
-        Record.stageNamed[T] {
-            [n <: String & Singleton, v] =>
-                (g: Field[n, v]) =>
-                    Column[n & String, v]("", g.name, resolveSqlName[T](g.name))
-        }
+    transparent inline def buildColumns[T, N <: String & Singleton](alias: N)(using f: Fields[T]) =
+        alias ~ new Record(columnsDict[T, f.AsTuple](alias)).asInstanceOf[Record[f.MapNamed[Column]]]
+
+    transparent inline def buildRowColumns[T](using f: Fields[T]) =
+        new Record(columnsDict[T, f.AsTuple]("")).asInstanceOf[Record[f.MapNamed[Column]]]
 
 end SqlAstInternal

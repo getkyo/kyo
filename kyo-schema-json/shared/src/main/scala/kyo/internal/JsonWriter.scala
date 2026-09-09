@@ -175,6 +175,10 @@ final class JsonWriter private (
         maybeComma()
         writeQuotedString(value.toString)
 
+    override def bigNumber(value: BigDecimal): Unit =
+        maybeComma()
+        writeAscii(value.toString)
+
     def instant(value: java.time.Instant): Unit =
         maybeComma()
         writeQuotedString(value.toString)

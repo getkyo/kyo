@@ -8,18 +8,18 @@ filesystem, process, and environment conventions specific to `kyo-system`.
 `kyo-system` is a four-platform cross-project for JVM, JavaScript, Native, and Wasm. Public
 filesystem behavior belongs in `shared`; platform leaves contain only host integration.
 
-The module owns these boundaries:
+The module owns these capability boundaries:
 
-| Surface | Safe API | Effect row |
+| Surface | Safe API | Capability or residual |
 |---|---|---|
-| Filesystem reads | `Path`, `FileSystem.Read` | `Sync`, `Abort[FileReadException]` |
-| Filesystem writes | `Path`, `FileSystem.Write` | `Sync`, `Abort[FileWriteException]`, `Abort[FileStructureException]` |
+| Filesystem reads | `Path`, `FileSystem.Read` | `PathRead` |
+| Filesystem writes | `Path`, `FileSystem.Write` | `PathWrite` |
 | Commands and processes | `Command`, `Process` | `Sync`, `Async`, `Scope` |
 | Environment | `System` | `Sync` |
 
-`FileSystem.Write[S] <: FileSystem.Read[S]`: write authority includes read authority, and a
-read-only backend intentionally cannot be passed where a write backend is required. Keep this
-negative authority law visible in return types and compile-time tests.
+`PathWrite <: PathRead`: write authority includes read authority.
+`Path.runReadOnly` intentionally cannot discharge a `PathWrite` operation. Keep this negative
+capability law visible in return types and compile-time tests.
 
 ### Source layout
 
@@ -40,7 +40,7 @@ kyo-system/
 ## Filesystem authority and selection
 
 `FileSystem.Read[S]` contains only inspection and read operations. `FileSystem.Write[S]` extends it
-with mutation and structure changes.
+with mutation, typed write channels, and structure changes.
 
 The built-in factories are:
 
@@ -48,24 +48,21 @@ The built-in factories are:
 |---|---|---|
 | `FileSystem.host` | write | Local host filesystem |
 
-A caller holds a backend as an ordinary value and calls its methods directly. Nothing routes
-`Path` through a backend yet: `Path`'s own methods go straight to `Path.Unsafe`, and `FileSystem`
-exists so a caller who wants a swappable filesystem has one contract to implement against. The
-conformance suites are the only consumers of the service in this module.
+`FileSystem.let(backend)(program)` changes the backend used by the default Path runners for a
+dynamic scope. Selection uses `Local`, propagates to child fibers, and restores the previous backend
+on exit. `Path.runWith` and `Path.runReadOnlyWith` select a backend explicitly for one runner.
 
 Never widen a read-only factory to `FileSystem.Write`. Authority is part of the public contract.
 
 ## Path operation flow
 
-1. A safe `Path` extension bridges the matching `Path.Unsafe` operation through `Sync.Unsafe.defer`.
-2. The unsafe tier returns a `Result` carrying a precise filesystem failure marker.
-3. `Abort.get` lifts that `Result` into the method's declared `Abort` row.
+1. A safe extension suspends a `Path.Op` under `PathRead` or `PathWrite`.
+2. `Path.run`, `Path.runReadOnly`, or an explicit-service runner dispatches the operation.
+3. A backend returns its own effect `S` plus a precise filesystem failure marker.
+4. Platform host code bridges a `Path.Unsafe` operation through `Sync.Unsafe.defer`.
 
-`FileSystem.host` follows the same three steps for every service method, so a host backend answers
-exactly what the matching `Path` method answers.
-
-Safe methods carry `Sync` plus a precise `Abort` row. Do not expose platform exceptions or widen an
-`Abort` row past what the unsafe tier can return.
+Safe Path methods carry capability effects. Backend methods carry backend effects and precise
+`Abort` rows. Do not expose platform exceptions or hide backend effects with casts.
 
 Every unsafe bridge must have a nearby `// Unsafe:` comment explaining the boundary. Unsafe methods
 return `Result`; safe backend methods lift those results into `Abort`.
@@ -81,9 +78,9 @@ passes `Origin.End` explicitly because the two are siblings over one polling loo
 the loop choose their own default. `Jsonl.watch` in `kyo-schema-json` defaults to `Origin.Start` so it
 replays existing records before emitting new ones.
 
-- `path.tail` and `path.tailBytes` carry `Async & Scope & Abort[FileReadException]`: `Abort` because
-  opening and measuring the handle can fail, `Async` because they sleep between polls, and `Scope`
-  because the handle closes when the enclosing scope exits.
+- `path.tail` and `path.tailBytes` carry `PathRead & Async & Scope`: `PathRead` because they open
+  their handle through the installed read service, exactly as every other read does, `Async` because
+  they sleep between polls, and `Scope` because the handle closes when the enclosing scope exits.
 - Both drive one `private[kyo] watch` loop, which owns the open handle, polling, and truncation
   rewind. `tail` threads UTF-8 and line-buffer state through that loop.
 - A `watch` step returns `Path.Step`: `Continue(values, state)` reads again, while `Stop(values)`
@@ -105,6 +102,34 @@ Movement and copying use `Path.MoveOptions` and `Path.CopyOptions`. File writes 
 `Path.WriteOptions`. Add policy fields to these values instead of restoring Boolean argument
 clusters. Required atomicity must either succeed atomically or fail before mutating the target.
 
+## Scoped channels
+
+`Path.ReadChannel[S]`, `Path.WriteChannel[S]`, and `Path.ReadWriteChannel[S]` expose positioned
+operations according to authority. Acquisition occurs through the matching `FileSystem` tier and is
+owned by `Scope`. Public channels do not expose `close`; resource release belongs to the acquiring
+scope.
+
+`FileSystem.WriteOpen` separates capability from existence policy:
+
+- `Existing` requires an existing regular file.
+- `Create` opens an existing file or creates it.
+- `CreateNew` fails if any target already exists.
+
+## Locks
+
+Locks are advisory, scope-managed values. `Path.LockMode` selects shared or exclusive compatibility.
+`Path.LockWait` selects immediate, unbounded, or deadline-bounded acquisition. Fiber waiting must use
+`Async`; never block an OS thread. Ownership checks and cleanup failures remain typed.
+
+Every backend claims a sentinel sibling (`<resolved path>.kyo-lock` by default; the suffix is an
+optional parameter and part of the lock's identity), never the data file. POSIX
+`fcntl` record locks are process-wide and the OS releases every lock the process holds on a file
+when the process closes any handle to that file, silently and undetectably; locking a file the
+caller also reads or writes would therefore drop the claim on the first touch. The sentinel is a
+file data I/O never opens, which closes that hole by construction, and it is the convention the
+Node lockfile protocol already used. The lock does not exclude a foreign process that locks the
+data file directly through the OS.
+
 ## Error contracts
 
 `FileSystemException` is the umbrella. Concrete exceptions mix in only the marker traits for the
@@ -113,6 +138,7 @@ operations that can raise them:
 - `FileReadException`
 - `FileWriteException`
 - `FileStructureException`
+- `FileLockException`
 
 Use `FileIOException(path, operation, cause)` only when no more precise leaf describes the failure.
 Preserve `Result.Panic` as a panic. Do not translate interruption, programmer defects, or unexpected
@@ -122,7 +148,7 @@ throwables into expected filesystem failures.
 
 1. Decide whether the operation needs read or write authority.
 2. Add a focused shared test that proves behavior and its precise failure case.
-3. Add the safe `Path` surface bridging the unsafe tier, when the operation belongs on `Path`.
+3. Add the safe Path surface and reified operation when it is a Path capability operation.
 4. Add the narrowest `FileSystem` tier method and precise effect row.
 5. Implement both platform leaves for host behavior.
 6. Add the safe-to-unsafe bridge with its `// Unsafe:` explanation.
@@ -138,11 +164,13 @@ source. Platform tests are reserved for genuine host integration differences.
 
 Use the reusable suites for backend laws:
 
-- `FileSystemReadTestSuite`
-- `FileSystemWriteTestSuite`
+- `FileSystemReadTest`
+- `FileSystemWriteTest`
+- `FileSystemChannelTest`
+- `FileSystemLockTest`
 
-Test effect rows and backend authority with `typeCheck` and `typeCheckErrors`. Never use sleeps or blocking primitives
-to make scheduling tests pass.
+Test capability rows with `typeCheck` and `typeCheckErrors`. Use deterministic `Async` coordination
+for lock tests. Never use sleeps or blocking primitives to make scheduling tests pass.
 
 Before submission, run the affected module tests on all four platforms and the module doctest. Read
 formatted files again after sbt completes because compilation formats sources.

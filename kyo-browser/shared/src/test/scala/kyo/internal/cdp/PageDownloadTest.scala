@@ -43,7 +43,7 @@ class PageDownloadTest extends kyo.BrowserTest:
     "setDownloadBehavior(Allow) causes CDP to emit Page.downloadWillBegin on a download" in {
         withBrowser {
             for
-                tempPath <- Path.tempDir("kyo-cdp-test-will-begin-")
+                tempPath <- Path.run(Path.tempDir("kyo-cdp-test-will-begin-"))
                 tempDir = tempPath.toString
                 now <- Clock.nowMonotonic
                 unique  = s"kyo-dl-${now.toNanos}.txt"
@@ -70,7 +70,7 @@ class PageDownloadTest extends kyo.BrowserTest:
     "downloadWillBegin and downloadProgress share the same guid and reach state=completed" in {
         withBrowser {
             for
-                tempPath <- Path.tempDir("kyo-cdp-test-guid-")
+                tempPath <- Path.run(Path.tempDir("kyo-cdp-test-guid-"))
                 tempDir = tempPath.toString
                 now <- Clock.nowMonotonic
                 unique  = s"kyo-dl-${now.toNanos}.txt"

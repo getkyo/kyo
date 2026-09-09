@@ -218,15 +218,16 @@ class IonCorpusTest extends kyo.test.Test[Any]:
     // The JS test runner's working directory is the build root, while the JVM and Native runners use the
     // platform subproject directory. Resolve the repository root by walking up to the directory that holds
     // build.sbt, then read the shared corpus from there. This keeps the suite cross-platform with no classpath.
-    private def corpusRoot(using Frame): Path < (Sync & Abort[FileReadException]) =
+    private def corpusRoot(using Frame): Path < (Sync & Abort[FileSystemException]) =
+        Path.runReadOnly(
+            for
+                cwd   <- Path.cwd
+                chain <- cwd.ancestors.run
+                root  <- searchRepoRoot(cwd, chain.toList)
+            yield root
+        )
 
-        for
-            cwd   <- Path.cwd
-            chain <- cwd.ancestors.run
-            root  <- searchRepoRoot(cwd, chain.toList)
-        yield root
-
-    private def searchRepoRoot(cwd: Path, candidates: List[Path])(using Frame): Path < Sync =
+    private def searchRepoRoot(cwd: Path, candidates: List[Path])(using Frame): Path < PathRead =
         candidates match
             case Nil => Kyo.lift(cwd)
             case head :: tail =>
@@ -234,11 +235,12 @@ class IonCorpusTest extends kyo.test.Test[Any]:
                     if found then Kyo.lift(head) else searchRepoRoot(cwd, tail)
                 }
 
-    private def resource(name: String)(using Frame): String < (Sync & Abort[FileReadException]) =
+    private def resource(name: String)(using Frame): String < (Sync & Abort[FileSystemException]) =
         corpusRoot.flatMap { root =>
-            (root / "kyo-schema-ion" / "shared" / "src" / "test" / "resources" / name.stripPrefix("/"))
-                .read(StandardCharsets.UTF_8)
-
+            Path.runReadOnly(
+                (root / "kyo-schema-ion" / "shared" / "src" / "test" / "resources" / name.stripPrefix("/"))
+                    .read(StandardCharsets.UTF_8)
+            )
         }
 
 end IonCorpusTest

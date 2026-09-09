@@ -95,7 +95,7 @@ ZqiUNiukltim2BOCW/KEsI8mbg==
         val tag      = uniquePathTag()
         val certPath = s"/tmp/kyo-tls-$tag-cert.pem"
         val keyPath  = s"/tmp/kyo-tls-$tag-key.pem"
-        Abort.run[FileWriteException](Path(certPath).write(certPem).andThen(Path(keyPath).write(keyPem))).map {
+        Abort.run[FileSystemException](Path.run(Path(certPath).write(certPem).andThen(Path(keyPath).write(keyPem)))).map {
             case Result.Success(_) => (certPath, keyPath)
             case other             => throw new RuntimeException(s"failed to write shared TLS test cert: $other")
         }
@@ -166,7 +166,7 @@ OnBE4RP7UrqA7cRm1tkCj+Y=
         val tag      = uniquePathTag()
         val certPath = s"/tmp/kyo-tls-wrong-$tag-cert.pem"
         val keyPath  = s"/tmp/kyo-tls-wrong-$tag-key.pem"
-        Abort.run[FileWriteException](Path(certPath).write(wrongHostCertPem).andThen(Path(keyPath).write(wrongHostKeyPem))).map {
+        Abort.run[FileSystemException](Path.run(Path(certPath).write(wrongHostCertPem).andThen(Path(keyPath).write(wrongHostKeyPem)))).map {
             case Result.Success(_) => (certPath, keyPath)
             case other             => throw new RuntimeException(s"failed to write wrong-host TLS test cert: $other")
         }

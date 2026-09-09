@@ -94,8 +94,8 @@ macOS / Linux until a Windows CI runner is added.
 
 ## Scripted overlap
 
-`kyo-ffi-it` complements, but does not replace, the 24 scripted
-fixtures under `kyo-ffi/plugin/src/sbt-test/kyo-ffi/`. Scripted tests
+`kyo-ffi-it` complements, but does not replace, the scripted fixtures
+under `kyo-ffi/plugin/src/sbt-test/kyo-ffi/`. Scripted tests
 boot a fresh sbt and exercise **plugin-lifecycle behavior** (task
 wiring, incremental caching, sbt-setting plumbing, cross-project
 platform detection, publish-local → Ivy round-trips). Those behaviors

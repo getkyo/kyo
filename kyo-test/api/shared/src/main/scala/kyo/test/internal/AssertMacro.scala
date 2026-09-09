@@ -31,6 +31,57 @@ object AssertMacro:
         sys.props.get("kyo.test.powerAssert").orElse(sys.env.get("KYO_TEST_POWER_ASSERT")).exists(truthy)
     end powerAssertEnabled
 
+    /** The same flag as a compile-time constant, so `assert` can branch on it with an `inline if`.
+      *
+      * The branch matters beyond instrumentation: only the power-assert path needs to take the condition
+      * apart, and only that path puts the caller's expression inside a macro expansion. Off the power
+      * path the condition is left in the inline body untouched, so `-Xcheck-macros` never re-checks user
+      * code that it did not already check where the user wrote it. That re-checking is not free: the
+      * compiler mis-substitutes its inline proxies for nested opaque types, so re-checking an ordinary
+      * `A < S1 < S2` or a staged `Record` rejects it, and every assert over such a value would fail to
+      * compile for anyone running with the flag.
+      */
+    inline def powerAssertCompiledIn: Boolean = ${ powerAssertCompiledInImpl }
+
+    private def powerAssertCompiledInImpl(using Quotes): Expr[Boolean] = Expr(powerAssertEnabled)
+
+    /** Records that the leaf evaluated an assertion.
+      *
+      * Called from the inline `assert` body rather than spliced, so the `private[kyo]` access happens
+      * here rather than at the call site, which can be any user package.
+      */
+    def evaluated(scope: AssertScope): Unit = scope.recordEvaluated()
+
+    /** Builds the failure from an assert whose condition was false, records it into the leaf, and throws.
+      *
+      * Recording before the throw is what lets a failure raised by a detached or leaked fiber reach the
+      * leaf sink even when its throw never returns to the joined body.
+      *
+      * The source text comes from the frame the assert already carries, so the path that does not compile
+      * in the power-assert instrumentation needs no macro of its own. The frame's marker sits at the end
+      * of the `assert(...)` call it was taken at, so the text before it, last line, is that call.
+      */
+    def raise(msg: Maybe[String], frame: Frame, scope: AssertScope): Nothing =
+        val sourceText =
+            frame.snippet.split("📍")(0).linesIterator.toList.lastOption.getOrElse("").trim
+        val diagram =
+            msg match
+                case Maybe.Present(m) if m.nonEmpty => s"$sourceText\n// message: $m"
+                case _                              => sourceText
+        val failure = new kyo.test.AssertionFailed(diagram, frame, msg, Maybe.empty[Throwable])
+        scope.record(failure)
+        throw failure
+    end raise
+
+    // A splice has to be the whole right-hand side of its inline def, so each of the two power-assert
+    // entry points gets one of its own.
+
+    inline def power(inline cond: Boolean, inline f: Frame, inline as: AssertScope): Unit =
+        ${ assertImpl('cond, 'f, 'as) }
+
+    inline def powerWithMsg(inline cond: Boolean, inline msg: String, inline f: Frame, inline as: AssertScope): Unit =
+        ${ assertWithMsgImpl('cond, 'msg, 'f, 'as) }
+
     /** Macro implementation for `assert(cond: Boolean)`, scope-threaded (the leaf evidence value). */
     def assertImpl(cond: Expr[Boolean], frame: Expr[Frame], scope: Expr[AssertScope])(using Quotes): Expr[Unit] =
         instrumentAndCheck(cond, frame, '{ Maybe.empty[String] }, scope)
@@ -58,6 +109,23 @@ object AssertMacro:
     def cancelImpl(msg: Expr[String], frame: Expr[Frame])(using Quotes): Expr[Nothing] =
         '{ throw new kyo.test.TestCancelled($msg)(using $frame) }
 
+    // Extract the source line for the diagram header at compile time.
+    //
+    // Off the power path the condition reaches this through `assert`'s inline body, so its position can
+    // land in TestBase.scala, whose source is a jar for every module but kyo-test itself and so reads
+    // back empty. The macro-expansion position is the caller's own `assert(...)`, which always has
+    // source, so it stands in when the condition's own position yields nothing.
+    private def sourceText(cond: Expr[Boolean])(using Quotes): String =
+        import quotes.reflect.*
+        def textOf(pos: Position): Option[String] =
+            pos.sourceCode.orElse {
+                pos.sourceFile.content
+                    .flatMap(_.linesIterator.drop(pos.startLine).nextOption())
+                    .map(_.drop(math.max(0, pos.startColumn)))
+            }.filter(_.nonEmpty)
+        textOf(cond.asTerm.pos).orElse(textOf(Position.ofMacroExpansion)).getOrElse("")
+    end sourceText
+
     private def instrumentAndCheck(
         cond: Expr[Boolean],
         frame: Expr[Frame],
@@ -75,21 +143,9 @@ object AssertMacro:
         // relative to `baseCol` (see `instrument`). When `sourceCode` is absent we fall back
         // to the raw file line, which still carries the leading indentation, so we drop
         // `baseCol` leading characters to de-indent it to the same column 0 base.
-        val condTerm  = cond.asTerm
-        val sourcePos = condTerm.pos
-        val baseCol   = sourcePos.startColumn
-        val sourceLine: String =
-            sourcePos.sourceCode.getOrElse(
-                sourcePos.sourceFile.content
-                    .getOrElse("")
-                    .linesIterator
-                    .drop(sourcePos.startLine)
-                    .nextOption()
-                    .getOrElse("")
-                    .drop(math.max(0, baseCol))
-            )
+        val baseCol = cond.asTerm.pos.startColumn
 
-        val sourceLineExpr: Expr[String] = Expr(sourceLine)
+        val sourceLineExpr: Expr[String] = Expr(sourceText(cond))
 
         if powerAssertEnabled then
             '{

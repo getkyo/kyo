@@ -5,17 +5,21 @@ import kyo.internal.mysql.MysqlConnection
 import kyo.internal.postgres.PostgresConnection
 
 /** The postgres/mysql `withFreshSchema` API for kyo-sql tests: it hands the caller a freshly-created database/schema scoped to the test's
-  * lifetime, provisioned against the per-JVM shared container fixture.
+  * lifetime, provisioned against the shared container fixture.
   *
   * The singleton container is memoized by descriptor id through [[SqlTestContainers.getOrInit]] over the shared
   * [[SqlTestContainers.containers]] table, which lives in the core test tree so both kyo-sql-tests and each backend module share one entry
   * per id: the first call for an id lazily initializes its container via [[SqlTestContainers.initSingleton]], concurrent callers await the
   * same [[kyo.Promise]] rather than starting a duplicate, and a failed startup removes that id's slot so the next caller may retry.
   *
-  * Containers are NOT torn down in-process. They carry the `kyo-sql-singleton` and `kyo-sql-owner-pid` labels, and
-  * [[SqlTestContainers.initSingleton]] removes every dead-owner container, together with its anonymous volumes, before creating a new
-  * singleton. Nothing in the build reaps them and nothing can: a force-killed test process runs no sbt hook either, which is why the reap
-  * sits on the creation path.
+  * That table is per process, so the sharing it gives is per process too. [[SqlTestContainers.initSingleton]] extends it across processes:
+  * it attaches to a live, healthy container left by an earlier test process whose fixture fingerprint matches, and only provisions when
+  * there is none.
+  *
+  * Containers are NOT torn down in-process. They carry the `kyo-sql-singleton`, `kyo-sql-owner-pid` and `kyo-sql-fixture` labels, and
+  * [[SqlTestContainers.initSingleton]] removes every container no live process owns, together with its anonymous volumes, on the creation
+  * path. Nothing in the build reaps them and nothing can: a force-killed test process runs no sbt hook either, which is why the reap sits
+  * there.
   */
 object SqlSharedContainers:
 
@@ -58,7 +62,7 @@ object SqlSharedContainers:
 
     // --- Public API ---
 
-    /** Run `f` against a fresh schema in the per-JVM shared container for `backend`. The schema is created on entry, the connection is scoped
+    /** Run `f` against a fresh schema in the shared container for `backend`. The schema is created on entry, the connection is scoped
       * to it, and the schema is dropped on exit (via [[Scope.ensure]], even if `f` fails).
       */
     def withFreshSchema[A, S](backend: Backend)(f: SchemaCtx => A < S)(using

@@ -1,3 +1,4 @@
+#include "kyo_it_api.h"
 #include <errno.h>
 #include <stdint.h>
 
@@ -15,7 +16,7 @@
  * than a numeric literal to avoid platform drift; the spec hard-codes 22
  * to catch any host where this assumption breaks.
  */
-int32_t kyo_it_always_fail(void) {
+KYO_IT_API int32_t kyo_it_always_fail(void) {
     errno = EINVAL;
     return -1;
 }
@@ -26,7 +27,7 @@ int32_t kyo_it_always_fail(void) {
  * `Int` return, since errno = 0, the auto-throw contract (FfiErrno on
  * non-zero errno) is satisfied and no exception is thrown.
  */
-int32_t kyo_it_clear_errno(void) {
+KYO_IT_API int32_t kyo_it_clear_errno(void) {
     errno = 0;
     return 1;
 }

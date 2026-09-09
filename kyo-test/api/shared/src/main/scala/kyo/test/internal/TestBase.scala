@@ -344,11 +344,21 @@ abstract class TestBase[S] extends KyoTestReflect with TypeCheck:
 
     /** Power-assert that throws `AssertionFailed` on `cond == false`, including a diagram of subexpression values to aid diagnosis. */
     protected inline def assert(inline cond: Boolean)(using inline f: Frame, inline as: kyo.test.AssertScope): Unit =
-        ${ kyo.test.internal.AssertMacro.assertImpl('cond, 'f, 'as) }
+        inline if kyo.test.internal.AssertMacro.powerAssertCompiledIn then
+            kyo.test.internal.AssertMacro.power(cond, f, as)
+        else
+            kyo.test.internal.AssertMacro.evaluated(as)
+            if !cond then kyo.test.internal.AssertMacro.raise(kyo.Maybe.empty[String], f, as)
+            end if
 
     /** Power-assert with an explicit user message appended to the diagram on failure. */
     protected inline def assert(inline cond: Boolean, inline msg: String)(using inline f: Frame, inline as: kyo.test.AssertScope): Unit =
-        ${ kyo.test.internal.AssertMacro.assertWithMsgImpl('cond, 'msg, 'f, 'as) }
+        inline if kyo.test.internal.AssertMacro.powerAssertCompiledIn then
+            kyo.test.internal.AssertMacro.powerWithMsg(cond, msg, f, as)
+        else
+            kyo.test.internal.AssertMacro.evaluated(as)
+            if !cond then kyo.test.internal.AssertMacro.raise(kyo.Maybe(msg), f, as)
+            end if
 
     /** Marks a leaf as intentionally asserting no runtime value: its verification is structural (it compiles,
       * runs without error, or matched an expected case) rather than a checked value. Records an evaluation so the

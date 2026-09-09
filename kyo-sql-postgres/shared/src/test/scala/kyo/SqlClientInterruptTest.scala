@@ -60,4 +60,39 @@ class SqlClientInterruptTest extends SqlContainerTest:
         }
     }
 
+    /** A caller interrupted out of a connect must not strand the socket that connect owns.
+      *
+      * `transport.connect` returns a fiber owning a descriptor from the instant it is called, so the finalizer that closes it has to be
+      * registered BEFORE the launch. While it was registered after, an interrupt landing in that window left nobody owning the socket:
+      * the connect still succeeded, handed its connection to a promise the interrupted computation never read, and the descriptor stayed
+      * ESTABLISHED for the life of the process along with the server-side peer it was connected to.
+      *
+      * The window is narrow, so ONE interrupt proves nothing: eight of 192 connects took it. The scenario is repeated until the failure
+      * is reliable rather than probabilistic, which is what makes this a guard instead of a coin flip.
+      *
+      * Each cycle runs in its OWN `Scope.run`. Without that, the fake server and the client accumulate for the whole leaf and the
+      * harness's descriptor check reports the fixture's own growth rather than anything about the interrupt path. Asserting that every
+      * interrupt actually landed is what keeps the loop honest, since a cycle whose statement was never in flight exercises nothing;
+      * the descriptor check is what catches the leak itself.
+      */
+    "an interrupted connect strands no descriptor" in {
+        Kyo.foreachDiscard(Chunk.from(1 to 100)) { _ =>
+            Scope.run {
+                withSilentClient { client =>
+                    Latch.initWith(1) { started =>
+                        Fiber.initUnscoped(
+                            started.release.andThen(Abort.run[SqlException](client.query("SELECT 1")))
+                        ).flatMap { queryFiber =>
+                            started.await.andThen {
+                                queryFiber.interrupt.map { interrupted =>
+                                    assert(interrupted, "each cycle must genuinely interrupt an in-flight statement")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }.andThen(succeed)
+    }
+
 end SqlClientInterruptTest

@@ -1,0 +1,45 @@
+name: windows-native-collect
+description: >-
+  Gather the Windows natives a producer just built into natives-out/, and prove each is a PE
+  object for the requested architecture. Shared by the two release producers.
+inputs:
+  os-arch:
+    description: 'windows-x86_64 or windows-aarch64.'
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Collect + verify natives
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p natives-out
+        # Windows artifacts carry NO `lib` prefix (CCompiler.libPrefix is empty there), so the
+        # `lib*` glob the POSIX producers use would match nothing here and this step would report
+        # having built nothing. The extension is pinned too: the MSVC link drops an import library
+        # and an export file beside the DLL, and neither belongs in the pool.
+        find . -path "*/target/ffi/*-${{ inputs.os-arch }}.dll" -exec cp -n {} natives-out/ \;
+        test -n "$(ls -A natives-out)" || { echo "producer natives-${{ inputs.os-arch }} built nothing" >&2; exit 1; }
+        case "${{ inputs.os-arch }}" in
+          windows-x86_64)  want=8664 ;;
+          windows-aarch64) want=aa64 ;;
+          *) echo "unknown os-arch '${{ inputs.os-arch }}'" >&2; exit 1 ;;
+        esac
+        # Read the PE machine field rather than shelling out to `file`, which Git Bash does not
+        # reliably carry on the Windows images. A PE begins with "MZ"; the 4-byte offset at 0x3c
+        # points at the "PE\0\0" signature, and the machine word follows it. Per-module completeness
+        # is checked at publish time; this proves the producer emitted the right KIND of object for
+        # the architecture it is about to upload them as.
+        for f in natives-out/*; do
+          magic=$(od -An -c -N2 "$f" | tr -d ' \n')
+          [ "$magic" = "MZ" ] || { echo "$f is not a PE object (leading bytes '$magic')" >&2; exit 1; }
+          off=$(od -An -tu4 -j60 -N4 "$f" | tr -d ' \n')
+          sig=$(od -An -c -j"$off" -N2 "$f" | tr -d ' \n')
+          [ "$sig" = "PE" ] || { echo "$f has no PE signature at offset $off" >&2; exit 1; }
+          machine=$(od -An -tx2 -j$((off + 4)) -N2 "$f" | tr -d ' \n')
+          [ "$machine" = "$want" ] || {
+            echo "$f has COFF machine 0x$machine, expected 0x$want for ${{ inputs.os-arch }}" >&2
+            exit 1
+          }
+        done
+        ls -l natives-out

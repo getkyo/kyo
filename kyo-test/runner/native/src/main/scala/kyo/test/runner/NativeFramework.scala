@@ -7,9 +7,14 @@ import sbt.testing.SubclassFingerprint
 
 /** Scala Native test-interface Framework entry point for kyo-test.
   *
-  * Structurally identical to [[SbtFramework]] on JVM and [[JsFramework]] on Scala.js. Discovered by the Scala Native test runner via the
-  * `sbt.testing.Framework` SPI. The scala-native-test-interface re-uses the same `sbt.testing` package; fingerprint matching and runner
-  * creation are identical.
+  * Structurally identical to [[SbtFramework]] on JVM and [[JsFramework]] on Scala.js. The scala-native-test-interface re-uses the same
+  * `sbt.testing` package; fingerprint matching and runner creation are identical.
+  *
+  * The Scala Native `TestAdapter` loads this class by name from `Test / testFrameworks`, via
+  * `scala.scalanative.reflect.Reflect.lookupInstantiatableClass`; that is what makes the `@EnableReflectiveInstantiation` annotation
+  * below load-bearing. The META-INF/services/sbt.testing.Framework file in this jar serves SPI-based tools such as scala-cli's test
+  * runner, not sbt. A class the adapter cannot instantiate is dropped silently, so a wiring mistake surfaces as zero tests and a
+  * successful exit rather than as an error.
   *
   * Native-specific behaviour:
   *   - Parallelism is kept at 1 by default (our test fixture is single-threaded for simplicity, matching the plan).

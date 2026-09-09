@@ -11,7 +11,7 @@ object KyoTestJsPlugin extends AutoPlugin {
     override def trigger  = allRequirements
     override def requires = KyoTestPlugin && ScalaJSPlugin
 
-    override def projectSettings: Seq[Setting[_]] = Seq(
+    override def projectSettings: Seq[Setting[?]] = Seq(
         testFrameworks := testFrameworks.value
             .filterNot(_.implClassNames.contains("kyo.test.runner.SbtFramework")) :+
             new TestFramework("kyo.test.runner.JsFramework")

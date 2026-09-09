@@ -40,7 +40,8 @@ object StreamCoreExtensions:
     )(
         using
         Tag[Emit[Chunk[A]]],
-        Tag[Emit[Chunk[Chunk[A]]]]
+        Tag[Emit[Chunk[Chunk[A]]]],
+        Tag[Emit[Chunk[Result.Partial[E, Maybe[Chunk[A]]]]]]
     ) extends StreamHub[A, E]:
         private def emit(listener: Hub.Listener[Result.Partial[E, Maybe[Chunk[A]]]])(using Frame) =
             listener
@@ -103,6 +104,7 @@ object StreamCoreExtensions:
             Tag[A],
             Tag[Emit[Chunk[A]]],
             Tag[Emit[Chunk[Chunk[A]]]],
+            Tag[Emit[Chunk[Result.Partial[E, Maybe[Chunk[A]]]]]],
             Frame
         ): StreamHubImpl[A, E] < (Async & Scope) =
             Sync.Unsafe.defer:
@@ -399,7 +401,7 @@ object StreamCoreExtensions:
                     Meter.useSemaphore(parallel): semaphore =>
                         // Ensure lingering fibers are interrupted
                         val cleanup = Abort.run[Closed]:
-                            Sync.ensure(channelOut.close):
+                            Sync.ensure(channelOut.closeDiscard):
                                 Loop.foreach:
                                     channelOut.drain.map: chunk =>
                                         if chunk.isEmpty then Loop.done
@@ -447,7 +449,7 @@ object StreamCoreExtensions:
                                             case Result.Failure(e) =>
                                                 // Not Closed, must be E
                                                 fiberError.set(Present(Right(e)))
-                                Sync.ensure(channelOut.close):
+                                Sync.ensure(channelOut.closeDiscard):
                                     Abort.run[Closed](emit).unit
                                 .andThen(fiberError)
                         end emitResults
@@ -507,7 +509,7 @@ object StreamCoreExtensions:
                         Meter.useSemaphore(parallel): semaphore =>
                             // Ensure lingering fibers are interrupted
                             val cleanup = Abort.run[Closed]:
-                                Sync.ensure(channelPar.close.andThen(channelOut.close)):
+                                Sync.ensure(channelPar.closeDiscard.andThen(channelOut.closeDiscard)):
                                     Loop.foreach:
                                         channelPar.drain.map: chunk =>
                                             if chunk.isEmpty then Loop.done
@@ -619,7 +621,7 @@ object StreamCoreExtensions:
                     Meter.useSemaphore(parallel): semaphore =>
                         // Ensure lingering fibers are interrupted
                         val cleanup = Abort.run[Closed]:
-                            Sync.ensure(channelOut.close):
+                            Sync.ensure(channelOut.closeDiscard):
                                 Loop.foreach:
                                     channelOut.drain.map: chunk =>
                                         if chunk.isEmpty then Loop.done
@@ -669,7 +671,7 @@ object StreamCoreExtensions:
                                             case Result.Failure(e) =>
                                                 // Not Closed, must be E
                                                 fiberError.set(Present(Right(e)))
-                                Sync.ensure(channelOut.close):
+                                Sync.ensure(channelOut.closeDiscard):
                                     Abort.run[Closed](emit).unit
                                 .andThen(fiberError)
                         end emitResults
@@ -735,7 +737,7 @@ object StreamCoreExtensions:
                         Meter.useSemaphore(parallel): semaphore =>
                             // Ensure lingering fibers are interrupted
                             val cleanup = Abort.run[Closed]:
-                                Sync.ensure(channelPar.close.andThen(channelOut.close)):
+                                Sync.ensure(channelPar.closeDiscard.andThen(channelOut.closeDiscard)):
                                     Loop.foreach:
                                         channelPar.drain.map: chunk =>
                                             if chunk.isEmpty then Loop.done
@@ -844,7 +846,8 @@ object StreamCoreExtensions:
             t1: Tag[V],
             t2: Tag[Emit[Chunk[V]]],
             t3: Tag[Emit[Chunk[Chunk[V]]]],
-            t4: ConcreteTag[E],
+            t4: Tag[Emit[Chunk[Result.Partial[E, Maybe[Chunk[V]]]]]],
+            t5: ConcreteTag[E],
             fr: Frame
         ): (Stream[V, Abort[E] & Async], Stream[V, Abort[E] & Scope & Async]) < (Scope & Async & S) =
             broadcastDynamicWith(bufferSize) { streamHub =>
@@ -852,7 +855,7 @@ object StreamCoreExtensions:
                     s1 <- streamHub.subscribe
                     s2 <- streamHub.subscribe
                 yield (s1, s2)
-            }(using i, t1, t2, t3, t4, fr)
+            }(using i, t1, t2, t3, t4, t5, fr)
 
         /** Broadcast to three streams that can be evaluated in parallel.
           */
@@ -862,7 +865,8 @@ object StreamCoreExtensions:
             t1: Tag[V],
             t2: Tag[Emit[Chunk[V]]],
             t3: Tag[Emit[Chunk[Chunk[V]]]],
-            t4: ConcreteTag[E],
+            t4: Tag[Emit[Chunk[Result.Partial[E, Maybe[Chunk[V]]]]]],
+            t5: ConcreteTag[E],
             fr: Frame
         ): (
             Stream[V, Abort[E] & Async],
@@ -875,7 +879,7 @@ object StreamCoreExtensions:
                     s2 <- streamHub.subscribe
                     s3 <- streamHub.subscribe
                 yield (s1, s2, s3)
-            }(using i, t1, t2, t3, t4, fr)
+            }(using i, t1, t2, t3, t4, t5, fr)
 
         /** Broadcast to four streams that can be evaluated in parallel.
           */
@@ -885,7 +889,8 @@ object StreamCoreExtensions:
             t1: Tag[V],
             t2: Tag[Emit[Chunk[V]]],
             t3: Tag[Emit[Chunk[Chunk[V]]]],
-            t4: ConcreteTag[E],
+            t4: Tag[Emit[Chunk[Result.Partial[E, Maybe[Chunk[V]]]]]],
+            t5: ConcreteTag[E],
             fr: Frame
         ): (
             Stream[V, Abort[E] & Async],
@@ -900,7 +905,7 @@ object StreamCoreExtensions:
                     s3 <- streamHub.subscribe
                     s4 <- streamHub.subscribe
                 yield (s1, s2, s3, s4)
-            }(using i, t1, t2, t3, t4, fr)
+            }(using i, t1, t2, t3, t4, t5, fr)
 
         /** Broadcast to five streams that can be evaluated in parallel.
           */
@@ -910,7 +915,8 @@ object StreamCoreExtensions:
             t1: Tag[V],
             t2: Tag[Emit[Chunk[V]]],
             t3: Tag[Emit[Chunk[Chunk[V]]]],
-            t4: ConcreteTag[E],
+            t4: Tag[Emit[Chunk[Result.Partial[E, Maybe[Chunk[V]]]]]],
+            t5: ConcreteTag[E],
             fr: Frame
         ): (
             Stream[V, Abort[E] & Async],
@@ -927,7 +933,7 @@ object StreamCoreExtensions:
                     s4 <- streamHub.subscribe
                     s5 <- streamHub.subscribe
                 yield (s1, s2, s3, s4, s5)
-            }(using i, t1, t2, t3, t4, fr)
+            }(using i, t1, t2, t3, t4, t5, fr)
 
         /** Broadcast to a specified number of streams that can be evaluated in parallel.
           *
@@ -944,7 +950,8 @@ object StreamCoreExtensions:
             t1: Tag[V],
             t2: Tag[Emit[Chunk[V]]],
             t3: Tag[Emit[Chunk[Chunk[V]]]],
-            t4: ConcreteTag[E],
+            t4: Tag[Emit[Chunk[Result.Partial[E, Maybe[Chunk[V]]]]]],
+            t5: ConcreteTag[E],
             fr: Frame
         ): Chunk[Stream[V, Abort[E] & Scope & Async]] < (Scope & Async & S) =
             broadcastDynamicWith(bufferSize) { streamHub =>
@@ -955,7 +962,7 @@ object StreamCoreExtensions:
                     else
                         streamHub.subscribe.map: stream =>
                             Sync.defer(builder.addOne(stream)).andThen(Loop.continue(remaining - 1))
-            }(using i, t1, t2, t3, t4, fr)
+            }(using i, t1, t2, t3, t4, t5, fr)
 
         /** Convert to a reusable stream that can be run multiple times in parallel to consume the same original elements. Original stream
           * begins to run as soon as the broadcasted stream is run for the first time.
@@ -976,7 +983,8 @@ object StreamCoreExtensions:
             t1: Tag[V],
             t2: Tag[Emit[Chunk[V]]],
             t3: Tag[Emit[Chunk[Chunk[V]]]],
-            t4: ConcreteTag[E],
+            t4: Tag[Emit[Chunk[Result.Partial[E, Maybe[Chunk[V]]]]]],
+            t5: ConcreteTag[E],
             fr: Frame
         ): Stream[V, Abort[E] & Async & Scope] < (Scope & Async & S) =
             broadcastDynamic(bufferSize).map: streamHub =>
@@ -1002,7 +1010,8 @@ object StreamCoreExtensions:
             t1: Tag[V],
             t2: Tag[Emit[Chunk[V]]],
             t3: Tag[Emit[Chunk[Chunk[V]]]],
-            t4: ConcreteTag[E],
+            t4: Tag[Emit[Chunk[Result.Partial[E, Maybe[Chunk[V]]]]]],
+            t5: ConcreteTag[E],
             fr: Frame
         ): StreamHub[V, E] < (Scope & Async & S) =
             Latch.initWith(1): latch =>
@@ -1028,7 +1037,8 @@ object StreamCoreExtensions:
             t1: Tag[V],
             t2: Tag[Emit[Chunk[V]]],
             t3: Tag[Emit[Chunk[Chunk[V]]]],
-            t4: ConcreteTag[E],
+            t4: Tag[Emit[Chunk[Result.Partial[E, Maybe[Chunk[V]]]]]],
+            t5: ConcreteTag[E],
             fr: Frame
         ): A < (Scope & Async & S & S1) =
             StreamHubImpl.init[V, E](bufferSize).map: streamHub =>
@@ -1052,7 +1062,8 @@ object StreamCoreExtensions:
             t1: Tag[V],
             t2: Tag[Emit[Chunk[V]]],
             t3: Tag[Emit[Chunk[Chunk[V]]]],
-            t4: ConcreteTag[E],
+            t4: Tag[Emit[Chunk[Result.Partial[E, Maybe[Chunk[V]]]]]],
+            t5: ConcreteTag[E],
             fr: Frame
         ): A < (Scope & Async & S & S1) =
             StreamHubImpl.init[V, E](defaultAsyncStreamBufferSize).map: streamHub =>
@@ -1188,4 +1199,31 @@ object StreamCoreExtensions:
 
 end StreamCoreExtensions
 
-export StreamCoreExtensions.*
+// Exported by name. A wildcard emits one forwarder per member in an order the compiler does not fix, so two clean builds of identical
+// sources produce different artifacts.
+export StreamCoreExtensions.StreamHub
+export StreamCoreExtensions.broadcast2
+export StreamCoreExtensions.broadcast3
+export StreamCoreExtensions.broadcast4
+export StreamCoreExtensions.broadcast5
+export StreamCoreExtensions.broadcastDynamic
+export StreamCoreExtensions.broadcastDynamicWith
+export StreamCoreExtensions.broadcasted
+export StreamCoreExtensions.broadcastN
+export StreamCoreExtensions.collectAll
+export StreamCoreExtensions.collectAllHalting
+export StreamCoreExtensions.defaultAsyncStreamBufferSize
+export StreamCoreExtensions.fromInputStream
+export StreamCoreExtensions.fromIterator
+export StreamCoreExtensions.fromIteratorCatching
+export StreamCoreExtensions.groupedWithin
+export StreamCoreExtensions.mapChunkPar
+export StreamCoreExtensions.mapChunkParUnordered
+export StreamCoreExtensions.mapPar
+export StreamCoreExtensions.mapParUnordered
+export StreamCoreExtensions.merge
+export StreamCoreExtensions.mergeHalting
+export StreamCoreExtensions.mergeHaltingLeft
+export StreamCoreExtensions.mergeHaltingRight
+export StreamCoreExtensions.readBufferCapacity
+export StreamCoreExtensions.streamFromJavaInputStream

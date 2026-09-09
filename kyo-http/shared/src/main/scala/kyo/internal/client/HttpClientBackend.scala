@@ -92,9 +92,17 @@ final private[kyo] class HttpClientBackend private (
                         val isDefaultPort   = if url.ssl then port == 443 else port == 80
                         val hostHeaderValue = if isDefaultPort || host.isEmpty then host else s"$host:$port"
                         val conn            = new HttpConnection(transportConn, http1, host, port, url.ssl, hostHeaderValue)
-                        resultPromise.completeDiscard(Result.succeed(conn))
+                        // The handoff is at-most-once, so a caller that already settled (a request timeout or any other
+                        // interrupt of `resultPromise`) leaves this connection undelivered. Nobody will ever use it and
+                        // nobody else holds it, so dropping the outcome would strand its socket for the life of the
+                        // process. Closing on a lost handoff is the same posture the transport takes when its own
+                        // connect completes after the caller has gone.
+                        if !resultPromise.complete(Result.succeed(conn)) then transportConn.close()
                     catch
                         case t: Throwable =>
+                            // The connection was established; only the wrapping failed. It is owned by nothing at this
+                            // point, so it has to be closed here or its descriptor outlives the process's interest in it.
+                            transportConn.close()
                             resultPromise.completeDiscard(Result.panic(t))
                     end try
                 case Result.Failure(netEx) =>
@@ -936,7 +944,7 @@ final private[kyo] class HttpClientBackend private (
                     Fiber.Promise.init[Unit, Any].map { peerClosedPromise =>
                         val closeFn: (Int, String) => Unit < Async = (code, reason) =>
                             closeReasonRef.set(Present((code, reason))).andThen {
-                                outbound.close.unit
+                                outbound.closeDiscard
                             }
                         val ws = new HttpWebSocket(inbound, outbound, closeReasonRef, peerClosedPromise, closeFn)
 
@@ -963,7 +971,7 @@ final private[kyo] class HttpClientBackend private (
                                         case Result.Failure(_) => Kyo.unit
                                         case Result.Panic(t)   => Log.warn("HttpWebSocket client reader panicked", t)
                                         case Result.Success(_) => Kyo.unit
-                                    log.andThen(inbound.close.unit).andThen(peerClosedPromise.completeUnit.unit)
+                                    log.andThen(inbound.closeDiscard).andThen(peerClosedPromise.completeUnit.unit)
                                 }
                             }.map { monitorFiber =>
                                 Fiber.initUnscoped {
@@ -993,8 +1001,8 @@ final private[kyo] class HttpClientBackend private (
                                         readFiber.interrupt.unit
                                             .andThen(writeFiber.interrupt.unit)
                                             .andThen(monitorFiber.interrupt.unit)
-                                            .andThen(inbound.close.unit)
-                                            .andThen(outbound.close.unit)
+                                            .andThen(inbound.closeDiscard)
+                                            .andThen(outbound.closeDiscard)
                                     ) {
                                         f(ws)
                                     }

@@ -629,26 +629,34 @@ class CompilerPoolTest extends kyo.test.Test[Any]:
                                     for
                                         uri = Compiler.Uri("stuck.scala")
 
-                                        // (a) the hung op fails with a typed Fatal after ~stuckTimeout. The
-                                        // hang can never fail on its own, so the reclaim Fatal proves the
-                                        // timeout fired; the elapsed check proves it bounded the hang rather
-                                        // than failing instantly.
-                                        start    <- Clock.now
-                                        cStuck   <- pool.compiler(cfg)
-                                        resStuck <- Abort.run[CompilerException](cStuck.compile(uri, "object Stuck"))
-                                        elapsed  <- Clock.now.map(_ - start)
-                                        _ = resStuck match
-                                            case Result.Failure(_: CompilerUnresponsiveException) =>
-                                                ()
-                                            case other =>
-                                                assert(
-                                                    false,
-                                                    s"expected a CompilerUnresponsiveException from the stuck-op reclaim, got $other"
+                                        // (a) under virtual time: the hung op is bounded by Async.timeout(stuckTimeout). A
+                                        // forked advancer drives the virtual clock so the timeout fires deterministically, and
+                                        // the elapsed check reads virtual time, not the wall clock. The reclaim Fatal proves the
+                                        // timeout fired (the hang can never fail on its own); elapsed proves it bounded the hang
+                                        // rather than failing instantly. Only leg (a) is virtualized: legs (b)/(c) below run on
+                                        // the real clock, so the fresh op there can never race the advancer.
+                                        _ <- Clock.withTimeControl { control =>
+                                            for
+                                                advancer <- Fiber.initUnscoped(Loop.forever(control.advance(1.milli)))
+                                                start    <- Clock.now
+                                                cStuck   <- pool.compiler(cfg)
+                                                resStuck <- Abort.run[CompilerException](cStuck.compile(uri, "object Stuck"))
+                                                elapsed  <- Clock.now.map(_ - start)
+                                                _        <- advancer.interrupt
+                                                _ = resStuck match
+                                                    case Result.Failure(_: CompilerUnresponsiveException) =>
+                                                        ()
+                                                    case other =>
+                                                        assert(
+                                                            false,
+                                                            s"expected a CompilerUnresponsiveException from the stuck-op reclaim, got $other"
+                                                        )
+                                                _ = assert(
+                                                    elapsed >= stuckTimeout,
+                                                    s"op returned in $elapsed; the timeout should have bounded the hang to $stuckTimeout"
                                                 )
-                                        _ = assert(
-                                            elapsed >= stuckTimeout * 0.5,
-                                            s"op returned in $elapsed; the timeout should have bounded the hang near $stuckTimeout"
-                                        )
+                                            yield ()
+                                        }
 
                                         // (b) the instance's close-on-evict finalizer ran (the worker was reclaimed).
                                         closedTag <- closedCh.take

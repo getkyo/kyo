@@ -37,8 +37,8 @@ private[kyo] object BrowserLauncher:
       */
     private def removeTmpDir(tmpDir: Path, removalSchedule: Schedule)(using Frame): Unit < Async =
         tmpDir.name.fold(Kyo.unit)(name => killOrphans(pattern = name, command = "pgrep")).andThen {
-            Abort.run[FileStructureException] {
-                Retry[FileStructureException](removalSchedule)(tmpDir.removeAll)
+            Abort.run[FileSystemException] {
+                Retry[FileSystemException](removalSchedule)(Path.run(tmpDir.removeAll))
             }.map {
                 case Result.Failure(err) =>
                     // Leaked tmp dirs are not a hard failure (they are cleaned up by `killOrphans` next launch),
@@ -58,16 +58,16 @@ private[kyo] object BrowserLauncher:
       * JVM/JS/Native.
       */
     private[kyo] def createTempDir(using Frame): Path < (Sync & Scope & Abort[BrowserSetupException]) =
-        Abort.recover[FileStructureException] { (ex: FileStructureException) =>
+        Abort.recover[FileSystemException] { (ex: FileSystemException) =>
             Abort.fail[BrowserSetupException](
                 BrowserSetupFailedException("failed to create Chrome user-data temp dir", ex)
             )
         } {
-            Path.tempDir("kyo-browser-")
+            Path.run(Path.tempDir("kyo-browser-"))
         }
 
     private[kyo] def createTempDir(parent: Path)(using Frame): Path < (Sync & Abort[BrowserSetupException]) =
-        Abort.recover[FileStructureException] { (ex: FileStructureException) =>
+        Abort.recover[FileSystemException] { (ex: FileSystemException) =>
             Abort.fail[BrowserSetupException](
                 BrowserSetupFailedException("failed to create Chrome user-data temp dir", ex)
             )
@@ -75,7 +75,7 @@ private[kyo] object BrowserLauncher:
             Random.nextLong.map { n =>
                 val childName = f"kyo-browser-$n%016x"
                 val target    = parent / childName
-                target.mkDir.andThen(target)
+                Path.run(target.mkDir).andThen(target)
             }
         }
 
@@ -187,7 +187,7 @@ private[kyo] object BrowserLauncher:
         val portFile = tmpDir / devToolsActivePortFile
         val poll: String < (Async & Abort[BrowserSetupException]) =
             Loop(()) { _ =>
-                Abort.run[FileReadException](portFile.read).map {
+                Abort.run[FileSystemException](Path.runReadOnly(portFile.read)).map {
                     case Result.Success(content) =>
                         parseDevToolsActivePort(content) match
                             case Present(url) => Loop.done(url)

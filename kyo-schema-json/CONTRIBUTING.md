@@ -264,23 +264,41 @@ Reading: the framer holds at most one partial record, capped by `maxLineSize`.
 Records complete within a chunk are emitted and dropped.
 
 Writing: `writeAll` folds the value stream chunk by chunk. Each chunk goes
-through `Json.Lines.encodeAllBytes`, which sizes its output array once and
-copies each encoded value and its newline into it exactly once, and is written
-straight out. What is held at any moment is one chunk of encoded bytes,
-regardless of how many values the stream has.
+through `Json.Lines.encodeAllBytes`, the same call `encode` streams, which sizes
+its output array once and copies each encoded value and its newline into it
+exactly once, and is written straight out. What is held at any moment is one
+chunk of encoded bytes, regardless of how many values the stream has.
 
-Four details of `writeAll` are contracts rather than incidental:
+`writeAll` is the one write implementation the module has, so `write` and
+`append` differ in `appending` alone and neither can grow behavior the other does
+not have. Five details of it are contracts rather than incidental:
 
 - **One handle across the whole fold**, so a stream of any length costs one open
-  and one close rather than one of each per chunk. `kyo-system` exposes no `Path`
-  stream sink, which is why this is hand-rolled over `Path.Unsafe.openWrite`
-  instead of composing an existing combinator.
-- **The fold runs under `Abort.run[Any]` INSIDE the bracket**, not outside it.
+  and one close rather than one of each per chunk. `Stream.writeTo` in
+  `kyo-system` opens truncating and hands the handle to the caller's `Scope`, so
+  it covers neither `append` nor a caller that must not be given a `Scope`, which
+  is why this is hand-rolled over `Path.Op.OpenWrite` and the installed service's
+  `writeChunk`.
+- **The open is a capability suspension and the chunk writes are not.** The open
+  suspends `Path.Op.OpenWrite`, which is what puts `PathWrite` in the row and
+  makes a runner authorize the write. Each chunk then calls `writeChunk` directly
+  on the service `FileSystem.useErased` hands back. Suspending
+  `Path.Op.WriteChunk` instead would put the failure out of reach: `Path.runWith`
+  maps the continuation over the dispatch result, so a failing dispatch drops the
+  continuation and every bracket the fold installed goes with it. The open fails
+  before there is a handle to release, so it needs no bracket of its own.
+
+  A backend still mediates every byte, because every `writeChunk` in the tree
+  dispatches on the handle alone.
+- **`Abort.run[Any]` runs INSIDE the bracket**, not outside it.
   `Sync.acquireReleaseWith` releases when its body completes or panics but not
-  when it aborts, and a stream's own values can abort for reasons unrelated to
-  the file. Reifying every outcome into a `Result` first leaves the bracket a
-  computation that always completes; the outcome is re-raised after the close.
-  Moving that `Abort.run` outward leaks the file handle on an aborting stream.
+  when it aborts, and the body can abort from the write above, from the stream's
+  own values, or from an interruption. Reifying every outcome into a `Result`
+  first leaves the bracket a computation that always completes; `reraise` puts
+  the outcome back afterwards, a `FileSystemException` onto the capability
+  through `Path.Op.Raise` and anything else into the caller's own row. Moving
+  that `Abort.run` outward leaks the file handle. This bracket, not a `Scope`, is
+  why the surface carries `Sync` rather than `Async`.
 - **The release finishes the handle before closing it**, on every exit including
   a failure part way, and closes it even when finishing throws. A write handle
   closed without `finish` is removed, which is exactly the rollback this surface
@@ -288,7 +306,14 @@ Four details of `writeAll` are contracts rather than incidental:
 - **The open happens before the fold and carries no bytes**, which is what makes
   the file's existence, and for `write` its emptiness, a fact about the call
   rather than about whether the stream produced anything. Writing an empty
-  stream empties the file; appending an empty stream still creates it.
+  stream empties the file; appending an empty stream still creates it. The open
+  also creates the parent directory when `createFolders` is set.
+
+One exit is not covered, and the omission is deliberate: a capability failure
+raised by the value stream's own effects, a stream reading another file through
+`PathRead`, say. That op is dispatched by the enclosing runner, outside this
+bracket, so its failure skips the release. Covering it would mean handling the
+caller's effects here, which is not `writeAll`'s to do.
 
 A failure part way through leaves the records already written on disk rather
 than removing the file. A prefix of a JSONL file is a valid JSONL file, so a

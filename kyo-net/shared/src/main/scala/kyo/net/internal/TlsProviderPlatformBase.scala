@@ -21,6 +21,13 @@ private[net] trait TlsProviderPlatformBase:
       */
     def engineProviderNames: Set[String] = registered.map(_.name).toSet
 
+    /** True when this host can actually BUILD an in-process TLS engine, which is what [[engine]] needs and what a caller of `connectTls` on
+      * the posix transport depends on. Distinct from "some provider is registered": the JS/Wasm registry also carries the selection-only
+      * `NodeTlsProvider`, whose probe is unconditionally available because Node terminates its own TLS, so a registry-wide check reports yes
+      * on a host where every engine provider is missing and the next `engine` call fails.
+      */
+    def hasAvailableEngine(using AllowUnsafe): Boolean = registered.exists(_.probe.isAvailable)
+
     /** The selected TLS provider honoring `-Dkyo.net.tls`. Reuses the SAME `IoBackend.select` as the I/O registry.
       *
       * A forced name that is unavailable surfaces in the failure by name, matching what the I/O side has always done; "&lt;default&gt;" is

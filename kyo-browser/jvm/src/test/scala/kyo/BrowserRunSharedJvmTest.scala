@@ -11,7 +11,7 @@ import kyo.internal.SharedChrome
   * of `runShared` without requiring Chrome-boot timing assertions (which are flaky on CI). They focus on correctness: the shared Chrome
   * does serve usable browser tabs, and successive `runShared` calls are independently scoped.
   */
-class BrowserRunSharedJvmTest extends BaseBrowserTest:
+class BrowserRunSharedJvmTest extends BaseChromeTest:
 
     // 3-minute envelope: under full-suite load, each `runShared` boot/navigate/title round-trip can take
     // 30s+ when Chrome is contending with preceding tests' I/O; the test does two sequential round-trips

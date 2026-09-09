@@ -1,0 +1,3 @@
+Read|root/missing.txt|FileNotFoundException
+Write|root/missing/value.txt|FileNotFoundException
+Create|root/a.txt|FileAlreadyExistsException

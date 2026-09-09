@@ -38,7 +38,7 @@ import scala.jdk.CollectionConverters.*
   * injects a unique `--user-agent=<tag>` extra-arg into the `Browser.LaunchConfig`; the tag is a UUID-suffixed string scanned via
   * `ProcessHandle.info().arguments()`.
   */
-class BrowserLauncherCleanupJvmTest extends BaseBrowserTest:
+class BrowserLauncherCleanupJvmTest extends BaseChromeTest:
 
     // Hang-guard only: must exceed the legitimate worst-case runtime of any single test so it fires
     // solely on a true hang, never on a correct-but-slow run. Worst case ≈ Chrome launch (≤90s

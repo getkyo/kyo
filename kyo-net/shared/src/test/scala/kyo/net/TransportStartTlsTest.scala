@@ -15,7 +15,7 @@ class TransportStartTlsTest extends Test:
     import AllowUnsafe.embrace.danger
 
     private def assumeTls(): Unit =
-        if !TlsProviderPlatform.registered.exists(_.probe.isAvailable) then cancel("no TLS provider available on this backend")
+        if !TlsProviderPlatform.hasAvailableEngine then cancel("no TLS engine provider is available on this host")
 
     private val upgradeRequest: Span[Byte] = Span.from(Array[Byte]('U'))
     private val upgradeReady: Span[Byte]   = Span.from(Array[Byte]('R'))
@@ -106,19 +106,20 @@ class TransportStartTlsTest extends Test:
             startTlsEchoServer(transport, serverTls).map { listener =>
                 Scope.ensure(Sync.defer(listener.close())).andThen {
                     Abort.run[Timeout] {
-                        Async.timeout(60.seconds) {
-                            Loop.indexed { i =>
-                                if i >= rounds then Loop.done(())
-                                else
-                                    val msg = s"handoff-$i".getBytes("UTF-8")
-                                    startTlsClient(transport, listener.port, cli, msg).map { echoed =>
-                                        assert(
-                                            new String(echoed, "UTF-8") == s"handoff-$i",
-                                            s"round $i must round-trip after the STARTTLS upgrade"
-                                        )
-                                        Loop.continue
-                                    }
-                            }
+                        Loop.indexed { i =>
+                            if i >= rounds then Loop.done(())
+                            else
+                                val msg = s"handoff-$i".getBytes("UTF-8")
+                                // Each round's upgrade round-trip is bounded on its own, so amortized slowness across the 20 rounds cannot
+                                // accumulate into a false failure the way a single budget spanning all rounds would. 30s fires only on a genuine
+                                // strand (a dropped ClientHello leaving the handshake parked), never on a slow-but-progressing round.
+                                Async.timeout(30.seconds)(startTlsClient(transport, listener.port, cli, msg)).map { echoed =>
+                                    assert(
+                                        new String(echoed, "UTF-8") == s"handoff-$i",
+                                        s"round $i must round-trip after the STARTTLS upgrade"
+                                    )
+                                    Loop.continue
+                                }
                         }
                     }.map { outcome =>
                         listener.close()

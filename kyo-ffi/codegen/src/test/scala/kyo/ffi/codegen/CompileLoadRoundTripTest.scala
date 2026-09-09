@@ -89,21 +89,39 @@ class CompileLoadRoundTripTest extends kyo.test.Test[Any]:
       * ProcessBuilder so we don't drag in the sbt-scoped `CCompiler` utility from `kyo-ffi-plugin`.
       */
     private def compileCLibrary(baseDir: Path): Path =
-        val cSource = locateCSource("c/round_trip_add.c")
-        val osName  = java.lang.System.getProperty("os.name").toLowerCase
-        val (ext, sharedFlag) =
-            if osName.contains("mac") then ("dylib", "-dynamiclib")
-            else ("so", "-shared")
-        val outLib = baseDir.resolve(s"lib$libraryId.$ext")
-        val cmd    = List("cc", "-O2", "-fPIC", sharedFlag, "-o", outLib.toString, cSource.toString)
+        val cSource   = locateCSource("c/round_trip_add.c")
+        val osName    = java.lang.System.getProperty("os.name").toLowerCase
+        val isWindows = osName.contains("win")
+        // Honour CC the way the plugin does: the library must be built by the toolchain the build
+        // selected, not by whatever the name `cc` happens to resolve to. On windows-arm64 those
+        // differ, and only the selected one produces a DLL Windows will open.
+        val cc     = Option(java.lang.System.getenv("CC")).map(_.trim).filter(_.nonEmpty).getOrElse("cc")
+        val isMsvc = cc.toLowerCase.stripSuffix(".exe").endsWith("cl")
+        val prefix = if isWindows then "" else "lib"
+        val ext    = if osName.contains("mac") then "dylib" else if isWindows then "dll" else "so"
+        val outLib = baseDir.resolve(s"$prefix$libraryId.$ext")
+        val cmd =
+            if isMsvc then
+                // cl builds a DLL with /LD and names it with /Fe:; it takes none of the gcc-style flags.
+                List(cc, "/LD", "/O2", s"/Fe:${outLib.toString}", cSource.toString)
+            else
+                // A Windows DLL carries no position-independent code, and clang targeting *-windows-msvc
+                // REJECTS -fPIC rather than ignoring it, where MinGW gcc accepts it silently.
+                val picFlags   = if isWindows then Nil else List("-fPIC")
+                val sharedFlag = if osName.contains("mac") then "-dynamiclib" else "-shared"
+                List(cc, "-O2") ++ picFlags ++ List(sharedFlag, "-o", outLib.toString, cSource.toString)
         val pb     = new ProcessBuilder(cmd*).redirectErrorStream(true)
         val proc   = pb.start()
         val output = new String(proc.getInputStream.readAllBytes(), StandardCharsets.UTF_8)
         val exit   = proc.waitFor()
         if exit != 0 then
-            // Setup failure (runs at suite instantiation, before any leaf scope exists), so surface it as a thrown
-            // exception rather than the leaf-scoped `fail`.
-            throw new RuntimeException(s"C compile failed (exit=$exit). Command: ${cmd.mkString(" ")}\nOutput:\n$output")
+            // Setup failure: this runs in a field initializer during reflective suite construction, so the
+            // runner reports only the InvocationTargetException wrapper and drops this exception's message.
+            // Print the diagnosis first, or a compile failure here is unreadable in a CI log.
+            val diagnosis = s"C compile failed (exit=$exit). Command: ${cmd.mkString(" ")}\nOutput:\n$output"
+            java.lang.System.err.println(s"[CompileLoadRoundTripTest] $diagnosis")
+            java.lang.System.err.flush()
+            throw new RuntimeException(diagnosis)
         end if
         outLib
     end compileCLibrary
@@ -208,9 +226,23 @@ class CompileLoadRoundTripTest extends kyo.test.Test[Any]:
             // `kyo.AllowUnsafe` parameter. Pass the process-wide `AllowUnsafe.embrace.danger` evidence for the call.
             val allowUnsafeClass = cl.loadClass("kyo.AllowUnsafe")
             val method           = implClass.getMethod("roundTripAdd", classOf[Int], classOf[Int], allowUnsafeClass)
+            // Reflection wraps whatever the binding throws in InvocationTargetException, and the runner
+            // prints the wrapper alone. A native that loads but resolves no symbol is indistinguishable
+            // from any other failure unless the cause is unwrapped here.
             val result =
-                method.invoke(instance, Integer.valueOf(2), Integer.valueOf(3), kyo.AllowUnsafe.embrace.danger)
-                    .asInstanceOf[java.lang.Integer]
+                try
+                    method.invoke(instance, Integer.valueOf(2), Integer.valueOf(3), kyo.AllowUnsafe.embrace.danger)
+                        .asInstanceOf[java.lang.Integer]
+                catch
+                    case e: java.lang.reflect.InvocationTargetException =>
+                        // The chain matters, not just the first link: an ExceptionInInitializerError carries
+                        // the load failure underneath it, and its own message is null. Render the whole trace.
+                        val cause  = if e.getCause ne null then e.getCause else e
+                        val writer = new java.io.StringWriter
+                        cause.printStackTrace(new java.io.PrintWriter(writer))
+                        throw new RuntimeException(s"binding call failed:\n${writer.toString}", cause)
+                end try
+            end result
             assert(result.intValue() == 5)
         finally cl.close()
         end try
@@ -275,9 +307,23 @@ class CompileLoadRoundTripTest extends kyo.test.Test[Any]:
             val instance         = implClass.getDeclaredConstructor().newInstance()
             val allowUnsafeClass = cl.loadClass("kyo.AllowUnsafe")
             val method           = implClass.getMethod("roundTripAdd", classOf[Int], classOf[Int], allowUnsafeClass)
+            // Reflection wraps whatever the binding throws in InvocationTargetException, and the runner
+            // prints the wrapper alone. A native that loads but resolves no symbol is indistinguishable
+            // from any other failure unless the cause is unwrapped here.
             val result =
-                method.invoke(instance, Integer.valueOf(2), Integer.valueOf(3), kyo.AllowUnsafe.embrace.danger)
-                    .asInstanceOf[java.lang.Integer]
+                try
+                    method.invoke(instance, Integer.valueOf(2), Integer.valueOf(3), kyo.AllowUnsafe.embrace.danger)
+                        .asInstanceOf[java.lang.Integer]
+                catch
+                    case e: java.lang.reflect.InvocationTargetException =>
+                        // The chain matters, not just the first link: an ExceptionInInitializerError carries
+                        // the load failure underneath it, and its own message is null. Render the whole trace.
+                        val cause  = if e.getCause ne null then e.getCause else e
+                        val writer = new java.io.StringWriter
+                        cause.printStackTrace(new java.io.PrintWriter(writer))
+                        throw new RuntimeException(s"binding call failed:\n${writer.toString}", cause)
+                end try
+            end result
             assert(result.intValue() == 5)
         finally cl.close()
         end try

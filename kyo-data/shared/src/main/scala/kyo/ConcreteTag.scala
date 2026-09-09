@@ -164,17 +164,19 @@ object ConcreteTag:
                             case _ =>
                                 val cls = value.getClass
                                 classOf[AnyVal].isAssignableFrom(cls) && (cls ne classOf[AnyVal])
-                    case _: Primitive =>
-                        value match
-                            case _: Int     => self eq IntTag
-                            case _: Long    => self eq LongTag
-                            case _: Double  => self eq DoubleTag
-                            case _: Float   => self eq FloatTag
-                            case _: Byte    => self eq ByteTag
-                            case _: Short   => self eq ShortTag
-                            case _: Char    => self eq CharTag
-                            case _: Boolean => self eq BooleanTag
-                            case _          => false
+                    // Each primitive asks the platform about its own type instead of classifying the
+                    // value first and comparing the answer to this tag. On the JVM the two are the
+                    // same, since the boxes are distinct classes. On JS and Wasm every number is one
+                    // runtime type, so classifying first let the widest match win: `_: Double` answers
+                    // for every number, and FloatTag, ByteTag and ShortTag accepted nothing at all.
+                    case IntTag         => value.isInstanceOf[Int]
+                    case LongTag        => value.isInstanceOf[Long]
+                    case DoubleTag      => value.isInstanceOf[Double]
+                    case FloatTag       => value.isInstanceOf[Float]
+                    case ByteTag        => value.isInstanceOf[Byte]
+                    case ShortTag       => value.isInstanceOf[Short]
+                    case CharTag        => value.isInstanceOf[Char]
+                    case BooleanTag     => value.isInstanceOf[Boolean]
                     case self: Class[?] => self.isInstance(value)
                 end match
             }

@@ -69,7 +69,7 @@ sealed abstract class Signal[A](using CanEqual[A, A]) extends Serializable:
     /** Waits for and returns the next value change in the signal.
       *
       * This method provides asynchronous notification of the next value change. It will wait until the signal's value changes before
-      * completing.
+      * completing, so on a signal that can never change (see [[Signal.initConst]]) it never completes.
       *
       * @return
       *   The next value of type A wrapped in an Async effect
@@ -276,11 +276,13 @@ object Signal:
 
     /** Waits for any of the given signals to change.
       *
+      * No signal can change if there is none to watch, so an empty sequence never completes.
+      *
       * @param signals
       *   The signals to watch
       */
     def awaitAny(signals: Seq[Signal[?]])(using Frame): Unit < Async =
-        if signals.isEmpty then ()
+        if signals.isEmpty then Async.never
         else Async.race(signals.map(_.next)).unit
 
     /** Zips a sequence of signals, waiting for all to change before emitting.
@@ -382,6 +384,9 @@ object Signal:
       * This method creates a signal that always returns the same value. Unlike `Signal.Ref`, this signal cannot be modified after creation.
       * This is useful for cases where you need a signal interface but the value never changes.
       *
+      * Since the value never changes, `next`/`nextWith` never complete. Read a constant with `current`/`currentWith`, and expect it to sit
+      * out the change-driven combinators (`awaitAny`, `combineLatest`, `zip`) rather than drive them.
+      *
       * @param value
       *   The constant value for the signal
       * @return
@@ -397,7 +402,9 @@ object Signal:
     ): Signal[A] =
         initRaw(
             currentWith = [B, S] => f => f(value),
-            nextWith = [B, S] => f => f(value)
+            // Completing this immediately would let a constant win every `awaitAny` arm, firing
+            // `combineLatest(ref, const).next` with no change to report and spinning an enclosing `observe`.
+            nextWith = [B, S] => _ => Async.never
         )
 
     /** Creates a new immutable signal with a constant value and applies a transformation function.

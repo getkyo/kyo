@@ -8,6 +8,12 @@ package kyo.net.internal.posix
   * the compilation target, which is the ABI the binary is built for and therefore the one these constants must match. The constants themselves
   * are stable kernel ABI values, so the literal table is the source of truth (kyo-ffi has no header-constant extraction surface, and adding one
   * for a fixed handful of stable values is not warranted).
+  *
+  * Most entries below are a two-way macOS/BSD versus Linux split whose `else` branch carries the Linux value, which is sound only because
+  * Windows never reads them: the bare POSIX socket symbols are absent from the Windows CRT, so `SocketBindings` fails to load and every
+  * socket, fcntl, and poller constant is unreachable there. [[ENOSYS]] is the exception, and any future constant read off a `kyo_*` shim
+  * will be too, because those shims ARE compiled and loaded on Windows. Such an entry needs an explicit [[isWindows]] branch; folding it
+  * into the `else` silently hands back a Linux number that names a different error in the Windows CRT.
   */
 private[net] object PosixConstants:
 
@@ -16,6 +22,12 @@ private[net] object PosixConstants:
 
     /** True on Linux, where epoll, `MSG_NOSIGNAL`, and `AF_INET6 == 10` apply. */
     val isLinux: Boolean = kyo.internal.Platform.isLinux
+
+    /** True on Windows, whose CRT numbers its errno values independently of both Unix families. The socket constants below are unreachable
+      * there (the bare POSIX socket symbols are absent from the Windows CRT, so `SocketBindings` never loads), but the `kyo_epoll.c` shim IS
+      * compiled and loaded on Windows, so the errno it reports is read and has to match.
+      */
+    val isWindows: Boolean = kyo.internal.Platform.isWindows
 
     // --- address families (sa_family_t, host byte order) ---
     val AF_INET: Int  = 2
@@ -76,6 +88,17 @@ private[net] object PosixConstants:
     val ECONNABORTED: Int = if isMacOrBsd then 53 else 103
     // EBUSY is 16 on both Linux and macOS/BSD; the io_uring reap loop treats it as a transient retry condition.
     val EBUSY: Int = 16
+
+    // ENOENT is 2 on both Linux and macOS/BSD. IORING_OP_ASYNC_CANCEL answers -ENOENT when it cannot find the target, which for a cancel
+    // issued against an in-flight op means the op completed on its own between the submit and the kernel's lookup.
+    val ENOENT: Int = 2
+    // ENOSYS is what kyo_epoll.c's off-Linux stubs report: the epoll and eventfd syscalls do not exist on this platform. It names the
+    // one outcome that distinguishes "the shim is present and says no" from "the symbol was never linked", which is the difference a
+    // published Native artifact has to preserve across build hosts. Unlike every other errno here, this one is read on Windows too,
+    // because the shim is compiled and loaded there. The Windows CRT numbers it 40 and numbers 38 ENAMETOOLONG (checked against the
+    // mingw-w64 errno.h the Windows CI leg builds the shim with), so folding Windows into the Linux branch reads the stub's answer as
+    // an unrelated error.
+    val ENOSYS: Int = if isWindows then 40 else if isMacOrBsd then 78 else 38
     // io_uring's bounded wait returns -ETIME on a timeout with no completion; the reap loop treats it as a normal empty turn.
     // io_uring is Linux-only, so the Linux value (62) is the one the driver ever sees; the macOS/BSD value (60) is kept for completeness.
     val ETIME: Int = if isMacOrBsd then 60 else 62
@@ -124,15 +147,17 @@ private[net] object PosixConstants:
     val EV_ADD: Short      = 0x0001
     val EV_DELETE: Short   = 0x0002
     val EV_ENABLE: Short   = 0x0004
-    // EV_DISABLE deactivates a kqueue filter without removing it from the interest list. Used to suppress spurious write-ready events after a
-    // write completes: the EVFILT_WRITE filter stays registered (EV_ADD | EV_CLEAR | EV_ENABLE) and is toggled off with EV_DISABLE after the
-    // write drains, then toggled back on with EV_ENABLE when the next awaitWritable call arms the fd for writing. This avoids the overhead of
-    // EV_DELETE + EV_ADD per write cycle while preventing the send-buffer-full filter from firing continuously.
-    val EV_DISABLE: Short = 0x0008
     // EV_CLEAR auto-resets the EVFILT_USER trigger state after the event is delivered, so one NOTE_TRIGGER wakes the poll exactly once and the
     // filter re-arms for the next wake without an explicit reset (the level-vs-edge analog of draining the epoll eventfd counter).
     val EV_CLEAR: Short   = 0x0020
     val EV_ONESHOT: Short = 0x0010
+    // EV_RECEIPT makes a change submission report per-entry results instead of failing the whole call. `man 2 kevent`: "useful for making bulk
+    // changes to a kqueue without draining any pending events. When passed as input, it forces EV_ERROR to always be returned. When a filter is
+    // successfully added, the data field will be zero." Both halves matter for the mid-drain changelist flush. Without it, a submission that
+    // passes no eventlist room hits the other branch of the same contract ("Otherwise, -1 will be returned"), which aborts at the first bad
+    // entry and silently leaves the rest of the batch unapplied; with it, every entry is processed and reports its own errno. And because the
+    // eventlist fills with one receipt per change, a readiness event cannot be consumed by a call whose results nothing reads.
+    val EV_RECEIPT: Short = 0x0040
     // NOTE_TRIGGER is the fflags bit that fires an already-registered EVFILT_USER filter; the wake path encodes it into the change so the parked
     // `kevent` returns. Stable macOS/BSD ABI value.
     val NOTE_TRIGGER: Int = 0x01000000

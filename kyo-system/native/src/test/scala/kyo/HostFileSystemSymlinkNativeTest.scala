@@ -9,7 +9,7 @@ import java.nio.file.Paths as JPaths
   * Native test created a symbolic link, so the symlink-escape fix was asserted on one platform
   * and assumed on this one.
   */
-class HostFileSystemSymlinkNativeTest extends FileSystemReadTestSuite:
+class HostFileSystemSymlinkNativeTest extends FileSystemReadTest:
 
     override protected def realPathRequiresExistence: Boolean = true
     override protected def supportsSymbolicLinks: Boolean     = true

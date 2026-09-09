@@ -86,13 +86,15 @@ private[kyo] object NioStdioConnection:
         })
 
         new NetConnection:
-            def inbound: Channel.Unsafe[Span[Byte]]                                    = inboundCh
-            def outbound: Channel.Unsafe[Span[Byte]]                                   = outboundCh
-            def isOpen(using AllowUnsafe): Boolean                                     = !closedFlag.get()
-            def close()(using AllowUnsafe, Frame): Unit                                = closeConnection()
-            private[kyo] def onClosing: Fiber.Unsafe[Unit, Any]                        = closingPromise
-            def detachForUpgrade()(using AllowUnsafe, Frame): Maybe[Chunk[Span[Byte]]] = Absent // not upgradable: no driver or socket
-            private[net] def start()(using AllowUnsafe, Frame): Boolean                = true   // pumps already started at open
+            def inbound: Channel.Unsafe[Span[Byte]]             = inboundCh
+            def outbound: Channel.Unsafe[Span[Byte]]            = outboundCh
+            def isOpen(using AllowUnsafe): Boolean              = !closedFlag.get()
+            def close()(using AllowUnsafe, Frame): Unit         = closeConnection()
+            private[kyo] def onClosing: Fiber.Unsafe[Unit, Any] = closingPromise
+            // not upgradable: no driver or socket, so the answer is known immediately
+            def detachForUpgrade()(using AllowUnsafe, Frame): Fiber.Unsafe[Maybe[Chunk[Span[Byte]]], Any] =
+                Fiber.Unsafe.fromResult(Result.succeed(Absent))
+            private[net] def start()(using AllowUnsafe, Frame): Boolean = true // pumps already started at open
             // Plaintext, driverless connection: no peer certificate to hash and no close_notify exchange to observe.
             def serverCertificateHash: Maybe[Span[Byte]] = Absent
             def status: NetConnection.Status             = NetConnection.Status.Active

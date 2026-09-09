@@ -38,6 +38,7 @@ import kyo.net.TransportCapabilities
 import kyo.net.internal.transport.*
 import kyo.scheduler.IOPromise
 import scala.annotation.tailrec
+import scala.util.control.NonFatal
 
 /** JVM TCP transport using a non-blocking NIO `Selector`.
   *
@@ -1489,35 +1490,54 @@ final private[kyo] class NioTransport private (
                 // blocks forever waiting for data that was consumed and discarded. Whether the pump raced
                 // ahead and buffered this flight is timing-dependent on fast loopback, so preRead is often
                 // empty (no-op) and sometimes non-empty (corrective).
-                val preRead: Maybe[Chunk[Span[Byte]]] = nioConn.detachForUpgrade()
-                if preRead.isEmpty then
-                    // The claim was won but the connection reached a terminal state before the detach (a close raced or preceded this call):
-                    // nothing was detached and the close path owns the channel, so fail typed. The failure settlement runs the owner arm
-                    // above, whose closeQuietly is idempotent against the close that won.
-                    promise.completeDiscard(Result.fail(NetAlreadyDetachedException()))
-                // Step 2: re-register the same channel (still open) with the driver for TLS handshake I/O.
-                else if !driver.registerChannel(handle) then
-                    promise.completeDiscard(Result.fail(NetTlsHandshakeException(host, -1, "")))
-                else
-                    // Step 3: drive TLS handshake on the same SocketChannel.
-                    // The TLS role follows the connection's TCP origin: an accepted connection (isServerOrigin) upgrades as the TLS server, a
-                    // connected one as the client (e.g. a Postgres client doing an SSLRequest upgrade). The origin is authoritative: a config
-                    // heuristic ("has a cert+key therefore server") would misclassify a mutual-TLS client that presents its own client certificate.
-                    val isServer = nioConn.isServerOrigin
-                    startTlsHandshake(
-                        handle.channel,
-                        host,
-                        -1,
-                        tls,
-                        isServer = isServer,
-                        promise,
-                        Present(handle),
-                        preRead,
-                        channelCapacity,
-                        handle.readBufferSize,
-                        handle.peerCloseGrace
-                    )
-                end if
+                // The detach reports the staged bytes through a handover rather than a return value, because a pump offer carrying that
+                // first flight can still be committing when the inbound channel closes. Everything downstream of the detach therefore runs
+                // on the handover's completion, which settles inline whenever no offer is in flight. The try lives inside the callback:
+                // completion callbacks are run under a catch-all that logs rather than propagates, so an exception raised out here would be
+                // swallowed instead of failing the upgrade promise.
+                nioConn.detachForUpgrade().onComplete { detached =>
+                    try
+                        val preRead: Maybe[Chunk[Span[Byte]]] = detached.foldError(_.eval, _ => Absent)
+                        if preRead.isEmpty then
+                            // The claim was won but the connection reached a terminal state before the detach (a close raced or preceded this
+                            // call): nothing was detached and the close path owns the channel, so fail typed. The failure settlement runs the
+                            // owner arm above, whose closeQuietly is idempotent against the close that won.
+                            promise.completeDiscard(Result.fail(NetAlreadyDetachedException()))
+                        // Step 2: re-register the same channel (still open) with the driver for TLS handshake I/O.
+                        else if !driver.registerChannel(handle) then
+                            promise.completeDiscard(Result.fail(NetTlsHandshakeException(host, -1, "")))
+                        else
+                            // Step 3: drive TLS handshake on the same SocketChannel.
+                            // The TLS role follows the connection's TCP origin: an accepted connection (isServerOrigin) upgrades as the TLS
+                            // server, a connected one as the client (e.g. a Postgres client doing an SSLRequest upgrade). The origin is
+                            // authoritative: a config heuristic ("has a cert+key therefore server") would misclassify a mutual-TLS client that
+                            // presents its own client certificate.
+                            val isServer = nioConn.isServerOrigin
+                            startTlsHandshake(
+                                handle.channel,
+                                host,
+                                -1,
+                                tls,
+                                isServer = isServer,
+                                promise,
+                                Present(handle),
+                                preRead,
+                                channelCapacity,
+                                handle.readBufferSize,
+                                handle.peerCloseGrace
+                            )
+                        end if
+                    catch
+                        case e: Exception =>
+                            promise.completeDiscard(Result.fail(NetTlsHandshakeException(host, -1, e)))
+                        case t: Throwable =>
+                            // The outer catch this mirrors takes Exception, which is the right leaf for a handshake that failed on its own
+                            // terms. An Error is not that, and here it cannot be left to unwind either: the enclosing callback runs under a
+                            // catch-all that logs rather than propagates, so an unhandled one would settle nothing and park the caller on an
+                            // upgrade that can never finish. Hand it back as the panic it would have been before the detach became a handover.
+                            promise.completeDiscard(Result.panic(t))
+                    end try
+                }
             end if
         catch
             case e: Exception =>
@@ -1550,7 +1570,7 @@ private[kyo] object NioTransport:
       * For client: uses trustAll, a custom CA cert from `caCertPath`, or the default trust store. For server: loads key managers from PEM
       * cert/key paths.
       */
-    private[kyo] def createSslContext(config: NetTlsConfig, isServer: Boolean)(using AllowUnsafe): SSLContext =
+    private[kyo] def createSslContext(config: NetTlsConfig, isServer: Boolean)(using AllowUnsafe, Frame): SSLContext =
         val ctx = SSLContext.getInstance("TLS")
         // The server verifies client certs against trustStorePath, falling back to caCertPath; the client verifies the server chain against
         // caCertPath.
@@ -1586,30 +1606,52 @@ private[kyo] object NioTransport:
         if lo <= hi then all.slice(lo, hi + 1) else Array.empty[String]
     end enabledProtocols
 
+    /** Report a failure to load configured TLS material as [[NetTlsConfigException]], the type the native providers raise for the same
+      * misconfiguration (`SslLibProvider.applyConfig`).
+      *
+      * Both tiers already fail closed, so this is about the TYPE a caller catches, not about a silent weakening. The JDK raises four different
+      * exceptions across these paths (`FileNotFoundException` on a missing CA or cert, `NoSuchFileException` on a missing key,
+      * `CertificateException` on a file holding no certificate, `InvalidKeySpecException` on an unusable key), and which tier runs at all is a
+      * property of the HOST rather than of the caller: a posix host reaches BoringSSL while one without it falls to this floor. Left
+      * unconverted, one `NetTlsConfig` and one operator typo are catchable on one machine and escape the same catch on another.
+      *
+      * `material` and `path` are named because the message is the only place the failure stays attributable to the setting that caused it; the
+      * JDK reason is kept as the cause, wrapped the way `SslLibProvider.readPem` wraps its own read failure, so nothing is lost. Only NonFatal
+      * failures convert: a fatal error is not a configuration problem and must keep propagating as itself.
+      */
+    private def loadConfigured[A](material: String, path: String)(load: => A)(using Frame): A =
+        try load
+        catch
+            case ex: Throwable if NonFatal(ex) =>
+                throw NetTlsConfigException(new IOException(s"configured $material at $path could not be loaded", ex))
+    end loadConfigured
+
     /** Load a PEM-encoded CA certificate and build TrustManagers that validate against it.
       *
       * Used for `sslmode=verify-ca` and `sslmode=verify-full` to pin server cert validation to a specific CA instead of the JDK default
       * trust store.
       */
-    private def loadCaCertTrustManagers(caPath: String)(using AllowUnsafe): Array[javax.net.ssl.TrustManager] =
+    private def loadCaCertTrustManagers(caPath: String)(using AllowUnsafe, Frame): Array[javax.net.ssl.TrustManager] =
         import java.io.FileInputStream
         import java.security.KeyStore
         import java.security.cert.CertificateFactory
         import javax.net.ssl.TrustManagerFactory
 
-        val cf       = CertificateFactory.getInstance("X.509")
-        val caStream = new FileInputStream(caPath)
-        val caCert =
-            try cf.generateCertificate(caStream)
-            finally caStream.close()
+        loadConfigured("CA certificate", caPath) {
+            val cf       = CertificateFactory.getInstance("X.509")
+            val caStream = new FileInputStream(caPath)
+            val caCert =
+                try cf.generateCertificate(caStream)
+                finally caStream.close()
 
-        val ks = KeyStore.getInstance(KeyStore.getDefaultType)
-        ks.load(null, null)
-        ks.setCertificateEntry("ca", caCert)
+            val ks = KeyStore.getInstance(KeyStore.getDefaultType)
+            ks.load(null, null)
+            ks.setCertificateEntry("ca", caCert)
 
-        val tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm)
-        tmf.init(ks)
-        tmf.getTrustManagers
+            val tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm)
+            tmf.init(ks)
+            tmf.getTrustManagers
+        }
     end loadCaCertTrustManagers
 
     /** Load PEM certificate chain and private key into KeyManagers for SSLContext.
@@ -1617,7 +1659,7 @@ private[kyo] object NioTransport:
       * Reads PEM-encoded X.509 certificate chain and PKCS#8 private key, loads them into an in-memory PKCS12 keystore, and returns
       * KeyManagers.
       */
-    private def loadPemKeyManagers(certPath: String, keyPath: String)(using AllowUnsafe): Array[javax.net.ssl.KeyManager] =
+    private def loadPemKeyManagers(certPath: String, keyPath: String)(using AllowUnsafe, Frame): Array[javax.net.ssl.KeyManager] =
         import java.io.FileInputStream
         import java.security.KeyFactory
         import java.security.KeyStore
@@ -1625,36 +1667,45 @@ private[kyo] object NioTransport:
         import java.security.spec.PKCS8EncodedKeySpec
         import javax.net.ssl.KeyManagerFactory
 
+        // Each half is wrapped against the path it actually reads, so a failure names the one setting that caused it rather than the pair.
         // Load certificate chain
-        val certFactory = CertificateFactory.getInstance("X.509")
-        val certStream  = new FileInputStream(certPath)
-        val certs =
-            try certFactory.generateCertificates(certStream)
-            finally certStream.close()
-        val certArray = new Array[java.security.cert.Certificate](certs.size())
-        certs.toArray(certArray)
+        val certArray = loadConfigured("certificate chain", certPath) {
+            val certFactory = CertificateFactory.getInstance("X.509")
+            val certStream  = new FileInputStream(certPath)
+            val certs =
+                try certFactory.generateCertificates(certStream)
+                finally certStream.close()
+            val array = new Array[java.security.cert.Certificate](certs.size())
+            certs.toArray(array)
+            array
+        }
 
         // Load private key (PKCS#8 PEM)
-        val keyBytes = java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(keyPath))
-        val keyPem   = new String(keyBytes, java.nio.charset.StandardCharsets.UTF_8)
-        val keyBase64 = keyPem
-            .replace("-----BEGIN PRIVATE KEY-----", "")
-            .replace("-----END PRIVATE KEY-----", "")
-            .replaceAll("\\s", "")
-        val keyDer  = java.util.Base64.getDecoder.decode(keyBase64)
-        val keySpec = new PKCS8EncodedKeySpec(keyDer)
-        val kf      = KeyFactory.getInstance("RSA")
-        val privKey = kf.generatePrivate(keySpec)
+        val privKey = loadConfigured("private key", keyPath) {
+            val keyBytes = java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(keyPath))
+            val keyPem   = new String(keyBytes, java.nio.charset.StandardCharsets.UTF_8)
+            val keyBase64 = keyPem
+                .replace("-----BEGIN PRIVATE KEY-----", "")
+                .replace("-----END PRIVATE KEY-----", "")
+                .replaceAll("\\s", "")
+            val keyDer  = java.util.Base64.getDecoder.decode(keyBase64)
+            val keySpec = new PKCS8EncodedKeySpec(keyDer)
+            val kf      = KeyFactory.getInstance("RSA")
+            kf.generatePrivate(keySpec)
+        }
 
-        // Build in-memory PKCS12 keystore
-        val ks       = KeyStore.getInstance("PKCS12")
-        val password = "".toCharArray
-        ks.load(null, password)
-        ks.setKeyEntry("server", privKey, password, certArray)
+        // Build in-memory PKCS12 keystore. This is where a key that parses but does not match the certificate is rejected, so the failure
+        // belongs to the pair rather than to either path alone.
+        loadConfigured("certificate chain and private key", s"$certPath / $keyPath") {
+            val ks       = KeyStore.getInstance("PKCS12")
+            val password = "".toCharArray
+            ks.load(null, password)
+            ks.setKeyEntry("server", privKey, password, certArray)
 
-        val kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm)
-        kmf.init(ks, password)
-        kmf.getKeyManagers
+            val kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm)
+            kmf.init(ks, password)
+            kmf.getKeyManagers
+        }
     end loadPemKeyManagers
 
     /** Returns the SHA-256 hash of the server's leaf certificate DER bytes per RFC 5929 tls-server-end-point.

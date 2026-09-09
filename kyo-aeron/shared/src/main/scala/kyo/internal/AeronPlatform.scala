@@ -25,12 +25,12 @@ end AeronDriverRuntime
 
 /** Per-platform Aeron runtime selectors, delegating to `AeronPlatformTransport`.
   *
-  * `embedded(dir)` launches an embedded media driver and connects a client (JVM: Java client plus
-  * `MediaDriver.launchEmbedded`; Native/JS: C client plus embedded C driver via the FFI shim).
-  * `dir` must be a distinct directory per call (callers allocate via `Path.tempDir`), otherwise
-  * concurrent embedded drivers collide on the same CnC file. The row is `< Async` because the
-  * `@Ffi.blocking` `driverStart`/`clientConnect` downcalls surface through a `.safe.get` bridge;
-  * the JVM body runs in the Async row too, for a uniform seam.
+  * `embedded(dir)` launches an embedded media driver and connects a client: the Aeron C client and
+  * its embedded C driver through the FFI shim, on every platform including the JVM, which reaches
+  * the shim through Panama downcalls. `dir` must be a distinct directory per call (callers allocate
+  * via `Path.tempDir`), otherwise concurrent embedded drivers collide on the same CnC file. The row
+  * is `< Async` because the `@Ffi.blocking` `driverStart`/`clientConnect` downcalls surface through
+  * a `.safe.get` bridge.
   *
   * `external(aeronDir)` connects to a driver already running at `aeronDir`. The caller owns that
   * driver, so the runtime's `close()` closes only the client. Both `Topic.run(aeronDir)` and

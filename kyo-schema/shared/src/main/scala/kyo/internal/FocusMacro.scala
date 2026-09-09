@@ -23,6 +23,36 @@ import scala.quoted.*
   */
 @publicInBinary private[kyo] object FocusMacro:
 
+    /** Builds `Schema.init`'s `writeFn` with the lambda's parameters as ordinary terms of this scope.
+      *
+      * The natural spelling, `'{ (v, w) => ${ writeBody('v, 'w) } }`, creates the parameters inside a
+      * splice and hands them to a helper that quotes with the enclosing method's `Quotes`, so a
+      * parameter is used outside the splice that created it. That is a scope violation, it compiles
+      * only because the body happens to land back where the parameter is in scope, and
+      * `-Xcheck-macros` rejects it. Building the lambda through `Lambda` keeps the parameters and the
+      * body in a single scope, so nothing crosses a splice boundary.
+      */
+    private def writeFnExpr[A: Type](using Quotes)(body: (Expr[A], Expr[Writer]) => Expr[Unit]): Expr[(A, Writer) => Unit] =
+        import quotes.reflect.*
+        Lambda(
+            Symbol.spliceOwner,
+            MethodType(List("v", "w"))(_ => List(TypeRepr.of[A], TypeRepr.of[Writer]), _ => TypeRepr.of[Unit]),
+            (owner, params) =>
+                val List(v, w) = params.map(_.asInstanceOf[Term])
+                body(v.asExprOf[A], w.asExprOf[Writer]).asTerm.changeOwner(owner)
+        ).asExprOf[(A, Writer) => Unit]
+    end writeFnExpr
+
+    /** Builds `Schema.init`'s `readFn` the same way `writeFnExpr` builds `writeFn`. */
+    private def readFnExpr[A: Type](using Quotes)(body: Expr[Reader] => Expr[A]): Expr[Reader => A] =
+        import quotes.reflect.*
+        Lambda(
+            Symbol.spliceOwner,
+            MethodType(List("r"))(_ => List(TypeRepr.of[Reader]), _ => TypeRepr.of[A]),
+            (owner, params) => body(params.head.asInstanceOf[Term].asExprOf[Reader]).asTerm.changeOwner(owner)
+        ).asExprOf[Reader => A]
+    end readFnExpr
+
     // ==========================================================================
     // Focus navigation (Focus.Select.selectDynamic, Schema.focus / focusChain / foreachChain)
     // ==========================================================================
@@ -1519,10 +1549,12 @@ import scala.quoted.*
         end structureExpr
 
         val selfRefExpr: Expr[Schema[A]] = selfRef.asExprOf[Schema[A]]
+        val writeFn                      = writeFnExpr[A](writeBody)
+        val readFn                       = readFnExpr[A](readBody)
         val selfRhs: Expr[Schema[A]] = '{
             Schema.init[A](
-                writeFn = (v, w) => ${ writeBody('v, 'w) },
-                readFn = r => ${ readBody('r) },
+                writeFn = $writeFn,
+                readFn = $readFn,
                 variantDecoders = $variantDecodersExpr,
                 representation = Schema.UnionRepresentation.Untagged,
                 structure = ${ structureExpr }
@@ -2020,12 +2052,14 @@ import scala.quoted.*
 
         // Build the Schema.init term first so every fieldSchemaExprTyped / structure call has
         // populated `hoistedSchemas`, then prepend the hoisted lazy vals as a wrapping block.
-        val cfg = desugarProductConfig[A](sym, tpe)
+        val cfg     = desugarProductConfig[A](sym, tpe)
+        val writeFn = writeFnExpr[A](writeBody)
+        val readFn  = readFnExpr[A](readBody)
         val schemaInitTerm: Term =
             '{
                 Schema.init[A](
-                    writeFn = (v, w) => ${ writeBody('v, 'w) },
-                    readFn = r => ${ readBody('r) },
+                    writeFn = $writeFn,
+                    readFn = $readFn,
                     sourceFields = $sourceFields,
                     renamedFields = ${ cfg.renamedFields },
                     droppedFields = ${ cfg.droppedFields },
@@ -2293,11 +2327,13 @@ import scala.quoted.*
             }
             '{ kyo.Chunk.from[kyo.Codec.Reader => Any](Array[kyo.Codec.Reader => Any](${ Varargs(perVariant) }*)) }
         end variantDecodersExpr
-        val cfg = desugarSumConfig(sym, tpe, children)
+        val cfg     = desugarSumConfig(sym, tpe, children)
+        val writeFn = writeFnExpr[A](writeBody)
+        val readFn  = readFnExpr[A](readBody)
         val selfRhs: Expr[Schema[A]] = '{
             Schema.init[A](
-                writeFn = (v, w) => ${ writeBody('v, 'w) },
-                readFn = r => ${ readBody('r) },
+                writeFn = $writeFn,
+                readFn = $readFn,
                 sourceFields = $sourceFields,
                 variantDecoders = $variantDecodersExpr,
                 discriminatorField = ${ cfg.discriminatorField },
@@ -2588,3 +2624,39 @@ import scala.quoted.*
     end defaultsImpl
 
 end FocusMacro
+
+/** Schema derivation entry point, spliced by `Schema.derived` and `Schema.derivedVia`.
+  *
+  * Two constraints fix the shape of this object, and it satisfies each with a different property.
+  *
+  * It is a SEPARATE OBJECT, so it compiles to its own class file. `Schema.scala`, `Changeset.scala`
+  * and `Structure.scala` each carry a `derives Schema`, so the compiler suspends them and expands
+  * their macros in a later run, which means their own class files do not exist yet at expansion
+  * time. [[FocusMacro]] names those types in its method signatures, so loading `FocusMacro$` at that
+  * point fails. This object names none of them outside `Expr`, which erases, so it loads and can
+  * make the call.
+  *
+  * It lives in THIS FILE rather than its own, so zinc cannot invalidate [[FocusMacro]] without
+  * invalidating it too. The compiler decides whether to suspend by looking at the spliced symbol
+  * alone and asking whether it is being compiled in the current run; it cannot see through the
+  * delegation. In a file of its own this object uses so few names that an upstream change recompiles
+  * [[FocusMacro]] and leaves it untouched, and the compiler then declines to suspend and expands
+  * against a `FocusMacro$.class` zinc has already deleted.
+  *
+  * Splitting this object back out into its own file reintroduces that failure, and inlining it into
+  * [[FocusMacro]] reintroduces the class-loading one.
+  */
+object SchemaDerivedMacro:
+
+    def derivedImpl[A: Type](using Quotes): Expr[Schema[A]] =
+        FocusMacro.derivedImpl[A]
+
+    def derivedViaImpl[A: Type, R: Type](using
+        Quotes
+    )(
+        construct: Expr[Any],
+        constructed: Expr[Schema.Constructed[R, A]]
+    ): Expr[Schema[A]] =
+        FocusMacro.derivedViaImpl[A, R](construct, constructed)
+
+end SchemaDerivedMacro

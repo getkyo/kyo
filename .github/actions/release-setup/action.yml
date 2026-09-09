@@ -4,11 +4,25 @@ description: >-
   native build dependencies, the staged BoringSSL and libaeron trees, and the JDK plus sbt.
   Shared by the release workflow and the release probe, so the probe builds in exactly the
   environment it vouches for; a native dependency added for publishing reaches both at once.
-  Assumes a linux x64 runner. Checkout is the caller's responsibility.
+  Linux only; the staged natives follow the runner's own architecture. Checkout is the
+  caller's responsibility.
 runs:
   using: composite
   steps:
     - uses: coursier/cache-action@v8.1.1
+
+    # The staged trees below are per-architecture, and the two callers do not share one: publish
+    # runs on x64, the probe on arm64. Resolve it from the runner rather than pinning a value that
+    # is right for only one of them.
+    - name: Resolve os-arch
+      id: osarch
+      shell: bash
+      run: |
+        case "$(uname -m)" in
+          x86_64)          echo "value=linux-x86_64" >> "$GITHUB_OUTPUT" ;;
+          aarch64|arm64)   echo "value=linux-aarch64" >> "$GITHUB_OUTPUT" ;;
+          *) echo "release-setup: no os-arch mapping for '$(uname -m)'." >&2; exit 1 ;;
+        esac
 
     # liburing rides along with the other native build deps: the kyo-net io_uring shim
     # (kyo_uring.c) statically links -luring, and publishing compiles it like any other build.
@@ -24,7 +38,7 @@ runs:
       shell: bash
       run: |
         bash scripts/apt-install.sh --if-missing cmake go:golang-go
-        bash kyo-net/build/boringssl/build-boringssl.sh linux-x86_64
+        bash kyo-net/build/boringssl/build-boringssl.sh "${{ steps.osarch.outputs.value }}"
 
     # The staged libaeron tree is gitignored, so anything that compiles kyo-aeron's C shim has to
     # build it first: the shim statically links -laeron_driver_static.
@@ -34,7 +48,7 @@ runs:
         # The Aeron driver links -luuid on Linux and the package providing the libuuid.so link
         # target is not preinstalled.
         bash scripts/apt-install.sh --if-missing cmake uuid-dev
-        bash kyo-aeron/scripts/build-aeron.sh linux-x86_64
+        bash kyo-aeron/scripts/build-aeron.sh "${{ steps.osarch.outputs.value }}"
 
     - uses: coursier/setup-action@v3.0.0
       with:

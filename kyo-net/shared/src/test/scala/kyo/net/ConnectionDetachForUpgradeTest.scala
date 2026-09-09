@@ -40,9 +40,13 @@ class ConnectionDetachForUpgradeTest extends Test:
         val conn = Connection.init[Unit]((), spy, 1)
         conn.start()
         Sync.defer {
-            val result = conn.detachForUpgrade()
-            // detachForUpgrade returns Present when it wins the CAS (Established -> Upgrading).
-            assert(result.isDefined, "detachForUpgrade on an Established connection must return Present")
+            val result = conn.detachForUpgrade().poll()
+            // detachForUpgrade reports Present when it wins the CAS (Established -> Upgrading). Nothing is offering here, so the handover
+            // settles inside the call; asserting on the settled result pins that too.
+            assert(
+                result.exists { case Result.Success(v) => v.eval.isDefined; case _ => false },
+                s"detachForUpgrade on an Established connection must settle synchronously and report Present, got $result"
+            )
             assert(
                 spy.closeHandleCount.get() == 0,
                 s"closeHandle must NOT be called after detachForUpgrade, got ${spy.closeHandleCount.get()}"
