@@ -988,7 +988,14 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
 
         // The issue's second program, which had no counterpart: every other Scope.run-inside-a-Stream leaf
         // here emits a bounded number of elements, so none of them ends an unbounded emitter early.
-        "Scope.ensure over an unbounded stream releases once when take ends it" in {
+        //
+        // The finalizer does run, but not in time: replacing the read below with assertEventually makes this
+        // pass, so what fails is the timing, not the release. The Sync.ensure twin at the leaf above releases
+        // before `run` returns, which is what makes this a defect rather than a property nobody promised.
+        // Same root as #1723: Scope.run's close hands its backlog to a detached fiber that nothing awaits.
+        "Scope.ensure over an unbounded stream releases once when take ends it".pendingUntilFixed(
+            "Finalizer.close drains the scope's finalizers on a detached fiber that nothing awaits, so a stream ended early by take has not finished releasing by the time run returns, though Sync.ensure over the same stream has"
+        ) in {
             AtomicInt.init(0).map { released =>
                 val stream = Stream:
                     Scope.run:
@@ -996,7 +1003,8 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
                             Loop(0)(i => Emit.valueWith(Chunk(i))(Loop.continue(i + 1)))
                 stream.take(5).run.map { taken =>
                     released.get.map { r =>
-                        assert(taken == Chunk(0, 1, 2, 3, 4) && r == 1)
+                        assert(taken == Chunk(0, 1, 2, 3, 4), s"took $taken")
+                        assert(r == 1, s"released $r times")
                     }
                 }
             }

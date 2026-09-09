@@ -346,7 +346,12 @@ object Isolate:
                 tpe match
                     case AndType(left, right)        => flatten(left) ++ flatten(right)
                     case t if t =:= TypeRepr.of[Any] => Nil
-                    case t                           => List(t)
+                    // Neither end of the lattice names an effect, and the bottom one has to be dropped
+                    // rather than left to the tests below: every `t <:< X` holds for it, so a row inferred
+                    // as Nothing, which is what an unconstrained row in a contravariant position becomes,
+                    // would read as naming the no-escape marker and be refused as a region escape.
+                    case t if t =:= TypeRepr.of[Nothing] => Nil
+                    case t                               => List(t)
 
             val keep   = flatten(TypeRepr.of[Keep])
             val remove = flatten(TypeRepr.of[Remove])

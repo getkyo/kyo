@@ -411,7 +411,9 @@ class VarTest extends kyo.test.Test[Any]:
         def program: Int < Var[Int] =
             for
                 n <- Var.get[Int]
-                x <- if n <= 0 then n else Var.set(n - 1).andThen(program)
+                // ascribed because a generator gives its right-hand side no expected type, so the branches
+                // would unify to a union before the lift can fire
+                x <- (if n <= 0 then n else Var.set(n - 1).andThen(program)): Int < Var[Int]
             yield x
         assert(Var.run(100000)(program).eval == 0)
     }
