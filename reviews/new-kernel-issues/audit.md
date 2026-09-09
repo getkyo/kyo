@@ -408,38 +408,41 @@ Ordered by how silently the bug returns if the test is absent.
 
 # Tests to add
 
-One entry per issue, all eleven, nothing dropped. Each gives the target file, the leaf name as
-it will read, the fixture, the assertions with expected values, whether it is plain or
-`pendingUntilFixed`, and any API the test needs that does not exist yet.
+Eleven issues in, eleven out. Every issue below has at least one concrete test fully specified.
+The single non-test in this section is 531's throughput half, which gets a named benchmark class
+and an exact baseline commit instead. Thirteen leaves in total, plus two relabellings and that
+one benchmark run.
 
-**Two repo constraints every entry respects.**
+**Format.** Each entry gives: target file, leaf name as it will read, the fixture concretely,
+the assertions with expected values, plain or `pendingUntilFixed` with the exact reason string,
+and any API the test needs that does not exist yet.
 
-- No dependence on the real clock. Coordination is by `Latch`, `Promise`, `Fiber.get` or
-  `assertEventually` (`kyo-test/api/shared/src/main/scala/kyo/test/internal/TestBase.scala:449`);
-  where virtual time is needed, `Clock.withTimeControl`
-  (`kyo-core/shared/src/main/scala/kyo/Clock.scala:325`). `Async.timeout` appears only as a
-  failure detector, never as a pass condition: a `Timeout` is the evidence that something never
-  ran, and no assertion passes because of elapsed time.
-- Every test file shares a name prefix with the source it covers, so no entry below creates a
-  new file. All of them land in existing files: `ScopeTest.scala` and `ScopeInterruptTest.scala`
-  cover `Scope.scala`, `SyncTest.scala` and `SyncInterruptTest.scala` cover `Sync.scala`,
-  `StreamCoreExtensionsTest.scala` covers `StreamCoreExtensions.scala`, `VarTest.scala` covers
-  `Var.scala`.
+**An issue whose behaviour does not exist yet still gets a test.** The assertion states the
+correct end state and the marker states that it is not true yet. kyo-test's marker is a tripwire
+in both directions: a still-failing body reports Pending, a now-passing body reports Failed with
+"remove the pendingUntilFixed marker"
+(`kyo-test/runner/shared/src/test/scala/kyo/LiveCoverageTest.scala:350-368`). So a specified
+target state goes red the moment the behaviour lands. No assertion below is weakened to pass
+today.
 
-**How `pendingUntilFixed` behaves here, which is why the assertions below are never weakened.**
-kyo-test's marker is a tripwire in both directions: a still-failing body reports Pending, and a
-now-passing body reports **Failed** with "remove the pendingUntilFixed marker"
-(`kyo-test/runner/shared/src/test/scala/kyo/LiveCoverageTest.scala:350-368`). So the assertion
-states what should be true and the marker states that it is not true yet; the moment the
-behaviour lands, the leaf goes red and asks to be un-marked.
+**Repo rules every entry respects.**
 
-**One divergence from the assignment, with its reason.** The 531 stack half is marked plain
-below, not `pendingUntilFixed`. By the reading in the 531 entry that half is already fixed
-(`kyo-kernel/shared/src/test/scala/kyo/KyoTest.scala:167` and `:182` assert the real answer
-where main was pending-until-fixed), so the marker would trip on a passing body and report
-Failed rather than Pending. The instruction is still honoured: write it plain, run it once, and
-if it fails, add the marker with the reason string given in that entry. I have not run it, so
-that fallback is real rather than rhetorical.
+- No real-clock dependence. Coordination is by `Latch`, `Promise`, `Fiber.get` or
+  `assertEventually`
+  (`kyo-test/api/shared/src/main/scala/kyo/test/internal/TestBase.scala:449`); virtual time, where
+  needed, via `Clock.withTimeControl` (`kyo-core/shared/src/main/scala/kyo/Clock.scala:325`).
+  `Async.timeout` appears only as a failure detector: a `Timeout` is the evidence that something
+  never ran, and no assertion passes because of elapsed time.
+- Every file shares a name prefix with the source it covers, so no entry creates a new file.
+  `ScopeTest.scala` and `ScopeInterruptTest.scala` cover `Scope.scala`, `SyncTest.scala` and
+  `SyncInterruptTest.scala` cover `Sync.scala`, `StreamCoreExtensionsTest.scala` covers
+  `StreamCoreExtensions.scala`, `VarTest.scala` covers `Var.scala`.
+
+**One judgement call, stated so it can be overruled.** Where I read the behaviour as already
+correct, the leaf is plain rather than `pendingUntilFixed`, because the marker fails a passing
+body. That applies to 1224 and to the 531 stack half. Both entries carry the exact reason string
+to attach if the leaf turns out red when run. I have not run any of these, so that fallback is
+real rather than rhetorical.
 
 ---
 
@@ -447,42 +450,41 @@ that fallback is real rather than rhetorical.
 
 - **File:** `kyo-core/jvm-native/src/test/scala/kyo/ScopeInterruptTest.scala`
 - **Leaf:** `"a fiber interrupted while parked on a masked promise still runs its scope finalizers"`
-- **Existing coverage is a different path, so this is an addition, not a replacement.**
-  `SyncInterruptTest.scala:23`, `ScopeTest.scala:649` and `AsyncTest.scala:1787` all park on a
-  promise the interrupt cascades to (`Async.useResult` registers `task.interrupts(v)`,
-  `kyo-core/shared/src/main/scala/kyo/Async.scala:837`), so all three are answered by the
-  resumption path and stay green if the abandonment path is deleted. Keep them; they are valid
-  coverage of the resumption path. This leaf forces the other one.
+- **Why an addition and not a replacement.** `SyncInterruptTest.scala:23`, `ScopeTest.scala:649`
+  and `AsyncTest.scala:1787` all park on a promise the interrupt cascades to (`Async.useResult`
+  registers `task.interrupts(v)`, `kyo-core/shared/src/main/scala/kyo/Async.scala:837`), so all
+  three are answered by the resumption path and stay green if the abandonment path is deleted.
+  Keep them as coverage of the resumption path; this leaf forces the other one.
 - **Fixture:** build the parked promise with
   `Sync.Unsafe.defer(Promise.Unsafe.initMasked[Unit, Any]().safe)`
-  (`kyo-core/shared/src/main/scala/kyo/Fiber.scala:653`, `.safe` at `:674`, `Promise` exported
-  top-level at `:46`). Its `preInterrupt()` returns `false`, which is what makes the cascade a
-  no-op. Fork with `Fiber.initUnscoped` a body of
+  (`kyo-core/shared/src/main/scala/kyo/Fiber.scala:653`, `.safe` at `:674`, `Promise` exported at
+  `:46`); its `preInterrupt()` returns `false`, which is what makes the cascade a no-op. Fork
+  with `Fiber.initUnscoped` a body of
   `Scope.run { Scope.ensure(finalized.release).andThen(promise.get.andThen(resumed.set(true))) }`.
-  Wait for the fiber to be genuinely parked with `assertEventually(promise.waiters.map(_ == 1))`
-  (`Fiber.scala:574`). Then, inside a single `Sync.Unsafe.defer` node so the order is fixed,
-  call `fiber.unsafe.interrupt()` and then `promise.unsafe.completeUnitDiscard()`.
-- **Assertions:** `finalized.await` completes, wrapped in
-  `Abort.run[Timeout](Async.timeout(3.seconds)(finalized.await))` purely as a failure detector,
-  and `out.isSuccess` is true; `resumed.get == false`, proving the queued continuation did not
-  run after cancellation.
+  Park it for real: `assertEventually(promise.waiters.map(_ == 1))` (`Fiber.scala:574`). Then in
+  one `Sync.Unsafe.defer` node, so the order is fixed, call `fiber.unsafe.interrupt()`
+  (`Fiber.scala:245`) followed by `promise.unsafe.completeUnitDiscard()`.
+- **Assertions:** `Abort.run[Timeout](Async.timeout(3.seconds)(finalized.await))` yields
+  `out.isSuccess == true` (timeout as failure detector only), and `resumed.get == false`, proving
+  the queued continuation did not run after cancellation.
 - **Marker:** plain.
-- **New API needed:** none. `Promise.Unsafe.initMasked`, `.safe`, `waiters`,
-  `unsafe.interrupt()` and `unsafe.completeUnitDiscard()` all exist.
+- **New API needed:** none.
 
 ### 1846, Sync.ensure on a typed Abort (FIXED)
 
 - **File:** `kyo-core/shared/src/test/scala/kyo/SyncTest.scala`, in the `"acquireReleaseWith"`
   block at `:324`
 - **Leaf:** `"releases when the use aborts with a typed error"`
-- **Existing coverage exercises the fixed path for `Sync.ensure`:** `SyncTest.scala:149` and
-  `:213`, plus `SyncInterruptTest.scala:70` and the three un-pinned aeron leaves at
+- **What already exercises the fixed path, and is sufficient for `Sync.ensure` itself:**
+  `SyncTest.scala:149` "runs finalizer on Abort.fail" and `:213` "error-aware ensure passes error
+  on Abort.fail", plus `SyncInterruptTest.scala:70` and the three un-pinned leaves at
   `kyo-aeron/shared/src/test/scala/kyo/TopicRuntimeReleaseTest.scala:23`, `:87`, `:102`. The gap
   is the sibling the issue names as the live exposure: `Sync.acquireReleaseWith` has no leaf for
-  a bare typed abort. `:161` covers only the reify-and-re-raise workaround, `:346` a panic, and
-  `:369` an acquire panic.
-- **Fixture:** `Abort.run[String](Sync.acquireReleaseWith(Sync.defer("resource"))(_ => Sync.defer { released += 1 })(_ => Abort.fail("boom")))`,
-  with no reification inside the bracket.
+  a bare typed abort. `:161` covers only the reify-and-re-raise workaround, `:346` a panic in the
+  use, `:369` a panic in the acquire.
+- **Fixture:** `var released = 0`;
+  `Abort.run[String](Sync.acquireReleaseWith(Sync.defer("resource"))(_ => Sync.defer { released += 1 })(_ => Abort.fail("boom")))`,
+  with no `Abort.run` inside the bracket.
 - **Assertions:** `result == Result.fail("boom")` and `released == 1`.
 - **Marker:** plain.
 - **New API needed:** none.
@@ -492,18 +494,20 @@ that fallback is real rather than rhetorical.
 - **File:** `kyo-core/jvm-native/src/test/scala/kyo/ScopeInterruptTest.scala`, in the
   `"an interrupt landing while the acquire's last step runs"` block at `:42`
 - **Leaf:** `"Fiber.init interrupts and awaits the fiber it spawned when the interrupt lands on the spawn"`
-- **Existing coverage exercises the fixed path:** `:80`, `:46`, `:112` and `:181`, plus
-  `ScopeTest.scala:208` for the closed-scope half. The narrow gap is `Fiber.init` itself:
-  `:181` covers `Fiber.use`, and `:146` exercises `Fiber.init` for the scope-exit wait rather
-  than for an interrupt landing on the spawn.
-- **Fixture:** mirror `:181`. Each of 40 rounds runs
+- **What already exercises the fixed path, and is sufficient for `acquireRelease` itself:** `:80`
+  "Scope.acquireRelease releases what the acquire produced", `:46` as the
+  `Sync.acquireReleaseWith` control, `:112` "Scope.acquire closes the handle it opened", `:181`
+  for `Fiber.use`, and `ScopeTest.scala:208` for the closed-scope half. The remaining gap is
+  `Fiber.init` itself: `:146` exercises it for the scope-exit wait, not for an interrupt landing
+  on the spawn, and `Fiber.init` is the entry point the issue names by inspection.
+- **Fixture:** mirror `:181`. Each of 40 rounds forks
   `Fiber.initUnscoped(Scope.run(Fiber.init(child).andThen(started.await)))` where `child` is
   `Sync.ensure(childAlive.set(false).andThen(torn.release))(childAlive.set(true).andThen(started.release).andThen(gate.await))`,
-  interrupts the parent as close to the spawn as possible, awaits `parent.getResult`, then waits
-  on `torn.await` under `Abort.run[Timeout](Async.timeout(300.millis)(...))` as a failure
-  detector and releases `gate`.
-- **Assertions:** the count of rounds where the timeout fired **and** `childAlive.get` is still
-  true equals `0`. Assert on the count, not a proportion: one escape is a real one.
+  interrupts the parent as close to the spawn as possible, awaits `parent.getResult`, waits on
+  `torn.await` under `Abort.run[Timeout](Async.timeout(300.millis)(...))` as a failure detector,
+  reads `childAlive`, then releases `gate`.
+- **Assertions:** the count of rounds where the timeout fired **and** `childAlive.get` was still
+  true equals `0`. On the count, not a proportion: one escape is a real one.
 - **Marker:** plain.
 - **New API needed:** none.
 
@@ -512,15 +516,16 @@ that fallback is real rather than rhetorical.
 - **File:** `kyo-core/shared/src/test/scala/kyo/SyncTest.scala`, beside the existing
   `"stack-safe"` leaves at `:60` and `:88`
 - **Leaf:** `"stack-safe when a map follows the recursive defer"`
-- **Existing coverage takes a different path:** `:60` and `:88` are both tail-recursive, so
-  neither grows a continuation; the growing-continuation shape is guarded only at the kernel
-  layer (`KyoTest.scala:169`, `PendingTest.scala:1053`).
+- **Why existing coverage does not reach it.** `:60` and `:88` are both tail-recursive, so
+  neither grows a continuation. The growing-continuation shape is guarded only at the kernel
+  layer (`kyo-kernel/shared/src/test/scala/kyo/KyoTest.scala:169`,
+  `kyo-kernel/shared/src/test/scala/kyo/kernel/PendingTest.scala:1053`).
 - **Fixture:** the issue's program,
   `def step(n: Int): Int < Sync = if n <= 0 then 0 else Sync.defer(step(n - 1)).map(_ + 1)`,
   evaluated at `1000000`. No fibers, no clock, no interrupts.
-- **Assertions:** `step(1000000) == 1000000`. The value rather than the mere absence of a throw,
-  so a rescue that drops accumulated continuations also fails.
-- **Marker:** plain. If it overflows when run, mark it
+- **Assertions:** `step(1000000) == 1000000`. The value rather than the absence of a throw, so a
+  rescue that drops accumulated continuations also fails.
+- **Marker:** plain. If it overflows when run, attach
   `.pendingUntilFixed("a map after a recursive Sync.defer grows the continuation, and unwinding it overflows the stack at depth 1000000")`
   and leave the assertion exactly as written.
 - **New API needed:** none.
@@ -533,37 +538,41 @@ Two leaves, because the issue's guarantee and the issue's program are not the sa
 
 - **File:** `kyo-core/shared/src/test/scala/kyo/ScopeTest.scala`
 - **Leaf:** `"every racer that took an item from the channel puts it back"`
-- **Fixture:** a `Channel.init[String](16, Access.MultiProducerMultiConsumer)` inside
-  `Scope.run`. Race 8 fibers, each running
-  `Scope.run(Scope.acquireRelease(chan.take)(chan.put))`, against a producer that puts 4 known
-  items. Give each racer a `Latch` its release opens; await all 8 under
-  `Abort.run[Timeout](Async.timeout(3.seconds)(...))` as a failure detector **before** draining.
-- **Assertions:** `drained.toSet == Set("1", "2", "3", "4")`, and every one of the 8 release
-  latches opened (`out.isSuccess`).
-- **Marker:** plain. Awaiting the releases is what makes this the library's actual contract,
-  "what was taken is put back", rather than a claim about when it is put back.
+- **Fixture:** inside `Scope.run`, a
+  `Channel.init[String](16, Access.MultiProducerMultiConsumer)`. Race 8 fibers, each running
+  `Scope.run(Scope.acquireRelease(chan.take)(chan.put))`, against a producer that puts the four
+  items `"1"` to `"4"`. Each racer gets its own `Latch` that its release opens; await all 8 under
+  `Abort.run[Timeout](Async.timeout(3.seconds)(...))` as a failure detector, then `chan.drain`.
+- **Assertions:** `drained.toSet == Set("1", "2", "3", "4")`, and all 8 release latches opened
+  (`out.isSuccess == true`).
+- **Marker:** plain. Awaiting the releases is what makes this the library's stated contract,
+  "what was taken is put back", rather than a claim about when.
 - **New API needed:** none.
 
-**Leaf B, the issue's program verbatim.**
+**Leaf B, the reporter's program verbatim.**
 
 - **File:** `kyo-core/shared/src/test/scala/kyo/ScopeTest.scala`
 - **Leaf:** `"a raced scope has finished releasing by the time race returns"`
-- **Fixture:** identical to Leaf A but with the reporter's ordering: drain immediately after the
-  race returns, with no wait on the losers.
+- **Fixture:** identical to Leaf A except for the ordering: drain immediately after `Async.race`
+  returns, with no wait on the losers, which is what the issue's program does.
 - **Assertions:** `drained.toSet == Set("1", "2", "3", "4")`.
 - **Marker:**
   `.pendingUntilFixed("Async.race interrupts the losing fibers and returns without waiting for them to unwind, so a loser's Scope.run may still be putting its item back when the drain reads the channel")`
-- **New API needed:** none, but this leaf encodes an open semantic question rather than an
-  agreed defect: whether `Async.race` should await its losers' releases
-  (`kyo-core/shared/src/main/scala/kyo/Async.scala:236`). Land it only alongside that decision;
-  if the answer is that it should not, delete this leaf and keep Leaf A.
+- **New API needed to make it pass:** a decision plus an implementation. `Async.race`
+  (`kyo-core/shared/src/main/scala/kyo/Async.scala:236`) would have to await its losers'
+  releases, which nothing in the codebase offers today. Land this leaf with that decision; if the
+  ruling is that `race` should not wait, delete Leaf B and keep Leaf A, and record the ruling on
+  the issue.
 
 ### 1723, Scope.run finalizer ordering under an outer handler (PARTIAL)
 
 - **File:** `kyo-core/shared/src/test/scala/kyo/ScopeTest.scala`
 - **Leaf:** `"a scope short-circuited by an outer handler has released before the next effect runs"`
-- **Existing coverage is kernel-level only:** `BracketTest.scala:1114` asserts this ordering for
-  a bare bracket. Nothing asserts it through `Scope.run`.
+- **Why existing coverage does not reach it.**
+  `kyo-kernel/shared/src/test/scala/kyo/kernel/BracketTest.scala:1114` asserts this ordering for
+  a bare bracket. Nothing asserts it through `Scope.run`, and `Check.runAbort` appears in exactly
+  one test file repo-wide (`kyo-prelude/shared/src/test/scala/kyo/CheckTest.scala`), never with
+  `Scope`.
 - **Fixture:** the issue's program with an event log in place of `Console`. Into an
   `AtomicRef[Chunk[String]]`, run
   `Abort.run { Check.runAbort { Scope.run { Scope.acquireRelease(log("acquire"))(_ => log("release")).map(_ => Check.require(false, "boom")) } } }.andThen(log("after"))`.
@@ -571,10 +580,10 @@ Two leaves, because the issue's guarantee and the issue's program are not the sa
 - **Assertions:** `log.get == Chunk("acquire", "release", "after")`.
 - **Marker:**
   `.pendingUntilFixed("the outer handler discards Scope.run's continuation, so only the Sync.ensure backstop fires and Finalizer.close runs the finalizers on a detached fiber that nothing awaits")`
-- **New API needed:** none to write the test. To make it pass, `Scope.run`'s discarded-path
-  close needs something the synchronous release position can wait on, which does not exist
-  today: `Finalizer.close` (`kyo-core/shared/src/main/scala/kyo/Scope.scala:263`) always detaches
-  via `Fiber.initUnscoped` (`:285`) and the only `await` is on the normal continuation (`:175`).
+- **New API needed to make it pass:** something the synchronous release position can wait on.
+  `Finalizer.close` (`kyo-core/shared/src/main/scala/kyo/Scope.scala:263`) always detaches via
+  `Fiber.initUnscoped` (`:285`), and the only `await` is on the normal continuation (`:175`),
+  which is exactly what the outer handler discarded.
 
 ### 1398, Stream.take resource safety (FIXED)
 
@@ -584,30 +593,31 @@ Two leaves, both in `kyo-core/shared/src/test/scala/kyo/StreamCoreExtensionsTest
 **Leaf A, the issue's second test, which has no counterpart.**
 
 - **Leaf:** `"Scope.ensure over an unbounded stream releases once when take ends it"`
-- **Existing coverage takes a different path:** `:976` covers the `Sync.ensure` half; every
-  `Scope.run`-inside-a-`Stream` leaf (`:1007`, `:1057`) uses a bounded emitter, so none exercises
-  early termination of an unbounded one.
+- **What already exercises the fixed path:** `:976` "Sync.ensure over an unbounded stream releases
+  once when take ends it" is the issue's first test and is sufficient for the `Sync.ensure` half;
+  `:916`, `:945`, `:957`, `:989` and the hand-out family at `:1004`, `:1020`, `:1054`, `:1137`,
+  `:1151` cover the rest. The gap: every `Scope.run`-inside-a-`Stream` leaf (`:1007`, `:1057`,
+  `:1358`) uses a bounded emitter, so none exercises early termination of an unbounded one.
 - **Fixture:**
   `Stream { Scope.run { Scope.ensure(released.incrementAndGet.unit).andThen(Loop(0)(i => Emit.valueWith(Chunk(i))(Loop.continue(i + 1)))) } }`,
   consumed with `.take(5).run`.
 - **Assertions:** `taken == Chunk(0, 1, 2, 3, 4)` and `released.get == 1`.
 - **Marker:** plain.
+- **New API needed:** none.
 
 **Leaf B, the ordering nothing asserts today.**
 
 - **Leaf:** `"the finalizer of a taken stream runs after the last element it emitted"`
-- **Fixture:** the issue's own shape. One `AtomicRef[List[String]]` receives both the elements
-  and the finalizer:
+- **Fixture:** one `AtomicRef[List[String]]` receives both the elements and the finalizer:
   `Stream { Sync.ensure(ref.getAndUpdate("finalized" :: _))(Loop(0)(i => ref.getAndUpdate(i.toString :: _).andThen(Emit.valueWith(Chunk(i))(Loop.continue(i + 1))))) }`,
   consumed with `.take(5).run`.
 - **Assertions:** `emitted == Chunk(0, 1, 2, 3, 4)` and
-  `ref.get == List("finalized", "4", "3", "2", "1", "0")`. The existing leaves assert the
-  release count only, so a finalizer firing at the wrong moment but the right number of times
-  passes today.
+  `ref.get == List("finalized", "4", "3", "2", "1", "0")`. The existing leaves assert the release
+  count only, so a finalizer firing at the wrong moment but the right number of times passes.
 - **Marker:** plain.
-- **New API needed:** none for either leaf.
-- **Not duplicated here:** the three open combinator gaps already have leaves in this file at
-  `:1205`, `:1228` and `:1251`, each `pendingUntilFixed` with its own reason. Leave them as they
+- **New API needed:** none.
+- **Not duplicated:** the three open combinator gaps already have `pendingUntilFixed` leaves in
+  this file at `:1205`, `:1228` and `:1251`, each with its own reason string. Leave them as they
   are.
 
 ### 1381, Isolated Scopes (NOT FIXED)
@@ -615,67 +625,82 @@ Two leaves, both in `kyo-core/shared/src/test/scala/kyo/StreamCoreExtensionsTest
 - **File:** `kyo-core/shared/src/test/scala/kyo/ScopeTest.scala`, in the
   `"scope isolation (#1381)"` block at `:864`
 - **Leaf:** `"a Scope.run inside a generic function does not run the caller's finalizers"`
-- **Existing coverage does not exercise the defect and should be relabelled.** `:866` passes
+- **Mislabelling to fix in the same change.** The existing leaf at `:866` passes
   `handleScoped(Sync.defer(42))`, a body with no `Scope` suspensions, so it only checks that a
-  nested `Scope.run` leaves the outer scope alone. It is correct as a nesting test; the block's
-  title is what makes it look like coverage of this issue. Keep it, retitle it
-  `"a nested Scope.run does not run the enclosing scope's finalizers"`, and move it out of the
-  `#1381` block.
+  nested `Scope.run` leaves the outer scope alone. It is a correct nesting test wearing the wrong
+  title. Retitle it `"a nested Scope.run does not run the enclosing scope's finalizers"` and move
+  it into the `"finalizer ordering (#1439)"` neighbourhood beside `:538`; leave only the new leaf
+  under `#1381`.
 - **Fixture:** written against the API that exists, so it compiles today.
   `def generic[A, S](effect: A < S): A < (Async & S) = Scope.run(Sync.defer(()).andThen(effect))`.
   Call it as
-  `Scope.run { Scope.ensure(caller.incrementAndGet.unit).andThen(generic(Scope.ensure(inner.incrementAndGet.unit).andThen(42)).map(r => caller.get.map(c => (r, c)))) }`.
+  `Scope.run { Scope.ensure(caller.incrementAndGet.unit).andThen(generic(Scope.ensure(inner.incrementAndGet.unit).andThen(42)).map(r => Kyo.zip(caller.get, inner.get).map((c, i) => (r, c, i)))) }`.
 - **Assertions:** inside the outer `Scope.run`, immediately after `generic` returns,
-  `caller.get == 0` and `inner.get == 1`: the callee's own finalizer ran, the caller's did not.
-  After the outer `Scope.run` exits, `caller.get == 1`. And `r == 42`.
+  `c == 0` and `i == 1`: the callee's own finalizer ran, the caller's did not. After the outer
+  `Scope.run` exits, `caller.get == 1`. And `r == 42`.
 - **Marker:**
   `.pendingUntilFixed("Scope is a ContextEffect, so the innermost Scope.run handles every Scope suspension in its dynamic extent, the caller's included; there is no isolation API to keep them apart")`
-- **New API needed to make it pass:** the feature itself. Some form of `Scope.isolate` or an
-  `Isolate` instance for `Scope`; none of `Scope.isolate`, `Isolate[Scope, ...]` or
-  `Kyo.isolate` exists anywhere in the repo. The test above deliberately does not reference it,
-  so it compiles and fails now rather than not compiling.
+- **New API needed to make it pass:** the feature. Some form of `Scope.isolate` or an `Isolate`
+  instance for `Scope`; none of `Scope.isolate`, `Isolate[Scope, ...]` or `Kyo.isolate` exists
+  anywhere in the repo. The leaf deliberately does not reference it, so it compiles and fails now
+  rather than not compiling.
 
 ### 1224, Strengthen guarantees of Resource/bracket (FIXED)
 
 - **File:** `kyo-core/shared/src/test/scala/kyo/ScopeTest.scala`, in the
   `"acquireRelease safety (#1224)"` block at `:567`
-- **Leaf:** the block needs a pointer, not a new fixture.
-- **Existing coverage exercises the fixed path, but not from the block that carries the issue
-  number.** The real guards are `ScopeInterruptTest.scala:46`, `:80` and `:112`, which hold the
-  acquiring worker inside the acquire until the interrupt has been sent, plus
-  `ScopeTest.scala:208` for the closed-scope half and
-  `kyo-kernel/shared/src/test/scala/kyo/kernel/BracketTest.scala:735-790` and `:782` at the
-  kernel layer. The `#1224` block itself contains no interrupt, so citing it alone overstates
-  what is covered.
-- **Action:** add a comment at the head of the `#1224` block naming
-  `ScopeInterruptTest.scala:46/:80/:112` as where the interrupt-in-the-window case is actually
-  pinned, so the next reader does not mistake this block for the guard. No new fixture, no new
-  assertions.
-- **Marker:** not applicable.
-- **New API needed:** none.
+- **Leaf:** `"a self-interrupt inside the acquire still releases what the acquire produced"`
+- **Mislabelling to fix in the same change.** The `#1224` block today holds only a normal
+  acquire, a failing acquire, a closed-scope panic and a concurrent cleanup: no interrupt
+  anywhere, which is the entire subject of the issue. The real guards live in
+  `kyo-core/jvm-native/src/test/scala/kyo/ScopeInterruptTest.scala:46`, `:80`, `:112`. Because
+  that file is jvm-native, **JS has no coverage of the acquire-and-register window at all**. The
+  leaf below is shared source, so it closes that hole and gives the block the interrupt it
+  claims.
+- **Fixture:** the reporter's own shape from 1820, which needs no worker hold and therefore runs
+  on every platform. Per iteration: `handoff <- Promise.init[Fiber[Unit, Any], Any]`, two
+  `AtomicBoolean`s `claimed` and `released`, then
+  `fiber <- Fiber.initUnscoped { handoff.get.map { self => Scope.run { Scope.acquireRelease(Sync.Unsafe.defer { discard(self.unsafe.interrupt()); claimed.unsafe.set(true); "resource" })(_ => Sync.Unsafe.defer(released.unsafe.set(true))).unit } } }`,
+  then `handoff.complete(Result.succeed(fiber))` and `fiber.getResult`. The fiber interrupts
+  itself from inside the acquire, in the same `Sync` node that performs the claim, so nothing
+  separates the interrupt request from the claim and the earliest delivery point is after the
+  acquire has returned. Run 500 iterations with `Kyo.foreach`.
+- **Assertions:** `outcomes.count((acquired, freed) => acquired && !freed) == 0`, with the failure
+  message naming the count out of 500. On main this shape measured 500 of 500 leaked, so the
+  assertion has a known-red history and is not vacuous.
+- **Marker:** plain. If it leaks when run, attach
+  `.pendingUntilFixed("acquisition and registration are two steps, so an interrupt delivered after the acquire returns leaves the resource with nothing registered to release it")`
+  and leave the assertion as written.
+- **New API needed:** none. `Fiber.unsafe` (`kyo-core/shared/src/main/scala/kyo/Fiber.scala:245`),
+  `AtomicBoolean.unsafe.set` (`kyo-core/shared/src/main/scala/kyo/Atomic.scala:495`) and
+  `Promise.init` all exist.
 
 ### 1131, Hierarchical Resource scopes (PARTIAL)
 
 - **File:** `kyo-core/shared/src/test/scala/kyo/ScopeTest.scala`
 - **Leaf:** `"closing a scope releases the resources of a nested scope still running under it"`
-- **Existing coverage is the half that landed:** `:538`, `:847` and
-  `ScopeInterruptTest.scala:146` all cover a nested run that finishes first. Nothing covers a
-  parent closing while a child is live.
+- **Why existing coverage does not reach it.** `:538` "nested Scope.run releases inner before
+  outer", `:847` "Scope.run wrapping Scope.run" and
+  `kyo-core/jvm-native/src/test/scala/kyo/ScopeInterruptTest.scala:146` all cover a nested run
+  that finishes first. Nothing covers a parent closing while a child is live, which is the half
+  the issue asks for.
 - **Fixture:** inside an outer `Scope.run`, fork with `Fiber.initUnscoped` a body that opens its
-  own `Scope.run`, acquires a resource with `Scope.acquireRelease`, releases a `started` latch,
-  and then parks on `gate.await` (a `Latch` the test never releases until the assertions are
-  done). Await `started`, then let the outer `Scope.run` exit.
-- **Assertions:** after the outer `Scope.run` returns, `released.get == 1`, awaited via
-  `assertEventually` with `Abort.run[Timeout](Async.timeout(3.seconds)(...))` as the failure
-  detector. Then release `gate` and assert `released.get == 1` still, so the child's own exit
-  does not double-release.
+  own `Scope.run`, acquires with
+  `Scope.acquireRelease(Sync.defer("child"))(_ => released.incrementAndGet.unit)`, releases a
+  `started` latch, then parks on `gate.await` where `gate` is a `Latch` the test holds shut.
+  Await `started`, then let the outer `Scope.run` return.
+- **Assertions:** after the outer `Scope.run` returns,
+  `assertEventually(released.get.map(_ == 1))` under
+  `Abort.run[Timeout](Async.timeout(3.seconds)(...))` as the failure detector, so
+  `out.isSuccess == true`. Then release `gate`, await the child fiber, and assert
+  `released.get == 1` still, so the child's own exit does not double-release.
 - **Marker:**
   `.pendingUntilFixed("a parent scope waits for a nested run but cannot close it: fork and join are the identity, so closing a scope does not stop the computation running under it")`
-- **New API needed to make it pass:** parent-to-child close propagation, which was built once in
-  `0a79a67e91` and withdrawn by `2338ac9fa8`. `fork` and `join` are the identity today
-  (`kyo-core/shared/src/main/scala/kyo/Scope.scala:166`, `:167`). This leaf specifies the
-  behaviour; landing it needs the design decision the 1131 entry flags, so file the leaf and the
-  decision together.
+- **New API needed to make it pass:** parent-to-child close propagation, built once in
+  `0a79a67e91` and withdrawn by `2338ac9fa8`; `fork` and `join` are the identity today
+  (`kyo-core/shared/src/main/scala/kyo/Scope.scala:166`, `:167`). The leaf specifies the target
+  state and can be filed now; the design decision it implies is named in the 1131 entry above and
+  should travel with it.
 
 ### 531, map after a large number of effect suspensions (PARTIAL)
 
@@ -683,37 +708,90 @@ Two leaves, both in `kyo-core/shared/src/test/scala/kyo/StreamCoreExtensionsTest
 
 - **File:** `kyo-prelude/shared/src/test/scala/kyo/VarTest.scala`
 - **Leaf:** `"stack-safe when a for-comprehension follows a recursive Var suspension"`
-- **Existing coverage takes a different path:** `KyoTest.scala:169` and `:184` use the kernel's
-  own `TestEffect1`, and `PendingTest.scala:1053` uses a map tower over a rescued computation.
-  Neither is the `Var` program the issue reported, and `VarTest.scala` has no stack-safety leaf.
+- **Why existing coverage does not reach it.** `kyo-kernel/shared/src/test/scala/kyo/KyoTest.scala:169`
+  and `:184` use the kernel's own `TestEffect1`, and
+  `kyo-kernel/shared/src/test/scala/kyo/kernel/PendingTest.scala:1053` uses a map tower over a
+  rescued computation. Neither is the `Var` program the issue reported, and `VarTest.scala` has
+  no stack-safety leaf.
 - **Fixture:** the issue's Step 1 program verbatim,
   `def program: Int < Var[Int] = for { n <- Var.get[Int]; x <- if n <= 0 then n else Var.set(n - 1).andThen(program) } yield x`,
-  run as `Var.run(100000)(program)`.
+  run as `Var.run(100000)(program)`. No fibers, no clock.
 - **Assertions:** `== 0`. The value, so a rescue that loses accumulated continuations fails too.
-- **Marker:** plain, for the reason given at the top of this section. If it overflows when run,
-  mark it
+- **Marker:** plain. If it overflows when run, attach
   `.pendingUntilFixed("the map the for-comprehension desugars to grows the continuation across 100000 Var suspensions, and unwinding it overflows the stack")`
   and leave the assertion as written.
 - **New API needed:** none.
-- The `Sync`-level twin of this is the 1739 leaf above; both shapes are worth having, since one
-  goes through `Var`'s `ArrowEffect` dispatch and the other through `Effect.deferInline`.
+- The `Sync`-level twin is the 1739 leaf: keep both, since one goes through `Var`'s `ArrowEffect`
+  dispatch and the other through `Effect.deferInline`.
 
-**Throughput half, no test.**
+**Throughput half, the one permitted non-test.**
 
-This is a benchmark question and no test should be written for it. A test cannot assert a
-throughput property without depending on wall-clock time, which this repo forbids, and a
-threshold would be flaky on CI hardware. The measurement is:
+No test, and none should be written: asserting throughput requires wall-clock time, which this
+repo forbids, and a threshold would be flaky on CI hardware.
 
-- **Benchmark:** `kyo-bench/src/main/scala/kyo/bench/arena/StateMapBench.scala`, which is the
-  issue's program at n = 1000 with cats and zio comparators already in place. Secondary:
-  `kyo-bench/src/main/scala/kyo/bench/arena/DeepBindMapBench.scala`, and
+- **Benchmark class:** `kyo.bench.arena.StateMapBench`
+  (`kyo-bench/src/main/scala/kyo/bench/arena/StateMapBench.scala`), which is the issue's program
+  at n = 1000 with cats and zio comparators already in place. Read alongside
+  `kyo.bench.arena.StateBench` (`kyo-bench/src/main/scala/kyo/bench/arena/StateBench.scala`),
+  the same loop without the trailing `map`, because the issue's claim is a ratio between the two
+  and not an absolute number. Secondary: `kyo.bench.arena.DeepBindMapBench`, and
   `kyo-kernel/jvm/src/jmh/scala/kyo/kernel/bench/KernelBench.scala:376` and `:386`
   (`dynamicChainOfMapsStaysLinear`, `dynamicChainOfBindsStaysLinear`) with their cats, zio and
   zio-blocks counterparts.
-- **Baseline to compare against:** the merge base of this branch with `origin/main`, so the
-  comparison isolates the kernel rewrite from anything main changed. The issue's claim is a
-  roughly 500x slowdown of the `map`-after-suspension form against the `flatMap`-only form, so
-  the ratio to watch is `StateMapBench.kyoBench` against `StateBench.kyoBench` on each side, not
-  the absolute number.
-- Until that run exists, "531 is fixed" is a claim about stack safety only, and the entry above
-  says so.
+- **Baseline commit:** `26aa77ad6ca090353e37d859cc069f6cf37bfe83`
+  (`26aa77ad6c [kyo-ffi] fix two windows-JVM test failures (path separator + precheck manifest)`).
+  That is the parent of `ee8d8a9cef`, the branch's first proto-kernel commit, and it is an
+  ancestor of `origin/main`, so it isolates the kernel rewrite from everything main changed
+  afterwards. Do not use the merge base of the current HEAD with `origin/main`: since the merge
+  landed, that resolves to main's own tip `9ef7ab9418` and measures nothing.
+- **What to compare:** `StateMapBench.kyoBench` against `StateBench.kyoBench` on each side. The
+  issue reports roughly a 500x gap between the `map`-after-suspension form and the `flatMap`-only
+  form; the question is whether that ratio closed, not whether absolute throughput moved.
+- Until that run exists, "531 is fixed" is a claim about stack safety only.
+
+---
+
+## Ranked: the complete set
+
+Thirteen leaves, two relabellings, one benchmark run. Ordered by how silently the bug returns if
+the item is absent.
+
+1. **1928**, masked-park leaf, `ScopeInterruptTest.scala`, plain. Every existing test parks on a
+   promise the interrupt cascades to, so deleting `onInterrupted`'s unconditional schedule or the
+   `!isPending() -> abandon` arm leaves the whole suite green. The fix is invisible to current
+   coverage.
+2. **1723**, scope ordering leaf, `ScopeTest.scala`, pendingUntilFixed. Not a regression risk but
+   a current one: the kernel pin passes while the kyo-core composition is, by the reading above,
+   still wrong.
+3. **1224**, self-interrupt-in-acquire leaf plus the block relabelling, `ScopeTest.scala`, plain.
+   Closes a platform hole as well as a labelling one: the only interrupt-window guards are in
+   jvm-native, so JS has no coverage of this window at all.
+4. **1381**, generic-function leaf plus the retitle of `:866`, `ScopeTest.scala`,
+   pendingUntilFixed. No test exercises the defect and the block title makes it look covered,
+   which is worse than an acknowledged hole.
+5. **1739**, `Sync.defer` growing-continuation leaf, `SyncTest.scala`, plain. Guarded only at the
+   kernel layer, so a change to `Effect.deferInline`'s node shape lands silently at the layer
+   users write.
+6. **531 stack**, `Var` for-comprehension leaf, `VarTest.scala`, plain. Same class as 5 through
+   the other dispatch path; the issue's literal program has no test anywhere.
+7. **1820**, `Fiber.init`-on-spawn leaf, `ScopeInterruptTest.scala`, plain. Narrow gap, since
+   `Fiber.use` is covered at `:181`, but `Fiber.init` is the entry point the issue names.
+8. **1398 Leaf A**, unbounded `Scope.ensure` under `take`, `StreamCoreExtensionsTest.scala`,
+   plain. The issue's second test, with no counterpart today.
+9. **1398 Leaf B**, finalizer ordering, `StreamCoreExtensionsTest.scala`, plain. Counts are
+   asserted, order is not, so a finalizer firing at the wrong moment but the right number of
+   times passes.
+10. **1846**, `acquireReleaseWith` bare typed abort, `SyncTest.scala`, plain. `Sync.ensure` is
+    well covered; the sibling the issue names as the live exposure is not directly covered.
+11. **1131**, parent-closes-live-child leaf, `ScopeTest.scala`, pendingUntilFixed. Specifies the
+    unbuilt half so it goes red the moment propagation lands.
+12. **1735 Leaf A**, the library guarantee, `ScopeTest.scala`, plain. Expected green today; its
+    value is pinning the contract rather than catching a live defect.
+13. **1735 Leaf B**, race-waits-for-losers, `ScopeTest.scala`, pendingUntilFixed. Encodes an open
+    semantic question about `Async.race`; land it with the ruling, not before.
+14. **531 throughput**, `StateMapBench` against baseline `26aa77ad6c`. Not a test; a run.
+
+**Audit of this section:** 11 issues listed above (1928, 1846, 1820, 1739, 1735, 1723, 1398,
+1381, 1224, 1131, 531), 11 with at least one named leaf, 0 entries without a specified test. The
+only non-test item is 531's throughput half, which carries a named benchmark class and the exact
+baseline commit.

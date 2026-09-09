@@ -70,6 +70,19 @@ class SyncTest extends kyo.test.Test[Any]:
                 assert(result == frames)
             }
         }
+        // The leaves above recurse in tail position, so nothing accumulates. Here the map after the
+        // recursive defer makes each level leave a continuation behind, which is the shape #1739
+        // reported and the one only the kernel's own suites guard today. The assertion is on the
+        // value, so a rescue that unwinds by dropping accumulated continuations fails too.
+        "stack-safe when a map follows the recursive defer" in {
+            val depth = 1000000
+            def step(n: Int): Int < Sync =
+                if n <= 0 then 0
+                else Sync.defer(step(n - 1)).map(_ + 1)
+            step(depth).map { result =>
+                assert(result == depth)
+            }
+        }
     }
     "run" - {
         "execution" in {
@@ -340,6 +353,21 @@ class SyncTest extends kyo.test.Test[Any]:
             }.map { result =>
                 assert(result == 8)
                 assert(order == List("acquire", "use:resource", "release:resource"))
+            }
+        }
+
+        // The sibling #1846 names as its live exposure. `Sync.ensure` has leaves for a bare typed abort
+        // above; `acquireReleaseWith` only had the reify-and-re-raise workaround, a panic in the use and
+        // a panic in the acquire, so nothing covered the use aborting typed with no Abort.run inside.
+        "releases when the use aborts with a typed error" in {
+            var released = 0
+            Abort.run[String] {
+                Sync.acquireReleaseWith(Sync.defer("resource"))(_ => Sync.defer { released += 1 }) { _ =>
+                    Abort.fail("boom")
+                }
+            }.map { result =>
+                assert(result == Result.fail("boom"))
+                assert(released == 1)
             }
         }
 

@@ -207,4 +207,66 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
         end for
     }
 
+    // Same gap as the leaf above, at the other spawn. `Fiber.init` goes through Scope.acquireRelease, so the
+    // interrupt that stops the child is registered as the acquire's value arrives; what is not covered anywhere
+    // is an interrupt landing on the spawn itself. Raced the same way, and one escape is a real one.
+    "Fiber.init interrupts and awaits the fiber it spawned when the interrupt lands on the spawn" in {
+        val rounds = 40
+        for
+            orphaned <- AtomicInt.init(0)
+            _ <- Kyo.foreachDiscard(1 to rounds) { _ =>
+                for
+                    started    <- Latch.init(1)
+                    torn       <- Latch.init(1)
+                    gate       <- Latch.init(1)
+                    childAlive <- AtomicBoolean.init(false)
+                    child = (Sync.ensure(childAlive.set(false).andThen(torn.release)) {
+                        childAlive.set(true).andThen(started.release).andThen(gate.await)
+                    }: Unit < (Sync & Async))
+                    parent <- Fiber.initUnscoped(Scope.run(Fiber.init(child).andThen(started.await)))
+                    _      <- parent.interrupt
+                    _      <- parent.getResult
+                    // the child is torn down asynchronously, so wait for it rather than sampling
+                    out  <- Abort.run[Timeout](Async.timeout(300.millis)(torn.await))
+                    left <- childAlive.get
+                    _    <- gate.release
+                    _    <- if out.isFailure && left then orphaned.incrementAndGet.unit else Kyo.unit
+                yield ()
+                end for
+            }
+            leaked <- orphaned.get
+        yield assert(leaked == 0, s"$leaked of $rounds rounds left the spawned fiber running with nothing to interrupt it")
+        end for
+    }
+
+    // A fiber abandoned while parked runs its finalizers through the abandonment walk, not through being
+    // resumed. Every other interrupt test here parks on a promise the interrupt cascades to, so all of them
+    // are answered by the resumption path and stay green even if the abandonment path is deleted. Masking
+    // the promise makes the cascade a no-op, which leaves the walk as the only thing that can save the
+    // finalizer, and completing the promise after the interrupt proves the queued continuation stays dead.
+    "a fiber interrupted while parked on a masked promise still runs its scope finalizers" in {
+        for
+            finalized <- Latch.init(1)
+            resumed   <- AtomicBoolean.init(false)
+            promise   <- Sync.Unsafe.defer(Promise.Unsafe.initMasked[Unit, Any]().safe)
+            fiber <- Fiber.initUnscoped {
+                Scope.run {
+                    Scope.ensure(finalized.release).andThen(promise.get.andThen(resumed.set(true)))
+                }
+            }
+            // parked for real: the interrupt has to find the fiber on the promise, not on its way there
+            _ <- assertEventually(promise.waiters.map(_ == 1))
+            _ <- Sync.Unsafe.defer {
+                discard(fiber.unsafe.interrupt())
+                promise.unsafe.completeUnitDiscard()
+            }
+            // the release runs on the abandonment walk, so wait for it; the timeout is the failure detector
+            out  <- Abort.run[Timeout](Async.timeout(3.seconds)(finalized.await))
+            woke <- resumed.get
+        yield
+            assert(out.isSuccess, "the scope finalizer never ran for a fiber abandoned while parked")
+            assert(!woke, "the interrupted continuation ran after the promise was completed")
+        end for
+    }
+
 end ScopeInterruptTest

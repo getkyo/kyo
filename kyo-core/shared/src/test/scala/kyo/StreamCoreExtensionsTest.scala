@@ -986,6 +986,42 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
             }
         }
 
+        // The issue's second program, which had no counterpart: every other Scope.run-inside-a-Stream leaf
+        // here emits a bounded number of elements, so none of them ends an unbounded emitter early.
+        "Scope.ensure over an unbounded stream releases once when take ends it" in {
+            AtomicInt.init(0).map { released =>
+                val stream = Stream:
+                    Scope.run:
+                        Scope.ensure(released.incrementAndGet.unit).andThen:
+                            Loop(0)(i => Emit.valueWith(Chunk(i))(Loop.continue(i + 1)))
+                stream.take(5).run.map { taken =>
+                    released.get.map { r =>
+                        assert(taken == Chunk(0, 1, 2, 3, 4) && r == 1)
+                    }
+                }
+            }
+        }
+
+        // The leaves around this one count releases, so a finalizer that fires at the wrong moment but the
+        // right number of times passes them. This one records the elements and the finalizer in one log, so
+        // it pins when the release happens relative to the last element the stream handed out.
+        "the finalizer of a taken stream runs after the last element it emitted" in {
+            AtomicRef.init(List.empty[String]).map { log =>
+                val stream = Stream:
+                    Sync.ensure(log.updateAndGet("finalized" :: _).unit):
+                        Loop(0) { i =>
+                            log.updateAndGet(i.toString :: _).andThen:
+                                Emit.valueWith(Chunk(i))(Loop.continue(i + 1))
+                        }
+                stream.take(5).run.map { emitted =>
+                    log.get.map { entries =>
+                        assert(emitted == Chunk(0, 1, 2, 3, 4))
+                        assert(entries == List("finalized", "4", "3", "2", "1", "0"), s"order was $entries")
+                    }
+                }
+            }
+        }
+
         "takeWhile early exit with scope ensure" in {
             AtomicInt.init(0).map { counter =>
                 Scope.run {

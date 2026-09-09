@@ -401,4 +401,18 @@ class VarTest extends kyo.test.Test[Any]:
             assert(Var.run(Nil)(sequence.flatten).eval == List("first", "second", "third"))
         }
     }
+
+    // #531's own program. The for-comprehension desugars to a map after the recursive suspension, so each
+    // level leaves a continuation behind rather than recursing in tail position. The kernel suites guard
+    // this shape through their own test effect; nothing exercised it through Var's ArrowEffect dispatch,
+    // which is the path the issue reported. The assertion is on the value, so a rescue that unwinds by
+    // dropping accumulated continuations fails too.
+    "stack-safe when a for-comprehension follows a recursive Var suspension" in {
+        def program: Int < Var[Int] =
+            for
+                n <- Var.get[Int]
+                x <- if n <= 0 then n else Var.set(n - 1).andThen(program)
+            yield x
+        assert(Var.run(100000)(program).eval == 0)
+    }
 end VarTest

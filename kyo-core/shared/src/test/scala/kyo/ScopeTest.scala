@@ -551,6 +551,27 @@ class ScopeTest extends kyo.test.Test[Any]:
             }.map(_ => assert(innerDone))
         }
 
+        // Moved here from the "scope isolation (#1381)" block, whose title it wore without testing: the body it
+        // passes through the generic function carries no Scope suspensions of its own, so what it actually pins
+        // is that a nested Scope.run leaves the enclosing scope's finalizers alone. That is this block's subject.
+        "a nested Scope.run does not run the enclosing scope's finalizers" in {
+            def handleScoped[A, S](v: A < (Scope & S)): A < (Async & S) =
+                Scope.run(v)
+
+            AtomicInt.init(0).map { counter =>
+                Scope.run {
+                    Scope.ensure(counter.incrementAndGet.unit).andThen {
+                        handleScoped(Sync.defer(42))
+                    }
+                }.map { r =>
+                    counter.get.map { c =>
+                        assert(r == 42)
+                        assert(c == 1)
+                    }
+                }
+            }
+        }
+
         "many resources all released" in {
             AtomicInt.init(0).map { counter =>
                 Scope.run {
@@ -566,6 +587,51 @@ class ScopeTest extends kyo.test.Test[Any]:
 
     "acquireRelease safety (#1224)" - {
         case object TestAcquireException extends scala.util.control.NoStackTrace
+
+        // The interrupt the block's title claims and did not have: every other leaf here is a normal acquire, a
+        // failing acquire, a closed scope or concurrent cleanup. The guards that do pin the acquire-and-register
+        // window live in ScopeInterruptTest, which is jvm-native, so JS had no coverage of this window at all.
+        //
+        // The fiber interrupts ITSELF from inside the acquire, in the same Sync node that performs the claim, so
+        // nothing separates the interrupt request from the claim and the earliest point it can be delivered is
+        // after the acquire has returned. That needs no held worker, which is what lets it run on every platform.
+        "a self-interrupt inside the acquire still releases what the acquire produced" in {
+            val rounds = 500
+            Kyo.foreach(1 to rounds) { _ =>
+                for
+                    handoff  <- Promise.init[Fiber[Unit, Any], Any]
+                    claimed  <- AtomicBoolean.init(false)
+                    released <- AtomicBoolean.init(false)
+                    fiber <- Fiber.initUnscoped {
+                        handoff.get.map { self =>
+                            Scope.run {
+                                Scope.acquireRelease {
+                                    // Unsafe: the interrupt and the claim have to be one indivisible step, which
+                                    // rules out suspending between them to reach the effectful tier.
+                                    import AllowUnsafe.embrace.danger
+                                    Sync.Unsafe.defer {
+                                        discard(self.unsafe.interrupt())
+                                        claimed.unsafe.set(true)
+                                        "resource"
+                                    }
+                                } { _ =>
+                                    import AllowUnsafe.embrace.danger
+                                    Sync.Unsafe.defer(released.unsafe.set(true))
+                                }.unit
+                            }
+                        }
+                    }
+                    _ <- handoff.complete(Result.succeed(fiber))
+                    _ <- fiber.getResult
+                    a <- claimed.get
+                    r <- released.get
+                yield (a, r)
+                end for
+            }.map { outcomes =>
+                val leaked = outcomes.count((acquired, freed) => acquired && !freed)
+                assert(leaked == 0, s"$leaked of $rounds rounds acquired a resource that was never released")
+            }
+        }
 
         "finalizer runs after normal acquire" in {
             var released = false
@@ -863,26 +929,39 @@ class ScopeTest extends kyo.test.Test[Any]:
 
     "scope isolation (#1381)" - {
 
-        "Scope.run on generic effect type with Scope should not run caller's finalizers" in {
-            def handleScoped[A, S](v: A < (Scope & S)): A < (Async & S) =
-                Scope.run(v)
+        // What the issue is about: a generic function that runs a scope of its own, handed a computation
+        // that carries the CALLER's Scope suspensions. Scope is a ContextEffect, so the innermost Scope.run
+        // handles every Scope suspension in its dynamic extent, and the callee's run answers the caller's
+        // `ensure` as well as its own. The leaf that used to carry this title passed a body with no Scope
+        // suspensions at all, so it never routed a caller's `A < (Scope & S)` through the generic function,
+        // which is the entire defect; it is a correct nesting test and now sits with the ordering leaves.
+        //
+        // Written against the API that exists, so it compiles and fails today rather than not compiling.
+        "a Scope.run inside a generic function does not run the caller's finalizers".pendingUntilFixed(
+            "Scope is a ContextEffect, so the innermost Scope.run handles every Scope suspension in its dynamic extent, the caller's included; there is no isolation API to keep them apart"
+        ) in {
+            def generic[A, S](effect: A < S): A < (Async & S) =
+                Scope.run(Sync.defer(()).andThen(effect))
 
-            AtomicInt.init(0).map { counter =>
-                Scope.run {
-                    // Register a finalizer in the OUTER scope
-                    Scope.ensure(counter.incrementAndGet.unit).andThen {
-                        // handleScoped calls Scope.run again — this inner Scope.run
-                        // should NOT trigger the outer scope's finalizer
-                        handleScoped(Sync.defer(42))
-                    }
-                }.map { r =>
-                    counter.get.map { c =>
-                        assert(r == 42)
-                        // Outer finalizer should run exactly once (when outer Scope.run closes)
-                        assert(c == 1)
+            for
+                caller <- AtomicInt.init(0)
+                inner  <- AtomicInt.init(0)
+                seen <- Scope.run {
+                    Scope.ensure(caller.incrementAndGet.unit).andThen {
+                        generic(Scope.ensure(inner.incrementAndGet.unit).andThen(42)).map { r =>
+                            // read inside the outer scope: the callee's own finalizer has run, the caller's has not
+                            Kyo.zip(caller.get, inner.get).map((c, i) => (r, c, i))
+                        }
                     }
                 }
-            }
+                (r, c, i) = seen
+                after <- caller.get
+            yield
+                assert(r == 42)
+                assert(c == 0, s"the caller's finalizer ran inside the callee's scope: caller=$c")
+                assert(i == 1, s"the callee's own finalizer did not run at its own exit: inner=$i")
+                assert(after == 1, s"the caller's finalizer must run once, at the outer exit: caller=$after")
+            end for
         }
     }
 
@@ -935,6 +1014,108 @@ class ScopeTest extends kyo.test.Test[Any]:
                     assert(id == 1)
                     assert(r.closes == 1)
                 }
+        }
+    }
+
+    "release ordering under an outer handler (#1723)" - {
+
+        // The issue's program, with a log in place of Console. BracketTest pins this ordering for a bare
+        // bracket, but nothing pins it through Scope.run: when an outer handler discards Scope.run's
+        // continuation, the only thing left to close the scope is the Sync.ensure backstop, and
+        // Finalizer.close hands its backlog to a detached fiber that nothing awaits. So the release is
+        // started before the next effect but not finished before it.
+        "a scope short-circuited by an outer handler has released before the next effect runs".pendingUntilFixed(
+            "the outer handler discards Scope.run's continuation, so only the Sync.ensure backstop fires and Finalizer.close runs the finalizers on a detached fiber that nothing awaits"
+        ) in {
+            for
+                log <- AtomicRef.init(Chunk.empty[String])
+                write = (s: String) => log.updateAndGet(_.append(s)).unit
+                _ <- Abort.run {
+                    Check.runAbort {
+                        Scope.run {
+                            Scope.acquireRelease(write("acquire"))(_ => write("release"))
+                                .map(_ => Check.require(false, "boom"))
+                        }
+                    }
+                }.andThen(write("after"))
+                seq <- log.get
+            yield assert(seq == Chunk("acquire", "release", "after"), s"order was $seq")
+            end for
+        }
+    }
+
+    "hierarchical scopes (#1131)" - {
+
+        // The half of the issue that did not land. A nested run registers an await-me finalizer in the
+        // enclosing scope, so a parent no longer exits while a child is still releasing; but fork and join
+        // are the identity, so a parent cannot close a child that is still running. Here the child parks and
+        // the parent exits, which leaves the child's resource open with nothing to close it.
+        "closing a scope releases the resources of a nested scope still running under it".pendingUntilFixed(
+            "a parent scope waits for a nested run but cannot close it: fork and join are the identity, so closing a scope does not stop the computation running under it"
+        ) in {
+            for
+                released <- AtomicInt.init(0)
+                started  <- Latch.init(1)
+                gate     <- Latch.init(1)
+                child <- Scope.run {
+                    Fiber.initUnscoped {
+                        Scope.run {
+                            Scope.acquireRelease(Sync.defer("child"))(_ => released.incrementAndGet.unit)
+                                .andThen(started.release)
+                                .andThen(gate.await)
+                        }
+                    }.map(fiber => started.await.andThen(fiber))
+                }
+                // the parent has exited; the child is still parked holding its resource
+                out <- Abort.run[Timeout](Async.timeout(3.seconds)(assertEventually(released.get.map(_ == 1))))
+                _   <- gate.release
+                _   <- child.getResult
+                r   <- released.get
+            yield
+                assert(out.isSuccess, "the parent scope exited without releasing the live child's resource")
+                assert(r == 1, s"the child's own exit released a second time: released=$r")
+            end for
+        }
+    }
+
+    "racing scopes (#1735)" - {
+
+        // What the library actually promises: whatever a racer took, its release puts back. The releases are
+        // awaited before the drain, so this is the contract itself rather than a claim about when it holds.
+        "every racer that took an item from the channel puts it back" in {
+            Scope.run {
+                for
+                    chan   <- Channel.init[String](16, Access.MultiProducerMultiConsumer)
+                    latches <- Kyo.foreach(1 to 8)(_ => Latch.init(1))
+                    racers = latches.map(latch =>
+                        Scope.run(Scope.acquireRelease(chan.take)(_ => latch.release.unit))
+                    )
+                    _   <- Kyo.foreachDiscard(Seq("1", "2", "3", "4"))(chan.put)
+                    _   <- Async.race(racers)
+                    out <- Abort.run[Timeout](Async.timeout(3.seconds)(Kyo.foreachDiscard(latches)(_.await)))
+                    drained <- chan.drain
+                yield
+                    assert(out.isSuccess, "a racer's release never ran")
+                    assert(drained.toSet == Set("1", "2", "3", "4"), s"items lost: $drained")
+                end for
+            }
+        }
+
+        // The reporter's program, which drains as soon as race returns. It reads the channel while the losing
+        // fibers may still be unwinding, so an item a loser took is not back yet.
+        "a raced scope has finished releasing by the time race returns".pendingUntilFixed(
+            "Async.race interrupts the losing fibers and returns without waiting for them to unwind, so a loser's Scope.run may still be putting its item back when the drain reads the channel"
+        ) in {
+            Scope.run {
+                for
+                    chan <- Channel.init[String](16, Access.MultiProducerMultiConsumer)
+                    racers = Seq.fill(8)(Scope.run(Scope.acquireRelease(chan.take)(chan.put)))
+                    _       <- Kyo.foreachDiscard(Seq("1", "2", "3", "4"))(chan.put)
+                    _       <- Async.race(racers)
+                    drained <- chan.drain
+                yield assert(drained.toSet == Set("1", "2", "3", "4"), s"items lost: $drained")
+                end for
+            }
         }
     }
 end ScopeTest
