@@ -469,8 +469,12 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
         curr = cleared
         status = Done
         if !isNull(remainder) then
-            ensureInterrupt(remainder)
-            Eval.release(remainder, new KyoException("fiber abandoned")(using Frame.internal))
+            // The release reports the join this fiber never reached, so the promise it was about to wait on
+            // is linked to this interrupt rather than left pending for whoever else holds it. Invoking the
+            // input is what registers the link, and it is the same call the boundary makes.
+            Eval.release(remainder, new KyoException("fiber abandoned")(using Frame.internal), Tag[Async.Join]) {
+                [C] => input => discard(input(this))
+            }
     end abandon
 
     // Drops the reference so a finished task does not retain the computation it ran. Never a signal: `curr`

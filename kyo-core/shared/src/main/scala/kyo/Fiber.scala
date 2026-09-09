@@ -4,6 +4,7 @@ import java.lang.invoke.VarHandle
 import java.util.Arrays
 import kyo.Result.Panic
 import kyo.internal.Reducible
+import kyo.kernel.Bracket
 import kyo.kernel.Isolate
 import kyo.kernel.internal.Safepoint
 import kyo.scheduler.IOPromise
@@ -134,21 +135,11 @@ object Fiber:
         reduce: Reducible[Abort[E]],
         frame: Frame
     ): Fiber[A, reduce.SReduced & S2] < (Sync & S & Scope) =
-        // The enclosing scope's finalizer interrupts the fiber and then waits for it to have released what it
-        // held. It cannot wait on the fiber itself: `IOPromise.interrupt` completes that promise at the moment
-        // of interrupt, before the body has released anything.
-        //
-        // `Sync.ensure` is what reports that end, and it reports all three: normal completion, an unwind, and
-        // a fiber interrupted before its first slice ever ran. That last one is why it is `ensure` rather
-        // than a bracket over the body. A bracket has nothing installed until its acquire's value arrives,
-        // so a fiber abandoned before then would leave this promise pending forever and the enclosing scope
-        // waiting on it, while `ensure` installs its region as a node that the abandonment walk finds
-        // whether or not a step ever ran.
-        //
-        // Reporting the end is all it does. Where a resource acquired inside the fiber belongs is unchanged:
-        // that still binds to the scope this call was made in.
+        // The scope's finalizer interrupts the fiber and waits for it to have released. It cannot wait on
+        // the fiber itself: `IOPromise.interrupt` completes that promise before the body has unwound.
+        // `Bracket.ensuring` reports every ending, including a fiber abandoned before its first slice.
         Sync.Unsafe.defer(IOPromise[Nothing, Unit]()).map { released =>
-            val reporting = Sync.ensure(Sync.Unsafe.defer(released.completeDiscard(Result.unit)))(v)
+            val reporting = Bracket.ensuring(_ => released.completeDiscard(Result.unit))(v)
             Scope.acquireRelease(initUnscoped[E, A, S, S2](reporting)) { fiber =>
                 fiber.interrupt.andThen(Async.useResult(released)(_ => ()))
             }

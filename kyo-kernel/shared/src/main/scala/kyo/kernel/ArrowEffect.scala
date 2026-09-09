@@ -949,15 +949,20 @@ object ArrowEffect:
     )(
         f: [C] => I[C] => Unit
     ): Unit =
-        @tailrec def loop(x: Any): Unit =
+        @tailrec def loop(x: Any, fuel: Int): Unit =
             x match
                 case kyo: Pending.SuspendArrow[I, O, E, c, ?, ?] @unchecked =>
                     if effectTag.erased <:< kyo.tag.erased then f[c](kyo.input)
-                case kyo: Pending.Handle[?, ?, ?, ?] => loop(kyo.value)
-                case kyo: Pending.Park[?, ?]         => loop(kyo.value)
-                case kyo: Pending.Defer[?, ?, ?, ?]  => loop(kyo.value)
-                case _                               => ()
-        loop(v)
+                case kyo: Pending.Handle[?, ?, ?, ?] => loop(kyo.value, fuel)
+                case kyo: Pending.Park[?, ?]         => loop(kyo.value, fuel)
+                // A deferral holds its body in a continuation, so the suspension under it is only reachable
+                // by evaluating the node. Bounded, because that is the caller's code and this walk runs on
+                // a teardown path; out of fuel it reads the value and stops, as it did before.
+                case kyo: Pending.Defer[a, b, c, s] @unchecked =>
+                    if fuel > 0 then loop(kyo.contA(kyo.value, kyo.contB), fuel - 1)
+                    else loop(kyo.value, fuel)
+                case _ => ()
+        loop(v, 16)
     end dispatchFirst
 
     // Not on main: the clause is handed the suspended operation itself instead of its input, which is

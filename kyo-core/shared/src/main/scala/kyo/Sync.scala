@@ -88,26 +88,28 @@ object Sync:
         // First failure wins, because a handler that replays ends the extent once per resumption: a
         // branch that aborted must not be overwritten by a later branch that succeeded, or a release
         // that commits on success would commit over it.
-        val aborted = AtomicRef.Unsafe.init[Maybe[Result.Error[Any]]](Absent)(using AllowUnsafe.embrace.danger)
-        // Unsafe: the kernel's release is synchronous, so the effectful release runs to completion here,
-        // and only its own Abort surfaces, as a throw
-        Bracket(acquire) { resource =>
-            Abort.run[E](use(resource)).map { result =>
-                result.foldError(
-                    _ => (),
-                    e => discard(aborted.compareAndSet(Absent, Maybe(e))(using AllowUnsafe.embrace.danger))
-                )
-                result
-            }
-        } { (resource, failure) =>
-            val outcome: Result[Any, Any] =
-                failure match
-                    // constructed rather than built through `Result.Panic.apply`, which refuses to hold a fatal:
-                    // the release is owed the failure that ended its extent whatever it is
-                    case Present(ex) => new Result.Panic(ex)
-                    case Absent      => aborted.get()(using AllowUnsafe.embrace.danger).getOrElse(Result.unit)
-            discard(Sync.Unsafe.evalOrThrow(release(resource, outcome))(using summon[Frame], AllowUnsafe.embrace.danger))
-        }.map(result => Abort.get(result))
+        Sync.Unsafe.defer {
+            val aborted = AtomicRef.Unsafe.init[Maybe[Result.Error[Any]]](Absent)(using AllowUnsafe.embrace.danger)
+            // Unsafe: the kernel's release is synchronous, so the effectful release runs to completion here,
+            // and only its own Abort surfaces, as a throw
+            Bracket(acquire) { resource =>
+                Abort.runWith[E](use(resource)) { result =>
+                    result.foldError(
+                        _ => (),
+                        e => discard(aborted.compareAndSet(Absent, Maybe(e))(using AllowUnsafe.embrace.danger))
+                    )
+                    result
+                }
+            } { (resource, failure) =>
+                val outcome: Result[Any, Any] =
+                    failure match
+                        // constructed rather than built through `Result.Panic.apply`, which refuses to hold a fatal:
+                        // the release is owed the failure that ended its extent whatever it is
+                        case Present(ex) => new Result.Panic(ex)
+                        case Absent      => aborted.get()(using AllowUnsafe.embrace.danger).getOrElse(Result.unit)
+                discard(Sync.Unsafe.evalOrThrow(release(resource, outcome))(using summon[Frame], AllowUnsafe.embrace.danger))
+            }.map(result => Abort.get(result))
+        }
     end acquireReleaseWith
 
     def acquireReleaseWith[A, S1](acquire: => A < (Sync & S1))(
@@ -164,24 +166,26 @@ object Sync:
         // First failure wins, because a handler that replays ends the extent once per resumption: a branch
         // that aborted must not be overwritten by a later branch that succeeded, or a release that commits
         // on success would commit over it.
-        val aborted = AtomicRef.Unsafe.init[Maybe[Result.Error[Any]]](Absent)(using AllowUnsafe.embrace.danger)
-        Bracket.ensuring { failure =>
-            val outcome: Maybe[Result.Error[Any]] =
-                failure match
-                    // constructed rather than through `Result.Panic.apply`, which refuses to hold a fatal
-                    case Present(ex) => Present(new Result.Panic(ex))
-                    case Absent      => aborted.get()(using AllowUnsafe.embrace.danger)
-            // Unsafe: the kernel's release is synchronous, so the effectful finalizer runs to completion here
-            discard(Sync.Unsafe.evalOrThrow(f(outcome))(using summon[Frame], AllowUnsafe.embrace.danger))
-        } {
-            Abort.run[E](v).map { result =>
-                result.foldError(
-                    _ => (),
-                    e => discard(aborted.compareAndSet(Absent, Maybe(e))(using AllowUnsafe.embrace.danger))
-                )
-                result
-            }
-        }.map(result => Abort.get(result))
+        Sync.Unsafe.defer {
+            val aborted = AtomicRef.Unsafe.init[Maybe[Result.Error[Any]]](Absent)(using AllowUnsafe.embrace.danger)
+            Bracket.ensuring { failure =>
+                val outcome: Maybe[Result.Error[Any]] =
+                    failure match
+                        // constructed rather than through `Result.Panic.apply`, which refuses to hold a fatal
+                        case Present(ex) => Present(new Result.Panic(ex))
+                        case Absent      => aborted.get()(using AllowUnsafe.embrace.danger)
+                // Unsafe: the kernel's release is synchronous, so the effectful finalizer runs to completion here
+                discard(Sync.Unsafe.evalOrThrow(f(outcome))(using summon[Frame], AllowUnsafe.embrace.danger))
+            } {
+                Abort.run[E](v).map { result =>
+                    result.foldError(
+                        _ => (),
+                        e => discard(aborted.compareAndSet(Absent, Maybe(e))(using AllowUnsafe.embrace.danger))
+                    )
+                    result
+                }
+            }.map(result => Abort.get(result))
+        }
     end ensure
 
     /** Retrieves a local value and applies a function that can perform side effects.

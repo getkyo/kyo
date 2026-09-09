@@ -607,6 +607,26 @@ class ScopeTest extends kyo.test.Test[Any]:
             end for
         }
 
+        // Concurrent because a single scope passes even when the linkage is broken: the defect is losing
+        // the race between a fiber's first slice and the interrupt, so it only shows in bulk.
+        "interrupting scoped fibers reaches the promises they are parked on" in {
+            Async.foreachDiscard(1 to 20, 20) { _ =>
+                for
+                    counter  <- AtomicInt.init(0)
+                    promises <- Kyo.fill(5)(Promise.init[Int, Any])
+                    _ <- Scope.run {
+                        for
+                            _ <- Kyo.foreach(promises)(p => p.onInterrupt(_ => counter.incrementAndGet.unit))
+                            _ <- Kyo.foreach(promises)(p => Fiber.init(p.get))
+                        yield ()
+                    }
+                    _ <- assertEventually(counter.get.map(_ == 5))
+                    c <- counter.get
+                yield assert(c == 5, s"only $c of 5 onInterrupt callbacks fired")
+                end for
+            }.andThen(assert(true))
+        }
+
         "Sync.ensure inside forked fiber runs" in {
             var called = false
             for

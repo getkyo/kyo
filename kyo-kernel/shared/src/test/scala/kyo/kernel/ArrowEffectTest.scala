@@ -2312,7 +2312,11 @@ class ArrowEffectTest extends Test:
             assert(seen == "root")
         }
 
-        "reads through a deferral without running the body behind it" in {
+        // A deferral holds its body in a continuation, so the operation under it exists only once the body
+        // has run. Reading it therefore costs running the body, which is what the caller of this asks for:
+        // an interrupt has to reach the join a fiber would have awaited, and leaving it unlinked strands
+        // the promise for whoever else holds it.
+        "runs a deferral to reach the operation behind it" in {
             var seen  = ""
             var built = false
             val v = Effect.defer {
@@ -2320,8 +2324,23 @@ class ArrowEffectTest extends Test:
                 say("hidden").map(_ => 1)
             }
             ArrowEffect.dispatchFirst(Tag[Say], v)([X] => input => seen = input)
-            assert(!built)
-            assert(seen == "")
+            assert(built)
+            assert(seen == "hidden")
+        }
+
+        "stops at its budget rather than running a chain of deferrals to the end" in {
+            var seen  = ""
+            var built = 0
+            def nest(n: Int): Int < Say =
+                if n == 0 then say("deep").map(_ => 1)
+                else
+                    Effect.defer {
+                        built += 1
+                        nest(n - 1)
+                    }
+            ArrowEffect.dispatchFirst(Tag[Say], nest(64))([X] => input => seen = input)
+            assert(seen == "", s"reported through a chain past the budget: $seen")
+            assert(built <= 16, s"ran $built deferrals")
         }
 
         "reads through the deferrals a map chain composes to the operation under them" in {

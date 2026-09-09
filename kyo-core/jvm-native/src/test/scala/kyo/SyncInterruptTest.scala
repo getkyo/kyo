@@ -18,6 +18,26 @@ class SyncInterruptTest extends kyo.test.Test[Any]:
         while !sent.unsafe.get() && java.lang.System.nanoTime() < deadline do Thread.onSpinWait()
     end untilInterrupted
 
+    // Cleanup that always occurs, for a computation that never got a slice. Holds only while nothing
+    // deferred sits above the region, since the abandonment walk stops at one.
+    "Sync.ensure runs its finalizer for a fiber abandoned before its first slice" in {
+        Async.foreachDiscard(1 to 20, 20) { _ =>
+            for
+                ran <- AtomicInt.init(0)
+                p   <- Promise.init[Int, Any]
+                fiber <- Fiber.initUnscoped {
+                    import AllowUnsafe.embrace.danger
+                    Sync.ensure(Sync.Unsafe.defer(discard(ran.unsafe.incrementAndGet())))(p.get)
+                }
+                _   <- fiber.interrupt
+                _   <- fiber.getResult
+                out <- Abort.run[Timeout](Async.timeout(5.seconds)(assertEventually(ran.get.map(_ == 1))))
+                c   <- ran.get
+            yield assert(out.isSuccess && c == 1, s"the finalizer ran $c times")
+            end for
+        }.andThen(assert(true))
+    }
+
     "an interrupt landing as the body produces its outcome" - {
 
         "still runs the finalizer" in {

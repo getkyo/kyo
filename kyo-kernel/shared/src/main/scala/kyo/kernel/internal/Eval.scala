@@ -6,6 +6,7 @@ import kyo.KyoException
 import kyo.Maybe
 import kyo.Maybe.Absent
 import kyo.Maybe.Present
+import kyo.Tag
 import kyo.bug
 import kyo.discard
 import kyo.kernel.<
@@ -525,20 +526,35 @@ import scala.util.control.NonFatal
     end released
 
     def release[A, S](v: A < S, ex: Throwable): Unit =
+        release(v, ex, Absent, _ => ())
+
+    /** Releases the regions `v` still holds, and hands `f` the input of the first operation under them that
+      * `effectTag` answers, so a caller that owes something to an operation the computation never reached
+      * can settle it without walking the computation a second time. `f` runs before anything is released.
+      */
+    def release[I[_], O[_], E <: ArrowEffect[I, O], A, S](v: A < S, ex: Throwable, effectTag: Tag[E])(
+        f: [C] => I[C] => Unit
+    ): Unit =
+        // Erasure-forced: the operation's state type is existential here, and `f` is the polymorphic
+        // function that takes it back at that type.
+        release(v, ex, Present(effectTag.erased), input => f[Any](input.asInstanceOf[I[Any]]))
+
+    private def release[A, S](v: A < S, ex: Throwable, effectTag: Maybe[Tag[Any]], f: Any => Unit): Unit =
         val collected = ArrayBuffer.empty[AnyRef]
-        @tailrec def collect(v: Any): Unit =
+        @tailrec def collect(v: Any, fuel: Int): Unit =
             v match
                 case p: Pending[?, ?] =>
                     p match
-                        case kyo: Pending.Defer[?, ?, ?, ?] =>
-                            collect(kyo.value)
+                        case kyo: Pending.Defer[a, b, c, s] @unchecked =>
+                            if fuel > 0 then collect(kyo.contA(kyo.value, kyo.contB), fuel - 1)
+                            else collect(kyo.value, fuel)
                         case kyo: Pending.HandleContext[VX, CX, ?, ?] @unchecked =>
                             val hc = kyo.handler
                             collected += hc
                             collected += hc.derive(Maybe.empty).asInstanceOf[AnyRef]
-                            collect(kyo.value)
+                            collect(kyo.value, fuel)
                         case kyo: Pending.Handle[?, ?, ?, ?] =>
-                            collect(kyo.value)
+                            collect(kyo.value, fuel)
                         case kyo: Pending.Park[?, ?] =>
                             expandOwed(collected, kyo.owed)
                             val entries = kyo.entries
@@ -553,11 +569,13 @@ import scala.util.control.NonFatal
                                 expandOwed(collected, entries.owed(i))
                                 i += 1
                             end while
-                            collect(kyo.value)
+                            collect(kyo.value, fuel)
+                        case kyo: Pending.SuspendArrow[?, ?, ?, ?, ?, ?] @unchecked =>
+                            effectTag.foreach(t => if t <:< kyo.tag.erased then f(kyo.input))
                         case _: Pending.Suspend[?, ?, ?, ?] => ()
                         case _: Pending.Snapshot[?, ?]      => ()
                 case _ => ()
-        collect(v)
+        collect(v, 16)
         releaseCollected(collected, ex)
     end release
 
