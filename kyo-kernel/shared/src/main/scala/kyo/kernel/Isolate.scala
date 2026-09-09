@@ -174,7 +174,7 @@ abstract class Isolate[Remove, -Keep, -Restore]:
       * Provides a more ergonomic way to use isolates with operations:
       * {{{
       * Var.isolate.update[Int].use {
-      *   Async.mask {
+      *   Async.uninterruptible {
       *     // computation with isolated Var[Int] effect
       *   }
       * }

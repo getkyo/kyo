@@ -5132,7 +5132,7 @@ class FlowEngineTest extends FlowEngineSupport:
                 AtomicInt.init(0).map { bodyRuns =>
                     val flow = Flow.init("unscheduled-loop")
                         .loop("total", 0) { (state: Int, ctx) =>
-                            val outcome: Loop.Outcome[Int, Int] =
+                            val outcome: Loop.Outcome[Int, Int] < Any =
                                 if state < 3 then Loop.continue(state + 1)
                                 else Loop.done[Int, Int](state)
                             bodyRuns.incrementAndGet.andThen(outcome)
@@ -5192,7 +5192,7 @@ class FlowEngineTest extends FlowEngineSupport:
                         val wfId       = Flow.Id.Workflow("loop-handoff")
                         val flow = Flow.init("loop-handoff")
                             .loop("total", 0) { (state: Int, ctx) =>
-                                val outcome: Loop.Outcome[Int, Int] =
+                                val outcome: Loop.Outcome[Int, Int] < Any =
                                     if state < iterations then Loop.continue(state + 1)
                                     else Loop.done[Int, Int](state)
                                 bodyRuns.incrementAndGet.andThen(outcome)

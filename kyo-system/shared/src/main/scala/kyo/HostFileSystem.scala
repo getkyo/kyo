@@ -362,7 +362,7 @@ private[kyo] object HostFileSystem:
             // interval that would otherwise be exposed.
             //
             // The general form of this belongs in Scope.acquireRelease, which has the same window for
-            // every caller in kyo. Widening that signature to carry Async.mask is a kyo-core change
+            // every caller in kyo. Widening that signature to carry Async.uninterruptible is a kyo-core change
             // with a far wider blast radius than this defect, so it is left for its own work.
             val acquire =
                 Sync.Unsafe.defer(AtomicRef.Unsafe.init[LockHolder](LockHolder.Empty)).map { holder =>
