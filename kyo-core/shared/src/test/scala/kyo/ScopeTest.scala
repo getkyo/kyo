@@ -1047,6 +1047,17 @@ class ScopeTest extends kyo.test.Test[Any]:
         // continuation, the only thing left to close the scope is the Sync.ensure backstop, and
         // Finalizer.close hands its backlog to a detached fiber that nothing awaits. So the release is
         // started before the next effect but not finished before it.
+        //
+        // Left pending deliberately. What is missing is backpressure rather than the release itself: nothing
+        // is lost, but the computation carries on while the cleanup is still running, so a loop that keeps
+        // failing acquires again before the previous release has finished. Scope.run does await on the paths
+        // it controls, a normal return and an Abort raised inside it, so the exposure is this one and fiber
+        // abandonment, which is where every raced loser and timed-out computation goes.
+        //
+        // Fixing it is not a matter of the kernel learning about Async: ArrowHandler.recover already hands a
+        // computation back to the evaluator (Eval.scala:413), and a handler-driven unwind can afford to park
+        // because the fiber is alive. The obstacle is that this path is drainDiscarded, which returns Unit at
+        // four handler-completion sites plus contextExit, arrowExit and the eval exit, all in the hot loop.
         "a scope short-circuited by an outer handler has released before the next effect runs".pendingUntilFixed(
             "the outer handler discards Scope.run's continuation, so only the Sync.ensure backstop fires and Finalizer.close runs the finalizers on a detached fiber that nothing awaits"
         ) in {
