@@ -462,6 +462,7 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
             Eval.release(remainder, new KyoException("fiber abandoned")(using Frame.internal), Tag[Async.Join]) {
                 [C] => input => discard(input(this))
             }
+        end if
     end abandon
 
     // Drops the reference so a finished task does not retain the computation it ran. Never a signal: `curr`

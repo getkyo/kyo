@@ -44,7 +44,7 @@ object Bracket:
     // Two shapes rather than one with a flag: a bracket's own state, and what it hands an isolated child. The
     // second hears the same lifecycle and does nothing with it, so it records no ending and can be shared,
     // where one that recorded would carry the first crossing's ending into every later one and refuse them all.
-    sealed private[kyo] abstract class Cell extends AtomicBoolean:
+    sealed abstract private[kyo] class Cell extends AtomicBoolean:
         private[kyo] def borrow(): Unit
         private[kyo] def isBorrowed: Boolean
         private[kyo] def complete(): Unit
@@ -92,12 +92,12 @@ object Bracket:
         // refuses a re-entry, so it holds nothing and one instance serves every crossing.
         val inert: Cell =
             new Cell:
-                private[kyo] def borrow(): Unit                = ()
-                private[kyo] def isBorrowed: Boolean           = false
-                private[kyo] def complete(): Unit              = ()
-                private[kyo] def drain(ex: Throwable): Unit    = ()
+                private[kyo] def borrow(): Unit                 = ()
+                private[kyo] def isBorrowed: Boolean            = false
+                private[kyo] def complete(): Unit               = ()
+                private[kyo] def drain(ex: Throwable): Unit     = ()
                 private[kyo] def discharge(ex: Throwable): Unit = ()
-                private[kyo] def endedItsExtent: Boolean       = false
+                private[kyo] def endedItsExtent: Boolean        = false
     end Cell
 
     def apply[A, S1](acquire: A < S1)[B, S2](use: A => B < S2)(

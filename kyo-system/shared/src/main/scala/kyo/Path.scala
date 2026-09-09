@@ -307,8 +307,8 @@ object Path extends PathPlatformSpecific:
         Frame
     ): A < (FS & Abort[FileSystemException] & S) =
         FileSystem.letErased(fileSystem) {
-            ArrowEffect.handle[[A] =>> Op[A], Id, PathWrite, A, S, FS & Abort[FileSystemException]](Tag[PathWrite], program)(
-                [C] => (op, cont) => dispatch(fileSystem, op).map(cont)
+            ArrowEffect.handleCont[[A] =>> Op[A], Id, PathWrite, A, S, FS & Abort[FileSystemException]](Tag[PathWrite], program)(
+                [C] => (op, cont) => dispatch(fileSystem, op).chain(cont)
             )
         }
 
@@ -322,8 +322,8 @@ object Path extends PathPlatformSpecific:
         Frame
     ): A < (FS & Abort[FileSystemException] & S) =
         FileSystem.letReadErased(fileSystem) {
-            ArrowEffect.handle[[A] =>> Op[A], Id, PathRead, A, S, FS & Abort[FileSystemException]](Tag[PathRead], program)(
-                [C] => (op, cont) => dispatchRead(fileSystem, op).map(cont)
+            ArrowEffect.handleCont[[A] =>> Op[A], Id, PathRead, A, S, FS & Abort[FileSystemException]](Tag[PathRead], program)(
+                [C] => (op, cont) => dispatchRead(fileSystem, op).chain(cont)
             )
         }
 
@@ -334,7 +334,7 @@ object Path extends PathPlatformSpecific:
         type State        = FileSystem.Read[Any]
         type Transform[A] = Result[FileSystemException, A]
 
-        def capture[A, S](f: State => A < S)(using Frame): A < (PathRead & Async & S) =
+        def capture[A, S](f: State => A < S)(using Frame): A < (PathRead & S) =
             FileSystem.useReadErased(f)
 
         def isolate[A, S](state: State, value: A < (S & PathRead))(using Frame): Result[FileSystemException, A] < (Async & S) =
@@ -355,7 +355,7 @@ object Path extends PathPlatformSpecific:
         type State        = FileSystem.Write[Any]
         type Transform[A] = Result[FileSystemException, A]
 
-        def capture[A, S](f: State => A < S)(using Frame): A < (PathWrite & Sync & S) =
+        def capture[A, S](f: State => A < S)(using Frame): A < (PathWrite & S) =
             FileSystem.useErased(f)
 
         def isolate[A, S](state: State, value: A < (S & PathWrite))(using Frame): Result[FileSystemException, A] < (Sync & S) =

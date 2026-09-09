@@ -80,7 +80,11 @@ object `<` extends Implicits:
                     out
                 end if
             end run
-            run(v, Arrow.id)
+            // The cast states the receiver's own type, so it holds by construction. It is needed because
+            // this body is inline: expanded into user code and re-checked under -Xcheck-macros, `<` is seen
+            // through an inline proxy the compiler does not substitute into the union, and a receiver whose
+            // own value type is itself pending leaves the un-proxied inner `<` nothing to conform to. Erased.
+            run(v.asInstanceOf[A < S], Arrow.id)
         end map
 
         /** Maps the value this computation produces, with no preemption point between the value arriving and `f` running.
@@ -96,7 +100,8 @@ object `<` extends Implicits:
                 new Arrow.Ensure[A, B, S2]:
                     def frame                = _frame
                     override def apply(a: A) = f(a)
-            v.chain(step)
+            // Cast per `map`'s note above.
+            v.asInstanceOf[A < S].chain(step)
         end ensureMap
 
         /** Maps the value produced by this computation to a new computation and flattens the result.
@@ -125,7 +130,8 @@ object `<` extends Implicits:
                     out
                 end if
             end run
-            run(v, Arrow.id)
+            // Cast per `map`'s note above.
+            run(v.asInstanceOf[A < S], Arrow.id)
         end flatMap
 
         /** Executes this computation, discards its result, and then executes another computation.
@@ -151,7 +157,8 @@ object `<` extends Implicits:
                     out
                 end if
             end run
-            run(v, Arrow.id)
+            // Cast per `map`'s note above.
+            run(v.asInstanceOf[A < S], Arrow.id)
         end andThen
 
         /** Executes this computation and discards its result.
@@ -170,12 +177,18 @@ object `<` extends Implicits:
                         override def apply[C2, S4](v2: A < S4, cont2: Arrow[C, C2, S4]) =
                             run(v2, cont.chain(cont2))
                 else
-                    val out = cont.head((), cont.tail)
+                    // `Unit` is the union's first arm, so the cast states a conformance that holds by
+                    // construction. It is needed because this body is inline: expanded into user code and
+                    // re-checked under -Xcheck-macros, `<` is seen through a proxy of this package that the
+                    // compiler does not substitute into the union, leaving the bare literal nothing to
+                    // conform to. Erased.
+                    val out = cont.head(().asInstanceOf[Unit < S3], cont.tail)
                     Safepoint.exit(slot)
                     out
                 end if
             end run
-            run(v, Arrow.id)
+            // Cast per `map`'s note above.
+            run(v.asInstanceOf[A < S], Arrow.id)
         end unit
 
         /** Applies a transformation to this computation.

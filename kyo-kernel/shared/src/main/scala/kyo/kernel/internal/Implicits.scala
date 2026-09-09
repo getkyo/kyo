@@ -32,7 +32,13 @@ trait Implicits:
             case _: (Int | Long | Float | Double | Boolean | Byte | Short | Char | Unit | String) =>
                 v.asInstanceOf[A < S]
             case _ =>
-                Nested.nest(v).asInstanceOf[A < S]
+                // Type arguments stated rather than inferred, and no second cast: `nest` already answers at
+                // `A < S`. Inferred, `A` is taken from the argument, which for a stable identifier is its
+                // singleton, and the cast this built named that singleton. Expanded into user code and
+                // re-checked under `-Xcheck-macros`, where a nested computation shows `<` through one inline
+                // proxy inside another and the compiler does not substitute across the nesting, that cast is
+                // rejected as malformed.
+                Nested.nest[A, S](v)
 
     implicit inline def abortCastUnit[S1, S2](inline v: Unit < S1): Unit < S2 = ${ LiftMacro.abortCastUnitImpl[S1, S2]('v) }
 

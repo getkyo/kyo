@@ -603,6 +603,7 @@ import scala.util.control.NonFatal
             try collect(v, fuel)
             finally Safepoint.restore(slot, saved)
         else collect(v, fuel)
+        end if
         releaseCollected(collected, ex)
     end release
 
