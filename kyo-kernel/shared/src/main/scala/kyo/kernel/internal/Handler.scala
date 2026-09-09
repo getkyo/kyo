@@ -211,7 +211,13 @@ end Handler
         def fork(parent: State): State
         def join(parent: State, forked: State, child: State): State
 
-        private[kyo] def done(state: State, value: A): Unit = ()
+        /** This region's extent ran to an end.
+          *
+          * No value, unlike [[Handler.ArrowHandler.done]]: the evaluator reaches this with whatever the stack it is
+          * running in produced, and a crossing wraps a forked result, so the origin's `A` is not what arrives. Nothing
+          * ever read it.
+          */
+        private[kyo] def done(state: State): Unit = ()
 
         /** Takes custody of this region because the handler that dumped it will resume the continuation again. */
         private[kyo] def borrow(state: State): Unit = ()

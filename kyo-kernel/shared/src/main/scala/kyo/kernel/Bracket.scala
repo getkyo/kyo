@@ -40,43 +40,64 @@ object Bracket:
 
     // The cell is no longer parameterised by the use value: the release is told how the extent ended, not what it
     // produced, so there is nothing about the value left to carry.
-    final private[kyo] class Cell(fin: Maybe[Throwable] => Unit) extends AtomicBoolean:
-        // Set when the region is re-installed from a continuation the handler above dumped, which is the one situation
-        // where the extent ending is not the last word: the same continuation can be resumed again, and a release fired
-        // at the first ending would run under the resumptions that follow. While it is set, an ending only records that
-        // it happened, and the handler that owes this region fires the release when that handler ends.
-        @volatile private var borrowed = false
-        // whether any ending of the extent ran to completion, which is what a later discharge reports, and what tells a
-        // refused re-entry which of the two ways this cell fired
-        @volatile private var ended = false
-
-        private[kyo] def borrow(): Unit      = borrowed = true
-        private[kyo] def isBorrowed: Boolean = borrowed
-
-        private[kyo] def complete(): Unit =
-            ended = true
-            if !borrowed && compareAndSet(false, true) then fin(Absent)
-
-        // The release is owed the failure that unwound its extent whatever it is, and the fatal itself keeps
-        // propagating. An unwind wins over any ending that already ran: the extent is being abandoned, and a release
-        // that commits on success would commit over a failure.
-        private[kyo] def drain(ex: Throwable): Unit =
-            if compareAndSet(false, true) then fin(Maybe(ex))
-
-        // the owner ended normally, so the extent's own endings are final. None of them means the extent never ran to
-        // an ending at all, and the discard signal is what the release is owed.
-        private[kyo] def discharge(ex: Throwable): Unit =
-            if compareAndSet(false, true) then
-                if ended then fin(Absent)
-                else fin(Maybe(ex))
-
-        private[kyo] def endedItsExtent: Boolean = ended
+    //
+    // Two shapes rather than one with a flag: a bracket's own state, and what it hands an isolated child. The
+    // second hears the same lifecycle and does nothing with it, so it records no ending and can be shared,
+    // where one that recorded would carry the first crossing's ending into every later one and refuse them all.
+    sealed private[kyo] abstract class Cell extends AtomicBoolean:
+        private[kyo] def borrow(): Unit
+        private[kyo] def isBorrowed: Boolean
+        private[kyo] def complete(): Unit
+        private[kyo] def drain(ex: Throwable): Unit
+        private[kyo] def discharge(ex: Throwable): Unit
+        private[kyo] def endedItsExtent: Boolean
     end Cell
 
     private[kyo] object Cell:
-        // the state a bracket hands to an isolated child: nothing completes or drains it, so a copy
-        // holding it never runs a release and never refuses a re-entry
-        val inert: Cell = new Cell(_ => ())
+
+        final class Live(fin: Maybe[Throwable] => Unit) extends Cell:
+            // Set when the region is re-installed from a continuation the handler above dumped, which is the one situation
+            // where the extent ending is not the last word: the same continuation can be resumed again, and a release fired
+            // at the first ending would run under the resumptions that follow. While it is set, an ending only records that
+            // it happened, and the handler that owes this region fires the release when that handler ends.
+            @volatile private var borrowed = false
+            // whether any ending of the extent ran to completion, which is what a later discharge reports, and what tells a
+            // refused re-entry which of the two ways this cell fired
+            @volatile private var ended = false
+
+            private[kyo] def borrow(): Unit      = borrowed = true
+            private[kyo] def isBorrowed: Boolean = borrowed
+
+            private[kyo] def complete(): Unit =
+                ended = true
+                if !borrowed && compareAndSet(false, true) then fin(Absent)
+
+            // The release is owed the failure that unwound its extent whatever it is, and the fatal itself keeps
+            // propagating. An unwind wins over any ending that already ran: the extent is being abandoned, and a release
+            // that commits on success would commit over a failure.
+            private[kyo] def drain(ex: Throwable): Unit =
+                if compareAndSet(false, true) then fin(Maybe(ex))
+
+            // the owner ended normally, so the extent's own endings are final. None of them means the extent never ran to
+            // an ending at all, and the discard signal is what the release is owed.
+            private[kyo] def discharge(ex: Throwable): Unit =
+                if compareAndSet(false, true) then
+                    if ended then fin(Absent)
+                    else fin(Maybe(ex))
+
+            private[kyo] def endedItsExtent: Boolean = ended
+        end Live
+
+        // What a bracket hands an isolated child: it never runs a release, never records an ending and never
+        // refuses a re-entry, so it holds nothing and one instance serves every crossing.
+        val inert: Cell =
+            new Cell:
+                private[kyo] def borrow(): Unit                = ()
+                private[kyo] def isBorrowed: Boolean           = false
+                private[kyo] def complete(): Unit              = ()
+                private[kyo] def drain(ex: Throwable): Unit    = ()
+                private[kyo] def discharge(ex: Throwable): Unit = ()
+                private[kyo] def endedItsExtent: Boolean       = false
     end Cell
 
     def apply[A, S1](acquire: A < S1)[B, S2](use: A => B < S2)(
@@ -85,7 +106,7 @@ object Bracket:
         val ensure = new Arrow.Ensure[A, B, S1 & S2]:
             def frame = _frame
             override def apply(a: A) =
-                val cell = new Cell(outcome => release(a, outcome))
+                val cell = new Cell.Live(outcome => release(a, outcome))
                 val body =
                     try use(a)
                     catch
@@ -114,7 +135,7 @@ object Bracket:
         val b =
             try body
             catch case ex => Effect.defer(throw ex)
-        region(new Cell(release), b)
+        region(new Cell.Live(release), b)
     end ensuring
 
     private def region[B, S](cell: => Cell, body: B < S)(using _frame: Frame): B < S =
@@ -125,7 +146,7 @@ object Bracket:
             def join(parent: Cell, fk: Cell, child: Cell)                       = parent
             override private[kyo] def borrow(state: Cell): Unit                 = state.borrow()
             override private[kyo] def defers(state: Cell): Boolean              = state.isBorrowed
-            override private[kyo] def done(state: Cell, value: B): Unit         = state.complete()
+            override private[kyo] def done(state: Cell): Unit                   = state.complete()
             override private[kyo] def release(state: Cell, ex: Throwable): Unit = state.drain(ex)
             override private[kyo] def discharge(state: Cell, ex: Throwable): Unit =
                 state.discharge(ex)
