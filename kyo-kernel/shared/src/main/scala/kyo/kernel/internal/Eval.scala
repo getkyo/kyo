@@ -556,9 +556,17 @@ import scala.util.control.NonFatal
             v match
                 case p: Pending[?, ?] =>
                     p match
+                        // A deferral whose value is still a computation is walked, which reaches what is
+                        // under it for free. One whose value is settled holds its body in the continuation,
+                        // so reaching it means running a step, and only that spends the budget.
                         case kyo: Pending.Defer[a, b, c, s] @unchecked =>
-                            if fuel > 0 then collect(kyo.contA(kyo.value, kyo.contB), fuel - 1)
-                            else collect(kyo.value, fuel)
+                            kyo.value match
+                                case _: Pending[?, ?] => collect(kyo.value, fuel)
+                                // `Arrow.id` rather than the node's own continuation, so a unit of budget
+                                // buys one step: an arrow is free to run as many as it likes once handed
+                                // one, and what follows this step is not where the operation under it is.
+                                case _ if fuel > 0 => collect(kyo.contA(kyo.value, Arrow.id), fuel - 1)
+                                case _             => ()
                         case kyo: Pending.HandleContext[VX, CX, ?, ?] @unchecked =>
                             val hc = kyo.handler
                             collected += hc
@@ -586,7 +594,15 @@ import scala.util.control.NonFatal
                         case _: Pending.Suspend[?, ?, ?, ?] => ()
                         case _: Pending.Snapshot[?, ?]      => ()
                 case _ => ()
-        collect(v, fuel)
+        // A deferral declines to run while the Safepoint is stopped, and it always is here: this walks a
+        // computation whose fiber has just been interrupted. The walk gets its own state so stepping
+        // reaches what a deferral holds, and the caller's is put back.
+        if fuel > 0 then
+            val slot  = Safepoint.get()
+            val saved = Safepoint.save(slot)
+            try collect(v, fuel)
+            finally Safepoint.restore(slot, saved)
+        else collect(v, fuel)
         releaseCollected(collected, ex)
     end release
 
