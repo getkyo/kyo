@@ -220,16 +220,17 @@ object Scope:
                     )
                     val promise = Promise.Unsafe.init[Unit, Any]().safe
 
+                    // Delegates rather than repeating the offer, so a closed scope answers both registration paths
+                    // the same way: the finalizer runs, and the caller still learns it is not scoped. Answering
+                    // differently here dropped the finalizer entirely, which is the one outcome the caller asked
+                    // against. The throw becomes this computation's panic, as it did before.
                     def ensure(v: Maybe[Error[Any]] => Any < (Async & Abort[Throwable]))(using Frame): Unit < Sync =
-                        Sync.Unsafe.defer {
-                            if !queue.offer(v).contains(true) then Abort.panic(closed)
-                            else ()
-                        }
+                        Sync.Unsafe.defer(ensureUnsafe(v))
 
                     private[kyo] def ensureUnsafe(v: Maybe[Error[Any]] => Any < (Async & Abort[Throwable]))(
                         using
-                        Frame,
-                        AllowUnsafe
+                        frame: Frame,
+                        allow: AllowUnsafe
                     ): Unit =
                         if !queue.offer(v).contains(true) then
                             // The registration is refused because this scope has already closed, and its caller is
@@ -237,6 +238,12 @@ object Scope:
                             // that would have run the release is over, and no later close will see it. So it runs
                             // here. It runs detached because this is not an effectful position, and the caller still
                             // learns that its resource is not scoped, by the throw below.
+                            //
+                            // Logged because a finalizer that runs this way runs off the scope that owned it, which
+                            // is invisible from the outside and worth seeing when a resource lifetime is in question.
+                            Log.live.unsafe.warn(
+                                s"Scope: a finalizer was registered on a closed scope at ${frame.position.show}, running it detached"
+                            )
                             discard(Fiber.Unsafe.init {
                                 Abort.recoverError[Throwable](error =>
                                     Log.error("Scope finalizer failed", error.exception)

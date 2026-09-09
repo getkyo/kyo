@@ -239,16 +239,18 @@ class ScopeTest extends kyo.test.Test[Any]:
             end for
         }
 
-        "fibers registering finalizers while their scope closes: each accepted registration runs exactly once" in {
+        "fibers registering finalizers while their scope closes: each registration runs exactly once" in {
             // A scope closes by draining its finalizer queue, and the fibers below stay free to register for the whole drain, so
             // registration and close overlap by construction. The scope is preloaded first so the drain is long enough for the two to
-            // meet. Every registration the scope accepted has to run, and none of them twice.
+            // meet. Every registration has to run, and none of them twice: a registration the scope refuses still runs its finalizer,
+            // off the scope, rather than dropping it, so the count to match is what was attempted and not what was accepted.
             (for
-                accepted <- AtomicInt.init(0)
-                ran      <- AtomicInt.init(0)
+                attempted <- AtomicInt.init(0)
+                accepted  <- AtomicInt.init(0)
+                ran       <- AtomicInt.init(0)
                 fibers <- Scope.run {
                     val register =
-                        Abort.run[Nothing](Scope.ensure(ran.incrementAndGet.unit)).map {
+                        attempted.incrementAndGet.andThen(Abort.run[Nothing](Scope.ensure(ran.incrementAndGet.unit))).map {
                             case Result.Success(_) => accepted.incrementAndGet.andThen(true)
                             case _                 => false
                         }
@@ -270,9 +272,13 @@ class ScopeTest extends kyo.test.Test[Any]:
                     end for
                 }
                 _ <- Kyo.foreachDiscard(fibers)(_.get)
-                a <- accepted.get
-                r <- ran.get
-            yield assert(r == a, s"each accepted registration must run exactly once: ran=$r accepted=$a"))
+                // a refused registration runs its finalizer off the scope, so the last of them can land after
+                // the fibers have finished
+                _   <- assertEventually(Kyo.zip(attempted.get, ran.get).map((att, r) => r == att))
+                att <- attempted.get
+                acc <- accepted.get
+                r   <- ran.get
+            yield assert(r == att, s"each registration must run exactly once: ran=$r attempted=$att accepted=$acc"))
                 .handle(Loop.repeat(20))
         }
 
@@ -596,11 +602,9 @@ class ScopeTest extends kyo.test.Test[Any]:
         // nothing separates the interrupt request from the claim and the earliest point it can be delivered is
         // after the acquire has returned. That needs no held worker, which is what lets it run on every platform.
         //
-        // Measured 3 of 500 rounds leaking when this leaf was written, against 500 of 500 on main: the window
-        // is far narrower than it was and is not closed. The assertion states the guarantee, not the measurement.
-        "a self-interrupt inside the acquire still releases what the acquire produced".pendingUntilFixed(
-            "acquisition and registration are two steps, so an interrupt delivered after the acquire returns leaves the resource with nothing registered to release it"
-        ) in {
+        // 500 of 500 rounds release, against 500 of 500 leaking on main, so the window this issue is about is
+        // closed.
+        "a self-interrupt inside the acquire still releases what the acquire produced" in {
             val rounds = 500
             Kyo.foreach(1 to rounds) { _ =>
                 for
@@ -629,6 +633,15 @@ class ScopeTest extends kyo.test.Test[Any]:
                     _ <- handoff.complete(Result.succeed(fiber))
                     _ <- fiber.getResult
                     a <- claimed.get
+                    // Waited for rather than read, because the release is not synchronous with the fiber ending:
+                    // the scope's finalizers are drained on a detached fiber, so the release can land after the
+                    // result does. Measured 3 rounds in 500 doing so. The registration itself is never at risk
+                    // here, whatever the interrupt's timing: the park check sits on the deferral before it runs,
+                    // so an interrupt delivered there leaves the acquire unrun and nothing acquired, and once
+                    // the acquire's value is settled the Ensure arrow that registers is applied in the same turn
+                    // with no safepoint between. Waiting is what separates "released late" from "leaked", and
+                    // only the second is a defect.
+                    _ <- assertEventually(Kyo.zip(claimed.get, released.get).map((acquired, freed) => !acquired || freed))
                     r <- released.get
                 yield (a, r)
                 end for
@@ -1102,24 +1115,31 @@ class ScopeTest extends kyo.test.Test[Any]:
                     chan     <- Channel.init[String](16, Access.MultiProducerMultiConsumer)
                     taken    <- AtomicInt.init(0)
                     returned <- AtomicInt.init(0)
-                    racers = Seq.fill(8) {
+                    // Opened by the fourth taker. The takers themselves never finish, so the race can only be
+                    // won by the extra racer below, and only once every item is held by a taker: that makes
+                    // the four losers-holding-an-item the scenario every run exercises, rather than however
+                    // many the scheduler happened to produce. Without it the counts could only be compared to
+                    // each other, which holds trivially at nothing taken and nothing returned.
+                    allTaken <- Latch.init(4)
+                    takers = Seq.fill(8) {
                         Scope.run {
-                            Scope.acquireRelease(chan.take.map(v => taken.incrementAndGet.andThen(v))) { v =>
+                            Scope.acquireRelease(
+                                chan.take.map(v => taken.incrementAndGet.andThen(allTaken.release).andThen(v))
+                            ) { v =>
                                 chan.put(v).andThen(returned.incrementAndGet.unit)
-                            }
+                            }.andThen(Async.never)
                         }
                     }
                     _ <- Kyo.foreachDiscard(Seq("1", "2", "3", "4"))(chan.put)
-                    _ <- Async.race(racers)
-                    // the losers unwind on their own fibers, so the counts settle after race returns
-                    out <- Abort.run[Timeout](Async.timeout(3.seconds) {
-                        assertEventually(Kyo.zip(taken.get, returned.get).map((t, r) => t == r))
-                    })
+                    _ <- Async.race(allTaken.await +: takers)
+                    // the losers unwind on their own fibers, so the returns land after race returns
+                    _       <- assertEventually(returned.get.map(_ == 4))
                     drained <- chan.drain
                     t       <- taken.get
                     r       <- returned.get
                 yield
-                    assert(out.isSuccess, s"racers took $t items and only $r came back")
+                    assert(t == 4, s"the four items were not all taken before the race ended: took $t")
+                    assert(r == 4, s"racers took $t items and only $r came back")
                     assert(drained.toSet == Set("1", "2", "3", "4"), s"items lost: $drained")
                 end for
             }
