@@ -231,7 +231,20 @@ object Scope:
                         Frame,
                         AllowUnsafe
                     ): Unit =
-                        if !queue.offer(v).contains(true) then throw closed
+                        if !queue.offer(v).contains(true) then
+                            // The registration is refused because this scope has already closed, and its caller is
+                            // holding a value that only this release frees. Throwing alone would leak it: the drain
+                            // that would have run the release is over, and no later close will see it. So it runs
+                            // here. It runs detached because this is not an effectful position, and the caller still
+                            // learns that its resource is not scoped, by the throw below.
+                            discard(Fiber.Unsafe.init {
+                                Abort.recoverError[Throwable](error =>
+                                    Log.error("Scope finalizer failed", error.exception)
+                                )(v(Present(Result.Panic(closed))))
+                            })
+                            throw closed
+                        end if
+                    end ensureUnsafe
 
                     private[kyo] def ensureIfOpen(v: Maybe[Error[Any]] => Any < (Async & Abort[Throwable]))(
                         using

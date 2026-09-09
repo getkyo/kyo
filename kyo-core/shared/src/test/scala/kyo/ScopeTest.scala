@@ -205,9 +205,7 @@ class ScopeTest extends kyo.test.Test[Any]:
             end for
         }
 
-        "a resource acquired after the scope closed is released rather than leaked".pendingUntilFixed(
-            "acquisition and registration are two steps, so a scope that closes between them refuses the registration and the acquired resource is never released"
-        ) in {
+        "a resource acquired after the scope closed is released rather than leaked" in {
             for
                 acquired <- AtomicInt.init(0)
                 released <- AtomicInt.init(0)
@@ -222,17 +220,22 @@ class ScopeTest extends kyo.test.Test[Any]:
                 // The gate opens only once Scope.run has returned, so the acquisition below is guaranteed to find the scope closed.
                 _      <- gate.release
                 result <- fiber.getResult
-                a      <- acquired.get
-                r      <- released.get
+                // A registration the scope refuses has no scope left to run its release under, so the release runs
+                // detached and settles after the acquiring fiber has already finished. Nothing here can wait on it,
+                // so the counters are polled rather than read once.
+                _ <- assertEventually {
+                    for
+                        a <- acquired.get
+                        r <- released.get
+                    yield a == 1 && r == 1
+                }
             yield
-                // Only the leak invariant is pinned, deliberately. Asserting that the resource was acquired first would pin the shape of
-                // the current defect, so a fix that refuses before acquiring would leave this leaf failing forever instead of turning red.
-                // Either outcome is correct as long as nothing acquired goes unreleased.
+                // The acquire runs, so the refused registration is what has to release: one acquisition, one release. Comparing the two
+                // counters instead would hold at zero, before the fiber has acquired anything.
                 assert(
                     result.isSuccess || result.panic.exists(_.isInstanceOf[Closed]),
                     s"registering on a closed scope must either succeed or panic Closed: $result"
                 )
-                assert(r == a, s"every acquired resource must be released: acquired=$a released=$r")
             end for
         }
 
