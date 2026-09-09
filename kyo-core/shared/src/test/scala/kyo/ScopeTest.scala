@@ -1084,6 +1084,19 @@ class ScopeTest extends kyo.test.Test[Any]:
         // enclosing scope, so a parent no longer exits while a child is still releasing; but fork and join
         // are the identity, so a parent cannot close a child that is still running. Here the child parks and
         // the parent exits, which leaves the child's resource open with nothing to close it.
+        //
+        // This is also what hangs kyo-ui's ReactiveUITeardownTest, all seven of its leaves. The design 2338ac9fa8
+        // settled on rests on "a nested run always closes itself, so an enclosing scope only ever has to wait",
+        // and there the nested run cannot: its work is blocked, and what would stop it is a finalizer in the
+        // PARENT's queue, drained in reverse order behind the wait for that very child. Parent waits for child,
+        // child waits for an interrupt the parent will only issue after the wait returns. Traced with the close
+        // running (3 closes, 3 backlog handovers, 2 finalizers started, 0 finished) and the observer still parked
+        // a second after the interrupt; not the abandonment walk's fuel, which changes nothing at 4096.
+        //
+        // Ordering the two by hand fixes the hang and breaks ReactiveUITeardownTest's nested-finalizer leaf
+        // instead, because a stop must precede a wait while a release must follow it. Splitting registrations
+        // into stops and releases makes callers classify an ordering they cannot see, so what this needs is the
+        // scope knowing what runs under it and cancelling it, which is the half of this issue that never landed.
         "closing a scope releases the resources of a nested scope still running under it".pendingUntilFixed(
             "a parent scope waits for a nested run but cannot close it: fork and join are the identity, so closing a scope does not stop the computation running under it"
         ) in {
