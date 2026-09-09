@@ -933,38 +933,6 @@ object ArrowEffect:
         end match
     end handleFirstRepeated
 
-    // Diverges from main: the head suspension can sit under handle, park and defer nodes, so this walks
-    // down to it instead of matching a single node. The walk is a real loop, so the method is not inline.
-    /** Inspects the head suspension of `v`. If it matches `effectTag`, invokes `f` with the suspension's input;
-      * otherwise does nothing. Unlike [[handleFirst]] this never enters the Safepoint, never executes the
-      * continuation, and never schedules a continuation. It is intended for purely-inspecting handlers that
-      * read the input as a value and produce side effects directly (e.g. registering an interrupt cascade
-      * link). Used by `IOTask.ensureInterrupt` to walk a stalled `curr` after the fiber's promise has already
-      * been completed (e.g. by an interrupt), so the Safepoint preempt flag would otherwise short-circuit the
-      * walk.
-      */
-    private[kyo] def dispatchFirst[I[_], O[_], E <: ArrowEffect[I, O], A, S](
-        effectTag: Tag[E],
-        v: A < (E & S)
-    )(
-        f: [C] => I[C] => Unit
-    ): Unit =
-        @tailrec def loop(x: Any, fuel: Int): Unit =
-            x match
-                case kyo: Pending.SuspendArrow[I, O, E, c, ?, ?] @unchecked =>
-                    if effectTag.erased <:< kyo.tag.erased then f[c](kyo.input)
-                case kyo: Pending.Handle[?, ?, ?, ?] => loop(kyo.value, fuel)
-                case kyo: Pending.Park[?, ?]         => loop(kyo.value, fuel)
-                // A deferral holds its body in a continuation, so the suspension under it is only reachable
-                // by evaluating the node. Bounded, because that is the caller's code and this walk runs on
-                // a teardown path; out of fuel it reads the value and stops, as it did before.
-                case kyo: Pending.Defer[a, b, c, s] @unchecked =>
-                    if fuel > 0 then loop(kyo.contA(kyo.value, kyo.contB), fuel - 1)
-                    else loop(kyo.value, fuel)
-                case _ => ()
-        loop(v, 16)
-    end dispatchFirst
-
     // Not on main: the clause is handed the suspended operation itself instead of its input, which is
     // what lets Mask re-suspend an operation it cannot inspect.
 

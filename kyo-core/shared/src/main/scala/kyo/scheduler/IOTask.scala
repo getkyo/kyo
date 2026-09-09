@@ -321,19 +321,6 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
         loop(v, 16)
     end currentFrame
 
-    /** Links the interrupt to the promise an unprocessed join would have awaited.
-      *
-      * A join registers the cascade when the boundary answers it, so an interrupt landing before the fiber
-      * ever reached that join leaves the promise it was about to wait on with nothing linking the two: the
-      * fiber is gone and the promise stays pending for whoever else holds it. Invoking the input is what
-      * registers the link, and it is the same call the boundary makes, so doing it here closes the race
-      * without running any of the computation.
-      */
-    private def ensureInterrupt(remainder: Unit < Any): Unit =
-        ArrowEffect.dispatchFirst(Tag[Async.Join], remainder.asInstanceOf[Unit < Async.Join]) {
-            [C] => joinInput => discard(joinInput(this))
-        }
-
     private def render(f: Frame): String =
         val at = StackTraceElement(
             s"${f.snippetShort} @ ${f.className}",

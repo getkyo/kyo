@@ -12,6 +12,7 @@ import kyo.kernel.ArrowEffect
 import kyo.kernel.Bracket
 import kyo.kernel.ContextEffect
 import kyo.kernel.Effect
+import kyo.kernel.Isolate
 import kyo.kernel.Region
 import kyo.kernel.internal.Pending.Park
 import org.scalatest.freespec.AnyFreeSpec
@@ -1514,6 +1515,125 @@ class EvalTest extends AnyFreeSpec:
             val out = parked.eval
             assert(out.asInstanceOf[AnyRef] eq payload.asInstanceOf[AnyRef])
             assert(out.eval == 7)
+        }
+    }
+
+    // A release reports the first operation under what it is tearing down, which is how a fiber's interrupt
+    // reaches the join it would have awaited. These are about what it reports; that it also releases is
+    // BracketTest's.
+    "release reports the first operation" - {
+        val walked = new RuntimeException("walked")
+
+        sealed trait AskSub extends Ask
+        def askSub: Int < AskSub = ArrowEffect.suspend[Any](Tag[AskSub], ())
+
+        "through a region and a handed-in deferral" in {
+            val inner: Int < (Ask & Say) = ask.map(a => a)
+            val idle: Int < Ask          = ArrowEffect.handleCont(Tag[Say], inner)([C] => (_, k) => k(()), a => a)
+            val deferred: Int < Ask      = Effect.defer(idle, Arrow.id)
+            var seen                     = 0
+            Eval.release(deferred, walked, Tag[Ask])([C] => _ => seen += 1)
+            assert(seen == 1)
+        }
+
+        "a foreign operation standing first is not reported" in {
+            var seen = 0
+            Eval.release(ask.map(_ + 1), walked, Tag[Say])([C] => _ => seen += 1)
+            assert(seen == 0)
+        }
+
+        "queries in the dispatch direction" in {
+            var seen = 0
+            Eval.release(ask, walked, Tag[AskSub])([C] => _ => seen += 1)
+            Eval.release(askSub, walked, Tag[Ask])([C] => _ => seen += 10)
+            assert(seen == 1)
+        }
+
+        "a settled value reports nothing" in {
+            var seen = 0
+            Eval.release(42: Int < Ask, walked, Tag[Ask])([C] => _ => seen += 1)
+            assert(seen == 0)
+        }
+
+        "sees through a context region" in {
+            sealed trait Cfg extends ContextEffect[Int]
+            val region: Int < Ask = ContextEffect.handleInheritable(Tag[Cfg], 1)(ask.map(_ + 1))
+            var seen              = 0
+            Eval.release(region, walked, Tag[Ask])([C] => _ => seen += 1)
+            assert(seen == 1)
+        }
+
+        "sees through a parked slice" in {
+            val body: Int < Ask =
+                ask.map { a =>
+                    discard(Safepoint.stop(Thread.currentThread()))
+                    Safepoint.deadline(java.lang.System.currentTimeMillis() - 1)
+                    Effect.defer(ask.map(b => a + b), Arrow.id)
+                }
+            val handled = ArrowEffect.handleCont(Tag[Ask], body)([C] => (_, k) => k(21), a => a)
+            val parked  = Eval.partial(handled)
+            var seen    = 0
+            Eval.release(parked, walked, Tag[Ask])([C] => _ => seen += 1)
+            assert(seen == 1)
+        }
+
+        "reads the input of a mapped suspension through its root" in {
+            var seen = ""
+            Eval.release(say("root").map(_ => 1).map(_ + 1), walked, Tag[Say])([X] => input => seen = input)
+            assert(seen == "root")
+        }
+
+        "reads through the deferrals a map chain composes to the operation under them" in {
+            var seen = ""
+            Eval.release(say("shown").map(_ => 1).map(_ + 1), walked, Tag[Say])([X] => input => seen = input)
+            assert(seen == "shown")
+        }
+
+        "reports nothing under an isolate capture" in {
+            var seen = 0
+            Eval.release(Isolate.internal.Contextual.run(ask), walked, Tag[Ask])([C] => _ => seen += 1)
+            assert(seen == 0)
+        }
+
+        "peels a stateless and a stateful region node" in {
+            var seen = ""
+            val inner: Int < (Ask & Say) =
+                ArrowEffect.handleLoopState(Tag[Ask], 0, say("deep").map(_ => ask))(
+                    [X] => (state, _) => Loop.continue(state + 1, state),
+                    (_, a) => a
+                )
+            val outer: Int < Say = ArrowEffect.handleCont(Tag[Ask], inner)([X] => (_, cont) => cont(1), a => a)
+            Eval.release(outer, walked, Tag[Say])([X] => input => seen = input)
+            assert(seen == "deep")
+        }
+
+        // An operation under a deferral exists only once the deferral has run, so reading it costs running
+        // that body. Bounded, so the shape of a computation cannot decide how much of it a teardown runs.
+        "runs a deferral to reach the operation behind it" in {
+            var seen  = ""
+            var built = false
+            val v = Effect.defer {
+                built = true
+                say("hidden").map(_ => 1)
+            }
+            Eval.release(v, walked, Tag[Say])([X] => input => seen = input)
+            assert(built)
+            assert(seen == "hidden")
+        }
+
+        "stops at its budget rather than running a chain of deferrals to the end" in {
+            var seen  = ""
+            var built = 0
+            def nest(n: Int): Int < Say =
+                if n == 0 then say("deep").map(_ => 1)
+                else
+                    Effect.defer {
+                        built += 1
+                        nest(n - 1)
+                    }
+            Eval.release(nest(64), walked, Tag[Say])([X] => input => seen = input)
+            assert(seen == "", s"reported through a chain past the budget: $seen")
+            assert(built <= 16, s"ran $built deferrals")
         }
     }
 

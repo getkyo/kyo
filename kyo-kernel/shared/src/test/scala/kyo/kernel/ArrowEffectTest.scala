@@ -1738,63 +1738,6 @@ class ArrowEffectTest extends Test:
         }
     }
 
-    "dispatchFirst" - {
-        "reports the first operation through a region and a handed-in deferral" in {
-            val inner: Int < (Ask & Say) = ask.map(a => a)
-            val idle: Int < Ask          = ArrowEffect.handleCont(Tag[Say], inner)([C] => (_, k) => k(()), a => a)
-            val deferred: Int < Ask      = Effect.defer(idle, Arrow.id)
-            var seen                     = 0
-            ArrowEffect.dispatchFirst(Tag[Ask], deferred)([C] => _ => seen += 1)
-            assert(seen == 1)
-
-            assert(ArrowEffect.handleCont(Tag[Ask], deferred)([C] => (_, k) => k(42), a => a).eval == 42)
-        }
-
-        "a foreign operation standing first is not reported" in {
-            var seen = 0
-            ArrowEffect.dispatchFirst(Tag[Say], ask.map(_ + 1))([C] => _ => seen += 1)
-            assert(seen == 0)
-        }
-
-        "queries in the dispatch direction" in {
-            var seen = 0
-
-            ArrowEffect.dispatchFirst(Tag[AskSub], ask)([C] => _ => seen += 1)
-
-            ArrowEffect.dispatchFirst(Tag[Ask], askSub)([C] => _ => seen += 10)
-            assert(seen == 1)
-        }
-
-        "a settled value reports nothing" in {
-            var seen = 0
-            ArrowEffect.dispatchFirst(Tag[Ask], 42: Int < Ask)([C] => _ => seen += 1)
-            assert(seen == 0)
-        }
-
-        "sees through a context region" in {
-            sealed trait Cfg extends ContextEffect[Int]
-            val region: Int < Ask = ContextEffect.handleInheritable(Tag[Cfg], 1)(ask.map(_ + 1))
-            var seen              = 0
-            ArrowEffect.dispatchFirst(Tag[Ask], region)([C] => _ => seen += 1)
-            assert(seen == 1)
-        }
-
-        "sees through a parked slice" in {
-            val body: Int < Ask =
-                ask.map { a =>
-                    discard(Safepoint.stop(Thread.currentThread()))
-                    Safepoint.deadline(java.lang.System.currentTimeMillis() - 1)
-                    Effect.defer(ask.map(b => a + b), Arrow.id)
-                }
-            val handled = ArrowEffect.handleCont(Tag[Ask], body)([C] => (_, k) => k(21), a => a)
-            val parked  = Eval.partial(handled)
-            var seen    = 0
-            ArrowEffect.dispatchFirst(Tag[Ask], parked)([C] => _ => seen += 1)
-            assert(seen == 1)
-            assert(parked.eval == 42)
-        }
-    }
-
     "contracts" - {
         "a clause raising a foreign effect is answered by the outer handler across the region" in {
             val v: Int < (Ask & Say) = ask.map(a => say("x").map(_ => ask.map(b => a + b)))
@@ -2305,52 +2248,6 @@ class ArrowEffectTest extends Test:
         }
     }
 
-    "dispatchFirst, ported" - {
-        "reads the input of a mapped suspension through its root" in {
-            var seen = ""
-            ArrowEffect.dispatchFirst(Tag[Say], say("root").map(_ => 1).map(_ + 1))([X] => input => seen = input)
-            assert(seen == "root")
-        }
-
-        // A deferral holds its body in a continuation, so the operation under it exists only once the body
-        // has run. Reading it therefore costs running the body, which is what the caller of this asks for:
-        // an interrupt has to reach the join a fiber would have awaited, and leaving it unlinked strands
-        // the promise for whoever else holds it.
-        "runs a deferral to reach the operation behind it" in {
-            var seen  = ""
-            var built = false
-            val v = Effect.defer {
-                built = true
-                say("hidden").map(_ => 1)
-            }
-            ArrowEffect.dispatchFirst(Tag[Say], v)([X] => input => seen = input)
-            assert(built)
-            assert(seen == "hidden")
-        }
-
-        "stops at its budget rather than running a chain of deferrals to the end" in {
-            var seen  = ""
-            var built = 0
-            def nest(n: Int): Int < Say =
-                if n == 0 then say("deep").map(_ => 1)
-                else
-                    Effect.defer {
-                        built += 1
-                        nest(n - 1)
-                    }
-            ArrowEffect.dispatchFirst(Tag[Say], nest(64))([X] => input => seen = input)
-            assert(seen == "", s"reported through a chain past the budget: $seen")
-            assert(built <= 16, s"ran $built deferrals")
-        }
-
-        "reads through the deferrals a map chain composes to the operation under them" in {
-            var seen = ""
-            val v    = say("shown").map(_ => 1).map(_ + 1)
-            ArrowEffect.dispatchFirst(Tag[Say], v)([X] => input => seen = input)
-            assert(seen == "shown")
-        }
-    }
-
     "recover, ported" - {
         "answers operations when nothing fails" in {
             val v = ask.map(a => ask.map(b => a + b))
@@ -2856,18 +2753,6 @@ class ArrowEffectTest extends Test:
             assert(parked.eval == "caught")
         }
 
-        "dispatchFirst peels a stateless and a stateful region node" in {
-            var seen = ""
-            val inner: Int < (Ask & Say) =
-                ArrowEffect.handleLoopState(Tag[Ask], 0, say("deep").map(_ => ask))(
-                    [X] => (state, _) => Loop.continue(state + 1, state),
-                    (_, a) => a
-                )
-            val outer: Int < Say = ArrowEffect.handleCont(Tag[Ask], inner)([X] => (_, cont) => cont(1), a => a)
-            ArrowEffect.dispatchFirst(Tag[Say], outer)([X] => input => seen = input)
-            assert(seen == "deep")
-        }
-
         "a deferred payload that throws mid answer loop cannot commit another dispatch's state or continuation" in {
             case class Boom() extends RuntimeException
             val body: Int < (Ask & Say) =
@@ -2907,12 +2792,6 @@ class ArrowEffectTest extends Test:
                 ArrowEffect.handleLoop(Tag[Ask], ask: Any < Ask)([C] => _ => hostile, (a: Any) => a)
                 """
             ).nonEmpty)
-        }
-
-        "dispatchFirst reports nothing under an isolate capture" in {
-            var seen = 0
-            ArrowEffect.dispatchFirst(Tag[Ask], Isolate.internal.Contextual.run(ask))([C] => _ => seen += 1)
-            assert(seen == 0)
         }
 
         "the fused loop leaves a subtype operation to the general path" in {
