@@ -586,9 +586,14 @@ import scala.collection.mutable.ArrayBuffer
             if h eq cont then cont else leftmost(h.asInstanceOf[Arrow[Any, Any, Any]])
         end leftmost
 
+        // Applying the `Ensure` is not always the whole of the debt. One that registers its release against
+        // something outside, as `Scope.acquireRelease` does, is done once it has been applied; one that
+        // installs a region to own the release, as `Bracket` does, has only just created what owes it, and
+        // discarding that region drops the release with it. So what the application produces is walked too,
+        // at no budget: it collects the region and any nested one, and steps through nothing.
         def ensuring(v: Any, cont: Arrow[Any, Any, Any]): Unit =
             leftmost(cont) match
-                case step: Arrow.Ensure[Any, Any, Any] @unchecked => discard(step(v))
+                case step: Arrow.Ensure[Any, Any, Any] @unchecked => collect(step(v), Arrow.id, 0)
                 case _                                            => ()
 
         @tailrec def collect(v: Any, cont: Arrow[Any, Any, Any], fuel: Int): Unit =

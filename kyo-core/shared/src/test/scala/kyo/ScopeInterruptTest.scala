@@ -1,116 +1,98 @@
 package kyo
 
-import java.util.concurrent.atomic.AtomicBoolean as JAtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger as JAtomicInteger
 
 /** Scope's behaviour when an interrupt lands inside an acquire, and when a scope exits over a child still holding a resource.
   *
-  * The acquire leaves interrupt their own fiber from inside the acquire and then produce the value, so delivery lands at the next
-  * safepoint, after the acquire and at or before the registration. That is the window the tests are about, and reaching it that way needs
-  * no second thread: no spin, no latch, no wall clock, and it runs on every platform. `ScopeTest`'s "acquire-time registration (#1820)"
-  * block pins the same window over many rounds for `Scope.acquireRelease`; the leaves here cover the sibling acquire surfaces once each.
+  * The acquire leaves interrupt their own fiber from inside the acquire and then take one more step before producing the value, so the
+  * interrupt is pending when that last step completes. That is the window the tests are about, and reaching it that way needs no second
+  * thread: no spin, no latch, no wall clock, and it runs on every platform.
+  *
+  * Both the extra step and the rounds are load-bearing, and both are measured rather than assumed. An acquire whose value arrives in the
+  * same node as the interrupt request releases every time even with the fix reverted, so a single-node acquire pins nothing; and the
+  * window a multi-node acquire opens is a race, so one shot passes on a tree that a run of rounds fails. `ScopeTest`'s "acquire-time
+  * registration (#1820)" block covers `Scope.acquireRelease` this way already, so the leaves here take the two acquire surfaces it does
+  * not: `Sync.acquireReleaseWith` and `Scope.acquire`.
   *
   * A release that runs through a fiber's abandonment is asynchronous, so each test waits for it with `assertEventually` rather than
   * asserting on anything the clock reports.
   */
 class ScopeInterruptTest extends kyo.test.Test[Any]:
 
-    /** A closeable whose close is observable, standing in for a file or a socket. */
-    final class Handle extends java.lang.AutoCloseable:
-        val closed            = new JAtomicBoolean(false)
-        def close(): Unit     = closed.set(true)
-        def isClosed: Boolean = closed.get()
-    end Handle
+    /** A closeable that records its own close, standing in for a file or a socket. */
+    final class Handle(closes: JAtomicInteger) extends java.lang.AutoCloseable:
+        def close(): Unit = discard(closes.incrementAndGet())
 
-    /** Spawns `body` on its own fiber and hands the fiber back to it, so the body can interrupt itself.
+    /** Runs `body` on its own fiber `rounds` times, handing each fiber to its own body.
       *
-      * The handoff is what makes the interrupt land inside the acquire instead of around it: the body waits for its own fiber before it
+      * The handoff is what lets the interrupt land inside the acquire instead of around it: the body waits for its own fiber before it
       * runs, so by the time the acquire executes there is something for it to interrupt.
       */
-    def selfInterrupting(body: Fiber[Unit, Any] => Unit < (Sync & Async))(using Frame): Result[Nothing, Unit] < (Sync & Async) =
-        for
-            handoff <- Promise.init[Fiber[Unit, Any], Any]
-            fiber   <- Fiber.initUnscoped(handoff.get.map(body))
-            _       <- handoff.complete(Result.succeed(fiber))
-            res     <- fiber.getResult
-        yield res
+    def selfInterrupting(rounds: Int)(body: Fiber[Unit, Any] => Unit < (Sync & Async))(using Frame): Unit < (Sync & Async) =
+        Loop.indexed { i =>
+            if i >= rounds then Loop.done
+            else
+                Promise.init[Fiber[Unit, Any], Any].map { handoff =>
+                    Fiber.initUnscoped(handoff.get.map(body)).map { fiber =>
+                        handoff.complete(Result.succeed(fiber)).andThen(fiber.getResult)
+                    }.andThen(Loop.continue)
+                }
+        }
 
     "an interrupt landing while the acquire's last step runs" - {
 
-        // The control: Sync's bracket builds its region as the acquire is applied, so an abandonment
-        // that finds the acquired value has something to release it with.
+        // Sync's bracket builds its region as the acquire is applied, so an abandonment that finds the
+        // acquired value has something to release it with. Reverting `Scope.acquireRelease`'s `ensureMap`
+        // leaves this leaf green, because it exercises a different mechanism; what it guards is that
+        // `Bracket` never grows the window `ensureMap` exists to close.
         "Sync.acquireReleaseWith still releases what the acquire produced" in {
+            val rounds = 200
             for
                 acquired <- AtomicInt.init(0)
                 released <- AtomicInt.init(0)
-                res <- selfInterrupting { self =>
+                _ <- selfInterrupting(rounds) { self =>
                     Sync.acquireReleaseWith {
                         Sync.defer {
                             // Unsafe: the interrupt has to be requested from inside the acquire, before it
-                            // returns, which is not an effectful position, and the count has to be taken in
-                            // the same node so it reports the acquire producing a value.
+                            // returns, which is not an effectful position.
                             import AllowUnsafe.embrace.danger
                             discard(self.unsafe.interrupt())
-                            discard(acquired.unsafe.incrementAndGet())
-                            "token"
-                        }
+                        }.andThen(acquired.incrementAndGet)
                     }(_ => released.incrementAndGet.unit)(_ => Sync.defer(()))
                 }
-                _ <- assertEventually(released.get.map(_ == 1))
-                a <- acquired.get
-                r <- released.get
-            yield
-                assert(res.isPanic, s"$res")
-                assert(a == 1)
-                assert(r == 1, s"acquired $a, released $r: the value the acquire produced was never released")
+                _   <- assertEventually(Kyo.zip(acquired.get, released.get).map((a, r) => a == r))
+                acq <- acquired.get
+                rel <- released.get
+            yield assert(acq == rel && acq > 0, s"$acq acquires ran to their end and $rel of them were released")
             end for
         }
 
-        "Scope.acquireRelease releases what the acquire produced" in {
+        // `Scope.acquire` is `acquireRelease(resource)(_.close())`, so what it adds is the close path: the
+        // release the caller never wrote. An interrupt in this window leaves a handle open with nobody
+        // holding it, which is the file or socket the whole registration exists for.
+        "Scope.acquire closes the handle it opened" in {
+            val rounds = 200
+            val opened = new JAtomicInteger(0)
+            val closed = new JAtomicInteger(0)
             for
-                acquired <- AtomicInt.init(0)
-                released <- AtomicInt.init(0)
-                res <- selfInterrupting { self =>
+                _ <- selfInterrupting(rounds) { self =>
                     Scope.run {
-                        Scope.acquireRelease {
+                        Scope.acquire {
                             Sync.defer {
                                 // Unsafe: see the leaf above.
                                 import AllowUnsafe.embrace.danger
                                 discard(self.unsafe.interrupt())
-                                discard(acquired.unsafe.incrementAndGet())
-                                "token"
-                            }
-                        }(_ => released.incrementAndGet.unit).andThen(Sync.defer(()))
-                    }
-                }
-                _ <- assertEventually(released.get.map(_ == 1))
-                a <- acquired.get
-                r <- released.get
-            yield
-                assert(res.isPanic, s"$res")
-                assert(a == 1)
-                assert(r == 1, s"acquired $a, released $r: the value the acquire produced was never released")
-            end for
-        }
-
-        "Scope.acquire closes the handle it opened" in {
-            val handle = new Handle
-            for
-                res <- selfInterrupting { self =>
-                    Scope.run {
-                        Scope.acquire {
-                            Sync.defer {
-                                // Unsafe: see the first leaf in this block.
-                                import AllowUnsafe.embrace.danger
-                                discard(self.unsafe.interrupt())
-                                handle
-                            }
+                            }.andThen(Sync.defer {
+                                discard(opened.incrementAndGet())
+                                new Handle(closed)
+                            })
                         }.andThen(Sync.defer(()))
                     }
                 }
-                _ <- assertEventually(Sync.defer(handle.isClosed))
-            yield
-                assert(res.isPanic, s"$res")
-                assert(handle.isClosed, "the opened handle was never closed")
+                _ <- assertEventually(Sync.defer(opened.get() == closed.get()))
+                o <- Sync.defer(opened.get())
+                c <- Sync.defer(closed.get())
+            yield assert(o == c && o > 0, s"$o handles were opened and $c of them were closed")
             end for
         }
     }
