@@ -78,16 +78,13 @@ object Sync:
     def acquireReleaseWith[A, S1](acquire: => A < (Sync & S1))(
         release: (A, Result[Any, Any]) => Any < (Sync & Abort[Throwable])
     )[B, E, S2](use: A => B < (Abort[E] & S2))(using ConcreteTag[E], Frame): B < (Sync & S1 & Abort[E] & S2) =
-        // the one bracket in this file, which every other ensure and acquireReleaseWith lands on. The
-        // kernel bracket owns the exactly-once guarantee and tells the release how the extent ended: the
-        // failure an unwind carried through it, the signal that the remainder holding it was discarded,
-        // or Absent for an ending that ran to completion. An abort is none of those to the kernel, which
-        // does not know Abort, so the use runs under its own Abort region and this method routes the
-        // failure to the release itself, raising it again past the bracket, typed as it came.
+        // The one bracket in this file, which every other ensure and acquireReleaseWith lands on. The kernel
+        // bracket owns the exactly-once guarantee and reports how the extent ended. An abort is none of the
+        // endings it knows, so the use runs under its own Abort region and the failure is routed to the
+        // release here, then raised again past the bracket, typed as it came.
         //
-        // First failure wins, because a handler that replays ends the extent once per resumption: a
-        // branch that aborted must not be overwritten by a later branch that succeeded, or a release
-        // that commits on success would commit over it.
+        // First failure wins: a handler that replays ends the extent once per resumption, and a branch that
+        // aborted must not be overwritten by a later one that succeeded.
         Sync.Unsafe.defer {
             val aborted = AtomicRef.Unsafe.init[Maybe[Result.Error[Any]]](Absent)(using AllowUnsafe.embrace.danger)
             // Unsafe: the kernel's release is synchronous, so the effectful release runs to completion here,

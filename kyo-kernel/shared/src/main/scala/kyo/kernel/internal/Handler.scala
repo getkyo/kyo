@@ -83,7 +83,6 @@ end Handler
         override private[kernel] def bound(ctx: Context, state: Any): Context = ctx.mask(tag)
         override private[kernel] def unbound(ctx: Context): Context           = ctx.unbind
 
-        // TODO why isn't this in Eval?
         private[kyo] def answering[X](operation: X < E, next: Arrow[X, A, E & S], kyo: Pending[?, ?], stack: Stack): A < (E & S) =
             try run(operation, next)
             catch
@@ -97,7 +96,6 @@ end Handler
     abstract class LoopHandler[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends ArrowHandler[Unit, E, A, B, S]:
         def run[X](input: I[X]): Outcome[O[X] < (E & S), B < S] < S
 
-        // TODO why aren't these methods in Eval?
         private[kyo] def running[X](
             input: I[X],
             kyo: Pending.Suspend[?, ?, ?, ?],
@@ -259,7 +257,6 @@ end Handler
         private[kyo] def discharge(state: State, ex: Throwable): Unit = release(state, ex)
     end ContextHandler
 
-    // TODO can we move this to Eval?
     private[kyo] inline def answersLoop[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, C](
         inline effectTag: Tag[E],
         inline handle: [X] => I[X] => Outcome[O[X] < (E & S), B < S] < S,

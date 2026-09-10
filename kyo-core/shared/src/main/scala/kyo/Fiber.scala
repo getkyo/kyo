@@ -768,8 +768,8 @@ object Fiber:
 
     private[kyo] object internal:
 
-        // the public initUnscoped with the internal Keep policy: the async-rowed combinators admit async
-        // isolates, and capture answers at `Remove & S`, so the spawn itself stays Sync
+        // The public initUnscoped with the internal Keep policy: capture answers at `Remove & S`, so the
+        // spawn itself stays Sync.
         def initUnscoped[E, A, S, S2](using
             isolate: Isolate[S, Abort[E] & Async, S2]
         )(
@@ -823,14 +823,12 @@ object Fiber:
                                 result.foldError(_ => (), e => this.interruptDiscard(e))
                         end State
                         val state = new State
-                        // one captured state for all the workers, crossed once per item inside
-                        // workerLoop. The worker task itself spawns crossing nothing: its value is the
-                        // Unit nobody joins, so a task-level crossing would install the state a second
-                        // time around every item's own crossing and produce a transform the completion
-                        // callback discards; each item's isolated value self-installs what it needs. The
-                        // parent is read once and passed to each child, before any of them is scheduled,
-                        // so an interrupt landing while they are still launching cannot orphan one that
-                        // started but was not yet registered
+                        // One captured state for all the workers, crossed once per item inside workerLoop.
+                        // The worker task crosses nothing: its value is the Unit nobody joins, so a
+                        // task-level crossing would install the state a second time and produce a transform
+                        // the completion callback discards. The interrupt parent is read once and passed to
+                        // each child before any is scheduled, so an interrupt arriving while they launch
+                        // cannot orphan one.
                         crossing.capture { captured =>
                             val parent = IOTask.currentTask()
                             @tailrec def loop(i: Int): Unit =
@@ -857,9 +855,8 @@ object Fiber:
             end if
         end foreachIndexed
 
-        // the crossing happens here rather than at the caller: each raced computation goes through the
-        // isolate against one captured state, and its restore travels inside the fiber the way
-        // `initUnscoped` puts it there, so what comes back carries the isolated effects in its own row
+        // The crossing happens here rather than at the caller: each raced computation goes through the
+        // isolate against one captured state, and its restore travels inside the fiber.
         def race[E, A, S, S2](using
             isolate: Isolate[S, Abort[E] & Async, S2]
         )(
@@ -878,10 +875,9 @@ object Fiber:
 
         private object Race:
 
-            // the crossing lands here, at the one place that spawns: one captured state for the whole race,
-            // each computation isolated against it, and its restore inside the fiber the way `initUnscoped`
-            // puts it there. The interrupt parent is read once and passed to each child, before any is
-            // scheduled, so an interrupt arriving while they are still launching cannot orphan one
+            // One captured state for the whole race, each computation isolated against it. The interrupt
+            // parent is read once and passed to each child before any is scheduled, so an interrupt arriving
+            // while they launch cannot orphan one.
             private inline def apply[E, A, S, S2](race: Race[E, A, S2], iterable: Iterable[A < (Abort[E] & Async & S)])(
                 using
                 isolate: Isolate[S, Abort[E] & Async, S2],

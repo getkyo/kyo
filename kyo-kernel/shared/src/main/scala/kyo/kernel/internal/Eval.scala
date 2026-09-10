@@ -80,7 +80,6 @@ import scala.collection.mutable.ArrayBuffer
                                 if !atTop then Debugger.onForeign(kyo, stack.handler(stack.depth - 1))
                                 stack.handler(idx) match
                                     case handler: Handler.ContHandler[IX, OX, EX, C, Y, S2] @unchecked =>
-                                        // TODO how about we move the atTop branching to the called methods?
                                         val entries = if atTop then Stack.Snapshot.empty else dumped(stack, idx, kyo)
                                         val ctx2    = if atTop then ctx else rebound(entries, ctx)
                                         val continuation =
@@ -103,7 +102,6 @@ import scala.collection.mutable.ArrayBuffer
                                         Debugger.onResult(result)
                                         if armed && Safepoint.stopped(slot) then park(result, Arrow.id, Arrow.id)
                                         else loop(result, Arrow.id, Arrow.id, ctx2)
-                                    // TODO are you sure the repeated code for the special atTop case is worth it? size of the loop mehtod is critical for performance
                                     case handler: Handler.LoopHandler[IX, OX, EX, C, Y, S2] @unchecked if atTop =>
                                         val k    = kyo.cont.chain(contA.chain(contB))
                                         val exit = handler.answers(kyo.input, k, armed, slot, kyo.frame)

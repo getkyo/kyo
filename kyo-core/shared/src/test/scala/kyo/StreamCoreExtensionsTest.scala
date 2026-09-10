@@ -1276,11 +1276,10 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
             end for
         }
 
-        // The gate is never opened, so the only thing that can release an element fiber is the consumer
-        // stopping and interrupting it. The count is exactly three and stays exactly three: element 1, the one
-        // the consumer takes, refuses to finish until the other three have acquired, so "the consumer stops"
-        // is always observed with three fibers holding. Without that latch how many had acquired would be a
-        // scheduling accident, and the leaf would have to settle for a weaker claim than the one that matters.
+        // The gate is never opened, so only the consumer stopping and interrupting an element fiber can
+        // release it. Element 1, the one the consumer takes, refuses to finish until the other three have
+        // acquired, so the stop is always observed with exactly three fibers holding rather than however
+        // many the scheduler happened to start.
         "mapPar releases an element's resource when the consumer stops" in {
             for
                 started  <- Latch.init(3)
@@ -1303,10 +1302,9 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
             end for
         }
 
-        // The public peel confines its rest to the callback, so neither reproduction below can be
-        // written against it: the fork is refused where the isolate for the crossing is demanded, and
-        // the hand-off is refused on the row. The internal peel hands out an unconfined rest, and the
-        // test after these two records what that costs.
+        // The public peel confines its rest to the callback, so neither reproduction below compiles against
+        // it: the fork is refused where the crossing's isolate is demanded, and the hand-off on the row. The
+        // internal peel hands out an unconfined rest.
         "the rest of a public peel cannot be forked" in {
             typeCheckFailure(
                 """
@@ -1329,12 +1327,10 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
             )("NoEscape")
         }
 
-        // splitAt hands out a rest whose lifetime is bounded by the scope that peeled it, which is why it is
-        // private[kyo] and splitAtWith is the public form. Carrying the rest past that scope, to another fiber
-        // here, is misuse, and the law that governs it is the bracket's: a scope cannot tell a remainder nobody
-        // will resume from one someone else still intends to resume, so it releases at its own exit. What
-        // matters is that the outcome is safe rather than silent, and it is: exactly one release, and the late
-        // consumer is refused instead of running against a released resource.
+        // splitAt's rest is bounded by the scope that peeled it, which is why it is private[kyo] and
+        // splitAtWith is the public form. Carrying it to another fiber is misuse: a scope cannot tell a
+        // remainder nobody will resume from one someone still intends to resume, so it releases at its own
+        // exit. The outcome is safe rather than silent: one release, and the late consumer is refused.
         "a rest from splitAt carried to another fiber is released at the peeling scope's exit, and consuming it there is refused" in {
             AtomicInt.init(0).map { released =>
                 Latch.init(1).map { entered =>
