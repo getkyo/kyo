@@ -40,7 +40,7 @@ trait Implicits:
                 // rejected as malformed.
                 Nested.nest[A, S](v)
 
-    implicit inline def abortCastUnit[S1, S2](inline v: Unit < S1): Unit < S2 = ${ LiftMacro.abortCastUnitImpl[S1, S2]('v) }
+    implicit inline def abortCastUnit[S1, S2](inline v: Unit < S1): Unit < S2 = ${ CanLiftMacro.abortCastUnitImpl[S1, S2]('v) }
 
     /** Converts a pure single-argument function to an effectful computation. */
     implicit inline def liftPureFunction1[A1, B](inline f: A1 => B)(

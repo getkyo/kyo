@@ -38,10 +38,16 @@ To fix this, you can:
 """)
 opaque type CanLift[A] = Null
 
-// Diverges from main: main derives every CanLift instance through this macro and produces
-// `CanLift.unsafe.bypass`. Here the plain givens in CanLift cover the common case and only
-// singletons reach the macro, so it also rejects nested effect computations and there is no
-// bypass to produce.
+// The macros that police the lift boundary: the singleton check that derives a `CanLift`, and the
+// guidance raised when a Unit computation is lifted to the wrong row. Both reject a lift and explain
+// why, and each has one caller, so they sit together rather than in an object apiece.
+//
+// Diverges from main twice over. Main derives every CanLift instance through this macro and produces
+// `CanLift.unsafe.bypass`; here the plain givens in CanLift cover the common case, only singletons
+// reach the macro, so it also rejects nested effect computations and there is no bypass to produce.
+// And main's LiftMacro, in its own file, IS the lift; here the lift is the plain implicit in
+// Implicits, which left that object holding the issue-903 abort alone, under a name that no longer
+// described it.
 object CanLiftMacro:
     inline def checkSingleton[A]: CanLift[A] = ${ liftImpl[A] }
 
@@ -59,6 +65,17 @@ object CanLiftMacro:
         '{ null.asInstanceOf[CanLift[A]] }
     end liftImpl
 
+    def abortCastUnitImpl[S1: Type, S2: Type](v: Expr[Unit < S1])(using quotes: Quotes): Expr[Unit < S2] =
+        import quotes.reflect.*
+        val source = TypeRepr.of[S1].show
+        report.errorAndAbort(
+            s"""Cannot lift `Unit < ${source}` to the expected type (`Unit < ?`).
+               |This may be due to an effect type mismatch.
+               |Consider removing or adjusting the type constraint on the left-hand side.
+               |More info : https://github.com/getkyo/kyo/issues/903""".stripMargin
+        )
+    end abortCastUnitImpl
+
 end CanLiftMacro
 
 object CanLift:
@@ -74,21 +91,3 @@ object CanLift:
 
     inline given CanLift[Nothing] = null
 end CanLift
-
-// Diverges from main: main's LiftMacro (its own file, kyo/kernel/internal/LiftMacro.scala) is the
-// lift itself; here the lift is the plain implicit in Implicits and this macro only produces the
-// issue-903 guidance when a Unit computation with the wrong row is lifted.
-object LiftMacro:
-
-    def abortCastUnitImpl[S1: Type, S2: Type](v: Expr[Unit < S1])(using quotes: Quotes): Expr[Unit < S2] =
-        import quotes.reflect.*
-        val source = TypeRepr.of[S1].show
-        report.errorAndAbort(
-            s"""Cannot lift `Unit < ${source}` to the expected type (`Unit < ?`).
-               |This may be due to an effect type mismatch.
-               |Consider removing or adjusting the type constraint on the left-hand side.
-               |More info : https://github.com/getkyo/kyo/issues/903""".stripMargin
-        )
-    end abortCastUnitImpl
-
-end LiftMacro

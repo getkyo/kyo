@@ -1,6 +1,6 @@
 package kyo.kernel.internal
 
-import kyo.internal.CompileTimeFlag
+import kyo.CompileTimeFlag
 
 abstract private[kyo] class Debugger:
 

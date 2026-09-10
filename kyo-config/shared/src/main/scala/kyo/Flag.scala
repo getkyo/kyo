@@ -54,7 +54,7 @@ abstract class Flag[A] private[kyo] (final val default: A, final val validate: A
     }
 
     /** Environment variable name: flag name with dots replaced by underscores, uppercased. */
-    final val envName: String = name.replace('.', '_').toUpperCase
+    final val envName: String = Flag.envName(name)
 
     // --- Internal ---
 
@@ -234,12 +234,19 @@ object Flag {
         val prop = FlagPlatform.property(name)
         if (prop ne null) reader.parse(name, prop)
         else {
-            val envName = name.replace('.', '_').toUpperCase
-            val env     = FlagPlatform.env(envName)
+            val env = FlagPlatform.env(envName(name))
             if (env ne null) reader.parse(name, env)
             else default
         }
     }
+
+    /** Environment variable name for a flag name: dots become underscores, then uppercased.
+      *
+      * A pure function of the name, with no config source behind it, which is what lets it be shared with
+      * [[kyo.CompileTimeFlag]]: that one runs inside the compiler and cannot go through [[FlagPlatform]],
+      * whose JS implementation reads `process` from the JavaScript global scope.
+      */
+    private[kyo] def envName(name: String): String = name.replace('.', '_').toUpperCase
 
     /** Returns a formatted table string with columns: Name, Type, Value/Expression, Default, Source. */
     def dump(): String = {
