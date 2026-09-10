@@ -29,13 +29,15 @@ class KyoTest extends Test:
     // Inline because Kyo.lift's match on the lifted type cannot reduce for an abstract A.
     inline def widen[A](inline v: A): A < Any = Kyo.lift(v)
 
-    // Pins the rendering: a suspension is Kyo(<tag>, <site>) and each map nests it in a Defer node.
+    // Pins the rendering: a suspension is Kyo(<tag>, <site>) and each map nests it in a Defer node. The sites
+    // embed file:line:col, so adding or removing a line anywhere above breaks these strings and they have to
+    // be re-read from the failure rather than recomputed.
     "toString" in {
         assert(TestEffect1(1).map(_ + 1).toString ==
-            "Defer(Kyo(kyo.KyoTest.TestEffect1, apply.suspend(KyoTest.scala:16:37)), this(?.map(KyoTest.scala:40:41)), Id)")
+            "Defer(Kyo(kyo.KyoTest.TestEffect1, apply.suspend(KyoTest.scala:14:37)), this(?.map(KyoTest.scala:36:41)), Id)")
         assert(
             TestEffect1(1).map(_ + 1).map(_ + 2).toString ==
-                "Defer(Defer(Kyo(kyo.KyoTest.TestEffect1, apply.suspend(KyoTest.scala:16:37)), this(?.map(KyoTest.scala:43:38)), Id), this(?.map(KyoTest.scala:43:49)), Id)"
+                "Defer(Defer(Kyo(kyo.KyoTest.TestEffect1, apply.suspend(KyoTest.scala:14:37)), this(?.map(KyoTest.scala:39:38)), Id), this(?.map(KyoTest.scala:39:49)), Id)"
         )
     }
 
