@@ -85,8 +85,7 @@ class ChoiceTest extends kyo.test.Test[Any]:
     }
 
     "large number of suspensions".notNative.notWasm in {
-        // #208: the evaluator runs suspensions on its own loop rather than the call stack, so the depth
-        // below does not overflow.
+        // #208: suspensions run on the evaluator's loop, not the call stack, so this depth does not overflow.
         var v = Choice.eval(1)
         for _ <- 0 until 100000 do
             v = v.map(_ => Choice.eval(1))
@@ -350,8 +349,7 @@ class ChoiceTest extends kyo.test.Test[Any]:
                     }
                 }((_, _) => log = log.append("release"))
             assert(v.eval == Chunk(1, 2, 3))
-            // The release belongs to an extent the region sits inside, so it is not part of what the handler
-            // replays: every branch runs against the same live resource.
+            // The release belongs to an extent outside the region, so every branch runs against the same live resource.
             assert(log == Chunk("branch1", "branch2", "branch3", "release"))
         }
 
@@ -363,8 +361,8 @@ class ChoiceTest extends kyo.test.Test[Any]:
                         Choice.eval(1, 2, 3).map(n => (n, released))
                     }
                 }((_, _) => released = true)
-            // seeing the release already run from inside a branch is the failure this pins: it would mean
-            // the extent ended on the first branch and the later ones ran against a spent resource
+            // a branch seeing the release already run would mean the extent ended on the first branch and
+            // the later ones ran against a spent resource
             assert(v.eval == Chunk((1, false), (2, false), (3, false)))
             assert(released)
         }
@@ -379,8 +377,7 @@ class ChoiceTest extends kyo.test.Test[Any]:
                 yield r
             }
             assert(v.eval == Chunk(10, 20, 30))
-            // each branch acquires its own, so replaying the continuation mints a fresh resource rather
-            // than re-entering one a previous branch already released
+            // each branch acquires its own: replaying the continuation mints a fresh resource rather than re-entering a released one
             assert(opens == 3)
             assert(closes == 3)
         }
@@ -398,10 +395,9 @@ class ChoiceTest extends kyo.test.Test[Any]:
         }
 
         "a bracket inside the streamed choice is held across every branch and released once" in {
-            // runStream pulls each branch through a handleFirst region and continues it in its own loop, so
-            // the bracket travels with each branch's remainder and every branch is that remainder applied
-            // again. The region declares both escaping and repeated, so the bracket is held across all of
-            // them and discharged once by the scope below.
+            // runStream pulls each branch through a handleFirst region and continues it in its own loop, so the
+            // bracket travels with each branch's remainder. The region declares escaping and repeated, so the
+            // bracket is held across every branch and discharged once by the scope below.
             var log = Chunk.empty[String]
             val v =
                 Choice.runStream {
@@ -416,9 +412,8 @@ class ChoiceTest extends kyo.test.Test[Any]:
         }
 
         "a bracket around the streamed choice releases once after every branch" in {
-            // the bracket sits below the region that replays, so it is not part of any branch's
-            // remainder: every branch runs against the live resource and the release runs once when the
-            // stream body completes
+            // the bracket sits below the region that replays, so it is not part of any branch's remainder:
+            // every branch runs against the live resource and the release runs once when the stream body ends
             var log = Chunk.empty[String]
             val v =
                 Stream {

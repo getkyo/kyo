@@ -12,15 +12,13 @@ import scala.annotation.tailrec
 
 sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2] with Task:
 
-    /** This fiber's computation, already wrapped in the boundary below.
-      *
-      * A member rather than a function, so the spawn's captures live on the task instead of a closure beside
-      * it. Each spawn passes the body itself, never a step composed onto it, so nothing stands between the
-      * region and the body's first operation.
+    /** This fiber's computation, wrapped in the boundary below with nothing composed between the region and
+      * the body's first operation. A member rather than a function, so the spawn's captures live on the task
+      * instead of a closure beside it.
       */
     protected def prepared: Unit < Any
 
-    /** The remainder of this fiber, prepared and wrapped in the boundary below.
+    /** The remainder of this fiber.
       *
       * Filled by `start`, not here: `prepared` reads subclass fields assigned after this constructor runs.
       * Built once rather than per slice, since the region carries what a handler accumulates.
@@ -38,12 +36,10 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
       *
       * Invariant: `Idle` is the only state another thread may take this task out of; every other transition
       * is made by the owner. Only the two claims out of `Idle` (`run`, `onInterrupted`) are contended, and
-      * both go through `casStatus`. This makes a redundant schedule free, so an interrupt need not know
+      * both go through `casStatus`, which makes a redundant schedule free: an interrupt need not know
       * whether a slice is in flight.
       *
-      * A union rather than an enum: both carrying cases hold an already-allocated reference, and enum cases
-      * would add an allocation per slice. `AnyRef` rather than `Status` because the platform handle must
-      * name the field's erased type.
+      * `AnyRef` rather than `Status` because the platform handle must name the field's erased type.
       */
     @volatile private var status: AnyRef = Idle
 
@@ -83,9 +79,9 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
         //
         // Erasure-forced: constructors are `Any` and the union tag is cast onto the region. A region is
         // contravariant in its input constructor, so one standing under two families with unrelated inputs
-        // could only be `Nothing`, which type checks and then leaves the clause holding an uninhabited type.
-        // The cast is confined to the tag, unchanged, so the region answers `Async.Join` and `Abort` and
-        // nothing else; the match below recovers which one arrived.
+        // could only be `Nothing`, leaving the clause holding an uninhabited type. The cast is confined to
+        // the tag, so the region answers those two families and nothing else; the match below recovers which
+        // one arrived.
         //
         // `Abort[E] & Async` rides in the region's `S` and is dropped from the row after: a row is
         // contravariant, while `Abort[E]` is an `Abort[Nothing]` and `Async` is opaque outside its package.
@@ -96,13 +92,12 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
             [C] =>
                 (input, cont) =>
                     // one clause for two families, discriminated by what the operation carries: an abort's
-                    // input is the error it is failing with, a join's is the thunk that hands over the
-                    // promise once this task is linked to it
+                    // input is its error, a join's is the thunk that hands over the promise
                     input match
                         case error: Result.Error[E] @unchecked =>
                             // Answering without applying the continuation discards the rest of the
-                            // computation, so no stop is needed. The answer itself is never read: the done
-                            // lane below checks whether this task is still pending, and this arm settled it.
+                            // computation, so no stop is needed. The answer is never read: the done lane
+                            // below checks whether this task is still pending, and this arm settled it.
                             completeDiscard(error)
                             null.asInstanceOf[P]
                         case joinInput: Async.JoinInput[C] @unchecked =>
@@ -120,14 +115,13 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
                                 case Absent =>
                                     // Waiting. The operation is left unanswered and raised again behind a
                                     // deferral, with a stop requested, so the eval parks in front of it.
-                                    // Answering without applying the continuation would tell the region
-                                    // the computation is over, draining finalizers a resumption still
-                                    // needs. Parking is the only exit that carries owed releases out with
-                                    // the remainder.
+                                    // Answering without applying the continuation would tell the region the
+                                    // computation is over, draining finalizers a resumption still needs:
+                                    // parking is the only exit that carries owed releases with the remainder.
                                     //
                                     // The wakeup is armed by `run`, not here: the remainder does not exist
-                                    // until the eval finishes unwinding, and arming early would let a
-                                    // second worker restore the same park and re-enter a spent scope.
+                                    // until the eval finishes unwinding, and arming early would let a second
+                                    // worker restore the same park and re-enter a spent scope.
                                     parkOn(promise, joinInput.frame)
                                     discard(Safepoint.stop(Thread.currentThread(), this))
                                     // Under the join's own frame, carried by the input: a clause is never
@@ -179,12 +173,11 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
         stopSlice()
         Scheduler.get.notifyInterrupt()
         // A slice in flight observes the interrupt through the stop above. One that is not running has
-        // nothing to stop, and the promise that would have resumed it may never see this interrupt, while
-        // the park it holds carries releases only a resumption can run. So make it runnable and let `run`
-        // decide, keeping abandonment at the single site that owns the task.
-        //
-        // Unconditional, because the claim is what makes it safe: a schedule landing during a slice loses
-        // the claim and returns. Reading the status here to decide would be the same race in disguise.
+        // nothing to stop, the promise that would have resumed it may never see this interrupt, and the park
+        // it holds carries releases only a resumption can run. So make it runnable and let `run` decide,
+        // keeping abandonment at the single site that owns the task. Unconditional: a schedule landing
+        // during a slice loses the claim and returns, and reading the status here would be the same race in
+        // disguise.
         Scheduler.get.schedule(this)
     end onInterrupted
 
@@ -194,8 +187,7 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
     /** Where this fiber currently stands, as one rendered frame, or empty where there is none.
       *
       * A diagnostic read from other threads while this one runs, so it touches only fields already in hand
-      * and never anything the evaluator would have run. Internal frames are dropped by identity so the
-      * kernel's own plumbing never surfaces.
+      * and never anything the evaluator would have run.
       */
     final override def fiberTrace(): String =
         try
@@ -206,8 +198,7 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
 
     /** The frame of the operation this fiber stands at, where it stands at one.
       *
-      * Walks the regions, the park and the deferrals in front of the operation. A deferral's payload is a
-      * value rather than a body, so this runs none of the fiber's computation.
+      * A deferral's payload is a value rather than a body, so this runs none of the fiber's computation.
       */
     private def currentFrame(v: Unit < Any): Maybe[Frame] =
         @tailrec def loop(x: Any, fuel: Int): Maybe[Frame] =
@@ -248,8 +239,8 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
             // Owned by somebody else, who finishes or releases it, so dropping this entry loses nothing.
             Task.Done
         else if !isPending() then
-            // Completed between slices by something that did not interrupt it, so no claim was made on its
-            // behalf and this one is what releases the remainder.
+            // Completed between slices without an interrupt, so no claim was made on its behalf and this
+            // one releases the remainder.
             abandon()
             Task.Done
         else
@@ -283,11 +274,10 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
                         cleared
             status match
                 case promise: IOPromise[?, ?] =>
-                    // `next` is the park, carrying the regions above it and the releases they owe. Kept
-                    // uncomposed so `abandon` can find it.
-                    //
-                    // Order matters: store the remainder, clear the status, then arm. Arming publishes the
-                    // task, so everything a resuming worker reads must already be written.
+                    // `next` is the park, carrying the regions above it and the releases they owe, kept
+                    // uncomposed so `abandon` can find it. Order matters: store the remainder, clear the
+                    // status, then arm. Arming publishes the task, so everything a resuming worker reads
+                    // must already be written.
                     curr = next
                     // Read out before the wakeup closes over it; see `parkOn`.
                     val frame = joinFrame
@@ -324,22 +314,20 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
 
     /** Releases what an abandoned remainder still holds, and links what it was about to wait on.
       *
-      * A parked computation carries its owed releases rather than running them. This fiber will not resume,
-      * so they are run here.
+      * A parked computation carries its owed releases rather than running them, and this fiber will not
+      * resume, so they are run here. The link comes first: an interrupt arriving before the fiber reached
+      * its join finds a remainder standing in front of one, with the promise behind it not yet tied to this
+      * fiber.
       *
-      * The link comes first: an interrupt arriving before the fiber reached its join finds a remainder
-      * standing in front of one, and the promise behind it is not yet tied to this fiber.
-      *
-      * Only reached by a thread owning the task, which is what makes the release happen once. `Done` keeps a
-      * later schedule from resuming what was just released.
+      * Only reached by a thread owning the task, so the release happens once. `Done` keeps a later schedule
+      * from resuming what was just released.
       */
     private def abandon(): Unit =
         val remainder = curr
         curr = cleared
         status = Done
         if !isNull(remainder) then
-            // Links the promise this fiber was about to wait on to this interrupt, rather than leaving it
-            // pending. Invoking the input registers the link, the same call the boundary makes.
+            // Invoking the input registers the link, the same call the boundary makes.
             Eval.release(remainder, new KyoException("fiber abandoned")(using Frame.internal), Tag[Async.Join]) {
                 [C] => input => discard(input(this))
             }
@@ -370,9 +358,8 @@ object IOTask:
 
     /** Compare-and-set on a task's `status` field, without an atomic wrapper around it.
       *
-      * The same shape as `IOPromise.StateHandle` and for the same reason: a task is allocated per fiber, and
-      * a field the platform updates in place costs nothing beside it, where a boxed atomic would be a second
-      * object per fiber.
+      * The same shape as `IOPromise.StateHandle` and for the same reason: a boxed atomic would be a second
+      * object per fiber, where a field the platform updates in place costs nothing.
       */
     abstract class StatusHandle:
         def compareAndSet(task: IOTask[?, ?, ?], curr: Status, next: Status): Boolean
@@ -386,10 +373,8 @@ object IOTask:
 
     /** The fiber running on this thread, or null where none is.
       *
-      * The boundary needs the fiber whose slice it is running in: to register an interrupt cascade on it, to
-      * tell it what it is waiting on, and to complete it. The boundary is built before the fiber exists, so
-      * it asks here rather than closing over one. It is also what a spawning fiber reads to link its
-      * children.
+      * The boundary is built before the fiber exists, so it asks here rather than closing over one, and a
+      * spawning fiber reads it to link its children.
       */
     private[kyo] val current: ThreadLocal[IOTask[?, ?, ?]] = new ThreadLocal[IOTask[?, ?, ?]]
 
@@ -415,10 +400,8 @@ object IOTask:
             runtime
         )
 
-    /** Spawns a fiber detached from its caller, crossing nothing.
-      *
-      * What the caller hands over carries no effects of its own, so there is no state to capture and nothing
-      * to restore: the body is prepared as written and the promise answers with its value.
+    /** Spawns a fiber detached from its caller, crossing nothing: what it hands over carries no effects of
+      * its own, so there is no state to capture and nothing to restore.
       */
     def detached[E, A](
         body: A < (Abort[E] & Async),
@@ -434,7 +417,7 @@ object IOTask:
         )
 
     private def start[E, A, S2](task: IOTask[E, A, S2], parent: Maybe[IOPromise[?, ?]], runtime: Int): IOTask[E, A, S2] =
-        // after the subclass is constructed, so `prepare` reads fields that are assigned
+        // after the subclass is constructed, so `prepared` reads fields that are assigned
         task.install()
         task.addRuntime(runtime)
         parent.foreach(p => p.interrupts(task))

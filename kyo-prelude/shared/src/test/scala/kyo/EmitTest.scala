@@ -698,8 +698,7 @@ class EmitTest extends kyo.test.Test[Any]:
     }
 
     "runWhile stops the emitter when the predicate is false" - {
-        // The side effect of each `valueWith` runs in the emitter's continuation, so a predicate that
-        // refuses the very first value leaves none of them running: the continuation is never resumed.
+        // Each `valueWith` side effect runs in the emitter's cont, so a predicate that refuses the first value never resumes it.
         "the emitter is not continued after the predicate returned false" in {
             var emitted = 0
             val emitter =

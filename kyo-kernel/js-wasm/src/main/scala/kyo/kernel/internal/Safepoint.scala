@@ -91,9 +91,8 @@ object Safepoint:
     def deadline(d: Long): Unit =
         armedDeadline = d
 
-    // A stop stands until the slice boundary consumes it. Single-threaded, so the only slice that can be
-    // running is the caller's: a stop is always addressed to it, and there is no slice record to check it
-    // against, which is why beginSlice and endSlice carry nothing here.
+    // A stop stands until the slice boundary consumes it. Single-threaded, so the only running slice is the
+    // caller's: a stop is always addressed to it, and beginSlice and endSlice carry nothing here.
     private var stopRequested: Boolean = false
 
     private[kyo] def stop(thread: Thread): Boolean = stop(thread, null)

@@ -378,9 +378,8 @@ class ArrowEffectTest extends Test:
 
         def flatten[A, B, C](v: A < B < C): A < (B & C) = v.map(a => a)
 
-        // Nested is a plain box rather than a suspension node, so a handler's settled path unnests it and
-        // the done arm re-boxes. The wrapper read back is a fresh instance, so these assert on the
-        // computation it carries.
+        // Nested is a plain box rather than a suspension node, so a handler's settled path unnests it and the
+        // done arm re-boxes. The wrapper read back is a fresh instance, so these assert on what it carries.
 
         "not handle Nested" - {
 
@@ -421,8 +420,7 @@ class ArrowEffectTest extends Test:
 
                 val flattened                           = flatten(result)
                 val finalResult: Int < NestedTestEffect = handle(flattened)
-                // The region is a node, so its answer is observable at eval rather than evalNow, and the
-                // row it leaves standing is closed to read it.
+                // The region is a node, so its answer is observable at eval rather than evalNow.
                 assert(ArrowEffect.handleCont(nestedTag, finalResult)([C] => (input, cont) => cont(input)).eval == 50)
             }
         }
@@ -523,8 +521,7 @@ class ArrowEffectTest extends Test:
 
         "handlePartial on Nested" - {
 
-            // Eval.partial takes a computation with no effects left in the row, so the region is closed
-            // before the partial evaluation.
+            // Eval.partial takes a computation with no effects left in the row, so the region closes first.
             def handle[A](v: A < NestedTestEffect): A < Any =
                 Eval.partial(
                     ArrowEffect.handleCont(nestedTag, v)([C] => (input, cont) => cont(input * 10), a => Kyo.lift(a))
@@ -2317,10 +2314,9 @@ class ArrowEffectTest extends Test:
             }
         }
 
-        // Why the kernel asks `kyo.IsFatal` rather than `scala.util.control.NonFatal`: Scala calls a
-        // `LinkageError` fatal, which would send an ordinary application bug out of the fiber and end the
-        // scheduler worker along with every release the computation owed. Here it is a value the recovery
-        // answers.
+        // The kernel asks `kyo.IsFatal` rather than `scala.util.control.NonFatal`: Scala calls a `LinkageError`
+        // fatal, which would send an ordinary application bug out of the fiber and end the scheduler worker
+        // along with every release the computation owed.
         "a LinkageError is recovered, because kyo does not call it fatal" in {
             val v = ask.map(_ => (throw new LinkageError("not fatal here")): Int)
             val r = ArrowEffect.handleCont(Tag[Ask], v)([X] => (_, cont) => cont(0), a => a, _ => Maybe(-1))
@@ -3304,9 +3300,9 @@ class ArrowEffectTest extends Test:
         }
     }
 
-    // A clause's continuation is confined to the region: its row carries `Region.NoEscape`, which no
-    // handler accepts and no Isolate can be derived for. Crossing to another fiber is an Isolate, so the
-    // gate is pinned on a stand-in for a fork rather than a real one.
+    // A clause's continuation is confined to the region: its row carries `Region.NoEscape`, which no handler
+    // accepts and no Isolate can be derived for. Crossing to another fiber is an Isolate, so the gate is pinned
+    // on a stand-in for a fork rather than a real one.
     "no escape" - {
         def cross[A, S, S2](v: A < S)(using Isolate[S, Any, S2]): A < S = v
 
@@ -3340,8 +3336,7 @@ class ArrowEffectTest extends Test:
         }
 
         "a row without the marker gets the ordinary isolate error, not the refusal" in {
-            // outside a clause: inside one, the expected type puts the marker on anything the clause
-            // builds, so every row there carries it
+            // outside a clause: inside one the expected type puts the marker on every row the clause builds
             typeCheckFailure("cross(ask)")("This operation requires isolation for effects")
         }
 
@@ -3369,8 +3364,8 @@ class ArrowEffectTest extends Test:
         }
 
         "a direct summon of the marker's isolate does not compile" in {
-            // an inline given that aborts is reported as a failed search rather than with its own text,
-            // so what a direct summon shows is the marker in the type it could not find an instance for
+            // an inline given that aborts is reported as a failed search rather than with its own text, so a
+            // direct summon shows the marker in the type it could not find an instance for
             typeCheckFailure(
                 """
                 ArrowEffect.handleCont(Tag[Ask], ask)(

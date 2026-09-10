@@ -133,8 +133,8 @@ private[kernel] object EffectTrace:
         private def full: Boolean = size == out.length
 
         def frame(f: Frame): Unit =
-            // a null frame is skipped rather than left to fail inside the builder: on the JVM that
-            // failure is swallowed as a non-fatal, on JS it is an undefined-behavior error that escapes
+            // A null frame is skipped rather than left to fail in the builder: the JVM swallows that
+            // failure as non-fatal, JS raises an undefined-behavior error that escapes.
             if (f ne null) && (f ne Frame.internal) && (f ne last) then
                 if full then dropped += 1
                 else

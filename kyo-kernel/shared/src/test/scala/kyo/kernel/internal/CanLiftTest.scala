@@ -84,8 +84,7 @@ class CanLiftTest extends Test:
         // typeCheckFailure already counts as an assertion
     }
 
-    // Only singletons reach CanLiftMacro, so the case-object and module-object paths need their own
-    // coverage.
+    // Only singletons reach CanLiftMacro, so the case-object and module-object paths need their own coverage.
     "case objects lift without reaching the macro" in {
         implicitly[CanLift[Maybe.Absent.type]]
         succeed

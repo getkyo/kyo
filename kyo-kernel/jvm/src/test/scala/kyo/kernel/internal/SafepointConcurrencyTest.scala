@@ -26,16 +26,11 @@ class SafepointConcurrencyTest extends AnyFreeSpec:
     sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())
 
-    // Slot is an opaque Int, so the identity checks in the ported cases below need multiversal
-    // equality for it.
+    // Slot is an opaque Int, so the identity checks below need multiversal equality for it.
     private given CanEqual[Safepoint.Slot, Safepoint.Slot] = CanEqual.derived
 
-    // Ported from main's kyo/kernel/internal/SafepointTest.scala. Main's Safepoint was an implicit
-    // per-evaluation value and its suite pinned that a computation never carries one across a
-    // thread and never gets a fresh one within a thread. Here Safepoint is the evaluator's
-    // per-thread slot, so the same property is which slot a thread resolves. Main's remaining
-    // cases are omitted by design: interceptors, Safepoint.ensure and the depth/interceptor bits
-    // of Safepoint.State are gone from this kernel.
+    // Safepoint is the evaluator's per-thread slot: these cases pin which slot a thread resolves,
+    // never carrying one across threads and never taking a fresh one within a thread.
     "does not allow capturing across threads" in {
         val slot                             = Safepoint.get()
         @volatile var forked: Safepoint.Slot = slot

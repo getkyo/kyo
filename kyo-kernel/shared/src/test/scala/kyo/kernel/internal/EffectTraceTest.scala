@@ -198,8 +198,7 @@ class EffectTraceTest extends AnyFreeSpec:
         loop(depth, innerStep(ask))
     end deepChain
 
-    // Ported from main's TraceTest ("repeated frames"): a chain whose every step comes from one
-    // call site, so the frames the walk meets are all the same instance.
+    // A chain whose every step comes from one call site, so the frames the walk meets are all the same instance.
     def repeatedChain(depth: Int): Int < Ask =
         @tailrec def loop(i: Int, acc: Int < Ask): Int < Ask =
             if i == 0 then acc
@@ -398,24 +397,21 @@ class EffectTraceTest extends AnyFreeSpec:
         assert(ex.getSuppressed.count(_.isInstanceOf[EffectTrace]) == 1)
     }
 
-    // Ported from main's kyo/kernel/internal/TraceTest.scala. Main pinned these on Trace, a ring of
-    // frames rendered by Trace.render; here the same behaviors belong to the EffectTrace walk and
-    // its carrier message, so the cases keep main's subject and name this kernel's API.
     "repeated frames" in {
         val ex  = intercept[Boom](runAsk(repeatedChain(200))(1).eval)
         val ms  = methods(ex)
         val els = carrier(ex).get.elements.toList.map(_.toString)
         assert(ms.contains("innerStep"))
         assert(ms.contains("stepA"))
-        // A run of 200 steps from one call site folds away, so it never fills the budget the same
-        // depth of alternating steps does (the cap group above pins that one at 64).
+        // A run of steps from one call site folds away, so it never fills the budget the same depth of
+        // alternating steps does (the cap group above pins that one at 64).
         assert(els.length < 64)
         assert(els.sliding(2).forall(w => w.length < 2 || w(0) != w(1)))
     }
 
     "counts only consecutive repeats, not all occurrences" in {
-        // stepA, stepB, stepA is two runs of stepA, one frame each, never one run of two: only
-        // adjacent repeats fold, so every walk of the chain records stepA twice per stepB once.
+        // stepA, stepB, stepA is two runs of stepA, one frame each, never one run of two: only adjacent
+        // repeats fold, so the walk records stepA twice per stepB once.
         val ex = intercept[Boom](runAsk(stepA(stepB(stepA(innerStep(ask)))))(1).eval)
         val ms = methods(ex)
         assert(ms.count(_ == "stepB") > 0)

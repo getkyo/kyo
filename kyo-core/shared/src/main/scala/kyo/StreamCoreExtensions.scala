@@ -10,10 +10,9 @@ object StreamCoreExtensions:
 
     /** Emits what the producers put on `channel`, until one of them signals the end.
       *
-      * Every caller pairs this with `Sync.ensure(producers.interrupt)`, because the consumer is free to stop
-      * before the producers do, a `take` downstream being the ordinary way, and closing the channel does not
-      * reach a producer parked inside a source stream's own step. Without the interrupt such a producer stays
-      * parked for as long as the program runs, holding whatever its source acquired.
+      * Every caller must pair this with `Sync.ensure(producers.interrupt)`: the consumer can stop first (a
+      * downstream `take` is the ordinary way), and closing the channel does not reach a producer parked inside a
+      * source stream's own step, which then stays parked for the life of the program holding what it acquired.
       */
     private def emitMaybeChunksFromChannel[V](channel: Channel[Maybe[Chunk[V]]])(using Tag[Emit[Chunk[V]]], Frame) =
         val emit = Loop.foreach:
@@ -456,11 +455,9 @@ object StreamCoreExtensions:
                                             case Result.Failure(e) =>
                                                 // Not Closed, must be E
                                                 fiberError.set(Present(Right(e)))
-                                // The consumer's exit is where the element fibers have to be stopped. Closing the
-                                // channel alone discards whatever is still in it, leaving those fibers running with
-                                // everything they hold, so the drain-and-interrupt the background's error paths
-                                // already use runs here too. It also stops the background forking elements nobody
-                                // will consume, which is why fewer of them acquire at all.
+                                // The consumer's exit is where the element fibers have to be stopped: closing the
+                                // channel alone discards whatever is still in it and leaves those fibers running
+                                // with everything they hold, so the drain-and-interrupt runs here too.
                                 Sync.ensure(cleanup.unit):
                                     Abort.run[Closed](emit).unit
                                 .andThen(fiberError)
@@ -683,11 +680,9 @@ object StreamCoreExtensions:
                                             case Result.Failure(e) =>
                                                 // Not Closed, must be E
                                                 fiberError.set(Present(Right(e)))
-                                // The consumer's exit is where the element fibers have to be stopped. Closing the
-                                // channel alone discards whatever is still in it, leaving those fibers running with
-                                // everything they hold, so the drain-and-interrupt the background's error paths
-                                // already use runs here too. It also stops the background forking elements nobody
-                                // will consume, which is why fewer of them acquire at all.
+                                // The consumer's exit is where the element fibers have to be stopped: closing the
+                                // channel alone discards whatever is still in it and leaves those fibers running
+                                // with everything they hold, so the drain-and-interrupt runs here too.
                                 Sync.ensure(cleanup.unit):
                                     Abort.run[Closed](emit).unit
                                 .andThen(fiberError)
@@ -1158,10 +1153,9 @@ object StreamCoreExtensions:
                                     else
                                         Loop.done
 
-                    // The push fork stays outside the internal scope: that Scope.run manages only the tick
-                    // timer, and a producer forked inside it would carry the internal scope as its innermost
-                    // binding, scoping the source stream's resources to this combinator instead of the
-                    // caller's ambient scope, where a plain run leaves them.
+                    // The push fork stays outside the internal scope: that Scope.run manages only the tick timer,
+                    // and a producer forked inside it would scope the source stream's resources to this combinator
+                    // instead of the caller's ambient scope.
                     push.map: fiber =>
                         (for
                             _ <- tick

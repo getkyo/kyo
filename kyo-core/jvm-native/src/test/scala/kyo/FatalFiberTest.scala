@@ -4,12 +4,10 @@ class FatalFiberTest extends kyo.test.Test[Any]:
 
     "fatal throwable from a fiber computation" - {
         "the promise is completed with a Panic before the worker rethrows" in {
-            // `run` completes the promise with a Panic and only then rethrows, so a fiber that took a fatal
-            // still reports it. Awaiting `getResult` exercises that order: had the rethrow come first, the
-            // promise would never complete and this would time out.
-            //
-            // InternalError because `IsFatal` counts only `VirtualMachineError` and `ControlThrowable`. A
-            // `LinkageError` is not fatal to kyo, which the leaf below pins.
+            // `run` completes the promise with a Panic and only then rethrows, so a fiber that took a fatal still
+            // reports it. Awaiting `getResult` exercises that order: with the rethrow first the promise would
+            // never complete. InternalError because `IsFatal` counts only `VirtualMachineError` and
+            // `ControlThrowable`; a `LinkageError` is not fatal to kyo, which the leaf below pins.
             val fatal                                 = new InternalError("simulated fatal")
             val body: Int < (Sync & Abort[Throwable]) = Sync.defer { throw fatal; 0 }
             Fiber.initUnscoped(body).map: fiber =>
@@ -18,8 +16,8 @@ class FatalFiberTest extends kyo.test.Test[Any]:
                     case other             => fail(s"unexpected outcome: $other")
         }
 
-        // The other side of the same policy: Scala treats a LinkageError as fatal, kyo does not, so it is
-        // carried as a value and the worker survives it.
+        // Scala treats a LinkageError as fatal and kyo does not, so it is carried as a value and the worker
+        // survives it.
         "a LinkageError is carried as a Panic rather than rethrown" in {
             val ex                                    = new LinkageError("simulated NoClassDefFoundError")
             val body: Int < (Sync & Abort[Throwable]) = Sync.defer { throw ex; 0 }

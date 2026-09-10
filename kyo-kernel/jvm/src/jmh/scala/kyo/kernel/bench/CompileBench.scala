@@ -5,16 +5,13 @@ import java.nio.file.Files
 import java.util.concurrent.TimeUnit
 import org.openjdk.jmh.annotations.*
 
-/** Compiles one fixture file with an in-process dotc against the kernel's classes per benchmark
-  * invocation. The classpath is this forked JVM's own, so the fixtures compile against exactly
-  * the kernel classes the bench runs with. JMH supplies the methodology: a forked JVM per
-  * fixture isolates all shared-JVM state, warmup iterations bring the compiler's own code to
-  * steady state, and per-iteration output makes progress observable. A compile with diagnostics
-  * fails the run, so a broken fixture cannot masquerade as a fast one. Fixtures live outside
-  * the kyo package so Frame derivation is the real per-site macro cost, and each isolates one
-  * compile-cost driver.
+/** Compiles one fixture file with an in-process dotc per benchmark invocation. The classpath is
+  * this forked JVM's own, so fixtures compile against exactly the kernel classes the bench runs
+  * with, and a fork per fixture isolates shared-JVM state. A compile with diagnostics fails the
+  * run, so a broken fixture cannot masquerade as a fast one. Fixtures live outside the kyo package
+  * so Frame derivation is the real per-site macro cost, and each isolates one compile-cost driver.
   *
-  * Quick in-process loop for diagnosis: pass -f 0 to skip forking.
+  * Pass -f 0 to skip forking for an in-process diagnosis loop.
   */
 @State(Scope.Benchmark)
 @BenchmarkMode(Array(Mode.AverageTime))
@@ -61,8 +58,8 @@ object CompileBench:
 
     private val resources = "kyo-kernel/jvm/src/jmh/resources"
 
-    /** A fixture file by set and name, located from the repository root, which is the closest ancestor of the working directory
-      * holding the fixture sets. The forked JVM starts in the project directory.
+    /** A fixture file by set and name, resolved from the closest ancestor of the working directory holding the fixture sets, since the
+      * forked JVM starts in the project directory.
       */
     def fixture(set: String, name: String): File =
         val root =

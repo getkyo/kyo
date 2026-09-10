@@ -18,9 +18,8 @@ import kyo.net.internal.backend.CapabilityProbe
   */
 abstract private[net] class SslLibProvider extends TlsEngineProvider:
 
-    /** The backing TLS library binding (BoringSSL or system OpenSSL), bound once per provider:
-      * the binding is a process-lifetime shared, stateless instance, and every binding method
-      * still requires AllowUnsafe per call, so the accessor itself carries no capability clause.
+    /** The backing TLS library binding (BoringSSL or system OpenSSL): a process-lifetime shared, stateless instance. Every binding method
+      * still requires AllowUnsafe per call, so the accessor itself carries none.
       */
     private[internal] def lib: SslLibBindings
 

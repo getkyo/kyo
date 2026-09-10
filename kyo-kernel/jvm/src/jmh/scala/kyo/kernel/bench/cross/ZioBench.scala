@@ -4,21 +4,18 @@ import java.util.concurrent.TimeUnit
 import org.openjdk.jmh.annotations.*
 import zio.{Scope as _, *}
 
-/** ZIO port of the KernelBench rows, for the cross-library comparison boards. Row names match
-  * KernelBench's so result tables join by name.
+/** ZIO port of the KernelBench rows for the cross-library boards. Row names match KernelBench's so
+  * result tables join by name.
   *
-  * Run entry: `Unsafe.unsafe(implicit u => runtime.unsafe.run(z).getOrThrowFiberFailure())` on a
-  * shared `Runtime.default`. One entry includes a FiberRuntime allocation, a FiberRefs update,
-  * registration in the fiber-roots weak set, then synchronous execution on the calling thread. The
-  * entry cost is measured, not factored out; entryFloorBatch makes it visible.
+  * Run entry: `runtime.unsafe.run` on a shared `Runtime.default` allocates a FiberRuntime, updates
+  * FiberRefs and registers in the fiber-roots weak set before running on the calling thread. That
+  * cost is measured, not factored out; entryFloorBatch isolates it.
   *
-  * Tier B substitution: kyo's Ask suspension answered by an installed handler becomes a
-  * `FiberRef.get` (the fiber-local read is ZIO's ambient-value substrate; `ZIO.service` is that
-  * same read plus a ZEnvironment dictionary lookup, recorded as suspensionBaselineAltEnv). The
-  * FiberRef's initial value is the installed answer: a fresh fiber reads the default, so no per-run
-  * install is paid; suspensionBaselineAltInstall records the per-run `locally` install variant.
-  * The stateful row uses `FiberRef.modify`. Rows suffixed `Alt` are recorded alternatives and are
-  * excluded from the headline tables.
+  * Tier B substitution: kyo's Ask suspension becomes a `FiberRef.get`, ZIO's ambient-value
+  * substrate, with the answer as the FiberRef's initial value so no per-run install is paid; the
+  * stateful row uses `FiberRef.modify`. Rows suffixed `Alt` record the other spellings
+  * (`ZIO.service` over a ZEnvironment, the per-run `locally` install) and stay out of the headline
+  * tables.
   */
 @State(org.openjdk.jmh.annotations.Scope.Benchmark)
 @BenchmarkMode(Array(Mode.AverageTime))
@@ -32,9 +29,7 @@ class ZioBench:
 
     private var seed = 1
 
-    /** The suspension with fifty transformations chained after it, built once; only answering it
-      * is timed in fusionAfterSuspensionRunOnly.
-      */
+    /** Built once so fusionAfterSuspensionRunOnly times only the answer, not the chain. */
     private val accumulatedChain: UIO[Int] =
         ask.get.map(a => a & 63)
             .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
@@ -66,8 +61,8 @@ class ZioBench:
         acc
     end evalFixedOverheadBatch
 
-    /** The bare entry: a settled value through the run entry with no transformation, so the
-      * fixed per-run cost is visible in the same units as every other row.
+    /** A settled value through the run entry with no transformation, so the fixed per-run cost is
+      * visible in the same units as every other row.
       */
     @Benchmark
     @OperationsPerInvocation(1000)
@@ -151,9 +146,8 @@ class ZioBench:
         runSync(loop(seed - 1))
     end suspensionBaseline
 
-    /** Recorded alternative: the environment spelling (`ZIO.service` under `provideEnvironment`),
-      * which is the same FiberRef read plus a ZEnvironment dictionary lookup. Excluded from the
-      * headline tables.
+    /** Recorded alternative: `ZIO.service` under `provideEnvironment`, the same FiberRef read plus
+      * a ZEnvironment dictionary lookup.
       */
     @Benchmark
     def suspensionBaselineAltEnv: Int =
@@ -163,9 +157,7 @@ class ZioBench:
         runSync(loop(seed - 1).provideEnvironment(env))
     end suspensionBaselineAltEnv
 
-    /** Recorded alternative: the per-run scoped install (`locally`), which is a full
-      * uninterruptible bracket in ZIO. Excluded from the headline tables.
-      */
+    /** Recorded alternative: the per-run `locally` install, a full uninterruptible bracket. */
     @Benchmark
     def suspensionBaselineAltInstall: Int =
         def loop(i: Int): UIO[Int] =
@@ -174,8 +166,8 @@ class ZioBench:
         runSync(ask.locally(1)(loop(seed - 1)))
     end suspensionBaselineAltInstall
 
-    /** FiberRef.getWith is defined as get.flatMap, so this row is expected to equal
-      * suspensionBaseline; confirming the equality is the finding.
+    /** `FiberRef.getWith` is defined as `get.flatMap`, so this row is expected to equal
+      * suspensionBaseline.
       */
     @Benchmark
     def suspensionFusesContinuation: Int =
@@ -240,8 +232,8 @@ class ZioBench:
         runSync(loop(seed - 1))
     end fusionAfterSuspension
 
-    /** The one row where the per-run install is the substance: the ambient is installed but
-      * never read.
+    /** The one row where the per-run install is the substance: the ambient is installed but never
+      * read.
       */
     @Benchmark
     def idleHandlerAddsNothing: Int =
@@ -273,8 +265,8 @@ class ZioBench:
         runSync(loop(seed - 1))
     end trailingMapsStayLinear
 
-    /** Two FiberRefs are two keys in one fiber-local map, not two nested handler regions, so
-      * nothing is crossed or re-attached; the row measures two ambient reads per level.
+    /** Two FiberRefs are two keys in one fiber-local map, not nested handler regions, so nothing is
+      * crossed or re-attached: the row measures two ambient reads per level.
       */
     @Benchmark
     def foreignCrossingsPayRotation: Int =
@@ -284,9 +276,9 @@ class ZioBench:
         runSync(loop(seed - 1))
     end foreignCrossingsPayRotation
 
-    /** Dynamic single-link application: NarrowDepth map links attached in a runtime loop, then
-      * one run. ZIO reifies a Mapped node per link, so the row measures node build plus the
-      * interpreter over a thousand stored nodes. Shape adopted from zio-blocks' AsyncChainBench.
+    /** NarrowDepth map links attached in a runtime loop, then one run. ZIO reifies a Mapped node
+      * per link, so the row measures node build plus the interpreter over those nodes. Shape from
+      * zio-blocks' AsyncChainBench.
       */
     @Benchmark
     def dynamicChainOfMapsStaysLinear: Int =
@@ -319,13 +311,13 @@ object ZioBench:
 
     final case class Box(value: Int)
 
-    /** One runtime for the whole class, built once at class init. Constructing a Runtime per
-      * operation would measure runtime construction, not evaluation.
+    /** One runtime for the whole class: building one per operation would measure runtime
+      * construction, not evaluation.
       */
     val runtime: Runtime[Any] = Runtime.default
 
-    /** The ambient answer: a FiberRef's initial value is what a fresh fiber reads, so
-      * constructing it with the answer is the install.
+    /** The ambient answer: a fresh fiber reads a FiberRef's initial value, so constructing it with
+      * the answer is the install.
       */
     val ask: FiberRef[Int]  = Unsafe.unsafe(implicit u => FiberRef.unsafe.make(1))
     val ask2: FiberRef[Int] = Unsafe.unsafe(implicit u => FiberRef.unsafe.make(0))

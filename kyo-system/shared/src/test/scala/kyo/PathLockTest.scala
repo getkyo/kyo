@@ -72,12 +72,10 @@ class HostPathLockTest extends FileSystemLockTest:
     }
 
     "repeated interrupted acquisitions leave the path acquirable" in {
-        // Interrupting from outside the fiber, so the interrupt lands wherever it lands rather than at a
-        // chosen point in the claim. Repeated attempts must not accumulate claims.
-        //
-        // Each round waits for its own claim before interrupting: interrupting at the spawn lands before the
-        // fiber runs, and a round that claimed nothing strands nothing. `afterClaimHook` fires with the OS
-        // claim held, so completing a promise there says the round got far enough to have something to lose.
+        // Interrupting from outside the fiber, so the interrupt lands wherever it lands rather than at a chosen
+        // point in the claim. Each round waits for its own claim first: interrupting at the spawn lands before
+        // the fiber runs, and a round that claimed nothing strands nothing. `afterClaimHook` fires with the OS
+        // claim held, so completing a promise there says the round had something to lose.
         AtomicInt.init(0).map { claims =>
             Scope.acquireRelease(FileSystem.host.tempDir("kyo-lock-interrupt"))(h => Sync.Unsafe.defer(h.remove())).map { handle =>
                 val target = handle.path / "contended.bin"
@@ -87,9 +85,8 @@ class HostPathLockTest extends FileSystemLockTest:
                         else
                             Promise.init[Unit, Any].map { claimed =>
                                 Sync.defer {
-                                    // Unsafe: the hook is a plain `() => Unit` the file system calls with
-                                    // the claim held, so neither the count nor the signal can be taken
-                                    // through an effect here.
+                                    // Unsafe: the hook is a plain `() => Unit` the file system calls with the
+                                    // claim held, so neither the count nor the signal can go through an effect.
                                     import AllowUnsafe.embrace.danger
                                     HostFileSystem.afterClaimHook = () =>
                                         discard(claims.unsafe.incrementAndGet())
@@ -99,8 +96,8 @@ class HostPathLockTest extends FileSystemLockTest:
                                         Scope.run(FileSystem.host.tryLock(target, Path.LockMode.Exclusive).map(_ => ()))
                                     ).map { fiber =>
                                         // A round that finds the path still held by the previous round's
-                                        // in-flight release never fires the hook, so the wait is against the
-                                        // fiber ending too.
+                                        // in-flight release never fires the hook, so the fiber ending is
+                                        // raced against the claim.
                                         Async.race(claimed.get, fiber.getResult.unit).andThen(fiber.interrupt)
                                     }
                                 }.andThen(Loop.continue)

@@ -18,7 +18,7 @@ class IOTaskTest extends kyo.test.Test[Any]:
             for
                 // Deterministic readiness witness: poll the actual property (the live trace surfacing a
                 // user frame), not a sleep. The remainder is written back at the suspend boundary, so a
-                // populated trace also proves the fiber is parked on `blocker` and its frame is stable.
+                // populated trace also proves the fiber is parked on `blocker`.
                 _ <- assertEventually(Sync.defer(iotask.fiberTrace().contains("IOTaskTest.scala:")))
                 rendered = iotask.fiberTrace()
                 _ <- Sync.defer(blocker.completeDiscard(Result.succeed(())))
@@ -43,8 +43,8 @@ class IOTaskTest extends kyo.test.Test[Any]:
                 _ <- Sync.defer(blocker.completeDiscard(Result.succeed(())))
                 _ <- Async.use(iotask.asInstanceOf[IOPromise[Nothing, Unit]])(_ => ())
             yield
-                // `currentFrame` drops `Frame.internal` by reference, so the kernel's own plumbing never
-                // surfaces: what is rendered is a call site the user wrote, never a file the kernel owns.
+                // `currentFrame` drops `Frame.internal` by reference, so what renders is a call site the
+                // user wrote, never a file the kernel owns.
                 assert(!rendered.contains("<internal>"), s"the internal placeholder surfaced: $rendered")
                 List("Eval.scala", "Arrow.scala", "IOTask.scala", "Fiber.scala").foreach { internal =>
                     assert(!rendered.contains(internal), s"a kernel frame surfaced: $rendered")
@@ -68,8 +68,7 @@ class IOTaskTest extends kyo.test.Test[Any]:
                 _ <- fiber.getResult
             yield
                 // A spinning fiber stands at no suspension, so the frame comes from the deferral in front
-                // of it: the arrow that applies a `Sync.defer` body names where the user wrote it, which is
-                // the whole point of reading a busy worker's trace.
+                // of it: the arrow that applies a `Sync.defer` body names where the user wrote it.
                 assert(rendered.contains("IOTaskTest.scala:"), s"the spin loop named no user frame: $rendered")
                 assert(rendered.contains("IOTaskTest.loop"), s"the frame is not the spinning deferral: $rendered")
             end for
@@ -84,7 +83,7 @@ class IOTaskTest extends kyo.test.Test[Any]:
             for
                 // A forked reader hammers fiberTrace() while the worker rewrites `curr`: the fiber parks
                 // (a frame to render), resumes (the remainder is replaced), then completes (`curr` is
-                // cleared). Every cross-thread read has to stay safe; the diagnostic never escapes a throw.
+                // cleared). Every one of those cross-thread reads has to stay safe.
                 reader <- Fiber.initUnscoped(Sync.defer((0 until 2000).map(_ => iotask.fiberTrace()).toVector))
                 _      <- Sync.defer(blocker.completeDiscard(Result.succeed(())))
                 reads  <- reader.get

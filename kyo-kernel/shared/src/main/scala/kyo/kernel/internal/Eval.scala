@@ -88,8 +88,7 @@ import scala.collection.mutable.ArrayBuffer
                                         val result = handler.answering(kyo.input, continuation, kyo, stack)
                                         Debugger.onResult(result)
                                         // The stop is honored on the clause's answer: one that re-raises the
-                                        // operation would otherwise dispatch straight back here with no
-                                        // deferral to park at.
+                                        // operation would otherwise dispatch straight back here with no deferral to park at.
                                         if armed && Safepoint.stopped(slot) then park(result, Arrow.id, Arrow.id)
                                         else loop(result, Arrow.id, Arrow.id, ctx2)
                                     case handler: Handler.MaskingHandler[EX, C, Y, S2] @unchecked =>
@@ -340,8 +339,8 @@ import scala.collection.mutable.ArrayBuffer
                 ri += 1
             end while
 
-            // A region that discharges exactly once cannot take its answerability back while the continuation
-            // can be resumed again, so the debt stays with the handler that dumped it.
+            // A region that discharges exactly once cannot take its answerability back while the cont can be
+            // resumed again, so the debt stays with the handler that dumped it.
             if !defers then stack.settle(entries)
             stack.oweBelow(stack.depth, kyo.owed)
 
@@ -370,8 +369,7 @@ import scala.collection.mutable.ArrayBuffer
             hc.unbound(ctx)
         end contextExit
 
-        // A region that hands its continuation out has not discarded what it owes: the debt moves to the scope
-        // below, settled when the remainder resumes or drained where that scope ends.
+        // An escaping region has not discarded what it owes, so the debt moves to the scope below.
         def arrowExit(handler: Handler.ArrowHandler[?, ?, ?, ?, ?], ctx: Context): Context =
             stack.pop()
             if stack.owesAny then
@@ -475,8 +473,8 @@ import scala.collection.mutable.ArrayBuffer
 
     private[kernel] def dumped(stack: Stack, idx: Int, kyo: Pending.Suspend[?, ?, ?, ?]): Stack.Snapshot =
         val entries = stack.dump(idx + 1)
-        // The continuation can be resumed more than once, so the regions going into it must not discharge
-        // themselves when the first resumption ends their extents. Out of line: every answer passes through here.
+        // The cont can be resumed more than once, so the regions going into it must not discharge themselves
+        // when the first resumption ends their extents.
         if stack.handler(idx).repeated then held(entries)
         Debugger.whenEnabled {
             var i = entries.regions - 1
@@ -487,8 +485,8 @@ import scala.collection.mutable.ArrayBuffer
         entries
     end dumped
 
-    // The regions a held continuation carries: the first resumption to end their extents records its outcome
-    // rather than discharging them, and whoever owes them discharges when it ends.
+    // The regions a held cont carries: the first resumption to end their extents records its outcome rather
+    // than discharging them, and whoever owes them discharges when it ends.
     private def held(entries: Stack.Snapshot): Unit =
         var i = 0
         while i < entries.regions do
@@ -534,9 +532,8 @@ import scala.collection.mutable.ArrayBuffer
 
     /** Releases the regions `v` still holds, running nothing.
       *
-      * A deferral is walked rather than evaluated, so what it holds stays unreached. That is what a caller
-      * releasing a continuation it has just refused needs: the refusal exists to stop that continuation
-      * from running, and a walk that evaluated it would run the very thing being refused.
+      * A deferral is walked rather than evaluated, so what it holds stays unreached: a caller releasing a cont
+      * it has just refused would otherwise run the very thing the refusal exists to stop.
       */
     def release[A, S](v: A < S, ex: Throwable): Unit =
         release(v, ex, Absent, _ => (), 0)
@@ -545,25 +542,24 @@ import scala.collection.mutable.ArrayBuffer
       * `effectTag` answers, so a caller that owes something to an operation the computation never reached
       * can settle it without walking the computation a second time. `f` runs before anything is released.
       *
-      * An operation under a deferral exists only once the deferral has run, so this evaluates them to reach
-      * it, bounded. That is for a caller abandoning a computation whole, where running a little of what was
-      * about to run is the price of not stranding what it was about to wait on. A caller releasing a
-      * continuation it refused wants [[release]] above, which evaluates nothing.
+      * An operation under a deferral exists only once the deferral has run, so this evaluates them to reach it,
+      * bounded: for a caller abandoning a computation whole, running a little of what was about to run is the
+      * price of not stranding what it was about to wait on. A caller releasing a cont it refused wants
+      * [[release]] above, which evaluates nothing.
       */
     def release[I[_], O[_], E <: ArrowEffect[I, O], A, S](v: A < S, ex: Throwable, effectTag: Tag[E])(
         f: [C] => I[C] => Unit
     ): Unit =
-        // Erasure-forced: the operation's state type is existential here, and `f` is the polymorphic
-        // function that takes it back at that type.
+        // Erasure-forced: the operation's state type is existential here, and `f` takes it back at that type.
         release(v, ex, Present(effectTag.erased), input => f[Any](input.asInstanceOf[I[Any]]), 16)
 
     private def release[A, S](v: A < S, ex: Throwable, effectTag: Maybe[Tag[Any]], f: Any => Unit, fuel: Int): Unit =
         val collected = ArrayBuffer.empty[AnyRef]
 
-        // An `Arrow.Ensure` waiting on an already-settled value is a release nobody will run, so the
-        // continuation is carried down and offered the value when one is reached. Only an `Ensure` may run
-        // here. A chain's head is its left arrow, itself a chain when one was built onto another, so the step
-        // that would have received the value is found by walking `head` down.
+        // An `Arrow.Ensure` waiting on an already-settled value is a release nobody will run, so the cont is
+        // carried down and offered the value when one is reached. Only an `Ensure` may run here. A chain's head
+        // is its left arrow, itself a chain when one was built onto another, so walking `head` down finds the
+        // step that would have received the value.
         @tailrec def leftmost(cont: Arrow[Any, Any, Any]): Arrow[Any, Any, Any] =
             val h = cont.head
             // Erasure-forced: the type joining a chain's links is existential from out here.
@@ -582,19 +578,18 @@ import scala.collection.mutable.ArrayBuffer
             v match
                 case p: Pending[?, ?] =>
                     p match
-                        // A deferral whose value is still a computation is walked, which reaches what is
-                        // under it for free. One whose value is settled holds its body in the continuation,
-                        // so reaching it means running a step, and only that spends the budget.
+                        // A deferral whose value is still a computation is walked, which reaches what is under
+                        // it for free. One whose value is settled holds its body in the cont, so reaching it
+                        // means running a step, and only that spends the budget.
                         case kyo: Pending.Defer[a, b, c, s] @unchecked =>
                             // Erasure-forced: the types joining a chain's links are existential from out here.
                             val after = kyo.contB.chain(cont).asInstanceOf[Arrow[Any, Any, Any]]
                             val below = kyo.contA.chain(after).asInstanceOf[Arrow[Any, Any, Any]]
                             kyo.value match
                                 case _: Pending[?, ?] => collect(kyo.value, below, fuel)
-                                // `Arrow.id` rather than the node's own continuation, so a unit of budget
-                                // buys one step: an arrow is free to run as many as it likes once handed
-                                // one. What follows that step is carried, because a release waiting on this
-                                // value sits there and stepping past it is what loses it.
+                                // `Arrow.id` rather than the node's own cont, so a unit of budget buys one
+                                // step: an arrow is free to run as many as it likes once handed one. What
+                                // follows that step is carried, since a release waiting on this value sits there.
                                 case _ if fuel > 0 =>
                                     ensuring(kyo.value, below)
                                     collect(kyo.contA(kyo.value, Arrow.id), after, fuel - 1)

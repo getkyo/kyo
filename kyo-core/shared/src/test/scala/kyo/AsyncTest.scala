@@ -1757,9 +1757,8 @@ class AsyncTest extends kyo.test.Test[Any]:
                     }
                 }
             }
-            // Parked on `never` for real, which is the whole claim: nothing completes that promise, so a
-            // fiber waiting on it cannot finish, and a poll taken once it is there needs no grace period.
-            // Waiting a fixed time instead only asks whether it finished early on this machine.
+            // Nothing completes `never`, so a fiber waiting on it cannot finish and a poll taken once it is
+            // parked needs no grace period. A fixed wait would only ask whether it finished early on this machine.
             _      <- assertEventually(never.waiters.map(_ == 1))
             polled <- fiber.poll
         yield assert(polled.isEmpty, s"fiber completed early with: $polled")
@@ -1891,13 +1890,13 @@ class AsyncTest extends kyo.test.Test[Any]:
         }
 
         "interrupting a timeout interrupts the computation it guards" in {
-            // Liveness: the finalizer completes only if the guarded computation was actually reached by the interrupt. A timeout that
-            // spawned its computation without wiring the interrupt through would leave it parked here forever.
+            // Liveness: the finalizer completes only if the interrupt reached the guarded computation. A timeout that spawned its
+            // computation without wiring the interrupt through would leave this parked forever.
             for
                 started     <- Promise.init[Unit, Any]
                 interrupted <- Promise.init[Unit, Any]
-                // The deadline is far beyond any run, so it cannot be what ends the computation. Only the caller's interrupt reaching
-                // through the timeout can complete the finalizer below, and the harness budget is what reports it if nothing does.
+                // The deadline is far beyond any run, so only the caller's interrupt reaching through the timeout can complete the
+                // finalizer below; the harness budget reports it if nothing does.
                 fiber <- Fiber.initUnscoped(Async.timeout(1.hour)(
                     Sync.ensure(interrupted.completeUnitDiscard)(
                         started.completeUnitDiscard.andThen(Async.never)
@@ -1919,13 +1918,13 @@ class AsyncTest extends kyo.test.Test[Any]:
         }
 
         "interrupting a timeout interrupts the computation it guards" in {
-            // Liveness: the finalizer completes only if the guarded computation was actually reached by the interrupt. A timeout that
-            // spawned its computation without wiring the interrupt through would leave it parked here forever.
+            // Liveness: the finalizer completes only if the interrupt reached the guarded computation. A timeout that spawned its
+            // computation without wiring the interrupt through would leave this parked forever.
             for
                 started     <- Promise.init[Unit, Any]
                 interrupted <- Promise.init[Unit, Any]
-                // The deadline is far beyond any run, so it cannot be what ends the computation. Only the caller's interrupt reaching
-                // through the timeout can complete the finalizer below, and the harness budget is what reports it if nothing does.
+                // The deadline is far beyond any run, so only the caller's interrupt reaching through the timeout can complete the
+                // finalizer below; the harness budget reports it if nothing does.
                 fiber <- Fiber.initUnscoped(Async.timeout(1.hour)(
                     Sync.ensure(interrupted.completeUnitDiscard)(
                         started.completeUnitDiscard.andThen(Async.never)

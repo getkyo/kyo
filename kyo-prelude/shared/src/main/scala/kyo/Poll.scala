@@ -226,11 +226,9 @@ object Poll:
                                             Loop.continue(emitCont(()), pollCont(Maybe(emitted))),
                                     // Poll.run(emitCont(ack))(pollCont(Maybe(emitted))),
                                     done = b =>
-                                        // Poller completed, which terminates consumption: the emitter's
-                                        // continuation is dropped rather than run to completion, so
-                                        // nothing it would have emitted afterwards happens and an
-                                        // unbounded emitter ends here. It produced no value, which is
-                                        // what Absent reports.
+                                        // Poller completed, ending consumption: the emitter's cont is
+                                        // dropped rather than run, so an unbounded emitter ends here.
+                                        // It produced no value, which is what Absent reports.
                                         Loop.done((Maybe.empty[A], b))
                             ),
                         done = a =>

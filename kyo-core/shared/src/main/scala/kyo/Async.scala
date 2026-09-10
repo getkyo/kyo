@@ -205,10 +205,9 @@ object Async extends AsyncPlatformSpecific:
                     // past that never fires. This rests on IOPromise.onComplete firing immediately on an already
                     // completed promise, so a sleep completing before the wiring below still interrupts at registration.
                     val sleepFiber = clock.unsafe.sleep(after)
-                    // `ensureMap` rather than `map`: the wiring below is the obligation the spawn has already
-                    // created, and `map` polls the safepoint before applying its function, so an interrupt
-                    // pending when the task arrives would park here and leave the task running with nothing
-                    // holding it. Applied as the value arrives, the spawn and its wiring are one step.
+                    // `ensureMap` rather than `map`: `map` polls the safepoint before applying its function, so an
+                    // interrupt pending when the task arrives would park here and leave the task running with nothing
+                    // holding it. `ensureMap` applies as the value arrives, keeping the spawn and its wiring one step.
                     Fiber.internal.initUnscoped(v).ensureMap { task =>
                         sleepFiber.onComplete(_ => discard(task.unsafe.interrupt(error)))
                         task.unsafe.onComplete(_ => discard(sleepFiber.interrupt()))
@@ -818,10 +817,9 @@ object Async extends AsyncPlatformSpecific:
 
         /** Where the join was written.
           *
-          * The scheduler raises this operation again when the promise it waits on is not ready, and a
-          * clause is never handed the frame of what it answers, so the raise would otherwise take the
-          * scheduler's own internal frame and the fiber would lose the one place it can say where it
-          * stopped.
+          * The scheduler raises this operation again when the promise is not ready, and a clause is never
+          * handed the frame of what it answers, so without this the raise would carry the scheduler's own
+          * internal frame instead of the join site.
           */
         def frame: Frame
     end JoinInput

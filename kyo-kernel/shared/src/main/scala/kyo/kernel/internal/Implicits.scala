@@ -3,12 +3,10 @@ package kyo.kernel.internal
 import kyo.<
 import scala.language.implicitConversions
 
-// The lift is a plain implicit gated by CanLift, which rejects pending values at the type level.
-//
-// It lives in this trait, mixed into the `<` companion, rather than in the companion itself: there the
-// alias is transparent, so a lambda such as liftPureFunction1's is typed with the dealiased union as its
-// result, which the inliner's opaque proxies do not map back when the conversion feeds map (PendingTest,
-// "a pure function passes to map point-free" fails to compile in the companion).
+// The lift is a plain implicit gated by CanLift, which rejects pending values at the type level. It must live in
+// this trait rather than in the `<` companion it is mixed into: in the companion the alias is transparent, so a
+// lambda such as liftPureFunction1's is typed with the dealiased union as its result, which the inliner's opaque
+// proxies do not map back when the conversion feeds map (PendingTest, "a pure function passes to map point-free").
 trait Implicits:
 
     /** Implicitly converts a plain value to an effectful computation.
@@ -31,12 +29,10 @@ trait Implicits:
             case _: (Int | Long | Float | Double | Boolean | Byte | Short | Char | Unit | String) =>
                 v.asInstanceOf[A < S]
             case _ =>
-                // Type arguments stated rather than inferred, and no second cast: `nest` already answers at
-                // `A < S`. Inferred, `A` is taken from the argument, which for a stable identifier is its
-                // singleton, and the cast this built named that singleton. Expanded into user code and
-                // re-checked under `-Xcheck-macros`, where a nested computation shows `<` through one inline
-                // proxy inside another and the compiler does not substitute across the nesting, that cast is
-                // rejected as malformed.
+                // Type arguments are stated rather than inferred, and there is no second cast: `nest` already
+                // answers at `A < S`. Inferred, `A` is the argument's singleton type for a stable identifier, and
+                // the cast built from it is rejected as malformed under `-Xcheck-macros` once it expands inside a
+                // nested computation.
                 Nested.nest[A, S](v)
 
     implicit inline def abortCastUnit[S1, S2](inline v: Unit < S1): Unit < S2 = ${ CanLiftMacro.abortCastUnitImpl[S1, S2]('v) }

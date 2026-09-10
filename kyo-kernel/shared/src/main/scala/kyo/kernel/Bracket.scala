@@ -17,11 +17,9 @@ import kyo.kernel.internal.*
   * `release` exactly once: when `use` completes, when it throws, or when a parked remainder holding the region is abandoned.
   *
   * The release is told how the extent ended (`Absent` for a clean end, otherwise the failure the unwind carried or the discard
-  * signal), which is what lets one commit on success and roll back otherwise. It is not told what the use produced: an extent a
-  * handler replays ends more than once, with more than one value, while "did any ending fail" has an answer either way. A caller
-  * needing its own failures, such as `Sync.acquireReleaseWith` reifying an `Abort`, routes them itself.
-  *
-  * The release takes no effects and its result is discarded: it must run where nothing is installed to answer for it.
+  * signal), not what the use produced: an extent a handler replays ends more than once, with more than one value. A caller needing
+  * its own failures, such as `Sync.acquireReleaseWith` reifying an `Abort`, routes them itself. The release takes no effects and
+  * its result is discarded: it runs where nothing is installed to answer for it.
   *
   * A bracket closes only with the scope that installed it. An isolated child, a spawned fiber included, gets an inert copy of the
   * region that neither completes, releases, nor refuses. A bracket inside a remainder a handler hands out as a value travels with
@@ -30,12 +28,10 @@ import kyo.kernel.internal.*
   */
 object Bracket:
 
-    // The region a bracket runs its use body under. `Cell` is the region's state and the exactly-once
-    // guard on the release.
+    // The region a bracket runs its use body under; `Cell` is its state and the exactly-once release guard.
     sealed private[kyo] trait Finalize extends ContextEffect[Cell]
 
-    // The cell is not parameterised by the use value: the release is told how the extent ended, not what
-    // it produced.
+    // Not parameterised by the use value: the release is told how the extent ended, not what it produced.
     //
     // Two shapes rather than one with a flag: a bracket's own state, and the inert one handed to an isolated
     // child. A recording instance would carry the first crossing's ending into every later one.
@@ -51,13 +47,11 @@ object Bracket:
     private[kyo] object Cell:
 
         final class Live(fin: Maybe[Throwable] => Unit) extends Cell:
-            // Set when the region is re-installed from a continuation the handler above dumped, the one case where
-            // an extent ending is not the last word: the continuation can be resumed again, so a release fired at
-            // the first ending would run under the resumptions that follow. While set, an ending only records, and
-            // the handler that owes this region fires the release when it ends.
+            // Set when the region is re-installed from a continuation the handler above dumped: the continuation can
+            // be resumed again, so a release fired at the first ending would run under the resumptions that follow.
+            // While set, an ending only records, and the handler that owes this region fires the release when it ends.
             @volatile private var borrowed = false
-            // Whether any ending ran to completion: what a later discharge reports, and what tells a refused
-            // re-entry which way this cell fired.
+            // Whether any ending ran to completion: read by a later discharge and by a refused re-entry.
             @volatile private var ended = false
 
             private[kyo] def borrow(): Unit      = borrowed = true
@@ -67,13 +61,13 @@ object Bracket:
                 ended = true
                 if !borrowed && compareAndSet(false, true) then fin(Absent)
 
-            // The release is owed the failure that unwound its extent, and the fatal keeps propagating. An unwind
-            // wins over any ending that already ran, or a release that commits on success would commit over it.
+            // The release is owed the failure that unwound its extent, and the fatal keeps propagating. An unwind wins
+            // over an ending that already ran, or a release that commits on success would commit over it.
             private[kyo] def drain(ex: Throwable): Unit =
                 if compareAndSet(false, true) then fin(Maybe(ex))
 
-            // The owner ended normally, so the extent's own endings are final. None means it never ran to an
-            // ending at all, and the discard signal is what the release is owed.
+            // The owner ended normally, so the extent's own endings are final. Never having ended means the discard
+            // signal is what the release is owed.
             private[kyo] def discharge(ex: Throwable): Unit =
                 if compareAndSet(false, true) then
                     if ended then fin(Absent)
@@ -82,8 +76,7 @@ object Bracket:
             private[kyo] def endedItsExtent: Boolean = ended
         end Live
 
-        // Handed to an isolated child: no release, no recorded ending, no refusal, so one instance serves
-        // every crossing.
+        // Handed to an isolated child: no release, no recorded ending, no refusal, so one instance serves every crossing.
         val inert: Cell =
             new Cell:
                 private[kyo] def borrow(): Unit                 = ()
@@ -116,15 +109,13 @@ object Bracket:
     /** Runs `release` when `body`'s extent ends, with nothing to acquire first.
       *
       * [[apply]] cannot install its region until the acquire's value arrives, because the release is owed that
-      * value, so a computation abandoned before it ever ran has no region and nothing to release, which is
-      * right: nothing was acquired. Here there is nothing to wait for, so the region is a node from the start
-      * and the abandonment walk finds it whether or not a single step ever ran. That is the difference between
-      * "release what I acquired" and "run this however the extent ends", and only the second can promise to run
-      * for a computation that never started.
+      * value, so a computation abandoned before it ever ran has no region and nothing to release. Here there is
+      * nothing to wait for: the region is a node from the start, and the abandonment walk finds it whether or not
+      * a single step ever ran.
       */
     def ensuring[B, S](release: Maybe[Throwable] => Unit)(body: => B < S)(using _frame: Frame): B < S =
-        // A throw while the body is being built is re-raised as the region's own body, so it unwinds with the
-        // region installed and fires the release.
+        // A throw while the body is being built is re-raised as the region's own body, so it unwinds with the region
+        // installed and fires the release.
         val b =
             try body
             catch case ex => Effect.defer(throw ex)

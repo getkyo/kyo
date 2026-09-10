@@ -168,7 +168,6 @@ final class MysqlChannel(
             case Maybe.Present(latch) =>
                 // A LOCAL INFILE cleanup is in-flight. Block until it releases the latch,
                 // then re-check whether the channel was marked corrupted during cleanup.
-                // Async.uninterruptible protects this wait so the caller cannot skip it.
                 Async.uninterruptible { latch.await }.andThen(checkCorrupted())
             case Maybe.Absent =>
                 _corrupted.get.flatMap {

@@ -57,22 +57,20 @@ object ZStreams:
         Tag[Emit[Chunk[A]]],
         ClassTag[A]
     ): ZStream[Any, E, A] =
-        // One producer fiber owns the whole consumption, so every resource the stream acquires
-        // lives and dies inside a single evaluation's extent; the ZIO scope owns the fiber and
-        // interrupts it when the ZStream ends, which runs the stream's own cleanup. A peel-per-step
-        // design instead hands the remainder across evaluations, and a resource inside the stream
-        // does not survive the peeling evaluation's exit.
+        // One producer fiber owns the whole consumption, so every resource the stream acquires lives and
+        // dies inside a single evaluation's extent; the ZIO scope interrupts that fiber when the ZStream
+        // ends, running the stream's own cleanup. Peeling per step would hand the remainder across
+        // evaluations, where a resource inside the stream does not survive the peeling evaluation's exit.
         ZStream.unwrapScoped {
             ZIO.acquireRelease(
                 ZIOs.run {
                     Channel.initUnscoped[Chunk[A]](4).map { channel =>
                         val produce =
-                            // the consumer going away closes the channel: a put failing with Closed is
-                            // that signal, not a stream failure. The producer's own extent owns the
-                            // handoff: however the loop ends (completion, failure, interrupt), the
-                            // scope waits for the consumer to drain what is buffered before closing,
-                            // so no delivered tail is discarded, and the release's hard close unblocks
-                            // that wait when the consumer leaves early
+                            // The consumer going away closes the channel, so a put failing with Closed is
+                            // that signal, not a stream failure. However the loop ends, the scope waits
+                            // for the consumer to drain what is buffered before closing, so no delivered
+                            // tail is discarded; the release's hard close unblocks that wait when the
+                            // consumer leaves early.
                             Scope.run {
                                 Scope.ensure(channel.closeAwaitEmpty.unit).andThen {
                                     Abort.run[Closed](stream.foreachChunk(channel.put)).unit

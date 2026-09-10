@@ -4,33 +4,21 @@ import java.util.concurrent.TimeUnit
 import org.openjdk.jmh.annotations.*
 import zio.blocks.async.*
 
-/** zio-blocks Async port of the KernelBench rows, for the cross-library comparison boards. Row
-  * names match KernelBench's so result tables join by name.
+/** zio-blocks Async port of the KernelBench rows; row names match KernelBench's so tables join by name.
+  * Entry is `.block`, a type test and a cast on a settled value, with no runtime and no fiber.
   *
-  * Run entry: `.block`. For a settled value that is a type-test chain and a cast, effectively
-  * free; there is no runtime and no fiber.
+  * Fidelity: with no effect system, ambient value, or handler, every Tier B row substitutes a
+  * read of the pre-completed `Async.succeed(1)` and is LOW. fusionAfterSuspensionRunOnly is
+  * NONE, its chain folds at field initialization. idleHandlerAddsNothing and
+  * foreignCrossingsPayRotation are skipped: with no handler their bodies duplicate other rows.
   *
-  * Fidelity: zio-blocks has no effect system, no ambient value, and no handler, so every Tier B
-  * row substitutes a pre-completed `Async.succeed(1)` read and is LOW fidelity by construction.
-  * fusionAfterSuspensionRunOnly is NONE: `map` over a ready value evaluates at field
-  * initialization, so the field holds a settled Int and the row measures `.block` on an
-  * already-computed value. idleHandlerAddsNothing and foreignCrossingsPayRotation are skipped
-  * (no handler concept; the bodies would duplicate other rows byte for byte).
+  * `flatMap` over a ready value calls the cont directly with no trampoline, so the depth-10000
+  * rows are 10000 JVM stack frames of Scala recursion, not an evaluator; hence -Xss32m.
   *
-  * Cost model note: `flatMap` over a ready value calls the continuation directly, with no
-  * trampoline, so the depth-10000 rows recurse on the JVM stack, one frame per level. That is
-  * why this project runs with -Xss32m, and it is a finding the results tables report rather
-  * than hide: those rows measure direct Scala recursion with a type test per step, not an
-  * evaluator.
-  *
-  * JIT elimination note: on the rows whose result is independent of the seed (the fusion
-  * chains and the ambient-read loops, where each level's computed value is discarded or
-  * increments by a constant), full inlining leaves pure arithmetic with a constant result and
-  * C2 deletes the entire program; those cells report a few nanoseconds and are labelled
-  * JIT-eliminated in the results tables. The rows that survive (deepRecursion, sharedHandler,
-  * trailingMaps, userTypes, the dynamic chains, the batch rows) are the zio-blocks cells that
-  * measure real work. Every other library's machinery blocks this elimination; having no
-  * machinery to measure is the honest zio-blocks answer to these rows.
+  * JIT elimination: where the result is independent of the seed (the fusion chains, the
+  * ambient-read loops) inlining leaves a constant and C2 deletes the program, so those cells
+  * report a few nanoseconds and are labelled JIT-eliminated. deepRecursion, sharedHandler,
+  * trailingMaps, userTypes, the dynamic chains and the batch rows survive and measure work.
   */
 @State(Scope.Benchmark)
 @BenchmarkMode(Array(Mode.AverageTime))
@@ -44,9 +32,7 @@ class ZioBlocksBench:
 
     private var seed = 1
 
-    /** Folds at initialization (map over a ready value evaluates eagerly), so this field holds
-      * a settled Int; fusionAfterSuspensionRunOnly's fidelity is NONE and the table says so.
-      */
+    /** Folds at initialization, so the field holds a settled Int; fusionAfterSuspensionRunOnly is fidelity NONE. */
     private val accumulatedChain: Async[Int] =
         answer.map(a => a & 63)
             .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
@@ -131,7 +117,7 @@ class ZioBlocksBench:
     end uncachedValuesPayBoxingOnly
 
     /** Box is not a Pollable, so `Async.succeed(Box(...))` stores the Box itself with no
-      * wrapper, which is the property this row tests on the kyo side too.
+      * wrapper, the same property this row tests on the kyo side.
       */
     @Benchmark
     def userTypesSkipKernelWrapping: Int =
@@ -147,9 +133,7 @@ class ZioBlocksBench:
         loop(Box(seed - 1)).block.value
     end userTypesSkipKernelWrapping
 
-    /** Every step is ready, so this is 10000 frames of ordinary JVM recursion, not a
-      * trampoline; the row is why the project sets -Xss32m.
-      */
+    /** Every step is ready, so this is 10000 frames of ordinary JVM recursion, not a trampoline. */
     @Benchmark
     def deepRecursionPaysRescuesOnly: Int =
         def loop(i: Int): Async[Int] =
@@ -167,9 +151,7 @@ class ZioBlocksBench:
         loop(seed - 1).block
     end suspensionBaseline
 
-    /** No distinct read-with-continuation spelling exists; expected to equal
-      * suspensionBaseline, and confirming the equality is the finding.
-      */
+    /** No distinct read-with-cont spelling exists; the row is expected to equal suspensionBaseline. */
     @Benchmark
     def suspensionFusesContinuation: Int =
         def loop(i: Int): Async[Int] =
@@ -215,10 +197,7 @@ class ZioBlocksBench:
         loop(seed - 1).block
     end continuationBodiesFuse
 
-    /** Fidelity NONE: the chain folded at field initialization, so this measures `.block` on a
-      * settled value. Reported with that label because "the chain folded at construction" is
-      * the honest answer to what this row asks of zio-blocks.
-      */
+    /** Fidelity NONE: the chain folded at field initialization, so this measures `.block` on a settled value. */
     @Benchmark
     def fusionAfterSuspensionRunOnly: Int =
         accumulatedChain.block
@@ -237,9 +216,8 @@ class ZioBlocksBench:
         loop(seed - 1).block
     end fusionAfterSuspension
 
-    /** The requirements' local-var substitution; fidelity LOW. The var is method-local and dead
-      * after the loop, which is honest since there is no state effect to pay for; if the JIT
-      * removes the increment the cell is effectively suspensionBaseline, and the note says so.
+    /** Local-var substitution for a state effect; fidelity LOW. The var is dead after the loop,
+      * so if the JIT removes the increment the cell is effectively suspensionBaseline.
       */
     @Benchmark
     def statefulAnswersPaySuccessor: Int =
@@ -261,8 +239,8 @@ class ZioBlocksBench:
     end trailingMapsStayLinear
 
     /** Dynamic single-link application over a ready value: each link applies eagerly through
-      * the inline fast path, so this measures a type test and the arithmetic per link. The
-      * original shape of zio-blocks' own AsyncChainBench.
+      * the inline fast path, so this measures a type test and the arithmetic per link. Shape
+      * taken from zio-blocks' own AsyncChainBench.
       */
     @Benchmark
     def dynamicChainOfMapsStaysLinear: Int =
@@ -295,9 +273,7 @@ object ZioBlocksBench:
 
     final case class Box(value: Int)
 
-    /** No effect system, so no ambient value and no handler: the Tier B rows read this
-      * pre-completed value; fidelity LOW, recorded per row.
-      */
+    /** No ambient value and no handler exist, so the Tier B rows read this pre-completed value; fidelity LOW. */
     val answer: Async[Int] = Async.succeed(1)
 
 end ZioBlocksBench

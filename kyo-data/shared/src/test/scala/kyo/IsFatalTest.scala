@@ -18,10 +18,9 @@ class IsFatalTest extends kyo.test.Test[Any]:
     }
 
     "not fatal" - {
-        // The two kyo answers differently from `scala.util.control.NonFatal`, and the reason this object
-        // exists. A class that fails to link says the program is wrong, not that the JVM is; an interrupt is
-        // something kyo delivers itself, by design. Under Scala's answer both reach the path that ends a
-        // scheduler worker and loses every release the computation still owed.
+        // These two kyo answers differently from `scala.util.control.NonFatal`, which is why this object exists:
+        // a class that fails to link says the program is wrong, not that the JVM is, and an interrupt is something
+        // kyo delivers itself. Under Scala's answer both end a scheduler worker and lose every release still owed.
         "LinkageError, which Scala calls fatal" in {
             val ex = new LinkageError("boom")
             assert(!IsFatal(ex))

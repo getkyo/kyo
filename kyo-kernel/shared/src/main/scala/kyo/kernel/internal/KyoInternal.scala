@@ -13,8 +13,7 @@ import kyo.Frame
   * @tparam S
   *   The type-level set of effects this computation may perform
   */
-// The nodes live in PendingInternal as Pending's subclasses and the continuation is a first-class
-// Arrow, so Kyo is the supertype of both.
+// The nodes live in PendingInternal as Pending's subclasses and the continuation is a first-class Arrow, so Kyo is the supertype of both.
 trait Kyo[+A, -S]:
     /** The stack frame where this value was created */
     def frame: Frame

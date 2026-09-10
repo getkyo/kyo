@@ -5,8 +5,7 @@ import kyo.kernel.Arrow
 
 // The stack-safety suspension threshold is platform-specific (smaller call stacks on Native
 // and WASM need to suspend sooner); each platform sets it in kyo.internal.Platform.
-// The evaluator's rescue budget is a fixed 512 until the platform sweep measures per-platform values;
-// EffectTrace's frame budget is 64.
+// These two budgets are fixed rather than platform-specific.
 private[kernel] inline def maxStackDepth  = 512
 private[kernel] inline def maxTraceFrames = 64
 

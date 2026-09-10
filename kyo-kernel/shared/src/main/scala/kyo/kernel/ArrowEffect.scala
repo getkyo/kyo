@@ -31,10 +31,10 @@ import scala.annotation.tailrec
   * representing the remainder of the computation from the point where the effect was suspended to the point where it's being handled.
   *
   * ArrowEffect provides two main kinds of handling methods with distinct capabilities:
-  *   - handleCont: Basic handler that receives the continuation as an Arrow and may introduce new effects (via S2 type parameter)
-  *   - handleLoop: Enhanced handler that resumes the continuation through the Loop abstraction, to continue or terminate processing:
-  *     - Without state (handleLoop): When you need loop control but not state between occurrences
-  *     - With state (handleLoopState): When you need both loop control and state maintenance between occurrences
+  *   - handleCont: receives the continuation as an Arrow and may introduce new effects (via S2 type parameter)
+  *   - handleLoop: resumes the continuation through the Loop abstraction, to continue or terminate processing:
+  *     - handleLoop: loop control without state between occurrences
+  *     - handleLoopState: loop control with state maintained between occurrences
   *
   * When defining concrete effects, ArrowEffect is commonly used with two special type constructors: Const and Id. The Const[X] type
   * constructor ignores its type parameter and always returns X, while Id[X] simply returns X unchanged. For instance, an effect that needs
@@ -45,8 +45,8 @@ abstract class ArrowEffect[-Input[_], +Output[_]] extends Effect
 
 object ArrowEffect:
 
-    // Suspensions and handled regions are arrow nodes (Pending.SuspendArrow, Pending.HandleArrow, and
-    // the Handler instances built below), interpreted by Eval.
+    // Suspensions and handled regions are arrow nodes (Pending.SuspendArrow, Pending.HandleArrow, the
+    // Handler instances below), interpreted by Eval.
 
     /** Creates a suspended computation that requests a function implementation from an arrow effect. This establishes a requirement for a
       * function that must be satisfied by a handler higher up in the program. The requirement becomes part of the effect type, ensuring
@@ -105,9 +105,9 @@ object ArrowEffect:
 
     /** Handles an arrow effect by providing a handler function implementation.
       *
-      * This is the basic form of effect handling where each effect occurrence is processed independently: the clause receives the
-      * operation's input and the continuation from the suspension point, and answers by applying the continuation, possibly several times
-      * or not at all. New effects may be introduced during handling through the S2 type parameter.
+      * Each effect occurrence is handled independently: the clause receives the operation's input and the continuation from the
+      * suspension point, and answers by applying the continuation, possibly several times or not at all. New effects may be introduced
+      * through the S2 type parameter.
       *
       * @param effectTag
       *   Identifies which arrow effect to handle
@@ -128,7 +128,7 @@ object ArrowEffect:
 
     /** Handles an arrow effect by providing a handler function implementation, transforming the final result.
       *
-      * Like the variant without done, with one addition: when the handled computation completes, done transforms its result.
+      * Like the variant without done, except done transforms the result when the handled computation completes.
       *
       * @param effectTag
       *   Identifies which arrow effect to handle
@@ -172,14 +172,14 @@ object ArrowEffect:
 
     /** Handles an arrow effect with a clause that may resume its continuation more than once.
       *
-      * The same as [[handleCont]] except that the region holds the regions it dumps into the continuation it hands the
-      * clause. A region that discharges exactly once, a bracket's release, would otherwise fire when the first
-      * resumption ends its extent, leaving every later resumption running against something already released. Held, it
-      * is discharged where this region ends instead, once, after every resumption has run.
+      * As [[handleCont]], except this region holds the regions it dumps into the continuation it hands the clause. A
+      * region that discharges exactly once, a bracket's release, would otherwise fire when the first resumption ends
+      * its extent, leaving later resumptions running against something already released; held, it discharges once,
+      * where this region ends.
       *
-      * Only a clause that really does resume more than once should use this: holding keeps the obligation longer than
-      * the clause does, so a single-shot handler would release later than it needs to for nothing. A clause that
-      * resumes more than once without using this is refused at the bracket it re-enters, with a message saying so.
+      * Only for a clause that really does resume more than once: holding keeps the obligation longer than a
+      * single-shot clause needs. A clause that resumes more than once without it is refused at the bracket it
+      * re-enters.
       */
     @nowarn("msg=anonymous")
     inline def handleContRepeated[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](
@@ -213,8 +213,8 @@ object ArrowEffect:
 
     /** Handles an arrow effect by providing a handler function implementation, with a recover arm.
       *
-      * Like the variant without recover, with one addition: when the handled computation fails, recover is offered the failure and may
-      * answer with a replacement result; when it declines the failure propagates.
+      * Like the variant without recover, except a failure of the handled computation is offered to recover, which may answer with a
+      * replacement result or decline, letting the failure propagate.
       *
       * @param effectTag
       *   Identifies which arrow effect to handle
@@ -240,8 +240,7 @@ object ArrowEffect:
     )(using inline _frame: Frame): B < (S & S2) =
         def onDone(v0: A): B < (S & S2)                   = done(v0)
         def onRecover(ex: Throwable): Maybe[B < (S & S2)] = recover(ex)
-        // The input is forced under the recovery clause: a throw while building the computation is the
-        // region's to answer, like one raised in its extent.
+        // The input is forced under the recovery clause: a throw while building it is the region's to answer.
         try
             val v0 = v
             v0 match
@@ -269,14 +268,13 @@ object ArrowEffect:
         end try
     end handleCont
 
-    /** Handles an arrow effect with a loop-based approach for greater flexibility.
+    /** Handles an arrow effect with a loop-based approach.
       *
-      * This variant differs from basic handleCont in two ways:
-      *   1. The clause receives only the operation's input; the continuation is resumed through the Loop.Outcome2 it answers with
-      *   2. It provides control flow through the Loop abstraction to continue or terminate processing
+      * Differs from handleCont in two ways:
+      *   1. The clause receives only the operation's input; the continuation is resumed through the Loop.Outcome it answers with
+      *   2. Control flow goes through the Loop abstraction, to continue or terminate processing
       *
-      * This non-stateful handleLoop is ideal when you need to perform effectful operations with access to new effects during handling, but
-      * don't need to maintain state between effect occurrences.
+      * Use it when handling needs new effects but no state between effect occurrences.
       *
       * @param effectTag
       *   Identifies which arrow effect to handle
@@ -297,11 +295,9 @@ object ArrowEffect:
 
     /** Handles an arrow effect with a loop-based approach and custom completion handling.
       *
-      * This variant provides two key advantages over handleCont:
+      * Differs from handleCont in two ways:
       *   1. It explicitly allows introducing new effects during handling via the S2 type parameter
       *   2. It provides control flow through the Loop abstraction to continue or terminate processing
-      *
-      * The separate done function gives precise control over how the final result is transformed when the loop completes.
       *
       * @param effectTag
       *   Identifies which arrow effect to handle
@@ -361,8 +357,8 @@ object ArrowEffect:
 
     /** Handles an arrow effect with a loop-based approach, custom completion handling and a recover arm.
       *
-      * Like the variant without recover, with one addition: when the handled computation fails, recover is offered the failure and may
-      * answer with a replacement result; when it declines the failure propagates.
+      * Like the variant without recover, except a failure of the handled computation is offered to recover, which may answer with a
+      * replacement result or decline, letting the failure propagate.
       *
       * @param effectTag
       *   Identifies which arrow effect to handle
@@ -537,8 +533,8 @@ object ArrowEffect:
 
     /** Handles an arrow effect with stateful loop-based approach, custom completion handling and a recover arm.
       *
-      * Like the variant without recover, with one addition: when the handled computation fails, recover is offered the current state and
-      * the failure and may answer with a replacement result; when it declines the failure propagates.
+      * Like the variant without recover, except the current state and a failure of the handled computation are offered to recover, which
+      * may answer with a replacement result or decline, letting the failure propagate.
       *
       * @param effectTag
       *   Identifies which arrow effect to handle
@@ -567,8 +563,8 @@ object ArrowEffect:
     )(using inline _frame: Frame): B < (S & S2) =
         def onDone(st: State, v0: A): B < (S & S2)                   = done(st, v0)
         def onRecover(st: State, ex: Throwable): Maybe[B < (S & S2)] = recover(st, ex)
-        // the input is forced under the recovery clause, as in the recovering handleCont; a throw
-        // there sees the initial state, the only one the region has had
+        // the input is forced under the recovery clause, as in the recovering handleCont; a throw there
+        // sees the initial state, the only one the region has had
         try
             val v0 = v
             v0 match
@@ -615,7 +611,7 @@ object ArrowEffect:
         end try
     end handleLoopState
 
-    /** handleCont with a continuation fused into the region node: the region's result flows into f without a separate map node.
+    /** handleCont with a continuation fused into the region node, avoiding a separate map node.
       *
       * @param f
       *   The transformation applied to the region's result
@@ -658,7 +654,7 @@ object ArrowEffect:
         end match
     end handleContWith
 
-    /** handleLoop with a continuation fused into the region node: the region's result flows into f without a separate map node.
+    /** handleLoop with a continuation fused into the region node, avoiding a separate map node.
       *
       * @param f
       *   The transformation applied to the region's result
@@ -717,7 +713,7 @@ object ArrowEffect:
         end match
     end handleLoopWith
 
-    /** handleLoopState with a continuation fused into the region node: the region's result flows into f without a separate map node.
+    /** handleLoopState with a continuation fused into the region node, avoiding a separate map node.
       *
       * @param f
       *   The transformation applied to the region's result
@@ -779,9 +775,9 @@ object ArrowEffect:
         end match
     end handleLoopStateWith
 
-    // Re-raises each masked request under a Mask tag so an enclosing handler cannot see it. `S` is any
-    // effect, not only an arrow one: the masking region shadows its tag in the context as well as holding it
-    // on the stack, so a context read reaches the same clause an arrow operation does.
+    // Re-raises each masked request under a Mask tag so an enclosing handler cannot see it. `S` is any effect,
+    // not only an arrow one: the masking region shadows its tag in the context as well as on the stack, so a
+    // context read reaches the same clause an arrow operation does.
     sealed abstract class Mask[S] extends ArrowEffect[[A] =>> A < S, Id]
 
     object Mask:
@@ -803,8 +799,8 @@ object ArrowEffect:
             }
     end Mask
 
-    // The first suspension is carried out of the region as a value, so handleFirst is a handleCont whose
-    // done arm answers it. FirstSuspended appears in that inline body, so both are private[kyo].
+    // The first suspension is carried out of the region as a value: handleFirst is a handleCont whose done
+    // arm answers it. FirstSuspended appears in that inline body, so both are private[kyo].
     abstract private[kyo] class FirstSuspended[I[_], O[_], E <: ArrowEffect[I, O], A, S]:
         type C
         def input: I[C]
@@ -815,11 +811,11 @@ object ArrowEffect:
       * first instance of an effect and transform its result into a different type, while leaving any subsequent occurrences of the effect
       * unhandled.
       *
-      * The continuation handed to `handle` is the remainder of `v`, and it carries every region that sat between this handler and the
+      * The continuation handed to `handle` is the remainder of `v`, carrying every region that sat between this handler and the
       * operation, a bracket included. Those regions are re-installed when the holder resumes the continuation, so a bracket inside the
-      * remainder releases when the remainder completes, once. A remainder that is never resumed releases at the exit of the scope
-      * enclosing this handler, or at the end of the evaluation, with the discard outcome. A remainder resumed a second time is refused
-      * at the bracket it re-enters.
+      * remainder releases once, when the remainder completes. A remainder that is never resumed releases with the discard outcome at the
+      * exit of the scope enclosing this handler, or at the end of the evaluation. A remainder resumed a second time is refused at the
+      * bracket it re-enters.
       *
       * @param effectTag
       *   Identifies which arrow effect to handle
@@ -853,9 +849,8 @@ object ArrowEffect:
                                 def input = input0
                                 def cont  = cont0.asInstanceOf[Arrow[O[X], A, E & S]]
                         def done(state: Unit, r: A | First) = onDone(r)
-                        // the token carries the region's continuation out, so what the region owes at
-                        // its exit is not orphaned: it belongs to the scope below until the holder
-                        // resumes or drops the remainder
+                        // the token carries the region's continuation out: what the region owes at its exit
+                        // belongs to the scope below until the holder resumes or drops the remainder
                         override def escaping = true
 
                 new Pending.HandleArrow[Unit, E, A | First, B, B, S & S2]:
@@ -871,9 +866,9 @@ object ArrowEffect:
 
     /** [[handleFirst]] for a clause that applies the continuation it peels more than once.
       *
-      * The remainder is handed out as usual and, on top of that, held across every application, so a bracket
-      * travelling with it is not released by whichever application finishes first. `Choice.runStream` is the shape: it
-      * applies the peeled continuation once per branch and evaluates the results outside the clause.
+      * The remainder is handed out as usual and held across every application, so a bracket travelling with it is not
+      * released by whichever application finishes first. `Choice.runStream` is the shape: it applies the peeled
+      * continuation once per branch and evaluates the results outside the clause.
       */
     @nowarn("msg=anonymous")
     private[kyo] inline def handleFirstRepeated[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](
@@ -899,9 +894,8 @@ object ArrowEffect:
                                 def input = input0
                                 def cont  = cont0.asInstanceOf[Arrow[O[X], A, E & S]]
                         def done(state: Unit, r: A | First) = onDone(r)
-                        // as handleFirst, and held on top of that: the holder applies the remainder more
-                        // than once, so what the region owes belongs to the scope below AND must survive
-                        // each application rather than being settled by the first
+                        // as handleFirst, plus held: the holder applies the remainder more than once, so what
+                        // the region owes must survive each application, not be settled by the first
                         override def escaping = true
                         override def repeated = true
 
@@ -916,8 +910,7 @@ object ArrowEffect:
         end match
     end handleFirstRepeated
 
-    // The clause is handed the suspended operation itself instead of its input, which lets Mask re-suspend
-    // an operation it cannot inspect.
+    // Mask must re-suspend an operation it cannot inspect, so the clause is handed the operation, not its input.
 
     /** Handles an arrow effect by providing a handler that receives the suspended operation itself; the result is the handled
       * computation's value.

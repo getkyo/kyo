@@ -36,10 +36,9 @@ object Pending:
         def tag: Tag[E]
         def cont: Arrow[A, B, S]
 
-        /** This request on its own, as the computation that raises it again.
-          *
-          * What a masking region's clause is handed, in place of an input it has no way to interpret. Each kind
-          * of suspension knows how to rebuild itself, so the evaluator does not.
+        /** This request on its own, as the computation that raises it again: what a masking region's clause is
+          * handed in place of an input it cannot interpret. Each kind of suspension rebuilds itself, so the
+          * evaluator does not have to.
           */
         private[kyo] def reraise: A < E
 

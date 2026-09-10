@@ -9,11 +9,10 @@ import scala.annotation.tailrec
 /** Storage for effect values used by ContextEffect.
   *
   * Context maintains a type-safe mapping between effect tags and their values. It provides the underlying storage mechanism that allows
-  * ContextEffect to request, store, and retrieve values. Bindings are kept in region order: entering a context region binds on top, leaving
-  * it unbinds the top, and a read walks from the innermost binding outward, so an inner region shadows an outer one with the same tag.
+  * ContextEffect to request, store, and retrieve values. Bindings are kept in region order: a region binds on top and unbinds on exit, and
+  * a read walks outward from the innermost binding, so an inner region shadows an outer one with the same tag.
   */
-// The stack's context regions in order. What crosses an async boundary is decided by each
-// ContextHandler's fork and join.
+// What crosses an async boundary is decided by each ContextHandler's fork and join.
 sealed abstract private[kernel] class Context:
 
     final def bind[A, E <: ContextEffect[A]](tag: Tag[E], value: A): Context =
@@ -21,9 +20,8 @@ sealed abstract private[kernel] class Context:
 
     /** Binds `tag` to the marker a masking region leaves behind, shadowing whatever is bound outside it.
       *
-      * A read that finds the marker is not answered from the context at all: it is dispatched to the region that
-      * left it, which re-raises it under the mask's own tag. That is the same route an arrow operation takes, so
-      * one mask covers both kinds of effect.
+      * A read that finds the marker is dispatched to the region that left it instead of being answered from the
+      * context, the same route an arrow operation takes, so one mask covers both kinds of effect.
       */
     final def mask[E <: Effect](tag: Tag[E]): Context =
         Context.Bound(tag.erased, Context.Masked, this)

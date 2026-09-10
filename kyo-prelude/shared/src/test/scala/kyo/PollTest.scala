@@ -346,9 +346,8 @@ class PollTest extends kyo.test.Test[Any]:
     }
 
     "runEmit stops the emitter when the poller completes" - {
-        // runEmit's contract is that the flow ends when the consumer completes, terminating
-        // consumption. The emitter's remainder is run to completion instead (Emit.runDiscard), so an
-        // unbounded emitter under a bracket neither terminates nor releases.
+        // runEmit ends the flow when the consumer completes. The emitter's remainder is then run to completion
+        // (Emit.runDiscard), so an unbounded emitter under a bracket neither terminates nor releases.
         "the emitter is not continued after the poller completed" in {
             var emitted = 0
             val emitter =

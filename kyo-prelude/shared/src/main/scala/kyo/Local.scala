@@ -16,8 +16,7 @@ import scala.annotation.nowarn
   *
   * Each local carries its own strategy for crossing fork boundaries: what a forked computation receives (everything, nothing, or a
   * transformation of the current value) and what the parent holds once a fork ends. The default strategy inherits the value into forks and
-  * keeps the parent's own value on join, matching inheritable thread locals; `init(default)(fork = _ => Absent)` is a local that never
-  * crosses, matching non-inheritable ones.
+  * keeps the parent's own value on join, matching inheritable thread locals; `initNoninheritable` builds one that never crosses.
   *
   * This effect useful for managing request context information, tracing and logging context, temporary configuration overrides, and user or
   * tenant context. Choose `Local` when you have context that always has a sensible default value and may need to be modified temporarily.
@@ -94,9 +93,8 @@ abstract class Local[A] extends Serializable:
             map => map.updated(this, f(map.getOrElse(this, default).asInstanceOf[A]).asInstanceOf[AnyRef])
         )(v)
 
-    // every binding of the shared tag installs these strategies, so a fork through any local's scope
-    // asks each local for its own crossing, and a join asks each held local against what the fork
-    // ended with
+    // All locals share one tag, so every binding installs these strategies: a fork asks each local for
+    // its own crossing, and a join asks each held local against what the fork ended with.
     private def scoped[B, S](
         ifUndefined: Map[Local[?], AnyRef],
         ifDefined: Map[Local[?], AnyRef] => Map[Local[?], AnyRef]
@@ -142,9 +140,8 @@ object Local:
     /** Creates a new Local instance with the given default value and fork-boundary strategy.
       *
       * `forkValue` decides what a forked computation receives: the value itself to inherit it, a
-      * transformation of it, or `Absent` for a local that must not cross, which is what non-inheritable
-      * thread locals say. `joinValue` decides what the parent holds once a fork ends, defaulting to keeping
-      * its own value.
+      * transformation of it, or `Absent` for a local that must not cross. `joinValue` decides what the
+      * parent holds once a fork ends, defaulting to keeping its own value.
       *
       * @param defaultValue
       *   The default value for the Local

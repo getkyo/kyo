@@ -26,12 +26,10 @@ class KyoTest extends Test:
             ArrowEffect.handleCont(Tag[TestEffect2], v)([C] => (input, cont) => cont(input.toUpperCase))
     end TestEffect2
 
-    // The lift's inline match on the lifted type cannot reduce for an abstract A, so this helper is
-    // inline and goes through Kyo.lift.
+    // Inline because Kyo.lift's match on the lifted type cannot reduce for an abstract A.
     inline def widen[A](inline v: A): A < Any = Kyo.lift(v)
 
-    // A suspension renders as Kyo(<tag>, <site>) and map wraps it in a Defer node, so the rendering
-    // nests. The site embeds the frame position.
+    // Pins the rendering: a suspension is Kyo(<tag>, <site>) and each map nests it in a Defer node.
     "toString" in {
         assert(TestEffect1(1).map(_ + 1).toString ==
             "Defer(Kyo(kyo.KyoTest.TestEffect1, apply.suspend(KyoTest.scala:16:37)), this(?.map(KyoTest.scala:40:41)), Id)")

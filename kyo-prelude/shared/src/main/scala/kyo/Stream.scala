@@ -660,10 +660,9 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
 
     /** Splits the stream after the first n elements and hands the head and the rest to f.
       *
-      * The rest is the remainder of this stream, and it carries whatever the stream had opened by then, a `Sync.ensure` or a
-      * `Channel.use` inside the stream's own body included. Those are released when f returns, so the rest is valid for the extent of f
-      * and its row says so: it carries `Region.NoEscape`, which cannot be forked, raced, timed out, or sent to another fiber, and cannot
-      * be stored where the marker is not in the type. Consume the rest inside f, or move its values across a boundary through a Channel.
+      * The rest carries whatever the stream had opened by then, a `Sync.ensure` or a `Channel.use` in the stream's own body included, and
+      * those are released when f returns. Its row says so: `Region.NoEscape` cannot be forked, raced, timed out, sent to another fiber, or
+      * stored where the marker is not in the type. Consume the rest inside f, or move its values out through a Channel.
       *
       * @param n
       *   The number of elements to take
@@ -675,8 +674,8 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
     def splitAtWith[VV >: V, A, S2](n: Int)(
         f: (Chunk[VV], Stream[VV, S & Region.NoEscape]) => A < (S2 & Region.NoEscape)
     )(using tag: Tag[Emit[Chunk[VV]]], frame: Frame): A < (S & S2) =
-        // the bracket is the extent the rest belongs to: whatever it still carries is released here when f
-        // returns, rather than waiting for whichever region happens to enclose this call
+        // The bracket is the extent the rest belongs to: what it still carries is released when f returns, not at
+        // whichever region encloses this call.
         Bracket(())(_ =>
             splitAt[VV](n).map((head, rest) => Region.discharge[A, S & S2](f(head, rest)))
         )((_, _) => ())
@@ -711,10 +710,9 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
         t3: Tag[Emit[Chunk[(VV, V2)]]],
         f: Frame
     ): Stream[(VV, V2), S & S2] =
-        // each region pulls one emission into a closed step value (the chunk and the raw remainder,
-        // or exhaustion), and every loop outcome is built at one level from the two steps: a region
-        // result that mentions the loop's own outcome type leaves its done slot to inference, which
-        // resolves it before the done branches are seen
+        // Each region pulls one emission into a closed step value (the chunk and the raw remainder, or exhaustion),
+        // and every loop outcome is built at one level from the two steps: a region result naming the loop's own
+        // outcome type leaves its done slot to inference, which resolves it before the done branches are seen.
         def step1(source: Unit < (Emit[Chunk[VV]] & S)): Maybe[(Chunk[VV], Unit < (Emit[Chunk[VV]] & S))] < S =
             ArrowEffect.handleFirst(t1, source)(
                 handle = [C] => (vals, cont) => Maybe((vals, cont(()))),

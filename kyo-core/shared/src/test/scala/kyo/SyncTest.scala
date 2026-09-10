@@ -70,9 +70,9 @@ class SyncTest extends kyo.test.Test[Any]:
                 assert(result == frames)
             }
         }
-        // The leaves above recurse in tail position, so nothing accumulates. The map after the recursive
-        // defer makes each level leave a continuation behind (#1739). The assertion is on the value, so a
-        // rescue that unwinds by dropping accumulated continuations fails too.
+        // The leaves above recurse in tail position; the map after the recursive defer makes each level
+        // leave a cont behind (#1739). The assertion is on the value, so a rescue that unwinds by
+        // dropping accumulated conts fails too.
         "stack-safe when a map follows the recursive defer" in {
             val depth = 1000000
             def step(n: Int): Int < Sync =
@@ -249,10 +249,9 @@ class SyncTest extends kyo.test.Test[Any]:
             }
         }
 
-        // A handler resuming the same continuation more than once replays the regions it carries. A
-        // bracket's extent is over once the first resumption completes it, so the release would already
-        // have run when the next arrives. Where the bracket sits decides the outcome, not which handler
-        // replays.
+        // A handler resuming the same cont more than once replays the regions it carries. A bracket's
+        // extent is over once the first resumption completes it, so the release would already have run
+        // when the next arrives. Where the bracket sits decides the outcome.
         "under a handler that replays" - {
 
             "every branch of a replaying handler runs against the live resource, released once after all of them" in {
@@ -272,8 +271,8 @@ class SyncTest extends kyo.test.Test[Any]:
                 end for
             }
 
-            // Holding is the handler's to ask for. A clause that resumes twice without declaring it
-            // still gets the refusal, and the refusal still has to say what happened.
+            // Holding is the handler's to ask for: a clause that resumes twice without declaring it is
+            // refused, and the refusal has to say what happened.
             "a handler that replays without declaring it is still refused, and the refusal says why" in {
                 import kyo.kernel.ArrowEffect
                 for
@@ -312,8 +311,7 @@ class SyncTest extends kyo.test.Test[Any]:
             }
 
             // The bracket's extent is the suspension itself, so it ends the moment the choice is
-            // answered. Held, that ending only records: the release runs once, after every branch, so
-            // no branch reads its own resource as already gone.
+            // answered. Held, that ending only records: the release runs once, after every branch.
             "a bracket whose extent ends at the choice point still outlives every branch" in {
                 for
                     released <- AtomicInt.init(0)
@@ -595,9 +593,9 @@ class SyncTest extends kyo.test.Test[Any]:
             }.andThen(assert(true))
         }
 
-        // An interrupt landing as the body produces its outcome. The body interrupts its own fiber and then
-        // produces the value, so delivery lands at the next safepoint: after the body's step, before the
-        // region completes. No second thread, so it runs on every platform.
+        // An interrupt landing as the body produces its outcome: the body interrupts its own fiber, so
+        // delivery lands at the next safepoint, after the body's step and before the region completes.
+        // No second thread, so it runs on every platform.
         "still runs the finalizer" in {
             for
                 ran     <- AtomicInt.init(0)

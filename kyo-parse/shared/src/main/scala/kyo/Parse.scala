@@ -894,11 +894,10 @@ object Parse:
             S2,
             ParseState[In]
         ](tag, state, parser)(
-            // Each branch casts the answer it produces to `C`. `Op` is covariant in its answer type, so
-            // matching it refines `C` only from below, never to an equality, and the answer types are
-            // themselves pending (`Attempt` answers `Maybe[A] < S`, the others `A < S`), so nothing in the
-            // branch can be reconciled with `C` by subtyping. The `@unchecked` patterns below already fix
-            // the same existentials to `Out` and `Parse[In]`; these casts state the matching half.
+            // Each branch casts the answer it produces to `C`. `Op` is covariant in its answer type, so matching
+            // it refines `C` only from below, never to an equality, and the answer types are themselves pending,
+            // so nothing in a branch can be reconciled with `C` by subtyping. The `@unchecked` patterns below
+            // fix the same existentials to `Out` and `Parse[In]`; these casts state the matching half.
             [C] =>
                 (state, input) =>
                     input match

@@ -171,11 +171,10 @@ class MeterTest extends kyo.test.Test[Any]:
             }
 
             "sustained contention never resumes a parked slice twice".notJs.notWasm in {
-                // Every acquisition brackets the body, so a fiber whose parked remainder is resumed by two
-                // workers runs one bracket twice: one of them releases, the other re-enters a scope that is
-                // already spent and the acquisition panics. Only contention reaches it, since the window is
-                // open while a fiber unwinds into a park and needs another fiber to complete what it waits
-                // on in that instant, so this drives many more acquisitions than the tests above.
+                // Every acquisition brackets the body, so a fiber whose parked remainder is resumed by two workers
+                // runs one bracket twice: one releases, the other re-enters a spent scope and the acquisition panics.
+                // The window is open only while a fiber unwinds into a park and another completes what it waits on in
+                // that instant, so the loop counts here are what make contention reach it.
                 val permits    = 2
                 val callers    = 20
                 val iterations = 1000

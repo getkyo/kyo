@@ -39,10 +39,10 @@ final private[kernel] class Stack:
 
     def pop(): Unit =
         size -= 1
-        // Dropped here rather than left behind. `clear` reaches only `0 until size`, and a released stack goes
-        // back to a per-thread pool on a live worker, so a slot left set keeps that region's handler, its state
-        // and its continuation reachable for as long as the worker lives. `owed` is deliberately not cleared:
-        // `takePopped` reads this index straight after the decrement.
+        // `clear` reaches only `0 until size`, and a released stack goes back to a per-thread pool on a live
+        // worker, so a slot left set keeps that region's handler, state and continuation reachable for as long
+        // as the worker lives. `owed` is deliberately not cleared: `takePopped` reads this index straight after
+        // the decrement.
         handlers(size) = null
         states(size) = null
         continuations(size) = null

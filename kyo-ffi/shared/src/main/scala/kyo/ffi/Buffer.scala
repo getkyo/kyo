@@ -181,14 +181,12 @@ final class Buffer[A] private[ffi] (
         underlying.setByte(i.toLong * layout.size, v)
     end setByte
 
-    // Byte-offset wide accessors on a byte buffer, for manual struct codecs and wire formats: a
-    // struct field lives at a byte offset inside a Buffer[Byte], and assembling it through the
-    // per-element `set` costs a boxing generic dispatch per byte (the kqueue/epoll codecs paid
-    // eight per Long field). These read and write the full width in one underlying access, in the
-    // platform's native byte order, which is what a kernel-facing struct wants (every supported
-    // target is little-endian). Callable only when `A` is provably `Byte`.
+    // Byte-offset wide accessors on a byte buffer, for manual struct codecs and wire formats. A struct
+    // field at a byte offset assembled through the per-element `set` costs a boxing generic dispatch per
+    // byte; these read and write the full width in one underlying access, in the platform's native byte
+    // order (every supported target is little-endian). Callable only when `A` is provably `Byte`.
 
-    /** Read the `Short` at byte offset `off` of a byte buffer, native byte order. See the note above. */
+    /** Read the `Short` at byte offset `off` of a byte buffer, native byte order. */
     def getShortAt(off: Int)(using ev: A =:= Byte, allow: AllowUnsafe): Short =
         core.checkOpen()
         checkByteRange(off, 2)
@@ -196,7 +194,7 @@ final class Buffer[A] private[ffi] (
         underlying.getShort(off.toLong)
     end getShortAt
 
-    /** Write the `Short` `v` at byte offset `off` of a byte buffer, native byte order. See the note above. */
+    /** Write the `Short` `v` at byte offset `off` of a byte buffer, native byte order. */
     def setShortAt(off: Int, v: Short)(using ev: A =:= Byte, allow: AllowUnsafe): Unit =
         core.checkOpen()
         checkByteRange(off, 2)
@@ -204,7 +202,7 @@ final class Buffer[A] private[ffi] (
         underlying.setShort(off.toLong, v)
     end setShortAt
 
-    /** Read the `Int` at byte offset `off` of a byte buffer, native byte order. See the note above. */
+    /** Read the `Int` at byte offset `off` of a byte buffer, native byte order. */
     def getIntAt(off: Int)(using ev: A =:= Byte, allow: AllowUnsafe): Int =
         core.checkOpen()
         checkByteRange(off, 4)
@@ -212,7 +210,7 @@ final class Buffer[A] private[ffi] (
         underlying.getInt(off.toLong)
     end getIntAt
 
-    /** Write the `Int` `v` at byte offset `off` of a byte buffer, native byte order. See the note above. */
+    /** Write the `Int` `v` at byte offset `off` of a byte buffer, native byte order. */
     def setIntAt(off: Int, v: Int)(using ev: A =:= Byte, allow: AllowUnsafe): Unit =
         core.checkOpen()
         checkByteRange(off, 4)
@@ -220,7 +218,7 @@ final class Buffer[A] private[ffi] (
         underlying.setInt(off.toLong, v)
     end setIntAt
 
-    /** Read the `Long` at byte offset `off` of a byte buffer, native byte order. See the note above. */
+    /** Read the `Long` at byte offset `off` of a byte buffer, native byte order. */
     def getLongAt(off: Int)(using ev: A =:= Byte, allow: AllowUnsafe): Long =
         core.checkOpen()
         checkByteRange(off, 8)
@@ -228,7 +226,7 @@ final class Buffer[A] private[ffi] (
         underlying.getLong(off.toLong)
     end getLongAt
 
-    /** Write the `Long` `v` at byte offset `off` of a byte buffer, native byte order. See the note above. */
+    /** Write the `Long` `v` at byte offset `off` of a byte buffer, native byte order. */
     def setLongAt(off: Int, v: Long)(using ev: A =:= Byte, allow: AllowUnsafe): Unit =
         core.checkOpen()
         checkByteRange(off, 8)
@@ -236,10 +234,7 @@ final class Buffer[A] private[ffi] (
         underlying.setLong(off.toLong, v)
     end setLongAt
 
-    /** Copy `len` bytes from `src` starting at `srcPos` into this byte buffer at byte offset
-      * `destOff`, in one bulk operation: the per-element `set` loop this replaces paid a boxing
-      * generic dispatch per byte on the write paths.
-      */
+    /** Copy `len` bytes from `src` starting at `srcPos` into this byte buffer at byte offset `destOff`, in one bulk operation. */
     def copyFromArray(src: Array[Byte], srcPos: Int, destOff: Int, len: Int)(using ev: A =:= Byte, allow: AllowUnsafe): Unit =
         core.checkOpen()
         checkByteRange(destOff, len)
@@ -249,8 +244,8 @@ final class Buffer[A] private[ffi] (
         underlying.copyFromArray(src, srcPos, destOff.toLong, len)
     end copyFromArray
 
-    /** Copy `len` bytes of this byte buffer starting at byte offset `srcOff` into `dest` at
-      * `destPos`, in one bulk operation; the counterpart of [[copyFromArray]] for the read paths.
+    /** Copy `len` bytes of this byte buffer starting at byte offset `srcOff` into `dest` at `destPos`, in one bulk operation. The
+      * counterpart of [[copyFromArray]].
       */
     def copyToArray(dest: Array[Byte], destPos: Int, srcOff: Int, len: Int)(using ev: A =:= Byte, allow: AllowUnsafe): Unit =
         core.checkOpen()

@@ -722,8 +722,8 @@ class FiberTest extends kyo.test.Test[Any]:
                     yield assert(result == "hi")
                 }
 
-                // Pending on the EffectTrace fidelity ruling: the kernel's trace is rebuilt from the child's own
-                // regions, so a spawn does not carry the spawning chain's frames into the child's exceptions.
+                // The kernel's trace is rebuilt from the child's own regions, so a spawn does not carry the
+                // spawning chain's frames into the child's exceptions.
                 "Trace.saved captures frames from a running computation".pendingUntilFixed(
                     "the kernel's effect trace does not carry the spawning chain's frames into a child fiber"
                 ) in {

@@ -177,11 +177,10 @@ object Exchange:
             val eventChannel = Channel.Unsafe.init[Event](eventCapacity, Access.MultiProducerMultiConsumer)
             val donePromise  = Promise.Unsafe.init[Unit, Abort[E | Closed]]()
             val pendingMap   = new ConcurrentHashMap[Id, Promise.Unsafe[Resp, Abort[E | Closed]]]()
-            // `ensureMap` rather than `map`: the reader fiber is live once the spawn returns, and only the
-            // `Unsafe` built below can close it. `map` polls the safepoint first, so an interrupt pending
-            // when the fiber arrives would park here and leave the reader running with nothing holding it,
-            // and this whole call is the acquire of a `Scope.acquireRelease`, whose release would then
-            // never see a resource either.
+            // `ensureMap` rather than `map`: the reader fiber is live once the spawn returns and only the
+            // `Unsafe` built below can close it. `map` polls the safepoint first, so an interrupt pending when
+            // the fiber arrives would park here, leaving the reader running with nothing holding it and the
+            // enclosing `Scope.acquireRelease` with no resource to release.
             Fiber.initUnscoped(readerLoop(pendingMap, eventChannel, donePromise, frame, receive, decode)).ensureMap { fiber =>
                 new Unsafe[Id, Wire, Req, Resp, Event, E](
                     nextIdFn = bug("Called Unsafe.apply on safe-initialized Exchange"),

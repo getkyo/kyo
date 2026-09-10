@@ -852,12 +852,10 @@ class BatchTest extends kyo.test.Test[Any]:
     }
 
     "brackets" - {
-        // Batch.capture answers a Batch suspension by putting the continuation into an item and
-        // returning that item as its region's value, then resumes the item later, after the region
-        // ended. That is the hand-out shape, so a bracket opened inside a batched computation is
-        // dumped into the continuation and owed by the region that answered. Whether the region
-        // drains it at its exit or hands it down decides whether the resumed item still has its
-        // resource.
+        // Batch.capture answers a Batch suspension by putting the continuation into an item and returning that item as its region's
+        // value, resuming the item after the region ended. A bracket opened inside a batched computation is therefore dumped into the
+        // continuation and owed by the region that answered; whether that region drains it at its exit or hands it down decides whether
+        // the resumed item still has its resource.
         "a bracket opened inside a batched computation survives into the item that carries it" in {
             var opens  = 0
             var closes = 0

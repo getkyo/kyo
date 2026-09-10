@@ -628,11 +628,9 @@ class EvalTest extends AnyFreeSpec:
             assert(ran)
         }
 
-        // #1820, at the level the walk lives. `ensureMap` exists so that a value and the obligation it creates
-        // are one step, for a resource that is open the moment the acquire returns. An abandonment has to find
-        // that obligation, and it does not sit under the node's value: it sits in the CONTINUATION, waiting on
-        // a value that has already arrived. A walk that descends into values alone steps straight past it, and
-        // what the acquire produced is then registered nowhere and released by nobody.
+        // #1820. `ensureMap` makes a value and the obligation it creates one step, for a resource open the moment
+        // the acquire returns. That obligation sits in the cont, waiting on a value that has already arrived, so a
+        // walk descending into values alone steps past it and what the acquire produced is released by nobody.
         "a release waiting on a value that already arrived is found on abandonment" in {
             var applied = Maybe.empty[String]
             val v: Int < Any =
@@ -645,16 +643,15 @@ class EvalTest extends AnyFreeSpec:
                 }
             val parked = Eval.partial(v)
             assert(applied.isEmpty, "the premise is that the stop parked before the ensure applied")
-            // The budgeted entry point, which is the one a fiber abandonment uses. The unbudgeted `release`
-            // never steps a deferral, so it cannot reach a release that is waiting one step further in.
+            // The budgeted entry point, the one a fiber abandonment uses. The unbudgeted `release` never steps a
+            // deferral, so it cannot reach a release waiting one step further in.
             Eval.release(parked, new RuntimeException("abandoned"), Tag[Ask])([C] => (_: Unit) => ())
             assert(applied == Maybe("token"), s"the release never ran, it saw $applied")
         }
 
-        // An `Ensure` that does not settle its debt by being applied. `Scope.acquireRelease`'s registers its
-        // release against a finalizer that outlives the fiber, so applying it is the whole obligation.
-        // `Bracket`'s builds the `Cell` that owns the release and returns the region holding it, so a walk
-        // that applies it and discards the result creates the obligation and drops it in the same move.
+        // An `Ensure` that does not settle its debt by being applied. `Scope.acquireRelease`'s registers against a
+        // finalizer that outlives the fiber, so applying it is the whole obligation; `Bracket`'s builds the `Cell`
+        // that owns the release and returns the region holding it, so applying and discarding drops the obligation.
         "a release the abandoned Ensure installs rather than registers is still run" in {
             var released = Maybe.empty[Int]
             val v: Int < Any =
@@ -1560,9 +1557,8 @@ class EvalTest extends AnyFreeSpec:
         }
     }
 
-    // A release reports the first operation under what it is tearing down, which is how a fiber's interrupt
-    // reaches the join it would have awaited. These are about what it reports; that it also releases is
-    // BracketTest's.
+    // A release reports the first operation under what it is tearing down, which is how a fiber's interrupt reaches
+    // the join it would have awaited. These pin what it reports; that it also releases is BracketTest's.
     "release reports the first operation" - {
         val walked = new RuntimeException("walked")
 

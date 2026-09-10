@@ -20,21 +20,21 @@ import scala.annotation.publicInBinary
 sealed abstract private[kernel] class Handler[E <: Effect, A, -S]:
     def tag: Tag[E]
 
-    /** Whether this handler's clause resumes the continuation it is given more than once.
+    /** Whether this handler's clause resumes the cont it is given more than once.
       *
-      * Answering a suspension dumps the regions between this handler and that suspension into the continuation. A
-      * region that discharges exactly once, a bracket's release, cannot be left to answer for itself when the same
-      * continuation can be resumed again: whichever resumption ends its extent first would fire the release under the
-      * rest. Declaring this holds those regions, so an ending records its outcome and the debt is discharged once,
+      * Answering a suspension dumps the regions between this handler and that suspension into the cont. A region
+      * that discharges exactly once, a bracket's release, cannot be left to answer for itself when the same cont
+      * can be resumed again: whichever resumption ends its extent first would fire the release under the rest.
+      * Declaring this holds those regions, so an ending only records its outcome and the debt is discharged once,
       * where this handler ends.
       */
     def repeated: Boolean = false
 
-    /** Whether this handler's clause hands the continuation out of the clause as a value.
+    /** Whether this handler's clause hands the cont out of the clause as a value.
       *
       * Such a clause has not finished with what it owes when its answer settles: the remainder is still live in
-      * whoever holds it. So the debt moves to the scope below rather than being discharged here, to be settled when
-      * the remainder resumes and drained at that scope's exit if it never does.
+      * whoever holds it. The debt moves to the scope below, to be settled when the remainder resumes and drained
+      * at that scope's exit if it never does.
       */
     def escaping: Boolean = false
 
@@ -44,8 +44,7 @@ sealed abstract private[kernel] class Handler[E <: Effect, A, -S]:
       * instead of answering it. Every other region is transparent to reads, which is the default here.
       *
       * The evaluator maps a region to a binding in five places (entry, exit, and the three that rebuild a
-      * context from the stack), and each has to agree with the others or the two structures drift. Asking the
-      * handler keeps that one answer in one place.
+      * context from the stack); asking the handler keeps every one of them on the same answer.
       */
     private[kernel] def bound(ctx: Context, state: Any): Context = ctx
 
@@ -75,7 +74,7 @@ end Handler
 
     // A region that masks its tag: every request for it, of either kind, reaches this clause as the request
     // itself re-raised rather than as an input, and no handler or binding it shadows sees it. An arrow
-    // operation arrives by the stack lookup; a context read arrives because entering this region masks the tag
+    // operation arrives by the stack lookup; a context read arrives because entering the region masks the tag
     // in the context, so the read dispatches here instead of answering from the binding outside.
     abstract class MaskingHandler[E <: Effect, A, B, S] extends ArrowHandler[Unit, E, A, B, S]:
         def run[X](operation: X < E, next: Arrow[X, A, E & S]): A < (E & S)
@@ -91,8 +90,7 @@ end Handler
                     throw ex
     end MaskingHandler
 
-    // A LoopHandler's clause answers with a single-state Outcome and the region carries no state; a
-    // LoopStateHandler's answers with an Outcome2 carrying its state.
+    // A LoopHandler's region carries no state; a LoopStateHandler's carries it through the Outcome2.
     abstract class LoopHandler[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends ArrowHandler[Unit, E, A, B, S]:
         def run[X](input: I[X]): Outcome[O[X] < (E & S), B < S] < S
 
@@ -235,12 +233,11 @@ end Handler
         /** This region's extent ran to an end.
           *
           * No value, unlike [[Handler.ArrowHandler.done]]: the evaluator reaches this with whatever the stack it is
-          * running in produced, and a crossing wraps a forked result, so the origin's `A` is not what arrives. Nothing
-          * ever read it.
+          * running in produced, and a crossing wraps a forked result, so the origin's `A` is not what arrives.
           */
         private[kyo] def done(state: State): Unit = ()
 
-        /** Takes custody of this region because the handler that dumped it will resume the continuation again. */
+        /** Takes custody of this region because the handler that dumped it will resume the cont again. */
         private[kyo] def borrow(state: State): Unit = ()
 
         /** Whether this region is under custody and must not be handed back its own answerability on resumption. */
@@ -251,8 +248,8 @@ end Handler
         private[kyo] def release(state: State, ex: Throwable): Unit = ()
 
         /** Discharges this region where its owner ends normally, as opposed to [[release]], which reports a failure that
-          * unwound it. A held region records the outcome of each ending, so this is where that record is finally acted
-          * on; `ex` is the discard signal, used only when nothing was ever recorded.
+          * unwound it. A held region records the outcome of each ending, and this is where that record is acted on;
+          * `ex` is the discard signal, used only when nothing was ever recorded.
           */
         private[kyo] def discharge(state: State, ex: Throwable): Unit = release(state, ex)
     end ContextHandler
@@ -266,8 +263,7 @@ end Handler
         armed: Boolean,
         slot: Safepoint.Slot
     ): Outcome[A < (E & S), B < S] < S =
-        // The walk fuses across operations of different types, so the input and the continuation
-        // in flight are erased; the answer handed back is the region's A.
+        // The walk fuses across operations of different types, so the input and cont in flight are erased.
         var in: Any                                 = input0
         var k: Arrow[Any, Any, Any]                 = k0.asInstanceOf[Arrow[Any, Any, Any]]
         var result: Outcome[A < (E & S), B < S] < S = null.asInstanceOf[Outcome[A < (E & S), B < S] < S]
@@ -343,8 +339,7 @@ end Handler
         armed: Boolean,
         slot: Safepoint.Slot
     ): Outcome2[State, A < (E & S), B < S] < S =
-        // The walk fuses across operations of different types, so the input and the continuation
-        // in flight are erased; the answer handed back is the region's A.
+        // The walk fuses across operations of different types, so the input and cont in flight are erased.
         var st: State                                       = state0
         var in: Any                                         = input0
         var k: Arrow[Any, Any, Any]                         = k0.asInstanceOf[Arrow[Any, Any, Any]]

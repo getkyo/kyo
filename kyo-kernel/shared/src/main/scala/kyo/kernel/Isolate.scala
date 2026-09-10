@@ -140,7 +140,6 @@ abstract class Isolate[Remove, -Keep, -Restore]:
       */
     def nest[A, S](v: A < (Remove & S))(using Frame): A < Restore < (Remove & Keep & S) =
         capture { state =>
-            // `Nested.nest` hides the restored computation's effects behind a `Nested` node.
             isolate(state, v).map(r => Nested.nest[A < Restore, Any](restore(r)))
         }
 
@@ -157,8 +156,6 @@ abstract class Isolate[Remove, -Keep, -Restore]:
     final def run[A, S](v: A < (S & Remove))(using Frame): A < (S & Remove & Keep & Restore) =
         capture(state => run(state, v))
 
-    // `run` takes a state the caller already captured; `apply` captures, runs in isolation, and hands
-    // the restored computation to `f` within the capture.
     def run[A, S](state: State, v: A < (S & Remove))(using Frame): A < (Keep & Restore & S) =
         restore(isolate(state, v))
 
@@ -214,12 +211,11 @@ abstract class Isolate[Remove, -Keep, -Restore]:
 
     /** This isolate, plus the crossing that leaving one fiber for another makes.
       *
-      * Isolating state in place and carrying it to another fiber are different acts, and only the second one asks a context region what a
-      * fork of it holds. An isolate says nothing about context regions on its own, so a spawn composes this in front of the caller's to say
-      * that the body starts somewhere else: each region in scope is forked through its own strategy on the way in, and joined back on the
-      * way out.
+      * Isolating state in place and carrying it to another fiber are different acts, and only the second asks a context region what a fork
+      * of it holds. A spawn composes this in front of the caller's isolate to say the body starts somewhere else: each region in scope is
+      * forked through its own strategy on the way in, and joined back on the way out.
       *
-      * The same instance has to capture and isolate, so a spawn holds the result of one call rather than calling this twice.
+      * Capture and isolate must come from the same instance, so a spawn holds the result of one call rather than calling this twice.
       */
     final private[kyo] def crossing: Isolate[Remove, Keep, Restore] =
         Contextual.andThen(this)
@@ -230,9 +226,8 @@ object Isolate:
 
     /** The effect that marks a computation as unable to cross an isolation boundary.
       *
-      * A continuation a handler clause receives carries `Region.NoEscape`, which is this effect (see [[Region]]). No handler accepts it,
-      * and the derivation below refuses it with an explanation instead of looking for an instance, so forking, racing, timing out, or
-      * otherwise moving such a computation to another fiber does not compile.
+      * A continuation a handler clause receives carries `Region.NoEscape`, which is this effect (see [[Region]]). The derivation below
+      * refuses it with an explanation instead of looking for an instance, so moving such a computation to another fiber does not compile.
       */
     sealed abstract class Disallowed extends Effect
 
@@ -258,9 +253,8 @@ object Isolate:
 
         /** The isolate that manages nothing, and the base case a composition folds onto.
           *
-          * A composition's base has to be the identity of `andThen`, so that an isolate for effects nobody named is an isolate that does
-          * nothing at all. `Contextual` below is not that: it crosses a fiber boundary, which is a thing to ask for rather than a thing to
-          * inherit from the shape of a type.
+          * The base has to be the identity of `andThen`, so an isolate for effects nobody named does nothing at all. `Contextual` below is
+          * not that: it crosses a fiber boundary, which is asked for rather than inherited from the shape of a type.
           */
         private[kernel] object Identity extends Isolate[Any, Any, Any]:
             type State        = Unit
@@ -270,11 +264,10 @@ object Isolate:
             def restore[A, S](v: A < S)(using Frame)                       = v
         end Identity
 
-        // Carries the context across a fork: snapshots the context regions, runs the isolated computation
-        // over a forked snapshot, and joins each region back through its own fork and join strategy.
-        //
-        // Reached through `crossing`, at the sites that leave one fiber for another. Deliberately not the
-        // base case of composition: an isolate asked for in place forks nothing.
+        // Carries the context across a fork: snapshots the context regions, runs the isolated computation over a
+        // forked snapshot, and joins each region back through its own fork and join strategy. Reached through
+        // `crossing`, at the sites that leave one fiber for another, never as the base case of a composition: an
+        // isolate asked for in place forks nothing.
         private[kernel] object Contextual extends Isolate[Any, Any, Any]:
             type State        = Stack.Snapshot
             type Transform[A] = (Stack.Snapshot, Stack.Snapshot, A)
@@ -311,8 +304,7 @@ object Isolate:
                                     cont2(av, Arrow.id)
                 }
 
-            // `Forked` marks a region's handler as the fork of `origin`, so `join` can find the region it
-            // was forked from on the current stack.
+            // Marks a region's handler as the fork of `origin`, so `join` can find the region it was forked from.
             final private class Forked[State, E <: ContextEffect[State], A, S](val origin: Handler.ContextHandler[State, E, A, S])
                 extends Handler.ContextHandler[State, E, A, S]:
                 def tag = origin.tag
@@ -371,10 +363,9 @@ object Isolate:
                 tpe match
                     case AndType(left, right)        => flatten(left) ++ flatten(right)
                     case t if t =:= TypeRepr.of[Any] => Nil
-                    // Neither end of the lattice names an effect, and the bottom one has to be dropped
-                    // rather than left to the tests below: every `t <:< X` holds for it, so a row inferred
-                    // as Nothing, which is what an unconstrained row in a contravariant position becomes,
-                    // would read as naming the no-escape marker and be refused as a region escape.
+                    // The bottom type has to be dropped rather than left to the tests below: every `t <:< X` holds
+                    // for it, so a row inferred as Nothing, which is what an unconstrained row in a contravariant
+                    // position becomes, would read as naming the no-escape marker and be refused as a region escape.
                     case t if t =:= TypeRepr.of[Nothing] => Nil
                     case t                               => List(t)
 

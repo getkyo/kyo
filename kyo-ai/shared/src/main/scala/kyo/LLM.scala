@@ -77,7 +77,7 @@ object LLM:
         end match
     end crossRunFailure
 
-    /** Threads `State` through `ArrowEffect.handleLoopState`, interpreting each op. NOT inline. */
+    /** Threads `State` through `ArrowEffect.handleLoopState`, interpreting each op. */
     private[kyo] def runWith[A, S, B, S2](state: State)(v: A < (LLM & S))(
         done: (State, A) => B < S2
     )(using Frame): B < (S & S2 & Async & Abort[AIGenException]) =

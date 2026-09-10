@@ -357,8 +357,8 @@ private[kyo] object UnsafeServerDispatch:
                 // holds needs this erased-boundary cast. Safe: the task runs serveRequest (a Unit computation) and settles only with its result.
                 val fiber = IOTask.detached(serveRequest(router, endpoint, lookup, streamCtx, request, config))
                     .asInstanceOf[Fiber.Unsafe[Unit, Any]]
-                // Nothing reads a handler fiber's result: the keep-alive onComplete below ignores it. A panic
-                // that is not a connection-lifecycle interrupt (a Closed sentinel) would vanish silently.
+                // Nothing reads a handler fiber's result, so a panic that is not a connection-lifecycle interrupt
+                // (a Closed sentinel) would vanish silently.
                 fiber.onComplete {
                     case p: Result.Panic if !p.exception.isInstanceOf[Closed] =>
                         Log.live.unsafe.error("UnsafeServerDispatch: handler fiber panic", p.exception)
@@ -676,9 +676,8 @@ private[kyo] object UnsafeServerDispatch:
 
     /** Runs the handler computation and encodes the response.
       *
-      * Generic over the endpoint's types so the computation keeps its pending type: erased to `Any` it
-      * would re-enter the kernel through the lift, which nests a computation as data instead of running
-      * it, and the unrun computation would be delivered as the response value.
+      * Generic over the endpoint's types so the computation keeps its pending type: erased to `Any` it re-enters
+      * the kernel through the lift, which nests it as data, and the unrun computation is delivered as the response.
       */
     private def dispatchHandler[Out, E](
         handlerComputation: HttpResponse[Out] < (Async & Abort[E | HttpResponse.Halt]),
@@ -686,9 +685,7 @@ private[kyo] object UnsafeServerDispatch:
         streamCtx: Http1StreamContext,
         isHead: Boolean
     )(using Frame): Unit < Async =
-        // Abort.run[Any] rather than the precise E | Halt: E is abstract here and has no ConcreteTag. The
-        // computation parameter keeps its pending type, which is what matters: a typed pending conforms as
-        // a computation, where an erased one re-enters through the lift and is nested as data.
+        // Abort.run[Any] rather than the precise E | Halt: E is abstract here and has no ConcreteTag.
         Abort.run[Any](handlerComputation).map {
             case Result.Success(response) =>
                 endpoint.encodeResponse(response)(

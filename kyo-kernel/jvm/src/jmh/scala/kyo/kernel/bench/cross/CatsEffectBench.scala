@@ -7,22 +7,19 @@ import cats.effect.unsafe.implicits.global
 import java.util.concurrent.TimeUnit
 import org.openjdk.jmh.annotations.*
 
-/** cats-effect port of the KernelBench rows, for the cross-library comparison boards. Row names
-  * match KernelBench's so result tables join by name.
+/** cats-effect port of the KernelBench rows; row names match KernelBench's so tables join by name.
   *
-  * Run entry: `unsafeRunSync()` on the global IORuntime. One entry allocates an
-  * ArrayBlockingQueue, schedules a fiber onto the work-stealing pool, and parks the calling
-  * thread until the pool hands the result back: a thread handoff per operation. The entry cost is
-  * measured, not factored out; entryFloorBatch makes it visible. Fiber tracing stays at its
-  * default (cached); the tracing-off variant is recorded in a separate sensitivity run.
+  * Run entry is `unsafeRunSync()` on the global IORuntime: an ArrayBlockingQueue allocation, a
+  * fiber scheduled onto the work-stealing pool, and the calling thread parked until the pool hands
+  * the result back, so a thread handoff per operation. That cost is measured, not factored out;
+  * entryFloorBatch makes it visible. Fiber tracing stays at its default (cached); the tracing-off
+  * variant is a separate sensitivity run.
   *
   * Tier B substitution: kyo's Ask suspension answered by an installed handler becomes an
-  * `IOLocal.get` (a fresh fiber reads the constructor default, so the default is the installed
-  * answer and no per-run install is paid; suspensionBaselineAltInstall records the per-run set).
-  * The stateful row uses `IOLocal.modify`, which is fiber-local state threading like kyo's
-  * stateful region; the requirements' `Ref[IO]` spelling is a shared atomic CAS and is recorded
-  * as statefulAnswersPaySuccessorAltRef. Rows suffixed `Alt` are recorded alternatives and are
-  * excluded from the headline tables.
+  * `IOLocal.get`, whose constructor default is what a fresh fiber reads, so no per-run install is
+  * paid. The stateful row uses `IOLocal.modify`, fiber-local state threading like kyo's stateful
+  * region. Rows suffixed `Alt` record the alternatives (the per-run `set`, `Ref[IO]`'s shared
+  * atomic CAS) and are excluded from the headline tables.
   */
 @State(Scope.Benchmark)
 @BenchmarkMode(Array(Mode.AverageTime))
@@ -36,9 +33,7 @@ class CatsEffectBench:
 
     private var seed = 1
 
-    /** The suspension with fifty transformations chained after it, built once; only answering it
-      * is timed in fusionAfterSuspensionRunOnly.
-      */
+    /** The suspension with fifty transformations chained after it, built once; only answering it is timed. */
     private val accumulatedChain: IO[Int] =
         ask.get.map(a => a & 63)
             .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
@@ -70,9 +65,7 @@ class CatsEffectBench:
         acc
     end evalFixedOverheadBatch
 
-    /** The bare entry: a settled value through the run entry with no transformation, so the
-      * fixed per-run cost is visible in the same units as every other row.
-      */
+    /** The bare entry with no transformation, exposing the fixed per-run cost in the same units as every other row. */
     @Benchmark
     @OperationsPerInvocation(1000)
     def entryFloorBatch: Int =
@@ -155,9 +148,7 @@ class CatsEffectBench:
         runSync(loop(seed - 1))
     end suspensionBaseline
 
-    /** Recorded alternative: the per-run install (`set` before the loop). Excluded from the
-      * headline tables.
-      */
+    /** Recorded alternative: the per-run install (`set` before the loop). */
     @Benchmark
     def suspensionBaselineAltInstall: Int =
         def loop(i: Int): IO[Int] =
@@ -166,9 +157,7 @@ class CatsEffectBench:
         runSync(ask.set(1).flatMap(_ => loop(seed - 1)))
     end suspensionBaselineAltInstall
 
-    /** IOLocal has no distinct read-with-continuation spelling, so this row is expected to
-      * equal suspensionBaseline; confirming the equality is the finding.
-      */
+    /** IOLocal has no distinct read-with-cont spelling, so the row is expected to equal suspensionBaseline. */
     @Benchmark
     def suspensionFusesContinuation: Int =
         def loop(i: Int): IO[Int] =
@@ -257,9 +246,7 @@ class CatsEffectBench:
         runSync(loop(seed - 1))
     end statefulAnswersPaySuccessor
 
-    /** Recorded alternative: the requirements' `Ref[IO]` spelling, a shared atomic CAS per
-      * answer. Excluded from the headline tables.
-      */
+    /** Recorded alternative: the `Ref[IO]` spelling, a shared atomic CAS per answer. */
     @Benchmark
     def statefulAnswersPaySuccessorAltRef: Int =
         def loop(i: Int): IO[Int] =
@@ -277,7 +264,7 @@ class CatsEffectBench:
     end trailingMapsStayLinear
 
     /** Two IOLocals are two keys in one fiber-local map, not two nested handler regions, so
-      * nothing is crossed or re-attached; the row measures two ambient reads per level.
+      * nothing is crossed or re-attached: the row measures two ambient reads per level.
       */
     @Benchmark
     def foreignCrossingsPayRotation: Int =
@@ -289,7 +276,7 @@ class CatsEffectBench:
 
     /** Dynamic single-link application: NarrowDepth map links attached in a runtime loop, then
       * one run. IO reifies a Map node per link, so the row measures node build plus the
-      * interpreter over a thousand stored nodes. Shape adopted from zio-blocks' AsyncChainBench.
+      * interpreter over a thousand stored nodes. Shape taken from zio-blocks' AsyncChainBench.
       */
     @Benchmark
     def dynamicChainOfMapsStaysLinear: Int =
@@ -322,9 +309,7 @@ object CatsEffectBench:
 
     final case class Box(value: Int)
 
-    /** The ambient answer: an IOLocal's constructor default is what a fresh fiber reads, so
-      * constructing it with the answer is the install.
-      */
+    /** The ambient answer: a fresh fiber reads the constructor default, so constructing it is the install. */
     val ask: IOLocal[Int]  = IOLocal(1).unsafeRunSync()
     val ask2: IOLocal[Int] = IOLocal(0).unsafeRunSync()
     val st: IOLocal[Int]   = IOLocal(0).unsafeRunSync()

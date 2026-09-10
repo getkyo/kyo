@@ -22,8 +22,7 @@ import scala.util.NotGiven
   * completion with a final result.
   */
 // The combinators take no Safepoint evidence: the evaluator polls the budget itself. A body that can
-// suspend defers the rest of the loop through an Arrow node (`Step`), cached in `step` and reused
-// across iterations.
+// suspend defers the rest of the loop through an Arrow node (`Step`), cached in `step` across iterations.
 object Loop:
 
     /** Represents the state to be carried forward to the next iteration of a loop.
@@ -136,8 +135,8 @@ object Loop:
       */
     opaque type Outcome4[A, B, C, D, +O] = O | Continue4[A, B, C, D]
 
-    // Done wraps a settled answer that is itself a Continue, so a completed outcome can be told from a
-    // continuation; unnest reads the answer back out.
+    // Wraps a settled answer that is itself a Continue, so it cannot be read as a request to continue;
+    // `unnest` reads the answer back out.
     final private[kyo] class Done[O](val value: O)
 
     private[kyo] def unnest[A, B, C, D, O](v: Outcome[A, O] | Outcome2[A, B, O] | Outcome3[A, B, C, O] | Outcome4[A, B, C, D, O]): O =
@@ -236,8 +235,8 @@ object Loop:
         ).asInstanceOf[Outcome4[A, B, C, D, O] < Any]
     end continue
 
-    // Wraps an answer that is itself a Continue in Done, and nests any other, so a settled answer cannot
-    // be mistaken for a suspension.
+    // Wraps an answer that is itself a Continue in `Done`, so a settled answer is not read as a request
+    // to continue.
     /** Creates an outcome signaling completion with no value. */
     @targetName("done0")
     inline def done[A]: Outcome[A, Unit] < Any = ().asInstanceOf[Outcome[A, Unit] < Any]

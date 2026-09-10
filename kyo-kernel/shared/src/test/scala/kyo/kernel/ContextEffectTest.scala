@@ -37,7 +37,7 @@ class ContextEffectTest extends AnyFreeSpec:
     "suspend" in {
         val effect: Int < TestRuntimeEffect1 = testRuntimeEffect1
         discard(effect)
-        // ContextEffect.suspend produces an Int < TestRuntimeEffect1; the type ascription above is the verification
+        // the type ascription above is the assertion: ContextEffect.suspend answers at Int < TestRuntimeEffect1
         succeed
     }
 

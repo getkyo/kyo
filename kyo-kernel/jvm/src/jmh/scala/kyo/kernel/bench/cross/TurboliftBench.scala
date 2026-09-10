@@ -8,16 +8,16 @@ import turbolift.Handler
 import turbolift.effects.ReaderEffect
 import turbolift.effects.StateEffect
 
-/** Turbolift port of the KernelBench rows, for the cross-library comparison boards. Row names
-  * match KernelBench's so result tables join by name.
+/** Turbolift port of the KernelBench rows for the cross-library boards. Row names match
+  * KernelBench's so result tables join by name.
   *
   * Turbolift is the one target with true algebraic effects, so the Ask and stateful rows are
-  * exact: a Reader operation resolved by its installed handler, and a State update threaded by
-  * the interpreter. Handlers are built once; only their application is per run, which matches
-  * kyo's per-run handleCont application.
+  * exact: a Reader operation resolved by its installed handler, and a State update threaded by the
+  * interpreter. Handlers are built once and only their application is per run, matching kyo's
+  * per-run handleCont application.
   *
-  * Run entry: `.runST`, not `.run`. Mode.default is MT, which ships the fiber to a thread pool
-  * and parks the caller; runST runs the fiber on the calling thread. Executor.ST allocates one
+  * Run entry: `.runST`, not `.run`. Mode.default is MT, which ships the fiber to a thread pool and
+  * parks the caller; runST runs it on the calling thread. Executor.ST allocates one
   * ZeroThreadedExecutor per run and that allocation is part of the measured entry.
   */
 @State(Scope.Benchmark)
@@ -32,9 +32,7 @@ class TurboliftBench:
 
     private var seed = 1
 
-    /** The suspension with fifty transformations chained after it, built once; only answering it
-      * is timed in fusionAfterSuspensionRunOnly.
-      */
+    /** Built once so fusionAfterSuspensionRunOnly times only the answer, not the chain. */
     private val accumulatedChain: Int !! Ask =
         Ask.ask.map(a => a & 63)
             .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
@@ -66,9 +64,9 @@ class TurboliftBench:
         acc
     end evalFixedOverheadBatch
 
-    /** The bare entry: a settled value through `.runST` with no transformation, so the fixed
-      * per-run cost (a ZeroThreadedExecutor, a root fiber, the CEK loop entry) is visible in
-      * the same units as every other row.
+    /** A settled value through `.runST` with no transformation, so the fixed per-run cost (a
+      * ZeroThreadedExecutor, a root fiber, the CEK loop entry) is visible in the same units as
+      * every other row.
       */
     @Benchmark
     @OperationsPerInvocation(1000)
@@ -153,8 +151,8 @@ class TurboliftBench:
         loop(seed - 1).handleWith(askHandler).runST
     end suspensionBaseline
 
-    /** Exact analogue of kyo's askWith: asksEff carries the continuation into the operation,
-      * answered by the interpreter's Local.getsEff.
+    /** Exact analogue of kyo's askWith: asksEff carries the cont into the operation, answered by
+      * the interpreter's Local.getsEff.
       */
     @Benchmark
     def suspensionFusesContinuation: Int =
@@ -164,9 +162,8 @@ class TurboliftBench:
         loop(seed - 1).handleWith(askHandler).runST
     end suspensionFusesContinuation
 
-    /** ReaderEffect.ask is a final val, so the sixteen sites share one operation node; what
-      * varies per site is the continuation class only. The row measures the portable half of
-      * what kyo's row measures.
+    /** `ReaderEffect.ask` is a final val, so the sixteen sites share one operation node and only
+      * the cont class varies. The row measures the portable half of what kyo's row measures.
       */
     @Benchmark
     def sharedHandlerPaysDispatch: Int =
@@ -223,8 +220,8 @@ class TurboliftBench:
         loop(seed - 1).handleWith(askHandler).runST
     end fusionAfterSuspension
 
-    /** The handler is installed and never used; the chain is ascribed into the Ask row exactly
-      * as KernelBench ascribes its loop.
+    /** The handler is installed and never used; the chain is ascribed into the Ask row as
+      * KernelBench ascribes its loop.
       */
     @Benchmark
     def idleHandlerAddsNothing: Int =
@@ -240,9 +237,9 @@ class TurboliftBench:
         (loop(seed - 1): Int !! Ask).handleWith(askHandler).runST
     end idleHandlerAddsNothing
 
-    /** Exact: State.update answers 1 and advances the interpreter-threaded state, matching
-      * kyo's Loop.continue(state + 1, 1). The local handler yields (answer, state); ._1
-      * matches kyo's return clause.
+    /** Exact: State.update answers 1 and advances the interpreter-threaded state, matching kyo's
+      * Loop.continue(state + 1, 1). The local handler yields (answer, state); ._1 matches kyo's
+      * return clause.
       */
     @Benchmark
     def statefulAnswersPaySuccessor: Int =
@@ -269,9 +266,9 @@ class TurboliftBench:
         loop(seed - 1).handleWith(askHandler).handleWith(ask2Handler).runST
     end foreignCrossingsPayRotation
 
-    /** Dynamic single-link application: NarrowDepth map links attached in a runtime loop, then
-      * one run. Turbolift reifies a node per link, so the row measures node build plus the CEK
-      * interpreter over a thousand stored nodes. Shape adopted from zio-blocks' AsyncChainBench.
+    /** NarrowDepth map links attached in a runtime loop, then one run. Turbolift reifies a node
+      * per link, so the row measures node build plus the CEK interpreter over those nodes. Shape
+      * from zio-blocks' AsyncChainBench.
       */
     @Benchmark
     def dynamicChainOfMapsStaysLinear: Int =
@@ -313,9 +310,6 @@ object TurboliftBench:
     case object St extends StateEffect[Int]
     type St = St.type
 
-    /** Handlers built once; only their application is per run, matching kyo's per-run
-      * handleCont application.
-      */
     val askHandler: Handler[Identity, Identity, Ask, Any]       = Ask.handler(1)
     val ask2Handler: Handler[Identity, Identity, Ask2, Any]     = Ask2.handler(0)
     val stHandler: Handler[Identity, [X] =>> (X, Int), St, Any] = St.handler(0)

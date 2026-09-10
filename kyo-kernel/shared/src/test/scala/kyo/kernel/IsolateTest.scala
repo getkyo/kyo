@@ -15,8 +15,7 @@ class IsolateTest extends Test:
 
     sealed trait NotContextEffectSub extends NotContextEffect
 
-    // A region that says a fork of it holds something else, so that whether a fork happened is readable
-    // from the value alone.
+    // A region whose fork holds a different value, so whether a fork happened is readable from the value alone.
     sealed trait Forking extends ContextEffect[Int]
 
     def forking[A, S](value: Int)(v: A < (Forking & S))(using Frame): A < S =
@@ -107,9 +106,8 @@ class IsolateTest extends Test:
             assert(ContextEffect.handleInheritable(Tag[TestEffect1], 7)(v).eval == 7)
         }
 
-        // A derived isolate manages the effects it was asked to manage. Leaving one fiber for another is a
-        // separate act, asked for by `crossing`, so an isolate used in place leaves every region in scope
-        // reading exactly what it read before, whatever that region says a fork of it would hold.
+        // Leaving one fiber for another is a separate act, asked for by `crossing`, so an isolate used in place
+        // leaves every region in scope reading what it read before, whatever a fork of that region would hold.
         "an isolate for effects nobody named leaves a forking region alone" in {
             val isolate         = summon[Isolate[Any, Any, Any]]
             val read: Int < Any = ContextEffect.suspend(Tag[Forking], -1)
@@ -134,8 +132,7 @@ class IsolateTest extends Test:
 
     "isolate application" - {
         "no context effect suspension" in {
-            // `capture` hands the isolate the contextual regions in scope; with no handler outside there
-            // are none.
+            // `capture` hands the isolate the contextual regions in scope; with no handler outside there are none.
             val effect: Stack.Snapshot < Any = Isolate.internal.Contextual.capture { (snapshot: Stack.Snapshot) =>
                 snapshot
             }

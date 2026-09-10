@@ -21,7 +21,6 @@ abstract class Effect private[kernel] ()
 
 object Effect:
 
-    // Builds a `Pending.Defer` node around a value and the continuations that run after it.
     def defer[A, B, S](v: A < S, cont: Arrow[A, B, S]): B < S =
         cont match
             case cont: Arrow.Chain[A, x, B, S] @unchecked =>

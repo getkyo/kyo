@@ -37,12 +37,10 @@ import scala.language.implicitConversions
   * `computation.handle(Abort.run, _.map(_ + 1))` handles `Abort` and then applies a transformation. While `handle` supports arbitrary
   * functions, it is primarily designed for effect handling .
   */
-// The union's second arm is Pending, the node family in PendingInternal. The combinators below build
-// Arrow and Defer nodes and leave the stack-depth budget to the evaluator, so their function parameters
-// take no Safepoint evidence.
-// The third arm is the wrapper the lift puts around a nested computation. It stands apart from the node
-// family and needs its own arm, or `Nothing < S` erases to Pending and a position holding a nested
-// computation cannot carry it.
+// The second arm is Pending, the node family in PendingInternal. The combinators below build Arrow and Defer
+// nodes and leave the stack-depth budget to the evaluator, so their function parameters take no Safepoint
+// evidence. The third arm is the wrapper the lift puts around a nested computation: without an arm of its own,
+// `Nothing < S` erases to Pending and a position holding a nested computation cannot carry it.
 opaque type <[+A, -S] = A | Pending[A, S] | Nested[A]
 
 // The lifts live in internal.Implicits, mixed in here.
@@ -77,19 +75,18 @@ object `<` extends Implicits:
                     out
                 end if
             end run
-            // States the receiver's own type, so it holds by construction. Needed because this body is
-            // inline: re-checked under -Xcheck-macros, `<` is seen through a proxy the compiler does not
-            // substitute into the union, leaving a pending value type nothing to conform to. Erased.
+            // States the receiver's own type, so it holds by construction. Needed because under -Xcheck-macros the
+            // inline body sees `<` through a proxy the compiler does not substitute into the union, leaving a
+            // pending value type nothing to conform to. Erased.
             run(v.asInstanceOf[A < S], Arrow.id)
         end map
 
         /** Maps the value this computation produces, with no preemption point between the value arriving and `f` running.
           *
           * `map` polls the safepoint before applying its function, so an interrupt pending when the value arrives parks the
-          * computation and `f` is never reached. That is the right default. It is wrong where `f` records an obligation the
-          * value has already created, a resource that is now open and whose finalizer is not yet registered: the park drops
-          * the registration and the value leaks. This variant applies `f` as the value arrives instead, so the two are one
-          * step and an interrupt lands on either side of the pair rather than between them.
+          * computation and `f` is never reached. That is wrong where `f` records an obligation the value has already created,
+          * a resource that is open and whose finalizer is not yet registered: the park drops the registration and the value
+          * leaks. This variant applies `f` as the value arrives, so an interrupt lands on either side of the pair.
           */
         inline def ensureMap[B, S2](inline f: A => B < S2)(using inline _frame: Frame): B < (S & S2) =
             @nowarn("msg=anonymous") def step: Arrow.Ensure[A, B, S2] =
@@ -173,8 +170,8 @@ object `<` extends Implicits:
                         override def apply[C2, S4](v2: A < S4, cont2: Arrow[C, C2, S4]) =
                             run(v2, cont.chain(cont2))
                 else
-                    // `Unit` is the union's first arm, so this holds by construction. Needed for the same
-                    // -Xcheck-macros reason as `map`'s cast above. Erased.
+                    // `Unit` is the union's first arm, so this holds by construction; same -Xcheck-macros reason
+                    // as `map`'s cast above. Erased.
                     val out = cont.head(().asInstanceOf[Unit < S3], cont.tail)
                     Safepoint.exit(slot)
                     out
@@ -216,8 +213,8 @@ object `<` extends Implicits:
             f(handle1)
         end handle
 
-        // Every stage takes its computation by name, so a stage such as Abort.run sees an exception
-        // thrown while the receiver is built.
+        // Every stage takes its computation by name, so a stage such as `Abort.run` sees an exception thrown
+        // while the receiver is built.
         /** Applies two transformations to this computation in sequence.
           *
           * Enables chaining multiple effect handlers or transformations in a readable sequential style.
@@ -429,14 +426,12 @@ object `<` extends Implicits:
         end eval
     end extension
 
-    // Public in binary rather than inline: an inline conversion binds a prefix proxy at every expansion
-    // site and a private one goes through an inline accessor, both growing every suspension's expansion
-    // (pinned in ArrowEffectBytecodeTest).
+    // Public in binary rather than inline: an inline conversion binds a prefix proxy at every expansion site, a
+    // private one goes through an inline accessor, and both grow every suspension (ArrowEffectBytecodeTest pins this).
     @publicInBinary implicit private[kernel] def fromKyo[A, S](v: Pending[A, S]): A < S = v
 
     given [A, S, APendingS <: A < S](using ra: Render[A]): Render[APendingS] with
-        // A lifted value is wrapped in Nested, which is not a Pending, so it needs its own case to render
-        // in the same Kyo(...) form.
+        // A lifted value is wrapped in Nested, not a Pending, so it needs its own case to render as Kyo(...).
         def asString(value: APendingS): String = value match
             case sus: Pending[?, ?] => sus.toString
             case nested: Nested[?]  => s"Kyo(${nested.value})"

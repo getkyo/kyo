@@ -18,10 +18,9 @@ import kyo.net.NetDnsResolutionException
   */
 private[net] object SystemResolver:
 
-    // bound once for the reason KqueuePollerBackend.kq is: the shared stateless binding was
-    // reloaded per resolve call.
-    // Unsafe: first use is always under a caller that holds AllowUnsafe, and each binding method
-    // still requires AllowUnsafe per call.
+    // Bound once, as KqueuePollerBackend.kq is: a shared stateless binding reloads on every resolve call otherwise.
+    // Unsafe: first use is always under a caller that holds AllowUnsafe, and each binding method still requires
+    // AllowUnsafe per call.
     private lazy val bindings: ResolveBindings =
         import AllowUnsafe.embrace.danger
         Ffi.load[ResolveBindings]

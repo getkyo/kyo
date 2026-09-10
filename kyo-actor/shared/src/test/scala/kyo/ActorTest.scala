@@ -409,15 +409,11 @@ class ActorTest extends kyo.test.Test[Any]:
             end for
         }
 
-        // Both tests above await the actor before checking cleanup, so neither asks what happens when the
-        // scope that owns the actor closes while the actor is still parked on its mailbox. Actor.run
-        // spawns through the scoped Fiber.init, which registers `_.interrupt`, so the scope signals the
-        // actor and returns without waiting for its teardown: a resource the behavior holds can still be
-        // open once Scope.run has returned. That is the same defect the Scope.run pin in
-        // ScopeInterruptTest records, inherited here rather than specific to Actor, and it is not pinned
-        // twice: written directly it is a race, and the usual way to make it deterministic, blocking the
-        // finalizer on a gate, would deadlock the fixed version, since a Scope.run that waits would wait
-        // on that gate. It needs an awaiting interruption to fix, and a deterministic pin to test.
+        // Neither test above covers the scope that owns the actor closing while the actor is still parked on
+        // its mailbox: Actor.run spawns through the scoped Fiber.init, which registers `_.interrupt`, so the
+        // scope signals the actor and returns without waiting for its teardown, leaving a resource the behavior
+        // holds open past Scope.run. That is the Scope.run defect ScopeInterruptTest pins, not an Actor-specific
+        // one; gating the finalizer to make a pin here deterministic would deadlock once the interrupt awaits.
     }
 
     "concurrency" - {

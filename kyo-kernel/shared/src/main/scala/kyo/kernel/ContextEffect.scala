@@ -15,9 +15,9 @@ import scala.annotation.nowarn
   * different handlers can provide different values in different scopes. The composition of effects automatically tracks these requirements
   * through the type system.
   *
-  * What a value does at an async boundary is decided by the handler that provides it. `handleInheritable` makes the value visible to
-  * forked computations as is; `handle` takes explicit fork and join strategies, which is how values that should remain within a single
-  * async context, like thread-local data, or values that must merge back after a fork are expressed.
+  * Behavior at an async boundary is a handler choice. `handleInheritable` makes the value visible to forked computations as is; `handle`
+  * takes explicit fork and join strategies, for values that must stay within one async context, like thread-local data, or that merge back
+  * after a fork.
   *
   * The polymorphic type parameter A defines what type of value is required:
   * @tparam A
@@ -128,9 +128,6 @@ object ContextEffect:
         end new
     end suspendWith
 
-    // Inheritance is a per-handler strategy: `handleInheritable` inherits across async boundaries, while
-    // `handle` takes explicit fork and join strategies plus the optional done and release hooks.
-
     /** Handles a context effect by providing a value for a specific computation scope. This satisfies suspend operations within that scope
       * by making the provided value available to them. The handler establishes a region where the context value is defined and can be
       * accessed.
@@ -192,7 +189,7 @@ object ContextEffect:
     )(v: B < (E & S))(using inline _frame: Frame): B < S =
         handle(effectTag)(derive, (parent: A) => parent, (parent: A, _: A, _: A) => parent)(v)
 
-    /** Handles a context effect with explicit strategies for what a forked computation sees and how its value comes back on join.
+    /** Handles a context effect with explicit fork and join strategies.
       *
       * @param effectTag
       *   Identifies which context effect to handle
@@ -219,8 +216,7 @@ object ContextEffect:
     )(v: B < (E & S))(using inline _frame: Frame): B < S =
         handle(effectTag)((outer: Maybe[A]) => outer.fold(ifUndefined)(ifDefined), fork, join)(v)
 
-    /** Handles a context effect with explicit fork and join strategies and a release hook, called with the region's value when the region
-      * is abandoned or fails.
+    /** Handles a context effect with explicit fork and join strategies and a release hook.
       *
       * @param effectTag
       *   Identifies which context effect to handle
@@ -250,8 +246,7 @@ object ContextEffect:
     )(v: B < (E & S))(using inline _frame: Frame): B < S =
         handle(effectTag)((outer: Maybe[A]) => outer.fold(ifUndefined)(ifDefined), fork, join, release = release)(v)
 
-    /** Handles a context effect with the full set of strategies. The region's value is derived from the outer one at entry; fork and join
-      * decide what crosses a fork and what comes back; done runs with the value when the region completes and release when it does not.
+    /** Handles a context effect with the full set of strategies.
       *
       * @param effectTag
       *   Identifies which context effect to handle

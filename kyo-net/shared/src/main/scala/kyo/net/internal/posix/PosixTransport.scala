@@ -1507,10 +1507,9 @@ final private[net] class PosixTransport private[posix] (
     /** The non-blocking fcntl shim (loaded once), used to set client / accepted sockets non-blocking on every architecture (RI: variadic
       * fcntl is ABI-unsafe on arm64).
       */
-    // bound once for the reason KqueuePollerBackend.kq is: the shared stateless binding was
-    // reloaded per call. Lazy so touching the transport object does not dlopen before selection.
-    // Unsafe: first use is always under a caller that holds AllowUnsafe, and each binding method
-    // still requires AllowUnsafe per call.
+    // Bound once like KqueuePollerBackend.kq: a shared stateless binding is reloaded on every call.
+    // Lazy so touching the transport object does not dlopen before selection.
+    // Unsafe: first use is always under a caller holding AllowUnsafe, and each binding method still requires AllowUnsafe per call.
     private lazy val shim: PosixShimBindings =
         import AllowUnsafe.embrace.danger
         Ffi.load[PosixShimBindings]

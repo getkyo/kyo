@@ -83,11 +83,9 @@ class StackTest extends AnyFreeSpec:
             assert(stack.continuation(0) eq k)
         }
 
-        // A pop that only moves `size` leaves the entry where it was, and a stack outlives any one evaluation:
-        // `Stack.release` returns it to a per-thread pool, and `clear` reaches only `0 until size`. So a slot
-        // left set here holds that region's handler, its state and its continuation for as long as the thread
-        // lives, whatever they close over. `truncate`, `dump` and `takeAll` all drop what they shrink past;
-        // this says `pop` does too.
+        // A pop that only moves `size` leaves the entry set, and a stack outlives one evaluation: `Stack.release`
+        // returns it to a per-thread pool and `clear` reaches only `0 until size`. A slot left set would hold that
+        // region's handler, state and cont, and whatever they close over, for as long as the thread lives.
         "a popped entry is dropped, not just skipped" in {
             val stack = new Stack
             val state = new Object

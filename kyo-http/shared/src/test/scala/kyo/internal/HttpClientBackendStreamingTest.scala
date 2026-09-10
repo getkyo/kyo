@@ -123,16 +123,13 @@ class HttpClientBackendStreamingTest extends kyo.BaseHttpTest:
             }
         }
 
-        // This is the re-review the note here used to call for. `Stream.take` no longer discards the continuation without
-        // unwinding: `Sync.ensure` is a bracket, and a bracket's release runs when the guarded extent ends, so stopping the
-        // stream early runs the finalizer and closes the decoded channel. The decode's next put then fails `Closed`, the
-        // body never reaches Done, and the connection is discarded rather than pooled, exactly as for the interrupted leaf
-        // above. What used to make this leaf differ was the release firing at fiber end instead, which was an artifact of
-        // the old runtime rather than anything `Sync.ensure` promised.
+        // `Sync.ensure` is a bracket, and a bracket's release runs when the guarded extent ends, so stopping the stream
+        // early runs the finalizer and closes the decoded channel. The decode's next put then fails `Closed`, the body
+        // never reaches Done, and the connection is discarded rather than pooled, as for the interrupted leaf above.
         //
-        // The cost is real: a consumer that reads a prefix and stops now gives up connection reuse. Buying it back means
-        // draining the remainder under a deadline and a byte cap, which is a feature to add deliberately rather than a
-        // timing property to inherit.
+        // The cost is real: a consumer that reads a prefix and stops gives up connection reuse. Buying it back means
+        // draining the remainder under a deadline and a byte cap, a feature to add deliberately rather than a timing
+        // property to inherit.
         "completes false when the consumer stops early, since ending the stream closes the body" in {
             val (clientConn, serverConn) = TransportConnection.inMemoryPair()
             val http1                    = Http1ClientConnection.init(clientConn.inbound, clientConn.outbound)

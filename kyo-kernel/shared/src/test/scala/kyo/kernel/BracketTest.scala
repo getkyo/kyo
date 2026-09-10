@@ -598,8 +598,8 @@ class BracketTest extends AnyFreeSpec:
         }
 
         "a bracket does not cross into an isolated child: a capture inside the child, resumed after the bracket ended, runs" in {
-            // A bracket closes only with the scope that installed it, and the child copy it forks is inert,
-            // so a continuation escaping the child carries no obligation and no refusal.
+            // The child copy a bracket forks is inert, so a continuation escaping the child carries no obligation
+            // and no refusal.
             var leaked    = Maybe.empty[Arrow[Int, Int, Ask]]
             var released  = false
             var usedAfter = false
@@ -633,8 +633,7 @@ class BracketTest extends AnyFreeSpec:
         }
 
         "an isolated child built inside a bracket and evaluated after the bracket ended is not refused" in {
-            // The shape of a spawned fiber: built in the parent's extent, evaluated by another eval once the
-            // parent's bracket has released.
+            // The shape of a spawned fiber: built in the parent's extent, evaluated after the bracket released.
             var released = false
             var child    = Maybe.empty[Int < Any]
             val body: Int < Any =
@@ -1164,9 +1163,8 @@ class BracketTest extends AnyFreeSpec:
 
     "multi-shot clauses" - {
 
-        // A held region records that its extent ended instead of releasing, and that record is acted on
-        // when its owner ends normally. An unwind is not that: the extent is being abandoned, so the
-        // release is owed the failure, not the silence of a branch that already ran to an end.
+        // A held region records that its extent ended instead of releasing, and an unwind overrides that record:
+        // the extent is being abandoned, so the release is owed the failure.
         "an unwind after a branch ended tells the release it failed" in {
             var outcome: Maybe[Maybe[Throwable]] = Absent
             val v =
@@ -1303,10 +1301,9 @@ class BracketTest extends AnyFreeSpec:
         }
 
         "a handleFirst remainder carries the bracket it was handed: the first shot completes it, the second is refused" in {
-            // the clause hands the continuation out as the region's value, so the bracket dumped into it
-            // is not released at the region's exit: it is owed to the scope below until the remainder
-            // resumes and completes it. The remainder is still one-shot: the second application finds the
-            // cell completed and is refused at the bracket
+            // The clause hands the continuation out as the region's value, so the bracket dumped into it is owed
+            // to the scope below until the remainder resumes and completes it. Still one-shot: the second
+            // application finds the cell completed and is refused.
             var closed             = false
             var closedAtClause     = false
             var seen               = List.empty[String]
@@ -1334,9 +1331,8 @@ class BracketTest extends AnyFreeSpec:
         }
 
         "a handleFirstRepeated remainder is held across every application, and each runs against the live resource" in {
-            // the same peel, declared as one the holder applies more than once: the bracket travelling with
-            // the remainder is not released by whichever application finishes first, but held and released
-            // where the scope below ends, so no application runs after the release
+            // The remainder is declared as one the holder applies more than once, so its bracket is held past the
+            // first application and released where the scope below ends.
             var closed             = false
             var closedAtClause     = false
             var seen               = List.empty[String]
@@ -1364,8 +1360,8 @@ class BracketTest extends AnyFreeSpec:
         }
 
         "a handleFirst remainder that is never resumed releases at the enclosing region's exit, as discarded" in {
-            // the clause drops the continuation: the bracket it carries is owed to the region below the
-            // handleFirst, still open while that region's body continues, and drained when it exits
+            // The clause drops the continuation: the bracket it carries is owed to the region below the
+            // handleFirst and drained when that region exits.
             var outcome        = Maybe.empty[Maybe[Throwable]]
             var closedAtClause = false
             var closedAfter    = false
@@ -1430,9 +1426,8 @@ class BracketTest extends AnyFreeSpec:
         }
 
         "nested hand-outs descend the debt through each region, and the remainder resumed through both completes the bracket" in {
-            // The inner region hands the bracket-carrying remainder out as a value, and the outer region
-            // hands its own remainder out with that inside it, so the debt moves inner lane to outer lane to
-            // the enclosing region's, where the resume finds it.
+            // Each region hands its remainder out as a value with the bracket-carrying one inside, so the debt
+            // descends region by region to where the resume finds it.
             var outcome         = Maybe.empty[Maybe[Throwable]]
             val body: Int < Ask = Bracket(Effect.defer(1))(r => ask.map(_ + r))((_, o) => outcome = Maybe(o))
             val inner: Maybe[Arrow[Int, Int, Ask]] < Any =

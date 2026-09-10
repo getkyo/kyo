@@ -1323,10 +1323,9 @@ object Flow:
 
         /** A registered handler, kept as the computation it is.
           *
-          * The row is erased the way the rest of this walk erases one, but the result is `Any < Any` rather than `Any`: a handler is a
-          * computation, and a position that says only `Any` invites the pending type's lift to fire at the `Abort.run` that runs it,
-          * which wraps the computation as data. The unwind then hands itself that value, matches neither failure arm, records the node
-          * compensated and runs nothing.
+          * The row is erased the way the rest of this walk erases one, but the result is `Any < Any` rather than `Any`: at `Any` the
+          * pending type's lift fires at the `Abort.run` that runs it and wraps the computation as data, so the unwind hands itself that
+          * value, matches neither failure arm, and records the node compensated without running anything.
           */
         case class Compensation(name: String, ctx: Record[Any], handler: Record[Any] => Any < Any)
 
@@ -1340,7 +1339,7 @@ object Flow:
                 ctx: Record[Any],
                 handler: internal.Handler[Any]
             ): Unit < Sync =
-                // The cast is the row erasure `Compensation` describes, and nothing else: the value is the same function.
+                // The cast is the row erasure `Compensation` describes: the value is the same function.
                 compsRef.getAndUpdate(Compensation(name, ctx, handler.asInstanceOf[Record[Any] => Any < Any]) +: _).unit
 
             /** Runs the handlers this attempt registered, in reverse order of registration, skipping the ones already recorded.

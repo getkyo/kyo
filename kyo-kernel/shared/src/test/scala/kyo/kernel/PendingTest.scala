@@ -422,8 +422,8 @@ class PendingTest extends Test:
                 ContextEffect.handleInheritable(Tag[TestEffect3], value)(v)
         end TestEffect3
 
-        // Forces the deferral by draining the safepoint budget, denying every entry inside the block,
-        // which is what a preempting fiber does to the resumption over a nested `A < S` value.
+        // Drains the safepoint budget so every entry inside the block is denied, as a preempting fiber denies
+        // the resumption over a nested `A < S` value.
         def drainedBudget[A](f: => A): A =
             val slot  = Safepoint.get()
             val saved = Safepoint.save(slot)
@@ -446,8 +446,8 @@ class PendingTest extends Test:
         }
 
         "a nested computation with a Nothing result" in {
-            // `Nothing < S` is `Pending[Nothing, S]` alone, so a position holding a nested one must
-            // still admit the lift's wrapper
+            // `Nothing < S` is `Pending[Nothing, S]` alone, so a position holding a nested one must still admit
+            // the lift's wrapper
             val inner: Nothing < TestEffect1          = TestEffect1(7).map(_ => (throw new IllegalStateException("unreached")): Nothing)
             val nested: (Nothing < TestEffect1) < Any = Kyo.lift(inner)
             val stopped: String < Any =
@@ -471,11 +471,9 @@ class PendingTest extends Test:
         // handled and does not leak past its handler. `drainedBudget` forces that deferral deterministically.
         // One leaf per operation.
 
-        // `ensureMap` exists so that a function recording an obligation the value has already created (a
-        // spawned fiber, an opened handle) is reached even when the safepoint is denied. `map` polls first
-        // and defers, which drops the recording and leaks the value. This is the primitive `Scope.acquireRelease`,
-        // `Async.timeout` and `Exchange.init` rely on, so its guarantee is pinned here rather than only through
-        // the races at those sites.
+        // `ensureMap` reaches a function recording an obligation the value has already created (a spawned fiber,
+        // an opened handle) even when the safepoint is denied, where `map` polls first and defers, dropping the
+        // recording and leaking the value. `Scope.acquireRelease`, `Async.timeout` and `Exchange.init` rely on it.
         "ensureMap applies its function at a denied safepoint, where map defers it" in {
             var mapped         = false
             var ensureMapped   = false
