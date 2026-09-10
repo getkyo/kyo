@@ -651,6 +651,26 @@ class EvalTest extends AnyFreeSpec:
             assert(applied == Maybe("token"), s"the release never ran, it saw $applied")
         }
 
+        // The sibling of the leaf above, for an `Ensure` that does not settle its debt by being applied.
+        // `Scope.acquireRelease`'s registers its release against a finalizer that outlives the fiber, so
+        // applying it is the whole of the obligation. `Bracket`'s builds the `Cell` that owns the release
+        // and returns the region holding it, so a walk that applies it and discards the result creates the
+        // obligation and drops it in the same move: the acquire ran, and nothing owes what it produced.
+        "a release the abandoned Ensure installs rather than registers is still run" in {
+            var released = Maybe.empty[Int]
+            val v: Int < Any =
+                Bracket(Effect.defer {
+                    requestStop()
+                    Effect.defer(7)
+                })(a => Effect.defer(a + 1)) { (a, _) =>
+                    released = Maybe(a)
+                }
+            val parked = Eval.partial(v)
+            assert(released.isEmpty, "the premise is that the stop parked before the bracket installed its region")
+            Eval.release(parked, new RuntimeException("abandoned"), Tag[Ask])([C] => (_: Unit) => ())
+            assert(released == Maybe(7), s"the release never ran for what the acquire produced, it saw $released")
+        }
+
         "a stateful region parked mid-loop resumes at the parked state" in {
             val body: Int < Ask =
                 ask.map { a =>
