@@ -242,9 +242,7 @@ object Flag {
 
     /** Environment variable name for a flag name: dots become underscores, then uppercased.
       *
-      * A pure function of the name, with no config source behind it, which is what lets it be shared with
-      * [[kyo.CompileTimeFlag]]: that one runs inside the compiler and cannot go through [[FlagPlatform]],
-      * whose JS implementation reads `process` from the JavaScript global scope.
+      * Pure, with no config source behind it, so [[kyo.CompileTimeFlag]] can share it from inside the compiler.
       */
     private[kyo] def envName(name: String): String = name.replace('.', '_').toUpperCase
 

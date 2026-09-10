@@ -651,11 +651,10 @@ class EvalTest extends AnyFreeSpec:
             assert(applied == Maybe("token"), s"the release never ran, it saw $applied")
         }
 
-        // The sibling of the leaf above, for an `Ensure` that does not settle its debt by being applied.
-        // `Scope.acquireRelease`'s registers its release against a finalizer that outlives the fiber, so
-        // applying it is the whole of the obligation. `Bracket`'s builds the `Cell` that owns the release
-        // and returns the region holding it, so a walk that applies it and discards the result creates the
-        // obligation and drops it in the same move: the acquire ran, and nothing owes what it produced.
+        // An `Ensure` that does not settle its debt by being applied. `Scope.acquireRelease`'s registers its
+        // release against a finalizer that outlives the fiber, so applying it is the whole obligation.
+        // `Bracket`'s builds the `Cell` that owns the release and returns the region holding it, so a walk
+        // that applies it and discards the result creates the obligation and drops it in the same move.
         "a release the abandoned Ensure installs rather than registers is still run" in {
             var released = Maybe.empty[Int]
             val v: Int < Any =

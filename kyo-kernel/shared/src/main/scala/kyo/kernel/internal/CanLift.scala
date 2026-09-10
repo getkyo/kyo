@@ -38,16 +38,8 @@ To fix this, you can:
 """)
 opaque type CanLift[A] = Null
 
-// The macros that police the lift boundary: the singleton check that derives a `CanLift`, and the
-// guidance raised when a Unit computation is lifted to the wrong row. Both reject a lift and explain
-// why, and each has one caller, so they sit together rather than in an object apiece.
-//
-// Diverges from main twice over. Main derives every CanLift instance through this macro and produces
-// `CanLift.unsafe.bypass`; here the plain givens in CanLift cover the common case, only singletons
-// reach the macro, so it also rejects nested effect computations and there is no bypass to produce.
-// And main's LiftMacro, in its own file, IS the lift; here the lift is the plain implicit in
-// Implicits, which left that object holding the issue-903 abort alone, under a name that no longer
-// described it.
+// The macros that police the lift boundary: the singleton check that derives a `CanLift`, and the guidance
+// raised when a Unit computation is lifted to the wrong row.
 object CanLiftMacro:
     inline def checkSingleton[A]: CanLift[A] = ${ liftImpl[A] }
 
@@ -80,9 +72,7 @@ end CanLiftMacro
 
 object CanLift:
 
-    // Diverges from main: main exports a single macro-derived `derived` given plus a
-    // `CanLift.unsafe.bypass`. Here the common case is a plain given guarded by NotGiven, only
-    // singletons go through CanLiftMacro, and there is no bypass.
+    // The common case is a plain given guarded by NotGiven; only singletons reach CanLiftMacro.
     inline given derived[A](using inline ng: NotGiven[A <:< (Any < Nothing)], inline ns: NotGiven[A <:< Singleton]): CanLift[A] = null
 
     inline given derivedCaseObject[A <: Singleton & Product](using inline ng: NotGiven[A <:< (Any < Nothing)]): CanLift[A] = null

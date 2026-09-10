@@ -3,13 +3,12 @@ package kyo.kernel.internal
 import kyo.<
 import scala.language.implicitConversions
 
-// Diverges from main: main's lift is a splice macro (LiftMacro.liftMacro) that nests an already
-// pending value; here the lift is a plain implicit gated by CanLift, which rejects pending values
-// at the type level. The function liftings are kept as on main. All of it lives in this trait,
-// mixed into the `<` companion, rather than in the companion itself: there the alias is
-// transparent, so a lambda such as liftPureFunction1's is typed with the dealiased union as its
-// result, which the inliner's opaque proxies do not map back when the conversion feeds map
-// (PendingTest, "a pure function passes to map point-free" fails to compile in the companion).
+// The lift is a plain implicit gated by CanLift, which rejects pending values at the type level.
+//
+// It lives in this trait, mixed into the `<` companion, rather than in the companion itself: there the
+// alias is transparent, so a lambda such as liftPureFunction1's is typed with the dealiased union as its
+// result, which the inliner's opaque proxies do not map back when the conversion feeds map (PendingTest,
+// "a pure function passes to map point-free" fails to compile in the companion).
 trait Implicits:
 
     /** Implicitly converts a plain value to an effectful computation.
