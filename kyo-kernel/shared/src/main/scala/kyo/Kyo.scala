@@ -33,7 +33,7 @@ object Kyo:
 
     /** Returns a pure effect that produces Unit.
       *
-      * This is exactly equivalent to `pure(())`, as both simply lift the Unit value into the effect context without introducing any effect
+      * This is exactly equivalent to `lift(())`, as both lift the Unit value into the effect context without introducing any effect
       * suspension.
       *
       * @tparam S

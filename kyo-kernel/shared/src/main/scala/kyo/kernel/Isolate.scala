@@ -429,10 +429,10 @@ object Isolate:
                         |     }
                         |
                         |4. For custom state management:
-                        |   val isolate = new Isolate.Stateful[MyEffect, Any] {
+                        |   val isolate = new Isolate[MyEffect, Any, MyEffect] {
                         |     type State = MyState        // Your effect's state
                         |     type Transform[A] = (State, A)
-                        |     ...
+                        |     ...                         // capture, isolate, restore
                         |   }
                         |   isolate.use {
                         |     Async.foreach(parallelism)(tasks)
