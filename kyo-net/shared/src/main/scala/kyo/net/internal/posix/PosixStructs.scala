@@ -58,9 +58,11 @@ private[net] object EpollEvent:
     /** Total byte size of `struct epoll_event`: 12 on packed x86_64, 16 on naturally-aligned arches. */
     val size: Int = if isX86_64 then 12 else 16
 
-    // The fields are written through the byte-offset wide accessors in the platform's native byte order, which is
-    // what a kernel-facing struct is: the kernel reads these bytes on this host. Every supported epoll target is
-    // little-endian, so this coincides with the LE layout the struct comment documents.
+    // The fields are written through the byte-offset wide accessors in the platform's native byte
+    // order, which is what a kernel-facing struct is: the kernel reads these bytes on this host.
+    // Every supported epoll target is little-endian, so this coincides with the LE layout the
+    // struct comment documents. The accessors write the full width in one access; the byte-by-byte
+    // predecessor paid a boxing generic dispatch per byte on the poll loop.
 
     /** Write `event` into `buf` at `offset` using the host layout (`events` at `offset`, `data` at `offset + dataOffset`). */
     def encode(buf: Buffer[Byte], offset: Int, event: EpollEvent)(using AllowUnsafe): Unit =

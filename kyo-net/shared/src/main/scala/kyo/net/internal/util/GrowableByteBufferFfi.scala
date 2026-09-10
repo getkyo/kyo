@@ -8,7 +8,7 @@ import kyo.AllowUnsafe
 extension (self: GrowableByteBuffer)
 
     /** Copies `len` bytes from an off-heap `Buffer[Byte]` into the internal array at the current position, growing the array if needed and
-      * advancing the position by `len`. One bulk copy, no intermediate allocation.
+      * advancing the position by `len`. One bulk copy straight into the internal array, no intermediate allocation.
       *
       * Used by decryptAll (multi-record path) and appendPending (TLS write backpressure).
       */

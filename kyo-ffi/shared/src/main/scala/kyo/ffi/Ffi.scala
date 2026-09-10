@@ -355,10 +355,11 @@ object Ffi:
       *   on the JVM when the generated impl class lacks a public nullary constructor: the ISE thrown inside `FfiReflect.instantiate`
       *   escapes `Ffi.load` uncaught (`computeIfAbsent` propagates it; only the class-not-found case is wrapped into `ImplNotFound`).
       */
-    // ConcreteTag rather than ClassTag: a binding trait is a plain class, so the tag summon inlines to a
-    // classOf constant, where ClassTag.apply re-allocates through the scala library's WeakReference cache.
-    // instantiateFn is shared for the same reason: a closure argument to computeIfAbsent allocates on
-    // every call, hit or miss, and load sits on callers' hot paths.
+    // ConcreteTag rather than ClassTag: a binding trait is a plain class, so the tag summon inlines
+    // to a classOf constant, where ClassTag.apply goes through the scala library's WeakReference
+    // cache and re-allocates the tag whenever a GC clears it. The instantiation function is a
+    // shared instance for the same reason: computeIfAbsent with a closure argument allocates the
+    // closure on every call, cache hit or not, and load sits on callers' hot paths.
     inline def load[T <: Ffi](using ct: ConcreteTag[T], allow: AllowUnsafe): T =
         cache.computeIfAbsent(ct.toClass, instantiateFn).asInstanceOf[T]
 
@@ -374,7 +375,7 @@ object Ffi:
 
     private val cache = new java.util.concurrent.ConcurrentHashMap[Class[?], AnyRef]()
 
-    // Shared so `load`'s computeIfAbsent never allocates its mapping function.
+    // shared so `load`'s computeIfAbsent never allocates its mapping function; see the note on `load`
     private val instantiateFn: java.util.function.Function[Class[?], AnyRef] = instantiate(_)
 
     private def instantiate(cls: Class[?]): AnyRef =

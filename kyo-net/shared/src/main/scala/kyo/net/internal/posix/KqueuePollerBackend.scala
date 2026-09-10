@@ -39,11 +39,13 @@ private[net] object KqueuePollerBackend extends PollerBackend:
     // of the timeout, so the practical behavior is identical to NULL for the poll loop's use case. Int.MaxValue / 1000 seconds ~= 24.8 days.
     private val IndefiniteTimeout: Timespec = Timespec(Int.MaxValue.toLong / 1000L, 0L)
 
-    // Ffi.load returns the same shared, stateless instance to every caller, so the binding is bound once here: loading per poll cycle
-    // would pay the tag summon and the load cache's lookup on the io driver's hot loop. Lazy rather than eager, because the registry
-    // touches this object on every platform and a val would dlopen before the availability probe passed.
-    // Unsafe: the load runs on first use, always under a caller that holds AllowUnsafe, and each binding method still requires
-    // AllowUnsafe per call.
+    // the binding is a process-lifetime singleton (Ffi.load returns the same shared, stateless
+    // instance to every caller); loading per poll cycle paid the tag summon and the load cache's
+    // lookup on the io driver's hot loop, so it is bound once here. A lazy val rather than a val:
+    // the registry touches this object on every platform, and eager loading would dlopen at that
+    // touch instead of after the availability probe passed.
+    // Unsafe: the load runs on first use, always under a caller that holds AllowUnsafe, and each
+    // binding method still requires AllowUnsafe per call.
     private lazy val kq: KqueueBindings =
         import AllowUnsafe.embrace.danger
         Ffi.load[KqueueBindings]
