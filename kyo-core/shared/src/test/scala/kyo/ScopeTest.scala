@@ -1030,8 +1030,8 @@ class ScopeTest extends kyo.test.Test[Any]:
             end for
         }
 
-        // A fatal error is what the scheduler gates on with NonFatal, so it takes a different path out of a
-        // finalizer than an ordinary failure. The releases registered before it are owed either way.
+        // A fatal error takes a different path out of a finalizer than an ordinary failure. The releases
+        // registered before it are owed either way.
         // JVM-only for the same reason IOTaskTest's fatal leaf is: it relies on worker-thread semantics the
         // single-worker Native and single-threaded JS runtimes do not provide.
         "a finalizer that throws a fatal error does not stop the ones registered before it".onlyJvm in {
@@ -1075,8 +1075,7 @@ class ScopeTest extends kyo.test.Test[Any]:
         // drain and stopped the finalizers halfway. The releases the interrupt was meant to trigger were
         // exactly the ones lost, which is why a stranded resource outlives the fiber that held it.
         //
-        // Rounds rather than one shot because the window is small: it lost one finalizer in 200 rounds,
-        // and adding logging to the close path was enough to stop it reproducing at all.
+        // Rounds rather than one shot: the window is small enough that logging on the close path hides it.
         "an interrupt racing the close does not stop the drain" in {
             val rounds = 1000
             for
@@ -1107,20 +1106,13 @@ class ScopeTest extends kyo.test.Test[Any]:
 
     "acquire-time registration (#1820)" - {
 
-        // The window the issue names: with the release registered in a suspension that follows the
-        // acquire, an interrupt pending when the acquire completes parks the evaluation before that
-        // registration is dispatched, and the value the acquire produced is held by nobody.
-        // `acquireRelease` records the release in the same step the value arrives in, which is what
-        // `ensureMap` is for.
+        // With the release registered in a suspension that follows the acquire, an interrupt pending when
+        // the acquire completes parks the evaluation before that registration is dispatched, leaving the
+        // acquired value held by nobody. `ensureMap` records the release in the step the value arrives in.
         //
-        // ScopeInterruptTest pins the same property, but by spinning inside the acquire until an
-        // interrupt is sent and waiting on a CountDownLatch, which blocks a thread and so lives in
-        // jvm-native and leaves JS and Native uncovered. Here the acquire interrupts its own fiber and
-        // then produces its value, so delivery lands at the next safepoint, after the acquire and at or
-        // before the registration. No spin, no latch, no wall clock, and it runs everywhere.
-        //
-        // Rounds rather than one shot, because #1928 taught that one shot misses a window that opens
-        // once in a couple of hundred tries.
+        // The acquire interrupts its own fiber and then produces its value, so delivery lands at the next
+        // safepoint, after the acquire and at or before the registration. Rounds rather than one shot: the
+        // window opens about once in a couple of hundred tries.
         "an interrupt requested inside the acquire still releases what it produced" in {
             val rounds = 1000
             for
@@ -1135,10 +1127,9 @@ class ScopeTest extends kyo.test.Test[Any]:
                                     Scope.run {
                                         Scope.acquireRelease {
                                             Sync.defer {
-                                                // Unsafe: the interrupt has to be requested from inside the
-                                                // acquire, before it returns, which is not an effectful position,
-                                                // and the count has to be taken in the same node so it reports the
-                                                // acquire producing a value rather than a step before it.
+                                                // Unsafe: the interrupt must be requested from inside the
+                                                // acquire, and the count taken in the same node, so it reports
+                                                // the acquire producing a value.
                                                 import AllowUnsafe.embrace.danger
                                                 discard(self.unsafe.interrupt())
                                                 discard(acquired.unsafe.incrementAndGet())
@@ -1159,15 +1150,10 @@ class ScopeTest extends kyo.test.Test[Any]:
             end for
         }
 
-        // The same window, with one more suspension in the acquire after the interrupt is requested. The
-        // acquire still runs to its end, so a real acquire would have opened its handle by now, but the
-        // interrupt parks the computation before `ensureMap` applies, and an unapplied `Arrow.Ensure`
-        // sitting in a continuation is not something the abandonment walk descends into. So the value the
-        // acquire produced is registered nowhere and released by nobody.
-        //
-        // Measured, not inferred: with the acquire's value arriving in the same node as the interrupt
-        // request, 1000 of 1000 are released; with one suspension after it, 1000 acquires complete and
-        // ZERO are released. `ensureMap` closes the window only for a single-node acquire.
+        // The same window with one more suspension in the acquire after the interrupt. The acquire runs to
+        // its end, so a real one would have opened its handle, but the interrupt parks the computation
+        // before `ensureMap` applies. A single-node acquire always releases, so only this shape reaches the
+        // case where the value is registered nowhere.
         "an acquire whose last step follows the interrupt is still released" in {
             val rounds = 200
             for
@@ -1234,18 +1220,13 @@ class ScopeTest extends kyo.test.Test[Any]:
 
     "scope isolation (#1381)" - {
 
-        // What the issue is about: a generic function that runs a scope of its own, handed a computation
-        // that carries the CALLER's Scope suspensions. Scope is a ContextEffect, so the innermost Scope.run
-        // handles every Scope suspension in its dynamic extent, and the callee's run answers the caller's
-        // `ensure` as well as its own. The leaf that used to carry this title passed a body with no Scope
-        // suspensions at all, so it never routed a caller's `A < (Scope & S)` through the generic function,
-        // which is the entire defect; it is a correct nesting test and now sits with the ordering leaves.
+        // A generic function that runs a scope of its own, handed a computation carrying the CALLER's Scope
+        // suspensions. Scope is a ContextEffect, so the innermost Scope.run answers every Scope suspension in
+        // its dynamic extent, the caller's `ensure` included.
         //
-        // Written against the API that exists, so it compiles and fails today rather than not compiling.
-        // The caller masks `Scope` before handing the computation over and unmasks after, so the callee's own
-        // `Scope.run` has no `Scope` suspension of the caller's left to answer. That is the alternative the
-        // issue states, spelled in the API that exists; the caller opts in, and a caller that does not mask
-        // still sees the innermost run answer everything in its extent.
+        // The caller masks `Scope` before handing the computation over and unmasks after, leaving the
+        // callee's run nothing of the caller's to answer. The caller opts in; one that does not mask still
+        // sees the innermost run answer everything in its extent.
         "a Scope.run inside a generic function does not run the caller's finalizers" in {
             import kyo.kernel.ArrowEffect.Mask
 
@@ -1333,17 +1314,13 @@ class ScopeTest extends kyo.test.Test[Any]:
 
     "release ordering under an outer handler (#1723)" - {
 
-        // The issue's program, with a log in place of Console. BracketTest pins this ordering for a bare
-        // bracket, but nothing pins it through Scope.run: when an outer handler discards Scope.run's
-        // continuation, the only thing left to close the scope is the Sync.ensure backstop, and
-        // Finalizer.close hands its backlog to a detached fiber that nothing awaits. So the release is
-        // started before the next effect but not finished before it.
+        // When an outer handler discards Scope.run's continuation, only the Sync.ensure backstop is left to
+        // close the scope, and Finalizer.close hands its backlog to a detached fiber nothing awaits, so the
+        // release starts before the next effect but does not finish before it.
         //
-        // Left pending deliberately. What is missing is backpressure rather than the release itself: nothing
-        // is lost, but the computation carries on while the cleanup is still running, so a loop that keeps
-        // failing acquires again before the previous release has finished. Scope.run does await on the paths
-        // it controls, a normal return and an Abort raised inside it, so the exposure is this one and fiber
-        // abandonment, which is where every raced loser and timed-out computation goes.
+        // Pending deliberately: what is missing is backpressure, not the release. Nothing is lost, but a loop
+        // that keeps failing acquires again before the previous release finished. Scope.run does await on the
+        // paths it controls, so the exposure is this one and fiber abandonment.
         //
         // Fixing it is not a matter of the kernel learning about Async: ArrowHandler.recover already hands a
         // computation back to the evaluator (Eval.scala:413), and a handler-driven unwind can afford to park

@@ -10,7 +10,6 @@ import kyo.kernel.Arrow
 private[kernel] inline def maxStackDepth  = 512
 private[kernel] inline def maxTraceFrames = 64
 
-
 // Rendering helpers for the node and arrow toStrings.
 private[kernel] def short(v: Any): String =
     v match

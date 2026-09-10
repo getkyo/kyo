@@ -111,19 +111,18 @@ class IOTaskTest extends kyo.test.Test[Any]:
     }
 
     "fatal error in a guarded body" - {
-        // A computation on a scheduler fiber throws a fatal error. IOTask completes the fiber's own promise with a
-        // Panic, but must still run the computation's finalizers; here a finalizer completes `probe`, standing in
-        // for a promise awaited elsewhere. If finalizers are skipped on the fatal path, `probe` is never completed
-        // and the timed await below expires. LinkageError is used because scala.util.control.NonFatal (which the
-        // scheduler gates on) classifies it as fatal. JVM-only: it relies on worker-thread semantics (one worker
-        // taking the fatal while the timeout fires on another), which the single-worker Native and single-threaded
-        // JS runtimes do not provide.
+        // A fatal error must still run the computation's finalizers: here one completes `probe`, standing in
+        // for a promise awaited elsewhere, so a skipped finalizer expires the await below.
+        //
+        // InternalError because the scheduler gates on `IsFatal`, which counts only `VirtualMachineError` and
+        // `ControlThrowable`. JVM-only: it relies on one worker taking the fatal while the timeout fires on
+        // another, which the single-worker Native and single-threaded JS runtimes do not provide.
         "runs the ensure finalizer even though the fatal aborts the fiber".onlyJvm in {
             for
                 probe <- Promise.init[Unit, Any]
                 _ <- Fiber.initUnscoped {
                     Sync.ensure { probe.completeDiscard(Result.succeed(())) } {
-                        Sync.defer[Unit, Any](throw new LinkageError("fatal error"))
+                        Sync.defer[Unit, Any](throw new InternalError("fatal error"))
                     }
                 }
                 // Await only `probe`, never the fatal fiber's own result: awaiting a fatally-aborted fiber re-raises

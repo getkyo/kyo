@@ -27,7 +27,6 @@ abstract class ContextEffect[+A] extends Effect
 
 object ContextEffect:
 
-
     /** Creates a suspended computation that requests a value from a context effect. This establishes a requirement for a value that must be
       * satisfied by a handler higher up in the program. The requirement becomes part of the effect type, ensuring that handlers must
       * provide the requested value before the program can execute.
