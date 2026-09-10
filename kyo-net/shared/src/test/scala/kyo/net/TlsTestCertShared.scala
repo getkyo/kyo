@@ -14,6 +14,18 @@ import kyo.*
   */
 object TlsTestCertShared:
 
+    // A /tmp name must be unique per call: nanoTime alone can tie across concurrent callers (its
+    // granularity is platform-dependent, about 40ns on an aarch64 VM, and a suite start fans a
+    // whole backend x provider matrix out at once), and a tied name means one cell
+    // truncate-rewrites the very pem another cell's TLS setup is reading, which surfaces as a
+    // truncated-key handshake failure. The counter makes the name unique within the process; the
+    // nanoTime keeps names from colliding across processes sharing /tmp.
+    private val pathSeq = new java.util.concurrent.atomic.AtomicLong(0)
+
+    /** A unique component for a /tmp path minted by a test fixture; see the note on `pathSeq`. */
+    private[net] def uniquePathTag(): String =
+        s"${java.lang.System.nanoTime()}-${pathSeq.incrementAndGet()}"
+
     val certPem: String =
         """-----BEGIN CERTIFICATE-----
 MIIDJzCCAg+gAwIBAgIUAsK6xZSOkkUp0XUzT5nHid5YS6owDQYJKoZIhvcNAQEL
@@ -76,13 +88,13 @@ ZqiUNiukltim2BOCW/KEsI8mbg==
             .map(_.toByte)
 
     /** Write the embedded cert and key to fresh temp paths under `/tmp` (which exists on every OS these backends run on) via the cross-platform
-      * `kyo.Path`, returning the (certPath, keyPath) for `NetTlsConfig.certChainPath` / `privateKeyPath`. A fresh nanoTime-suffixed name per call
-      * keeps concurrent or repeated runs from colliding.
+      * `kyo.Path`, returning the (certPath, keyPath) for `NetTlsConfig.certChainPath` / `privateKeyPath`. The name carries `uniquePathTag()`, so
+      * concurrent cells never share a path and repeated runs never collide.
       */
     def writePems(using Frame): (String, String) < Sync =
-        val nano     = java.lang.System.nanoTime()
-        val certPath = s"/tmp/kyo-tls-$nano-cert.pem"
-        val keyPath  = s"/tmp/kyo-tls-$nano-key.pem"
+        val tag      = uniquePathTag()
+        val certPath = s"/tmp/kyo-tls-$tag-cert.pem"
+        val keyPath  = s"/tmp/kyo-tls-$tag-key.pem"
         Abort.run[FileSystemException](Path.run(Path(certPath).write(certPem).andThen(Path(keyPath).write(keyPem)))).map {
             case Result.Success(_) => (certPath, keyPath)
             case other             => throw new RuntimeException(s"failed to write shared TLS test cert: $other")
@@ -151,9 +163,9 @@ OnBE4RP7UrqA7cRm1tkCj+Y=
 
     /** Write the embedded wrong-name cert + key to fresh temp paths, returning (certPath, keyPath), mirroring [[writePems]]. */
     def writeWrongHostPems(using Frame): (String, String) < Sync =
-        val nano     = java.lang.System.nanoTime()
-        val certPath = s"/tmp/kyo-tls-wrong-$nano-cert.pem"
-        val keyPath  = s"/tmp/kyo-tls-wrong-$nano-key.pem"
+        val tag      = uniquePathTag()
+        val certPath = s"/tmp/kyo-tls-wrong-$tag-cert.pem"
+        val keyPath  = s"/tmp/kyo-tls-wrong-$tag-key.pem"
         Abort.run[FileSystemException](Path.run(Path(certPath).write(wrongHostCertPem).andThen(Path(keyPath).write(wrongHostKeyPem)))).map {
             case Result.Success(_) => (certPath, keyPath)
             case other             => throw new RuntimeException(s"failed to write wrong-host TLS test cert: $other")

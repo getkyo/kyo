@@ -24,7 +24,7 @@ private[ffi] trait BufferFactoryBase:
         BufferConversions.fromArray(a, (n, ll) => alloc[A](n, ll), l)
 
     /** Copy a range of a [[Buffer]] into a freshly allocated on-heap [[scala.Array]]. */
-    def copyToArray[A: scala.reflect.ClassTag](b: Buffer[A], from: Int, len: Int): Array[A] =
+    def copyToArray[A: kyo.ConcreteTag](b: Buffer[A], from: Int, len: Int): Array[A] =
         BufferConversions.copyToArray(b, from, len)
 
     /** Encode `s` as UTF-8 and store it null-terminated in a fresh [[Buffer]] of [[Byte]]. */

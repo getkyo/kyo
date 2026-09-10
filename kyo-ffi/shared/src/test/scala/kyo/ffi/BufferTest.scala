@@ -362,6 +362,86 @@ class BufferTest extends Test:
                 assert(out.length == 0)
             }
         }
+
+        "byte buffers take the bulk path with the same result" in {
+            Buffer.use[Byte, Unit](6) { b =>
+                (0 until 6).foreach(i => b.setByte(i, (i * 3).toByte))
+                val out = Buffer.copyToArray(b, 2, 3)
+                assert(out.toSeq == Seq(6: Byte, 9: Byte, 12: Byte))
+            }
+        }
+    }
+
+    "byte-offset wide accessors" - {
+        "long round-trips at unaligned offsets" in {
+            Buffer.use[Byte, Unit](16) { b =>
+                b.setLongAt(0, 0x0102030405060708L)
+                b.setLongAt(7, 0x1112131415161718L)
+                assert(b.getLongAt(7) == 0x1112131415161718L)
+                // the second write overlapped the first's last byte; the untouched prefix survives
+                assert((b.getLongAt(0) & 0x00ffffffffffffffL) == 0x0002030405060708L)
+            }
+        }
+
+        "int and short round-trip" in {
+            Buffer.use[Byte, Unit](8) { b =>
+                b.setIntAt(1, 0xdeadbeef)
+                b.setShortAt(6, 0x7a5a.toShort)
+                assert(b.getIntAt(1) == 0xdeadbeef)
+                assert(b.getShortAt(6) == 0x7a5a.toShort)
+            }
+        }
+
+        "widths agree with per-byte reads in native order" in {
+            Buffer.use[Byte, Unit](8) { b =>
+                b.setLongAt(0, 0x0102030405060708L)
+                var v = 0L
+                var i = 0
+                while i < 8 do
+                    v |= (b.getByte(i).toLong & 0xff) << (i * 8)
+                    i += 1
+                // reassembling little-endian matches on every supported (little-endian) target
+                assert(v == 0x0102030405060708L)
+            }
+        }
+
+        "a width crossing the end is rejected" in {
+            Buffer.use[Byte, Unit](8) { b =>
+                kyo.discard(intercept[IndexOutOfBoundsException](b.setLongAt(1, 1L)))
+                kyo.discard(intercept[IndexOutOfBoundsException](b.getIntAt(5)))
+                kyo.discard(intercept[IndexOutOfBoundsException](b.getShortAt(-1)))
+                assert(b.getLongAt(0) == 0L)
+            }
+        }
+    }
+
+    "byte bulk copies" - {
+        "copyFromArray writes at the given offsets" in {
+            Buffer.use[Byte, Unit](8) { b =>
+                (0 until 8).foreach(i => b.setByte(i, 0))
+                b.copyFromArray(Array[Byte](1, 2, 3, 4, 5), 1, 2, 3)
+                assert((0 until 8).map(b.getByte(_)).toSeq == Seq[Byte](0, 0, 2, 3, 4, 0, 0, 0))
+            }
+        }
+
+        "copyToArray reads at the given offsets" in {
+            Buffer.use[Byte, Unit](6) { b =>
+                (0 until 6).foreach(i => b.setByte(i, (i + 1).toByte))
+                val dest = Array.fill[Byte](6)(-1)
+                b.copyToArray(dest, 2, 1, 3)
+                assert(dest.toSeq == Seq[Byte](-1, -1, 2, 3, 4, -1))
+            }
+        }
+
+        "out-of-range copies are rejected on both sides" in {
+            Buffer.use[Byte, Unit](4) { b =>
+                kyo.discard(intercept[IndexOutOfBoundsException](b.copyFromArray(new Array[Byte](2), 0, 3, 2)))
+                kyo.discard(intercept[IndexOutOfBoundsException](b.copyFromArray(new Array[Byte](2), 1, 0, 2)))
+                kyo.discard(intercept[IndexOutOfBoundsException](b.copyToArray(new Array[Byte](2), 1, 0, 2)))
+                kyo.discard(intercept[IndexOutOfBoundsException](b.copyToArray(new Array[Byte](4), 0, 3, 2)))
+                assert(b.size == 4)
+            }
+        }
     }
 
     "Buffer.fromUtf8" - {

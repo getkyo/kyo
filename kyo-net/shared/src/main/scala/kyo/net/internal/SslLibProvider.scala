@@ -18,8 +18,11 @@ import kyo.net.internal.backend.CapabilityProbe
   */
 abstract private[net] class SslLibProvider extends TlsEngineProvider:
 
-    /** The backing TLS library binding (BoringSSL or system OpenSSL). */
-    private[internal] def lib(using AllowUnsafe): SslLibBindings
+    /** The backing TLS library binding (BoringSSL or system OpenSSL), bound once per provider:
+      * the binding is a process-lifetime shared, stateless instance, and every binding method
+      * still requires AllowUnsafe per call, so the accessor itself carries no capability clause.
+      */
+    private[internal] def lib: SslLibBindings
 
     /** Allocate and free an `SSL_CTX` through the backing library. Memoized by `CapabilityDescriptor.probe`, which matters here beyond the
       * general host-static argument: running this per TLS connect/listen meant many concurrent `SSL_CTX_new`/`SSL_CTX_free` calls across

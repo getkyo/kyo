@@ -20,6 +20,13 @@ private[net] object BoringSslProvider extends SslLibProvider:
 
     def libraryIds: Chunk[String] = Chunk(BoringSslBindings.library)
 
-    private[internal] def lib(using AllowUnsafe): SslLibBindings = Ffi.load[BoringSslBindings]
+    // bound once for the reason KqueuePollerBackend.kq is: the shared stateless binding was
+    // reloaded per TLS operation. Lazy so the provider registry's touch of this object does not
+    // dlopen before its capability probe passed.
+    // Unsafe: first use is always under a caller that holds AllowUnsafe, and each binding method
+    // still requires AllowUnsafe per call.
+    private[internal] lazy val lib: SslLibBindings =
+        import AllowUnsafe.embrace.danger
+        Ffi.load[BoringSslBindings]
 
 end BoringSslProvider

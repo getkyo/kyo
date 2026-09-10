@@ -181,6 +181,90 @@ final class Buffer[A] private[ffi] (
         underlying.setByte(i.toLong * layout.size, v)
     end setByte
 
+    // Byte-offset wide accessors on a byte buffer, for manual struct codecs and wire formats: a
+    // struct field lives at a byte offset inside a Buffer[Byte], and assembling it through the
+    // per-element `set` costs a boxing generic dispatch per byte (the kqueue/epoll codecs paid
+    // eight per Long field). These read and write the full width in one underlying access, in the
+    // platform's native byte order, which is what a kernel-facing struct wants (every supported
+    // target is little-endian). Callable only when `A` is provably `Byte`.
+
+    /** Read the `Short` at byte offset `off` of a byte buffer, native byte order. See the note above. */
+    def getShortAt(off: Int)(using ev: A =:= Byte, allow: AllowUnsafe): Short =
+        core.checkOpen()
+        checkByteRange(off, 2)
+        // Unsafe: raw off-heap Short read at the checked byte offset.
+        underlying.getShort(off.toLong)
+    end getShortAt
+
+    /** Write the `Short` `v` at byte offset `off` of a byte buffer, native byte order. See the note above. */
+    def setShortAt(off: Int, v: Short)(using ev: A =:= Byte, allow: AllowUnsafe): Unit =
+        core.checkOpen()
+        checkByteRange(off, 2)
+        // Unsafe: raw off-heap Short write at the checked byte offset.
+        underlying.setShort(off.toLong, v)
+    end setShortAt
+
+    /** Read the `Int` at byte offset `off` of a byte buffer, native byte order. See the note above. */
+    def getIntAt(off: Int)(using ev: A =:= Byte, allow: AllowUnsafe): Int =
+        core.checkOpen()
+        checkByteRange(off, 4)
+        // Unsafe: raw off-heap Int read at the checked byte offset.
+        underlying.getInt(off.toLong)
+    end getIntAt
+
+    /** Write the `Int` `v` at byte offset `off` of a byte buffer, native byte order. See the note above. */
+    def setIntAt(off: Int, v: Int)(using ev: A =:= Byte, allow: AllowUnsafe): Unit =
+        core.checkOpen()
+        checkByteRange(off, 4)
+        // Unsafe: raw off-heap Int write at the checked byte offset.
+        underlying.setInt(off.toLong, v)
+    end setIntAt
+
+    /** Read the `Long` at byte offset `off` of a byte buffer, native byte order. See the note above. */
+    def getLongAt(off: Int)(using ev: A =:= Byte, allow: AllowUnsafe): Long =
+        core.checkOpen()
+        checkByteRange(off, 8)
+        // Unsafe: raw off-heap Long read at the checked byte offset.
+        underlying.getLong(off.toLong)
+    end getLongAt
+
+    /** Write the `Long` `v` at byte offset `off` of a byte buffer, native byte order. See the note above. */
+    def setLongAt(off: Int, v: Long)(using ev: A =:= Byte, allow: AllowUnsafe): Unit =
+        core.checkOpen()
+        checkByteRange(off, 8)
+        // Unsafe: raw off-heap Long write at the checked byte offset.
+        underlying.setLong(off.toLong, v)
+    end setLongAt
+
+    /** Copy `len` bytes from `src` starting at `srcPos` into this byte buffer at byte offset
+      * `destOff`, in one bulk operation: the per-element `set` loop this replaces paid a boxing
+      * generic dispatch per byte on the write paths.
+      */
+    def copyFromArray(src: Array[Byte], srcPos: Int, destOff: Int, len: Int)(using ev: A =:= Byte, allow: AllowUnsafe): Unit =
+        core.checkOpen()
+        checkByteRange(destOff, len)
+        if srcPos < 0 || len < 0 || srcPos + len > src.length then
+            throw new IndexOutOfBoundsException(s"source range [$srcPos, ${srcPos + len}) out of [0, ${src.length})")
+        // Unsafe: raw off-heap bulk write at the checked byte range.
+        underlying.copyFromArray(src, srcPos, destOff.toLong, len)
+    end copyFromArray
+
+    /** Copy `len` bytes of this byte buffer starting at byte offset `srcOff` into `dest` at
+      * `destPos`, in one bulk operation; the counterpart of [[copyFromArray]] for the read paths.
+      */
+    def copyToArray(dest: Array[Byte], destPos: Int, srcOff: Int, len: Int)(using ev: A =:= Byte, allow: AllowUnsafe): Unit =
+        core.checkOpen()
+        checkByteRange(srcOff, len)
+        if destPos < 0 || len < 0 || destPos + len > dest.length then
+            throw new IndexOutOfBoundsException(s"destination range [$destPos, ${destPos + len}) out of [0, ${dest.length})")
+        // Unsafe: raw off-heap bulk read at the checked byte range.
+        underlying.copyToArray(dest, srcOff.toLong, destPos, len)
+    end copyToArray
+
+    private def checkByteRange(off: Int, width: Int): Unit =
+        if off < 0 || off.toLong + width > core.byteSize then
+            throw new IndexOutOfBoundsException(s"byte range [$off, ${off.toLong + width}) out of [0, ${core.byteSize})")
+
     /** Release the underlying memory. Idempotent -- subsequent calls are no-ops. */
     def close()(using AllowUnsafe): Unit =
         // For borrowed buffers `close` must be a true no-op -- including not flipping the closed flag --
@@ -236,7 +320,7 @@ object Buffer:
     end useArray
 
     /** Copy a range `[from, from + len)` of `b` into a freshly allocated on-heap [[scala.Array]]. */
-    def copyToArray[A: scala.reflect.ClassTag](b: Buffer[A], from: Int, len: Int)(using AllowUnsafe): Array[A] =
+    def copyToArray[A: kyo.ConcreteTag](b: Buffer[A], from: Int, len: Int)(using AllowUnsafe): Array[A] =
         internal.BufferFactory.copyToArray[A](b, from, len)
 
     /** Encode `s` as UTF-8 and store it null-terminated in a freshly allocated [[Buffer]] of [[Byte]]. */
