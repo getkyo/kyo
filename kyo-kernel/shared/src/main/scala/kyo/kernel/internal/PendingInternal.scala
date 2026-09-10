@@ -37,20 +37,22 @@ object Pending:
         def tag: Tag[E]
         def cont: Arrow[A, B, S]
 
-        override def toString: String =
-            s"Kyo(${tag.show}, ${site(frame)})"
-    end Suspend
+        /** This request on its own, as the computation that raises it again.
+          *
+          * What a masking region's clause is handed, in place of an input it has no way to interpret. Each kind
+          * of suspension knows how to rebuild itself, so the evaluator does not.
+          */
+        private[kyo] def reraise: A < E
 
-    abstract class SuspendArrow[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends Suspend[E, O[A], B, S]:
-        def input: I[A]
-
-        private[kyo] def crossing[C](entries: Stack.Snapshot, resume: Arrow[B, C, S]): Arrow[O[A], C, S] =
+        // Only `cont` is involved, so this carries a context read crossing to the region that masked it as
+        // readily as an arrow operation crossing to its handler.
+        private[kyo] def crossing[C](entries: Stack.Snapshot, resume: Arrow[B, C, S]): Arrow[A, C, S] =
             val kc = cont
-            new Arrow.Step[O[A], C, S]:
+            new Arrow.Step[A, C, S]:
                 def frame = Frame.internal
-                override def apply[D, S3](v: O[A] < S3, cont2: Arrow[C, D, S3]) =
+                override def apply[D, S3](v: A < S3, cont2: Arrow[C, D, S3]) =
                     v match
-                        case p: Pending[O[A], S3] @unchecked => Effect.defer(p, this, cont2)
+                        case p: Pending[A, S3] @unchecked => Effect.defer(p, this, cont2)
                         case _ =>
                             cont2(
                                 Park(
@@ -61,10 +63,32 @@ object Pending:
                             )
             end new
         end crossing
+
+        override def toString: String =
+            s"Kyo(${tag.show}, ${site(frame)})"
+    end Suspend
+
+    abstract class SuspendArrow[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends Suspend[E, O[A], B, S]:
+        self =>
+        def input: I[A]
+
+        private[kyo] def reraise: O[A] < E =
+            new SuspendArrow[I, O, E, A, O[A], E]:
+                def tag   = self.tag
+                def input = self.input
+                def cont  = Arrow.id
     end SuspendArrow
 
     abstract class SuspendContext[State, E <: ContextEffect[State], A, S] extends Suspend[E, State, A, S]:
+        self =>
         def default: Maybe[State]
+
+        private[kyo] def reraise: State < E =
+            new SuspendContext[State, E, State, E]:
+                def tag     = self.tag
+                def default = self.default
+                def cont    = Arrow.id
+    end SuspendContext
 
     def handle[State, E <: Effect, A, B, S](v: A < (E & S), handler: Handler.ArrowHandler[State, E, A, B, S], state: State): B < S =
         v match

@@ -42,6 +42,11 @@ class ArrowEffectMaskTest extends AnyFreeSpec:
                 buf += input
                 cont(()))
 
+    sealed trait Cfg extends ContextEffect[Int]
+    def readCfg: Int < Cfg = ContextEffect.suspend(Tag[Cfg])
+    def runCfg[A, S](v: A < (Cfg & S))(value: Int): A < S =
+        ContextEffect.handleInheritable(Tag[Cfg], value)(v)
+
     private def requestStop(): Unit =
         discard(Safepoint.stop(Thread.currentThread()))
         Safepoint.deadline(java.lang.System.currentTimeMillis() - 1)
@@ -216,6 +221,52 @@ class ArrowEffectMaskTest extends AnyFreeSpec:
             val r: Int < Any = ArrowEffect.handleCont(Tag[Ask], out)([C] => (_, _) => -1, a => a)
             assert(r.eval == -1)
             assert(!later)
+        }
+    }
+
+    "context effects" - {
+
+        "a masked context read tunnels past an inner binding" in {
+            val masked: Int < Mask[Cfg] = Mask[Cfg](readCfg)
+            val inner: Int < Mask[Cfg]  = runCfg(masked)(10)
+            val out: Int < Cfg          = Mask.run[Cfg](inner)
+            assert(runCfg(out)(42).eval == 42)
+        }
+
+        "every masked context read tunnels" in {
+            val v: Int < Cfg            = readCfg.map(a => readCfg.map(b => a * 100 + b))
+            val masked: Int < Mask[Cfg] = Mask[Cfg](v)
+            val inner: Int < Mask[Cfg]  = runCfg(masked)(1)
+            val out: Int < Cfg          = Mask.run[Cfg](inner)
+            assert(runCfg(out)(42).eval == 4242)
+        }
+
+        "a read outside the mask is answered by the inner binding" in {
+            val v: Int < (Cfg & Mask[Cfg]) = readCfg.map(a => Mask[Cfg](readCfg).map(b => a * 100 + b))
+            val inner: Int < Mask[Cfg]     = runCfg(v)(1)
+            val out: Int < Cfg             = Mask.run[Cfg](inner)
+            assert(runCfg(out)(42).eval == 142)
+        }
+
+        "masking a context effect leaves an arrow effect live for its local handler" in {
+            val buf                             = ListBuffer[String]()
+            val v: Int < (Cfg & Say)            = readCfg.map(a => say(s"got $a").map(_ => a))
+            val masked: Int < (Mask[Cfg] & Say) = Mask[Cfg](v)
+            val sayHandled: Int < Mask[Cfg]     = runSay(masked)(buf)
+            val cfgLocal: Int < Mask[Cfg]       = runCfg(sayHandled)(1)
+            val out: Int < Cfg                  = Mask.run[Cfg](cfgLocal)
+            assert(runCfg(out)(42).eval == 42)
+            assert(buf.toList == List("got 42"))
+        }
+
+        "one mask over an arrow and a context effect covers both" in {
+            val buf                                 = ListBuffer[String]()
+            val v: Int < (Ask & Cfg)                = ask.map(a => readCfg.map(c => a + c))
+            val masked: Int < Mask[Ask & Cfg]       = Mask[Ask & Cfg](v)
+            val innerHandled: Int < Mask[Ask & Cfg] = runCfg(runAsk(masked)(1))(2)
+            val out: Int < (Ask & Cfg)              = Mask.run[Ask & Cfg](innerHandled)
+            assert(runCfg(runAsk(out)(40))(2).eval == 42)
+            assert(buf.isEmpty)
         }
     }
 

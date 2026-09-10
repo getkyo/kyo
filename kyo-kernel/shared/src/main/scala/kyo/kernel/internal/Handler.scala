@@ -38,6 +38,19 @@ sealed abstract private[kernel] class Handler[E <: Effect, A, -S]:
       */
     def escaping: Boolean = false
 
+    /** What entering this region contributes to the context, and what leaving it takes back.
+      *
+      * A context region binds its value. A masking region binds the marker that sends a read to the region
+      * instead of answering it. Every other region is transparent to reads, which is the default here.
+      *
+      * The evaluator maps a region to a binding in five places (entry, exit, and the three that rebuild a
+      * context from the stack), and each has to agree with the others or the two structures drift. Asking the
+      * handler keeps that one answer in one place.
+      */
+    private[kernel] def bound(ctx: Context, state: Any): Context = ctx
+
+    private[kernel] def unbound(ctx: Context): Context = ctx
+
     override def toString = s"Handler(${tag.show})"
 end Handler
 
@@ -60,8 +73,15 @@ end Handler
                     throw ex
     end ContHandler
 
-    abstract class ContOpHandler[E <: Effect, A, B, S] extends ArrowHandler[Unit, E, A, B, S]:
+    // A region that masks its tag: every request for it, of either kind, reaches this clause as the request
+    // itself re-raised rather than as an input, and no handler or binding it shadows sees it. An arrow
+    // operation arrives by the stack lookup; a context read arrives because entering this region masks the tag
+    // in the context, so the read dispatches here instead of answering from the binding outside.
+    abstract class MaskingHandler[E <: Effect, A, B, S] extends ArrowHandler[Unit, E, A, B, S]:
         def run[X](operation: X < E, next: Arrow[X, A, E & S]): A < (E & S)
+
+        override private[kernel] def bound(ctx: Context, state: Any): Context = ctx.mask(tag)
+        override private[kernel] def unbound(ctx: Context): Context           = ctx.unbind
 
         // TODO why isn't this in Eval?
         private[kyo] def answering[X](operation: X < E, next: Arrow[X, A, E & S], kyo: Pending[?, ?], stack: Stack): A < (E & S) =
@@ -70,7 +90,7 @@ end Handler
                 case ex =>
                     EffectTrace.attach(ex, kyo, next, stack)
                     throw ex
-    end ContOpHandler
+    end MaskingHandler
 
     // Not on main: a LoopHandler's clause answers with a single-state Outcome and the region carries no
     // state; a LoopStateHandler's answers with an Outcome2 carrying its state.
@@ -210,6 +230,9 @@ end Handler
         def derive(outer: Maybe[State]): State
         def fork(parent: State): State
         def join(parent: State, forked: State, child: State): State
+
+        override private[kernel] def bound(ctx: Context, state: Any): Context = ctx.bind(tag, state.asInstanceOf[State])
+        override private[kernel] def unbound(ctx: Context): Context           = ctx.unbind
 
         /** This region's extent ran to an end.
           *

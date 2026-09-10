@@ -1254,7 +1254,7 @@ class ArrowEffectTest extends Test:
             var seen         = List.empty[String]
             val v: Int < Ask = ask.map(_ + 1)
 
-            val r: Int < Any = ArrowEffect.handleContOperation(Tag[AskSub], v)(
+            val r: Int < Any = ArrowEffect.handleMasking(Tag[AskSub], v)(
                 [X] =>
                     (operation, _) =>
                         seen = operation.toString :: seen
@@ -3376,7 +3376,7 @@ class ArrowEffectTest extends Test:
         "the operation form confines its continuation the same way" in {
             typeCheckFailure(
                 """
-                ArrowEffect.handleContOperation(Tag[Ask], ask)([X] => (op, next) => cross(op.map(next(_))), (a: Int) => a)
+                ArrowEffect.handleMasking(Tag[Ask], ask)([X] => (op, next) => cross(op.map(next(_))), (a: Int) => a)
                 """
             )(confined)
         }

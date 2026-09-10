@@ -796,20 +796,22 @@ object ArrowEffect:
         end match
     end handleLoopStateWith
 
-    // Not on main: Mask lives in this object (D5), suspending each masked operation under a Mask tag so
-    // an enclosing handler cannot see it.
+    // Not on main: Mask lives in this object (D5), re-raising each masked request under a Mask tag so an
+    // enclosing handler cannot see it. `S` is any effect, not only an arrow one: the masking region shadows
+    // its tag in the context as well as holding it on the stack, so a context read reaches the same clause an
+    // arrow operation does. One mask, both kinds, including an intersection of the two.
     sealed abstract class Mask[S] extends ArrowEffect[[A] =>> A < S, Id]
 
     object Mask:
 
         def apply[E](using
             Frame
-        )[E2 >: E <: ArrowEffect[?, ?], A, S](v: A < (E2 & S))(
+        )[E2 >: E <: Effect, A, S](v: A < (E2 & S))(
             using
             tag: Tag[E2],
             maskTag: Tag[Mask[E]]
         ): A < (Mask[E] & S) =
-            handleContOperation(tag, v) {
+            handleMasking(tag, v) {
                 [X] => (operation, cont) => suspend[X](maskTag, operation).map(cont(_))
             }
 
@@ -948,13 +950,13 @@ object ArrowEffect:
       * @return
       *   The computation result with the function implementation provided
       */
-    private[kyo] inline def handleContOperation[E <: ArrowEffect[?, ?], A, S, S2](
+    private[kyo] inline def handleMasking[E <: Effect, A, S, S2](
         inline effectTag: Tag[E],
         v: A < (E & S)
     )(
         inline handle: [X] => (X < E, Arrow[X, A, E & S & S2 & Region.NoEscape]) => A < (E & S & S2 & Region.NoEscape)
     )(using inline _frame: Frame): A < (S & S2) =
-        handleContOperation(effectTag, v)(handle, a => a)
+        handleMasking(effectTag, v)(handle, a => a)
 
     /** Handles an arrow effect by providing a handler that receives the suspended operation itself, as a computation in the effect, rather
       * than its input. The continuation is the one from the suspension point, as in handleCont.
@@ -971,7 +973,7 @@ object ArrowEffect:
       *   The computation result with the function implementation provided
       */
     @nowarn("msg=anonymous")
-    private[kyo] inline def handleContOperation[E <: ArrowEffect[?, ?], A, B, S, S2](
+    private[kyo] inline def handleMasking[E <: Effect, A, B, S, S2](
         inline effectTag: Tag[E],
         v: A < (E & S)
     )(
@@ -982,7 +984,7 @@ object ArrowEffect:
         v match
             case _: Pending[?, ?] =>
                 val h =
-                    new Handler.ContOpHandler[E, A, B, S & S2]:
+                    new Handler.MaskingHandler[E, A, B, S & S2]:
                         def tag = effectTag
                         def run[X](operation: X < E, next: Arrow[X, A, E & S & S2]) =
                             Region.discharge(handle[X](operation, next))
@@ -997,6 +999,6 @@ object ArrowEffect:
                 end new
             case _ => onDone(Nested.unnest(v))
         end match
-    end handleContOperation
+    end handleMasking
 
 end ArrowEffect

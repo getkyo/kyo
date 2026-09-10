@@ -56,10 +56,19 @@ import scala.util.control.NonFatal
 
                 case kyo: Pending.Suspend[?, ?, T, S2] @unchecked =>
                     kyo match
-                        case kyo: Pending.SuspendContext[VX, CX, T, S2] @unchecked =>
+                        case kyo: Pending.SuspendContext[VX, CX, T, CX & S2] @unchecked =>
                             val state = ctx.get(kyo.tag).orElse(kyo.default).getOrElse(unhandled(kyo, stack))
-                            Debugger.onContext(kyo, ctx)
-                            loop(kyo.cont(state, contA.chain(contB)), Arrow.id, Arrow.id, ctx)
+                            if state.asInstanceOf[AnyRef] ne Context.Masked then
+                                Debugger.onContext(kyo, ctx)
+                                loop(kyo.cont(state, contA.chain(contB)), Arrow.id, Arrow.id, ctx)
+                            else
+                                // A masking region shadows the binding this read would have answered from, so it
+                                // dispatches to that region instead, by the route an arrow operation already takes.
+                                val entries = maskedEntries(kyo)
+                                val result  = maskedRead(kyo, entries, contA.chain(contB))
+                                if armed && Safepoint.stopped(slot) then park(result, Arrow.id, Arrow.id)
+                                else loop(result, Arrow.id, Arrow.id, rebound(entries, ctx))
+                            end if
 
                         case kyo: Pending.SuspendArrow[IX, OX, EX, VX, T, EX & S2] @unchecked =>
                             val idx = stack.find(kyo.tag)
@@ -84,18 +93,13 @@ import scala.util.control.NonFatal
                                         // dispatched straight back to this clause with no deferral to park at
                                         if armed && Safepoint.stopped(slot) then park(result, Arrow.id, Arrow.id)
                                         else loop(result, Arrow.id, Arrow.id, ctx2)
-                                    case handler: Handler.ContOpHandler[EX, C, Y, S2] @unchecked =>
+                                    case handler: Handler.MaskingHandler[EX, C, Y, S2] @unchecked =>
                                         val entries = if atTop then Stack.Snapshot.empty else dumped(stack, idx, kyo)
                                         val ctx2    = if atTop then ctx else rebound(entries, ctx)
                                         val continuation =
                                             if atTop then kyo.cont.chain(contA.chain(contB))
                                             else kyo.crossing(entries, contA.chain(contB))
-                                        val operation: OX[VX] < EX =
-                                            new Pending.SuspendArrow[IX, OX, EX, VX, OX[VX], EX]:
-                                                def tag   = kyo.tag
-                                                def input = kyo.input
-                                                def cont  = Arrow.id
-                                        val result = handler.answering(operation, continuation, kyo, stack)
+                                        val result = handler.answering(kyo.reraise, continuation, kyo, stack)
                                         Debugger.onResult(result)
                                         if armed && Safepoint.stopped(slot) then park(result, Arrow.id, Arrow.id)
                                         else loop(result, Arrow.id, Arrow.id, ctx2)
@@ -233,12 +237,12 @@ import scala.util.control.NonFatal
                 case kyo: Pending.HandleArrow[?, ?, ?, ?, T, S2] @unchecked =>
                     Debugger.onRegionEnter(kyo.handler, kyo.state)
                     stack.push(kyo.handler, kyo.state, kyo.cont.chain(contA.chain(contB)))
-                    loop(kyo.value, Arrow.id, Arrow.id, ctx)
+                    loop(kyo.value, Arrow.id, Arrow.id, kyo.handler.bound(ctx, kyo.state))
 
                 case kyo: Pending.HandleContext[VX, CX, T, S2] @unchecked =>
                     val handler    = kyo.handler
                     val newState   = handler.derive(ctx.get(handler.tag))
-                    val newContext = ctx.bind(handler.tag, newState)
+                    val newContext = handler.bound(ctx, newState)
                     Debugger.onContext(kyo, newContext)
                     Debugger.onRegionEnter(handler, newState)
                     stack.push(handler, newState, contA.chain(contB))
@@ -269,8 +273,7 @@ import scala.util.control.NonFatal
                                     val handler = handler0.asInstanceOf[Handler.ArrowHandler[VX, EX, AX, Y, Any]]
                                     val result  = handler.done(stack.state(top).asInstanceOf[VX], Nested.unnest[AX](res))
                                     Debugger.onRegionExit(handler, result)
-                                    arrowExit(handler)
-                                    loop(result, next, Arrow.id, ctx)
+                                    loop(result, next, Arrow.id, arrowExit(handler, ctx))
                             end match
                     else
                         contA match
@@ -299,6 +302,29 @@ import scala.util.control.NonFatal
                 Pending.Park[A, S](parked, stack.takeAll(), owedNow)
             end if
         end park
+
+        // Both out of line because `loop`'s size is what it is. A masked read reaches its region exactly as an
+        // arrow operation reaches its handler; only the entries and the answer are wanted back.
+        //
+        // The regions between are dumped here, which pops the stack down to the masking region, so it is at the
+        // top by the time `maskedRead` looks for it, whether or not it started there.
+        def maskedEntries(kyo: Pending.Suspend[?, ?, ?, ?]): Stack.Snapshot =
+            val idx = stack.find(kyo.tag)
+            if idx == stack.depth - 1 then Stack.Snapshot.empty else dumped(stack, idx, kyo)
+
+        def maskedRead[VX2, CX2 <: ContextEffect[VX2], T2, Y, S3](
+            kyo: Pending.SuspendContext[VX2, CX2, T2, CX2 & S3],
+            entries: Stack.Snapshot,
+            resume: Arrow[T2, Y, S3]
+        ): Y < (CX2 & S3) =
+            val handler = stack.handler(stack.depth - 1).asInstanceOf[Handler.MaskingHandler[CX2, Y, Any, S3]]
+            val continuation =
+                if entries.isEmpty then kyo.cont.chain(resume)
+                else kyo.crossing(entries, resume)
+            val result = handler.answering(kyo.reraise, continuation, kyo, stack)
+            Debugger.onResult(result)
+            result
+        end maskedRead
 
         def installed(kyo: Pending.Park[?, ?], resume: Arrow[Any, Any, Any], ctx: Context): Context =
             val entries = kyo.entries
@@ -332,21 +358,13 @@ import scala.util.control.NonFatal
                     val cont =
                         if i == 0 then stored.chain(resume)
                         else stored
-                    entries.handler(i) match
-                        case hc: Handler.ContextHandler[VX, CX, Y, Any] @unchecked =>
-                            val st = entries.state(i).asInstanceOf[VX]
-                            Debugger.onRegionEnter(hc, st)
-                            stack.push(hc, st, cont)
-                            stack.owe(stack.depth - 1, entries.owed(i))
-                            install(i + 1, c.bind(hc.tag, st))
-                        case handler0 =>
-                            val handler = handler0.asInstanceOf[Handler[EX, Y, Any]]
-                            val st      = entries.state(i).asInstanceOf[VX]
-                            Debugger.onRegionEnter(handler, st)
-                            stack.push(handler, st, cont)
-                            stack.owe(stack.depth - 1, entries.owed(i))
-                            install(i + 1, c)
-                    end match
+                    val handler = entries.handler(i).asInstanceOf[Handler[EX, Y, Any]]
+                    val st      = entries.state(i)
+                    Debugger.onRegionEnter(handler, st)
+                    stack.push(handler, st, cont)
+                    stack.owe(stack.depth - 1, entries.owed(i))
+                    // each region puts back what `rebound` took off on the way out
+                    install(i + 1, handler.bound(c, st))
             install(0, ctx)
         end installed
 
@@ -355,27 +373,24 @@ import scala.util.control.NonFatal
             stack.pop()
             if stack.owesAny then
                 drainDiscarded(stack.takePopped())
-            ctx.unbind
+            hc.unbound(ctx)
         end contextExit
 
         // a region that hands its continuation out has not discarded what it owes: the debt moves to
         // the scope below, as it does for a region exiting with a pending outcome, and is settled by
         // identity when the remainder resumes or drained where that scope ends
-        def arrowExit(handler: Handler.ArrowHandler[?, ?, ?, ?, ?]): Unit =
+        def arrowExit(handler: Handler.ArrowHandler[?, ?, ?, ?, ?], ctx: Context): Context =
             stack.pop()
             if stack.owesAny then
                 if handler.escaping then stack.oweBelow(stack.depth, stack.takePopped())
                 else drainDiscarded(stack.takePopped())
+            handler.unbound(ctx)
         end arrowExit
 
         def rebuilt(): Context =
             @tailrec def rebuild(i: Int, c: Context): Context =
                 if i == stack.depth then c
-                else
-                    stack.handler(i) match
-                        case handler: Handler.ContextHandler[VX, CX, ?, ?] @unchecked =>
-                            rebuild(i + 1, c.bind(handler.tag, stack.state(i).asInstanceOf[VX]))
-                        case _ => rebuild(i + 1, c)
+                else rebuild(i + 1, stack.handler(i).bound(c, stack.state(i)))
             rebuild(0, Context.empty)
         end rebuilt
 
@@ -504,7 +519,7 @@ import scala.util.control.NonFatal
         var c = ctx
         var i = 0
         while i < entries.regions do
-            if entries.handler(i).isInstanceOf[Handler.ContextHandler[?, ?, ?, ?]] then c = c.unbind
+            c = entries.handler(i).unbound(c)
             i += 1
         end while
         c

@@ -20,6 +20,15 @@ sealed abstract private[kernel] class Context:
     final def bind[A, E <: ContextEffect[A]](tag: Tag[E], value: A): Context =
         Context.Bound(tag.erased, value, this)
 
+    /** Binds `tag` to the marker a masking region leaves behind, shadowing whatever is bound outside it.
+      *
+      * A read that finds the marker is not answered from the context at all: it is dispatched to the region that
+      * left it, which re-raises it under the mask's own tag. That is the same route an arrow operation takes, so
+      * one mask covers both kinds of effect.
+      */
+    final def mask[E <: Effect](tag: Tag[E]): Context =
+        Context.Bound(tag.erased, Context.Masked, this)
+
     final def get[A, E <: ContextEffect[A]](tag: Tag[E]): Maybe[A] =
         val te = tag.erased
         @tailrec def loop(c: Context): Maybe[A] =
@@ -36,6 +45,9 @@ end Context
 private[kernel] object Context:
 
     val empty: Context = Empty
+
+    /** What [[Context.mask]] binds. Compared by reference at the read site; never handed to user code. */
+    private[kernel] object Masked
 
     private object Empty extends Context:
         def unbind: Context = bug("unbind on an empty context")
