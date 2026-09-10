@@ -16,6 +16,17 @@ class IsolateTest extends Test:
     // Not on main: the fixtures below back this kernel's extra groups.
     sealed trait NotContextEffectSub extends NotContextEffect
 
+    // A region that says a fork of it holds something else, so that whether a fork happened is readable
+    // from the value alone.
+    sealed trait Forking extends ContextEffect[Int]
+
+    def forking[A, S](value: Int)(v: A < (Forking & S))(using Frame): A < S =
+        ContextEffect.handle(Tag[Forking])(
+            (_: Maybe[Int]) => value,
+            fork = (_: Int) => -99,
+            join = (parent: Int, _: Int, _: Int) => parent
+        )(v)
+
     sealed trait CellA extends ArrowEffect[Const[Maybe[Int]], Const[Int]]
     sealed trait CellB extends ArrowEffect[Const[Maybe[Int]], Const[Int]]
 
@@ -95,6 +106,30 @@ class IsolateTest extends Test:
             val i = summon[Isolate[TestEffect1, Any, TestEffect1]]
             val v = i.run(ContextEffect.suspend(Tag[TestEffect1]))
             assert(ContextEffect.handleInheritable(Tag[TestEffect1], 7)(v).eval == 7)
+        }
+
+        // A derived isolate manages the effects it was asked to manage. Leaving one fiber for another is a
+        // separate act, asked for by `crossing`, so an isolate used in place leaves every region in scope
+        // reading exactly what it read before, whatever that region says a fork of it would hold.
+        "an isolate for effects nobody named leaves a forking region alone" in {
+            val isolate         = summon[Isolate[Any, Any, Any]]
+            val read: Int < Any = ContextEffect.suspend(Tag[Forking], -1)
+            val v               = isolate.run(read)
+            assert(forking(7)(v).eval == 7)
+        }
+
+        "an isolate for one effect leaves another effect's forking region alone" in {
+            val isolate         = summon[Isolate[TestEffect1, Any, TestEffect1]]
+            val read: Int < Any = ContextEffect.suspend(Tag[Forking], -1)
+            val v               = isolate.run(read.map(a => ContextEffect.suspend(Tag[TestEffect1], 0).map(_ + a)))
+            assert(forking(7)(ContextEffect.handleInheritable(Tag[TestEffect1], 1)(v)).eval == 8)
+        }
+
+        "the same isolate asked to cross forks every region in scope" in {
+            val isolate         = summon[Isolate[Any, Any, Any]].crossing
+            val read: Int < Any = ContextEffect.suspend(Tag[Forking], -1)
+            val v               = isolate.run(read)
+            assert(forking(7)(v).eval == -99)
         }
     }
 

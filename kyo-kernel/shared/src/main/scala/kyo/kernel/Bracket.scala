@@ -4,12 +4,12 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kyo.Absent
 import kyo.Closed
 import kyo.Frame
+import kyo.IsFatal
 import kyo.Maybe
 import kyo.Present
 import kyo.Result
 import kyo.Tag
 import kyo.kernel.internal.*
-import scala.util.control.NonFatal
 
 /** Binds a resource for the extent of a use and guarantees its release runs, whichever way the extent ends.
   *
@@ -112,7 +112,7 @@ object Bracket:
                     catch
                         case ex =>
                             try cell.drain(ex)
-                            catch case t if NonFatal(t) && (t ne ex) => ex.addSuppressed(t)
+                            catch case t if !IsFatal(t) && (t ne ex) => ex.addSuppressed(t)
                             throw ex
                 region(cell, body)
             end apply

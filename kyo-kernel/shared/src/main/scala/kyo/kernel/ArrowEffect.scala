@@ -5,7 +5,6 @@ import kyo.kernel.Arrow
 import kyo.kernel.internal.*
 import scala.annotation.nowarn
 import scala.annotation.tailrec
-import scala.util.control.NonFatal
 
 /** Represents abstract functions whose implementations are provided later by a handler.
   *
@@ -273,7 +272,7 @@ object ArrowEffect:
                     onDone(Nested.unnest(v0))
             end match
         catch
-            case ex if NonFatal(ex) => onRecover(ex).getOrElse(throw ex)
+            case ex if !IsFatal(ex) => onRecover(ex).getOrElse(throw ex)
         end try
     end handleCont
 
@@ -439,7 +438,7 @@ object ArrowEffect:
                     onDone(Nested.unnest(v0))
             end match
         catch
-            case ex if NonFatal(ex) => onRecover(ex).getOrElse(throw ex)
+            case ex if !IsFatal(ex) => onRecover(ex).getOrElse(throw ex)
         end try
     end handleLoop
 
@@ -625,7 +624,7 @@ object ArrowEffect:
                     onDone(state, Nested.unnest(v0))
             end match
         catch
-            case ex if NonFatal(ex) => onRecover(state, ex).getOrElse(throw ex)
+            case ex if !IsFatal(ex) => onRecover(state, ex).getOrElse(throw ex)
         end try
     end handleLoopState
 

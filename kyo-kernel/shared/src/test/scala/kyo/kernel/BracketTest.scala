@@ -1613,40 +1613,40 @@ class BracketTest extends AnyFreeSpec:
 
         "a fatal failure runs nested releases innermost first" in {
             var order = List.empty[String]
-            val boom  = new InterruptedException("fatal")
+            val boom  = new OutOfMemoryError("fatal")
             val v: Int < Any =
                 Bracket(Effect.defer(1)) { _ =>
                     Bracket(Effect.defer(2)) { _ =>
                         (throw boom): Int
                     }((_, _) => order :+= "inner")
                 }((_, _) => order :+= "outer")
-            assert(intercept[InterruptedException](v.eval) eq boom)
+            assert(intercept[OutOfMemoryError](v.eval) eq boom)
             assert(order == List("inner", "outer"))
         }
 
         "a fatal failure thrown from a map after the acquire runs the release" in {
             var order = List.empty[String]
-            val boom  = new InterruptedException("fatal")
+            val boom  = new OutOfMemoryError("fatal")
             val v: Int < Any =
                 Bracket(Effect.defer(1)) { r =>
                     Effect.defer(r).map(_ => (throw boom): Int)
                 }((_, _) => order :+= "release")
-            assert(intercept[InterruptedException](v.eval) eq boom)
+            assert(intercept[OutOfMemoryError](v.eval) eq boom)
             assert(order == List("release"))
         }
 
         "a fatal failure runs the release" in {
             var order = List.empty[String]
-            val boom  = new InterruptedException("fatal")
+            val boom  = new OutOfMemoryError("fatal")
             val v: Int < Any =
                 Bracket(Effect.defer(1))(_ => (throw boom): Int)((_, _) => order :+= "release")
-            assert(intercept[InterruptedException](v.eval) eq boom)
+            assert(intercept[OutOfMemoryError](v.eval) eq boom)
             assert(order == List("release"))
         }
 
         "a fatal failure runs the release and is not answered by a recovery" in {
             var order = List.empty[String]
-            val boom  = new InterruptedException("fatal")
+            val boom  = new OutOfMemoryError("fatal")
             val v: Int < Any =
                 recovering[Int](
                     Bracket(Effect.defer(1))(_ => (throw boom): Int)((_, _) => order :+= "release")
@@ -1654,7 +1654,7 @@ class BracketTest extends AnyFreeSpec:
                     order :+= "recover"
                     -1
                 }
-            assert(intercept[InterruptedException](v.eval) eq boom)
+            assert(intercept[OutOfMemoryError](v.eval) eq boom)
             assert(order == List("release"))
         }
     }

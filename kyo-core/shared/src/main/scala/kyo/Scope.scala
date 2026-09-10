@@ -180,15 +180,24 @@ object Scope:
                 fork = (parent: Finalizer) => parent.forked,
                 join = (parent: Finalizer, _: Finalizer, _: Finalizer) => parent
             )(v)
-                .handle(
-                    Sync.ensure(finalizer.close),
-                    Abort.run[Any]
-                ).map { result =>
+                // The close that carries the error runs INSIDE the backstop's region, so it gets there
+                // first. Whichever close reaches the queue first is the one whose error the finalizers
+                // see, and the backstop has only what an ending carries: nothing on a normal return, and
+                // for a typed abort unwinding through it, a synthesised "fiber abandoned" panic rather
+                // than the failure the computation produced. Both were reaching the queue ahead of the
+                // real error, which is what handed `ensuringError`'s finalizer a panic it never raised.
+                //
+                // So the abort is caught first, turning the ending into a value; the close below runs on
+                // that value with the error in hand; and the backstop outside answers only for an
+                // abandonment, which is the one ending that never reaches the close below at all.
+                .handle(Abort.run[Any])
+                .map { result =>
                     finalizer
                         .close(result.error)
                         .andThen(finalizer.await)
                         .andThen(Abort.get(result.asInstanceOf[Result[Nothing, A]]))
                 }
+                .handle(Sync.ensure(finalizer.close))
         }
 
     /** The finalizers registered against one scope, run in reverse registration order when it closes.
@@ -285,7 +294,13 @@ object Scope:
                         Access.MultiProducerSingleConsumer
                     )
                     val children = Queue.Unbounded.Unsafe.init[Finalizer](Access.MultiProducerSingleConsumer)
-                    val promise  = Promise.Unsafe.init[Unit, Any]().safe
+
+                    // Masked, because `close` hands the drain to a fiber and `become`s this promise with it, and
+                    // `await` is what a caller parks on. An interrupt landing on that caller would otherwise
+                    // travel through the promise into the drain and stop the finalizers halfway, which loses
+                    // exactly the releases the interrupt was supposed to trigger (#1928). Interrupting a scope's
+                    // cleanup is never what an interrupt means.
+                    val promise = Promise.Unsafe.initMasked[Unit, Any]().safe
 
                     // Delegates rather than repeating the offer, so a closed scope answers both registration paths
                     // the same way: the finalizer runs, and the caller still learns it is not scoped. Answering

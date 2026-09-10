@@ -112,12 +112,15 @@ class LocalTest extends kyo.test.Test[Any]:
     }
 
     "non-inheritable" - {
+        // What a local does at a boundary is a question about crossing one, so these ask an isolate for the
+        // crossing rather than for isolation in place. `Isolate[Any, Any, Any]` alone manages nothing and
+        // leaves every local reading what it read, which the last leaf here pins.
         "context inheritance" in {
             val noninheritableLocal = Local.initNoninheritable(10)
             val inheritableLocal    = Local.init("test")
 
             val forked =
-                noninheritableLocal.let(20)(inheritableLocal.let("modified")(Isolate[Any, Any, Any].run {
+                noninheritableLocal.let(20)(inheritableLocal.let("modified")(Isolate[Any, Any, Any].crossing.run {
                     for
                         n <- noninheritableLocal.get
                         i <- inheritableLocal.get
@@ -134,10 +137,10 @@ class LocalTest extends kyo.test.Test[Any]:
             val forked =
                 noninheritableLocal.let(20)(
                     inheritableLocal.let("outer")(
-                        Isolate[Any, Any, Any].run {
+                        Isolate[Any, Any, Any].crossing.run {
                             noninheritableLocal.let(30)(
                                 inheritableLocal.let("inner")(
-                                    Isolate[Any, Any, Any].run {
+                                    Isolate[Any, Any, Any].crossing.run {
                                         for
                                             n <- noninheritableLocal.get
                                             i <- inheritableLocal.get
@@ -152,6 +155,21 @@ class LocalTest extends kyo.test.Test[Any]:
             // the inner fork starts the non-inheritable local at its default again, even though the
             // binding around it set 30, while the inheritable one carries the innermost binding across
             assert(forked == (10, "inner"))
+        }
+
+        "isolating state in place is not a boundary, and the binding stands" in {
+            val noninheritableLocal = Local.initNoninheritable(10)
+            val inheritableLocal    = Local.init("test")
+
+            val inPlace =
+                noninheritableLocal.let(20)(inheritableLocal.let("modified")(Isolate[Any, Any, Any].run {
+                    for
+                        n <- noninheritableLocal.get
+                        i <- inheritableLocal.get
+                    yield (n, i)
+                })).eval
+
+            assert(inPlace == (20, "modified"))
         }
 
     }

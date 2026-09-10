@@ -71,24 +71,59 @@ class HostPathLockTest extends FileSystemLockTest:
         }
     }
 
-    "repeated interrupted acquisitions leave the path acquirable".ignore(
-        "kyo-core can lose a Scope.ensure finalizer when its fiber is interrupted under load, which strands the lock; see #1928"
-    ) in {
-        // Interrupting from outside the fiber, which lands before the claim is made. That is the
-        // opposite end of the acquisition from the case above and is worth holding separately: it
-        // pins that an acquisition abandoned before it claims anything leaves nothing behind, so
-        // repeated attempts cannot accumulate claims.
-        Scope.acquireRelease(FileSystem.host.tempDir("kyo-lock-interrupt"))(h => Sync.Unsafe.defer(h.remove())).map { handle =>
-            val target = handle.path / "contended.bin"
-            Loop.indexed { i =>
-                if i >= 200 then Loop.done
-                else
-                    Fiber.initUnscoped(Scope.run(FileSystem.host.tryLock(target, Path.LockMode.Exclusive).map(_ => ())))
-                        .map(_.interrupt)
-                        .andThen(Loop.continue)
-            }.andThen {
-                assertEventually {
-                    Scope.run(FileSystem.host.tryLock(target, Path.LockMode.Exclusive).map(_.isDefined))
+    "repeated interrupted acquisitions leave the path acquirable" in {
+        // Interrupting from outside the fiber, so the interrupt lands wherever it lands rather than at
+        // a chosen point in the claim. That is the opposite end of the acquisition from the case above
+        // and is worth holding separately: repeated attempts must not accumulate claims.
+        //
+        // Each round waits for its own claim before interrupting, and the count is what makes that a
+        // guard rather than a green light. Spawning and interrupting straight away reaches the claim in
+        // ZERO of 200 rounds, measured: the interrupt lands before the fiber runs, a round that claimed
+        // nothing strands nothing, and the leaf passes having exercised none of #1928. That is how this
+        // leaf came to be disabled against a defect it never ran. `afterClaimHook` fires with the OS
+        // claim held, so completing a promise there is what says the round got far enough to have
+        // something to lose.
+        //
+        // Fifty rounds because the strand is not probabilistic once the claims are real: five were
+        // enough to leave the path returning Absent on 8585 consecutive retries.
+        AtomicInt.init(0).map { claims =>
+            Scope.acquireRelease(FileSystem.host.tempDir("kyo-lock-interrupt"))(h => Sync.Unsafe.defer(h.remove())).map { handle =>
+                val target = handle.path / "contended.bin"
+                Scope.ensure(Sync.defer(HostFileSystem.afterClaimHook = () => ())).andThen {
+                    Loop.indexed { i =>
+                        if i >= 50 then Loop.done
+                        else
+                            Promise.init[Unit, Any].map { claimed =>
+                                Sync.defer {
+                                    // Unsafe: the hook is a plain `() => Unit` the file system calls with
+                                    // the claim held, so neither the count nor the signal can be taken
+                                    // through an effect here.
+                                    import AllowUnsafe.embrace.danger
+                                    HostFileSystem.afterClaimHook = () =>
+                                        discard(claims.unsafe.incrementAndGet())
+                                        discard(claimed.unsafe.complete(Result.succeed(())))
+                                }.andThen {
+                                    Fiber.initUnscoped(
+                                        Scope.run(FileSystem.host.tryLock(target, Path.LockMode.Exclusive).map(_ => ()))
+                                    ).map { fiber =>
+                                        // A round whose `tryLock` finds the path still held by the
+                                        // previous round's in-flight release claims nothing and never
+                                        // fires the hook, so the wait is against the fiber ending too.
+                                        Async.race(claimed.get, fiber.getResult.unit).andThen(fiber.interrupt)
+                                    }
+                                }.andThen(Loop.continue)
+                            }
+                    }.andThen {
+                        // Retried rather than attempted once: an interrupt starts the release without
+                        // waiting for it, so a lock briefly held is not a stranded one.
+                        assertEventually {
+                            Scope.run(FileSystem.host.tryLock(target, Path.LockMode.Exclusive).map(_.isDefined))
+                        }.andThen {
+                            claims.get.map { c =>
+                                assert(c > 0, s"no round reached the claim, so no interrupt landed on one that was held: claims=$c")
+                            }
+                        }
+                    }
                 }
             }
         }

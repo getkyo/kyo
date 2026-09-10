@@ -201,17 +201,30 @@ abstract class Isolate[Remove, -Keep, -Restore]:
       *   A new isolate handling both state managements
       */
     final def andThen[RM2, KP2, RS2](next: Isolate[RM2, KP2, RS2]): Isolate[Remove & RM2, Keep & KP2, Restore & RS2] =
-        // Diverges from main: no `Identity` short circuit, since main's `Identity` isolate is gone
-        // and `Contextual`, its replacement as the base case, is not a no-op.
-        new Isolate[Remove & RM2, Keep & KP2, Restore & RS2]:
-            type State        = (self.State, next.State)
-            type Transform[A] = self.Transform[next.Transform[A]]
-            def capture[A, S](f: State => A < S)(using Frame) =
-                self.capture(s1 => next.capture(s2 => f((s1, s2))))
-            def isolate[A, S](state: State, v: A < (S & (Remove & RM2)))(using Frame) =
-                self.isolate(state._1, next.isolate(state._2, v))
-            def restore[A, S](v: Transform[A] < S)(using Frame) =
-                next.restore(self.restore(v))
+        if self eq Identity then next.asInstanceOf[Isolate[Remove & RM2, Keep & KP2, Restore & RS2]]
+        else if next eq Identity then self.asInstanceOf[Isolate[Remove & RM2, Keep & KP2, Restore & RS2]]
+        else
+            new Isolate[Remove & RM2, Keep & KP2, Restore & RS2]:
+                type State        = (self.State, next.State)
+                type Transform[A] = self.Transform[next.Transform[A]]
+                def capture[A, S](f: State => A < S)(using Frame) =
+                    self.capture(s1 => next.capture(s2 => f((s1, s2))))
+                def isolate[A, S](state: State, v: A < (S & (Remove & RM2)))(using Frame) =
+                    self.isolate(state._1, next.isolate(state._2, v))
+                def restore[A, S](v: Transform[A] < S)(using Frame) =
+                    next.restore(self.restore(v))
+
+    /** This isolate, plus the crossing that leaving one fiber for another makes.
+      *
+      * Isolating state in place and carrying it to another fiber are different acts, and only the second one asks a context region what a
+      * fork of it holds. An isolate says nothing about context regions on its own, so a spawn composes this in front of the caller's to say
+      * that the body starts somewhere else: each region in scope is forked through its own strategy on the way in, and joined back on the
+      * way out.
+      *
+      * The same instance has to capture and isolate, so a spawn holds the result of one call rather than calling this twice.
+      */
+    final private[kyo] def crossing: Isolate[Remove, Keep, Restore] =
+        Contextual.andThen(this)
 
 end Isolate
 
@@ -245,11 +258,26 @@ object Isolate:
 
     private[kyo] object internal:
 
-        // Diverges from main: main's `Identity` isolate is gone, and so are the `runDetached` and
-        // `restoring` helpers that threaded a `Trace`, a `Context` and a `Safepoint` across a fork.
-        // `Contextual` takes Identity's place as the base case of composition: it snapshots the
-        // context regions, runs the isolated computation over a forked snapshot, and joins each
-        // region back through that region's own fork and join strategy.
+        /** The isolate that manages nothing, and the base case a composition folds onto.
+          *
+          * A composition's base has to be the identity of `andThen`, so that an isolate for effects nobody named is an isolate that does
+          * nothing at all. `Contextual` below is not that: it crosses a fiber boundary, which is a thing to ask for rather than a thing to
+          * inherit from the shape of a type.
+          */
+        private[kernel] object Identity extends Isolate[Any, Any, Any]:
+            type State        = Unit
+            type Transform[A] = A
+            def capture[A, S](f: State => A < S)(using Frame)              = f(())
+            def isolate[A, S](state: State, v: A < (S & Any))(using Frame) = v
+            def restore[A, S](v: A < S)(using Frame)                       = v
+        end Identity
+
+        // Diverges from main: the `runDetached` and `restoring` helpers that threaded a `Trace`, a
+        // `Context` and a `Safepoint` across a fork are gone. `Contextual` is what carries the context
+        // across one now: it snapshots the context regions, runs the isolated computation over a forked
+        // snapshot, and joins each region back through that region's own fork and join strategy. Reached
+        // through `crossing`, at the sites that actually leave one fiber for another; it is deliberately
+        // not the base case of composition, because an isolate asked for in place forks nothing.
         private[kernel] object Contextual extends Isolate[Any, Any, Any]:
             type State        = Stack.Snapshot
             type Transform[A] = (Stack.Snapshot, Stack.Snapshot, A)
@@ -429,8 +457,7 @@ object Isolate:
                 )
             end if
 
-            // Diverges from main: `Contextual` is the base case of the fold, where main used `Identity`.
-            isolates.flatMap(_._2).foldLeft('{ Contextual.asInstanceOf[Isolate[Remove, Keep, Restore]] })((prev, next) =>
+            isolates.flatMap(_._2).foldLeft('{ Identity.asInstanceOf[Isolate[Remove, Keep, Restore]] })((prev, next) =>
                 '{ $prev.andThen($next.asInstanceOf[Isolate[Remove, Keep, Restore]]) }
             )
         end deriveImpl

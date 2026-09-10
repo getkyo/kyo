@@ -1321,7 +1321,14 @@ object Flow:
         interpreter: FlowInterpreter[S]
     )(using Frame): Record[In & Out] < S =
 
-        case class Compensation(name: String, ctx: Record[Any], handler: Record[Any] => Any)
+        /** A registered handler, kept as the computation it is.
+          *
+          * The row is erased the way the rest of this walk erases one, but the result is `Any < Any` rather than `Any`: a handler is a
+          * computation, and a position that says only `Any` invites the pending type's lift to fire at the `Abort.run` that runs it,
+          * which wraps the computation as data. The unwind then hands itself that value, matches neither failure arm, records the node
+          * compensated and runs nothing.
+          */
+        case class Compensation(name: String, ctx: Record[Any], handler: Record[Any] => Any < Any)
 
         def addField(ctx: Record[Any], name: String, value: Any): Record[Any] =
             new Record[Any](ctx.toDict ++ Dict(name -> value))
@@ -1331,9 +1338,10 @@ object Flow:
             def pushComp(
                 name: String,
                 ctx: Record[Any],
-                handler: Record[Any] => Any
+                handler: internal.Handler[Any]
             ): Unit < Sync =
-                compsRef.getAndUpdate(Compensation(name, ctx, handler) +: _).unit
+                // The cast is the row erasure `Compensation` describes, and nothing else: the value is the same function.
+                compsRef.getAndUpdate(Compensation(name, ctx, handler.asInstanceOf[Record[Any] => Any < Any]) +: _).unit
 
             /** Runs the handlers this attempt registered, in reverse order of registration, skipping the ones already recorded.
               *

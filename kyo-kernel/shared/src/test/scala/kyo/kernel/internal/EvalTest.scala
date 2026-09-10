@@ -628,6 +628,29 @@ class EvalTest extends AnyFreeSpec:
             assert(ran)
         }
 
+        // #1820, at the level the walk lives. `ensureMap` exists so that a value and the obligation it creates
+        // are one step, for a resource that is open the moment the acquire returns. An abandonment has to find
+        // that obligation, and it does not sit under the node's value: it sits in the CONTINUATION, waiting on
+        // a value that has already arrived. A walk that descends into values alone steps straight past it, and
+        // what the acquire produced is then registered nowhere and released by nobody.
+        "a release waiting on a value that already arrived is found on abandonment" in {
+            var applied = Maybe.empty[String]
+            val v: Int < Any =
+                Effect.defer {
+                    requestStop()
+                    Effect.defer("token")
+                }.ensureMap { token =>
+                    applied = Maybe(token)
+                    1
+                }
+            val parked = Eval.partial(v)
+            assert(applied.isEmpty, "the premise is that the stop parked before the ensure applied")
+            // The budgeted entry point, which is the one a fiber abandonment uses. The unbudgeted `release`
+            // never steps a deferral, so it cannot reach a release that is waiting one step further in.
+            Eval.release(parked, new RuntimeException("abandoned"), Tag[Ask])([C] => (_: Unit) => ())
+            assert(applied == Maybe("token"), s"the release never ran, it saw $applied")
+        }
+
         "a stateful region parked mid-loop resumes at the parked state" in {
             val body: Int < Ask =
                 ask.map { a =>

@@ -58,7 +58,7 @@ class ScopeCombinatorsTest extends kyo.test.Test[Any]:
 
             val ensure: Maybe[Error[Any]] => Unit < (Sync & Abort[Throwable]) = ex => Sync.defer { error = ex }
             Abort.fail("failure").ensuringError(ensure).handle(Scope.run, Abort.run(_)).andThen {
-                assert(error == Result.fail("failure"))
+                assert(error == Result.fail("failure"), s"the finalizer was handed $error")
             }
         }
     }

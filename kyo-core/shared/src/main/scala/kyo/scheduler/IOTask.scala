@@ -9,7 +9,6 @@ import kyo.kernel.internal.Pending
 import kyo.kernel.internal.Safepoint
 import kyo.scheduler.IOTask.*
 import scala.annotation.tailrec
-import scala.util.control.NonFatal
 
 sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2] with Task:
 
@@ -368,7 +367,7 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
                         // reason either way.
                         completeDiscard(new Result.Panic(ex))
                         curr = cleared
-                        if !NonFatal(ex) then
+                        if IsFatal(ex) then
                             // a fatal leaves `run` without reaching the arms below, which are what release
                             // ownership. Ownership never given up is never reclaimed: the claim at the top
                             // would fail for good, and with it every later schedule and the interrupt
@@ -553,7 +552,6 @@ object IOTask:
         )
 
     private def start[E, A, S2](task: IOTask[E, A, S2], parent: Maybe[IOPromise[?, ?]], runtime: Int): IOTask[E, A, S2] =
-        // diagnostic probe, env-gated, removed once the flake campaign closes
         // after the subclass is constructed, so `prepare` reads fields that are assigned
         task.install()
         task.addRuntime(runtime)

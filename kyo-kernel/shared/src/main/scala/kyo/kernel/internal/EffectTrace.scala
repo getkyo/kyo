@@ -1,13 +1,13 @@
 package kyo.kernel.internal
 
 import kyo.Frame
+import kyo.IsFatal
 import kyo.Maybe
 import kyo.Tag
 import kyo.discard
 import kyo.kernel.Arrow
 import scala.annotation.tailrec
 import scala.collection.mutable.ArrayDeque
-import scala.util.control.NonFatal
 import scala.util.control.NoStackTrace
 
 final class EffectTrace extends Exception(null, null, false, false):
@@ -55,7 +55,7 @@ private[kernel] object EffectTrace:
         }
 
     private inline def reconstruct(ex: Throwable, stack: Maybe[Stack])(inline fill: Builder => Unit): Unit =
-        if NonFatal(ex) then
+        if !IsFatal(ex) then
             try
                 val carrier = carrierOf(ex)
                 val walked  = stack.exists(s => carrier.seen.exists(_ eq s) && carrier.seenEpoch == s.epoch)
@@ -68,12 +68,12 @@ private[kernel] object EffectTrace:
                     fill(builder)
                     builder.installInto(carrier)
                 end if
-            catch case failure if NonFatal(failure) => ()
+            catch case failure if !IsFatal(failure) => ()
         end if
     end reconstruct
 
     def splice(ex: Throwable): Unit =
-        if NonFatal(ex) && !ex.isInstanceOf[NoStackTrace] then
+        if !IsFatal(ex) && !ex.isInstanceOf[NoStackTrace] then
             try
                 find(ex) match
                     case Maybe.Present(carrier) if carrier.elements.length > 0 =>
@@ -86,7 +86,7 @@ private[kernel] object EffectTrace:
                                     p
                         ex.setStackTrace(carrier.elements ++ physical)
                     case _ => ()
-            catch case failure if NonFatal(failure) => ()
+            catch case failure if !IsFatal(failure) => ()
         end if
     end splice
 

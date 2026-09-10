@@ -2,6 +2,7 @@ package kyo.kernel.internal
 
 import kyo.Chunk
 import kyo.Frame
+import kyo.IsFatal
 import kyo.KyoException
 import kyo.Maybe
 import kyo.Maybe.Absent
@@ -21,7 +22,6 @@ import language.implicitConversions
 import scala.annotation.publicInBinary
 import scala.annotation.tailrec
 import scala.collection.mutable.ArrayBuffer
-import scala.util.control.NonFatal
 
 @publicInBinary private[kyo] object Eval:
 
@@ -336,7 +336,7 @@ import scala.util.control.NonFatal
                         if hc.defers(entries.state(ri).asInstanceOf[VX]) then defers = true
                         try hc.reenter(entries.state(ri).asInstanceOf[VX])
                         catch
-                            case ex if NonFatal(ex) =>
+                            case ex if !IsFatal(ex) =>
                                 release(kyo, ex)
                                 throw ex
                         end try
@@ -414,9 +414,9 @@ import scala.util.control.NonFatal
                     case handler0 =>
                         val handler = handler0.asInstanceOf[Handler.ArrowHandler[VX, EX, AX, Y, Any]]
                         val outcome =
-                            try if NonFatal(ex) then handler.recover(state.asInstanceOf[VX], ex) else Absent
+                            try if IsFatal(ex) then Absent else handler.recover(state.asInstanceOf[VX], ex)
                             catch
-                                case ex2 if NonFatal(ex2) =>
+                                case ex2 if !IsFatal(ex2) =>
                                     Debugger.onRegionExit(handler, ex2)
                                     stack.pop()
                                     val owedHere = stack.takePopped()
@@ -535,8 +535,8 @@ import scala.util.control.NonFatal
         val hc = handler.asInstanceOf[Handler.ContextHandler[Any, ContextEffect[Any], Any, Any]]
         try if discharging then hc.discharge(state, ex) else hc.release(state, ex)
         catch
-            case t if NonFatal(t) && (t ne ex) => ex.addSuppressed(t)
-            case t if NonFatal(t)              => ()
+            case t if !IsFatal(t) && (t ne ex) => ex.addSuppressed(t)
+            case t if !IsFatal(t)              => ()
         end try
     end released
 
@@ -567,7 +567,31 @@ import scala.util.control.NonFatal
 
     private def release[A, S](v: A < S, ex: Throwable, effectTag: Maybe[Tag[Any]], f: Any => Unit, fuel: Int): Unit =
         val collected = ArrayBuffer.empty[AnyRef]
-        @tailrec def collect(v: Any, fuel: Int): Unit =
+
+        // What an abandoned computation still owes is not only under a node's value: an `Arrow.Ensure` waiting
+        // for a value that has already settled is a release nobody will run, and descending into the value
+        // alone drops the continuation holding it. So the continuation is carried down and offered the value
+        // when one is reached.
+        //
+        // Only an `Ensure`, which is the whole of what may run here. An `Ensure` exists to run when its
+        // computation does not, so applying one settles a debt rather than resuming work; anything else in the
+        // continuation is ordinary work and is left alone.
+        //
+        // A chain's head is its left arrow, and that is itself a chain whenever one was built onto another, so
+        // the step that would have received the value is found by walking `head` down. Nothing is rebuilt: the
+        // rest of the continuation is not going to run.
+        @tailrec def leftmost(cont: Arrow[Any, Any, Any]): Arrow[Any, Any, Any] =
+            val h = cont.head
+            // Erasure-forced: the type joining a chain's links is existential from out here.
+            if h eq cont then cont else leftmost(h.asInstanceOf[Arrow[Any, Any, Any]])
+        end leftmost
+
+        def ensuring(v: Any, cont: Arrow[Any, Any, Any]): Unit =
+            leftmost(cont) match
+                case step: Arrow.Ensure[Any, Any, Any] @unchecked => discard(step(v))
+                case _                                            => ()
+
+        @tailrec def collect(v: Any, cont: Arrow[Any, Any, Any], fuel: Int): Unit =
             v match
                 case p: Pending[?, ?] =>
                     p match
@@ -575,20 +599,27 @@ import scala.util.control.NonFatal
                         // under it for free. One whose value is settled holds its body in the continuation,
                         // so reaching it means running a step, and only that spends the budget.
                         case kyo: Pending.Defer[a, b, c, s] @unchecked =>
+                            // Erasure-forced: the types joining a chain's links are existential from out here.
+                            val after = kyo.contB.chain(cont).asInstanceOf[Arrow[Any, Any, Any]]
+                            val below = kyo.contA.chain(after).asInstanceOf[Arrow[Any, Any, Any]]
                             kyo.value match
-                                case _: Pending[?, ?] => collect(kyo.value, fuel)
+                                case _: Pending[?, ?] => collect(kyo.value, below, fuel)
                                 // `Arrow.id` rather than the node's own continuation, so a unit of budget
                                 // buys one step: an arrow is free to run as many as it likes once handed
-                                // one, and what follows this step is not where the operation under it is.
-                                case _ if fuel > 0 => collect(kyo.contA(kyo.value, Arrow.id), fuel - 1)
-                                case _             => ()
+                                // one. What follows that step is carried, because a release waiting on this
+                                // value sits there and stepping past it is what loses it.
+                                case _ if fuel > 0 =>
+                                    ensuring(kyo.value, below)
+                                    collect(kyo.contA(kyo.value, Arrow.id), after, fuel - 1)
+                                case _ => ensuring(kyo.value, below)
+                            end match
                         case kyo: Pending.HandleContext[VX, CX, ?, ?] @unchecked =>
                             val hc = kyo.handler
                             collected += hc
                             collected += hc.derive(Maybe.empty).asInstanceOf[AnyRef]
-                            collect(kyo.value, fuel)
+                            collect(kyo.value, cont, fuel)
                         case kyo: Pending.Handle[?, ?, ?, ?] =>
-                            collect(kyo.value, fuel)
+                            collect(kyo.value, cont, fuel)
                         case kyo: Pending.Park[?, ?] =>
                             expandOwed(collected, kyo.owed)
                             val entries = kyo.entries
@@ -603,21 +634,21 @@ import scala.util.control.NonFatal
                                 expandOwed(collected, entries.owed(i))
                                 i += 1
                             end while
-                            collect(kyo.value, fuel)
+                            collect(kyo.value, cont, fuel)
                         case kyo: Pending.SuspendArrow[?, ?, ?, ?, ?, ?] @unchecked =>
                             effectTag.foreach(t => if t <:< kyo.tag.erased then f(kyo.input))
                         case _: Pending.Suspend[?, ?, ?, ?] => ()
                         case _: Pending.Snapshot[?, ?]      => ()
-                case _ => ()
+                case settled => ensuring(settled, cont)
         // A deferral declines to run while the Safepoint is stopped, and it always is here: this walks a
         // computation whose fiber has just been interrupted. The walk gets its own state so stepping
         // reaches what a deferral holds, and the caller's is put back.
         if fuel > 0 then
             val slot  = Safepoint.get()
             val saved = Safepoint.save(slot)
-            try collect(v, fuel)
+            try collect(v, Arrow.id, fuel)
             finally Safepoint.restore(slot, saved)
-        else collect(v, fuel)
+        else collect(v, Arrow.id, fuel)
         end if
         releaseCollected(collected, ex)
     end release

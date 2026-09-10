@@ -2304,22 +2304,39 @@ class ArrowEffectTest extends Test:
         }
 
         "a fatal error in the computation is not recovered" in {
-            val v = ask.map(_ => (throw new InterruptedException("fatal")): Int)
+            val v = ask.map(_ => (throw new OutOfMemoryError("fatal")): Int)
             val r = ArrowEffect.handleCont(Tag[Ask], v)([X] => (_, cont) => cont(0), a => a, _ => Maybe(-1))
-            intercept[InterruptedException] {
+            intercept[OutOfMemoryError] {
                 val _ = r.eval
             }
         }
 
         "a fatal error in the handler is not recovered" in {
             val r = ArrowEffect.handleCont(Tag[Ask], ask.map(_ + 1))(
-                [X] => (_, _) => (throw new InterruptedException("fatal")): Int < Ask,
+                [X] => (_, _) => (throw new OutOfMemoryError("fatal")): Int < Ask,
                 a => a,
                 _ => Maybe(-1)
             )
-            intercept[InterruptedException] {
+            intercept[OutOfMemoryError] {
                 val _ = r.eval
             }
+        }
+
+        // The other half of the fatal question, and the reason the kernel asks `kyo.IsFatal` rather than
+        // `scala.util.control.NonFatal`. Scala calls a `LinkageError` fatal, which sends an ordinary
+        // application bug out of the fiber and into the scheduler worker: the worker ends, and every release
+        // the computation still owed goes with it. A class that fails to link says the program is wrong, not
+        // that the JVM is, so it is a value here and the recovery answers it.
+        "a LinkageError is recovered, because kyo does not call it fatal" in {
+            val v = ask.map(_ => (throw new LinkageError("not fatal here")): Int)
+            val r = ArrowEffect.handleCont(Tag[Ask], v)([X] => (_, cont) => cont(0), a => a, _ => Maybe(-1))
+            assert(r.eval == -1)
+        }
+
+        "an InterruptedException is recovered, for the same reason" in {
+            val v = ask.map(_ => (throw new InterruptedException("not fatal here")): Int)
+            val r = ArrowEffect.handleCont(Tag[Ask], v)([X] => (_, cont) => cont(0), a => a, _ => Maybe(-1))
+            assert(r.eval == -1)
         }
 
         "an inner handler keeps answering its own operations" in {

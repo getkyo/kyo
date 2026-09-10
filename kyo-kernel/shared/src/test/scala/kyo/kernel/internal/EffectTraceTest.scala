@@ -139,8 +139,8 @@ class EffectTraceTest extends AnyFreeSpec:
     }
 
     "a fatal error passes through untouched" in {
-        val v  = runAsk(ask.map(_ => (throw new InterruptedException("stop")): Int))(1)
-        val ex = intercept[InterruptedException](v.eval)
+        val v  = runAsk(ask.map(_ => (throw new OutOfMemoryError("stop")): Int))(1)
+        val ex = intercept[OutOfMemoryError](v.eval)
         assert(carrier(ex).isEmpty)
     }
 

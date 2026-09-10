@@ -9,105 +9,104 @@ class IOTaskTest extends kyo.test.Test[Any]:
 
     "fiberTrace" - {
 
-        // "fiberTrace renders the live user frames of a blocked effectful fiber" in {
-        //     val blocker                      = new IOPromise[Nothing, Unit]()
-        //     def userStep(x: Int): Int < Sync = Sync.defer(x + 1)
-        //     def work: Unit < Async =
-        //         Sync.defer(1).map(userStep).map(_ => Async.use(blocker)(_ => ())).map(_ => ())
-        //     val iotask = IOTask.unscoped(work)
-        //     for
-        //         // Deterministic readiness witness: poll the actual property (the live trace surfacing a
-        //         // user frame), not a sleep. The trace is published at the suspend boundary's writeback, so
-        //         // a populated trace also proves the fiber is blocked on `blocker` and its trace is stable.
-        //         _ <- assertEventually(Sync.defer(iotask.fiberTrace().contains("IOTaskTest.scala:")))
-        //         rendered = iotask.fiberTrace()
-        //         _ <- Sync.defer(blocker.completeDiscard(Result.succeed(())))
-        //         _ <- Async.use(iotask.asInstanceOf[IOPromise[Nothing, Unit]])(_ => ())
-        //     yield
-        //         assert(rendered.nonEmpty)
-        //         assert(rendered.startsWith("at "))
-        //         // A real user file:line from this test's effect chain, proving the live (not fork-time)
-        //         // frames are readable cross-thread off a still-blocked fiber.
-        //         assert(rendered.contains("IOTaskTest.scala:"))
-        //         assert(!rendered.contains("<internal>"))
-        //     end for
-        // }
+        "renders the live user frame of a blocked effectful fiber" in {
+            val blocker                      = new IOPromise[Nothing, Unit]()
+            def userStep(x: Int): Int < Sync = Sync.defer(x + 1)
+            def work: Unit < Async =
+                Sync.defer(1).map(userStep).map(_ => Async.use(blocker)(_ => ())).map(_ => ())
+            val iotask = IOTask.unscoped(work)
+            for
+                // Deterministic readiness witness: poll the actual property (the live trace surfacing a
+                // user frame), not a sleep. The remainder is written back at the suspend boundary, so a
+                // populated trace also proves the fiber is parked on `blocker` and its frame is stable.
+                _ <- assertEventually(Sync.defer(iotask.fiberTrace().contains("IOTaskTest.scala:")))
+                rendered = iotask.fiberTrace()
+                _ <- Sync.defer(blocker.completeDiscard(Result.succeed(())))
+                _ <- Async.use(iotask.asInstanceOf[IOPromise[Nothing, Unit]])(_ => ())
+            yield
+                assert(rendered.startsWith("at "), s"the trace does not render as a frame: $rendered")
+                // A real user file:line from this test's effect chain, proving the live (not fork-time)
+                // frame is readable cross-thread off a still-parked fiber.
+                assert(rendered.contains("IOTaskTest.scala:"), s"the trace names no user frame: $rendered")
+            end for
+        }
 
-        // "fiberTrace excludes internal frames" in {
-        //     val blocker                      = new IOPromise[Nothing, Unit]()
-        //     def userStep(x: Int): Int < Sync = Sync.defer(x + 1)
-        //     def work: Unit < Async =
-        //         Sync.defer(1).map(userStep).map(_ => Async.use(blocker)(_ => ())).map(_ => ())
-        //     val iotask = IOTask.unscoped(work)
-        //     for
-        //         _ <- Async.sleep(1.second)
-        //         _ <- Console.printLine("AAAA " + iotask.fiberTrace())
-        //         _ <- Sync.defer(assert(iotask.fiberTrace().contains("IOTaskTest.scala:")))
-        //         rendered = iotask.fiberTrace()
-        //         _ <- Sync.defer(blocker.completeDiscard(Result.succeed(())))
-        //         _ <- Async.use(iotask.asInstanceOf[IOPromise[Nothing, Unit]])(_ => ())
-        //     yield
-        //         // The trace carries real user frames (non-empty) yet never the shared internal placeholder:
-        //         // pushFrame drops Frame.internal by reference, so no <internal> line can enter the ring.
-        //         assert(rendered.nonEmpty)
-        //         assert(!rendered.contains("<internal>"))
-        //     end for
-        // }
+        "renders no kernel frame" in {
+            val blocker                      = new IOPromise[Nothing, Unit]()
+            def userStep(x: Int): Int < Sync = Sync.defer(x + 1)
+            def work: Unit < Async =
+                Sync.defer(1).map(userStep).map(_ => Async.use(blocker)(_ => ())).map(_ => ())
+            val iotask = IOTask.unscoped(work)
+            for
+                _ <- assertEventually(Sync.defer(iotask.fiberTrace().nonEmpty))
+                rendered = iotask.fiberTrace()
+                _ <- Sync.defer(blocker.completeDiscard(Result.succeed(())))
+                _ <- Async.use(iotask.asInstanceOf[IOPromise[Nothing, Unit]])(_ => ())
+            yield
+                // `currentFrame` drops `Frame.internal` by reference, so the kernel's own plumbing never
+                // surfaces: what is rendered is a call site the user wrote, never a file the kernel owns.
+                assert(!rendered.contains("<internal>"), s"the internal placeholder surfaced: $rendered")
+                List("Eval.scala", "Arrow.scala", "IOTask.scala", "Fiber.scala").foreach { internal =>
+                    assert(!rendered.contains(internal), s"a kernel frame surfaced: $rendered")
+                }
+            end for
+        }
 
-        // "fiberTrace is empty for a pure Sync.defer spin loop" in {
-        //     val stop                      = new AtomicBoolean(false)
-        //     val iterations                = new AtomicLong(0L)
-        //     def loop(i: Int): Unit < Sync = Sync.defer { discard(iterations.incrementAndGet()); if stop.get() then () else loop(i + 1) }
-        //     for
-        //         fiber <- Fiber.initUnscoped(loop(0))
-        //         // Deterministic witness that the loop is genuinely spinning (many bare defers executed)
-        //         // before reading its trace, so the empty-trace assertion is about an active fiber.
-        //         _ <- assertEventually(Sync.defer(iterations.get() > 100L))
-        //         // fiberTrace lives on IOTask; reach the concrete task for the diagnostic read.
-        //         rendered = fiber.asInstanceOf[IOTask[?, ?, ?]].fiberTrace()
-        //         _ <- Sync.defer(stop.set(true))
-        //         _ <- fiber.interrupt
-        //         _ <- fiber.getResult
-        //     yield
-        //         // A pure Sync.defer chain pushes no frames (defers carry no user frame; the IOTask's own
-        //         // call-site frame is Frame.internal and is skipped), so the live trace stays empty.
-        //         assert(!rendered.contains("IOTaskTest.scala:"))
-        //         assert(rendered.isEmpty)
-        //     end for
-        // }
+        "renders the deferral a Sync.defer spin loop stands in" in {
+            val stop                      = new AtomicBoolean(false)
+            val iterations                = new AtomicLong(0L)
+            def loop(i: Int): Unit < Sync = Sync.defer { discard(iterations.incrementAndGet()); if stop.get() then () else loop(i + 1) }
+            for
+                fiber <- Fiber.initUnscoped(loop(0))
+                // Deterministic witness that the loop is genuinely spinning (many bare defers executed)
+                // before reading its trace, so what is read is an active fiber's frame.
+                _ <- assertEventually(Sync.defer(iterations.get() > 100L))
+                // fiberTrace lives on IOTask; reach the concrete task for the diagnostic read.
+                rendered = fiber.asInstanceOf[IOTask[?, ?, ?]].fiberTrace()
+                _ <- Sync.defer(stop.set(true))
+                _ <- fiber.interrupt
+                _ <- fiber.getResult
+            yield
+                // A spinning fiber stands at no suspension, so the frame comes from the deferral in front
+                // of it: the arrow that applies a `Sync.defer` body names where the user wrote it, which is
+                // the whole point of reading a busy worker's trace.
+                assert(rendered.contains("IOTaskTest.scala:"), s"the spin loop named no user frame: $rendered")
+                assert(rendered.contains("IOTaskTest.loop"), s"the frame is not the spinning deferral: $rendered")
+            end for
+        }
 
-        // "fiberTrace never throws under concurrent trace mutation" in {
-        //     val blocker                      = new IOPromise[Nothing, Unit]()
-        //     def userStep(x: Int): Int < Sync = Sync.defer(x + 1)
-        //     def work: Unit < Async =
-        //         Sync.defer(1).map(userStep).map(_ => Async.use(blocker)(_ => ())).map(_ => ())
-        //     val iotask = IOTask.unscoped(work)
-        //     for
-        //         // A forked reader hammers fiberTrace() while the worker mutates the trace: the fiber is
-        //         // blocked (populated trace), then resumes (writeback), then completes (run() nulls trace).
-        //         // Every cross-thread read must stay safe; the diagnostic read never escapes a throw.
-        //         reader <- Fiber.initUnscoped(Sync.defer((0 until 2000).map(_ => iotask.fiberTrace()).toVector))
-        //         _      <- Sync.defer(blocker.completeDiscard(Result.succeed(())))
-        //         reads  <- reader.get
-        //         _      <- Async.use(iotask.asInstanceOf[IOPromise[Nothing, Unit]])(_ => ())
-        //         // After the task is definitely complete its trace is nulled, so every later read is "".
-        //         afterComplete = (0 until 1000).map(_ => iotask.fiberTrace()).toVector
-        //     yield
-        //         assert(reads.size == 2000)
-        //         assert(reads.forall(s => (s ne null) && (s == "" || s.startsWith("at "))))
-        //         assert(afterComplete.forall(_ == ""))
-        //     end for
-        // }
+        "never throws while the fiber it reads is running" in {
+            val blocker                      = new IOPromise[Nothing, Unit]()
+            def userStep(x: Int): Int < Sync = Sync.defer(x + 1)
+            def work: Unit < Async =
+                Sync.defer(1).map(userStep).map(_ => Async.use(blocker)(_ => ())).map(_ => ())
+            val iotask = IOTask.unscoped(work)
+            for
+                // A forked reader hammers fiberTrace() while the worker rewrites `curr`: the fiber parks
+                // (a frame to render), resumes (the remainder is replaced), then completes (`curr` is
+                // cleared). Every cross-thread read has to stay safe; the diagnostic never escapes a throw.
+                reader <- Fiber.initUnscoped(Sync.defer((0 until 2000).map(_ => iotask.fiberTrace()).toVector))
+                _      <- Sync.defer(blocker.completeDiscard(Result.succeed(())))
+                reads  <- reader.get
+                _      <- Async.use(iotask.asInstanceOf[IOPromise[Nothing, Unit]])(_ => ())
+                // After the task is definitely complete `curr` is cleared, so every later read is "".
+                afterComplete = (0 until 1000).map(_ => iotask.fiberTrace()).toVector
+            yield
+                assert(reads.size == 2000)
+                assert(reads.forall(s => (s ne null) && (s == "" || s.startsWith("at "))), "a read rendered a malformed frame")
+                assert(afterComplete.forall(_ == ""), "a completed task still rendered a frame")
+            end for
+        }
 
-        // "fiberTrace has no effect row and is a plain String" in {
-        //     val iotask = IOTask.unscoped(Sync.defer(()))
-        //     // Compile-shaped assertion: fiberTrace() is a bare String, with no pending effect row and no
-        //     // AllowUnsafe capability. If it returned `String < Sync` or required AllowUnsafe this would not
-        //     // typecheck.
-        //     val s: String = iotask.fiberTrace()
-        //     for _ <- Async.use(iotask.asInstanceOf[IOPromise[Nothing, Unit]])(_ => ())
-        //     yield assert(s == "" || s.startsWith("at "))
-        // }
+        "has no effect row and is a plain String" in {
+            val iotask = IOTask.unscoped(Sync.defer(()))
+            // Compile-shaped assertion: fiberTrace() is a bare String, with no pending effect row and no
+            // AllowUnsafe capability. If it returned `String < Sync` or required AllowUnsafe this would not
+            // typecheck.
+            val s: String = iotask.fiberTrace()
+            for _ <- Async.use(iotask.asInstanceOf[IOPromise[Nothing, Unit]])(_ => ())
+            yield assert(s == "" || s.startsWith("at "))
+        }
 
     }
 

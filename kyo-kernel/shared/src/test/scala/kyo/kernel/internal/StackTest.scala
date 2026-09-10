@@ -82,6 +82,40 @@ class StackTest extends AnyFreeSpec:
             stack.push(askHandler, (), k)
             assert(stack.continuation(0) eq k)
         }
+
+        // A pop that only moves `size` leaves the entry where it was, and a stack outlives any one evaluation:
+        // `Stack.release` returns it to a per-thread pool, and `clear` reaches only `0 until size`. So a slot
+        // left set here holds that region's handler, its state and its continuation for as long as the thread
+        // lives, whatever they close over. `truncate`, `dump` and `takeAll` all drop what they shrink past;
+        // this says `pop` does too.
+        "a popped entry is dropped, not just skipped" in {
+            val stack = new Stack
+            val state = new Object
+            val k     = Arrow[Int](_ + 1)
+            stack.push(askHandler, state, k)
+            stack.pop()
+            assert(stack.depth == 0)
+            assert(stack.handler(0) == null, "the popped slot still holds its handler")
+            assert(stack.state(0).asInstanceOf[AnyRef] eq null, "the popped slot still holds its state")
+            assert(stack.continuation(0) == null, "the popped slot still holds its continuation")
+        }
+
+        // The same, one level down, so a fix that clears more than it should fails here rather than passing.
+        "popping the inner entry leaves the outer one intact" in {
+            val stack = new Stack
+            val kept  = askHandler
+            val outer = new Object
+            val inner = new Object
+            stack.push(kept, outer, Arrow.id[Int])
+            stack.push(sayHandler, inner, Arrow.id[Int])
+            stack.pop()
+            assert(stack.depth == 1)
+            assert(stack.handler(1) == null, "the popped slot still holds its handler")
+            assert(stack.state(1).asInstanceOf[AnyRef] eq null, "the popped slot still holds its state")
+            assert(stack.continuation(1) == null, "the popped slot still holds its continuation")
+            assert(stack.handler(0) eq kept, "the entry still in scope was dropped")
+            assert(stack.state(0).asInstanceOf[AnyRef] eq outer, "the entry still in scope lost its state")
+        }
     }
 
     "find" - {
