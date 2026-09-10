@@ -598,10 +598,8 @@ class BracketTest extends AnyFreeSpec:
         }
 
         "a bracket does not cross into an isolated child: a capture inside the child, resumed after the bracket ended, runs" in {
-            // the bracket belongs to the computation that installed it and closes only with its own
-            // scope; the child copy it forks is inert, so a continuation escaping the child carries
-            // no obligation and no refusal, as a bracket outside the answering handler already does
-            // not (see the pin below)
+            // A bracket closes only with the scope that installed it, and the child copy it forks is inert,
+            // so a continuation escaping the child carries no obligation and no refusal.
             var leaked    = Maybe.empty[Arrow[Int, Int, Ask]]
             var released  = false
             var usedAfter = false
@@ -635,8 +633,8 @@ class BracketTest extends AnyFreeSpec:
         }
 
         "an isolated child built inside a bracket and evaluated after the bracket ended is not refused" in {
-            // the shape of a spawned fiber: the child computation is built in the parent's extent and
-            // evaluated by another eval once the parent's bracket has released
+            // The shape of a spawned fiber: built in the parent's extent, evaluated by another eval once the
+            // parent's bracket has released.
             var released = false
             var child    = Maybe.empty[Int < Any]
             val body: Int < Any =
@@ -1432,10 +1430,9 @@ class BracketTest extends AnyFreeSpec:
         }
 
         "nested hand-outs descend the debt through each region, and the remainder resumed through both completes the bracket" in {
-            // the inner region hands the bracket-carrying remainder out as a value; the outer region's
-            // body holds that value and then suspends, so the outer region hands its own remainder out
-            // with the inner one inside it. The debt moves from the inner lane to the outer lane to the
-            // enclosing region's lane, where the resume finds it
+            // The inner region hands the bracket-carrying remainder out as a value, and the outer region
+            // hands its own remainder out with that inside it, so the debt moves inner lane to outer lane to
+            // the enclosing region's, where the resume finds it.
             var outcome         = Maybe.empty[Maybe[Throwable]]
             val body: Int < Ask = Bracket(Effect.defer(1))(r => ask.map(_ + r))((_, o) => outcome = Maybe(o))
             val inner: Maybe[Arrow[Int, Int, Ask]] < Any =

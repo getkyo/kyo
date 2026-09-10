@@ -72,20 +72,12 @@ class HostPathLockTest extends FileSystemLockTest:
     }
 
     "repeated interrupted acquisitions leave the path acquirable" in {
-        // Interrupting from outside the fiber, so the interrupt lands wherever it lands rather than at
-        // a chosen point in the claim. That is the opposite end of the acquisition from the case above
-        // and is worth holding separately: repeated attempts must not accumulate claims.
+        // Interrupting from outside the fiber, so the interrupt lands wherever it lands rather than at a
+        // chosen point in the claim. Repeated attempts must not accumulate claims.
         //
-        // Each round waits for its own claim before interrupting, and the count is what makes that a
-        // guard rather than a green light. Spawning and interrupting straight away reaches the claim in
-        // ZERO of 200 rounds, measured: the interrupt lands before the fiber runs, a round that claimed
-        // nothing strands nothing, and the leaf passes having exercised none of #1928. That is how this
-        // leaf came to be disabled against a defect it never ran. `afterClaimHook` fires with the OS
-        // claim held, so completing a promise there is what says the round got far enough to have
-        // something to lose.
-        //
-        // Fifty rounds because the strand is not probabilistic once the claims are real: five were
-        // enough to leave the path returning Absent on 8585 consecutive retries.
+        // Each round waits for its own claim before interrupting: interrupting at the spawn lands before the
+        // fiber runs, and a round that claimed nothing strands nothing. `afterClaimHook` fires with the OS
+        // claim held, so completing a promise there says the round got far enough to have something to lose.
         AtomicInt.init(0).map { claims =>
             Scope.acquireRelease(FileSystem.host.tempDir("kyo-lock-interrupt"))(h => Sync.Unsafe.defer(h.remove())).map { handle =>
                 val target = handle.path / "contended.bin"
@@ -106,9 +98,9 @@ class HostPathLockTest extends FileSystemLockTest:
                                     Fiber.initUnscoped(
                                         Scope.run(FileSystem.host.tryLock(target, Path.LockMode.Exclusive).map(_ => ()))
                                     ).map { fiber =>
-                                        // A round whose `tryLock` finds the path still held by the
-                                        // previous round's in-flight release claims nothing and never
-                                        // fires the hook, so the wait is against the fiber ending too.
+                                        // A round that finds the path still held by the previous round's
+                                        // in-flight release never fires the hook, so the wait is against the
+                                        // fiber ending too.
                                         Async.race(claimed.get, fiber.getResult.unit).andThen(fiber.interrupt)
                                     }
                                 }.andThen(Loop.continue)

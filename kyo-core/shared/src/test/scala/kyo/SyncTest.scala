@@ -70,10 +70,9 @@ class SyncTest extends kyo.test.Test[Any]:
                 assert(result == frames)
             }
         }
-        // The leaves above recurse in tail position, so nothing accumulates. Here the map after the
-        // recursive defer makes each level leave a continuation behind, which is the shape #1739
-        // reported and the one only the kernel's own suites guard today. The assertion is on the
-        // value, so a rescue that unwinds by dropping accumulated continuations fails too.
+        // The leaves above recurse in tail position, so nothing accumulates. The map after the recursive
+        // defer makes each level leave a continuation behind (#1739). The assertion is on the value, so a
+        // rescue that unwinds by dropping accumulated continuations fails too.
         "stack-safe when a map follows the recursive defer" in {
             val depth = 1000000
             def step(n: Int): Int < Sync =
@@ -250,10 +249,10 @@ class SyncTest extends kyo.test.Test[Any]:
             }
         }
 
-        // A handler that resumes the same continuation more than once replays whatever regions that
-        // continuation carries. A bracket is one of them, and its extent is over once the first
-        // resumption completes it, so the release would have already run when the next resumption
-        // arrives. What decides the outcome is where the bracket sits, not which handler replays.
+        // A handler resuming the same continuation more than once replays the regions it carries. A
+        // bracket's extent is over once the first resumption completes it, so the release would already
+        // have run when the next arrives. Where the bracket sits decides the outcome, not which handler
+        // replays.
         "under a handler that replays" - {
 
             "every branch of a replaying handler runs against the live resource, released once after all of them" in {
@@ -356,9 +355,7 @@ class SyncTest extends kyo.test.Test[Any]:
             }
         }
 
-        // The sibling #1846 names as its live exposure. `Sync.ensure` has leaves for a bare typed abort
-        // above; `acquireReleaseWith` only had the reify-and-re-raise workaround, a panic in the use and
-        // a panic in the acquire, so nothing covered the use aborting typed with no Abort.run inside.
+        // #1846: the use aborting typed, with no Abort.run inside.
         "releases when the use aborts with a typed error" in {
             var released = 0
             Abort.run[String] {
@@ -600,7 +597,7 @@ class SyncTest extends kyo.test.Test[Any]:
 
         // An interrupt landing as the body produces its outcome. The body interrupts its own fiber and then
         // produces the value, so delivery lands at the next safepoint: after the body's step, before the
-        // region's own completion. Reaching that moment needs no second thread, so it runs on every platform.
+        // region completes. No second thread, so it runs on every platform.
         "still runs the finalizer" in {
             for
                 ran     <- AtomicInt.init(0)
