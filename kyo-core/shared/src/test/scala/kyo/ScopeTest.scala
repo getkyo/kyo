@@ -976,15 +976,9 @@ class ScopeTest extends kyo.test.Test[Any]:
             end for
         }
 
-        // A release that suspends is still a release. The drain runs on a fiber `close` spawns, and the
-        // computation that closed the scope parks on `await`; interrupting it must not reach the drain, or
-        // the releases the interrupt was meant to trigger are the ones lost. #1928 from the other side: that
-        // leaf races the interrupt against the close, this one lands it squarely on the waiter.
-        //
-        // The interrupt has to land while the release is in flight, which means waiting for the finalizer to
-        // say it is running rather than for the fiber to be not-done: a fiber is not-done from its first
-        // instant, so waiting on that interrupts before the scope's body has even registered the finalizer,
-        // and the leaf passes or hangs for reasons that have nothing to do with the release.
+        // #1928 landed squarely on the waiter rather than raced: the closing computation parks on `await`,
+        // and interrupting it must not reach the drain. The interrupt waits for the finalizer to report that
+        // it is running, not for the fiber to be not-done, which is true from its first instant.
         "a finalizer that suspends still completes when the closing computation is interrupted" in {
             for
                 entered  <- Promise.init[Unit, Any]
@@ -1069,13 +1063,10 @@ class ScopeTest extends kyo.test.Test[Any]:
 
     "finalizers lost under interrupt (#1928)" - {
 
-        // The interrupt races the scope's own close rather than landing in the body. `close` hands the
-        // drain to a fiber and `become`s the finalizer's promise with it, and `await` is what the closing
-        // computation parks on, so an interrupt arriving there travelled through the promise into the
-        // drain and stopped the finalizers halfway. The releases the interrupt was meant to trigger were
-        // exactly the ones lost, which is why a stranded resource outlives the fiber that held it.
-        //
-        // Rounds rather than one shot: the window is small enough that logging on the close path hides it.
+        // The interrupt races the scope's own close rather than landing in the body: `close` `become`s the
+        // finalizer's promise with the drain's fiber, so an interrupt on `await` travelled through the
+        // promise into the drain and stopped the finalizers halfway. Rounds rather than one shot: the window
+        // is small enough that logging on the close path hides it.
         "an interrupt racing the close does not stop the drain" in {
             val rounds = 1000
             for
@@ -1319,13 +1310,9 @@ class ScopeTest extends kyo.test.Test[Any]:
         // release starts before the next effect but does not finish before it.
         //
         // Pending deliberately: what is missing is backpressure, not the release. Nothing is lost, but a loop
-        // that keeps failing acquires again before the previous release finished. Scope.run does await on the
-        // paths it controls, so the exposure is this one and fiber abandonment.
-        //
-        // Fixing it is not a matter of the kernel learning about Async: ArrowHandler.recover already hands a
-        // computation back to the evaluator (Eval.scala:413), and an unwind through a handler can afford to park
-        // because the fiber is alive. The obstacle is that this path is drainDiscarded, which returns Unit at
-        // four handler-completion sites plus contextExit, arrowExit and the eval exit, all in the hot loop.
+        // that keeps failing acquires again before the previous release finished. Scope.run awaits on the
+        // paths it controls, so the exposure is this one and fiber abandonment. The obstacle to closing it is
+        // that this path is drainDiscarded, which returns Unit at seven sites in the hot loop.
         "a scope short-circuited by an outer handler has released before the next effect runs".pendingUntilFixed(
             "the outer handler discards Scope.run's continuation, so only the Sync.ensure backstop fires and Finalizer.close runs the finalizers on a detached fiber that nothing awaits"
         ) in {
@@ -1400,15 +1387,11 @@ class ScopeTest extends kyo.test.Test[Any]:
             end for
         }
 
-        // The other half of the same rule, and the one a fork decides: a run opened inside a fork is a root,
-        // because the enclosing scope is not what ends the fiber carrying it. Closing it from there takes a
-        // resource away from an owner still using it.
-        //
-        // This is the shape of a service started lazily under `Fiber.initUnscoped` inside whatever scope first
-        // asked for it, holding its scope open with a park. kyo-browser's shared Chrome is one: launched once
-        // per run and shared by every test, it was destroyed by the close of the first test scope to touch it,
-        // and the next test reconnected to a dead port. Registration still reaches the scope the fork was made
-        // in, which `StreamCoreExtensionsTest:890` pins; membership is what a fork withholds.
+        // A run opened inside a fork is a root: the enclosing scope does not end the fiber carrying it, so
+        // closing it from there takes a resource from an owner still using it. The shape is a service started
+        // lazily under `Fiber.initUnscoped` inside whatever scope first asked for it, such as a shared browser
+        // process. Registration still reaches the scope the fork was made in (`StreamCoreExtensionsTest:890`);
+        // membership is what a fork withholds.
         "a run opened inside an unscoped fiber outlives the scope the fiber was spawned in" in {
             for
                 released <- AtomicInt.init(0)
