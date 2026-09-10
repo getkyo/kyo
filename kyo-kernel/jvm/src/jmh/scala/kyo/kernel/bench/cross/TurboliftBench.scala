@@ -17,7 +17,7 @@ import turbolift.effects.StateEffect
   * kyo's per-run handleCont application.
   *
   * Run entry: `.runST`, not `.run`. Mode.default is MT, which ships the fiber to a thread pool
-  * and parks the caller; runST drives the fiber on the calling thread. Executor.ST allocates one
+  * and parks the caller; runST runs the fiber on the calling thread. Executor.ST allocates one
   * ZeroThreadedExecutor per run and that allocation is part of the measured entry.
   */
 @State(Scope.Benchmark)

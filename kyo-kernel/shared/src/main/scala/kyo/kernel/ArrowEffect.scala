@@ -873,7 +873,7 @@ object ArrowEffect:
       *
       * The remainder is handed out as usual and, on top of that, held across every application, so a bracket
       * travelling with it is not released by whichever application finishes first. `Choice.runStream` is the shape: it
-      * applies the peeled continuation once per branch and drives the results outside the clause.
+      * applies the peeled continuation once per branch and evaluates the results outside the clause.
       */
     @nowarn("msg=anonymous")
     private[kyo] inline def handleFirstRepeated[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](

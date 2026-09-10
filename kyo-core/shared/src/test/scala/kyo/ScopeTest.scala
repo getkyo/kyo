@@ -1323,7 +1323,7 @@ class ScopeTest extends kyo.test.Test[Any]:
         // paths it controls, so the exposure is this one and fiber abandonment.
         //
         // Fixing it is not a matter of the kernel learning about Async: ArrowHandler.recover already hands a
-        // computation back to the evaluator (Eval.scala:413), and a handler-driven unwind can afford to park
+        // computation back to the evaluator (Eval.scala:413), and an unwind through a handler can afford to park
         // because the fiber is alive. The obstacle is that this path is drainDiscarded, which returns Unit at
         // four handler-completion sites plus contextExit, arrowExit and the eval exit, all in the hot loop.
         "a scope short-circuited by an outer handler has released before the next effect runs".pendingUntilFixed(

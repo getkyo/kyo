@@ -85,8 +85,8 @@ class ChoiceTest extends kyo.test.Test[Any]:
     }
 
     "large number of suspensions".notNative.notWasm in {
-        // was https://github.com/getkyo/kyo/issues/208: the kernel drives suspensions on its own loop
-        // rather than the call stack, so the depth below no longer overflows
+        // #208: the evaluator runs suspensions on its own loop rather than the call stack, so the depth
+        // below does not overflow.
         var v = Choice.eval(1)
         for _ <- 0 until 100000 do
             v = v.map(_ => Choice.eval(1))
@@ -350,9 +350,8 @@ class ChoiceTest extends kyo.test.Test[Any]:
                     }
                 }((_, _) => log = log.append("release"))
             assert(v.eval == Chunk(1, 2, 3))
-            // the release belongs to an extent the region sits inside, so it is not part of what the
-            // handler replays: every branch runs against the same live resource, and the one value the
-            // region answers with is what ends the extent
+            // The release belongs to an extent the region sits inside, so it is not part of what the handler
+            // replays: every branch runs against the same live resource.
             assert(log == Chunk("branch1", "branch2", "branch3", "release"))
         }
 
@@ -399,11 +398,10 @@ class ChoiceTest extends kyo.test.Test[Any]:
         }
 
         "a bracket inside the streamed choice is held across every branch and released once" in {
-            // runStream pulls each pending branch through a handleFirst region and continues it in its
-            // own loop, so the bracket travels with each branch's remainder, and every branch is the same
-            // remainder applied again. The region declares both, escaping and repeated, so the bracket is
-            // held across all of them: no branch's ending releases it, and the scope it was handed down
-            // to discharges it once, after the last one
+            // runStream pulls each branch through a handleFirst region and continues it in its own loop, so
+            // the bracket travels with each branch's remainder and every branch is that remainder applied
+            // again. The region declares both escaping and repeated, so the bracket is held across all of
+            // them and discharged once by the scope below.
             var log = Chunk.empty[String]
             val v =
                 Choice.runStream {

@@ -5,7 +5,7 @@ import kyo.kernel.*
 import kyo.kernel.internal.Eval
 
 /** The shared HandleSites shape written against kernel2's region surface: `handleCont` takes a done clause where the older kernel's
-  * `handle` took one clause, and the result is driven with `Eval(...)` rather than `.eval`. Same site count, same nesting, same
+  * `handle` took one clause, and the result is evaluated with `Eval(...)` rather than `.eval`. Same site count, same nesting, same
   * continuation shape, so the compile-cost driver is the same and only the spelling differs.
   */
 object HandleSites:

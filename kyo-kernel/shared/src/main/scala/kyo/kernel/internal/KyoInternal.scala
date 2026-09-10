@@ -5,7 +5,7 @@ import kyo.Frame
 /** The core representation of suspended computations in Kyo's effect system.
   *
   * A value of type Kyo[A, S] is either a [[Pending]] node, the reification of one combinator (a deferral, a suspension, a region entry, a
-  * parked slice or a stack snapshot), or an [[kyo.kernel.Arrow]], the reification of a continuation. The evaluator drives values built
+  * parked slice or a stack snapshot), or an [[kyo.kernel.Arrow]], the reification of a continuation. The evaluator runs values built
   * from these two families; each carries the frame it was created at for traces.
   *
   * @tparam A

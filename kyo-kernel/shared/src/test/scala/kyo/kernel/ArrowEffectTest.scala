@@ -2317,11 +2317,10 @@ class ArrowEffectTest extends Test:
             }
         }
 
-        // The other half of the fatal question, and the reason the kernel asks `kyo.IsFatal` rather than
-        // `scala.util.control.NonFatal`. Scala calls a `LinkageError` fatal, which sends an ordinary
-        // application bug out of the fiber and into the scheduler worker: the worker ends, and every release
-        // the computation still owed goes with it. A class that fails to link says the program is wrong, not
-        // that the JVM is, so it is a value here and the recovery answers it.
+        // Why the kernel asks `kyo.IsFatal` rather than `scala.util.control.NonFatal`: Scala calls a
+        // `LinkageError` fatal, which would send an ordinary application bug out of the fiber and end the
+        // scheduler worker along with every release the computation owed. Here it is a value the recovery
+        // answers.
         "a LinkageError is recovered, because kyo does not call it fatal" in {
             val v = ask.map(_ => (throw new LinkageError("not fatal here")): Int)
             val r = ArrowEffect.handleCont(Tag[Ask], v)([X] => (_, cont) => cont(0), a => a, _ => Maybe(-1))
@@ -3305,10 +3304,9 @@ class ArrowEffectTest extends Test:
         }
     }
 
-    // A continuation a clause receives is confined to the region: its row carries `Region.NoEscape`,
-    // which no handler accepts and no Isolate can be derived for. The kernel's notion of crossing to
-    // another fiber is an Isolate, so the gate is pinned here on a stand-in for a fork, with no
-    // scheduler involved: anything that demands an isolate for the continuation's row.
+    // A clause's continuation is confined to the region: its row carries `Region.NoEscape`, which no
+    // handler accepts and no Isolate can be derived for. Crossing to another fiber is an Isolate, so the
+    // gate is pinned on a stand-in for a fork rather than a real one.
     "no escape" - {
         def cross[A, S, S2](v: A < S)(using Isolate[S, Any, S2]): A < S = v
 
