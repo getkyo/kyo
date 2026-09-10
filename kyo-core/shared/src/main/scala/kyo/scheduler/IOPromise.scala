@@ -92,12 +92,15 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Serializable with 
       */
     protected def onInterrupted(): Unit = {}
 
-    final def mask(): IOPromise[E, A] =
+    /** Returns a promise that mirrors this one's completion but refuses interrupts, so an interrupt aimed at the result cannot reach the
+      * computation producing it.
+      */
+    final def uninterruptible(): IOPromise[E, A] =
         val p = new IOPromise[E, A]:
             override def preInterrupt() = false
         onComplete(p.completeDiscard)
         p
-    end mask
+    end uninterruptible
 
     inline def interruptDiscard(inline error: => Error[E]): Unit =
         discard(interrupt(error))

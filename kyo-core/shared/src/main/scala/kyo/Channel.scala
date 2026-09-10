@@ -217,7 +217,8 @@ object Channel:
           * committing when it runs. Use `closeDiscard` to close without the elements and stay in `Sync`.
           *
           * Interrupting a caller parked here discards those elements. The channel still closes, but they have no receiver, so an
-          * interrupted close behaves as `closeDiscard`. Mask the interrupt where the elements own a resource that must be released.
+          * interrupted close behaves as `closeDiscard`. Make the close uninterruptible where the elements own a resource that must be
+          * released.
           *
           * @return
           *   A sequence of remaining elements, or absent when another close owns the closure

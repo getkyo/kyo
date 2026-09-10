@@ -355,7 +355,7 @@ private[kyo] object UnsafeServerDispatch:
                 // subtype, structurally different from that alias even though both erase to the same runtime object. The alias is transparent
                 // only inside kyo.Fiber's own defining scope, so exposing the scheduled task as the Fiber.Unsafe[Unit, Any] the inflight slot
                 // holds needs this erased-boundary cast. Safe: the task runs serveRequest (a Unit computation) and settles only with its result.
-                val fiber = IOTask.unscoped(serveRequest(router, endpoint, lookup, streamCtx, request, config))
+                val fiber = IOTask.detached(serveRequest(router, endpoint, lookup, streamCtx, request, config))
                     .asInstanceOf[Fiber.Unsafe[Unit, Any]]
                 // Nothing reads a handler fiber's result: the keep-alive onComplete below ignores it. A panic
                 // that is not a connection-lifecycle interrupt (a Closed sentinel) would vanish silently.
@@ -409,7 +409,7 @@ private[kyo] object UnsafeServerDispatch:
         // handler must be able to read it via req.query, exactly as a non-upgrade request can.
         val url  = HttpUrl(Absent, "", 0, request.pathAsString, request.queryRawString)
         val conn = new ChannelBackedStream(streamCtx.inbound, streamCtx.outbound)
-        discard(IOTask.unscoped(
+        discard(IOTask.detached(
             Abort.run[Any](
                 WebSocketCodec.acceptUpgrade(conn, headers, wsHandler.wsConfig).andThen {
                     serveWebSocket(conn, streamCtx.inbound, streamCtx.outbound, wsHandler, headers, url)

@@ -295,12 +295,12 @@ object Scope:
                     )
                     val children = Queue.Unbounded.Unsafe.init[Finalizer](Access.MultiProducerSingleConsumer)
 
-                    // Masked, because `close` hands the drain to a fiber and `become`s this promise with it, and
+                    // Uninterruptible, because `close` hands the drain to a fiber and `become`s this promise with it, and
                     // `await` is what a caller parks on. An interrupt landing on that caller would otherwise
                     // travel through the promise into the drain and stop the finalizers halfway, which loses
                     // exactly the releases the interrupt was supposed to trigger (#1928). Interrupting a scope's
                     // cleanup is never what an interrupt means.
-                    val promise = Promise.Unsafe.initMasked[Unit, Any]().safe
+                    val promise = Promise.Unsafe.initUninterruptible[Unit, Any]().safe
 
                     // Delegates rather than repeating the offer, so a closed scope answers both registration paths
                     // the same way: the finalizer runs, and the caller still learns it is not scoped. Answering

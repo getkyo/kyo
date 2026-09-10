@@ -460,13 +460,13 @@ object Fiber:
             // crossing is only the bindings standing at the call. `capture`'s row is `Any` for that reason,
             // which is what lets the state be taken here rather than asked of the caller: this returns a
             // fiber, not a computation, so there is no outer scope to capture in
-            IOTask.unscoped(Sync.defer(v))
+            IOTask.detached(Sync.defer(v))
                 .asInstanceOf[Fiber.Unsafe[A, reduce.SReduced]]
         end init
 
         extension [A, S](self: Unsafe[A, S])
             def done()(using AllowUnsafe): Boolean                 = self.lower.done()
-            def uninterruptible()(using AllowUnsafe): Unsafe[A, S] = self.lower.mask()
+            def uninterruptible()(using AllowUnsafe): Unsafe[A, S] = self.lower.uninterruptible()
 
             def map[B](f: A => B)(using AllowUnsafe, Frame): Unsafe[B, S] =
                 val p = new IOPromise[Any, B < S](interrupts = self.lower) with (Result[Any, A < S] => Unit):
@@ -679,7 +679,7 @@ object Fiber:
         object Unsafe:
             def init[A, S]()(using AllowUnsafe): Unsafe[A, S] = IOPromise()
 
-            def initMasked[A, S]()(using AllowUnsafe): Unsafe[A, S] =
+            def initUninterruptible[A, S]()(using AllowUnsafe): Unsafe[A, S] =
                 new IOPromise[Any, A < S]:
                     override def preInterrupt() = false
 
@@ -856,7 +856,7 @@ object Fiber:
                                             }
                                         end if
                                     end workerLoop
-                                    val fiber = IOTask.unscoped(workerLoop(), parent)
+                                    val fiber = IOTask.detached(workerLoop(), parent)
                                     state.interrupts(fiber)
                                     fiber.onComplete(state)
                                     loop(i + 1)

@@ -533,12 +533,12 @@ object IOTask:
             runtime
         )
 
-    /** Spawns a fiber that crosses nothing.
+    /** Spawns a fiber detached from its caller, crossing nothing.
       *
       * What the caller hands over carries no effects of its own, so there is no state to capture and nothing
       * to restore: the body is prepared as written and the promise answers with its value.
       */
-    def unscoped[E, A](
+    def detached[E, A](
         body: A < (Abort[E] & Async),
         parent: Maybe[IOPromise[?, ?]] = Absent,
         runtime: Int = 0

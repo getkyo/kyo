@@ -127,8 +127,8 @@ object Queue:
           * with the drain. A consumer already inside `poll` is the caller's own business, as it is on an open queue.
           *
           * Interrupting a caller parked here discards the backlog. The queue still closes and still drains, but the elements have no
-          * receiver and are dropped, so an interrupted close behaves as `closeDiscard`. Mask the interrupt where the elements own a
-          * resource that must be released.
+          * receiver and are dropped, so an interrupted close behaves as `closeDiscard`. Make the close uninterruptible where the elements
+          * own a resource that must be released.
           *
           * @return
           *   a sequence of remaining elements, or absent when another close owns the closure. Absent means this call did not close the

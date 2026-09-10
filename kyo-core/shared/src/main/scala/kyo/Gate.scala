@@ -148,10 +148,10 @@ object Gate:
         protected val state = State.init(0, initialParties, 0)(using allowUnsafe)
 
         // Promise for the current pass, swapped on each pass advance.
-        // Masked to prevent one interrupted fiber from affecting other waiters.
+        // Uninterruptible to prevent one interrupted fiber from affecting other waiters.
         protected val currentPass =
             AtomicRef.Unsafe.init(
-                Promise.Unsafe.initMasked[Unit, Abort[Closed]]()(using allowUnsafe)
+                Promise.Unsafe.initUninterruptible[Unit, Abort[Closed]]()(using allowUnsafe)
             )(using allowUnsafe)
 
         // Read promise before state (promise-before-CAS ordering): if the pass
@@ -273,7 +273,7 @@ object Gate:
                 discard(close()) // No parties remain, close gate
             else
                 // Swap promise and release waiters
-                currentPass.set(Promise.Unsafe.initMasked[Unit, Abort[Closed]]())
+                currentPass.set(Promise.Unsafe.initUninterruptible[Unit, Abort[Closed]]())
                 currentPromise.completeUnitDiscard()
             end if
         end advancePass
@@ -311,12 +311,12 @@ object Gate:
                             discard(this.close())
                         else if stop(phase, parties) then
                             // Stop condition met, release waiters then close
-                            currentPass.set(Promise.Unsafe.initMasked[Unit, Abort[Closed]]())
+                            currentPass.set(Promise.Unsafe.initUninterruptible[Unit, Abort[Closed]]())
                             currentPromise.completeUnitDiscard()
                             discard(this.close())
                         else
                             // Swap promise and release waiters
-                            currentPass.set(Promise.Unsafe.initMasked[Unit, Abort[Closed]]())
+                            currentPass.set(Promise.Unsafe.initUninterruptible[Unit, Abort[Closed]]())
                             currentPromise.completeUnitDiscard()
                         end if
                     end advancePass
@@ -522,7 +522,7 @@ object Gate:
                     discard(close())
                 else
                     // Swap promise, release waiters, signal parent
-                    val newPromise = Promise.Unsafe.initMasked[Unit, Abort[Closed]]()
+                    val newPromise = Promise.Unsafe.initUninterruptible[Unit, Abort[Closed]]()
                     currentPass.set(newPromise)
                     currentPromise.completeUnitDiscard()
                     parent.foreach(p => p.arrive())
@@ -604,13 +604,13 @@ object Gate:
                                 discard(this.close())
                             else if stop(phase, parties) then
                                 // Stop condition met, release waiters then close
-                                currentPass.set(Promise.Unsafe.initMasked[Unit, Abort[Closed]]())
+                                currentPass.set(Promise.Unsafe.initUninterruptible[Unit, Abort[Closed]]())
                                 currentPromise.completeUnitDiscard()
                                 parent.foreach(p => p.arrive())
                                 discard(this.close())
                             else
                                 // Swap promise, release waiters, signal parent
-                                currentPass.set(Promise.Unsafe.initMasked[Unit, Abort[Closed]]())
+                                currentPass.set(Promise.Unsafe.initUninterruptible[Unit, Abort[Closed]]())
                                 currentPromise.completeUnitDiscard()
                                 parent.foreach(p => p.arrive())
                             end if

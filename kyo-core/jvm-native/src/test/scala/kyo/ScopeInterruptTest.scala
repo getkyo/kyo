@@ -275,14 +275,15 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
 
     // A fiber abandoned while parked runs its finalizers through the abandonment walk, not through being
     // resumed. Every other interrupt test here parks on a promise the interrupt cascades to, so all of them
-    // are answered by the resumption path and stay green even if the abandonment path is deleted. Masking
-    // the promise makes the cascade a no-op, which leaves the walk as the only thing that can save the
-    // finalizer, and completing the promise after the interrupt proves the queued continuation stays dead.
-    "a fiber interrupted while parked on a masked promise still runs its scope finalizers" in {
+    // are answered by the resumption path and stay green even if the abandonment path is deleted. Making
+    // the promise uninterruptible turns the cascade into a no-op, which leaves the walk as the only thing
+    // that can save the finalizer, and completing the promise after the interrupt proves the queued
+    // continuation stays dead.
+    "a fiber interrupted while parked on an uninterruptible promise still runs its scope finalizers" in {
         for
             finalized <- Latch.init(1)
             resumed   <- AtomicBoolean.init(false)
-            promise   <- Sync.Unsafe.defer(Promise.Unsafe.initMasked[Unit, Any]().safe)
+            promise   <- Sync.Unsafe.defer(Promise.Unsafe.initUninterruptible[Unit, Any]().safe)
             fiber <- Fiber.initUnscoped {
                 Scope.run {
                     Scope.ensure(finalized.release).andThen(promise.get.andThen(resumed.set(true)))

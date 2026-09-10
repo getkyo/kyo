@@ -417,7 +417,7 @@ final private[kyo] class HttpClientBackend private (
                     conn.transport.outbound.safe.put(TerminalChunk)
                 }
             }.unit
-        discard(IOTask.unscoped(computation))
+        discard(IOTask.detached(computation))
     end streamRequestBody
 
     // -- Buffered response body reading --
@@ -612,7 +612,7 @@ final private[kyo] class HttpClientBackend private (
             val decodedCh = Channel.Unsafe.init[Span[Byte]](4)
             // Fresh DecoderState (a streaming decode outlives the request scope, so it must not share connection-scoped state);
             // its terminal result is the reuse decision (Done => reuse, fault => discard), completed before closeAwaitEmpty so reuse does not wait on the consumer.
-            discard(kyo.scheduler.IOTask.unscoped(
+            discard(kyo.scheduler.IOTask.detached(
                 Abort.run[Closed | HttpMalformedBodyException | HttpPayloadTooLargeException](ChunkedBodyDecoder.readStreaming(
                     conn.http1.bodyChannel,
                     lastBodySpan,
