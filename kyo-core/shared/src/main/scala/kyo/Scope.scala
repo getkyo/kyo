@@ -166,16 +166,11 @@ object Scope:
                 fork = (parent: Finalizer) => parent.forked,
                 join = (parent: Finalizer, _: Finalizer, _: Finalizer) => parent
             )(v)
-                // The close that carries the error runs INSIDE the backstop's region, so it gets there
-                // first. Whichever close reaches the queue first is the one whose error the finalizers
-                // see, and the backstop has only what an ending carries: nothing on a normal return, and
-                // for a typed abort unwinding through it, a synthesised "fiber abandoned" panic rather
-                // than the failure the computation produced. Both were reaching the queue ahead of the
-                // real error, which is what handed `ensuringError`'s finalizer a panic it never raised.
-                //
-                // So the abort is caught first, turning the ending into a value; the close below runs on
-                // that value with the error in hand; and the backstop outside answers only for an
-                // abandonment, which is the one ending that never reaches the close below at all.
+                // Whichever close reaches the queue first is the one whose error the finalizers see, and the
+                // backstop carries only what an ending carries: nothing on a normal return, and a synthesised
+                // "fiber abandoned" panic for a typed abort. So the abort is caught first, turning the ending
+                // into a value; the close below runs with the real error in hand; and the backstop answers
+                // only for an abandonment, the one ending that never reaches the close below.
                 .handle(Abort.run[Any])
                 .map { result =>
                     finalizer
@@ -288,10 +283,9 @@ object Scope:
                     // cleanup is never what an interrupt means.
                     val promise = Promise.Unsafe.initUninterruptible[Unit, Any]().safe
 
-                    // Delegates rather than repeating the offer, so a closed scope answers both registration paths
-                    // the same way: the finalizer runs, and the caller still learns it is not scoped. Answering
-                    // differently here dropped the finalizer entirely, which is the one outcome the caller asked
-                    // against. The throw becomes this computation's panic, as it did before.
+                    // Delegates rather than repeating the offer, so a closed scope answers both registration
+                    // paths alike: the finalizer runs, and the caller still learns it is not scoped. The throw
+                    // becomes this computation's panic.
                     def ensure(v: Maybe[Error[Any]] => Any < (Async & Abort[Throwable]))(using Frame): Unit < Sync =
                         Sync.Unsafe.defer(ensureUnsafe(v))
 
@@ -301,14 +295,10 @@ object Scope:
                         allow: AllowUnsafe
                     ): Unit =
                         if !queue.offer(v).contains(true) then
-                            // The registration is refused because this scope has already closed, and its caller is
-                            // holding a value that only this release frees. Throwing alone would leak it: the drain
-                            // that would have run the release is over, and no later close will see it. So it runs
-                            // here. It runs detached because this is not an effectful position, and the caller still
-                            // learns that its resource is not scoped, by the throw below.
-                            //
-                            // Logged because a finalizer that runs this way runs off the scope that owned it, which
-                            // is invisible from the outside and worth seeing when a resource lifetime is in question.
+                            // The scope has already closed, so no later drain would run this release and throwing
+                            // alone would leak what the caller holds. It runs here, detached, since this is not an
+                            // effectful position; the throw below still tells the caller its resource is unscoped.
+                            // Logged because a finalizer running off its scope is invisible from the outside.
                             Log.live.unsafe.warn(
                                 s"Scope: a finalizer was registered on a closed scope at ${frame.position.show}, running it detached"
                             )
@@ -342,19 +332,16 @@ object Scope:
 
                     def close(ex: Maybe[Error[Any]])(using Frame): Unit < Sync =
                         Sync.Unsafe.defer {
-                            // The queue hands its backlog over asynchronously, because an `ensure` that began before this close may
-                            // still be committing its task and no synchronous answer could include it. Nothing here waits for that:
-                            // the finalizers already ran on a detached fiber with `await` parked on `promise`, so registering a
-                            // continuation keeps this `Sync` and leaves both of `run`'s close paths, including the panic path that
-                            // cannot suspend, exactly as they were.
+                            // The handover is asynchronous because an `ensure` that began before this close may
+                            // still be committing its task. Nothing waits for it here: registering a continuation
+                            // keeps this `Sync`, which both of `run`'s close paths need, the panic path included.
                             queue.close().safe.onComplete { backlog =>
                                 backlog.foldError(
                                     _.map {
                                         case Absent         => Kyo.unit
                                         case Present(tasks) =>
-                                            // The runs nested in this one are closed and waited for first, so their
-                                            // resources are released before this scope's own, and closing them rather
-                                            // than waiting for them to close themselves is what keeps a child whose
+                                            // Nested runs are closed and waited for first, so their resources release
+                                            // before this scope's own. Closing rather than waiting keeps a child whose
                                             // computation is blocked from holding this close open. See `addChild`.
                                             val nested =
                                                 Sync.Unsafe.defer(children.close()).map(_.safe.get).map {

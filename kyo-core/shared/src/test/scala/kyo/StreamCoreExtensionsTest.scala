@@ -986,13 +986,10 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
             }
         }
 
-        // The issue's second program, which had no counterpart: every other Scope.run-inside-a-Stream leaf
-        // here emits a bounded number of elements, so none of them ends an unbounded emitter early.
+        // An unbounded emitter ended early, which the bounded leaves around this one do not cover.
         //
-        // Awaited rather than read the instant `run` returns, because Scope.run's close hands its backlog to a
-        // detached fiber: the finalizer runs, just not before the next effect. Worth knowing that the
-        // Sync.ensure twin directly above releases in time on the identical stream, so the two spellings of
-        // one intent do not agree on when. Exactly one release either way, which is what this pins.
+        // Awaited rather than read when `run` returns: Scope.run's close hands its backlog to a detached
+        // fiber, so the finalizer runs, just not before the next effect. Exactly one release.
         "Scope.ensure over an unbounded stream releases once when take ends it" in {
             AtomicInt.init(0).map { released =>
                 val stream = Stream:
@@ -1010,9 +1007,8 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
             }
         }
 
-        // The leaves around this one count releases, so a finalizer that fires at the wrong moment but the
-        // right number of times passes them. This one records the elements and the finalizer in one log, so
-        // it pins when the release happens relative to the last element the stream handed out.
+        // Counting releases cannot catch a finalizer that fires at the wrong moment. Recording elements and
+        // the finalizer in one log pins when the release happens relative to the last element.
         "the finalizer of a taken stream runs after the last element it emitted" in {
             AtomicRef.init(List.empty[String]).map { log =>
                 val stream = Stream:
@@ -1206,10 +1202,8 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
             }
         }
 
-        // Across fibers, custody is decided by whoever acts first on the remainder: a consumer that
-        // installed it must keep the resource until it completes, and the peeling scope's drain must
-        // then find nothing to do. The first test below pins the order that works today; the second
-        // asserts the order that must not release the resource under the consumer.
+        // Across fibers, custody goes to whoever acts first on the remainder: a consumer that installed it
+        // keeps the resource until it completes, and the peeling scope's drain then finds nothing to do.
         "a rest from splitAt run to completion in another fiber before the peeling scope exits releases once, with its value" in {
             AtomicRef.init(Chunk.empty[Maybe[Result.Error[Any]]]).map { seen =>
                 Latch.init(1).map { finished =>
@@ -1240,12 +1234,10 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
             }
         }
 
-        // A stream combinator that spawns its own fibers ends the stream's extent without ending
-        // them. A producer or element fiber parked anywhere other than a channel put, which the
-        // channel's close wakes, keeps whatever it holds open after the consumer has stopped and
-        // after the combinator's own brackets have been released. Each test below proves the fiber
-        // was alive and parked rather than slow: the resource is still held when the stream has
-        // ended, and it releases only once a gate the test controls is opened.
+        // A stream combinator that spawns fibers ends the stream's extent without ending them. A fiber
+        // parked anywhere other than a channel put, which the channel's close wakes, keeps what it holds open
+        // after the consumer stopped. Each test below proves the fiber was parked rather than slow: the
+        // resource is still held when the stream ended, and releases only once the test opens a gate.
         // Same as the merge leaf below, at the halting end: the gate is never opened, so the halted side can
         // only be released by the merged stream's end interrupting it.
         "mergeHaltingLeft releases the halted side's resource when the merged stream ends" in {
@@ -1265,10 +1257,8 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
             end for
         }
 
-        // The gate is never opened, so the producer can only be released by the consumer stopping and
-        // interrupting it: before that interrupt existed this timed out, the producer staying parked inside
-        // its own step, holding its bracket, for as long as the program ran. The release runs on the
-        // producer's own fiber, so it is awaited rather than read the instant `run` returns.
+        // The gate is never opened, so only the consumer stopping and interrupting the producer can release
+        // it. The release runs on the producer's own fiber, so it is awaited rather than read at once.
         "merge releases a producer's resource when the consumer stops" in {
             for
                 released <- AtomicInt.init(0)

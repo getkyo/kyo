@@ -220,9 +220,8 @@ class ScopeTest extends kyo.test.Test[Any]:
                 // The gate opens only once Scope.run has returned, so the acquisition below is guaranteed to find the scope closed.
                 _      <- gate.release
                 result <- fiber.getResult
-                // A registration the scope refuses has no scope left to run its release under, so the release runs
-                // detached and settles after the acquiring fiber has already finished. Nothing here can wait on it,
-                // so the counters are polled rather than read once.
+                // A refused registration runs its release detached, settling after the acquiring fiber has
+                // finished, so the counters are polled rather than read once.
                 _ <- assertEventually {
                     for
                         a <- acquired.get
@@ -557,9 +556,6 @@ class ScopeTest extends kyo.test.Test[Any]:
             }.map(_ => assert(innerDone))
         }
 
-        // Moved here from the "scope isolation (#1381)" block, whose title it wore without testing: the body it
-        // passes through the generic function carries no Scope suspensions of its own, so what it actually pins
-        // is that a nested Scope.run leaves the enclosing scope's finalizers alone. That is this block's subject.
         "a nested Scope.run does not run the enclosing scope's finalizers" in {
             def handleScoped[A, S](v: A < (Scope & S)): A < (Async & S) =
                 Scope.run(v)
@@ -594,16 +590,9 @@ class ScopeTest extends kyo.test.Test[Any]:
     "acquireRelease safety (#1224)" - {
         case object TestAcquireException extends scala.util.control.NoStackTrace
 
-        // The interrupt the block's title claims and did not have: every other leaf here is a normal acquire, a
-        // failing acquire, a closed scope or concurrent cleanup. The guards that do pin the acquire-and-register
-        // window live in ScopeInterruptTest, which is jvm-native, so JS had no coverage of this window at all.
-        //
-        // The fiber interrupts ITSELF from inside the acquire, in the same Sync node that performs the claim, so
-        // nothing separates the interrupt request from the claim and the earliest point it can be delivered is
-        // after the acquire has returned. That needs no held worker, which is what lets it run on every platform.
-        //
-        // 500 of 500 rounds release, against 500 of 500 leaking on main, so the window this issue is about is
-        // closed.
+        // The fiber interrupts itself from inside the acquire, in the same Sync node that performs the claim,
+        // so the earliest the interrupt can be delivered is after the acquire has returned. No held worker, so
+        // it runs on every platform.
         "a self-interrupt inside the acquire still releases what the acquire produced" in {
             val rounds = 500
             Kyo.foreach(1 to rounds) { _ =>
@@ -633,14 +622,8 @@ class ScopeTest extends kyo.test.Test[Any]:
                     _ <- handoff.complete(Result.succeed(fiber))
                     _ <- fiber.getResult
                     a <- claimed.get
-                    // Waited for rather than read, because the release is not synchronous with the fiber ending:
-                    // the scope's finalizers are drained on a detached fiber, so the release can land after the
-                    // result does. Measured 3 rounds in 500 doing so. The registration itself is never at risk
-                    // here, whatever the interrupt's timing: the park check sits on the deferral before it runs,
-                    // so an interrupt delivered there leaves the acquire unrun and nothing acquired, and once
-                    // the acquire's value is settled the Ensure arrow that registers is applied in the same turn
-                    // with no safepoint between. Waiting is what separates "released late" from "leaked", and
-                    // only the second is a defect.
+                    // Waited for rather than read: the finalizers drain on a detached fiber, so a release can
+                    // land after the result. Waiting is what separates "released late" from "leaked".
                     _ <- assertEventually(Kyo.zip(claimed.get, released.get).map((acquired, freed) => !acquired || freed))
                     r <- released.get
                 yield (a, r)
@@ -948,9 +931,8 @@ class ScopeTest extends kyo.test.Test[Any]:
 
     "drain completeness" - {
 
-        // One finalizer failing must not cost the others theirs. The drain folds each release's error and
-        // logs it rather than raising, so the loop continues; nothing pinned that, and the existing
-        // "release fails" leaf has a single resource, which cannot tell a continue from a stop.
+        // One finalizer failing must not cost the others theirs: the drain folds each release's error and logs
+        // it rather than raising, so the loop continues.
         "a finalizer that aborts does not stop the ones registered before it" in {
             for
                 ran <- AtomicRef.init(Chunk.empty[String])
