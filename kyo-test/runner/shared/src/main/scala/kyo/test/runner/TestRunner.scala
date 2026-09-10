@@ -397,19 +397,8 @@ object TestRunner:
         // Retrieve the buffered body INSIDE a `Sync.defer` so a body that throws synchronously (e.g. a bare
         // `assert(1 == 2)` whose entire body is the throwing expression) is captured by the conversion below rather than
         // escaping eagerly during retrieval. The suite's `aroundLeaf` hook wraps every leaf body (default identity).
-        val rawBody: Unit < (Async & Abort[Any] & Scope) =
-            // Start each evaluation of the body from an empty sink. Retry/repeat re-run this computation, and an early
-            // attempt that THREW a failure (which the assert macro recorded into the sink before throwing) then RECOVERED
-            // would otherwise leave a stale record that the drain-then-flip below wrongly turns into a Failed leaf. The
-            // clear runs BEFORE the body spawns any detached fiber, so a detached fiber's later record (the plain
-            // detached-capture path) is preserved and still flips the leaf; only the FINAL attempt's records survive.
-            Sync.defer {
-                val _ = as.drain()
-                ()
-            }
-                .andThen(instance.aroundLeaf(Sync.defer(ctx.takeRegisteredBody(as))))
-        // The leaf baseline is `Abort[Any]` (a leaf may abort with ANY value, not only a Throwable). Convert it to the
-        // runner's `Abort[Throwable]` pipeline here, at the single production point, so Retry/timeout/repeat and the
+        // Convert a leaf computation from the `Abort[Any]` baseline (a leaf may abort with ANY value, not only a
+        // Throwable) into the runner's `Abort[Throwable]` pipeline, so Retry/timeout/repeat and the
         // `Abort.run[Throwable]` boundary below stay Throwable-shaped (mirrors `KyoApp.abortAnyToThrowable`):
         //   - `Abort.catching[Throwable]` turns a thrown failure (e.g. `assert` throws `AssertionFailed`) into an Abort
         //     FAILURE, which is what makes retry-on-throw work: Kyo's `Retry` re-raises a `Result.Panic` WITHOUT retrying,
