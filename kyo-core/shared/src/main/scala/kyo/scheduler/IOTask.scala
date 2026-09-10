@@ -12,66 +12,38 @@ import scala.annotation.tailrec
 
 sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2] with Task:
 
-    /** What this fiber runs, before the boundary is put around it.
-      *
-      * A method on the task rather than a function handed to it: whatever it builds has to complete this
-      * task, so it needs `this` either way, and an abstract member lets the spawn's own captures live on the
-      * task instead of costing a closure beside it.
-      *
-      * It is also where a crossing goes, when there is one. A spawn that carries effects isolates the body
-      * and applies the restore to the result rather than composing it into the body, which keeps the
-      * restored effects out of the row the scheduler has to answer and puts them in the value the promise
-      * holds. A spawn that carries none prepares the body as written.
-      */
     /** This fiber's computation, already wrapped in the boundary below.
       *
-      * Each spawn builds its own, because what it hands the boundary and how it completes this task differ:
-      * one has a body and answers with its value, the other has a crossing and answers with what the
-      * restore makes of it. Both give the boundary the body itself rather than a step composed onto it, so
-      * nothing stands between the region and the body's first operation.
+      * A member rather than a function, so the spawn's captures live on the task instead of a closure beside
+      * it. Each spawn passes the body itself, never a step composed onto it, so nothing stands between the
+      * region and the body's first operation.
       */
     protected def prepared: Unit < Any
 
     /** The remainder of this fiber, prepared and wrapped in the boundary below.
       *
-      * Filled by `start` rather than here, because `prepare` reads the fields of whichever subclass a spawn
-      * built and those are not assigned until after this constructor has run. Built once, not per slice: the
-      * region carries what a handler accumulates, and re-establishing it every slice would lose it.
+      * Filled by `start`, not here: `prepared` reads subclass fields assigned after this constructor runs.
+      * Built once rather than per slice, since the region carries what a handler accumulates.
       */
     private var curr: Unit < Any = cleared
 
     /** Who owns this task, and whether it is still alive. Four states, never two at once:
       *
-      *   - `Idle`: owned by nobody, between slices. The remainder in `curr` is what a resumption runs.
-      *   - `Thread`: a worker is inside a slice, on that thread. Stops belong to the Safepoint and are
-      *     delivered per thread through its slot, so this is what lets a preemption or an interrupt reach a
-      *     slice already in flight.
-      *   - `IOPromise`: the slice decided to park on that promise and is still unwinding towards it. The
-      *     fiber has produced no result and must not be rescheduled; whoever it waits on will do that.
-      *     Saying which promise is what lets the wakeup be registered and later unlinked.
-      *   - `Done`: terminal. No slice will run again, and whatever the remainder held has been released.
+      *   - `Idle`: owned by nobody, between slices. `curr` holds what a resumption runs.
+      *   - `Thread`: a worker is inside a slice, on that thread. Stops are delivered per thread, so this is
+      *     how a preemption or interrupt reaches a slice in flight.
+      *   - `IOPromise`: parked on that promise, not to be rescheduled; naming it lets the wakeup be
+      *     registered and later unlinked.
+      *   - `Done`: terminal, and what the remainder held has been released.
       *
-      * One rule governs every transition: **`Idle` is the only state another thread may take this task out
-      * of, and every other transition is performed by the thread that already owns it.** So exactly two
-      * transitions are contended, both of them claims out of `Idle`: one to resume the remainder (`run`) and
-      * one to release what it holds (`onInterrupted`). Both go through `casStatus`, which is what makes them
-      * exclusive; the rest are plain writes by the owner.
+      * Invariant: `Idle` is the only state another thread may take this task out of; every other transition
+      * is made by the owner. Only the two claims out of `Idle` (`run`, `onInterrupted`) are contended, and
+      * both go through `casStatus`. This makes a redundant schedule free, so an interrupt need not know
+      * whether a slice is in flight.
       *
-      * What that buys is a task that can be handed to the scheduler more than once for free. A redundant
-      * schedule loses the claim and returns, so an interrupt never has to know whether a slice is in flight.
-      *
-      * A union rather than an enum: the transitions run at the top of every slice and at every park, and the
-      * two carrying cases hold a reference that is already allocated, so naming them as enum cases would add
-      * an allocation per slice to the hottest path the scheduler has.
-      *
-      * Written by the owning thread and read by whoever is stopping, resuming or interrupting it, so it is
-      * volatile; the platform handle updates it in place for the two claims.
-      *
-      * Declared at `AnyRef` rather than at `Status`, which is what it holds: a union erases to the least
-      * upper bound of its parts, the platform handle has to name the field's erased type, and `AnyRef` is
-      * the only spelling that states it without depending on what that bound works out to be. Every read
-      * matches on the four shapes and every write is one of them, so the narrower type is still what the
-      * code around it works in.
+      * A union rather than an enum: both carrying cases hold an already-allocated reference, and enum cases
+      * would add an allocation per slice. `AnyRef` rather than `Status` because the platform handle must
+      * name the field's erased type.
       */
     @volatile private var status: AnyRef = Idle
 
@@ -102,38 +74,24 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
 
     /** The fiber boundary: one region answering everything the scheduler is responsible for.
       *
-      * `Async.Join` and `Abort` are answered together through a tag that is the union of the two. A region's
-      * tag says which operations it answers and an operation is answered where its own tag is subsumed by
-      * it, so one entry covers both families, and every abort reaches it whatever its error type, because
-      * `Abort` is contravariant and each `Abort[E]` is an `Abort[Nothing]`.
+      * `Async.Join` and `Abort` share one entry through a tag that is the union of the two, and every abort
+      * reaches it whatever its error type, since each `Abort[E]` is an `Abort[Nothing]`.
       *
-      * It lives here rather than in `Fiber` because none of its decisions are effect interpretation. An
-      * abort completes this promise, a ready join resumes in place, and a pending one parks this task: all
-      * three are scheduling, and all three need state that is nobody else's business.
+      * Here rather than in `Fiber` because none of its decisions are effect interpretation: an abort
+      * completes this promise, a ready join resumes in place, a pending one parks this task.
       */
     protected def boundary[P](v: P < (Abort[E] & Async))(complete: P => Unit): Unit < Any =
-        // The region is typed at Unit because a fiber answers with its promise, not with a value: every way
-        // out of here completes this task or hands the continuation to something that will, so there is
-        // nothing for the region to carry and nothing after it to run.
+        // Typed at Unit: a fiber answers with its promise, so every exit completes this task or hands the
+        // continuation to something that will.
         //
-        // The constructors are `Any` and the union tag is cast onto the region that describes. Spelling the
-        // bound honestly is what fails: a region is contravariant in its input constructor, so a
-        // constructor standing under two families that carry unrelated inputs can only be the bottom type,
-        // which type checks and then leaves the clause holding a `Nothing` that no arriving value inhabits.
-        // The cast is confined to the tag, and the tag is the union unchanged. It is what selects
-        // operations, so the region still answers `Async.Join` and `Abort` and nothing besides; what the
-        // constructors give up is only the clause's ability to state which of the two it is looking at,
-        // which the match below establishes anyway.
+        // Erasure-forced: constructors are `Any` and the union tag is cast onto the region. A region is
+        // contravariant in its input constructor, so one standing under two families with unrelated inputs
+        // could only be `Nothing`, which type checks and then leaves the clause holding an uninhabited type.
+        // The cast is confined to the tag, unchanged, so the region answers `Async.Join` and `Abort` and
+        // nothing else; the match below recovers which one arrived.
         //
-        // `Abort[E] & Async` rides in the region's `S` and is dropped from the row afterwards. Both are
-        // answered here, and neither can say so in `E`, because a row is contravariant while both of these
-        // names are subtypes of what the tag above spells: `Abort[E]` is an `Abort[Nothing]`, and `Async` is
-        // an opaque alias whose expansion `Async.Join & Sync` is only an upper bound outside its own
-        // package. What the tag subsumes and what a row position accepts run in opposite directions, so the
-        // names are carried whole through `S` and discharged by the cast, which is what states that the
-        // region answered them. Nothing is left behind: every abort reaches the clause, `Async.Join` is the
-        // tag itself, and `Sync` is a marker that nothing suspends on, `Sync.defer` being a deferral the
-        // eval runs on its own.
+        // `Abort[E] & Async` rides in the region's `S` and is dropped from the row after: a row is
+        // contravariant, while `Abort[E]` is an `Abort[Nothing]` and `Async` is opaque outside its package.
         ArrowEffect.handleCont[[X] =>> Any, [X] =>> Any, ArrowEffect[[X] =>> Any, [X] =>> Any], P, Unit, Abort[E] & Async, Any](
             Tag[Async.Join & Abort[Any]].asInstanceOf[Tag[ArrowEffect[[X] =>> Any, [X] =>> Any]]],
             v
@@ -145,13 +103,9 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
                     // promise once this task is linked to it
                     input match
                         case error: Result.Error[E] @unchecked =>
-                            // no stop is needed to end the slice: answering without applying the
-                            // continuation is what discards the rest of the computation, so the region
-                            // completes here and the eval has nothing left to carry on with.
-                            //
-                            // The region carries what the body produces, and an abort produces none of it,
-                            // so what the clause answers with is never read: the done lane below asks
-                            // whether this task is still pending, and this arm has just settled it.
+                            // Answering without applying the continuation discards the rest of the
+                            // computation, so no stop is needed. The answer itself is never read: the done
+                            // lane below checks whether this task is still pending, and this arm settled it.
                             completeDiscard(error)
                             null.asInstanceOf[P]
                         case joinInput: Async.JoinInput[C] @unchecked =>
@@ -167,40 +121,16 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
                                     removeInterrupt(promise)(using joinInput.frame)
                                     cont(r)
                                 case Absent =>
-                                    // Waiting. The operation is deliberately left unanswered: it is raised
-                                    // again behind a deferral, with a stop requested, so the eval parks in
-                                    // front of it rather than running off the end.
+                                    // Waiting. The operation is left unanswered and raised again behind a
+                                    // deferral, with a stop requested, so the eval parks in front of it.
+                                    // Answering without applying the continuation would tell the region
+                                    // the computation is over, draining finalizers a resumption still
+                                    // needs. Parking is the only exit that carries owed releases out with
+                                    // the remainder.
                                     //
-                                    // Answering without applying the continuation is how a region says the
-                                    // computation is over, and a suspended fiber is not over. The eval
-                                    // drains the finalizers on that exit, correctly, since as far as it can
-                                    // see nothing is left; the continuation meanwhile lives in this
-                                    // completion, and resuming it re-enters a bracket whose release already
-                                    // ran. Parking is what distinguishes the two, and it is the only exit
-                                    // that carries the outstanding releases out with the remainder instead
-                                    // of running them.
-                                    //
-                                    // Nothing composes over what the eval hands back, so the park stays at
-                                    // the head of `curr`, where `finalizeResources` can still find it if
-                                    // this fiber is abandoned rather than resumed.
-                                    //
-                                    // The completion only reschedules. Resuming replays this clause, and
-                                    // the poll above answers it in place the second time.
-                                    //
-                                    // `status` is what tells `run` the slice ended waiting rather than
-                                    // finished. It is cleared by `run`, never here, so a promise that
-                                    // completes inline still leaves `run` able to see that it parked.
-                                    //
-                                    // The wakeup is deliberately NOT armed here. What it makes runnable is
-                                    // the remainder, and the remainder does not exist yet: it is the park
-                                    // the eval builds while unwinding out of this clause, and only `run`
-                                    // ever holds it. Arming here publishes this task to the scheduler while
-                                    // `curr` still holds the previous slice, so a completion landing in the
-                                    // window hands another worker a remainder that has already been
-                                    // resumed, and the two restore the same park: same regions, same
-                                    // outstanding releases. One completes and runs them, the other then
-                                    // re-enters a scope whose release is spent. So `run` arms it, once the
-                                    // remainder is stored.
+                                    // The wakeup is armed by `run`, not here: the remainder does not exist
+                                    // until the eval finishes unwinding, and arming early would let a
+                                    // second worker restore the same park and re-enter a spent scope.
                                     parkOn(promise, joinInput.frame)
                                     discard(Safepoint.stop(Thread.currentThread(), this))
                                     // under the frame the join was written at, which the input carries
@@ -258,13 +188,12 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
         stopSlice()
         Scheduler.get.notifyInterrupt()
         // A slice in flight observes the interrupt through the stop above. One that is not running has
-        // nothing to stop, and what would have resumed it is the promise it waits on, which this interrupt
-        // may never reach; the park it holds carries releases that only a resumption can run. So make it
-        // runnable and let `run` decide, which keeps abandonment to the single site that owns the task.
+        // nothing to stop, and the promise that would have resumed it may never see this interrupt, while
+        // the park it holds carries releases only a resumption can run. So make it runnable and let `run`
+        // decide, keeping abandonment at the single site that owns the task.
         //
-        // Unconditional, because the claim is what makes it safe: a schedule that lands while a slice is in
-        // flight loses the claim and returns, and the slice covers that case itself when it releases
-        // ownership. Reading the status here to decide would be the same race in a cheaper disguise.
+        // Unconditional, because the claim is what makes it safe: a schedule landing during a slice loses
+        // the claim and returns. Reading the status here to decide would be the same race in disguise.
         Scheduler.get.schedule(this)
     end onInterrupted
 
@@ -273,14 +202,9 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
 
     /** Where this fiber currently stands, as one rendered frame, or empty where there is none.
       *
-      * A diagnostic, read from other threads while this one runs: the scheduler's status view asks every
-      * busy worker for it, and the leak checker prints it beside the JVM stack. So it reads fields already
-      * in hand and never anything the evaluator would have run. A deferral's payload and a recovery's body
-      * are methods on purpose, so that reading them runs user code; neither is touched here.
-      *
-      * The frame is the operation's own, or a deferral's call site: a deferral's body lives in its arrows,
-      * whose frames are fields naming where the user built them. Internal frames are dropped by identity so
-      * the kernel's own plumbing never surfaces.
+      * A diagnostic read from other threads while this one runs, so it touches only fields already in hand
+      * and never anything the evaluator would have run. Internal frames are dropped by identity so the
+      * kernel's own plumbing never surfaces.
       */
     final override def fiberTrace(): String =
         try
@@ -291,10 +215,8 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
 
     /** The frame of the operation this fiber stands at, where it stands at one.
       *
-      * Reads fields already in hand and nothing else: the regions installed around the operation, the park
-      * a slice ended at, and the deferrals composed in front of it. A deferral's payload is a value, never
-      * a body, so reading it here runs none of the fiber's computation, which matters because this is
-      * called from another thread while the fiber is still live.
+      * Walks the regions, the park and the deferrals in front of the operation. A deferral's payload is a
+      * value rather than a body, so this runs none of the fiber's computation.
       */
     private def currentFrame(v: Unit < Any): Maybe[Frame] =
         @tailrec def loop(x: Any, fuel: Int): Maybe[Frame] =
@@ -379,25 +301,11 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
                         cleared
             status match
                 case promise: IOPromise[?, ?] =>
-                    // the boundary parked on another promise: `next` is the park the eval handed back,
-                    // carrying the regions above it and the releases they still owe, and it is what the
-                    // wakeup resumes. Kept as it was handed over, not composed with anything, so `abandon`
-                    // can still see the park if this fiber is dropped instead. No result was produced and
-                    // nothing reschedules from here: the promise's completion does that.
+                    // `next` is the park, carrying the regions above it and the releases they owe. Kept
+                    // uncomposed so `abandon` can find it.
                     //
-                    // The status is cleared here rather than in the completion, so a promise that was
-                    // already complete and called back inline still leaves this able to see that it parked.
-                    //
-                    // The three statements are ordered, and the order is the whole point. The remainder is
-                    // stored first, because it is what a resumption runs. The status is cleared next, so a
-                    // resumption that starts the instant the wakeup is armed finds this task between slices
-                    // rather than still waiting. Only then is the wakeup armed, which is what publishes this
-                    // task to the scheduler: after it, another worker may be inside `run` before this call
-                    // returns, and everything it reads is already written.
-                    //
-                    // Nothing is lost by arming late. A promise that completed while the eval was unwinding
-                    // is settled by the time `onComplete` reaches it, and a settled promise runs the
-                    // callback on this thread instead of storing it, so the reschedule still happens.
+                    // Order matters: store the remainder, clear the status, then arm. Arming publishes the
+                    // task, so everything a resuming worker reads must already be written.
                     curr = next
                     // read out before the wakeup closes over it, so the field stays this class's own: see
                     // `parkOn` for why a lambda reaching a field is what the platform handle cannot survive
@@ -439,16 +347,14 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
 
     /** Releases what an abandoned remainder still holds, and links what it was about to wait on.
       *
-      * A parked computation carries its outstanding releases rather than running them, because whoever holds
-      * it may carry on. This fiber will not: its promise is complete and nothing will resume it.
+      * A parked computation carries its owed releases rather than running them. This fiber will not resume,
+      * so they are run here.
       *
-      * The link comes first. An interrupt that arrives before the fiber reached its join finds the
-      * remainder standing in front of one, and the promise behind it has nothing tying it to this fiber
-      * yet, so registering that link here is what carries the interrupt the rest of the way.
+      * The link comes first: an interrupt arriving before the fiber reached its join finds a remainder
+      * standing in front of one, and the promise behind it is not yet tied to this fiber.
       *
-      * Only ever reached by a thread that owns the task, either holding it or having just claimed it out of
-      * `Idle`, which is what makes the release below happen once however many times a completion is
-      * observed. Leaving it `Done` is what keeps a later schedule from resuming what was just released.
+      * Only reached by a thread owning the task, which is what makes the release happen once. `Done` keeps a
+      * later schedule from resuming what was just released.
       */
     private def abandon(): Unit =
         val remainder = curr
