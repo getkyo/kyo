@@ -133,20 +133,17 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
                                     // second worker restore the same park and re-enter a spent scope.
                                     parkOn(promise, joinInput.frame)
                                     discard(Safepoint.stop(Thread.currentThread(), this))
-                                    // under the frame the join was written at, which the input carries
-                                    // for this. A clause is never handed the frame of what it answers, so
-                                    // without it the raise would take the scheduler's own and the fiber
-                                    // would lose where it stopped
+                                    // Under the join's own frame, carried by the input: a clause is never
+                                    // handed the frame of what it answers, and the scheduler's own would
+                                    // lose where the fiber stopped.
                                     ArrowEffect.suspendWith[C](using joinInput.frame)(Tag[Async.Join], joinInput)(r => cont(r))
                             end match
                         case other =>
                             bug(s"fiber boundary received an operation it does not answer: $other")
             ,
-            // the body reached its end, so this is where the fiber answers. Guarded because the abort arm
-            // above settles the task itself and answers with a value that stands for nothing
+            // Guarded because the abort arm above settles the task itself and answers with a placeholder.
             p => if isPending() then complete(p) else ()
-            // the region is the scheduler's own, built the same way for every fiber, so there is no call
-            // site to name. What a parked fiber reports comes from the operation it stopped at, not here
+            // No call site to name: what a parked fiber reports comes from the operation it stopped at.
         )(using Frame.internal).asInstanceOf[Unit < Any]
     end boundary
 
@@ -168,9 +165,8 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
 
     private def stopSlice(): Unit =
         status match
-            // addressed to this task: the read of `status` and the sentinel landing are two steps,
-            // and the slice can end between them with the thread already running another task. The
-            // addressee is what lets the slot refuse such a late delivery; see `Safepoint.stop`
+            // Addressed to this task: the read and the sentinel landing are two steps, and the slice can end
+            // between them. The addressee lets the slot refuse a late delivery; see `Safepoint.stop`.
             case thread: Thread => discard(Safepoint.stop(thread, this))
             case _              => ()
     end stopSlice
@@ -254,9 +250,7 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
 
     final def run(startMillis: Long, clock: InternalClock, deadline: Long): Task.Result =
         if !casStatus(Idle, Thread.currentThread()) then
-            // Somebody else owns this task: a slice is in flight, or it is over. Whoever owns it finishes or
-            // releases it, so dropping this queue entry loses nothing. This is what makes a redundant
-            // schedule free, which is what lets the interrupt path schedule without knowing the state.
+            // Owned by somebody else, who finishes or releases it, so dropping this entry loses nothing.
             Task.Done
         else if !isPending() then
             // Completed between slices by something that did not interrupt it, so no claim was made on its
@@ -266,14 +260,12 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
         else
             val previous = IOTask.current.get()
             IOTask.current.set(this)
-            // the slice this claim runs, recorded for the stop channel: a stall check or interrupt
-            // addresses its stop to this task, and the slot honors it only while this record
-            // stands, so a delivery that races the slice boundary cannot stop whatever runs next
+            // Records the slice for the stop channel: the slot honors a stop only while this record stands,
+            // so a delivery racing the slice boundary cannot stop whatever runs next.
             val slot          = Safepoint.get()
             val previousSlice = Safepoint.beginSlice(slot, this)
-            // the scheduler's slice deadline: on js-wasm it is the preemption source, checked at
-            // the budget drains until the slice boundary consumes it; on jvm-native stops carry
-            // preemption and the call inlines to nothing. Arming stays the eval's own entry step
+            // The slice deadline. On js-wasm it is the preemption source; on jvm-native stops carry
+            // preemption and this inlines to nothing.
             Safepoint.deadline(deadline)
             val next =
                 try
@@ -283,18 +275,13 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
                         Safepoint.endSlice(slot, previousSlice)
                 catch
                     case ex =>
-                        // The promise is completed here rather than by the boundary, which the failure
-                        // unwound past. Constructed rather than built through `Result.panic`, which refuses
-                        // to hold a fatal: the fatal is re-propagated below, and the observer is owed the
-                        // reason either way.
+                        // Completed here because the failure unwound past the boundary. Constructed rather
+                        // than through `Result.panic`, which refuses to hold a fatal.
                         completeDiscard(new Result.Panic(ex))
                         curr = cleared
                         if IsFatal(ex) then
-                            // a fatal leaves `run` without reaching the arms below, which are what release
-                            // ownership. Ownership never given up is never reclaimed: the claim at the top
-                            // would fail for good, and with it every later schedule and the interrupt
-                            // path's own claim. Nothing is left to release, so the terminal state is the
-                            // honest one to leave behind
+                            // A fatal skips the arms below that release ownership, and ownership never given
+                            // up is never reclaimed. Nothing is left to release, so mark it terminal.
                             status = Done
                             throw ex
                         end if
@@ -307,33 +294,28 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
                     // Order matters: store the remainder, clear the status, then arm. Arming publishes the
                     // task, so everything a resuming worker reads must already be written.
                     curr = next
-                    // read out before the wakeup closes over it, so the field stays this class's own: see
-                    // `parkOn` for why a lambda reaching a field is what the platform handle cannot survive
+                    // Read out before the wakeup closes over it; see `parkOn`.
                     val frame = joinFrame
                     status = Idle
                     promise.onComplete { _ =>
                         removeInterrupt(promise)(using frame)
                         Scheduler.get.schedule(this)
                     }
-                    // An interrupt that landed while this slice was unwinding found the task waiting and left
-                    // it alone, because the remainder it would have released did not exist yet. It does now,
-                    // and the wakeup above may never come, so the claim is made here instead.
+                    // An interrupt landing while this slice unwound left the task alone, the remainder not
+                    // existing yet. It does now, and the wakeup may never come, so claim it here.
                     if !isPending() && casStatus(Idle, Done) then abandon()
                     Task.Done
                 case _ =>
-                    // The remainder is stored before ownership is released, for the reason the park arm
-                    // above gives: once this task is idle another thread may claim it, and what it claims
-                    // has to be this slice's remainder rather than the one it replaced.
+                    // Stored before ownership is released: once idle, another thread may claim this task.
                     if next.evalNow.isDefined then
-                        // The computation reached its end. The boundary completed the fiber on the way here.
+                        // The boundary completed the fiber on the way here.
                         curr = cleared
                         status = Done
                         Task.Done
                     else
                         curr = next
                         if !isPending() then
-                            // Interrupted or completed mid-slice: the remainder the eval stopped at is the
-                            // accurate one, and nobody will resume it.
+                            // Interrupted or completed mid-slice, and nobody will resume the remainder.
                             abandon()
                             Task.Done
                         else
@@ -361,17 +343,16 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
         curr = cleared
         status = Done
         if !isNull(remainder) then
-            // The release reports the join this fiber never reached, so the promise it was about to wait on
-            // is linked to this interrupt rather than left pending for whoever else holds it. Invoking the
-            // input is what registers the link, and it is the same call the boundary makes.
+            // Links the promise this fiber was about to wait on to this interrupt, rather than leaving it
+            // pending. Invoking the input registers the link, the same call the boundary makes.
             Eval.release(remainder, new KyoException("fiber abandoned")(using Frame.internal), Tag[Async.Join]) {
                 [C] => input => discard(input(this))
             }
         end if
     end abandon
 
-    // Drops the reference so a finished task does not retain the computation it ran. Never a signal: `curr`
-    // is read only while the task is runnable, and what a slice produced is said by `evalNow` and `status`.
+    // Drops the reference so a finished task does not retain the computation it ran. Never a signal: what a
+    // slice produced is said by `evalNow` and `status`.
     private inline def cleared = null.asInstanceOf[Unit < Any]
 
     override def toString =
