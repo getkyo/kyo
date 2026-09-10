@@ -145,27 +145,19 @@ object Sync:
         ct: ConcreteTag[E],
         inline frame: Frame
     ): A < (Sync & Abort[E] & S) =
-        // `Bracket.ensuring` rather than a bracket over a `()` acquire, because there is a difference between
-        // the two that this method needs. A bracket cannot install its region until the acquire's value
-        // arrives, so a computation abandoned before it ever ran has no region and the finalizer does not
-        // run: right for a bracket, since nothing was acquired, and wrong here, where the caller asked for
-        // cleanup that always occurs and may well be closing over something acquired outside. `ensuring`
-        // installs the region as a node, which the abandonment walk finds whether or not a step ever ran.
+        // `Bracket.ensuring` rather than a bracket over a `()` acquire: a bracket cannot install its region
+        // until the acquire's value arrives, so a computation abandoned before it ran has no region and no
+        // finalizer. Right for a bracket, wrong here, where the caller asked for cleanup that always occurs.
+        // `ensuring` installs the region as a node the abandonment walk finds whether or not a step ran.
         //
-        // The abort routing below is the same as `acquireReleaseWith`'s and is here for the same reason: the
-        // kernel does not know `Abort`, so without it the finalizer would still run on a typed abort but
-        // would be told the discard signal rather than the failure the caller raised.
+        // The abort routing is `acquireReleaseWith`'s: the kernel does not know `Abort`, so without it the
+        // finalizer would be told the discard signal rather than the caller's failure.
         //
-        // The finalizer has exactly one call site, the release, because that is the only place that knows
-        // whether this ending fires now or is held: under a handler that replays, an ending only records
-        // and the release runs once after every branch. Calling the finalizer from the body instead, where
-        // the outcome is already in hand, closes the resource at the first branch's ending and the branches
-        // after it run against a resource that is gone. So the body leaves the failure here and the release
-        // reads it, rather than calling the finalizer itself.
+        // The finalizer has one call site, the release, because only there is it known whether this ending
+        // fires now or is held: under a handler that replays, an ending records and the release runs once
+        // after every branch. Calling it from the body would close the resource at the first branch's ending.
         //
-        // First failure wins, because a handler that replays ends the extent once per resumption: a branch
-        // that aborted must not be overwritten by a later branch that succeeded, or a release that commits
-        // on success would commit over it.
+        // First failure wins: a branch that aborted must not be overwritten by a later branch that succeeded.
         Sync.Unsafe.defer {
             val aborted = AtomicRef.Unsafe.init[Maybe[Result.Error[Any]]](Absent)(using AllowUnsafe.embrace.danger)
             Bracket.ensuring { failure =>

@@ -140,35 +140,21 @@ object Scope:
     def run[A, S](closeParallelism: Int)(v: A < (Scope & S))(using frame: Frame): A < (Async & S) =
         Sync.Unsafe.defer {
             val finalizer = Finalizer.Unsafe.init(closeParallelism)
-            // A scope is closed at the end of the `Scope.run` that opened it, and nowhere else.
+            // A scope closes at the end of the `Scope.run` that opened it, and nowhere else.
             //
-            // A run nested inside another joins it as a child, and an enclosing scope closes its children and
-            // waits for them before releasing anything of its own, which is what puts an inner resource's
-            // release before an outer one's. The unwind path is where that does the work: there only
-            // `Sync.ensure` runs, and `close` hands the drain to a detached fiber without waiting for it, so
-            // the enclosing scope's own finalizers would otherwise run alongside the child's.
+            // A nested run joins as a child. An enclosing scope closes its children and waits for them before
+            // releasing its own, which orders an inner resource's release before an outer one's.
             //
-            // Closing them rather than only waiting, because "a nested run always closes itself" holds only
-            // while the computation carrying it can still get there. One blocked inside a handler closes when
-            // something ends that handler, and that something is often a finalizer of the enclosing scope: as a
-            // queued wait it could sit ahead of the finalizer that would release it, and the close waited on
-            // itself. Holding the child's finalizer settles it either way.
+            // Closing rather than only waiting: a nested run blocked inside a handler closes when something
+            // ends that handler, often a finalizer of this scope, so a queued wait could sit ahead of the
+            // finalizer that would release it and wait on itself. Tolerantly, since the enclosing scope may
+            // already be closed by a fiber that outlived it.
             //
-            // Tolerantly, because the enclosing scope may already be closed: a fiber that outlived it carries
-            // its binding, and a nested run there has nobody to wait for it. Nothing leaks, so nothing raises.
-            //
-            // A crossing gets no scope of its own. It shares the one it left, which is what binds a forked
-            // computation's resources to the caller's ambient scope: the lifetime of a resource must not
-            // depend on whether a combinator happened to fork internally. `groupedWithin` states the same
-            // rule at its own spawn, and `StreamCoreExtensionsTest:890` pins it.
-            //
-            // What a crossing does not share is membership, which is what `forked` withholds. A run opened
-            // inside a fork is a root of its own, because this scope is not what ends the fiber carrying it:
-            // a scoped fiber is interrupted and then awaited by the `Fiber.init` that spawned it, which is
-            // what releases a nested run inside it, and an unscoped one is unparented by construction and
-            // belongs to whoever spawned it. Closing either from here takes a resource away from an owner
-            // still using it, which is how a service started lazily inside the first scope that asked for it
-            // loses the thing it was holding open.
+            // A crossing shares this scope rather than getting its own, so a resource's lifetime does not
+            // depend on whether a combinator forked internally (pinned in StreamCoreExtensionsTest:890).
+            // It does not share membership, which `forked` withholds: a run opened inside a fork is its own
+            // root, because this scope does not end the fiber carrying it. Closing it from here would take a
+            // resource from an owner still using it.
             ContextEffect.handle(Tag[Scope])(
                 derive = (outer: Maybe[Finalizer]) =>
                     outer.foreach { enclosing =>

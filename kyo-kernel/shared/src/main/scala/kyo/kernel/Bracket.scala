@@ -14,23 +14,19 @@ import kyo.kernel.internal.*
 /** Binds a resource for the extent of a use and guarantees its release runs, whichever way the extent ends.
   *
   * `Bracket(acquire)(use)(release)` evaluates `acquire`, runs `use` on its result under a region that owns the release, and runs
-  * `release` exactly once: when `use` completes, when it throws, or when a parked remainder still holding the region is abandoned.
-  * The release is told what it is releasing and how the extent ended: `Absent` when it ran to an end, and otherwise the failure the
-  * unwind carried through the region, or the signal that the remainder holding it was discarded. That is what lets one commit on
-  * success and roll back otherwise. It is deliberately not told what the use produced: an extent that a handler replays ends more
-  * than once, with more than one value, and there is no principled way to choose between them, whereas "did any ending fail" has an
-  * answer whatever the number of endings. A caller that needs to interpret its own failures, `Sync.acquireReleaseWith` reifying an
-  * `Abort` for instance, knows how to read them and routes them itself.
+  * `release` exactly once: when `use` completes, when it throws, or when a parked remainder holding the region is abandoned.
   *
-  * The release takes no effects because it has to be able to run where nothing is installed to answer for it, which is all an
-  * interpreter that is ending can offer, and its result is discarded for the same reason.
+  * The release is told how the extent ended (`Absent` for a clean end, otherwise the failure the unwind carried or the discard
+  * signal), which is what lets one commit on success and roll back otherwise. It is not told what the use produced: an extent a
+  * handler replays ends more than once, with more than one value, while "did any ending fail" has an answer either way. A caller
+  * needing its own failures, such as `Sync.acquireReleaseWith` reifying an `Abort`, routes them itself.
   *
-  * A bracket belongs to the computation that installed it and closes only with its own scope: an isolated child, a spawned fiber
-  * included, gets an inert copy of the region that neither completes, releases, nor refuses.
+  * The release takes no effects and its result is discarded: it must run where nothing is installed to answer for it.
   *
-  * A bracket inside a remainder that a handler hands out as a value (the coroutine step the stream combinators are built on) travels
-  * with that remainder: it releases when the remainder completes, at the exit of the scope enclosing the handler when the remainder is
-  * never resumed, and it refuses a second resumption.
+  * A bracket closes only with the scope that installed it. An isolated child, a spawned fiber included, gets an inert copy of the
+  * region that neither completes, releases, nor refuses. A bracket inside a remainder a handler hands out as a value travels with
+  * that remainder: it releases when the remainder completes, or at the exit of the scope enclosing the handler if it is never
+  * resumed, and refuses a second resumption.
   */
 object Bracket:
 

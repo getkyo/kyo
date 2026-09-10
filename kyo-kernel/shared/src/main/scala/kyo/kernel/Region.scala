@@ -2,17 +2,14 @@ package kyo.kernel
 
 /** The marker a handler clause's continuation carries, and what it forbids.
   *
-  * A clause receives the continuation of the computation it answers. That continuation carries the regions that sat between the handler
-  * and the suspension, a bracket among them, and the handler releases what they carry when the clause returns. So the continuation is
-  * valid on this fiber, inside that clause, and the clause is expected to hand it back to the region rather than to send it elsewhere.
+  * A clause's continuation carries the regions that sat between the handler and the suspension, a bracket among them, and the handler
+  * releases what they carry when the clause returns. So it is valid only on this fiber, inside that clause.
   *
-  * The marker states that. Everything a clause derives from its continuation carries `Region.NoEscape` in its row, and the row is enough
-  * to stop the two ways a continuation leaves by accident: a crossing demands an `Isolate` for the row and the derivation refuses the
-  * marker, and a holder typed without the marker does not accept it, the row being contravariant. Handing it back to the region compiles,
-  * because the region's own currency carries the marker and the region discharges it.
+  * Everything derived from it carries `Region.NoEscape` in its row, which stops the two accidental exits: a crossing demands an
+  * `Isolate` for the row and the derivation refuses the marker, and a holder typed without the marker does not accept it, the row being
+  * contravariant. Handing it back to the region compiles, since the region's currency carries the marker and discharges it.
   *
-  * A peel is the deliberate opposite, and it does not go through here: `ArrowEffect.handleFirst` exists to hand the continuation out, so
-  * its clause receives an unmarked one. What a peel's caller may do with the remainder is the peel's own contract to state.
+  * `ArrowEffect.handleFirst` is the deliberate opposite and does not go through here: its clause receives an unmarked continuation.
   *
   * The marker has no runtime presence: rows are phantom, and the discharge is a cast on the row alone.
   */

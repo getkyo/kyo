@@ -141,22 +141,15 @@ object Fiber:
         // `Bracket.ensuring` reports every ending, including a fiber abandoned before its first slice.
         Sync.Unsafe.defer((IOPromise[Nothing, Maybe[Throwable]](), Scope.Finalizer.Unsafe.init(1))).map { (ended, own) =>
             val reporting = Bracket.ensuring(cause => ended.completeDiscard(Result.succeed(cause)))(v)
-            // The fiber gets a scope of its own, which is the difference between this and `initUnscoped`.
-            // A crossing hands on the forked view of the caller's scope, so a run opened inside a spawned
-            // fiber is a root of its own; that is right for a fiber nothing here ends, and wrong for one
-            // this scope interrupts and waits for, because a resource that run holds would then be released
-            // alongside the outer ones rather than before them. The unwind path is where that shows: only
-            // `Sync.ensure` runs there, and `close` hands its drain to a detached fiber without waiting.
+            // The fiber gets a scope of its own, which is the difference from `initUnscoped`. A nested run
+            // is then a child of THIS scope, the release below ends it with what actually ended the fiber,
+            // and `await` puts its releases ahead of the enclosing scope's.
             //
-            // Binding the caller's own finalizer instead would carry the ordering, and it was wrong for a
-            // different reason: a nested run would become a child of the CALLER's scope, closed by the
-            // caller's drain carrying the CALLER's verdict. A lease released that way is told the ending was
-            // clean, so it pools the connection instead of cancelling the statement still on the wire, which
-            // `SqlConnectionCancelTest`'s "Scope teardown while a statement is in flight" caught.
-            //
-            // A scope of its own answers both: a nested run is a child of THIS scope, the release below ends
-            // it with what actually ended the fiber, and `await` is what puts its releases ahead of the
-            // enclosing scope's own.
+            // Neither alternative works. The forked view of the caller's scope makes a nested run its own
+            // root, so its resources release alongside the outer ones rather than before them. The caller's
+            // own finalizer carries the ordering but closes the run with the CALLER's verdict, so a lease is
+            // told the ending was clean and pools a connection whose statement is still on the wire (pinned
+            // by SqlConnectionCancelTest, "Scope teardown while a statement is in flight").
             val owned = ContextEffect.handleInheritable(Tag[Scope], own)(reporting)
             Scope.acquireRelease(initUnscoped[E, A, S, S2](owned)) { fiber =>
                 fiber.interrupt
