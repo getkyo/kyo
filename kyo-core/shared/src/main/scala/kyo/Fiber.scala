@@ -179,11 +179,9 @@ object Fiber:
     )(
         v: => A < (Abort[E] & Async & S)
     )[B, S3](f: Fiber[A, reduce.SReduced & S2] => B < S3): B < (Sync & S & S3) =
-        // Mapping the spawn and installing the interrupt in the mapped function would leave a window: the
-        // fiber is already running while the region that would interrupt it is still one dispatch away, so
-        // an interrupt landing in between leaves the child with nothing to stop it, and nothing an
-        // abandonment can walk either. A bracket's region is built as the acquire is applied instead, which
-        // puts the spawn and its interrupt on the same side of any interrupt.
+        // A bracket's region is built as the acquire is applied, putting the spawn and its interrupt on the
+        // same side of any interrupt. Installing the interrupt in a mapped function instead leaves a window
+        // where the child is running with nothing to stop it and nothing an abandonment can walk.
         Sync.acquireReleaseWith(initUnscoped[E, A, S, S2](v))(_.interrupt)(f)
 
     /** Runs an asynchronous computation in a new Fiber without guaranteeing interruption.
@@ -202,10 +200,9 @@ object Fiber:
         reduce: Reducible[Abort[E]],
         frame: Frame
     ): Fiber[A, reduce.SReduced & S2] < (Sync & S) =
-        // only the capture happens here: the task holds the isolate and does the crossing itself, so what it
-        // is handed is the body as written. `crossing` is what makes the caller's isolate one that leaves
-        // this fiber. Deliberately unparented, which is what makes it unscoped; the internal spawners below
-        // do the opposite and link the running task
+        // Only the capture happens here: the task holds the isolate and does the crossing itself, so it is
+        // handed the body as written. Deliberately unparented, which is what makes it unscoped; the internal
+        // spawners below link the running task instead.
         val crossing = isolate.crossing
         crossing.capture { state =>
             IOTask(crossing)(state, v).asInstanceOf[Fiber[A, reduce.SReduced & S2]]
@@ -449,10 +446,9 @@ object Fiber:
             // effectful (`A < (Async & Abort[E])`): Sync.defer deconstructs it so IOTask drives the
             // Async and Abort effects to completion inside the carrier, rather than leaving the
             // computation as an un-run suspension (a plain value infers `E = Nothing`, unchanged).
-            // the body carries no effects of its own, so the isolate resolved here handles nothing and the
-            // crossing is only the bindings standing at the call. `capture`'s row is `Any` for that reason,
-            // which is what lets the state be taken here rather than asked of the caller: this returns a
-            // fiber, not a computation, so there is no outer scope to capture in
+            // The body carries no effects, so the isolate handles nothing and the crossing is only the
+            // bindings standing at the call. `capture`'s row is `Any`, which lets the state be taken here:
+            // this returns a fiber, not a computation, so there is no outer scope to capture in.
             IOTask.detached(Sync.defer(v))
                 .asInstanceOf[Fiber.Unsafe[A, reduce.SReduced]]
         end init
@@ -804,9 +800,9 @@ object Fiber:
                     // here, where the array that holds each item's isolated form is typed by it
                     val crossing = isolate.crossing
                     Sync.Unsafe.defer {
-                        // a worker's own value is Unit: what it produces travels to the promise through
-                        // `complete`, so the isolation is taken off each item rather than off the worker, and
-                        // what the array holds is the isolated form. Restoring on the worker would attach it
+                        // A worker's own value is Unit: what it produces reaches the promise through
+                        // `complete`, so the isolation is taken off each item and the array holds the isolated
+                        // form. Restoring on the worker would attach it
                         // to the Unit nobody joins, and the forked state would be dropped
                         class State extends IOPromise[Any, Chunk[B] < (Abort[E] & S2)]
                             with (Result[E, Unit < S2] => Unit):

@@ -303,11 +303,8 @@ import scala.collection.mutable.ArrayBuffer
             end if
         end park
 
-        // Both out of line because `loop`'s size is what it is. A masked read reaches its region exactly as an
-        // arrow operation reaches its handler; only the entries and the answer are wanted back.
-        //
-        // The regions between are dumped here, which pops the stack down to the masking region, so it is at the
-        // top by the time `maskedRead` looks for it, whether or not it started there.
+        // Out of line to keep `loop` small. Dumping the regions between pops the stack down to the masking
+        // region, so it is at the top by the time `maskedRead` looks for it.
         def maskedEntries(kyo: Pending.Suspend[?, ?, ?, ?]): Stack.Snapshot =
             val idx = stack.find(kyo.tag)
             if idx == stack.depth - 1 then Stack.Snapshot.empty else dumped(stack, idx, kyo)
@@ -345,9 +342,8 @@ import scala.collection.mutable.ArrayBuffer
                 ri += 1
             end while
 
-            // Settling hands each region back its own answerability, which a region that discharges exactly once
-            // cannot take while the continuation can be resumed again. Leaving the debt where it is keeps the
-            // obligation with the handler that dumped it, to be discharged where that handler ends.
+            // A region that discharges exactly once cannot take its answerability back while the continuation
+            // can be resumed again, so the debt stays with the handler that dumped it.
             if !defers then stack.settle(entries)
             stack.oweBelow(stack.depth, kyo.owed)
 
@@ -376,9 +372,8 @@ import scala.collection.mutable.ArrayBuffer
             hc.unbound(ctx)
         end contextExit
 
-        // a region that hands its continuation out has not discarded what it owes: the debt moves to
-        // the scope below, as it does for a region exiting with a pending outcome, and is settled by
-        // identity when the remainder resumes or drained where that scope ends
+        // A region that hands its continuation out has not discarded what it owes: the debt moves to the scope
+        // below, settled when the remainder resumes or drained where that scope ends.
         def arrowExit(handler: Handler.ArrowHandler[?, ?, ?, ?, ?], ctx: Context): Context =
             stack.pop()
             if stack.owesAny then
@@ -482,9 +477,8 @@ import scala.collection.mutable.ArrayBuffer
 
     private[kernel] def dumped(stack: Stack, idx: Int, kyo: Pending.Suspend[?, ?, ?, ?]): Stack.Snapshot =
         val entries = stack.dump(idx + 1)
-        // This continuation can be resumed more than once, either here or wherever it is handed to, so the regions
-        // going into it must not discharge themselves when the first resumption ends their extents. Held out of
-        // line: every answer passes through here, and only the declaring handlers walk the regions.
+        // The continuation can be resumed more than once, so the regions going into it must not discharge
+        // themselves when the first resumption ends their extents. Out of line: every answer passes through here.
         if stack.handler(idx).repeated then held(entries)
         Debugger.whenEnabled {
             var i = entries.regions - 1
@@ -568,18 +562,12 @@ import scala.collection.mutable.ArrayBuffer
     private def release[A, S](v: A < S, ex: Throwable, effectTag: Maybe[Tag[Any]], f: Any => Unit, fuel: Int): Unit =
         val collected = ArrayBuffer.empty[AnyRef]
 
-        // What an abandoned computation still owes is not only under a node's value: an `Arrow.Ensure` waiting
-        // for a value that has already settled is a release nobody will run, and descending into the value
-        // alone drops the continuation holding it. So the continuation is carried down and offered the value
-        // when one is reached.
+        // What an abandoned computation owes is not only under a node's value: an `Arrow.Ensure` waiting on an
+        // already-settled value is a release nobody will run, so the continuation is carried down and offered
+        // the value when one is reached. Only an `Ensure` may run here; anything else is ordinary work.
         //
-        // Only an `Ensure`, which is the whole of what may run here. An `Ensure` exists to run when its
-        // computation does not, so applying one settles a debt rather than resuming work; anything else in the
-        // continuation is ordinary work and is left alone.
-        //
-        // A chain's head is its left arrow, and that is itself a chain whenever one was built onto another, so
-        // the step that would have received the value is found by walking `head` down. Nothing is rebuilt: the
-        // rest of the continuation is not going to run.
+        // A chain's head is its left arrow, itself a chain whenever one was built onto another, so the step
+        // that would have received the value is found by walking `head` down.
         @tailrec def leftmost(cont: Arrow[Any, Any, Any]): Arrow[Any, Any, Any] =
             val h = cont.head
             // Erasure-forced: the type joining a chain's links is existential from out here.

@@ -40,10 +40,9 @@ import scala.language.implicitConversions
 // The union's second arm is Pending, the node family in PendingInternal. The combinators below build
 // Arrow and Defer nodes and leave the stack-depth budget to the evaluator, so their function parameters
 // take no Safepoint evidence.
-// The third arm is the wrapper the lift puts around a nested computation. On main that wrapper is
-// a Kyo, so it inhabits the second arm; here it stands apart from the node family and needs its
-// own arm, or `Nothing < S` erases to Pending and a position holding a nested computation cannot
-// carry it.
+// The third arm is the wrapper the lift puts around a nested computation. It stands apart from the node
+// family and needs its own arm, or `Nothing < S` erases to Pending and a position holding a nested
+// computation cannot carry it.
 opaque type <[+A, -S] = A | Pending[A, S] | Nested[A]
 
 // The lifts live in internal.Implicits, mixed in here.
@@ -78,10 +77,9 @@ object `<` extends Implicits:
                     out
                 end if
             end run
-            // The cast states the receiver's own type, so it holds by construction. It is needed because
-            // this body is inline: expanded into user code and re-checked under -Xcheck-macros, `<` is seen
-            // through an inline proxy the compiler does not substitute into the union, and a receiver whose
-            // own value type is itself pending leaves the un-proxied inner `<` nothing to conform to. Erased.
+            // States the receiver's own type, so it holds by construction. Needed because this body is
+            // inline: re-checked under -Xcheck-macros, `<` is seen through a proxy the compiler does not
+            // substitute into the union, leaving a pending value type nothing to conform to. Erased.
             run(v.asInstanceOf[A < S], Arrow.id)
         end map
 
@@ -175,11 +173,8 @@ object `<` extends Implicits:
                         override def apply[C2, S4](v2: A < S4, cont2: Arrow[C, C2, S4]) =
                             run(v2, cont.chain(cont2))
                 else
-                    // `Unit` is the union's first arm, so the cast states a conformance that holds by
-                    // construction. It is needed because this body is inline: expanded into user code and
-                    // re-checked under -Xcheck-macros, `<` is seen through a proxy of this package that the
-                    // compiler does not substitute into the union, leaving the bare literal nothing to
-                    // conform to. Erased.
+                    // `Unit` is the union's first arm, so this holds by construction. Needed for the same
+                    // -Xcheck-macros reason as `map`'s cast above. Erased.
                     val out = cont.head(().asInstanceOf[Unit < S3], cont.tail)
                     Safepoint.exit(slot)
                     out
