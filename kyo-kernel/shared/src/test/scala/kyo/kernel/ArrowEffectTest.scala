@@ -124,8 +124,7 @@ class ArrowEffectTest extends Test:
             )
 
             assert(result.eval == 42)
-            // Diverges from main: the evaluator's frames between the test body and the loop body add a
-            // constant 12 here, main's inline handling added at most 10.
+            // The evaluator's frames between the test body and the loop body add a constant 12.
             assert(maxDepth - minDepth <= 20)
         }
     }
@@ -326,9 +325,6 @@ class ArrowEffectTest extends Test:
         }
     }
 
-    // Diverges from main: handlePartial is gone, the partial evaluation entry point here is
-    // Eval.partial over a computation whose effects are already handled, and the stop condition is
-    // the safepoint's rather than a flag handed to the handler.
     "handlePartial" - {
         "evaluates pure values" in {
             val x: Int < Any = 5
@@ -382,9 +378,9 @@ class ArrowEffectTest extends Test:
 
         def flatten[A, B, C](v: A < B < C): A < (B & C) = v.map(a => a)
 
-        // Diverges from main: Nested is a plain box here rather than a suspension node, so a
-        // handler's settled path unnests it and the done arm re-boxes. The wrapper each case reads
-        // back is a fresh instance, so these assert on the computation it carries.
+        // Nested is a plain box rather than a suspension node, so a handler's settled path unnests it and
+        // the done arm re-boxes. The wrapper read back is a fresh instance, so these assert on the
+        // computation it carries.
 
         "not handle Nested" - {
 
@@ -425,8 +421,8 @@ class ArrowEffectTest extends Test:
 
                 val flattened                           = flatten(result)
                 val finalResult: Int < NestedTestEffect = handle(flattened)
-                // Diverges from main: the region is a node here, so its answer is observable at eval
-                // rather than at evalNow, and the row it leaves standing is closed to read it.
+                // The region is a node, so its answer is observable at eval rather than evalNow, and the
+                // row it leaves standing is closed to read it.
                 assert(ArrowEffect.handleCont(nestedTag, finalResult)([C] => (input, cont) => cont(input)).eval == 50)
             }
         }
@@ -527,9 +523,8 @@ class ArrowEffectTest extends Test:
 
         "handlePartial on Nested" - {
 
-            // Diverges from main: Eval.partial takes a computation with no effects left in the row,
-            // so the region is closed before the partial evaluation instead of being handed two
-            // handlers and a stop flag.
+            // Eval.partial takes a computation with no effects left in the row, so the region is closed
+            // before the partial evaluation.
             def handle[A](v: A < NestedTestEffect): A < Any =
                 Eval.partial(
                     ArrowEffect.handleCont(nestedTag, v)([C] => (input, cont) => cont(input * 10), a => Kyo.lift(a))

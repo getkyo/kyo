@@ -2,9 +2,6 @@ package kyo.kernel.internal
 
 import kyo.*
 
-// Diverges from main: main's suites extend kyo.test.Test, which sits above the kernel; the kernel
-// tests on ScalaTest through kyo.Test (see kyo-kernel/shared/src/test/scala/kyo/Test.scala), whose
-// `succeed` is ScalaTest's and takes no message.
 class CanLiftTest extends Test:
 
     "compile for non-Kyo types" in {
@@ -87,8 +84,8 @@ class CanLiftTest extends Test:
         // typeCheckFailure already counts as an assertion
     }
 
-    // Not on main: this kernel routes singletons through CanLiftMacro instead of deriving every
-    // instance through it, so the case-object and module-object paths are its own coverage.
+    // Only singletons reach CanLiftMacro, so the case-object and module-object paths need their own
+    // coverage.
     "case objects lift without reaching the macro" in {
         implicitly[CanLift[Maybe.Absent.type]]
         succeed

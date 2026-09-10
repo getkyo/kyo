@@ -19,11 +19,9 @@ import scala.annotation.nowarn
   */
 abstract class Effect private[kernel] ()
 
-// Diverges from main: `Effect.catching` is gone (D2), each handler carries a `recover` arm instead, and the bracket lives in
-// `Bracket`.
 object Effect:
 
-    // Not on main: the `defer` overloads that build a `Pending.Defer` node around a value and the continuations that run after it.
+    // Builds a `Pending.Defer` node around a value and the continuations that run after it.
     def defer[A, B, S](v: A < S, cont: Arrow[A, B, S]): B < S =
         cont match
             case cont: Arrow.Chain[A, x, B, S] @unchecked =>
@@ -60,7 +58,6 @@ object Effect:
         else
             defer(v, cont1, cont2.chain(cont3))
 
-    // Diverges from main: public, no `Safepoint ?=>` body since the evaluator polls the budget, and `deferInline` builds a `DeferWith`.
     def defer[A, S](f: => A < S)(using Frame): A < S =
         deferInline(f)
 

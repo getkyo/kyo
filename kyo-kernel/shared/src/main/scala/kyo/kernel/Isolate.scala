@@ -96,7 +96,7 @@ abstract class Isolate[Remove, -Keep, -Restore]:
       * @return
       *   Computation with Remove, Keep, and additional effects
       */
-    // Diverges from main: the captured computation's row is `Remove & S`; the IOTask integration relies on it.
+    // The captured computation's row is `Remove & S`; the IOTask integration relies on it.
     def capture[A, S](f: State => A < S)(using Frame): A < (Remove & S)
 
     /** Executes a computation with isolated state.
@@ -140,8 +140,7 @@ abstract class Isolate[Remove, -Keep, -Restore]:
       */
     def nest[A, S](v: A < (Remove & S))(using Frame): A < Restore < (Remove & Keep & S) =
         capture { state =>
-            // Diverges from main: `Kyo.lift` is gone. `Nested.nest` is the lift that hides the
-            // restored computation's effects behind a `Nested` node.
+            // `Nested.nest` hides the restored computation's effects behind a `Nested` node.
             isolate(state, v).map(r => Nested.nest[A < Restore, Any](restore(r)))
         }
 
@@ -158,9 +157,8 @@ abstract class Isolate[Remove, -Keep, -Restore]:
     final def run[A, S](v: A < (S & Remove))(using Frame): A < (S & Remove & Keep & Restore) =
         capture(state => run(state, v))
 
-    // Not on main: `run` for a state the caller already captured, and `apply`, which captures,
-    // runs the computation in isolation and hands the restored computation to `f` within the
-    // capture.
+    // `run` takes a state the caller already captured; `apply` captures, runs in isolation, and hands
+    // the restored computation to `f` within the capture.
     def run[A, S](state: State, v: A < (S & Remove))(using Frame): A < (Keep & Restore & S) =
         restore(isolate(state, v))
 
@@ -272,12 +270,11 @@ object Isolate:
             def restore[A, S](v: A < S)(using Frame)                       = v
         end Identity
 
-        // Diverges from main: the `runDetached` and `restoring` helpers that threaded a `Trace`, a
-        // `Context` and a `Safepoint` across a fork are gone. `Contextual` is what carries the context
-        // across one now: it snapshots the context regions, runs the isolated computation over a forked
-        // snapshot, and joins each region back through that region's own fork and join strategy. Reached
-        // through `crossing`, at the sites that actually leave one fiber for another; it is deliberately
-        // not the base case of composition, because an isolate asked for in place forks nothing.
+        // Carries the context across a fork: snapshots the context regions, runs the isolated computation
+        // over a forked snapshot, and joins each region back through its own fork and join strategy.
+        //
+        // Reached through `crossing`, at the sites that leave one fiber for another. Deliberately not the
+        // base case of composition: an isolate asked for in place forks nothing.
         private[kernel] object Contextual extends Isolate[Any, Any, Any]:
             type State        = Stack.Snapshot
             type Transform[A] = (Stack.Snapshot, Stack.Snapshot, A)
@@ -314,8 +311,8 @@ object Isolate:
                                     cont2(av, Arrow.id)
                 }
 
-            // Not on main: `Forked` marks a region's handler as the fork of `origin`, so `join` can
-            // find the region it was forked from on the current stack.
+            // `Forked` marks a region's handler as the fork of `origin`, so `join` can find the region it
+            // was forked from on the current stack.
             final private class Forked[State, E <: ContextEffect[State], A, S](val origin: Handler.ContextHandler[State, E, A, S])
                 extends Handler.ContextHandler[State, E, A, S]:
                 def tag = origin.tag

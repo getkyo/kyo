@@ -34,12 +34,12 @@ import kyo.kernel.internal.*
   */
 object Bracket:
 
-    // Not on main: the `Finalize` region a bracket runs its use body under, and the `Cell` that is the region's state and the
-    // exactly-once guard on the release.
+    // The region a bracket runs its use body under. `Cell` is the region's state and the exactly-once
+    // guard on the release.
     sealed private[kyo] trait Finalize extends ContextEffect[Cell]
 
-    // The cell is no longer parameterised by the use value: the release is told how the extent ended, not what it
-    // produced, so there is nothing about the value left to carry.
+    // The cell is not parameterised by the use value: the release is told how the extent ended, not what
+    // it produced.
     //
     // Two shapes rather than one with a flag: a bracket's own state, and what it hands an isolated child. The
     // second hears the same lifecycle and does nothing with it, so it records no ending and can be shared,

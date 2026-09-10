@@ -3,11 +3,8 @@ package kyo.kernel
 import kyo.*
 import org.scalatest.freespec.AnyFreeSpec
 
-// Diverges from main: kyo-kernel does not depend on kyo-test here, so the suite extends
-// ScalaTest's AnyFreeSpec instead of kyo.test.Test.
 class LoopTest extends AnyFreeSpec:
 
-    // Not on main: fixtures for the extra cases at the end of the file.
     sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())
 

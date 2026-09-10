@@ -27,8 +27,6 @@ abstract class ContextEffect[+A] extends Effect
 
 object ContextEffect:
 
-    // Diverges from main: the `Noninheritable` marker is gone (D4, inheritance is a handler strategy below), and a suspension builds a
-    // `Pending.SuspendContext` node where main builds a `KyoDefer` that reads the `Context`.
 
     /** Creates a suspended computation that requests a value from a context effect. This establishes a requirement for a value that must be
       * satisfied by a handler higher up in the program. The requirement becomes part of the effect type, ensuring that handlers must
@@ -131,9 +129,8 @@ object ContextEffect:
         end new
     end suspendWith
 
-    // Diverges from main: main's `handle` inherits across async boundaries unless the effect mixes in the
-    // Noninheritable marker. Here inheritance is a per-handler strategy (D4): `handleInheritable` is main's
-    // default and `handle` takes explicit fork and join strategies plus the optional done and release hooks.
+    // Inheritance is a per-handler strategy: `handleInheritable` inherits across async boundaries, while
+    // `handle` takes explicit fork and join strategies plus the optional done and release hooks.
 
     /** Handles a context effect by providing a value for a specific computation scope. This satisfies suspend operations within that scope
       * by making the provided value available to them. The handler establishes a region where the context value is defined and can be

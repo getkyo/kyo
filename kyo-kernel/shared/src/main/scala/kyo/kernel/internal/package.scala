@@ -5,15 +5,13 @@ import kyo.kernel.Arrow
 
 // The stack-safety suspension threshold is platform-specific (smaller call stacks on Native
 // and WASM need to suspend sooner); each platform sets it in kyo.internal.Platform.
-// Diverges from main: main reads kyo.internal.Platform.maxStackDepth and caps traces at 16 frames.
-// Here the evaluator's rescue budget is a fixed 512 until the platform sweep measures the
-// per-platform values, and EffectTrace's frame budget is 64.
+// The evaluator's rescue budget is a fixed 512 until the platform sweep measures per-platform values;
+// EffectTrace's frame budget is 64.
 private[kernel] inline def maxStackDepth  = 512
 private[kernel] inline def maxTraceFrames = 64
 
-// Diverges from main: the erased aliases IX, OX and EX live in Eval with VX and CX.
 
-// Not on main: rendering helpers for the node and arrow toStrings.
+// Rendering helpers for the node and arrow toStrings.
 private[kernel] def short(v: Any): String =
     v match
         case v: Pending[?, ?]            => v.toString

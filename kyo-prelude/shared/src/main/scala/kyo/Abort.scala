@@ -630,8 +630,8 @@ object Abort:
             }
         )
 
-    // Not on main: the region catching installs so that an exception thrown while v is built or run
-    // reaches its recover arm; the effect itself is never suspended.
+    // The region `catching` installs so an exception thrown while v is built or run reaches its recover
+    // arm. Never suspended.
     sealed private[kyo] trait Catching extends ArrowEffect[Const[Unit], Const[Unit]]
 
     /** Provides methods for working with literal error values in Abort effects.

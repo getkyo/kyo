@@ -45,9 +45,8 @@ abstract class ArrowEffect[-Input[_], +Output[_]] extends Effect
 
 object ArrowEffect:
 
-    // Diverges from main: suspensions and handled regions are arrow nodes (Pending.SuspendArrow,
-    // Pending.HandleArrow and the Handler instances built below) interpreted by Eval, where main
-    // built KyoSuspend/KyoContinue chains that every handler walked itself.
+    // Suspensions and handled regions are arrow nodes (Pending.SuspendArrow, Pending.HandleArrow, and
+    // the Handler instances built below), interpreted by Eval.
 
     /** Creates a suspended computation that requests a function implementation from an arrow effect. This establishes a requirement for a
       * function that must be satisfied by a handler higher up in the program. The requirement becomes part of the effect type, ensuring
@@ -103,11 +102,6 @@ object ArrowEffect:
                 v match
                     case kyo: Pending[O[A], S2] @unchecked => Effect.defer(kyo, this, cont2)
                     case _                                 => cont2(f(Nested.unnest[O[A]](v)), Arrow.id)
-
-    // Diverges from main: main's `handle` is `handleCont` here, the clause receives the continuation
-    // as an Arrow and may introduce effects through S2, and the overloads below add `done` and
-    // `recover` (D2). Main's two, three and four effect `handle` overloads, its `handleCatching` and
-    // its `handlePartial` are gone.
 
     /** Handles an arrow effect by providing a handler function implementation.
       *
@@ -246,9 +240,8 @@ object ArrowEffect:
     )(using inline _frame: Frame): B < (S & S2) =
         def onDone(v0: A): B < (S & S2)                   = done(v0)
         def onRecover(ex: Throwable): Maybe[B < (S & S2)] = recover(ex)
-        // the input is forced under the recovery clause, as main's handleCatching forces its by-name
-        // input: a throw while building the computation is the region's to answer, like one raised
-        // in its extent
+        // The input is forced under the recovery clause: a throw while building the computation is the
+        // region's to answer, like one raised in its extent.
         try
             val v0 = v
             v0 match
@@ -275,9 +268,6 @@ object ArrowEffect:
             case ex if !IsFatal(ex) => onRecover(ex).getOrElse(throw ex)
         end try
     end handleCont
-
-    // Diverges from main: the clause is handed only the operation's input, the continuation reaching it
-    // through the Loop.Outcome2 it answers with, and the overloads below add `done` and `recover` (D2).
 
     /** Handles an arrow effect with a loop-based approach for greater flexibility.
       *
@@ -441,9 +431,6 @@ object ArrowEffect:
             case ex if !IsFatal(ex) => onRecover(ex).getOrElse(throw ex)
         end try
     end handleLoop
-
-    // Diverges from main: main's stateful `handleLoop` overloads are `handleLoopState` here, and the
-    // last overload adds `recover` (D2).
 
     /** Handles an arrow effect with stateful loop-based approach for maximum flexibility.
       *
@@ -628,9 +615,6 @@ object ArrowEffect:
         end try
     end handleLoopState
 
-    // Not on main: the `With` variants fuse the continuation into the region node, so the region's
-    // result flows into it without allocating a separate map node.
-
     /** handleCont with a continuation fused into the region node: the region's result flows into f without a separate map node.
       *
       * @param f
@@ -795,10 +779,9 @@ object ArrowEffect:
         end match
     end handleLoopStateWith
 
-    // Not on main: Mask lives in this object (D5), re-raising each masked request under a Mask tag so an
-    // enclosing handler cannot see it. `S` is any effect, not only an arrow one: the masking region shadows
-    // its tag in the context as well as holding it on the stack, so a context read reaches the same clause an
-    // arrow operation does. One mask, both kinds, including an intersection of the two.
+    // Re-raises each masked request under a Mask tag so an enclosing handler cannot see it. `S` is any
+    // effect, not only an arrow one: the masking region shadows its tag in the context as well as holding it
+    // on the stack, so a context read reaches the same clause an arrow operation does.
     sealed abstract class Mask[S] extends ArrowEffect[[A] =>> A < S, Id]
 
     object Mask:
@@ -820,9 +803,8 @@ object ArrowEffect:
             }
     end Mask
 
-    // Not on main: the first suspension is carried out of the region as a value, so handleFirst is a
-    // handleCont whose done arm answers it. FirstSuspended appears in that inline body, which is why
-    // both it and handleFirst are private[kyo].
+    // The first suspension is carried out of the region as a value, so handleFirst is a handleCont whose
+    // done arm answers it. FirstSuspended appears in that inline body, so both are private[kyo].
     abstract private[kyo] class FirstSuspended[I[_], O[_], E <: ArrowEffect[I, O], A, S]:
         type C
         def input: I[C]
@@ -934,8 +916,8 @@ object ArrowEffect:
         end match
     end handleFirstRepeated
 
-    // Not on main: the clause is handed the suspended operation itself instead of its input, which is
-    // what lets Mask re-suspend an operation it cannot inspect.
+    // The clause is handed the suspended operation itself instead of its input, which lets Mask re-suspend
+    // an operation it cannot inspect.
 
     /** Handles an arrow effect by providing a handler that receives the suspended operation itself; the result is the handled
       * computation's value.

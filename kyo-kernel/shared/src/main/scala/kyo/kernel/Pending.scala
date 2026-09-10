@@ -37,18 +37,16 @@ import scala.language.implicitConversions
   * `computation.handle(Abort.run, _.map(_ + 1))` handles `Abort` and then applies a transformation. While `handle` supports arbitrary
   * functions, it is primarily designed for effect handling .
   */
-// Diverges from main: the union's second arm is Pending (the node family in PendingInternal)
-// where main has Kyo, its suspension ADT. The combinators below build Arrow and Defer nodes and
-// leave the stack-depth budget to the evaluator, so their function parameters take no
-// `Safepoint ?=>` context and no Safepoint evidence; `eval` and `flatten` go through Eval.
+// The union's second arm is Pending, the node family in PendingInternal. The combinators below build
+// Arrow and Defer nodes and leave the stack-depth budget to the evaluator, so their function parameters
+// take no Safepoint evidence.
 // The third arm is the wrapper the lift puts around a nested computation. On main that wrapper is
 // a Kyo, so it inhabits the second arm; here it stands apart from the node family and needs its
 // own arm, or `Nothing < S` erases to Pending and a position holding a nested computation cannot
 // carry it.
 opaque type <[+A, -S] = A | Pending[A, S] | Nested[A]
 
-// Not on main: the lifts main defines in this object (lift, liftAnyVal, liftUnit, abortCastUnit
-// and the liftPureFunction overloads) live in internal.Implicits, which is mixed in here.
+// The lifts live in internal.Implicits, mixed in here.
 object `<` extends Implicits:
 
     extension [A, S](inline v: A < S)
@@ -223,10 +221,8 @@ object `<` extends Implicits:
             f(handle1)
         end handle
 
-        // Diverges from main: every stage takes its computation by name, as the one-argument overload
-        // does on main. Main's strict f1 on the multi-argument overloads evaluates the receiver before
-        // the first stage runs, so a stage that takes its computation by name, such as Abort.run,
-        // never sees an exception thrown while the receiver is built.
+        // Every stage takes its computation by name, so a stage such as Abort.run sees an exception
+        // thrown while the receiver is built.
         /** Applies two transformations to this computation in sequence.
           *
           * Enables chaining multiple effect handlers or transformations in a readable sequential style.
@@ -386,8 +382,6 @@ object `<` extends Implicits:
     end extension
 
     extension [A, S](v: A < S)
-        // Not on main: main's extension here is `unsafeGet`, whose role Nested.unnest now fills;
-        // `chain` applies an Arrow to a computation.
         def chain[B, S2](cont: Arrow[A, B, S2]): B < (S & S2) =
             cont(v, Arrow.id)
     end extension
@@ -440,15 +434,14 @@ object `<` extends Implicits:
         end eval
     end extension
 
-    // Diverges from main: the conversion is from Pending, the union's second arm here, not Kyo, and it
-    // is not inline but public in binary: an inline conversion binds a prefix proxy at every expansion
-    // site and a private one goes through an inline accessor, and both grow every suspension's
-    // expansion (pinned in ArrowEffectBytecodeTest).
+    // Public in binary rather than inline: an inline conversion binds a prefix proxy at every expansion
+    // site and a private one goes through an inline accessor, both growing every suspension's expansion
+    // (pinned in ArrowEffectBytecodeTest).
     @publicInBinary implicit private[kernel] def fromKyo[A, S](v: Pending[A, S]): A < S = v
 
     given [A, S, APendingS <: A < S](using ra: Render[A]): Render[APendingS] with
-        // Not on main: a value lifted into a pending computation is wrapped in Nested, which is
-        // not a Pending here, so it needs its own case to render in the same Kyo(...) form.
+        // A lifted value is wrapped in Nested, which is not a Pending, so it needs its own case to render
+        // in the same Kyo(...) form.
         def asString(value: APendingS): String = value match
             case sus: Pending[?, ?] => sus.toString
             case nested: Nested[?]  => s"Kyo(${nested.value})"

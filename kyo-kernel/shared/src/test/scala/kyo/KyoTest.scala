@@ -6,8 +6,6 @@ import scala.annotation.tailrec
 import scala.collection.Iterable
 import scala.collection.IterableOps
 
-// Diverges from main: kyo-kernel does not depend on kyo-test here, so the suite extends this
-// module's ScalaTest base (kyo.Test) instead of kyo.test.Test.
 class KyoTest extends Test:
 
     sealed trait TestEffect1 extends ArrowEffect[Const[Int], Const[Int]]
@@ -28,14 +26,12 @@ class KyoTest extends Test:
             ArrowEffect.handleCont(Tag[TestEffect2], v)([C] => (input, cont) => cont(input.toUpperCase))
     end TestEffect2
 
-    // Diverges from main: the lift is a plain implicit gated by CanLift here, and its inline match
-    // on the lifted type cannot reduce for an abstract A, so the widening helper is inline and goes
-    // through Kyo.lift.
+    // The lift's inline match on the lifted type cannot reduce for an abstract A, so this helper is
+    // inline and goes through Kyo.lift.
     inline def widen[A](inline v: A): A < Any = Kyo.lift(v)
 
-    // Diverges from main: a suspension renders as Kyo(<tag>, <site>), with no input and no source
-    // snippet, and map wraps it in a Defer node, so the rendering is nested rather than main's
-    // single Kyo(...) line. The site embeds the frame position, which main's expected strings pinned.
+    // A suspension renders as Kyo(<tag>, <site>) and map wraps it in a Defer node, so the rendering
+    // nests. The site embeds the frame position.
     "toString" in {
         assert(TestEffect1(1).map(_ + 1).toString ==
             "Defer(Kyo(kyo.KyoTest.TestEffect1, apply.suspend(KyoTest.scala:16:37)), this(?.map(KyoTest.scala:40:41)), Id)")
@@ -164,8 +160,6 @@ class KyoTest extends Test:
                 assert(incr(0, n).eval == n)
             }
 
-            // Diverges from main: deep suspension is stack-safe here, so the case runs everywhere and
-            // asserts the real answer instead of being pending-until-fixed with a placeholder one.
             "suspension at the start" in {
                 try
                     assert(TestEffect1.run(incr(TestEffect1(n), n)).eval == 2 * n + 1)
@@ -179,8 +173,6 @@ class KyoTest extends Test:
                 assert(TestEffect1.run(incr(n, n).map(n => TestEffect1(n + n))).eval == n * 4 + 1)
             }
 
-            // Diverges from main: deep suspension is stack-safe here, so the case runs everywhere and
-            // asserts the real answer instead of being pending-until-fixed with a placeholder one.
             "multiple effects" in {
                 @tailrec def incr(v: Int < TestEffect1, n: Int): Int < TestEffect1 =
                     n match

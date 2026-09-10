@@ -13,7 +13,6 @@ class IsolateTest extends Test:
     sealed trait TestEffect3      extends ContextEffect[Boolean]
     sealed trait NotContextEffect extends ArrowEffect[Const[Int], Const[Int]]
 
-    // Not on main: the fixtures below back this kernel's extra groups.
     sealed trait NotContextEffectSub extends NotContextEffect
 
     // A region that says a fork of it holds something else, so that whether a fork happened is readable
@@ -135,8 +134,8 @@ class IsolateTest extends Test:
 
     "isolate application" - {
         "no context effect suspension" in {
-            // Diverges from main: `runDetached`'s (Trace, Context) callback is gone. `capture` hands
-            // the isolate the contextual regions in scope, and with no handler outside there are none.
+            // `capture` hands the isolate the contextual regions in scope; with no handler outside there
+            // are none.
             val effect: Stack.Snapshot < Any = Isolate.internal.Contextual.capture { (snapshot: Stack.Snapshot) =>
                 snapshot
             }

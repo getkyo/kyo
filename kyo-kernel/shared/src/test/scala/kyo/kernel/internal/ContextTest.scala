@@ -12,8 +12,7 @@ class ContextTest extends Test:
 
     "empty" - {
         "should be empty" in {
-            // Diverges from main: Context has no isEmpty predicate here; the empty context is the
-            // one with no binding to unbind.
+            // Context has no isEmpty predicate; the empty context is the one with no binding to unbind.
             assert(intercept[Throwable](Context.empty.unbind).getMessage.contains("empty context"))
         }
 

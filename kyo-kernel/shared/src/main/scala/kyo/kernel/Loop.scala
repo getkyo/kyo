@@ -21,13 +21,11 @@ import scala.util.NotGiven
   * The outcome of each iteration is represented by an Outcome type, which can either signal continuation with new state values or
   * completion with a final result.
   */
-// Diverges from main: the combinators loop over this kernel's Pending representation. They take no
-// Safepoint evidence and no `Safepoint ?=>` body, since the evaluator polls the budget itself, and a
-// combinator whose body can suspend defers the rest of the loop through an Arrow node (`Step`) that
-// is cached in `step` and reused across iterations, unwrapping a `Done` answer when the loop settles.
+// The combinators take no Safepoint evidence: the evaluator polls the budget itself. A body that can
+// suspend defers the rest of the loop through an Arrow node (`Step`), cached in `step` and reused
+// across iterations.
 object Loop:
 
-    // Diverges from main: the Continue classes report to the debugger and print themselves.
     /** Represents the state to be carried forward to the next iteration of a loop.
       *
       * @tparam A
@@ -90,7 +88,6 @@ object Loop:
         override def toString = s"Continue4(${_1}, ${_2}, ${_3}, ${_4})"
     end Continue4
 
-    // Diverges from main: the Outcome types are covariant in O.
     /** Represents the result of a loop iteration, which can either continue with new state or complete with a final value.
       *
       * @tparam A
@@ -139,8 +136,8 @@ object Loop:
       */
     opaque type Outcome4[A, B, C, D, +O] = O | Continue4[A, B, C, D]
 
-    // Not on main: Done wraps a settled answer that is itself a Continue, so a completed outcome can
-    // be told from a continuation; unnest reads the answer back out.
+    // Done wraps a settled answer that is itself a Continue, so a completed outcome can be told from a
+    // continuation; unnest reads the answer back out.
     final private[kyo] class Done[O](val value: O)
 
     private[kyo] def unnest[A, B, C, D, O](v: Outcome[A, O] | Outcome2[A, B, O] | Outcome3[A, B, C, O] | Outcome4[A, B, C, D, O]): O =
@@ -152,7 +149,7 @@ object Loop:
         new Continue:
             def _1 = ()
 
-    // Diverges from main: continue answers as a computation, since a clause may suspend before continuing.
+    // Answers as a computation, since a clause may suspend before continuing.
     /** Creates an outcome signaling continuation with no state value.
       *
       * This is a convenience method for continuing a loop without maintaining any state between iterations. It's particularly useful for
@@ -239,8 +236,8 @@ object Loop:
         ).asInstanceOf[Outcome4[A, B, C, D, O] < Any]
     end continue
 
-    // Diverges from main: done answers as a computation, wrapping an answer that is itself a Continue
-    // in Done and nesting any other answer so it cannot be mistaken for a suspension.
+    // Wraps an answer that is itself a Continue in Done, and nests any other, so a settled answer cannot
+    // be mistaken for a suspension.
     /** Creates an outcome signaling completion with no value. */
     @targetName("done0")
     inline def done[A]: Outcome[A, Unit] < Any = ().asInstanceOf[Outcome[A, Unit] < Any]
@@ -481,8 +478,6 @@ object Loop:
         loop(Maybe.empty, Loop.continue(input1, input2, input3, input4))
     end apply
 
-    // Diverges from main: indexed tests the body's answer for Pending and defers the rest of the loop
-    // through it, instead of rebuilding the suspension around the loop.
     /** Executes an indexed loop without state values.
       *
       * This method runs an iterative computation that maintains a counter between iterations. Each iteration receives the current index and
@@ -684,8 +679,6 @@ object Loop:
         loop(Maybe.empty, Loop.continue)
     end foreach
 
-    // Diverges from main: repeat tests the body's answer for Pending, and evaluates the body exactly
-    // n times (main evaluates it once more and discards the answer).
     /** Repeats an operation a specified number of times.
       *
       * A simpler looping construct that executes an operation exactly n times. Unlike other loop variants, this doesn't maintain state or

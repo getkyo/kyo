@@ -11,9 +11,6 @@ import scala.collection.IterableOps
   * Async effect. Use the Kyo companion object methods when sequential processing is sufficient and Async when concurrent processing would
   * be beneficial.
   */
-// Diverges from main: every combinator's function parameter takes no `Safepoint ?=>` context and
-// the methods carry no Safepoint evidence, the evaluator polls the stack-depth budget itself. The
-// bodies are the same collection walks over this kernel's Loop.
 object Kyo:
 
     /** Explicitly lifts a pure plain value to a Kyo computation.

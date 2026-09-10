@@ -13,9 +13,8 @@ import kyo.Frame
   * @tparam S
   *   The type-level set of effects this computation may perform
   */
-// Diverges from main: main's Kyo is the sealed base of the suspension ADT (KyoSuspend, KyoContinue,
-// KyoDefer, Nested); here the nodes live in PendingInternal as Pending's subclasses and the
-// continuation is a first-class Arrow, so Kyo is the supertype of both.
+// The nodes live in PendingInternal as Pending's subclasses and the continuation is a first-class
+// Arrow, so Kyo is the supertype of both.
 trait Kyo[+A, -S]:
     /** The stack frame where this value was created */
     def frame: Frame

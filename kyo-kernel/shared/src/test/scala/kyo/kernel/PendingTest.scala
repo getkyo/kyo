@@ -6,8 +6,6 @@ import kyo.kernel.internal.Safepoint
 import scala.annotation.nowarn
 import scala.annotation.tailrec
 
-// Diverges from main: kyo-kernel does not depend on kyo-test here, so the suite extends this
-// module's ScalaTest base (kyo.Test) instead of kyo.test.Test.
 class PendingTest extends Test:
 
     private val Period = Safepoint.period()
@@ -187,9 +185,7 @@ class PendingTest extends Test:
             assert(x.evalNow == Maybe.empty)
         }
 
-        // Diverges from main: Safepoint carries no interceptors here, so there is nothing to make
-        // TestEffect.run's handling run inline. The handled computation is settled by running it,
-        // and evalNow reports Absent until then.
+        // The handled computation is settled by running it; evalNow reports Absent until then.
         "accepts nested computations" in {
             Kyo.lift(TestEffect(1)).evalNow match
                 case Absent => fail()
@@ -365,8 +361,6 @@ class PendingTest extends Test:
             assert(result.eval == true)
         }
 
-        // Diverges from main: every stage of handle is by name here; main's strict f1 on the longer overloads
-        // lets the exception escape.
         "a by-name stage sees an exception thrown while the receiver is built" in {
             def catching[A](v: => A < Any): Maybe[A] =
                 try Maybe(v.eval)
@@ -428,9 +422,8 @@ class PendingTest extends Test:
                 ContextEffect.handleInheritable(Tag[TestEffect3], value)(v)
         end TestEffect3
 
-        // Diverges from main: Safepoint has no interceptors here, so the deferral is forced by
-        // draining the safepoint budget. Every entry inside the block is denied, which is what a
-        // preempting fiber does to the resumption over a nested `A < S` value.
+        // Forces the deferral by draining the safepoint budget, denying every entry inside the block,
+        // which is what a preempting fiber does to the resumption over a nested `A < S` value.
         def drainedBudget[A](f: => A): A =
             val slot  = Safepoint.get()
             val saved = Safepoint.save(slot)

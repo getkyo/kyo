@@ -92,8 +92,8 @@ end Handler
                     throw ex
     end MaskingHandler
 
-    // Not on main: a LoopHandler's clause answers with a single-state Outcome and the region carries no
-    // state; a LoopStateHandler's answers with an Outcome2 carrying its state.
+    // A LoopHandler's clause answers with a single-state Outcome and the region carries no state; a
+    // LoopStateHandler's answers with an Outcome2 carrying its state.
     abstract class LoopHandler[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends ArrowHandler[Unit, E, A, B, S]:
         def run[X](input: I[X]): Outcome[O[X] < (E & S), B < S] < S
 
