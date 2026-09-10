@@ -129,12 +129,11 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
     // The gap is inside kyo's own spawn, so it cannot be held open the way the acquire thunks above are.
     // It is raced instead: each round interrupts the parent as close to the spawn as possible, and the
     // round fails only if a child is left running with nobody to stop it. One escape is a real one, so
-    // the assertion is on the count, not on a proportion.
+    // every round that started a child is checked, rather than a proportion of them.
     "Fiber.use interrupts the fiber it spawned when an interrupt lands on the spawn" in {
         val rounds = 40
         for
             exercised <- AtomicInt.init(0)
-            orphaned  <- AtomicInt.init(0)
             // Half the rounds wait for the child to be running before interrupting, and half interrupt at the
             // spawn. Racing alone proved nothing: under a full-suite run the child never won the race once in
             // forty rounds, so the leaf passed having orphaned nothing because it had started nothing. The
@@ -143,10 +142,9 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
             _ <- Kyo.foreachDiscard(1 to rounds) { round =>
                 for
                     started    <- Promise.init[Unit, Any]
-                    torn       <- Latch.init(1)
                     gate       <- Latch.init(1)
                     childAlive <- AtomicBoolean.init(false)
-                    child = (Sync.ensure(childAlive.set(false).andThen(torn.release)) {
+                    child = (Sync.ensure(childAlive.set(false)) {
                         childAlive.set(true).andThen(started.completeUnitDiscard).andThen(gate.await)
                     }: Unit < (Sync & Async))
                     parent <- Fiber.initUnscoped(Fiber.use[Nothing, Unit, Any, Any](child)(_ => started.get))
@@ -154,27 +152,22 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
                     _      <- parent.interrupt
                     _      <- parent.getResult
                     // Most rounds interrupt the parent before the child ever runs, and a child that never started
-                    // holds nothing and tears nothing down, so waiting for `torn` there only pays the timeout: the
-                    // whole leaf spent 40 of them, twelve seconds, on rounds proving nothing. Only a round whose
-                    // child actually started has a teardown to wait for.
+                    // holds nothing and tears nothing down, so there is nothing to wait for there. Only a round
+                    // whose child actually started has a teardown owed to it.
                     ran <- started.done
-                    out <- (
-                        if ran then Abort.run[Timeout](Async.timeout(300.millis)(torn.await))
-                        else Result.succeed(())
-                    ): Result[Timeout, Unit] < Async
-                    left <- childAlive.get
-                    _    <- gate.release
-                    _    <- if ran then exercised.incrementAndGet.unit else Kyo.unit
-                    _    <- if out.isFailure && left then orphaned.incrementAndGet.unit else Kyo.unit
+                    // The orphan check. It waits for the teardown to be observably true rather than giving it a
+                    // deadline: a bound here is not a timeout on the test, it is an input to the verdict, so a
+                    // loaded worker that tears the child down a little slower would be recorded as a leak. A
+                    // child that really is orphaned never clears this flag and the leaf fails on it.
+                    _ <- if ran then assertEventually(childAlive.get.map(!_)) else Kyo.unit
+                    _ <- gate.release
+                    _ <- if ran then exercised.incrementAndGet.unit else Kyo.unit
                 yield ()
                 end for
             }
-            leaked <- orphaned.get
-            hit    <- exercised.get
-        yield
-            assert(leaked == 0, s"$leaked of $rounds rounds left the spawned fiber running with nothing to interrupt it")
-            // A round whose child never started proves nothing, so the leaf has to know the race lands sometimes.
-            assert(hit > 0, s"none of the $rounds rounds got the child running, so nothing was raced against the spawn")
+            hit <- exercised.get
+        // A round whose child never started proves nothing, so the leaf has to know the race lands sometimes.
+        yield assert(hit > 0, s"none of the $rounds rounds got the child running, so nothing was raced against the spawn")
         end for
     }
 
@@ -185,7 +178,6 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
         val rounds = 40
         for
             exercised <- AtomicInt.init(0)
-            orphaned  <- AtomicInt.init(0)
             // Half the rounds wait for the child to be running before interrupting, and half interrupt at the
             // spawn. Racing alone proved nothing: under a full-suite run the child never won the race once in
             // forty rounds, so the leaf passed having orphaned nothing because it had started nothing. The
@@ -194,34 +186,26 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
             _ <- Kyo.foreachDiscard(1 to rounds) { round =>
                 for
                     started    <- Promise.init[Unit, Any]
-                    torn       <- Latch.init(1)
                     gate       <- Latch.init(1)
                     childAlive <- AtomicBoolean.init(false)
-                    child = (Sync.ensure(childAlive.set(false).andThen(torn.release)) {
+                    child = (Sync.ensure(childAlive.set(false)) {
                         childAlive.set(true).andThen(started.completeUnitDiscard).andThen(gate.await)
                     }: Unit < (Sync & Async))
                     parent <- Fiber.initUnscoped(Scope.run(Fiber.init(child).andThen(started.get)))
                     _      <- if round % 2 == 0 then started.get else Kyo.unit
                     _      <- parent.interrupt
                     _      <- parent.getResult
-                    // Only a round whose child actually started has a teardown to wait for; see the leaf above.
+                    // Only a round whose child actually started has a teardown owed to it; see the leaf above,
+                    // including why the orphan check waits for the teardown instead of bounding it.
                     ran <- started.done
-                    out <- (
-                        if ran then Abort.run[Timeout](Async.timeout(300.millis)(torn.await))
-                        else Result.succeed(())
-                    ): Result[Timeout, Unit] < Async
-                    left <- childAlive.get
-                    _    <- gate.release
-                    _    <- if ran then exercised.incrementAndGet.unit else Kyo.unit
-                    _    <- if out.isFailure && left then orphaned.incrementAndGet.unit else Kyo.unit
+                    _   <- if ran then assertEventually(childAlive.get.map(!_)) else Kyo.unit
+                    _   <- gate.release
+                    _   <- if ran then exercised.incrementAndGet.unit else Kyo.unit
                 yield ()
                 end for
             }
-            leaked <- orphaned.get
-            hit    <- exercised.get
-        yield
-            assert(leaked == 0, s"$leaked of $rounds rounds left the spawned fiber running with nothing to interrupt it")
-            assert(hit > 0, s"none of the $rounds rounds got the child running, so nothing was raced against the spawn")
+            hit <- exercised.get
+        yield assert(hit > 0, s"none of the $rounds rounds got the child running, so nothing was raced against the spawn")
         end for
     }
 
