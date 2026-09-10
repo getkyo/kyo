@@ -740,7 +740,8 @@ class ScopeTest extends kyo.test.Test[Any]:
                 )
                 _ <- started.await
                 _ <- fiber.interrupt
-                _ <- Async.sleep(500.millis)
+                // the bracket runs on the abandonment walk, which the interrupt starts without waiting for
+                _ <- assertEventually(ran.get.map(_ == 1))
                 n <- ran.get
             yield assert(n == 1, s"bracket ran $n times")
             end for

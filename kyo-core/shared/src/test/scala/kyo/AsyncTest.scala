@@ -1757,7 +1757,10 @@ class AsyncTest extends kyo.test.Test[Any]:
                     }
                 }
             }
-            _      <- Async.sleep(200.millis)
+            // Parked on `never` for real, which is the whole claim: nothing completes that promise, so a
+            // fiber waiting on it cannot finish, and a poll taken once it is there needs no grace period.
+            // Waiting a fixed time instead only asks whether it finished early on this machine.
+            _      <- assertEventually(never.waiters.map(_ == 1))
             polled <- fiber.poll
         yield assert(polled.isEmpty, s"fiber completed early with: $polled")
     }
