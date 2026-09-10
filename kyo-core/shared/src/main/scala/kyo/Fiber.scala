@@ -6,7 +6,6 @@ import kyo.Result.Panic
 import kyo.internal.Reducible
 import kyo.kernel.Bracket
 import kyo.kernel.ContextEffect
-import kyo.kernel.Isolate
 import kyo.kernel.internal.Safepoint
 import kyo.scheduler.IOPromise
 import kyo.scheduler.IOPromiseBase

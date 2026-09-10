@@ -408,12 +408,6 @@ class ActorTest extends kyo.test.Test[Any]:
             yield assert(result == Result.fail(TestError))
             end for
         }
-
-        // Neither test above covers the scope that owns the actor closing while the actor is still parked on
-        // its mailbox: Actor.run spawns through the scoped Fiber.init, which registers `_.interrupt`, so the
-        // scope signals the actor and returns without waiting for its teardown, leaving a resource the behavior
-        // holds open past Scope.run. That is the Scope.run defect ScopeInterruptTest pins, not an Actor-specific
-        // one; gating the finalizer to make a pin here deterministic would deadlock once the interrupt awaits.
     }
 
     "concurrency" - {
