@@ -63,7 +63,7 @@ import scala.collection.mutable.ArrayBuffer
                                 loop(kyo.cont(state, contA.chain(contB)), Arrow.id, Arrow.id, ctx)
                             else
                                 // A masking region shadows the binding this read would have answered from, so it
-                                // dispatches to that region instead, by the route an arrow operation already takes.
+                                // dispatches there by the route an arrow operation takes.
                                 val entries = maskedEntries(kyo)
                                 val result  = maskedRead(kyo, entries, contA.chain(contB))
                                 if armed && Safepoint.stopped(slot) then park(result, Arrow.id, Arrow.id)
@@ -87,9 +87,9 @@ import scala.collection.mutable.ArrayBuffer
                                             else kyo.crossing(entries, contA.chain(contB))
                                         val result = handler.answering(kyo.input, continuation, kyo, stack)
                                         Debugger.onResult(result)
-                                        // the stop is honored on the clause's answer, as the loop walks do on
-                                        // theirs: an answer that re-raises the operation would otherwise be
-                                        // dispatched straight back to this clause with no deferral to park at
+                                        // The stop is honored on the clause's answer: one that re-raises the
+                                        // operation would otherwise dispatch straight back here with no
+                                        // deferral to park at.
                                         if armed && Safepoint.stopped(slot) then park(result, Arrow.id, Arrow.id)
                                         else loop(result, Arrow.id, Arrow.id, ctx2)
                                     case handler: Handler.MaskingHandler[EX, C, Y, S2] @unchecked =>
@@ -487,8 +487,8 @@ import scala.collection.mutable.ArrayBuffer
         entries
     end dumped
 
-    // The regions a held continuation carries, marked so that the first resumption to end their extents records
-    // its outcome rather than discharging them; whoever owes them discharges them when it ends.
+    // The regions a held continuation carries: the first resumption to end their extents records its outcome
+    // rather than discharging them, and whoever owes them discharges when it ends.
     private def held(entries: Stack.Snapshot): Unit =
         var i = 0
         while i < entries.regions do
@@ -502,8 +502,8 @@ import scala.collection.mutable.ArrayBuffer
     private def drainDiscarded(owed: Chunk[Stack.Snapshot]): Unit =
         if !owed.isEmpty then
             val signal = new KyoException("remainder discarded")(using Frame.internal)
-            // the owner is ending normally, so a held region's recorded outcome is what its release is owed; the
-            // signal only stands in for a region that never ran to an ending
+            // The owner is ending normally, so a held region's recorded outcome is what its release is owed;
+            // the signal only stands in for one that never ran to an ending.
             drainOwed(owed, signal, discharging = true)
             if signal.getSuppressed.length != 0 then Report.unhandled(signal)
 
@@ -560,11 +560,9 @@ import scala.collection.mutable.ArrayBuffer
     private def release[A, S](v: A < S, ex: Throwable, effectTag: Maybe[Tag[Any]], f: Any => Unit, fuel: Int): Unit =
         val collected = ArrayBuffer.empty[AnyRef]
 
-        // What an abandoned computation owes is not only under a node's value: an `Arrow.Ensure` waiting on an
-        // already-settled value is a release nobody will run, so the continuation is carried down and offered
-        // the value when one is reached. Only an `Ensure` may run here; anything else is ordinary work.
-        //
-        // A chain's head is its left arrow, itself a chain whenever one was built onto another, so the step
+        // An `Arrow.Ensure` waiting on an already-settled value is a release nobody will run, so the
+        // continuation is carried down and offered the value when one is reached. Only an `Ensure` may run
+        // here. A chain's head is its left arrow, itself a chain when one was built onto another, so the step
         // that would have received the value is found by walking `head` down.
         @tailrec def leftmost(cont: Arrow[Any, Any, Any]): Arrow[Any, Any, Any] =
             val h = cont.head
@@ -572,11 +570,9 @@ import scala.collection.mutable.ArrayBuffer
             if h eq cont then cont else leftmost(h.asInstanceOf[Arrow[Any, Any, Any]])
         end leftmost
 
-        // Applying the `Ensure` is not always the whole of the debt. One that registers its release elsewhere,
-        // as `Scope.acquireRelease` does, is done once applied; one that installs a region to own the release,
-        // as `Bracket` does, has only just created what owes it, and discarding that region drops the release
-        // with it. So the application's result is walked too, at no budget: it collects the region and any
-        // nested one, and steps through nothing.
+        // Applying the `Ensure` is not always the whole debt. One that registers its release elsewhere, as
+        // `Scope.acquireRelease` does, is done once applied; one that installs a region to own it, as
+        // `Bracket` does, has only just created what owes it. So the result is walked too, at no budget.
         def ensuring(v: Any, cont: Arrow[Any, Any, Any]): Unit =
             leftmost(cont) match
                 case step: Arrow.Ensure[Any, Any, Any] @unchecked => collect(step(v), Arrow.id, 0)

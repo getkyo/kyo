@@ -47,10 +47,9 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
       */
     @volatile private var status: AnyRef = Idle
 
-    /** Takes this task out of `curr`, for a thread that does not own it yet.
+    /** Claims this task for a thread that does not own it yet.
       *
-      * Absent handle means a single-threaded runtime, where the read-modify-write is already atomic with
-      * respect to everything that can observe it.
+      * An absent handle means a single-threaded runtime, where the read-modify-write is already atomic.
       */
     private def casStatus(curr: Status, next: Status): Boolean =
         IOTaskPlatformSpecific.statusHandle match
@@ -65,10 +64,8 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
 
     /** The frame of the join a park stopped at, for the unlink the wakeup performs.
       *
-      * The wakeup is armed by `run` rather than by the boundary (see the park arm below), and the frame the
-      * unlink is written under belongs to the join, which only the boundary is holding. So the boundary
-      * leaves it here. Written and read by the same thread within one slice, which is why it is a plain var
-      * next to a volatile one: nothing outside that slice looks at it.
+      * `run` arms the wakeup but only the boundary holds the join's frame, so the boundary leaves it here.
+      * A plain var next to a volatile one: written and read by the same thread within one slice.
       */
     private var joinFrame: Frame = Frame.internal
 
@@ -153,10 +150,8 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
 
     /** Records that this slice has decided to park, and on what.
       *
-      * A method rather than two writes at the site, because the site is inside the boundary's clause: a field
-      * a lambda touches is not the enclosing class's private field any more, it is promoted and renamed, and
-      * the platform handle finds `status` by name. Keeping every access in a method of this class is what
-      * keeps the field private and its name its own.
+      * A method rather than two writes at the site: the site is inside a lambda, and a field a lambda touches
+      * is promoted and renamed, while the platform handle finds `status` by name.
       */
     private def parkOn(promise: IOPromise[?, ?], frame: Frame): Unit =
         status = promise

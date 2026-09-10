@@ -81,14 +81,12 @@ object Scope:
         frame: Frame
     ): A < (Scope & Sync & S) =
         ContextEffect.suspendWith(Tag[Scope]) { finalizer =>
-            // The finalizer is read before the acquire runs, and the registration is a plain call rather than a
-            // suspension, so `ensureMap` can put the acquire's completion and that registration in one step. Mapping
-            // with `map` instead would leave a window: the registration would be a suspension of its own, and an
-            // interrupt pending when the acquire completes parks the computation before that suspension is dispatched,
-            // leaving the abandonment nothing to release the acquired value with.
+            // `ensureMap` puts the acquire's completion and the registration in one step. `map` would make the
+            // registration a suspension of its own, and an interrupt pending when the acquire completes parks
+            // before that suspension is dispatched, leaving the abandonment nothing to release.
             Sync.defer(acquire).ensureMap { resource =>
-                // Unsafe: the registration has to complete in the same step the acquire's value arrives in, which
-                // rules out returning it as an effect for the evaluator to dispatch later.
+                // Unsafe: the registration must complete in the step the acquire's value arrives in, which rules
+                // out returning it as an effect.
                 import AllowUnsafe.embrace.danger
                 finalizer.ensureUnsafe(_ => release(resource))
                 resource
@@ -140,20 +138,16 @@ object Scope:
     def run[A, S](closeParallelism: Int)(v: A < (Scope & S))(using frame: Frame): A < (Async & S) =
         Sync.Unsafe.defer {
             val finalizer = Finalizer.Unsafe.init(closeParallelism)
-            // A scope closes at the end of the `Scope.run` that opened it, and nowhere else.
+            // A scope closes at the end of the `Scope.run` that opened it, and nowhere else. A nested run joins
+            // as a child, and children are closed and waited for before this scope releases its own, which
+            // orders inner releases before outer ones. Closed rather than only waited for: a nested run blocked
+            // inside a handler closes when something ends that handler, often a finalizer of this scope, so a
+            // queued wait could sit ahead of the finalizer that would release it. Tolerantly, since the
+            // enclosing scope may already be closed by a fiber that outlived it.
             //
-            // A nested run joins as a child. An enclosing scope closes its children and waits for them before
-            // releasing its own, which orders an inner resource's release before an outer one's.
-            //
-            // Closing rather than only waiting: a nested run blocked inside a handler closes when something
-            // ends that handler, often a finalizer of this scope, so a queued wait could sit ahead of the
-            // finalizer that would release it and wait on itself. Tolerantly, since the enclosing scope may
-            // already be closed by a fiber that outlived it.
-            //
-            // A crossing shares this scope rather than getting its own, so a resource's lifetime does not
-            // depend on whether a combinator forked internally (pinned in StreamCoreExtensionsTest:890).
-            // It does not share membership, which `forked` withholds: a run opened inside a fork is its own
-            // root, because this scope does not end the fiber carrying it. Closing it from here would take a
+            // A crossing shares this scope, so a resource's lifetime does not depend on whether a combinator
+            // forked internally (StreamCoreExtensionsTest:890). It does not share membership, which `forked`
+            // withholds: a run opened inside a fork is its own root, and closing it from here would take a
             // resource from an owner still using it.
             ContextEffect.handle(Tag[Scope])(
                 derive = (outer: Maybe[Finalizer]) =>
@@ -276,11 +270,9 @@ object Scope:
                     )
                     val children = Queue.Unbounded.Unsafe.init[Finalizer](Access.MultiProducerSingleConsumer)
 
-                    // Uninterruptible, because `close` hands the drain to a fiber and `become`s this promise with it, and
-                    // `await` is what a caller parks on. An interrupt landing on that caller would otherwise
-                    // travel through the promise into the drain and stop the finalizers halfway, which loses
-                    // exactly the releases the interrupt was supposed to trigger (#1928). Interrupting a scope's
-                    // cleanup is never what an interrupt means.
+                    // Uninterruptible: `close` `become`s this promise with the drain's fiber and `await` is what a
+                    // caller parks on, so an interrupt there would travel into the drain and stop the finalizers
+                    // halfway, losing the releases it was meant to trigger (#1928).
                     val promise = Promise.Unsafe.initUninterruptible[Unit, Any]().safe
 
                     // Delegates rather than repeating the offer, so a closed scope answers both registration
