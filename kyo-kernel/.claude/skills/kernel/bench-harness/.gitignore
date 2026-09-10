@@ -1,7 +1,0 @@
-target/
-project/target/
-project/project/
-.bsp/
-.metals/
-.vscode/
-.scala-build/

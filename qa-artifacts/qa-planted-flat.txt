@@ -1,7 +1,0 @@
---- Execution profile ---
-Total samples       : 311949
-
-       bytes  percent  samples  top
-  ----------  -------  -------  ---
-163550281076  100.00%   311948  byte[]
-      524287    0.00%        1  java.lang.String

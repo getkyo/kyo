@@ -1,6 +1,0 @@
-       bytes  percent  samples  top
-  ----------  -------  -------  ---
-  1987047730   50.66%     3790  kyo.kernel.proto.Nested
-  1927279012   49.14%     3676  kyo.kernel.bench.ProtoKernelBench$$anon$95
-     5242870    0.13%       10  kyo.kernel.proto.Arrow$Bind
-     2621435    0.07%        5  kyo.kernel.bench.ProtoKernelBench$$anon$51

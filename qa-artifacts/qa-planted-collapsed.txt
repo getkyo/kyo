@@ -1,4 +1,0 @@
-Planted.main;Planted.plantedAllocator;byte[]_[i] 312717
-Planted.main;Planted.minorAllocator;char[]_[i] 2
-Planted.main;Planted.minorAllocator;java/lang/String.<init>;java/lang/String.<init>;java/lang/StringUTF16.compress;byte[]_[i] 2
-Planted.main;Planted.minorAllocator;java.lang.String_[i] 2
