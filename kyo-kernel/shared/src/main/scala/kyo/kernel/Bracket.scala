@@ -37,9 +37,8 @@ object Bracket:
     // The cell is not parameterised by the use value: the release is told how the extent ended, not what
     // it produced.
     //
-    // Two shapes rather than one with a flag: a bracket's own state, and what it hands an isolated child. The
-    // second hears the same lifecycle and does nothing with it, so it records no ending and can be shared,
-    // where one that recorded would carry the first crossing's ending into every later one and refuse them all.
+    // Two shapes rather than one with a flag: a bracket's own state, and the inert one handed to an isolated
+    // child. A recording instance would carry the first crossing's ending into every later one.
     sealed abstract private[kyo] class Cell extends AtomicBoolean:
         private[kyo] def borrow(): Unit
         private[kyo] def isBorrowed: Boolean
@@ -52,13 +51,13 @@ object Bracket:
     private[kyo] object Cell:
 
         final class Live(fin: Maybe[Throwable] => Unit) extends Cell:
-            // Set when the region is re-installed from a continuation the handler above dumped, which is the one situation
-            // where the extent ending is not the last word: the same continuation can be resumed again, and a release fired
-            // at the first ending would run under the resumptions that follow. While it is set, an ending only records that
-            // it happened, and the handler that owes this region fires the release when that handler ends.
+            // Set when the region is re-installed from a continuation the handler above dumped, the one case where
+            // an extent ending is not the last word: the continuation can be resumed again, so a release fired at
+            // the first ending would run under the resumptions that follow. While set, an ending only records, and
+            // the handler that owes this region fires the release when it ends.
             @volatile private var borrowed = false
-            // whether any ending of the extent ran to completion, which is what a later discharge reports, and what tells a
-            // refused re-entry which of the two ways this cell fired
+            // Whether any ending ran to completion: what a later discharge reports, and what tells a refused
+            // re-entry which way this cell fired.
             @volatile private var ended = false
 
             private[kyo] def borrow(): Unit      = borrowed = true
@@ -68,14 +67,13 @@ object Bracket:
                 ended = true
                 if !borrowed && compareAndSet(false, true) then fin(Absent)
 
-            // The release is owed the failure that unwound its extent whatever it is, and the fatal itself keeps
-            // propagating. An unwind wins over any ending that already ran: the extent is being abandoned, and a release
-            // that commits on success would commit over a failure.
+            // The release is owed the failure that unwound its extent, and the fatal keeps propagating. An unwind
+            // wins over any ending that already ran, or a release that commits on success would commit over it.
             private[kyo] def drain(ex: Throwable): Unit =
                 if compareAndSet(false, true) then fin(Maybe(ex))
 
-            // the owner ended normally, so the extent's own endings are final. None of them means the extent never ran to
-            // an ending at all, and the discard signal is what the release is owed.
+            // The owner ended normally, so the extent's own endings are final. None means it never ran to an
+            // ending at all, and the discard signal is what the release is owed.
             private[kyo] def discharge(ex: Throwable): Unit =
                 if compareAndSet(false, true) then
                     if ended then fin(Absent)
@@ -84,8 +82,8 @@ object Bracket:
             private[kyo] def endedItsExtent: Boolean = ended
         end Live
 
-        // What a bracket hands an isolated child: it never runs a release, never records an ending and never
-        // refuses a re-entry, so it holds nothing and one instance serves every crossing.
+        // Handed to an isolated child: no release, no recorded ending, no refusal, so one instance serves
+        // every crossing.
         val inert: Cell =
             new Cell:
                 private[kyo] def borrow(): Unit                 = ()
@@ -125,9 +123,8 @@ object Bracket:
       * for a computation that never started.
       */
     def ensuring[B, S](release: Maybe[Throwable] => Unit)(body: => B < S)(using _frame: Frame): B < S =
-        // A throw while the body is being built is re-raised as the region's own body rather than here, so
-        // building the value stays free of effects and the throw unwinds with the region installed, which
-        // is what fires the release.
+        // A throw while the body is being built is re-raised as the region's own body, so it unwinds with the
+        // region installed and fires the release.
         val b =
             try body
             catch case ex => Effect.defer(throw ex)
