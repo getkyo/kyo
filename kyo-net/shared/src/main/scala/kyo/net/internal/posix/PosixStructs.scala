@@ -262,10 +262,7 @@ private[net] object SockAddr:
             zero(buf, inet4Size)
             putFamily(buf, family)
             putPortNetOrder(buf, 2, port)
-            var i = 0
-            while i < 4 do
-                buf.set(4 + i, addr(i))
-                i += 1
+            buf.copyFromArray(addr, 0, 4, 4)
             Maybe((buf, inet4Size))
         end if
     end encodeInet4Raw
@@ -289,10 +286,7 @@ private[net] object SockAddr:
             zero(buf, inet6Size)
             putFamily(buf, family)
             putPortNetOrder(buf, 2, port)
-            var i = 0
-            while i < 16 do
-                buf.set(8 + i, addr(i))
-                i += 1
+            buf.copyFromArray(addr, 0, 8, 16)
             Maybe((buf, inet6Size))
         end if
     end encodeInet6Raw
@@ -309,10 +303,7 @@ private[net] object SockAddr:
             val buf = Buffer.alloc[Byte](unixSize)
             zero(buf, unixSize)
             putFamily(buf, family)
-            var i = 0
-            while i < bytes.length do
-                buf.set(2 + i, bytes(i))
-                i += 1
+            buf.copyFromArray(bytes, 0, 2, bytes.length)
             Maybe((buf, unixSize))
         end if
     end encodeUnix
