@@ -306,11 +306,11 @@ assert(scaled.eval == 30)
 
 ### Binding a value for a scope
 
-A `ContextEffect` is discharged by binding rather than by answering. `ContextEffect.handle` installs a value for the extent of a computation and removes the effect from the row:
+A `ContextEffect` is discharged by binding rather than by answering. `ContextEffect.handleInheritable` installs a value for the extent of a computation and removes the effect from the row:
 
 ```scala
 def withLevel[A, S](n: Int)(v: A < (Level & S)): A < S =
-    ContextEffect.handle(Tag[Level], n, (_: Int) => n)(v)
+    ContextEffect.handleInheritable(Tag[Level], n, (_: Int) => n)(v)
 
 assert(withLevel(2)(levelPlus(40)).eval == 42)
 ```
@@ -319,14 +319,14 @@ Two values are supplied, not one. The first is what to bind when nothing is boun
 
 ```scala
 val layered: Int < Any =
-    withLevel(1)(ContextEffect.handle(Tag[Level], 0, (outer: Int) => outer + 10)(level))
+    withLevel(1)(ContextEffect.handleInheritable(Tag[Level], 0, (outer: Int) => outer + 10)(level))
 
 assert(layered.eval == 11)
 ```
 
 > **Note:** a binding resolves when it is installed, not when it is read. A computation captured under one binding and resumed under a different enclosing binding merges into the one it is resumed under, rather than carrying its original.
 
-Three further parameters describe what happens at the edges of the extent, and each defaults to the plainest answer. `fork` is what a computation forked from here receives, `join` is what this scope holds once a fork ends, and `release` is what the value owes when the extent ends. They belong to [crossing an execution boundary](#crossing-an-execution-boundary), where the reason they are on this call becomes visible.
+`handleInheritable` decides the edges of the extent for you: a forked computation receives the binding unchanged and the scope keeps its own value when that fork ends. `ContextEffect.handle` is the form that asks, taking `fork`, what a computation forked from here receives, and `join`, what this scope holds once a fork ends, as required arguments, plus optional `done` and `release` hooks for what the value owes when the extent ends. Those belong to [crossing an execution boundary](#crossing-an-execution-boundary), where the reason they are on this call becomes visible.
 
 > **Note:** handler resolution and binding resolution follow different rules. A handler is found by subtyping, so a handler for a subtype answers a supertype's operations and not the reverse. A binding is found by exact tag equality, so a binding for one `ContextEffect` never answers a read of another.
 

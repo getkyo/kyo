@@ -793,10 +793,6 @@ lazy val `kyo-kernel` =
             // reusing one compiler across blocks trips dotty's denotation validation on the
             // suspended-unit retries. A fresh driver per block sidesteps it.
             doctestFreshDriver := true,
-            // Mid-migration: kyo-settings puts the doctest driver jar on the Test classpath,
-            // and that jar is built from the stack above the kernel, which compiles against
-            // the previous kernel until it migrates. Kept off so the kernel's own suites run.
-            Test / unmanagedJars := Seq.empty,
             // Bytecode-shape pins (PendingBytecodeTest, ArrowEffectBytecodeTest) read method
             // sizes through javassist, matching the old kernel's BytecodeTest.
             libraryDependencies += "org.javassist" % "javassist" % "3.32.0-GA" % Test,
