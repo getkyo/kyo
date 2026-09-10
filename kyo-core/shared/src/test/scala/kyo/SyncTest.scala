@@ -576,4 +576,81 @@ class SyncTest extends kyo.test.Test[Any]:
         }
     }
 
+    "ensure under interruption" - {
+
+        // Cleanup that always occurs, for a computation that never got a slice. Holds only while nothing
+        // deferred sits above the region, since the abandonment walk stops at one.
+        "runs its finalizer for a fiber abandoned before its first slice" in {
+            Async.foreachDiscard(1 to 20, 20) { _ =>
+                for
+                    ran <- AtomicInt.init(0)
+                    p   <- Promise.init[Int, Any]
+                    fiber <- Fiber.initUnscoped {
+                        import AllowUnsafe.embrace.danger
+                        Sync.ensure(Sync.Unsafe.defer(discard(ran.unsafe.incrementAndGet())))(p.get)
+                    }
+                    _ <- fiber.interrupt
+                    _ <- fiber.getResult
+                    _ <- assertEventually(ran.get.map(_ == 1))
+                    c <- ran.get
+                yield assert(c == 1, s"the finalizer ran $c times")
+                end for
+            }.andThen(assert(true))
+        }
+
+        // An interrupt landing as the body produces its outcome. The body interrupts its own fiber and then
+        // produces the value, so delivery lands at the next safepoint: after the body's step, before the
+        // region's own completion. Reaching that moment needs no second thread, so it runs on every platform.
+        "still runs the finalizer" in {
+            for
+                ran     <- AtomicInt.init(0)
+                handoff <- Promise.init[Fiber[Unit, Any], Any]
+                fiber <- Fiber.initUnscoped {
+                    handoff.get.map { self =>
+                        Sync.ensure(ran.incrementAndGet.unit) {
+                            Sync.defer {
+                                // Unsafe: the interrupt has to be requested from inside the body, before its
+                                // step ends, which is not an effectful position.
+                                import AllowUnsafe.embrace.danger
+                                discard(self.unsafe.interrupt())
+                            }
+                        }
+                    }
+                }
+                _   <- handoff.complete(Result.succeed(fiber))
+                res <- fiber.getResult
+                _   <- assertEventually(ran.get.map(_ == 1))
+                r   <- ran.get
+            yield
+                assert(res.isPanic, s"$res")
+                assert(r == 1, s"the finalizer ran $r times")
+            end for
+        }
+
+        "runs the finalizer exactly once when the body aborts" in {
+            for
+                ran     <- AtomicInt.init(0)
+                handoff <- Promise.init[Fiber[Unit, Any], Any]
+                fiber <- Fiber.initUnscoped {
+                    handoff.get.map { self =>
+                        Abort.run[String] {
+                            Sync.ensure(ran.incrementAndGet.unit) {
+                                Sync.defer {
+                                    // Unsafe: see the leaf above.
+                                    import AllowUnsafe.embrace.danger
+                                    discard(self.unsafe.interrupt())
+                                }.andThen(Abort.fail("boom"))
+                            }
+                        }.unit
+                    }
+                }
+                _ <- handoff.complete(Result.succeed(fiber))
+                _ <- fiber.getResult
+                _ <- assertEventually(ran.get.map(_ == 1))
+                r <- ran.get
+            yield assert(r == 1, s"the finalizer ran $r times")
+            end for
+        }
+    }
+
 end SyncTest

@@ -1,19 +1,16 @@
 package kyo
 
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean as JAtomicBoolean
 
 /** Scope's behaviour when an interrupt lands inside an acquire, and when a scope exits over a child still holding a resource.
   *
-  * jvm-native rather than shared: pinning the moment an interrupt lands inside the acquire's own step needs the acquiring worker held
-  * there until the interrupt has been sent, and a held worker has no meaning on the single-threaded JS runtime. The hold is a plain JDK
-  * handshake on purpose, bounded, and it stands for what the acquire really is: the user's opaque side effect, a socket or a file being
-  * opened, running while an interrupt arrives from outside. The scheduler is adaptive, so a worker parked this way is compensated.
+  * The acquire leaves interrupt their own fiber from inside the acquire and then produce the value, so delivery lands at the next
+  * safepoint, after the acquire and at or before the registration. That is the window the tests are about, and reaching it that way needs
+  * no second thread: no spin, no latch, no wall clock, and it runs on every platform. `ScopeTest`'s "acquire-time registration (#1820)"
+  * block pins the same window over many rounds for `Scope.acquireRelease`; the leaves here cover the sibling acquire surfaces once each.
   *
-  * A release that runs through a fiber's abandonment is asynchronous, so each test waits on a latch the release opens, bounded by a
-  * live-clock timeout. That bound is a failure detector only: a `Timeout` is the evidence that the release never ran, and no assertion
-  * passes because of elapsed time.
+  * A release that runs through a fiber's abandonment is asynchronous, so each test waits for it with `assertEventually` rather than
+  * asserting on anything the clock reports.
   */
 class ScopeInterruptTest extends kyo.test.Test[Any]:
 
@@ -24,132 +21,105 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
         def isClosed: Boolean = closed.get()
     end Handle
 
-    /** Holds this worker until the parent says it has sent the interrupt, so the interrupt is pending when the step completes.
+    /** Spawns `body` on its own fiber and hands the fiber back to it, so the body can interrupt itself.
       *
-      * `entered` is set as the hold begins. A parent that waits for it knows this worker is inside the hold rather than on
-      * its way there, which is the difference between a resource genuinely still held and one whose release happened to win
-      * a race.
+      * The handoff is what makes the interrupt land inside the acquire instead of around it: the body waits for its own fiber before it
+      * runs, so by the time the acquire executes there is something for it to interrupt.
       */
-    def untilInterrupted(sent: AtomicBoolean, entered: Maybe[AtomicBoolean] = Absent): Unit =
-        // Unsafe: this is the opaque side effect itself, a synchronous hold on the worker, so it cannot
-        // suspend to read or write through the effectful tier.
-        import AllowUnsafe.embrace.danger
-        entered.foreach(_.unsafe.set(true))
-        val deadline = java.lang.System.nanoTime() + 5.seconds.toNanos
-        while !sent.unsafe.get() && java.lang.System.nanoTime() < deadline do Thread.onSpinWait()
-    end untilInterrupted
+    def selfInterrupting(body: Fiber[Unit, Any] => Unit < (Sync & Async))(using Frame): Result[Nothing, Unit] < (Sync & Async) =
+        for
+            handoff <- Promise.init[Fiber[Unit, Any], Any]
+            fiber   <- Fiber.initUnscoped(handoff.get.map(body))
+            _       <- handoff.complete(Result.succeed(fiber))
+            res     <- fiber.getResult
+        yield res
 
     "an interrupt landing while the acquire's last step runs" - {
 
         // The control: Sync's bracket builds its region as the acquire is applied, so an abandonment
         // that finds the acquired value has something to release it with.
         "Sync.acquireReleaseWith still releases what the acquire produced" in {
-            val inAcquire = new CountDownLatch(1)
             for
-                interruptSent <- AtomicBoolean.init(false)
-                acquired      <- AtomicInt.init(0)
-                released      <- AtomicInt.init(0)
-                relDone       <- Latch.init(1)
-                fiber <- Fiber.initUnscoped {
+                acquired <- AtomicInt.init(0)
+                released <- AtomicInt.init(0)
+                res <- selfInterrupting { self =>
                     Sync.acquireReleaseWith {
-                        acquired.incrementAndGet.andThen(Sync.defer {
-                            inAcquire.countDown()
-                            untilInterrupted(interruptSent)
+                        Sync.defer {
+                            // Unsafe: the interrupt has to be requested from inside the acquire, before it
+                            // returns, which is not an effectful position, and the count has to be taken in
+                            // the same node so it reports the acquire producing a value.
+                            import AllowUnsafe.embrace.danger
+                            discard(self.unsafe.interrupt())
+                            discard(acquired.unsafe.incrementAndGet())
                             "token"
-                        })
-                    }(_ => released.incrementAndGet.unit.andThen(relDone.release))(_ => Sync.defer(()))
+                        }
+                    }(_ => released.incrementAndGet.unit)(_ => Sync.defer(()))
                 }
-                _   <- Sync.defer(discard(inAcquire.await(5, TimeUnit.SECONDS)))
-                _   <- fiber.interrupt
-                _   <- interruptSent.set(true)
-                res <- fiber.getResult
-                out <- Abort.run[Timeout](Async.timeout(3.seconds)(relDone.await))
-                a   <- acquired.get
-                r   <- released.get
+                _ <- assertEventually(released.get.map(_ == 1))
+                a <- acquired.get
+                r <- released.get
             yield
                 assert(res.isPanic, s"$res")
                 assert(a == 1)
-                assert(out.isSuccess && r == 1, s"acquired $a, released $r ($out)")
+                assert(r == 1, s"acquired $a, released $r: the value the acquire produced was never released")
             end for
         }
 
-        // Scope used to register its finalizer in a suspension that follows the acquire, so an
-        // interrupt pending when the acquire completed parked the eval before that registration was
-        // dispatched and the acquired value was never released. The finalizer now goes in first and
-        // a bracket records what the acquire produced, which is atomic with the acquire's own exit.
         "Scope.acquireRelease releases what the acquire produced" in {
-            val inAcquire = new CountDownLatch(1)
             for
-                interruptSent <- AtomicBoolean.init(false)
-                acquired      <- AtomicInt.init(0)
-                released      <- AtomicInt.init(0)
-                relDone       <- Latch.init(1)
-                fiber <- Fiber.initUnscoped {
+                acquired <- AtomicInt.init(0)
+                released <- AtomicInt.init(0)
+                res <- selfInterrupting { self =>
                     Scope.run {
                         Scope.acquireRelease {
-                            acquired.incrementAndGet.andThen(Sync.defer {
-                                inAcquire.countDown()
-                                untilInterrupted(interruptSent)
+                            Sync.defer {
+                                // Unsafe: see the leaf above.
+                                import AllowUnsafe.embrace.danger
+                                discard(self.unsafe.interrupt())
+                                discard(acquired.unsafe.incrementAndGet())
                                 "token"
-                            })
-                        }(_ => released.incrementAndGet.unit.andThen(relDone.release)).andThen(Sync.defer(()))
+                            }
+                        }(_ => released.incrementAndGet.unit).andThen(Sync.defer(()))
                     }
                 }
-                _   <- Sync.defer(discard(inAcquire.await(5, TimeUnit.SECONDS)))
-                _   <- fiber.interrupt
-                _   <- interruptSent.set(true)
-                res <- fiber.getResult
-                out <- Abort.run[Timeout](Async.timeout(3.seconds)(relDone.await))
-                a   <- acquired.get
-                r   <- released.get
+                _ <- assertEventually(released.get.map(_ == 1))
+                a <- acquired.get
+                r <- released.get
             yield
                 assert(res.isPanic, s"$res")
                 assert(a == 1)
-                assert(out.isSuccess && r == 1, s"acquired $a, released $r: the value the acquire produced was never released ($out)")
+                assert(r == 1, s"acquired $a, released $r: the value the acquire produced was never released")
             end for
         }
 
         "Scope.acquire closes the handle it opened" in {
-            val inAcquire = new CountDownLatch(1)
-            val handle    = new Handle
+            val handle = new Handle
             for
-                interruptSent <- AtomicBoolean.init(false)
-                fiber <- Fiber.initUnscoped {
+                res <- selfInterrupting { self =>
                     Scope.run {
                         Scope.acquire {
                             Sync.defer {
-                                inAcquire.countDown()
-                                untilInterrupted(interruptSent)
+                                // Unsafe: see the first leaf in this block.
+                                import AllowUnsafe.embrace.danger
+                                discard(self.unsafe.interrupt())
                                 handle
                             }
                         }.andThen(Sync.defer(()))
                     }
                 }
-                _   <- Sync.defer(discard(inAcquire.await(5, TimeUnit.SECONDS)))
-                _   <- fiber.interrupt
-                _   <- interruptSent.set(true)
-                res <- fiber.getResult
-                out <- Abort.run[Timeout](Async.timeout(3.seconds)(Loop.foreach {
-                    Sync.defer(handle.isClosed).map(c => if c then Loop.done else Async.sleep(10.millis).andThen(Loop.continue))
-                }))
+                _ <- assertEventually(Sync.defer(handle.isClosed))
             yield
                 assert(res.isPanic, s"$res")
-                assert(out.isSuccess && handle.isClosed, s"the opened handle was never closed ($out)")
+                assert(handle.isClosed, "the opened handle was never closed")
             end for
         }
     }
 
-    // `Fiber.init` interrupts the child and then waits for it to have released, so the scope's exit
-    // comes after the child's release rather than racing it. The child is held past the point the
-    // parent would otherwise have exited, so the order below is the scope's guarantee, not a race:
-    // signalling alone would let the scope record its exit first.
     "Scope.run waits for a scoped fiber to release the bracket it is inside" in {
         // The child has to be holding the bracket when the scope starts exiting, or the release happens for the
         // wrong reason and this reports the bug fixed when it is not. It parks rather than spinning: the region is
         // installed before the body runs, so the bracket is held from the first instant either way, and a park
-        // ends when the scope's exit interrupts it. Spinning cost five seconds a run, because that hold could only
-        // end at its own deadline: the flag that would have released it early is set after `Scope.run` returns,
-        // and `Scope.run` does not return until the child has released.
+        // ends when the scope's exit interrupts it.
         for
             entered  <- AtomicBoolean.init(false)
             log      <- AtomicRef.init(Chunk.empty[String])
@@ -281,12 +251,12 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
     // continuation stays dead.
     "a fiber interrupted while parked on an uninterruptible promise still runs its scope finalizers" in {
         for
-            finalized <- Latch.init(1)
+            finalized <- AtomicInt.init(0)
             resumed   <- AtomicBoolean.init(false)
             promise   <- Sync.Unsafe.defer(Promise.Unsafe.initUninterruptible[Unit, Any]().safe)
             fiber <- Fiber.initUnscoped {
                 Scope.run {
-                    Scope.ensure(finalized.release).andThen(promise.get.andThen(resumed.set(true)))
+                    Scope.ensure(finalized.incrementAndGet.unit).andThen(promise.get.andThen(resumed.set(true)))
                 }
             }
             // parked for real: the interrupt has to find the fiber on the promise, not on its way there
@@ -295,11 +265,12 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
                 discard(fiber.unsafe.interrupt())
                 promise.unsafe.completeUnitDiscard()
             }
-            // the release runs on the abandonment walk, so wait for it; the timeout is the failure detector
-            out  <- Abort.run[Timeout](Async.timeout(3.seconds)(finalized.await))
+            // the release runs on the abandonment walk, so wait for it
+            _    <- assertEventually(finalized.get.map(_ == 1))
+            fin  <- finalized.get
             woke <- resumed.get
         yield
-            assert(out.isSuccess, "the scope finalizer never ran for a fiber abandoned while parked")
+            assert(fin == 1, "the scope finalizer never ran for a fiber abandoned while parked")
             assert(!woke, "the interrupted continuation ran after the promise was completed")
         end for
     }
