@@ -6,21 +6,36 @@ import scala.annotation.nowarn
 
 /** The base trait for all effects in the Kyo effect system.
   *
-  * When code performs an effectful operation, instead of executing immediately, effects create a suspended computation that captures what
-  * needs to be done. These suspended computations can then be interpreted in different ways through effect handlers.
+  * An effectful operation does not execute where it is written. It builds a suspended computation capturing what needs to be done, and a
+  * handler later interprets it. That indirection is what makes effectful code pure and composable: the code describes the operations it
+  * wants, a handler decides how they actually happen, and the same description can be run, mocked, retried or abandoned.
   *
-  * This suspension mechanism is the foundation of Kyo's effect system. It allows effectful code to be pure and composable - rather than
-  * performing operations directly, code builds up a description of what operations should occur. This description can then be interpreted
-  * by handlers that determine how the operations are actually executed.
+  * An effect is used as a type, never instantiated. It is the name a suspension carries and the name a handler matches on, so declaring one
+  * means declaring a type that extends one of the two kinds below.
   *
-  * There are two kinds of effects:
-  *   - [[ArrowEffect]] for suspended computations involving input/output transformations.
-  *   - [[ContextEffect]] for suspended computations requiring contextual values.
+  * There are two kinds:
+  *   - [[ArrowEffect]] for operations that take an input and are answered with an output.
+  *   - [[ContextEffect]] for values bound around a computation and read from within it.
+  *
+  * @see
+  *   [[ArrowEffect]] For declaring an operation and the handlers that answer it
+  * @see
+  *   [[ContextEffect]] For declaring a value bound around a computation
+  * @see
+  *   [[Effect.defer]] For moving a block into the computation the evaluator runs
   */
 abstract class Effect private[kernel] ()
 
 object Effect:
 
+    /** Reifies the application of `cont` to `v` as a node, rather than applying it here.
+      *
+      * This is what lets the evaluator own the call: the pair becomes a value it unfolds instead of `cont` running on the current stack,
+      * which is where stack safety and the safepoint budget come from.
+      *
+      * The overloads taking two and three continuations let a caller that already holds a composition hand the links over separately, so one
+      * node carries them rather than a node plus an [[Arrow.Chain]]. An identity link is dropped instead of stored.
+      */
     def defer[A, B, S](v: A < S, cont: Arrow[A, B, S]): B < S =
         cont match
             case cont: Arrow.Chain[A, x, B, S] @unchecked =>
@@ -57,6 +72,11 @@ object Effect:
         else
             defer(v, cont1, cont2.chain(cont3))
 
+    /** Defers a block so it runs where the evaluator reaches it rather than where it is written.
+      *
+      * Taking the block by name and making it a node is the way to move ordinary code into a computation: what the block does happens when
+      * the computation runs, once per run, instead of at the point the value is built.
+      */
     def defer[A, S](f: => A < S)(using Frame): A < S =
         deferInline(f)
 
