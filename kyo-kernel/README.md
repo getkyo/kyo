@@ -89,7 +89,7 @@ assert(Ask.run(1)(merged).eval == 2)
 
 Inside `wrap` the lift sees an abstract `A`. At the call site `A` is `Int < Ask`, so what comes back is a computation nested exactly once, and it stays inert data until someone flattens it.
 
-`flatten` collapses `A < S < S2` into `A < (S & S2)`. This is the fix the nested-effect error points at, and it is also a deliberate tool: [`Isolate#nest`](#tunneling-instead-of-restoring) builds a nested computation on purpose so the caller can decide when the inner layer applies.
+`flatten` collapses `A < S < S2` into `A < (S & S2)`. This is the fix the nested-effect error points at, and it is also a deliberate tool: [`Isolate#nest`](#nest-holding-the-restore-back) builds a nested computation on purpose so the caller can decide when the inner layer applies.
 
 ### Running
 
@@ -764,22 +764,42 @@ val levelIsolate: Isolate[Level, Any, Level] = Isolate.derive[Level, Any, Level]
 
 ### The three phases
 
-An isolate is three methods that run in order, plus the two abstract types they pass between themselves. `State` is what the crossing carries and `Transform[_]` is how the isolated computation's result is wrapped on the way back.
+An instance is three methods plus the two abstract types they hand between themselves. `State` is what the crossing carries from the old evaluation to the new one. `Transform[_]` is how the isolated computation's result comes back, carrying whatever the isolation needs to settle afterwards.
 
-`capture` reads the state where the fork happens, so its row is `Remove` and nothing more. `isolate` runs the computation with that state, with only `Keep` available. `restore` unwraps the transformed result and makes `Restore` available. An instance is exactly those three methods over those two types.
+The three run in a fixed order, and each one's row says where it stands:
 
-### Running the phases
+| Phase | Shape | Where it stands |
+| --- | --- | --- |
+| `capture` | `(State => A < S) => A < (Remove & S)` | Inside the effect being left, since reading its state means performing it. This is why `Remove` is in the row. |
+| `isolate` | `(State, A < (S & Remove)) => Transform[A] < (Keep & S)` | Inside the new evaluation. `Remove` is gone, only `Keep` is available, and the answer is wrapped in `Transform`. |
+| `restore` | `Transform[A] < S => A < (Restore & S)` | Back outside, unwrapping the transform and making `Restore` available. |
 
-`run` composes all three in one call and is what most code wants. `Remove` is still in the row it answers with, because the capture at the front of it has to read the state from the evaluation the fork is leaving, and reading it means standing inside the effect. The overload that takes an already-captured state is the one that does not, and it exists for a fork that captures once and isolates many branches from that one capture.
+Spelled out, a crossing is those three nested in that order:
 
 ```scala
-val crossing: Int < (Level & Say) =
-    levelIsolate.run(level.map(l => say(s"level $l").andThen(l)))
+val body: Int < (Level & Say) = level.map(l => say(s"level $l").andThen(l))
+
+val byPhases: Int < (Level & Say) =
+    levelIsolate.capture(state => levelIsolate.restore(levelIsolate.isolate(state, body)))
+
+assert(runLevel(2)(runSay(byPhases)).eval == ((Chunk("level 2"), 2)))
+```
+
+`Remove` and `Restore` are separate parameters because `restore` decides what the crossing hands back, which need not be what `capture` read. A stateful effect can capture its state, let the isolated run transform it, and restore only the final value rather than replaying every update. For the `Level` binding above both are `Level` and the phases pass the value straight through, which is what a `ContextEffect`'s derived instance does; the context half of every isolate already carries bindings across, so its three phases have nothing left to do.
+
+`Say` is worth noticing in that example. It was never mentioned by the isolate, and it crossed untouched: the operation suspended inside the isolation, stayed pending through all three phases, and was answered by the handler outside. An isolate manages state; it does not handle arbitrary operations.
+
+### `run`: the three phases composed
+
+`run` is exactly the nesting written above, in one call, and is what most code wants:
+
+```scala
+val crossing: Int < (Level & Say) = levelIsolate.run(body)
 
 assert(runLevel(2)(runSay(crossing)).eval == ((Chunk("level 2"), 2)))
 ```
 
-`Say` was never mentioned by the isolate, and it crossed the boundary untouched: the operation suspended inside the isolation, stayed pending through capture, isolation and restore, and was answered by the handler outside. An isolate manages state; it does not handle arbitrary operations.
+`Remove` stays in the row it answers with, because the `capture` at the front has to read the state from the evaluation being left. The overload taking an already-captured state is the one that does not, and it exists for a fork that captures once and isolates many branches from that single capture.
 
 The instance's own `apply` is `run` with the consumer fused in, so the crossed computation is handed straight to whoever asked for it rather than becoming a value of its own. `use` supplies the instance as a `given` to an operation that requires one, which is how a caller picks a strategy for a specific block:
 
@@ -789,14 +809,14 @@ def forked(using i: Isolate[Level, Any, Level]): Int < Level = i.run(level)
 assert(runLevel(3)(levelIsolate.use(forked)).eval == 3)
 ```
 
-### Tunneling instead of restoring
+### `nest`: holding the restore back
 
-`nest` is the deliberate exception to all of this. Instead of applying `Restore` immediately, it hands the removed effects back as the row of a nested `A < Restore`, and the caller decides when that inner layer applies. That is the one place in the module where nesting is the intent, and it is what lets other effects be handled between the two layers:
+`nest` runs the same first two phases as `run`, on the same state, and differs in one step at the end. Where `run` applies the restore and hands back an `A`, `nest` wraps the restored computation as a value, handing back an `A < Restore` nested one layer deep. Nothing is skipped; the restore is held rather than applied, and the caller decides when it lands.
+
+That gap between the two layers is the point. Whatever effects the body still owes the outer world can be handled while the isolated result sits inert inside:
 
 ```scala
 val nestingIsolate: Isolate[Level, Say, Level] = Isolate.derive[Level, Say, Level]
-
-val body: Int < (Level & Say) = level.map(l => say(s"level $l").andThen(l))
 
 val tunneled: (Int < Level) < (Level & Say)           = nestingIsolate.nest(body)
 val transcribed: (Chunk[String], Int < Level) < Level = runSay(tunneled)
@@ -805,7 +825,7 @@ val finished: Int < Level                             = transcribed.map(_._2)
 assert(runLevel(5)(finished).eval == 5)
 ```
 
-`Say` was handled on the outer layer, while the isolated result was still sitting inert in the inner one, whose row is the `Restore` the isolate names. The last line is where that inner layer applies: binding through it with `map` collapses it, exactly as `.flatten` would on a value whose nesting is visible in the type.
+`Say` was handled on the outer layer while the isolated result was still boxed in the inner one, whose row is the `Restore` the isolate names. The last line is where that inner layer applies: binding through it with `map` collapses it, exactly as `.flatten` would on a value whose nesting is visible in the type. This is the one place in the module where nesting is the intent rather than a mistake the lift refuses.
 
 ### Composing and obtaining instances
 
