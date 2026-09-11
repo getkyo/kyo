@@ -479,17 +479,9 @@ assert(Ask.run(2)(askTimes(3)).eval == 6)
 
 ### `head` and `tail`: why an arrow exposes its own composition
 
-An `Arrow` has two ways to be applied. `arrow(value)` is the plain one, and the whole of `chain` is visible in it: `Chain` carries two links and can only hand a value to the first, then the result to the second. `apply(value, cont)` is the other, taking the rest of the computation as a second argument, so the result never becomes a value in between. Every hot path in the module uses the second, and `head` and `tail` are what make a composition able to participate in it.
+An arrow is applied two ways: `arrow(value)`, and `apply(value, cont)` which takes the rest of the computation as a second argument so the intermediate never becomes a value. Every hot path uses the second.
 
-`Chain` does no work of its own, so applying one can only build a node and hand it back to the evaluator to unfold. Rather than call it, every one of those sites pulls it apart, applying `cont.head` to the value with `cont.tail` passed along as the continuation.
-
-For a `Chain` that is its first link applied to the value with its second link fused in behind it, so the composition is walked without a node being built for it. For an atom the split is trivial by construction: an atom is its own `head`, with `Arrow.id` as its `tail`, so the very same expression is the atom applied directly.
-
-That uniformity is the point. The receiver at these sites is the arrow that actually does work, never the `Chain` wrapper that would only have deferred, so a call site does not alternate between the two according to whether the continuation it was handed happened to be composed. Composition stays free at the point of application rather than costing a node and a trip through the evaluator.
-
-Both members are public for that reason, not as an invitation: they exist because the inline expansions that make up the hot paths have to reach them. Reach for `chain` to compose and `arrow(value)` to apply, and leave these two to the machinery.
-
-Applying an arrow through that split is the same computation as applying it directly, which is the property the hot paths rely on:
+`head` and `tail` split an arrow into the part that does work and the part that follows it: for a composition its two links, for an atom the arrow itself and `Arrow.id`. One expression then covers both.
 
 ```scala
 val double: Arrow[Int, Int, Any] = Arrow(_ * 2)
@@ -498,36 +490,27 @@ val both: Arrow[Int, Int, Any]   = double.chain(incr)
 
 assert(both(5).eval == 11)
 
-// what a hot path writes instead, for a composed arrow and for an atom alike
+// what a hot path writes, correct for a composition and an atom alike
 assert(both.head(5, both.tail).eval == 11)
 assert(double.head(5, double.tail).eval == 10)
 ```
 
-### Why that shape exists: fusion
+`both(5)` reaches `Chain`, which does no work of its own and can only build a node for the evaluator to unfold. `both.head(5, both.tail)` runs the first link with the second behind it, so composition costs nothing where it is applied.
 
-The reason for passing the continuation rather than answering with a value is what the JIT can do with the result. A straightforward interpreter runs a chain of transformations by producing each intermediate value and returning to its own loop to find the next step:
-
-```text
-42 ──▶ [eval] ──▶ (_ * 2) ──▶ [eval] ──▶ (_ + 1) ──▶ [eval] ──▶ 85
-```
-
-Every one of those trips is a call the JIT cannot see through. `Eval.loop` is around fifteen hundred bytes of bytecode, far past any inlining budget, and it is the single loop that every effect in the program passes through, so its dispatch is megamorphic. Nothing on either side of it fuses with anything on the other.
-
-Passing the continuation removes the trips. `map` and `Arrow(f)` are `inline`, so each call site expands into a class of its own with the body inlined into its `apply`, and the next step arrives as an argument rather than being looked up afterwards. The chain is applied from inside the site that already holds the first transformation:
+The payoff is fusion. `map` and `Arrow(f)` are `inline`, so every call site expands into a class of its own with the body inlined into its `apply`. The receiver there is one concrete class and the next step arrives as an argument, so a run of transformations becomes straight-line code rather than a series of trips:
 
 ```text
-42 ──▶ (_ * 2) ──▶ (_ + 1) ──▶ 85
+fused:      42 ──▶ (_ * 2) ──▶ (_ + 1) ──▶ 85
+otherwise:  42 ──▶ [eval] ──▶ (_ * 2) ──▶ [eval] ──▶ (_ + 1) ──▶ [eval] ──▶ 85
 ```
-
-At each of those sites the receiver is one concrete class, so the JIT inlines through it, and a run of transformations collapses into straight-line code with the intermediates in registers. This is why a chain over a value that has already settled costs so little: each `map` applies its function on the spot, and the run never reaches the evaluator at all.
 
 ```scala
 assert(settled.map(_ * 2).map(_ + 1).eval == 85)
 ```
 
-Composition is where it would break. A `Chain` does no work of its own, so a site that called `cont(value)` on one would get a node handed back and be sent to the evaluator, ending the fusion at every `chain` boundary. Writing `cont.head(value, cont.tail)` is what avoids that: the receiver is the first link for a composition and the arrow itself for an atom, always something that does work, never a wrapper that would only defer. That is the whole reason those two members exist.
+`Eval.loop` is around fifteen hundred bytes and every effect in the program passes through it, so it never inlines and its dispatch is megamorphic. Anything routed back through it stops fusing, which is what `cont(value)` on a `Chain` would do at every composition boundary.
 
-Two consequences worth keeping in mind when reading the module. The fusion is per call site, so the same `map` body reached from two places is two classes, which is what keeps each one monomorphic. And a suspension ends a fused run by construction: the answer is not available yet, so the rest becomes a continuation and the evaluator takes over until a handler answers.
+Both members are public for that reason, not as an invitation: reach for `chain` to compose and `arrow(value)` to apply. Two things follow. Fusion is per call site, so one `map` body reached from two places is two classes, each monomorphic. And a suspension ends a fused run, because the answer is not there yet and the evaluator takes over until a handler supplies it.
 
 ## Failure and resources
 
