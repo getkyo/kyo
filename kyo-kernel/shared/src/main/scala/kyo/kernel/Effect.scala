@@ -88,6 +88,7 @@ object Effect:
             def value                   = ()
             override def apply(v: Unit) = f
             override def apply[C, S2](v: Unit < S2, cont: Arrow[A, C, S2]) =
+                // TODO can this use the more efficient approach like in <.map?
                 v match
                     case kyo: Pending[Unit, S2] @unchecked =>
                         defer(kyo, this, cont)

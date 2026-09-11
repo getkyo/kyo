@@ -21,8 +21,8 @@ import scala.quoted.*
   * This design unifies two categories of state management:
   *
   * **Simple State Copying** is used for [[ContextEffect]]s, which store their state in a format that can be directly copied from the
-  * original computation to the forked one. These are effects like environment variables, configuration settings, or local values - pieces
-  * of state that can simply be copied as-is when the computation forks.
+  * original computation to the forked one. These are effects like environment variables, configuration settings, or local values: pieces of
+  * state that can simply be copied as-is when the computation forks.
   *
   * **Complex State Management** handles effects that require structured transformation. When forking a computation with these effects, the
   * isolation:

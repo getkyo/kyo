@@ -59,8 +59,8 @@ object `<` extends Implicits:
         /** Maps the value produced by this computation to a new computation and flattens the result. This is the monadic bind operation for
           * the pending type.
           *
-          * Note: Both `map` and `flatMap` have identical behavior in this API - they both act as the monadic bind. While `map` is the
-          * recommended method to use, `flatMap` exists to support for-comprehension syntax in Scala.
+          * Note: `map` and `flatMap` have identical behavior in this API, both acting as the monadic bind. `map` is the recommended one;
+          * `flatMap` exists to support for-comprehension syntax in Scala.
           *
           * @param f
           *   The transformation function to apply to the result
