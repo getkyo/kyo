@@ -78,30 +78,30 @@ class ZioBlocksBench:
 
     @Benchmark
     def fusionAllocatesNothing: Int =
-        def loop(i: Int): Async[Int] =
-            if i > FusedDepth then Async.succeed(0)
+        def loop(i: Int, acc: Int): Async[Int] =
+            if i > FusedDepth then Async.succeed(acc)
             else
-                Async.succeed(i & 63)
+                Async.succeed(acc & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63)
-                    .flatMap(_ => loop(i + 1))
-        loop(seed - 1).block
+                    .flatMap(v => loop(i + 1, v))
+        loop(0, seed).block
     end fusionAllocatesNothing
 
     @Benchmark
     def fusionPastBudgetPaysRescuesOnly: Int =
-        def loop(i: Int): Async[Int] =
-            if i > NarrowDepth then Async.succeed(0)
+        def loop(i: Int, acc: Int): Async[Int] =
+            if i > NarrowDepth then Async.succeed(acc)
             else
-                Async.succeed(i & 63)
+                Async.succeed(acc & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63)
-                    .flatMap(_ => loop(i + 1))
-        loop(seed - 1).block
+                    .flatMap(v => loop(i + 1, v))
+        loop(0, seed).block
     end fusionPastBudgetPaysRescuesOnly
 
     @Benchmark
@@ -138,7 +138,7 @@ class ZioBlocksBench:
     def deepRecursionPaysRescuesOnly: Int =
         def loop(i: Int): Async[Int] =
             Async.succeed(()).flatMap { _ =>
-                if i > Depth then Async.succeed(0) else loop(i + 1)
+                if i > Depth then Async.succeed(i) else loop(i + 1)
             }
         loop(seed - 1).block
     end deepRecursionPaysRescuesOnly
@@ -183,18 +183,18 @@ class ZioBlocksBench:
 
     @Benchmark
     def continuationBodiesFuse: Int =
-        def loop(i: Int): Async[Int] =
-            if i > NarrowDepth then Async.succeed(i)
+        def loop(i: Int, acc: Int): Async[Int] =
+            if i > NarrowDepth then Async.succeed(acc)
             else
                 answer.flatMap { a =>
-                    Async.succeed((i + a) & 63)
+                    Async.succeed((acc + a) & 63)
                         .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                         .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                         .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                         .map(v => (v + 1) & 63)
-                        .flatMap(_ => loop(i + 1))
+                        .flatMap(v => loop(i + 1, v))
                 }
-        loop(seed - 1).block
+        loop(0, seed).block
     end continuationBodiesFuse
 
     /** Fidelity NONE: the chain folded at field initialization, so this measures `.block` on a settled value. */
@@ -204,16 +204,16 @@ class ZioBlocksBench:
 
     @Benchmark
     def fusionAfterSuspension: Int =
-        def loop(i: Int): Async[Int] =
-            if i > NarrowDepth then Async.succeed(i)
+        def loop(i: Int, acc: Int): Async[Int] =
+            if i > NarrowDepth then Async.succeed(acc)
             else
                 answer
-                    .map(a => (i + a) & 63)
+                    .map(a => (acc + a) & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
-                    .flatMap(_ => loop(i + 1))
-        loop(seed - 1).block
+                    .flatMap(v => loop(i + 1, v))
+        loop(0, seed).block
     end fusionAfterSuspension
 
     /** Local-var substitution for a state effect; fidelity LOW. The var is dead after the loop,

@@ -77,30 +77,30 @@ class ZioBench:
 
     @Benchmark
     def fusionAllocatesNothing: Int =
-        def loop(i: Int): UIO[Int] =
-            if i > FusedDepth then ZIO.succeed(0)
+        def loop(i: Int, acc: Int): UIO[Int] =
+            if i > FusedDepth then ZIO.succeed(acc)
             else
-                ZIO.succeed(i & 63)
+                ZIO.succeed(acc & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63)
-                    .flatMap(_ => loop(i + 1))
-        runSync(loop(seed - 1))
+                    .flatMap(v => loop(i + 1, v))
+        runSync(loop(0, seed))
     end fusionAllocatesNothing
 
     @Benchmark
     def fusionPastBudgetPaysRescuesOnly: Int =
-        def loop(i: Int): UIO[Int] =
-            if i > NarrowDepth then ZIO.succeed(0)
+        def loop(i: Int, acc: Int): UIO[Int] =
+            if i > NarrowDepth then ZIO.succeed(acc)
             else
-                ZIO.succeed(i & 63)
+                ZIO.succeed(acc & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63)
-                    .flatMap(_ => loop(i + 1))
-        runSync(loop(seed - 1))
+                    .flatMap(v => loop(i + 1, v))
+        runSync(loop(0, seed))
     end fusionPastBudgetPaysRescuesOnly
 
     @Benchmark
@@ -133,7 +133,7 @@ class ZioBench:
     def deepRecursionPaysRescuesOnly: Int =
         def loop(i: Int): UIO[Int] =
             ZIO.unit.flatMap { _ =>
-                if i > Depth then ZIO.succeed(0) else loop(i + 1)
+                if i > Depth then ZIO.succeed(i) else loop(i + 1)
             }
         runSync(loop(seed - 1))
     end deepRecursionPaysRescuesOnly
@@ -200,18 +200,18 @@ class ZioBench:
 
     @Benchmark
     def continuationBodiesFuse: Int =
-        def loop(i: Int): UIO[Int] =
-            if i > NarrowDepth then ZIO.succeed(i)
+        def loop(i: Int, acc: Int): UIO[Int] =
+            if i > NarrowDepth then ZIO.succeed(acc)
             else
                 ask.get.flatMap { a =>
-                    ZIO.succeed((i + a) & 63)
+                    ZIO.succeed((acc + a) & 63)
                         .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                         .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                         .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                         .map(v => (v + 1) & 63)
-                        .flatMap(_ => loop(i + 1))
+                        .flatMap(v => loop(i + 1, v))
                 }
-        runSync(loop(seed - 1))
+        runSync(loop(0, seed))
     end continuationBodiesFuse
 
     @Benchmark
@@ -220,16 +220,16 @@ class ZioBench:
 
     @Benchmark
     def fusionAfterSuspension: Int =
-        def loop(i: Int): UIO[Int] =
-            if i > NarrowDepth then ZIO.succeed(i)
+        def loop(i: Int, acc: Int): UIO[Int] =
+            if i > NarrowDepth then ZIO.succeed(acc)
             else
                 ask.get
-                    .map(a => (i + a) & 63)
+                    .map(a => (acc + a) & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
-                    .flatMap(_ => loop(i + 1))
-        runSync(loop(seed - 1))
+                    .flatMap(v => loop(i + 1, v))
+        runSync(loop(0, seed))
     end fusionAfterSuspension
 
     /** The one row where the per-run install is the substance: the ambient is installed but never
@@ -237,16 +237,16 @@ class ZioBench:
       */
     @Benchmark
     def idleHandlerAddsNothing: Int =
-        def loop(i: Int): UIO[Int] =
-            if i > NarrowDepth then ZIO.succeed(0)
+        def loop(i: Int, acc: Int): UIO[Int] =
+            if i > NarrowDepth then ZIO.succeed(acc)
             else
-                ZIO.succeed(i & 63)
+                ZIO.succeed(acc & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63)
-                    .flatMap(_ => loop(i + 1))
-        runSync(ask.locally(1)(loop(seed - 1)))
+                    .flatMap(v => loop(i + 1, v))
+        runSync(ask.locally(1)(loop(0, seed)))
     end idleHandlerAddsNothing
 
     @Benchmark

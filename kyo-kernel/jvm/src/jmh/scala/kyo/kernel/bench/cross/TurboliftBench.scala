@@ -81,30 +81,30 @@ class TurboliftBench:
 
     @Benchmark
     def fusionAllocatesNothing: Int =
-        def loop(i: Int): Int !! Any =
-            if i > FusedDepth then !!.pure(0)
+        def loop(i: Int, acc: Int): Int !! Any =
+            if i > FusedDepth then !!.pure(acc)
             else
-                !!.pure(i & 63)
+                !!.pure(acc & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63)
-                    .flatMap(_ => loop(i + 1))
-        loop(seed - 1).runST
+                    .flatMap(v => loop(i + 1, v))
+        loop(0, seed).runST
     end fusionAllocatesNothing
 
     @Benchmark
     def fusionPastBudgetPaysRescuesOnly: Int =
-        def loop(i: Int): Int !! Any =
-            if i > NarrowDepth then !!.pure(0)
+        def loop(i: Int, acc: Int): Int !! Any =
+            if i > NarrowDepth then !!.pure(acc)
             else
-                !!.pure(i & 63)
+                !!.pure(acc & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63)
-                    .flatMap(_ => loop(i + 1))
-        loop(seed - 1).runST
+                    .flatMap(v => loop(i + 1, v))
+        loop(0, seed).runST
     end fusionPastBudgetPaysRescuesOnly
 
     @Benchmark
@@ -137,7 +137,7 @@ class TurboliftBench:
     def deepRecursionPaysRescuesOnly: Int =
         def loop(i: Int): Int !! Any =
             !!.unit.flatMap { _ =>
-                if i > Depth then !!.pure(0) else loop(i + 1)
+                if i > Depth then !!.pure(i) else loop(i + 1)
             }
         loop(seed - 1).runST
     end deepRecursionPaysRescuesOnly
@@ -188,18 +188,18 @@ class TurboliftBench:
 
     @Benchmark
     def continuationBodiesFuse: Int =
-        def loop(i: Int): Int !! Ask =
-            if i > NarrowDepth then !!.pure(i)
+        def loop(i: Int, acc: Int): Int !! Ask =
+            if i > NarrowDepth then !!.pure(acc)
             else
                 Ask.ask.flatMap { a =>
-                    !!.pure((i + a) & 63)
+                    !!.pure((acc + a) & 63)
                         .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                         .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                         .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                         .map(v => (v + 1) & 63)
-                        .flatMap(_ => loop(i + 1))
+                        .flatMap(v => loop(i + 1, v))
                 }
-        loop(seed - 1).handleWith(askHandler).runST
+        loop(0, seed).handleWith(askHandler).runST
     end continuationBodiesFuse
 
     @Benchmark
@@ -208,16 +208,16 @@ class TurboliftBench:
 
     @Benchmark
     def fusionAfterSuspension: Int =
-        def loop(i: Int): Int !! Ask =
-            if i > NarrowDepth then !!.pure(i)
+        def loop(i: Int, acc: Int): Int !! Ask =
+            if i > NarrowDepth then !!.pure(acc)
             else
                 Ask.ask
-                    .map(a => (i + a) & 63)
+                    .map(a => (acc + a) & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
-                    .flatMap(_ => loop(i + 1))
-        loop(seed - 1).handleWith(askHandler).runST
+                    .flatMap(v => loop(i + 1, v))
+        loop(0, seed).handleWith(askHandler).runST
     end fusionAfterSuspension
 
     /** The handler is installed and never used; the chain is ascribed into the Ask row as
@@ -225,16 +225,16 @@ class TurboliftBench:
       */
     @Benchmark
     def idleHandlerAddsNothing: Int =
-        def loop(i: Int): Int !! Any =
-            if i > NarrowDepth then !!.pure(0)
+        def loop(i: Int, acc: Int): Int !! Any =
+            if i > NarrowDepth then !!.pure(acc)
             else
-                !!.pure(i & 63)
+                !!.pure(acc & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63)
-                    .flatMap(_ => loop(i + 1))
-        (loop(seed - 1): Int !! Ask).handleWith(askHandler).runST
+                    .flatMap(v => loop(i + 1, v))
+        (loop(0, seed): Int !! Ask).handleWith(askHandler).runST
     end idleHandlerAddsNothing
 
     /** Exact: State.update answers 1 and advances the interpreter-threaded state, matching kyo's

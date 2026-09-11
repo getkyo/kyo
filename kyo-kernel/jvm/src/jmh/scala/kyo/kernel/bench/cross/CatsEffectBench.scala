@@ -79,30 +79,30 @@ class CatsEffectBench:
 
     @Benchmark
     def fusionAllocatesNothing: Int =
-        def loop(i: Int): IO[Int] =
-            if i > FusedDepth then IO.pure(0)
+        def loop(i: Int, acc: Int): IO[Int] =
+            if i > FusedDepth then IO.pure(acc)
             else
-                IO.pure(i & 63)
+                IO.pure(acc & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63)
-                    .flatMap(_ => loop(i + 1))
-        runSync(loop(seed - 1))
+                    .flatMap(v => loop(i + 1, v))
+        runSync(loop(0, seed))
     end fusionAllocatesNothing
 
     @Benchmark
     def fusionPastBudgetPaysRescuesOnly: Int =
-        def loop(i: Int): IO[Int] =
-            if i > NarrowDepth then IO.pure(0)
+        def loop(i: Int, acc: Int): IO[Int] =
+            if i > NarrowDepth then IO.pure(acc)
             else
-                IO.pure(i & 63)
+                IO.pure(acc & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63)
-                    .flatMap(_ => loop(i + 1))
-        runSync(loop(seed - 1))
+                    .flatMap(v => loop(i + 1, v))
+        runSync(loop(0, seed))
     end fusionPastBudgetPaysRescuesOnly
 
     @Benchmark
@@ -135,7 +135,7 @@ class CatsEffectBench:
     def deepRecursionPaysRescuesOnly: Int =
         def loop(i: Int): IO[Int] =
             IO.unit.flatMap { _ =>
-                if i > Depth then IO.pure(0) else loop(i + 1)
+                if i > Depth then IO.pure(i) else loop(i + 1)
             }
         runSync(loop(seed - 1))
     end deepRecursionPaysRescuesOnly
@@ -189,18 +189,18 @@ class CatsEffectBench:
 
     @Benchmark
     def continuationBodiesFuse: Int =
-        def loop(i: Int): IO[Int] =
-            if i > NarrowDepth then IO.pure(i)
+        def loop(i: Int, acc: Int): IO[Int] =
+            if i > NarrowDepth then IO.pure(acc)
             else
                 ask.get.flatMap { a =>
-                    IO.pure((i + a) & 63)
+                    IO.pure((acc + a) & 63)
                         .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                         .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                         .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                         .map(v => (v + 1) & 63)
-                        .flatMap(_ => loop(i + 1))
+                        .flatMap(v => loop(i + 1, v))
                 }
-        runSync(loop(seed - 1))
+        runSync(loop(0, seed))
     end continuationBodiesFuse
 
     @Benchmark
@@ -209,16 +209,16 @@ class CatsEffectBench:
 
     @Benchmark
     def fusionAfterSuspension: Int =
-        def loop(i: Int): IO[Int] =
-            if i > NarrowDepth then IO.pure(i)
+        def loop(i: Int, acc: Int): IO[Int] =
+            if i > NarrowDepth then IO.pure(acc)
             else
                 ask.get
-                    .map(a => (i + a) & 63)
+                    .map(a => (acc + a) & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
-                    .flatMap(_ => loop(i + 1))
-        runSync(loop(seed - 1))
+                    .flatMap(v => loop(i + 1, v))
+        runSync(loop(0, seed))
     end fusionAfterSuspension
 
     /** The one row where the per-run install is the substance: the ambient is installed but
@@ -226,16 +226,16 @@ class CatsEffectBench:
       */
     @Benchmark
     def idleHandlerAddsNothing: Int =
-        def loop(i: Int): IO[Int] =
-            if i > NarrowDepth then IO.pure(0)
+        def loop(i: Int, acc: Int): IO[Int] =
+            if i > NarrowDepth then IO.pure(acc)
             else
-                IO.pure(i & 63)
+                IO.pure(acc & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63)
-                    .flatMap(_ => loop(i + 1))
-        runSync(ask.set(1).flatMap(_ => loop(seed - 1)))
+                    .flatMap(v => loop(i + 1, v))
+        runSync(ask.set(1).flatMap(_ => loop(0, seed)))
     end idleHandlerAddsNothing
 
     @Benchmark

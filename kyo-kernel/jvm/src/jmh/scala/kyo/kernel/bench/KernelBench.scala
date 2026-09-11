@@ -28,30 +28,30 @@ class KernelBench:
 
     @Benchmark
     def fusionAllocatesNothing: Int =
-        def loop(i: Int): Int < Any =
-            if i > FusedDepth then 0
+        def loop(i: Int, acc: Int): Int < Any =
+            if i > FusedDepth then acc
             else
-                ((i & 63): Int < Any)
+                ((acc & 63): Int < Any)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63)
-                    .map(_ => loop(i + 1))
-        run(loop(0))
+                    .map(v => loop(i + 1, v))
+        run(loop(0, seed))
     end fusionAllocatesNothing
 
     @Benchmark
     def fusionPastBudgetPaysRescuesOnly: Int =
-        def loop(i: Int): Int < Any =
-            if i > NarrowDepth then 0
+        def loop(i: Int, acc: Int): Int < Any =
+            if i > NarrowDepth then acc
             else
-                ((i & 63): Int < Any)
+                ((acc & 63): Int < Any)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63)
-                    .map(_ => loop(i + 1))
-        run(loop(0))
+                    .map(v => loop(i + 1, v))
+        run(loop(0, seed))
     end fusionPastBudgetPaysRescuesOnly
 
     @Benchmark
@@ -63,7 +63,7 @@ class KernelBench:
                     .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
                     .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
                     .map(loop)
-        run(loop(0))
+        run(loop(seed - 1))
     end uncachedValuesPayBoxingOnly
 
     @Benchmark
@@ -71,7 +71,7 @@ class KernelBench:
         def loop(i: Int): Int < Any =
             if i > NarrowDepth then i
             else Effect.defer(i + 1).map(loop)
-        run(loop(0))
+        run(loop(seed - 1))
     end deferBindPerStep
 
     @Benchmark
@@ -79,7 +79,7 @@ class KernelBench:
         def loop(i: Int): Int < Any =
             if i > NarrowDepth then i
             else Effect.defer(i + 1).map(loop)
-        run(ArrowEffect.handleCont(Tag[Ask], loop(0): Int < Ask)([C] => (_, cont) => cont(1), a => a))
+        run(ArrowEffect.handleCont(Tag[Ask], loop(seed - 1): Int < Ask)([C] => (_, cont) => cont(1), a => a))
     end deferBindUnderIdleHandler
 
     @Benchmark
@@ -87,34 +87,34 @@ class KernelBench:
         def loop(i: Int): Int < Any =
             if i > NarrowDepth then i
             else Effect.defer(i + 1).map(loop)
-        run(loop(0).map(x => x))
+        run(loop(seed - 1).map(x => x))
     end deferBindUnderTrailingMap
 
     @Benchmark
     def deepRecursionPaysRescuesOnly: Int =
         def loop(i: Int): Int < Any =
             ((): Unit < Any).map { _ =>
-                if i > Depth then 0 else loop(i + 1)
+                if i > Depth then i else loop(i + 1)
             }
-        run(loop(0))
+        run(loop(seed - 1))
     end deepRecursionPaysRescuesOnly
 
     @Benchmark
     def deepRecursionNoRescue: Int =
         def loop(i: Int): Int < Any =
             ((): Unit < Any).map { _ =>
-                if i > 400 then 0 else loop(i + 1)
+                if i > 400 then i else loop(i + 1)
             }
-        run(loop(0))
+        run(loop(seed - 1))
     end deepRecursionNoRescue
 
     @Benchmark
     def deepRecursionOneRescue: Int =
         def loop(i: Int): Int < Any =
             ((): Unit < Any).map { _ =>
-                if i > 600 then 0 else loop(i + 1)
+                if i > 600 then i else loop(i + 1)
             }
-        run(loop(0))
+        run(loop(seed - 1))
     end deepRecursionOneRescue
 
     @Benchmark
@@ -122,7 +122,7 @@ class KernelBench:
         def loop(i: Int): Int < Ask =
             if i > Depth then i
             else ask.map(a => loop(i + a))
-        run(ArrowEffect.handleCont(Tag[Ask], loop(0))([C] => (_, cont) => cont(1), a => a))
+        run(ArrowEffect.handleCont(Tag[Ask], loop(seed - 1))([C] => (_, cont) => cont(1), a => a))
     end suspensionBaseline
 
     @Benchmark
@@ -130,7 +130,7 @@ class KernelBench:
         def loop(i: Int): Int < Ask =
             if i > Depth then i
             else askWith(a => loop(i + a))
-        run(ArrowEffect.handleCont(Tag[Ask], loop(0))([C] => (_, cont) => cont(1), a => a))
+        run(ArrowEffect.handleCont(Tag[Ask], loop(seed - 1))([C] => (_, cont) => cont(1), a => a))
     end suspensionFusesContinuation
 
     @Benchmark
@@ -138,7 +138,7 @@ class KernelBench:
         def loop(i: Int): Int < Ask =
             if i > Depth then i
             else ask.map(a => loop(i + a))
-        run(ArrowEffect.handleLoop(Tag[Ask], loop(0))([C] => _ => Loop.continue(1), a => a))
+        run(ArrowEffect.handleLoop(Tag[Ask], loop(seed - 1))([C] => _ => Loop.continue(1), a => a))
     end handleLoopAnswersInPlace
 
     @Benchmark
@@ -147,7 +147,7 @@ class KernelBench:
             if i > Depth then i
             else ask.map(a => loop(i + a))
         run(
-            ArrowEffect.handleLoopWith(Tag[Ask], loop(0))(
+            ArrowEffect.handleLoopWith(Tag[Ask], loop(seed - 1))(
                 [C] => _ => Loop.continue(1),
                 a => a
             )(b => b + 1)
@@ -156,10 +156,10 @@ class KernelBench:
 
     @Benchmark
     def nestedPayloadsUnwrapInMaps: Int =
-        def loop(i: Int): Int < Any =
-            if i > NarrowDepth then 0
-            else boxed(ask).map(_ => loop(i + 1))
-        run(loop(0))
+        def loop(i: Int, acc: Int): Int < Any =
+            if i > NarrowDepth then acc
+            else boxed(ask).map(_ => loop(i + 1, acc + i))
+        run(loop(0, seed))
     end nestedPayloadsUnwrapInMaps
 
     @Benchmark
@@ -168,7 +168,7 @@ class KernelBench:
             if i > Depth then i
             else ask.map(a => loop(i + a))
         run(
-            ArrowEffect.handleLoopState(Tag[Ask], 0, loop(0))(
+            ArrowEffect.handleLoopState(Tag[Ask], 0, loop(seed - 1))(
                 [C] => (state, _) => Loop.continue(state + 1, 1),
                 (_, a) => a
             )
@@ -177,16 +177,16 @@ class KernelBench:
 
     @Benchmark
     def idleHandlerAddsNothing: Int =
-        def loop(i: Int): Int < Any =
-            if i > NarrowDepth then 0
+        def loop(i: Int, acc: Int): Int < Any =
+            if i > NarrowDepth then acc
             else
-                ((i & 63): Int < Any)
+                ((acc & 63): Int < Any)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63)
-                    .map(_ => loop(i + 1))
-        run(ArrowEffect.handleCont(Tag[Ask], loop(0): Int < Ask)([C] => (_, cont) => cont(1), a => a))
+                    .map(v => loop(i + 1, v))
+        run(ArrowEffect.handleCont(Tag[Ask], loop(0, seed): Int < Ask)([C] => (_, cont) => cont(1), a => a))
     end idleHandlerAddsNothing
 
     @Benchmark
@@ -194,7 +194,7 @@ class KernelBench:
         def loop(i: Int): Int < Ask =
             if i > Depth then i
             else ask.map(a => loop(i + a)).map(x => x)
-        run(ArrowEffect.handleCont(Tag[Ask], loop(0))([C] => (_, cont) => cont(1), a => a))
+        run(ArrowEffect.handleCont(Tag[Ask], loop(seed - 1))([C] => (_, cont) => cont(1), a => a))
     end trailingMapsStayLinear
 
     @Benchmark
@@ -202,7 +202,7 @@ class KernelBench:
         def loop(i: Int): Int < Ask =
             if i > NarrowDepth then i
             else ask.map(a => loop(i + a))
-        val emitted: Int < Tick = ArrowEffect.handleLoop(Tag[Ask], loop(0))(
+        val emitted: Int < Tick = ArrowEffect.handleLoop(Tag[Ask], loop(seed - 1))(
             [C] => _ => tick.map(t => Loop.continue(t)),
             a => a
         )
@@ -211,18 +211,18 @@ class KernelBench:
 
     @Benchmark
     def continuationBodiesFuse: Int =
-        def loop(i: Int): Int < Ask =
-            if i > NarrowDepth then i
+        def loop(i: Int, acc: Int): Int < Ask =
+            if i > NarrowDepth then acc
             else
                 ask.map { a =>
-                    (((i + a) & 63): Int < Any)
+                    (((acc + a) & 63): Int < Any)
                         .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                         .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                         .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                         .map(v => (v + 1) & 63)
-                        .map(_ => loop(i + 1))
+                        .map(v => loop(i + 1, v))
                 }
-        run(ArrowEffect.handleCont(Tag[Ask], loop(0))([C] => (_, cont) => cont(1), a => a))
+        run(ArrowEffect.handleCont(Tag[Ask], loop(0, seed))([C] => (_, cont) => cont(1), a => a))
     end continuationBodiesFuse
 
     @Benchmark
@@ -261,10 +261,10 @@ class KernelBench:
 
     @Benchmark
     def inlineLimitKeepsZeroAllocation: Int =
-        def loop(i: Int): Int < Any =
-            if i > FusedWideDepth then 0
+        def loop(i: Int, acc: Int): Int < Any =
+            if i > FusedWideDepth then acc
             else
-                ((i & 63): Int < Any)
+                ((acc & 63): Int < Any)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
@@ -282,8 +282,8 @@ class KernelBench:
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63)
-                    .map(_ => loop(i + 1))
-        run(loop(seed - 1))
+                    .map(v => loop(i + 1, v))
+        run(loop(0, seed))
     end inlineLimitKeepsZeroAllocation
 
     private val accumulatedChain: Int < Ask =
@@ -312,16 +312,16 @@ class KernelBench:
 
     @Benchmark
     def fusionAfterSuspension: Int =
-        def loop(i: Int): Int < Ask =
-            if i > NarrowDepth then i
+        def loop(i: Int, acc: Int): Int < Ask =
+            if i > NarrowDepth then acc
             else
                 ask
-                    .map(a => (i + a) & 63)
+                    .map(a => (acc + a) & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
-                    .map(_ => loop(i + 1))
-        run(ArrowEffect.handleCont(Tag[Ask], loop(seed - 1))([C] => (_, cont) => cont(1), a => a))
+                    .map(v => loop(i + 1, v))
+        run(ArrowEffect.handleCont(Tag[Ask], loop(0, seed))([C] => (_, cont) => cont(1), a => a))
     end fusionAfterSuspension
 
     @Benchmark
