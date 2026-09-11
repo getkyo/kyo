@@ -51,7 +51,6 @@ import scala.language.implicitConversions
   */
 opaque type <[+A, -S] = A | Pending[A, S] | Nested[A]
 
-// The lifts live in internal.Implicits, mixed in here.
 object `<` extends Implicits:
 
     extension [A, S](inline v: A < S)
@@ -113,6 +112,7 @@ object `<` extends Implicits:
           * @return
           *   A computation producing the final result
           */
+        // TODO could we somehow detect if the flatMap is in a for-comp and fail at compile time if not?
         inline def flatMap[B, S2](inline f: A => B < S2)(using inline _frame: Frame): B < (S & S2) =
             @nowarn("msg=anonymous") def run[C, S3](v: A < S3, cont: Arrow[B, C, S3]): C < (S2 & S3) =
                 var slot: Safepoint.Slot = -1

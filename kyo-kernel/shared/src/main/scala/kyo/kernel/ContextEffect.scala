@@ -183,6 +183,7 @@ object ContextEffect:
       * @param v
       *   The computation requiring the context value
       */
+    // TODO not sure why this is using a separate param group and the others aren't. I imagine it's inference, let's either have all with two param groups or none
     inline def handleInheritable[A, E <: ContextEffect[A], B, S](
         inline effectTag: Tag[E]
     )(

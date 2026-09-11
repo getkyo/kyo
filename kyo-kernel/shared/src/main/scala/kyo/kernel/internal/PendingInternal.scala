@@ -12,12 +12,27 @@ import kyo.kernel.Effect
 import language.implicitConversions
 import scala.annotation.publicInBinary
 
+/** One node of a suspended computation, the reification of a single combinator.
+  *
+  * Each subclass is one thing the evaluator can encounter: a deferral holding a value with the continuations waiting on it, a suspension
+  * awaiting an answer, a region entry, a parked slice, or a stack snapshot. With [[kyo.kernel.Arrow]] these are the whole of what a
+  * computation is made of, which is why a new node kind implies a new combinator rather than a patch to the evaluator.
+  *
+  * The nodes are abstract classes so that each construction site implements the members anonymously and keeps its own types, which is what
+  * lets a node hold a primitive input without boxing it.
+  */
 sealed trait Pending[+A, -S] extends Kyo[A, S]:
     def frame: Frame = Frame.internal
 end Pending
 
 object Pending:
 
+    /** A value with the continuations waiting on it, reifying the application of a continuation rather than running it here.
+      *
+      * Two continuation slots rather than one because a composition arrives as a pair often enough to be worth storing flat: a caller
+      * holding an `Arrow.Chain` hands its links over separately and one node carries both, instead of a node plus the chain. A site with
+      * only one continuation puts `Arrow.id` in the other slot.
+      */
     abstract class Defer[A, B, C, -S] @publicInBinary private[kyo] () extends Pending[C, S]:
         Debugger.onAlloc(this)
 
