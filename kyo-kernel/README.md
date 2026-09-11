@@ -489,6 +489,46 @@ That uniformity is the point. The receiver at these sites is the arrow that actu
 
 Both members are public for that reason, not as an invitation: they exist because the inline expansions that make up the hot paths have to reach them. Reach for `chain` to compose and `arrow(value)` to apply, and leave these two to the machinery.
 
+Applying an arrow through that split is the same computation as applying it directly, which is the property the hot paths rely on:
+
+```scala
+val double: Arrow[Int, Int, Any] = Arrow(_ * 2)
+val incr: Arrow[Int, Int, Any]   = Arrow(_ + 1)
+val both: Arrow[Int, Int, Any]   = double.chain(incr)
+
+assert(both(5).eval == 11)
+
+// what a hot path writes instead, for a composed arrow and for an atom alike
+assert(both.head(5, both.tail).eval == 11)
+assert(double.head(5, double.tail).eval == 10)
+```
+
+### Why that shape exists: fusion
+
+The reason for passing the continuation rather than answering with a value is what the JIT can do with the result. A straightforward interpreter runs a chain of transformations by producing each intermediate value and returning to its own loop to find the next step:
+
+```text
+42 ──▶ [eval] ──▶ (_ * 2) ──▶ [eval] ──▶ (_ + 1) ──▶ [eval] ──▶ 86
+```
+
+Every one of those trips is a call the JIT cannot see through. `Eval.loop` is around fifteen hundred bytes of bytecode, far past any inlining budget, and it is the single loop that every effect in the program passes through, so its dispatch is megamorphic. Nothing on either side of it fuses with anything on the other.
+
+Passing the continuation removes the trips. `map` and `Arrow(f)` are `inline`, so each call site expands into a class of its own with the body inlined into its `apply`, and the next step arrives as an argument rather than being looked up afterwards. The chain is applied from inside the site that already holds the first transformation:
+
+```text
+42 ──▶ (_ * 2) ──▶ (_ + 1) ──▶ 86
+```
+
+At each of those sites the receiver is one concrete class, so the JIT inlines through it, and a run of transformations collapses into straight-line code with the intermediates in registers. This is why a chain over a value that has already settled costs so little: each `map` applies its function on the spot, and the run never reaches the evaluator at all.
+
+```scala
+assert(42.map(_ * 2).map(_ + 1).eval == 86)
+```
+
+Composition is where it would break. A `Chain` does no work of its own, so a site that called `cont(value)` on one would get a node handed back and be sent to the evaluator, ending the fusion at every `chain` boundary. Writing `cont.head(value, cont.tail)` is what avoids that: the receiver is the first link for a composition and the arrow itself for an atom, always something that does work, never a wrapper that would only defer. That is the whole reason those two members exist.
+
+Two consequences worth keeping in mind when reading the module. The fusion is per call site, so the same `map` body reached from two places is two classes, which is what keeps each one monomorphic. And a suspension ends a fused run by construction: the answer is not available yet, so the rest becomes a continuation and the evaluator takes over until a handler answers.
+
 ## Failure and resources
 
 Effects describe what a computation asks for. Exceptions are the other thing that can happen to it, and a computation can also simply be dropped, by a clause that never applies its continuation. Recovery and release have to cover all three endings.
