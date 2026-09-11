@@ -62,9 +62,10 @@ private[mysql] object LocalInfileExchange:
         Latch.init(1).flatMap { latch =>
             channel.beginCleanup(latch).andThen {
                 // Register a cleanup finalizer that fires on error exit (including timeout/interrupt).
-                // On error, we attempt graceful cleanup (empty terminator + drain server response)
-                // inside Async.uninterruptible so the cleanup cannot itself be interrupted.  A 5-second inner
-                // timeout prevents the cleanup from hanging forever if the server stops responding.
+                // A failure the terminator can still speak to gets the graceful cleanup: empty terminator plus
+                // drain, inside Async.uninterruptible so the cleanup cannot itself be interrupted, under a
+                // 5-second timeout so a server that stops responding cannot hang it forever. A cancellation
+                // takes no round-trip at all, for the reason given on that branch.
                 // The latch is always released at the end of this block so waiting callers unblock.
                 Scope.ensure {
                     case Maybe.Present(error) =>
@@ -79,43 +80,49 @@ private[mysql] object LocalInfileExchange:
                             case Result.Panic(_)            => true
                             case Result.Failure(_: Timeout) => true
                             case _                          => false
-                        Async.uninterruptible {
-                            Abort.run[Timeout](
-                                Async.timeout(5.seconds) {
-                                    Abort.run[SqlException](
-                                        sendRawPayload(channel, Span.empty).flatMap { _ =>
-                                            // Use readRawPayloadSkipCheck: _corrupted may already be set
-                                            // by a concurrent markCorrupted() call and we still need to
-                                            // drain the server's response before discarding the connection.
-                                            readFinalResponseSkipCheck(channel).map(_ => ())
+                        if cancellationLike then
+                            // No round-trip on this edge. Its result is not trusted either way, since the branch
+                            // below marks the channel corrupted even when the terminator appears to succeed, so
+                            // the only thing waiting on a server still consuming the upload buys is the whole
+                            // budget spent holding this connection's pool permit, which is returned when the
+                            // lease's scope closes. A caller that then wants a connection is made to wait on
+                            // cleanup it did not ask for and can fail to acquire one at all, instead of being
+                            // handed this connection and failing fast as unusable. Closing the socket ends the
+                            // load by itself: the server sees the EOF.
+                            channel.markCorrupted(OperationName).andThen(channel.endCleanup()).andThen(latch.release)
+                        else
+                            Async.uninterruptible {
+                                Abort.run[Timeout](
+                                    Async.timeout(5.seconds) {
+                                        Abort.run[SqlException](
+                                            sendRawPayload(channel, Span.empty).flatMap { _ =>
+                                                // Use readRawPayloadSkipCheck: _corrupted may already be set
+                                                // by a concurrent markCorrupted() call and we still need to
+                                                // drain the server's response before discarding the connection.
+                                                readFinalResponseSkipCheck(channel).map(_ => ())
+                                            }
+                                        ).flatMap {
+                                            case Result.Success(_) =>
+                                                // A typed stream failure fires at a chunk boundary with nothing in
+                                                // flight, so the terminator is genuine and the connection stays reusable.
+                                                channel.endCleanup().andThen(latch.release)
+                                            case Result.Failure(_) =>
+                                                // Cleanup failed (write error or ERR from server).
+                                                channel.markCorrupted(OperationName).andThen(channel.endCleanup()).andThen(latch.release)
+                                            case Result.Panic(t) =>
+                                                channel.markCorrupted(OperationName).andThen(channel.endCleanup()).andThen(latch.release)
                                         }
-                                    ).flatMap {
-                                        case Result.Success(_) =>
-                                            // Cleanup round-trip syntactically succeeded.  For
-                                            // cancellation-like failures this success cannot be trusted
-                                            // (see classification above), mark the channel corrupted
-                                            // so the next caller fails fast with "unusable" instead of
-                                            // observing a desynchronised protocol stream (e.g.
-                                            // "Got packets out of order" on a follow-up query).
-                                            (if cancellationLike then channel.markCorrupted(OperationName) else ((): Unit < Sync)).andThen(
-                                                channel.endCleanup()
-                                            ).andThen(latch.release)
-                                        case Result.Failure(_) =>
-                                            // Cleanup failed (write error or ERR from server).
-                                            channel.markCorrupted(OperationName).andThen(channel.endCleanup()).andThen(latch.release)
-                                        case Result.Panic(t) =>
-                                            channel.markCorrupted(OperationName).andThen(channel.endCleanup()).andThen(latch.release)
                                     }
+                                ).flatMap {
+                                    case Result.Success(_) => ()
+                                    case Result.Failure(_) =>
+                                        // Inner 5-second cleanup timeout fired. Mark corrupted and unblock callers.
+                                        channel.markCorrupted(OperationName).andThen(channel.endCleanup()).andThen(latch.release)
+                                    case Result.Panic(t) =>
+                                        channel.markCorrupted(OperationName).andThen(channel.endCleanup()).andThen(latch.release)
                                 }
-                            ).flatMap {
-                                case Result.Success(_) => ()
-                                case Result.Failure(_) =>
-                                    // Inner 5-second cleanup timeout fired. Mark corrupted and unblock callers.
-                                    channel.markCorrupted(OperationName).andThen(channel.endCleanup()).andThen(latch.release)
-                                case Result.Panic(t) =>
-                                    channel.markCorrupted(OperationName).andThen(channel.endCleanup()).andThen(latch.release)
                             }
-                        }
+                        end if
                     case Maybe.Absent =>
                         // Normal success exit: terminator was already sent on the success path below.
                         // Release the latch immediately, no corruption, no cleanup needed.
