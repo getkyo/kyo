@@ -390,15 +390,16 @@ class ZioBench:
             if i > FusedWideDepth then ZIO.succeed(acc)
             else
                 ZIO.succeed(acc & 63)
-                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
-                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
-                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
-                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
-                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
-                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
-                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
-                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
-                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .flatMap(v => loop(i + 1, v))
         runSync(loop(0, seed))
     end inlineLimitKeepsZeroAllocation
@@ -406,16 +407,22 @@ class ZioBench:
     /** A narrower chain run deep, so the cost shows in time rather than in expansion. */
     @Benchmark
     def inlineLimitCostsTimeNotAllocation: Int =
-        def loop(i: Int, acc: Int): UIO[Int] =
-            if i > NarrowDepth then ZIO.succeed(acc)
+        def loop(i: Int): UIO[Int] =
+            if i > NarrowDepth then ZIO.succeed(i)
             else
-                ZIO.succeed(acc & 63)
-                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
-                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
-                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
-                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
-                    .flatMap(v => loop(i + 1, v))
-        runSync(loop(0, seed))
+                ZIO.succeed(i + 51)
+                    .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
+                    .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
+                    .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
+                    .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
+                    .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
+                    .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
+                    .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
+                    .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
+                    .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
+                    .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
+                    .flatMap(loop)
+        runSync(loop(seed - 1))
     end inlineLimitCostsTimeNotAllocation
 
     /** A computation carried as a value and flattened each round, measuring the wrap and unwrap. */
@@ -432,6 +439,75 @@ class ZioBench:
     def evalFixedOverhead: Int =
         runSync(ZIO.succeed(seed).map(_ + 1))
     end evalFixedOverhead
+
+
+    /** A read resolved against the innermost of three nested bindings. */
+    @Benchmark
+    def contextReadsUnderBindings: Int =
+        def loop(i: Int): UIO[Int] =
+            if i > NarrowDepth then ZIO.succeed(i) else st.get.flatMap(c => loop(i + c))
+        runSync(ask.locally(3)(ask2.locally(2)(st.locally(1)(loop(seed - 1)))))
+    end contextReadsUnderBindings
+
+    /** A binding installed and torn down once per round, so the round pays entry and exit. */
+    @Benchmark
+    def contextRegionsPayEntryExit: Int =
+        def loop(i: Int): UIO[Int] =
+            if i > NarrowDepth then ZIO.succeed(i)
+            else st.locally(1)(st.get).flatMap(c => loop(i + c))
+        runSync(loop(seed - 1))
+    end contextRegionsPayEntryExit
+
+    /** Every occurrence answered where it stands, without the remainder being handed over. */
+    @Benchmark
+    def handleLoopAnswersInPlace: Int =
+        def loop(i: Int): UIO[Int] =
+            if i > Depth then ZIO.succeed(i) else ask.get.flatMap(a => loop(i + a))
+        runSync(loop(seed - 1))
+    end handleLoopAnswersInPlace
+
+    /** The same, with what follows the region folded into the answer. */
+    @Benchmark
+    def handleLoopFusesContinuation: Int =
+        def loop(i: Int): UIO[Int] =
+            if i > Depth then ZIO.succeed(i) else ask.get.flatMap(a => loop(i + a))
+        runSync(loop(seed - 1).map(b => b + 1))
+    end handleLoopFusesContinuation
+
+    /** An answer that itself performs a second operation, so the region is rebuilt around it. */
+    @Benchmark
+    def emittingClausesPayRegionRebuild: Int =
+        def loop(i: Int): UIO[Int] =
+            if i > NarrowDepth then ZIO.succeed(i)
+            else ask.get.flatMap(a => ask2.get.flatMap(_ => loop(i + a)))
+        runSync(loop(seed - 1))
+    end emittingClausesPayRegionRebuild
+
+    /** Two operations interleaved, the inner one answered without displacing the outer. */
+    @Benchmark
+    def foreignCrossingsAnsweredInPlace: Int =
+        def loop(i: Int): UIO[Int] =
+            if i > Depth then ZIO.succeed(i)
+            else ask.get.flatMap(a => ask2.get.flatMap(t => loop(i + a + t)))
+        runSync(loop(seed - 1))
+    end foreignCrossingsAnsweredInPlace
+
+    /** A computation run to its first suspension rather than to completion. */
+    @Benchmark
+    def partialSuspensionBaseline: Int =
+        def loop(i: Int): UIO[Int] =
+            if i > Depth then ZIO.succeed(i) else ask.get.flatMap(a => loop(i + a))
+        runSync(ZIO.suspendSucceed(loop(seed - 1)))
+    end partialSuspensionBaseline
+
+
+    /** The stateful loop with the state threaded through a cell rather than the handler's state. */
+    @Benchmark
+    def statefulAnswersPaySuccessorAltRef: Int =
+        def loop(i: Int): UIO[Int] =
+            if i > Depth then ZIO.succeed(i) else ask.get.flatMap(a => loop(i + a))
+        runSync(st.set(0).flatMap(_ => loop(seed - 1)))
+    end statefulAnswersPaySuccessorAltRef
 
 end ZioBench
 

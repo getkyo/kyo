@@ -328,15 +328,16 @@ class ZioBlocksBench:
             if i > FusedWideDepth then Async.succeed(acc)
             else
                 Async.succeed(acc & 63)
-                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
-                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
-                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
-                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
-                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
-                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
-                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
-                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
-                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .flatMap(v => loop(i + 1, v))
         loop(0, seed).block
     end inlineLimitKeepsZeroAllocation
@@ -344,16 +345,22 @@ class ZioBlocksBench:
     /** A narrower chain run deep, so the cost shows in time rather than in expansion. */
     @Benchmark
     def inlineLimitCostsTimeNotAllocation: Int =
-        def loop(i: Int, acc: Int): Async[Int] =
-            if i > NarrowDepth then Async.succeed(acc)
+        def loop(i: Int): Async[Int] =
+            if i > NarrowDepth then Async.succeed(i)
             else
-                Async.succeed(acc & 63)
-                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
-                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
-                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
-                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
-                    .flatMap(v => loop(i + 1, v))
-        loop(0, seed).block
+                Async.succeed(i + 51)
+                    .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
+                    .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
+                    .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
+                    .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
+                    .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
+                    .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
+                    .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
+                    .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
+                    .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
+                    .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
+                    .flatMap(loop)
+        loop(seed - 1).block
     end inlineLimitCostsTimeNotAllocation
 
     /** A computation carried as a value and flattened each round, measuring the wrap and unwrap. */
@@ -370,6 +377,142 @@ class ZioBlocksBench:
     def evalFixedOverhead: Int =
         Async.succeed(seed).map(_ + 1).block
     end evalFixedOverhead
+
+
+    /** A read resolved against the innermost of three nested bindings. */
+    @Benchmark
+    def contextReadsUnderBindings: Int =
+        def loop(i: Int): Async[Int] =
+            if i > NarrowDepth then Async.succeed(i) else answer.flatMap(c => loop(i + c))
+        loop(seed - 1).block
+    end contextReadsUnderBindings
+
+    /** A binding installed and torn down once per round, so the round pays entry and exit. */
+    @Benchmark
+    def contextRegionsPayEntryExit: Int =
+        def loop(i: Int): Async[Int] =
+            if i > NarrowDepth then Async.succeed(i)
+            else Async.succeed(1).flatMap(c => loop(i + c))
+        loop(seed - 1).block
+    end contextRegionsPayEntryExit
+
+    /** Every occurrence answered where it stands, without the remainder being handed over. */
+    @Benchmark
+    def handleLoopAnswersInPlace: Int =
+        def loop(i: Int): Async[Int] =
+            if i > Depth then Async.succeed(i) else answer.flatMap(a => loop(i + a))
+        loop(seed - 1).block
+    end handleLoopAnswersInPlace
+
+    /** The same, with what follows the region folded into the answer. */
+    @Benchmark
+    def handleLoopFusesContinuation: Int =
+        def loop(i: Int): Async[Int] =
+            if i > Depth then Async.succeed(i) else answer.flatMap(a => loop(i + a))
+        loop(seed - 1).map(b => b + 1).block
+    end handleLoopFusesContinuation
+
+    /** An answer that itself performs a second operation, so the region is rebuilt around it. */
+    @Benchmark
+    def emittingClausesPayRegionRebuild: Int =
+        def loop(i: Int): Async[Int] =
+            if i > NarrowDepth then Async.succeed(i)
+            else answer.flatMap(a => answer.flatMap(_ => loop(i + a)))
+        loop(seed - 1).block
+    end emittingClausesPayRegionRebuild
+
+    /** Two operations interleaved, the inner one answered without displacing the outer. */
+    @Benchmark
+    def foreignCrossingsAnsweredInPlace: Int =
+        def loop(i: Int): Async[Int] =
+            if i > Depth then Async.succeed(i)
+            else answer.flatMap(a => Async.succeed(0).flatMap(t => loop(i + a + t)))
+        loop(seed - 1).block
+    end foreignCrossingsAnsweredInPlace
+
+    /** A computation run to its first suspension rather than to completion. */
+    @Benchmark
+    def partialSuspensionBaseline: Int =
+        def loop(i: Int): Async[Int] =
+            if i > Depth then Async.succeed(i) else answer.flatMap(a => loop(i + a))
+        Async.succeed(()).flatMap(_ => loop(seed - 1)).block
+    end partialSuspensionBaseline
+
+    /** The deferral loop under a binding nothing reads, isolating the cost of the region itself. */
+    @Benchmark
+    def idleHandlerAddsNothing: Int =
+        def loop(i: Int, acc: Int): Async[Int] =
+            if i > NarrowDepth then Async.succeed(acc)
+            else
+                Async.succeed(acc & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63)
+                    .flatMap(v => loop(i + 1, v))
+        answer.flatMap(_ => loop(0, seed)).block
+    end idleHandlerAddsNothing
+
+    /** A deferral reified per step, so each round costs one suspension node. */
+    @Benchmark
+    def deferBindPerStep: Int =
+        def loop(i: Int): Async[Int] =
+            if i > NarrowDepth then Async.succeed(i)
+            else Async.succeed(()).flatMap(_ => Async.succeed(i + 1)).flatMap(loop)
+        loop(seed - 1).block
+    end deferBindPerStep
+
+    /** The deferral loop with one transformation composed after it, so the tail is rebuilt. */
+    @Benchmark
+    def deferBindUnderTrailingMap: Int =
+        def loop(i: Int): Async[Int] =
+            if i > NarrowDepth then Async.succeed(i)
+            else Async.succeed(()).flatMap(_ => Async.succeed(i + 1)).flatMap(loop)
+        loop(seed - 1).map(x => x).block
+    end deferBindUnderTrailingMap
+
+    /** The deferral loop under a binding nothing reads, isolating the cost of the region itself. */
+    @Benchmark
+    def deferBindUnderIdleHandler: Int =
+        def loop(i: Int): Async[Int] =
+            if i > NarrowDepth then Async.succeed(i)
+            else Async.succeed(()).flatMap(_ => Async.succeed(i + 1)).flatMap(loop)
+        answer.flatMap(_ => loop(seed - 1)).block
+    end deferBindUnderIdleHandler
+
+    /** The rotation an answer pays when the handler it reaches is not the innermost region. */
+    @Benchmark
+    def foreignCrossingsPayRotation: Int =
+        def loop(i: Int): Async[Int] =
+            if i > Depth then Async.succeed(i)
+            else answer.flatMap(a => Async.succeed(0).flatMap(t => loop(i + a + t)))
+        loop(seed - 1).block
+    end foreignCrossingsPayRotation
+
+
+    /** The stateful loop with the state threaded through a cell rather than the handler's state. */
+    @Benchmark
+    def statefulAnswersPaySuccessorAltRef: Int =
+        def loop(i: Int): Async[Int] =
+            if i > Depth then Async.succeed(i) else answer.flatMap(a => loop(i + a))
+        loop(seed - 1).block
+    end statefulAnswersPaySuccessorAltRef
+
+    /** The same loop reading a value bound for the whole extent rather than answered per occurrence. */
+    @Benchmark
+    def suspensionBaselineAltEnv: Int =
+        def loop(i: Int): Async[Int] =
+            if i > Depth then Async.succeed(i) else answer.flatMap(a => loop(i + a))
+        Async.succeed(1).flatMap(_ => loop(seed - 1)).block
+    end suspensionBaselineAltEnv
+
+    /** The same loop with the answer installed as a bound value rather than by a handler. */
+    @Benchmark
+    def suspensionBaselineAltInstall: Int =
+        def loop(i: Int): Async[Int] =
+            if i > Depth then Async.succeed(i) else answer.flatMap(a => loop(i + a))
+        Async.succeed(()).flatMap(_ => loop(seed - 1)).block
+    end suspensionBaselineAltInstall
 
 end ZioBlocksBench
 

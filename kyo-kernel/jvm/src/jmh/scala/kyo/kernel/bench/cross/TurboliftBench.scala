@@ -380,15 +380,16 @@ class TurboliftBench:
             if i > FusedWideDepth then !!.pure(acc)
             else
                 !!.pure(acc & 63)
-                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
-                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
-                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
-                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
-                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
-                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
-                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
-                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
-                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .flatMap(v => loop(i + 1, v))
         loop(0, seed).runST
     end inlineLimitKeepsZeroAllocation
@@ -396,16 +397,22 @@ class TurboliftBench:
     /** A narrower chain run deep, so the cost shows in time rather than in expansion. */
     @Benchmark
     def inlineLimitCostsTimeNotAllocation: Int =
-        def loop(i: Int, acc: Int): Int !! Any =
-            if i > NarrowDepth then !!.pure(acc)
+        def loop(i: Int): Int !! Any =
+            if i > NarrowDepth then !!.pure(i)
             else
-                !!.pure(acc & 63)
-                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
-                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
-                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
-                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
-                    .flatMap(v => loop(i + 1, v))
-        loop(0, seed).runST
+                !!.pure(i + 51)
+                    .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
+                    .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
+                    .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
+                    .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
+                    .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
+                    .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
+                    .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
+                    .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
+                    .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
+                    .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
+                    .flatMap(loop)
+        loop(seed - 1).runST
     end inlineLimitCostsTimeNotAllocation
 
     /** A computation carried as a value and flattened each round, measuring the wrap and unwrap. */
@@ -422,6 +429,91 @@ class TurboliftBench:
     def evalFixedOverhead: Int =
         !!.pure(seed).map(_ + 1).runST
     end evalFixedOverhead
+
+
+    /** A read resolved against the innermost of three nested bindings. */
+    @Benchmark
+    def contextReadsUnderBindings: Int =
+        def loop(i: Int): Int !! Ask =
+            if i > NarrowDepth then !!.pure(i) else Ask.ask.flatMap(c => loop(i + c))
+        (loop(seed - 1): Int !! Ask).handleWith(askHandler).runST
+    end contextReadsUnderBindings
+
+    /** A binding installed and torn down once per round, so the round pays entry and exit. */
+    @Benchmark
+    def contextRegionsPayEntryExit: Int =
+        def loop(i: Int): Int !! Any =
+            if i > NarrowDepth then !!.pure(i)
+            else (Ask.ask: Int !! Ask).handleWith(askHandler).flatMap(c => loop(i + c))
+        loop(seed - 1).runST
+    end contextRegionsPayEntryExit
+
+    /** Every occurrence answered where it stands, without the remainder being handed over. */
+    @Benchmark
+    def handleLoopAnswersInPlace: Int =
+        def loop(i: Int): Int !! Ask =
+            if i > Depth then !!.pure(i) else Ask.ask.flatMap(a => loop(i + a))
+        (loop(seed - 1): Int !! Ask).handleWith(askHandler).runST
+    end handleLoopAnswersInPlace
+
+    /** The same, with what follows the region folded into the answer. */
+    @Benchmark
+    def handleLoopFusesContinuation: Int =
+        def loop(i: Int): Int !! Ask =
+            if i > Depth then !!.pure(i) else Ask.ask.flatMap(a => loop(i + a))
+        (loop(seed - 1): Int !! Ask).handleWith(askHandler).map(b => b + 1).runST
+    end handleLoopFusesContinuation
+
+    /** An answer that itself performs a second operation, so the region is rebuilt around it. */
+    @Benchmark
+    def emittingClausesPayRegionRebuild: Int =
+        def loop(i: Int): Int !! (Ask & Ask2) =
+            if i > NarrowDepth then !!.pure(i)
+            else Ask.ask.flatMap(a => Ask2.ask.flatMap(_ => loop(i + a)))
+        loop(seed - 1).handleWith(ask2Handler).handleWith(askHandler).runST
+    end emittingClausesPayRegionRebuild
+
+    /** Two operations interleaved, the inner one answered without displacing the outer. */
+    @Benchmark
+    def foreignCrossingsAnsweredInPlace: Int =
+        def loop(i: Int): Int !! (Ask & Ask2) =
+            if i > Depth then !!.pure(i)
+            else Ask.ask.flatMap(a => Ask2.ask.flatMap(t => loop(i + a + t)))
+        loop(seed - 1).handleWith(ask2Handler).handleWith(askHandler).runST
+    end foreignCrossingsAnsweredInPlace
+
+    /** A computation run to its first suspension rather than to completion. */
+    @Benchmark
+    def partialSuspensionBaseline: Int =
+        def loop(i: Int): Int !! Ask =
+            if i > Depth then !!.pure(i) else Ask.ask.flatMap(a => loop(i + a))
+        !!.impureEff(loop(seed - 1): Int !! Ask).handleWith(askHandler).runST
+    end partialSuspensionBaseline
+
+
+    /** The stateful loop with the state threaded through a cell rather than the handler's state. */
+    @Benchmark
+    def statefulAnswersPaySuccessorAltRef: Int =
+        def loop(i: Int): Int !! Ask =
+            if i > Depth then !!.pure(i) else Ask.ask.flatMap(a => loop(i + a))
+        (loop(seed - 1): Int !! Ask).handleWith(askHandler).runST
+    end statefulAnswersPaySuccessorAltRef
+
+    /** The same loop reading a value bound for the whole extent rather than answered per occurrence. */
+    @Benchmark
+    def suspensionBaselineAltEnv: Int =
+        def loop(i: Int): Int !! Ask2 =
+            if i > Depth then !!.pure(i) else Ask2.ask.flatMap(a => loop(i + a))
+        (loop(seed - 1): Int !! Ask2).handleWith(Ask2.handler(1)).runST
+    end suspensionBaselineAltEnv
+
+    /** The same loop with the answer installed as a bound value rather than by a handler. */
+    @Benchmark
+    def suspensionBaselineAltInstall: Int =
+        def loop(i: Int): Int !! Ask =
+            if i > Depth then !!.pure(i) else Ask.ask.flatMap(a => loop(i + a))
+        (loop(seed - 1): Int !! Ask).handleWith(Ask.handler(1)).runST
+    end suspensionBaselineAltInstall
 
 end TurboliftBench
 

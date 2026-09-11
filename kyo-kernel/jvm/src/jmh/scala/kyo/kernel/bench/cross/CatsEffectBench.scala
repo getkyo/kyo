@@ -388,15 +388,16 @@ class CatsEffectBench:
             if i > FusedWideDepth then IO.pure(acc)
             else
                 IO.pure(acc & 63)
-                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
-                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
-                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
-                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
-                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
-                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
-                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
-                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
-                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .flatMap(v => loop(i + 1, v))
         runSync(loop(0, seed))
     end inlineLimitKeepsZeroAllocation
@@ -404,16 +405,22 @@ class CatsEffectBench:
     /** A narrower chain run deep, so the cost shows in time rather than in expansion. */
     @Benchmark
     def inlineLimitCostsTimeNotAllocation: Int =
-        def loop(i: Int, acc: Int): IO[Int] =
-            if i > NarrowDepth then IO.pure(acc)
+        def loop(i: Int): IO[Int] =
+            if i > NarrowDepth then IO.pure(i)
             else
-                IO.pure(acc & 63)
-                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
-                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
-                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
-                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
-                    .flatMap(v => loop(i + 1, v))
-        runSync(loop(0, seed))
+                IO.pure(i + 51)
+                    .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
+                    .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
+                    .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
+                    .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
+                    .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
+                    .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
+                    .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
+                    .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
+                    .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
+                    .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
+                    .flatMap(loop)
+        runSync(loop(seed - 1))
     end inlineLimitCostsTimeNotAllocation
 
     /** A computation carried as a value and flattened each round, measuring the wrap and unwrap. */
@@ -430,6 +437,75 @@ class CatsEffectBench:
     def evalFixedOverhead: Int =
         runSync(IO.pure(seed).map(_ + 1))
     end evalFixedOverhead
+
+
+    /** A read resolved against the innermost of three nested bindings. */
+    @Benchmark
+    def contextReadsUnderBindings: Int =
+        def loop(i: Int): IO[Int] =
+            if i > NarrowDepth then IO.pure(i) else st.get.flatMap(c => loop(i + c))
+        runSync(ask.set(3).flatMap(_ => ask2.set(2)).flatMap(_ => st.set(1)).flatMap(_ => loop(seed - 1)))
+    end contextReadsUnderBindings
+
+    /** A binding installed and torn down once per round, so the round pays entry and exit. */
+    @Benchmark
+    def contextRegionsPayEntryExit: Int =
+        def loop(i: Int): IO[Int] =
+            if i > NarrowDepth then IO.pure(i)
+            else st.getAndSet(1).flatMap(prev => st.get.flatMap(c => st.set(prev).flatMap(_ => loop(i + c))))
+        runSync(loop(seed - 1))
+    end contextRegionsPayEntryExit
+
+    /** Every occurrence answered where it stands, without the remainder being handed over. */
+    @Benchmark
+    def handleLoopAnswersInPlace: Int =
+        def loop(i: Int): IO[Int] =
+            if i > Depth then IO.pure(i) else ask.get.flatMap(a => loop(i + a))
+        runSync(loop(seed - 1))
+    end handleLoopAnswersInPlace
+
+    /** The same, with what follows the region folded into the answer. */
+    @Benchmark
+    def handleLoopFusesContinuation: Int =
+        def loop(i: Int): IO[Int] =
+            if i > Depth then IO.pure(i) else ask.get.flatMap(a => loop(i + a))
+        runSync(loop(seed - 1).map(b => b + 1))
+    end handleLoopFusesContinuation
+
+    /** An answer that itself performs a second operation, so the region is rebuilt around it. */
+    @Benchmark
+    def emittingClausesPayRegionRebuild: Int =
+        def loop(i: Int): IO[Int] =
+            if i > NarrowDepth then IO.pure(i)
+            else ask.get.flatMap(a => ask2.get.flatMap(_ => loop(i + a)))
+        runSync(loop(seed - 1))
+    end emittingClausesPayRegionRebuild
+
+    /** Two operations interleaved, the inner one answered without displacing the outer. */
+    @Benchmark
+    def foreignCrossingsAnsweredInPlace: Int =
+        def loop(i: Int): IO[Int] =
+            if i > Depth then IO.pure(i)
+            else ask.get.flatMap(a => ask2.get.flatMap(t => loop(i + a + t)))
+        runSync(loop(seed - 1))
+    end foreignCrossingsAnsweredInPlace
+
+    /** A computation run to its first suspension rather than to completion. */
+    @Benchmark
+    def partialSuspensionBaseline: Int =
+        def loop(i: Int): IO[Int] =
+            if i > Depth then IO.pure(i) else ask.get.flatMap(a => loop(i + a))
+        runSync(IO.defer(loop(seed - 1)))
+    end partialSuspensionBaseline
+
+
+    /** The same loop reading a value bound for the whole extent rather than answered per occurrence. */
+    @Benchmark
+    def suspensionBaselineAltEnv: Int =
+        def loop(i: Int): IO[Int] =
+            if i > Depth then IO.pure(i) else ask2.get.flatMap(a => loop(i + a))
+        runSync(ask2.set(1).flatMap(_ => loop(seed - 1)))
+    end suspensionBaselineAltEnv
 
 end CatsEffectBench
 

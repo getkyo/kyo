@@ -478,6 +478,34 @@ class KernelBench:
         run(loop(seed - 1))
     end contextRegionsPayEntryExit
 
+
+    /** The same loop with the answer installed as a bound value rather than by a handler. */
+    @Benchmark
+    def suspensionBaselineAltInstall: Int =
+        def loop(i: Int): Int < Cfg =
+            if i > Depth then i
+            else ContextEffect.suspend(Tag[Cfg]).map(a => loop(i + a))
+        run(ContextEffect.handleInheritable(Tag[Cfg], 1)(loop(seed - 1)))
+    end suspensionBaselineAltInstall
+
+    /** The same loop reading a value bound for the whole extent rather than answered per occurrence. */
+    @Benchmark
+    def suspensionBaselineAltEnv: Int =
+        def loop(i: Int): Int < Cfg2 =
+            if i > Depth then i
+            else ContextEffect.suspend(Tag[Cfg2]).map(a => loop(i + a))
+        run(ContextEffect.handleInheritable(Tag[Cfg2], 1)(loop(seed - 1)))
+    end suspensionBaselineAltEnv
+
+    /** The stateful loop with the state threaded through a cell rather than the handler's state. */
+    @Benchmark
+    def statefulAnswersPaySuccessorAltRef: Int =
+        def loop(i: Int): Int < Ask =
+            if i > Depth then i
+            else ask.map(a => loop(i + a))
+        run(ArrowEffect.handleCont(Tag[Ask], loop(seed - 1))([C] => (_, cont) => cont(1), a => a))
+    end statefulAnswersPaySuccessorAltRef
+
 end KernelBench
 
 object KernelBench:
