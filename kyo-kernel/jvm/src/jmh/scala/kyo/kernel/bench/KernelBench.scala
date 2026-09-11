@@ -16,9 +16,9 @@ import org.openjdk.jmh.annotations.*
 @Warmup(iterations = 5, time = 1)
 @Measurement(iterations = 5, time = 1)
 @Fork(value = 2)
-class ProtoBench:
+class KernelBench:
 
-    import ProtoBench.*
+    import KernelBench.*
 
     private var seed = 1
 
@@ -454,9 +454,9 @@ class ProtoBench:
         run(loop(seed - 1))
     end contextRegionsPayEntryExit
 
-end ProtoBench
+end KernelBench
 
-object ProtoBench:
+object KernelBench:
 
     inline def Depth          = 10000
     inline def NarrowDepth    = 1000
@@ -490,4 +490,4 @@ object ProtoBench:
 
     sealed trait Cfg3 extends ContextEffect[Int]
 
-end ProtoBench
+end KernelBench

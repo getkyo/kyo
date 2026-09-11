@@ -14,7 +14,7 @@ import kyo.kernel.Isolate
 import kyo.render
 import org.scalatest.freespec.AnyFreeSpec
 
-class ProtoKernelTest extends AnyFreeSpec:
+class KernelTest extends AnyFreeSpec:
 
     sealed trait Ask   extends ArrowEffect[Const[Unit], Const[Int]]
     sealed trait Say   extends ArrowEffect[Const[String], Const[Unit]]
@@ -549,4 +549,4 @@ class ProtoKernelTest extends AnyFreeSpec:
         }
     }
 
-end ProtoKernelTest
+end KernelTest
