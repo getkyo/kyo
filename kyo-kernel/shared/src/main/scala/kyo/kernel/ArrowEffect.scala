@@ -63,7 +63,7 @@ object ArrowEffect:
       *
       * @param effectTag
       *   Identifies the effect this operation belongs to
-      * @param funcionInput
+      * @param functionInput
       *   The operation's input, handed to the handler's clause
       */
     @nowarn("msg=anonymous")
@@ -71,12 +71,12 @@ object ArrowEffect:
         using inline _frame: Frame
     )[I[_], O[_], E <: ArrowEffect[I, O]](
         inline effectTag: Tag[E],
-        inline funcionInput: I[A]
+        inline functionInput: I[A]
     ): O[A] < E =
         new Pending.SuspendArrow[I, O, E, A, O[A], E]:
             override def frame = _frame
             def tag            = effectTag
-            def input          = funcionInput
+            def input          = functionInput
             def cont           = Arrow.id
 
     /** Performs an operation and transforms its answer in the same node, rather than suspending and mapping afterwards.
@@ -86,7 +86,7 @@ object ArrowEffect:
       *
       * @param effectTag
       *   Identifies the effect this operation belongs to
-      * @param funcionInput
+      * @param functionInput
       *   The operation's input, handed to the handler's clause
       * @param f
       *   Transforms the handler's answer
@@ -96,14 +96,14 @@ object ArrowEffect:
         using inline _frame: Frame
     )[I[_], O[_], E <: ArrowEffect[I, O], B, S](
         inline effectTag: Tag[E],
-        inline funcionInput: I[A]
+        inline functionInput: I[A]
     )(
         inline f: O[A] => B < S
     ): B < (S & E) =
         new Pending.SuspendArrowWith[I, O, E, A, B, E & S]:
             override def frame = _frame
             def tag            = effectTag
-            def input          = funcionInput
+            def input          = functionInput
             def cont           = this
             override def apply[D, S2](v: O[A] < S2, cont2: Arrow[B, D, S2]) =
                 v match

@@ -89,15 +89,14 @@ object ContextEffect:
       *
       * @param effectTag
       *   Identifies the context effect to read
-      * @param default
+      * @param defaultValue
       *   Used when no handler has bound a value, evaluated only then
       */
     @nowarn("msg=anonymous")
     inline def suspend[A, E <: ContextEffect[A]](
         inline effectTag: Tag[E],
-        inline default: => A
+        inline defaultValue: => A
     )(using inline _frame: Frame): A < Any =
-        def defaultValue: A = default
         new Pending.SuspendContext[A, E, A, Any]:
             override def frame = _frame
             def tag            = effectTag
@@ -112,7 +111,7 @@ object ContextEffect:
       *
       * @param effectTag
       *   Identifies the context effect to read
-      * @param default
+      * @param defaultValue
       *   Used when no handler has bound a value, evaluated only then
       * @param f
       *   Transforms the value that was read
@@ -120,11 +119,10 @@ object ContextEffect:
     @nowarn("msg=anonymous")
     inline def suspendWith[A, E <: ContextEffect[A], B, S](
         inline effectTag: Tag[E],
-        inline default: => A
+        inline defaultValue: => A
     )(
         inline f: A => B < S
     )(using inline _frame: Frame): B < S =
-        def defaultValue: A = default
         new Pending.SuspendContextWith[A, E, B, S]:
             override def frame = _frame
             def tag            = effectTag
