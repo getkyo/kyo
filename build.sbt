@@ -32,7 +32,6 @@ val zioVersion       = "2.1.26"
 val catsVersion      = "3.7.0"
 val oxVersion        = "1.0.5"
 val scalaTestVersion = "3.2.20"
-val zioBlocksVersion = "0.0.51"
 val turboliftVersion = "0.126.0"
 
 val compilerOptionFailDiscard = "-Wconf:msg=(unused.*value|discarded.*value|pure.*statement):error"
@@ -769,7 +768,7 @@ lazy val `kyo-data` =
         .jsSettings(`js-settings`)
         .wasmSettings(`wasm-settings`)
 
-// Cross-library ports of KernelBench's rows (ZIO, cats-effect, zio-blocks Async, Turbolift),
+// Cross-library ports of KernelBench's rows (ZIO, cats-effect, Turbolift),
 // for comparison boards. A separate unpublished project so the external dependencies never
 // reach a published kyo artifact's pom; row names match KernelBench's so result tables join
 // by name.
@@ -800,17 +799,11 @@ lazy val `kyo-kernel` =
             // UseCompactObjectHeaders from kyo-settings, and a collector-dependent layout
             // flag must not be baked into the canonical numbers.
             Jmh / javaOptions := (Test / javaOptions).value.filterNot(_ == "-XX:+UseCompactObjectHeaders"),
-            // zio-blocks Async has no trampoline: flatMap over a settled value calls the
-            // continuation directly, so the cross benches' depth-10000 rows recurse on the JVM
-            // stack. Uniform across every fork in this project; the other rows are
-            // stack-insensitive.
-            Jmh / javaOptions += "-Xss32m",
             // The comparison benches under bench/cross; jmh-scoped so the frameworks stay off
             // the Compile and Test classpaths.
             libraryDependencies ++= Seq(
                 "dev.zio"            %% "zio"              % zioVersion,
                 "org.typelevel"      %% "cats-effect"      % catsVersion,
-                "dev.zio"            %% "zio-blocks-async" % zioBlocksVersion,
                 "io.github.marcinzh" %% "turbolift-core"   % turboliftVersion,
                 "org.scala-lang"     %% "scala3-compiler"  % scalaVersion.value
             ).map(_ % "jmh"),

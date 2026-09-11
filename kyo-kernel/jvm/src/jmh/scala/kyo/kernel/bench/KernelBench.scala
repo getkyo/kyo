@@ -30,10 +30,11 @@ class KernelBench:
       * per invocation lifts the measurement above it.
       */
     @Benchmark
+    @OperationsPerInvocation(1000)
     def evalFixedOverheadBatch: Int =
         var acc = 0
         var i   = 0
-        while i < NarrowDepth do
+        while i < 1000 do
             acc += run(((seed + i): Int < Any).map(_ + 1))
             i += 1
         acc
@@ -41,10 +42,11 @@ class KernelBench:
 
     /** The floor the row above is measured against: the same batch with nothing composed onto the value. */
     @Benchmark
+    @OperationsPerInvocation(1000)
     def entryFloorBatch: Int =
         var acc = 0
         var i   = 0
-        while i < NarrowDepth do
+        while i < 1000 do
             acc += run((seed + i): Int < Any)
             i += 1
         acc
