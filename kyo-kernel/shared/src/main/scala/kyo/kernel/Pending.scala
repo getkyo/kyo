@@ -20,9 +20,9 @@ import scala.language.implicitConversions
   *
   * This type allows Kyo to track effects at compile time and ensure they are properly handled. The effects are accumulated in the type
   * parameter `S` as an intersection type (`&`). Because intersection types are unordered, `Abort[String] & Emit[Log]` is equivalent to
-  * `Emit[Log] & Abort[String]` - the order in which effects appear in the type does not determine the order in which they execute.
+  * `Emit[Log] & Abort[String]`: the order in which effects appear in the type does not determine the order in which they execute.
   *
-  * The pending type has a single fundamental operation - the monadic bind, which is exposed as both `map` and `flatMap` (for
+  * The pending type has a single fundamental operation, the monadic bind, exposed as both `map` and `flatMap` (the latter for
   * for-comprehension support). Plain values are automatically lifted into the effect context, which means `map` can serve as both `map` and
   * `flatMap`. This allows writing effectful code typically without having to distinguish map from flatMap or manually lifting values.
   *
@@ -35,12 +35,20 @@ import scala.language.implicitConversions
   *
   * Beyond effect handlers, `handle` can be used with any function that takes a computation as input. For example,
   * `computation.handle(Abort.run, _.map(_ + 1))` handles `Abort` and then applies a transformation. While `handle` supports arbitrary
-  * functions, it is primarily designed for effect handling .
+  * functions, it is primarily designed for effect handling.
+  *
+  * #### Representation
+  *
+  * The type is opaque over a three-arm union, and each arm is load-bearing:
+  *   - a raw `A`, which is why a plain value is already a computation and why a settled one costs no wrapper;
+  *   - a `Pending` node, the family in `PendingInternal` reifying one combinator: a deferral, a suspension, a region entry, a parked slice
+  *     or a stack snapshot;
+  *   - a `Nested` wrapper, which is what the lift puts around a computation used as a value. Without an arm of its own, `Nothing < S`
+  *     erases to `Pending` and a position holding a nested computation could not carry it.
+  *
+  * The combinators below build `Arrow` and `Defer` nodes and leave the stack-depth budget to the evaluator, which is why their function
+  * parameters take no `Safepoint` evidence.
   */
-// The second arm is Pending, the node family in PendingInternal. The combinators below build Arrow and Defer
-// nodes and leave the stack-depth budget to the evaluator, so their function parameters take no Safepoint
-// evidence. The third arm is the wrapper the lift puts around a nested computation: without an arm of its own,
-// `Nothing < S` erases to Pending and a position holding a nested computation cannot carry it.
 opaque type <[+A, -S] = A | Pending[A, S] | Nested[A]
 
 // The lifts live in internal.Implicits, mixed in here.

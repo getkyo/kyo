@@ -240,6 +240,7 @@ object Arrow:
         override def toString = s"Step(${site(frame)})"
     end Step
 
+    // TODO do we need to override toString? let's review all Kyo subtypes for that
     abstract private[kyo] class Ensure[-A, B, -S] extends Step[A, B, S]:
         override def apply(v: A): B < S
 

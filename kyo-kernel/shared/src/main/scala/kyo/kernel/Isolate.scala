@@ -91,12 +91,11 @@ abstract class Isolate[Remove, -Keep, -Restore]:
       * This is the first phase of isolation, obtaining the state that will be managed during the isolated execution. The computation
       * continues with all original effects plus Keep effects available.
       *
+      * The captured computation's row is `Remove & S`, which the IOTask integration relies on.
+      *
       * @param f
       *   Function that receives the captured state
-      * @return
-      *   Computation with Remove, Keep, and additional effects
       */
-    // The captured computation's row is `Remove & S`; the IOTask integration relies on it.
     def capture[A, S](f: State => A < S)(using Frame): A < (Remove & S)
 
     /** Executes a computation with isolated state.

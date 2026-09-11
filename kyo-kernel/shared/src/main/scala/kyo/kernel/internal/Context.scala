@@ -11,8 +11,10 @@ import scala.annotation.tailrec
   * Context maintains a type-safe mapping between effect tags and their values. It provides the underlying storage mechanism that allows
   * ContextEffect to request, store, and retrieve values. Bindings are kept in region order: a region binds on top and unbinds on exit, and
   * a read walks outward from the innermost binding, so an inner region shadows an outer one with the same tag.
+  *
+  * This structure decides only what a read sees on one fiber. What crosses an async boundary is decided per binding, by each
+  * `ContextHandler`'s fork and join.
   */
-// What crosses an async boundary is decided by each ContextHandler's fork and join.
 sealed abstract private[kernel] class Context:
 
     final def bind[A, E <: ContextEffect[A]](tag: Tag[E], value: A): Context =

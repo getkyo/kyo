@@ -24,6 +24,7 @@ import scala.annotation.nowarn
   * @see
   *   [[Effect.defer]] For moving a block into the computation the evaluator runs
   */
+// TODO sealed?
 abstract class Effect private[kernel] ()
 
 object Effect:
@@ -80,13 +81,11 @@ object Effect:
     def defer[A, S](f: => A < S)(using Frame): A < S =
         deferInline(f)
 
-    private val unitValue: Unit < Any = ()
-
     @nowarn("msg=anonymous")
     private[kyo] inline def deferInline[A, S](inline f: => A < S)(using inline _frame: Frame): A < S =
         new Pending.DeferWith[Unit, A, S]:
             override def frame          = _frame
-            def value                   = unitValue
+            def value                   = ()
             override def apply(v: Unit) = f
             override def apply[C, S2](v: Unit < S2, cont: Arrow[A, C, S2]) =
                 v match

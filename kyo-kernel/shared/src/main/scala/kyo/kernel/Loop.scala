@@ -9,20 +9,28 @@ import scala.annotation.tailrec
 import scala.annotation.targetName
 import scala.util.NotGiven
 
-/** Provides utilities for creating and managing iterative computations with effects.
+/** Iterative computations that can perform effects between rounds.
   *
-  * While Kyo already provides stack-safe recursion through its core functionality, Loop offers a more performant and ergonomic way to write
-  * iterative computations that can perform effects between iterations. It manages state between iterations and provides control over when
-  * to continue or terminate the loop.
+  * Recursion in kyo is already stack-safe, so a loop written recursively is correct. This exists because an explicit loop is cheaper and
+  * reads better: the state is named rather than threaded through arguments, and each round's decision to keep going or stop is a value
+  * rather than a shape the reader has to infer from the recursion.
   *
-  * Loops can maintain multiple state values (up to 4) between iterations through Continue variants. This enables complex stateful
-  * computations while maintaining type safety and pure functional semantics.
+  * A round's body answers with an [[Loop.Outcome]]: [[Loop.continue]] carrying the state for the next round, or [[Loop.done]] carrying the
+  * loop's result. Up to four state values can be carried, through the `Continue` variants, so a multi-value loop allocates no tuple per
+  * round.
   *
-  * The outcome of each iteration is represented by an Outcome type, which can either signal continuation with new state values or
-  * completion with a final result.
+  * The combinators take no `Safepoint` evidence, because the evaluator polls the budget itself. A body that can suspend defers the rest of
+  * the loop through an `Arrow` node, cached across rounds rather than rebuilt on each one.
+  *
+  * @see
+  *   [[Loop.Outcome]] For what a round answers with
+  * @see
+  *   [[Loop.continue]] For carrying state into the next round
+  * @see
+  *   [[Loop.done]] For ending the loop with a result
+  * @see
+  *   [[Loop.forever]] For a loop with no termination condition
   */
-// The combinators take no Safepoint evidence: the evaluator polls the budget itself. A body that can
-// suspend defers the rest of the loop through an Arrow node (`Step`), cached in `step` across iterations.
 object Loop:
 
     /** Represents the state to be carried forward to the next iteration of a loop.
