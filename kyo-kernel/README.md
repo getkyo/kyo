@@ -184,7 +184,7 @@ That `eval` is the point: the defaulted read has an empty row, so it runs with n
 
 `suspendWith` fuses a transformation onto the read, in both the required and the defaulted form, the same way it does for an `ArrowEffect` operation.
 
-> **Caution:** a required read whose binding is missing raises at evaluation time. The row is what makes that unreachable, and it is the only thing that does, so it is not something to work around. Reach for a handler or a default, never a cast.
+A required read cannot be reached without a binding: the effect is in the row, and a computation only evaluates once its row is empty, so the compiler has already ruled the case out across the whole program. The raise that sits behind a missing binding is reachable only by discarding the row with a cast, which is the one thing not to do here. Reach for a handler or a default.
 
 ## Answering an effect
 

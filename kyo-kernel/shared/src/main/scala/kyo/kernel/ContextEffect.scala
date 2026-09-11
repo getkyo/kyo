@@ -12,8 +12,9 @@ import scala.annotation.nowarn
   * binds the value for an extent, and outside that extent it is not there, so the binding is dynamically scoped rather than threaded through
   * signatures. Different handlers can bind different values in different scopes, and the row tracks the requirement either way.
   *
-  * A read comes in two forms. The required form adds the effect to the row, so the compiler will not let the computation run until something
-  * binds a value. The defaulted form adds nothing to the row, because it cannot fail.
+  * A read comes in two forms. The required form puts the effect in the row, and a computation only evaluates once its row is empty, so a
+  * required read is unreachable until a handler has bound a value. That is a static guarantee over the whole program, not a check that
+  * happens to pass. The defaulted form adds nothing to the row, because it cannot fail.
   *
   * #### Crossing an async boundary
   *
@@ -23,8 +24,7 @@ import scala.annotation.nowarn
   *   - [[ContextEffect.handle]] takes explicit fork and join strategies, for a value that has to be transformed when a fork takes it or
   *     merged when the fork rejoins.
   *
-  * WARNING: a required read whose binding is missing raises at evaluation time. The row is the only thing that makes that unreachable, so
-  * reach for a handler or a default, never for a cast.
+  * Note: the raise that backs a missing binding is reachable only by discarding the row with a cast. Reach for a handler or a default.
   *
   * @tparam A
   *   The type of value that will be provided by a handler
@@ -42,9 +42,8 @@ object ContextEffect:
 
     /** Reads the value bound for this context effect, requiring that something has bound one.
       *
-      * The effect joins the row, so the computation cannot be evaluated until a handler binds a value. Reaching this read with nothing bound
-      * raises at evaluation time, and the row is what makes that unreachable; the overload taking a default is the way to read without
-      * requiring a binding.
+      * The effect joins the row, and a computation only evaluates once its row is empty, so this read cannot be reached until a handler has
+      * bound a value. The overload taking a default is the way to read without requiring one.
       *
       * @param effectTag
       *   Identifies the context effect to read
