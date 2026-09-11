@@ -6,40 +6,47 @@ import kyo.kernel.internal.*
 import scala.annotation.nowarn
 import scala.annotation.tailrec
 
-/** Represents abstract functions whose implementations are provided later by a handler.
+/** Represents abstract operations whose implementations are provided later by a handler.
   *
-  * ArrowEffect captures the shape of a function without specifying its implementation. It describes a transformation from Input[A] to
-  * Output[A] for any type A, but defers how that transformation actually happens until a handler interprets it. This makes it a powerful
-  * way to write code that is abstract over how its operations are performed.
+  * An arrow effect captures the shape of an operation without its implementation: a transformation from `Input[A]` to `Output[A]` for any
+  * `A`, with how that transformation happens deferred until a handler interprets it. Code written against one is abstract over how its
+  * operations are actually performed.
   *
-  * ArrowEffect supports multi-shot continuations, meaning that handlers can invoke the continuation function multiple times or not at all.
-  * This enables powerful control flow effects like backtracking, non-determinism, or early returns. For example, a choice effect could
-  * invoke its continuation multiple times with different values to explore multiple execution paths.
+  * Every use of an arrow effect creates a suspended operation carrying its input and the continuation from that point. A handler supplies
+  * the clause that answers it, receiving the input and, depending on the family below, the continuation itself. Because a continuation is an
+  * ordinary [[Arrow]], a clause may apply it more than once or not at all, which is what backtracking, non-determinism and early return are
+  * built from.
   *
-  * The type parameters Input[_] and Output[_] define the "shape" of the function being abstracted:
+  * #### Declaring one
+  *
+  * An effect is a type and is never instantiated, so a declaration is a type extending this class. `Input` and `Output` are type
+  * constructors, and two cover most effects: `Const[X]` ignores its parameter and always answers `X`, for an operation carrying a plain
+  * value such as an error, while `Id[X]` answers `X` unchanged, for an operation answered with the value it was given.
+  *
+  * #### Answering one
+  *
+  * Two families answer an operation, differing in what the clause is handed:
+  *   - [[ArrowEffect.handleCont]] hands the clause the continuation as an [[Arrow]], to apply once, many times, or not at all.
+  *     [[ArrowEffect.handleContRepeated]] is its variant for a clause that applies the continuation more than once.
+  *   - [[ArrowEffect.handleLoop]] hands the clause the input alone and takes a [[Loop.Outcome]] back, continuing with an answer or
+  *     terminating with a result. [[ArrowEffect.handleLoopState]] carries state between occurrences.
+  *
+  * Overloads of each add a `done` arm, transforming the region's final value, and a `recover` arm, answering a throwable raised inside the
+  * region. The `*With` variants fuse the caller's continuation into the region node rather than building a separate map after it.
   *
   * @tparam Input
-  *   The input type constructor - what arguments the function takes
+  *   The type constructor for what an operation carries in
   * @tparam Output
-  *   The output type constructor - what results the function produces
+  *   The type constructor for what a handler answers with
   *
-  * Every use of an ArrowEffect creates a suspended function call. This suspended call contains all the information needed to perform the
-  * operation, but doesn't specify how to perform it.
-  *
-  * A handler then provides the actual function implementation that determines what happens when that suspended call is executed. Each
-  * handler takes two parameters: an input value of type I[C] that contains the input of the operation, and a continuation function
-  * representing the remainder of the computation from the point where the effect was suspended to the point where it's being handled.
-  *
-  * ArrowEffect provides two main kinds of handling methods with distinct capabilities:
-  *   - handleCont: receives the continuation as an Arrow and may introduce new effects (via S2 type parameter)
-  *   - handleLoop: resumes the continuation through the Loop abstraction, to continue or terminate processing:
-  *     - handleLoop: loop control without state between occurrences
-  *     - handleLoopState: loop control with state maintained between occurrences
-  *
-  * When defining concrete effects, ArrowEffect is commonly used with two special type constructors: Const and Id. The Const[X] type
-  * constructor ignores its type parameter and always returns X, while Id[X] simply returns X unchanged. For instance, an effect that needs
-  * to fail with errors of type E would use Const[E] as its input type - it only needs the error value itself, not any type parameters.
-  * Similarly, an effect for making choices among values would use Id as its output type - it passes through the chosen value unchanged.
+  * @see
+  *   [[ArrowEffect.suspend]] For performing an operation
+  * @see
+  *   [[ArrowEffect.suspendWith]] For performing one and transforming its answer in the same step
+  * @see
+  *   [[ArrowEffect.Mask]] For hiding an effect from enclosing handlers
+  * @see
+  *   [[ContextEffect]] For the other kind of effect, a value bound around a computation
   */
 abstract class ArrowEffect[-Input[_], +Output[_]] extends Effect
 

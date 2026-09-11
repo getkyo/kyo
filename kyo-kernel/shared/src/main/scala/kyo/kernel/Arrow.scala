@@ -26,6 +26,10 @@ import scala.annotation.targetName
   * pipeline pre-composed with [[chain]] pays for its composition once as well. [[Arrow.recursive]] is the same idea for a step that
   * re-enters itself.
   *
+  * The two-argument [[apply]] is where the module's throughput comes from. A continuation handed in as an argument is applied at the call
+  * site that already has the transformation inlined into it, so the JIT fuses a chain of steps into straight-line code instead of routing
+  * each one back through the evaluator. [[head]] and [[tail]] are what let a composed arrow take part in that.
+  *
   * A handler clause receives its continuation as an arrow of this same type, composed and applied like any other and as many times as the
   * clause likes, which is what makes multi-shot continuations ordinary here rather than a separate capability.
   *
@@ -61,16 +65,6 @@ sealed trait Arrow[-A, +B, -S] extends Kyo[B, S]:
         Debugger.onUnfused(this)
         this.head(v, this.tail)
 
-    /** Applies this arrow to a computation with `cont` composed after it, so the result never becomes a value in between.
-      *
-      * This is the shape every hot path in the module uses. Taking the rest of the computation as a second argument lets an arrow that must
-      * defer build a single node carrying both halves, and lets one that need not defer run straight into `cont` without materializing its
-      * own answer first.
-      *
-      * Ordinary code wants `arrow(value)`; this is for callers that already hold a continuation.
-      */
-    def apply[C, S2](v: A < S2, cont: Arrow[B, C, S2]): C < (S & S2)
-
     /** Applies this arrow to a computation, with nothing composed after it. The arrow is the receiver, so a value needs no arrow-shaped
       * method of its own.
       *
@@ -79,6 +73,25 @@ sealed trait Arrow[-A, +B, -S] extends Kyo[B, S]:
     @targetName("applyPending")
     def apply[S2](v: A < S2): B < (S & S2) =
         this(v, Arrow.id)
+    /** Applies this arrow to a computation with `cont` composed after it, so the result never becomes a value in between.
+      *
+      * Taking the rest of the computation as an argument is what lets the JIT fuse a chain of transformations into straight-line code. Every
+      * `map` and every [[Arrow.apply]] expands to a class of its own with the body inlined into `apply`, so the receiver at each of those
+      * sites is a single concrete type. Handing the continuation in means the next step is applied from that same site, where the JIT can
+      * inline through it and fuse the chain. Answering with the intermediate value instead would send every step back through the
+      * evaluator's loop, which is far too large to inline and sees every effect in the program, so nothing downstream of it would fuse.
+      *
+      * An implementation reaches the next step as `cont.head(result, cont.tail)` rather than `cont(result)`, which is what stops a
+      * composition from breaking the chain: for a composed continuation that runs the first link with the second behind it, and for an atom
+      * it is the atom applied with [[Arrow.id]] behind it, the same expression either way. Calling `cont` directly would reach the
+      * composition node, which can only build a node and hand it back to the evaluator, ending the fusion at every composition boundary.
+      *
+      * It is also what keeps a deferral to one node: an arrow that must defer builds a single node carrying both halves, rather than a node
+      * plus a composition for what follows it.
+      *
+      * Ordinary code wants `arrow(value)`; this is for callers that already hold a continuation.
+      */
+    def apply[C, S2](v: A < S2, cont: Arrow[B, C, S2]): C < (S & S2)
 
     /** Composes this arrow with another, feeding this arrow's result into `a` and intersecting both rows.
       *
@@ -98,9 +111,10 @@ sealed trait Arrow[-A, +B, -S] extends Kyo[B, S]:
 
     /** The half of this arrow's composition that does work when the arrow is applied.
       *
-      * For a composed arrow this is its first link; for an atom it is the arrow itself, with [[tail]] the identity. That uniformity is the
-      * point: a call site applies `head` to the value and passes `tail` along as the continuation, without ever branching on whether the
-      * arrow it was handed happened to be composed, so composition costs no node at the point of application.
+      * For a composed arrow this is its first link; for an atom it is the arrow itself, with [[tail]] the identity. That uniformity is what
+      * makes the fused application in [[apply]] possible: a site writes `cont.head(value, cont.tail)` once and it is correct for both, so
+      * the receiver is always an arrow that does work and never a composition node that would only defer. Composition costs nothing at the
+      * point of application, and it does not break the chain the JIT is inlining through.
       *
       * Public because the inline expansions making up the module's hot paths have to reach it, not as an invitation. Reach for [[chain]] to
       * compose and `arrow(value)` to apply.
@@ -109,7 +123,7 @@ sealed trait Arrow[-A, +B, -S] extends Kyo[B, S]:
 
     /** The half of this arrow's composition passed along as the continuation when [[head]] is applied, [[Arrow.id]] for an atom.
       *
-      * See [[head]] for why both are public.
+      * See [[head]] for why both are public and what the split buys.
       */
     def tail: Arrow[X, B, S]
 end Arrow
