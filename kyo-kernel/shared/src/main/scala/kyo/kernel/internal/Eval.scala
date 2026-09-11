@@ -63,9 +63,8 @@ import scala.collection.mutable.ArrayBuffer
     // `armed` is a parameter rather than a test inside the loop: it is constant for the whole evaluation, so the
     // stop check folds away entirely for a run that cannot be preempted.
     private def apply[A, S](v: A < S, armed: Boolean): A < S =
-
+        // TODO let's add brief comments to the code here to guide the understanding
         val stack = Stack.borrow()
-
         val slot  = Safepoint.get()
         val saved = Safepoint.save(slot)
         if armed then Safepoint.arm(slot)
@@ -151,6 +150,7 @@ import scala.collection.mutable.ArrayBuffer
                                         end match
                                     case handler: Handler.LoopHandler[IX, OX, EX, C, Y, S2] @unchecked =>
                                         val outcome0 = handler.running(kyo.input, kyo, stack, idx)
+                                        // Load-bearing despite nothing reading it: see `Stack.sink`.
                                         stack.sink = outcome0
                                         Debugger.onResult(outcome0)
                                         outcome0 match
@@ -214,6 +214,7 @@ import scala.collection.mutable.ArrayBuffer
                                         end match
                                     case handler: Handler.LoopStateHandler[VX, IX, OX, EX, C, Y, S2] @unchecked =>
                                         val outcome0 = handler.running(stack.state(idx).asInstanceOf[VX], kyo.input, kyo, stack, idx)
+                                        // Load-bearing despite nothing reading it: see `Stack.sink`.
                                         stack.sink = outcome0
                                         Debugger.onResult(outcome0)
                                         outcome0 match

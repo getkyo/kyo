@@ -508,7 +508,7 @@ otherwise:  42 ──▶ [eval] ──▶ (_ * 2) ──▶ [eval] ──▶ (_ 
 assert(settled.map(_ * 2).map(_ + 1).eval == 85)
 ```
 
-`Eval.loop` is around fifteen hundred bytes and every effect in the program passes through it, so it never inlines and its dispatch is megamorphic. Anything routed back through it stops fusing, which is what `cont(value)` on a `Chain` would do at every composition boundary.
+`Eval.loop` is far past any inlining budget and every effect in the program passes through it, so it never inlines and its dispatch is megamorphic. Anything routed back through it stops fusing, which is what `cont(value)` on a `Chain` would do at every composition boundary.
 
 Both members are public for that reason, not as an invitation: reach for `chain` to compose and `arrow(value)` to apply. Two things follow. Fusion is per call site, so one `map` body reached from two places is two classes, each monomorphic. And a suspension ends a fused run, because the answer is not there yet and the evaluator takes over until a handler supplies it.
 

@@ -204,6 +204,7 @@ object Pending:
     // rather than sitting in a separate arrow behind it, which is what fuses a `map` or a `done` into the node it
     // follows and saves the evaluator a hop. `Arrow.Transform` is what lets a node stand in an arrow position.
 
+    // TODO let's move these two their non-with versions
     abstract class DeferWith[A, B, -S] extends Defer[A, B, B, S] with Arrow.Transform[A, B, S]:
         def contA = this
         def contB = Arrow.id

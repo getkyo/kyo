@@ -28,6 +28,20 @@ final private[kernel] class Stack:
     // The same debt for what sits below depth 0, discharged by the evaluation itself rather than by a region.
     private var evalOwed: Chunk[Stack.Snapshot] = Chunk.empty
 
+    // A flag rather than a scan: `settle` runs on a path where there is usually no debt at all, and this lets it
+    // return without touching the lanes.
+    private var owes = false
+
+    /** A write-only store that forces a loop handler's outcome to escape. Nothing reads it, and deleting it is a large regression.
+      *
+      * The write is here so C2 cannot prove the outcome is local, because scalar-replacing it is pathological on this path: with the clause's
+      * `Continue2` eliminated inside the fully inlined dispatch lane, the settled handleLoop rows ran about twice as slow as the pre-rewrite
+      * evaluator, at byte-identical allocation. Confirmed two ways, by flag flip against `-XX:-EliminateAllocations` and by disassembly,
+      * where the slow compilation has no allocation site for the outcome and the fast one materializes it.
+      *
+      * The rows that move if this goes away are `handleLoopAnswersInPlace`, `handleLoopFusesContinuation` and `statefulAnswersPaySuccessor`
+      * in the kernel benchmarks. Measure them before touching it.
+      */
     var sink: Any = null
 
     private var epochCount = 0
@@ -63,10 +77,6 @@ final private[kernel] class Stack:
         states(size) = null
         continuations(size) = null
     end pop
-
-    // A flag rather than a scan: `settle` runs on a path where there is usually no debt at all, and this lets it
-    // return without touching the lanes.
-    private var owes = false
 
     def owesAny: Boolean = owes
 
