@@ -263,6 +263,114 @@ class ZioBlocksBench:
         fa.block
     end dynamicChainOfBindsStaysLinear
 
+
+    /** Recursion shallow enough to stay within one evaluation slice. */
+    @Benchmark
+    def deepRecursionNoRescue: Int =
+        def loop(i: Int): Async[Int] =
+            Async.succeed(()).flatMap(_ => if i > 400 then Async.succeed(i) else loop(i + 1))
+        loop(seed - 1).block
+    end deepRecursionNoRescue
+
+    /** Recursion deep enough to cross the slice boundary once. */
+    @Benchmark
+    def deepRecursionOneRescue: Int =
+        def loop(i: Int): Async[Int] =
+            Async.succeed(()).flatMap(_ => if i > 600 then Async.succeed(i) else loop(i + 1))
+        loop(seed - 1).block
+    end deepRecursionOneRescue
+
+    /** Iteration driven by open recursion through a method. */
+    @Benchmark
+    def pureIterationViaMethod: Int =
+        def loop(i: Int): Async[Int] =
+            if i > Depth then Async.succeed(i) else Async.succeed(i + 1).flatMap(loop)
+        loop(seed - 1).block
+    end pureIterationViaMethod
+
+
+    /** Iteration expressed as a loop rather than open recursion. */
+    @Benchmark
+    def pureIterationViaLoop: Int =
+        def go(i: Int): Async[Int] =
+            if i > Depth then Async.succeed(i) else Async.succeed(i + 1).flatMap(go)
+        go(seed - 1).block
+    end pureIterationViaLoop
+
+    /** Iteration through a step held as a value, so the loop body outlives the expression that built it. */
+    @Benchmark
+    def pureIterationViaArrow: Int =
+        lazy val step: Int => Async[Int] = i =>
+            if i > Depth then Async.succeed(i) else Async.succeed(i + 1).flatMap(v => step(v))
+        step(seed - 1).block
+    end pureIterationViaArrow
+
+    /** Iteration whose every round performs an operation, expressed as a loop. */
+    @Benchmark
+    def effectfulIterationViaLoop: Int =
+        def go(i: Int): Async[Int] =
+            if i > Depth then Async.succeed(i) else answer.flatMap(a => go(i + a))
+        (go(seed - 1)).block
+    end effectfulIterationViaLoop
+
+    /** Iteration whose every round performs an operation, driven by a step held as a value. */
+    @Benchmark
+    def effectfulIterationViaArrow: Int =
+        lazy val step: Int => Async[Int] = i =>
+            if i > Depth then Async.succeed(i) else answer.flatMap(a => step(i + a))
+        (step(seed - 1)).block
+    end effectfulIterationViaArrow
+
+    /** A transformation chain wide enough to reach the compiler's expansion limit, run shallow. */
+    @Benchmark
+    def inlineLimitKeepsZeroAllocation: Int =
+        def loop(i: Int, acc: Int): Async[Int] =
+            if i > FusedWideDepth then Async.succeed(acc)
+            else
+                Async.succeed(acc & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .flatMap(v => loop(i + 1, v))
+        loop(0, seed).block
+    end inlineLimitKeepsZeroAllocation
+
+    /** A narrower chain run deep, so the cost shows in time rather than in expansion. */
+    @Benchmark
+    def inlineLimitCostsTimeNotAllocation: Int =
+        def loop(i: Int, acc: Int): Async[Int] =
+            if i > NarrowDepth then Async.succeed(acc)
+            else
+                Async.succeed(acc & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .flatMap(v => loop(i + 1, v))
+        loop(0, seed).block
+    end inlineLimitCostsTimeNotAllocation
+
+    /** A computation carried as a value and flattened each round, measuring the wrap and unwrap. */
+    @Benchmark
+    def nestedPayloadsUnwrapInMaps: Int =
+        def loop(i: Int, acc: Int): Async[Int] =
+            if i > NarrowDepth then Async.succeed(acc)
+            else Async.succeed(Async.succeed(acc)).flatten.flatMap(_ => loop(i + 1, acc + i))
+        loop(0, seed).block
+    end nestedPayloadsUnwrapInMaps
+
+    /** The cost of one entry, too small to resolve alone; the batch row measures it. */
+    @Benchmark
+    def evalFixedOverhead: Int =
+        Async.succeed(seed).map(_ + 1).block
+    end evalFixedOverhead
+
 end ZioBlocksBench
 
 object ZioBlocksBench:
@@ -270,6 +378,7 @@ object ZioBlocksBench:
     inline def Depth       = 10000
     inline def NarrowDepth = 1000
     inline def FusedDepth  = 32
+    inline def FusedWideDepth = 8
 
     final case class Box(value: Int)
 

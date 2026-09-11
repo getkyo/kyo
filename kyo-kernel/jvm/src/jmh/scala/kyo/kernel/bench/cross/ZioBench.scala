@@ -301,6 +301,138 @@ class ZioBench:
         runSync(fa)
     end dynamicChainOfBindsStaysLinear
 
+
+    /** Recursion shallow enough to stay within one evaluation slice. */
+    @Benchmark
+    def deepRecursionNoRescue: Int =
+        def loop(i: Int): UIO[Int] =
+            ZIO.unit.flatMap(_ => if i > 400 then ZIO.succeed(i) else loop(i + 1))
+        runSync(loop(seed - 1))
+    end deepRecursionNoRescue
+
+    /** Recursion deep enough to cross the slice boundary once. */
+    @Benchmark
+    def deepRecursionOneRescue: Int =
+        def loop(i: Int): UIO[Int] =
+            ZIO.unit.flatMap(_ => if i > 600 then ZIO.succeed(i) else loop(i + 1))
+        runSync(loop(seed - 1))
+    end deepRecursionOneRescue
+
+    /** Iteration driven by open recursion through a method. */
+    @Benchmark
+    def pureIterationViaMethod: Int =
+        def loop(i: Int): UIO[Int] =
+            if i > Depth then ZIO.succeed(i) else ZIO.succeed(i + 1).flatMap(loop)
+        runSync(loop(seed - 1))
+    end pureIterationViaMethod
+
+    /** A deferral reified per step, so each round costs one suspension node. */
+    @Benchmark
+    def deferBindPerStep: Int =
+        def loop(i: Int): UIO[Int] =
+            if i > NarrowDepth then ZIO.succeed(i) else ZIO.suspendSucceed(ZIO.succeed(i + 1)).flatMap(loop)
+        runSync(loop(seed - 1))
+    end deferBindPerStep
+
+    /** The deferral loop with one transformation composed after it, so the tail is rebuilt. */
+    @Benchmark
+    def deferBindUnderTrailingMap: Int =
+        def loop(i: Int): UIO[Int] =
+            if i > NarrowDepth then ZIO.succeed(i) else ZIO.suspendSucceed(ZIO.succeed(i + 1)).flatMap(loop)
+        runSync(loop(seed - 1).map(x => x))
+    end deferBindUnderTrailingMap
+
+    /** The deferral loop under a binding nothing reads, isolating the cost of the region itself. */
+    @Benchmark
+    def deferBindUnderIdleHandler: Int =
+        def loop(i: Int): UIO[Int] =
+            if i > NarrowDepth then ZIO.succeed(i) else ZIO.suspendSucceed(ZIO.succeed(i + 1)).flatMap(loop)
+        runSync(ask.set(1).flatMap(_ => loop(seed - 1)))
+    end deferBindUnderIdleHandler
+
+
+    /** Iteration expressed as a loop rather than open recursion. */
+    @Benchmark
+    def pureIterationViaLoop: Int =
+        def go(i: Int): UIO[Int] =
+            if i > Depth then ZIO.succeed(i) else ZIO.succeed(i + 1).flatMap(go)
+        runSync(go(seed - 1))
+    end pureIterationViaLoop
+
+    /** Iteration through a step held as a value, so the loop body outlives the expression that built it. */
+    @Benchmark
+    def pureIterationViaArrow: Int =
+        lazy val step: Int => UIO[Int] = i =>
+            if i > Depth then ZIO.succeed(i) else ZIO.succeed(i + 1).flatMap(v => step(v))
+        runSync(step(seed - 1))
+    end pureIterationViaArrow
+
+    /** Iteration whose every round performs an operation, expressed as a loop. */
+    @Benchmark
+    def effectfulIterationViaLoop: Int =
+        def go(i: Int): UIO[Int] =
+            if i > Depth then ZIO.succeed(i) else ask.get.flatMap(a => go(i + a))
+        runSync(go(seed - 1))
+    end effectfulIterationViaLoop
+
+    /** Iteration whose every round performs an operation, driven by a step held as a value. */
+    @Benchmark
+    def effectfulIterationViaArrow: Int =
+        lazy val step: Int => UIO[Int] = i =>
+            if i > Depth then ZIO.succeed(i) else ask.get.flatMap(a => step(i + a))
+        runSync(step(seed - 1))
+    end effectfulIterationViaArrow
+
+    /** A transformation chain wide enough to reach the compiler's expansion limit, run shallow. */
+    @Benchmark
+    def inlineLimitKeepsZeroAllocation: Int =
+        def loop(i: Int, acc: Int): UIO[Int] =
+            if i > FusedWideDepth then ZIO.succeed(acc)
+            else
+                ZIO.succeed(acc & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .flatMap(v => loop(i + 1, v))
+        runSync(loop(0, seed))
+    end inlineLimitKeepsZeroAllocation
+
+    /** A narrower chain run deep, so the cost shows in time rather than in expansion. */
+    @Benchmark
+    def inlineLimitCostsTimeNotAllocation: Int =
+        def loop(i: Int, acc: Int): UIO[Int] =
+            if i > NarrowDepth then ZIO.succeed(acc)
+            else
+                ZIO.succeed(acc & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
+                    .flatMap(v => loop(i + 1, v))
+        runSync(loop(0, seed))
+    end inlineLimitCostsTimeNotAllocation
+
+    /** A computation carried as a value and flattened each round, measuring the wrap and unwrap. */
+    @Benchmark
+    def nestedPayloadsUnwrapInMaps: Int =
+        def loop(i: Int, acc: Int): UIO[Int] =
+            if i > NarrowDepth then ZIO.succeed(acc)
+            else ZIO.succeed(ZIO.succeed(acc)).flatten.flatMap(_ => loop(i + 1, acc + i))
+        runSync(loop(0, seed))
+    end nestedPayloadsUnwrapInMaps
+
+    /** The cost of one entry, too small to resolve alone; the batch row measures it. */
+    @Benchmark
+    def evalFixedOverhead: Int =
+        runSync(ZIO.succeed(seed).map(_ + 1))
+    end evalFixedOverhead
+
 end ZioBench
 
 object ZioBench:
@@ -308,6 +440,7 @@ object ZioBench:
     inline def Depth       = 10000
     inline def NarrowDepth = 1000
     inline def FusedDepth  = 32
+    inline def FusedWideDepth = 8
 
     final case class Box(value: Int)
 

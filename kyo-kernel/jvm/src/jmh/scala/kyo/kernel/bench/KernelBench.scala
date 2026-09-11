@@ -26,6 +26,30 @@ class KernelBench:
     def evalFixedOverhead: Int =
         run((seed: Int < Any).map(_ + 1))
 
+    /** One eval is below JMH's resolution, which is why the single-op row reads zero. A thousand of them
+      * per invocation lifts the measurement above it.
+      */
+    @Benchmark
+    def evalFixedOverheadBatch: Int =
+        var acc = 0
+        var i   = 0
+        while i < NarrowDepth do
+            acc += run(((seed + i): Int < Any).map(_ + 1))
+            i += 1
+        acc
+    end evalFixedOverheadBatch
+
+    /** The floor the row above is measured against: the same batch with nothing composed onto the value. */
+    @Benchmark
+    def entryFloorBatch: Int =
+        var acc = 0
+        var i   = 0
+        while i < NarrowDepth do
+            acc += run((seed + i): Int < Any)
+            i += 1
+        acc
+    end entryFloorBatch
+
     @Benchmark
     def fusionAllocatesNothing: Int =
         def loop(i: Int, acc: Int): Int < Any =
