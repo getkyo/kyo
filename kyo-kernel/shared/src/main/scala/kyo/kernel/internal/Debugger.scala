@@ -2,6 +2,15 @@ package kyo.kernel.internal
 
 import kyo.CompileTimeFlag
 
+/** Hooks the evaluator calls as it runs, for tracing what a computation actually did.
+  *
+  * Every hook is a no-op by default, so an implementation overrides only what it wants to see. Nothing here is on in a normal build: the
+  * call sites go through [[Debugger.enabled]], a compile-time flag that is false, and an `inline if` on a false constant leaves no trace in
+  * the bytecode. Turning it on is a recompile, not a runtime switch.
+  *
+  * That is deliberate. These hooks sit on the hottest paths in the module, and a runtime check on each would show up in the benchmarks
+  * whether or not a debugger was installed.
+  */
 abstract private[kyo] class Debugger:
 
     def enter(): Boolean = true
@@ -31,6 +40,7 @@ end Debugger
 
 private[kyo] object Debugger:
 
+    /** Resolved on the compiling JVM, not the running one, so a false value erases every hook below rather than branching over it. */
     inline def enabled: Boolean = CompileTimeFlag.boolean("kyo.kernel.internal.Debugger.enabled", false)
 
     private var current: Debugger = Noop

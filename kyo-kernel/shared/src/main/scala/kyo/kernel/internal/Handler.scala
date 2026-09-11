@@ -71,9 +71,10 @@ end Handler
       * throwable raised inside the region, answering with a replacement or declining so the unwind carries on.
       */
     sealed abstract class ArrowHandler[State, E <: Effect, A, B, -S] extends Handler[E, B, S]:
-        def done(state: State, v: A): B < S
 
+        def done(state: State, v: A): B < S
         def recover(state: State, ex: Throwable): Maybe[B < S] = Absent
+
     end ArrowHandler
 
     /** The region behind [[kyo.kernel.ArrowEffect.handleCont]]: the clause is handed the continuation and decides what to do with it.
@@ -82,6 +83,7 @@ end Handler
       * no state, hence `Unit`.
       */
     abstract class ContHandler[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends ArrowHandler[Unit, E, A, B, S]:
+
         def run[X](input: I[X], cont: Arrow[O[X], A, E & S]): A < (E & S)
 
         /** Runs the clause, attaching the effect trace to anything it throws.

@@ -7,6 +7,15 @@ private[kyo] class Safepoint
 private object periodBounds extends (Int => Either[Throwable, Int]):
     def apply(n: Int): Either[Throwable, Int] = Right(Math.min(Math.max(1, n), 0x7fff))
 
+/** The single-threaded counterpart of the JVM and Native safepoint: same contract, no slot table.
+  *
+  * The budget and the arming bit mean exactly what they do there, and [[Safepoint.period]] defaults lower on these platforms because the call
+  * stack a fused run may build on is smaller. What is absent is the per-thread machinery: there is one execution context, so the state is one
+  * value rather than a strided array indexed by a claimed slot.
+  *
+  * @see
+  *   The `jvm-native` variant of this file for the budget's purpose and the state layout
+  */
 object Safepoint:
 
     opaque type Slot >: Int = Int

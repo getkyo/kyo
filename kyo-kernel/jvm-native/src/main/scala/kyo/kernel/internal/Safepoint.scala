@@ -7,6 +7,28 @@ import scala.annotation.tailrec
 
 private[kyo] class Safepoint
 
+/** The budget that decides when a fused run has to stop building JVM stack and defer instead, and the channel a scheduler stops a fiber
+  * through.
+  *
+  * Fusion is what makes the module fast, but it runs transformations on the caller's stack, so an unbounded fused run would overflow it. Each
+  * fused step takes a unit of budget; when it runs out, the combinator builds a node instead and the evaluator picks it up, which costs heap
+  * rather than a frame. That is where stack safety comes from on the fused path, the tail-recursive loop being where it comes from elsewhere.
+  *
+  * The same word covers preemption because it is the same check. A scheduler arms a thread's slot, and the next poll that sees it parks the
+  * computation and answers the remainder as a value, so a run becomes a slice without the computation knowing.
+  *
+  * #### Layout
+  *
+  * State is per thread, but not in a `ThreadLocal` read: a thread takes a slot index once and the state lives in a plain array, so a poll is
+  * an array read and a compare rather than a map lookup. A thread's index is spread by `LineStride` so adjacent thread ids do not land on one
+  * cache line, and a thread that finds no free slot after probing falls back to a shared overflow slot, which stays correct but contends.
+  *
+  * One int carries the whole state: the remaining depth in the low bits, a guard bit that keeps the counter from going negative into the
+  * arming bit, and the arming bit itself. That way a poll tests one field, and the common answer is a decrement.
+  *
+  * @see
+  *   [[Safepoint.period]] For the budget, which defaults per platform and is overridable
+  */
 object Safepoint:
 
     opaque type Slot >: Int = Int

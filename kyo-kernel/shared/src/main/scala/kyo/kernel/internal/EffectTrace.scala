@@ -10,6 +10,26 @@ import scala.annotation.tailrec
 import scala.collection.mutable.ArrayDeque
 import scala.util.control.NoStackTrace
 
+/** The trace of where a failure came from in the computation, as opposed to where it came from on the JVM stack.
+  *
+  * A physical stack trace is close to useless here: the computation was assembled somewhere and is run somewhere else, by a loop every effect
+  * passes through, so the frames say `Eval.loop` and little more. This reconstructs the useful half by walking what the evaluator is holding
+  * at the point of failure: the node that failed, the continuation behind it, and the regions installed around it. Each contributes the
+  * [[kyo.Frame]] of the site that built it.
+  *
+  * It is carried as a suppressed exception on the failure rather than replacing it, so nothing about the original is lost, and [[splice]]
+  * later prepends the reconstructed frames to its stack trace.
+  *
+  * @param elements
+  *   The reconstructed frames, outermost last.
+  * @param dropped
+  *   How many frames the walk stopped short of, bounded by `maxTraceFrames`.
+  * @param physical
+  *   The original JVM frames, filtered of plumbing, cached because splicing can be reached more than once.
+  * @param seen
+  *   The stack this trace was built from, with `seenEpoch` its epoch at the time. A stack is pooled and reused, so the pair is what tells a
+  *   second attach that it is looking at the same evaluation rather than a recycled object.
+  */
 final class EffectTrace extends Exception(null, null, false, false):
 
     private[kyo] var elements: Array[StackTraceElement]        = EffectTrace.noElements
@@ -72,6 +92,11 @@ private[kernel] object EffectTrace:
         end if
     end reconstruct
 
+    /** Puts the reconstructed frames onto the throwable's own stack trace, where anything that prints it will show them.
+      *
+      * Called as a failure leaves the evaluator. A fatal throwable and one marked `NoStackTrace` are left alone: the first is not ours to
+      * decorate, and the second asked for no trace at all.
+      */
     def splice(ex: Throwable): Unit =
         if !IsFatal(ex) && !ex.isInstanceOf[NoStackTrace] then
             try
