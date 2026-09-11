@@ -73,6 +73,20 @@ sealed trait Arrow[-A, +B, -S] extends Kyo[B, S]:
     @targetName("applyPending")
     def apply[S2](v: A < S2): B < (S & S2) =
         this(v, Arrow.id)
+
+    /** Composes this arrow with another, feeding this arrow's result into `a` and intersecting both rows.
+      *
+      * Composing with [[Arrow.id]] on either side answers the other arrow unchanged, so a fold over a collection of arrows starting from
+      * `id` allocates nothing for the empty and single-element cases.
+      */
+    def chain[C, S2](a: Arrow[B, C, S2]): Arrow[A, C, S & S2] =
+        if this.isInstanceOf[Arrow.Id[?]] then
+            a.asInstanceOf[Arrow[A, C, S & S2]]
+        else if a.isInstanceOf[Arrow.Id[?]] then
+            this.asInstanceOf[Arrow[A, C, S & S2]]
+        else
+            Arrow.Chain(this, a)
+
     /** Applies this arrow to a computation with `cont` composed after it, so the result never becomes a value in between.
       *
       * Taking the rest of the computation as an argument is what lets the JIT fuse a chain of transformations into straight-line code. Every
@@ -92,19 +106,6 @@ sealed trait Arrow[-A, +B, -S] extends Kyo[B, S]:
       * Ordinary code wants `arrow(value)`; this is for callers that already hold a continuation.
       */
     def apply[C, S2](v: A < S2, cont: Arrow[B, C, S2]): C < (S & S2)
-
-    /** Composes this arrow with another, feeding this arrow's result into `a` and intersecting both rows.
-      *
-      * Composing with [[Arrow.id]] on either side answers the other arrow unchanged, so a fold over a collection of arrows starting from
-      * `id` allocates nothing for the empty and single-element cases.
-      */
-    def chain[C, S2](a: Arrow[B, C, S2]): Arrow[A, C, S & S2] =
-        if this.isInstanceOf[Arrow.Id[?]] then
-            a.asInstanceOf[Arrow[A, C, S & S2]]
-        else if a.isInstanceOf[Arrow.Id[?]] then
-            this.asInstanceOf[Arrow[A, C, S & S2]]
-        else
-            Arrow.Chain(this, a)
 
     /** The intermediate type of this arrow's own composition: what [[head]] produces and [[tail]] accepts. */
     type X
@@ -167,6 +168,7 @@ object Arrow:
             def frame                = _frame
             override def apply(v: A) = f(v)
             def apply[C, S2](v: A < S2, cont: Arrow[B, C, S2]) =
+                // TODO we have a more efficient representation for this in <.map, check if we can use it. Review all similar impls in kyo-kernel
                 v match
                     case v: Pending[A, S2] @unchecked =>
                         Effect.defer(v, this, cont)
@@ -180,9 +182,17 @@ object Arrow:
                             out
                         end if
 
-    /** Builds an arrow that applies without taking the safepoint budget, so nothing is preempted between the value
-      * arriving and `f` running. `ensureMap` is the way to reach it; this exists because the expansion has to name
-      * `Ensure`, and only a summon from inside this object can, `Ensure` being `private[kyo]`.
+    /** Builds an arrow that applies without polling the safepoint, so `f` runs as the value arrives with nothing schedulable in between.
+      *
+      * [[Arrow.apply]] polls before applying its function, so an interrupt pending when the value arrives parks the computation and the
+      * function never runs. That is right nearly everywhere, and wrong where `f` records an obligation the value itself just created: the
+      * resource is open, its release is not registered, and a park landing between the two loses it.
+      *
+      * Reach for it only for that pairing, a resource opened and its release registered, or a fiber spawned and its handle stored. Skipping
+      * the poll also means the computation cannot be preempted at that point, so [[Arrow.apply]] is right everywhere else.
+      *
+      * @param f
+      *   The transformation, run as the value arrives
       */
     @nowarn("msg=anonymous")
     inline def ensure[A](using _frame: Frame)[B, S](inline f: A => B < S): Arrow[A, B, S] =
