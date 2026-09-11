@@ -6,6 +6,15 @@ import kyo.kernel.Arrow
 import kyo.kernel.Effect
 import scala.annotation.tailrec
 
+/** The regions installed around the computation the evaluator is running, innermost last.
+  *
+  * Four parallel arrays indexed by depth rather than one array of region objects: the handler, its state, the continuation for its result,
+  * and the snapshots it owes. Pushing a region then writes four slots and allocates nothing, which matters because a region is pushed and
+  * popped for every handled computation.
+  *
+  * The stack is mutable and borrowed from a per-thread pool for one evaluation, then cleared and returned. Nothing that leaves the evaluator
+  * points at it: what escapes is a [[Stack.Snapshot]], an immutable copy.
+  */
 final private[kernel] class Stack:
 
     private var handlers      = new Array[Handler[?, ?, ?]](0)
@@ -13,14 +22,21 @@ final private[kernel] class Stack:
     private var continuations = new Array[Arrow[?, ?, ?]](0)
     private var size          = 0
 
+    // What each region still has to discharge on behalf of regions dumped out from above it, indexed the same way.
     private var owed = new Array[Chunk[Stack.Snapshot]](0)
 
+    // The same debt for what sits below depth 0, discharged by the evaluation itself rather than by a region.
     private var evalOwed: Chunk[Stack.Snapshot] = Chunk.empty
 
     var sink: Any = null
 
     private var epochCount = 0
 
+    /** Bumped each time the stack is cleared for reuse.
+      *
+      * The object itself is recycled through the pool, so a value that held on to a stack compares the epoch it recorded against this one to
+      * find out whether what it saw is still the same evaluation.
+      */
     def epoch: Int = epochCount
 
     def isEmpty: Boolean = size == 0
@@ -48,6 +64,8 @@ final private[kernel] class Stack:
         continuations(size) = null
     end pop
 
+    // A flag rather than a scan: `settle` runs on a path where there is usually no debt at all, and this lets it
+    // return without touching the lanes.
     private var owes = false
 
     def owesAny: Boolean = owes
@@ -60,17 +78,25 @@ final private[kernel] class Stack:
         owedHere
     end takeOwed
 
+    /** Records that region `i` owes the obligations in `snapshots`.
+      *
+      * A region dumped out of the live stack still has obligations to discharge, a bracket's release among them, and they cannot be
+      * discharged where it was taken from, because the continuation holding it may yet be resumed. The debt moves to a region that is still
+      * installed, which discharges it when its own extent ends.
+      */
     def owe(i: Int, snapshots: Chunk[Stack.Snapshot]): Unit =
         if !snapshots.isEmpty then
             owes = true
             owed(i) = owed(i).concat(snapshots)
 
+    /** [[owe]] against the region below `i`, or against the evaluation itself when `i` is the outermost. */
     def oweBelow(i: Int, snapshots: Chunk[Stack.Snapshot]): Unit =
         if !snapshots.isEmpty then
             owes = true
             if i == 0 then evalOwed = evalOwed.concat(snapshots)
             else owed(i - 1) = owed(i - 1).concat(snapshots)
 
+    /** Cancels one snapshot's debt, in the innermost lane recording it, because those regions ended on their own. */
     def settle(snapshot: Stack.Snapshot): Unit =
         if owes then
             @tailrec def loop(i: Int): Unit =
@@ -119,6 +145,7 @@ final private[kernel] class Stack:
         epochCount += 1
     end clear
 
+    /** Takes every region off the stack as a snapshot, leaving it empty. What a computation carries across an execution boundary. */
     def takeAll(): Stack.Snapshot =
         val out = new Array[AnyRef](size * 4)
         @tailrec def loop(i: Int): Unit =
@@ -136,6 +163,11 @@ final private[kernel] class Stack:
         Stack.wrap(out)
     end takeAll
 
+    /** Copies the context regions alone, leaving the stack untouched.
+      *
+      * A fork inherits bindings but not the handlers around the parent, so the copy keeps the context handlers and drops the rest. The
+      * continuation slot is [[Arrow.id]] for each: these regions are being reinstalled, not resumed into.
+      */
     def contextual(): Stack.Snapshot =
         var count = 0
         var i     = 0
@@ -176,6 +208,11 @@ final private[kernel] class Stack:
         size = to
     end truncate
 
+    /** The depth of the innermost region answering `tag`, or -1 when nothing does.
+      *
+      * Walking inward-out is what makes an inner handler shadow an outer one for the same effect, and the match is on tag subtyping so a
+      * handler for a supertype answers an operation of a subtype.
+      */
     def find[E <: Effect](tag: kyo.Tag[E]): Int =
         @tailrec def loop(i: Int): Int =
             if i < 0 then -1
@@ -184,6 +221,12 @@ final private[kernel] class Stack:
         loop(size - 1)
     end find
 
+    /** Takes the regions from `from` upward off the live stack, returning them as a snapshot the region below then owes.
+      *
+      * This is what puts the regions sitting between a handler and a suspension into the continuation the clause receives: they stop being
+      * installed, so the clause runs outside them, and they are reinstalled if the continuation is resumed. The debt recorded below is what
+      * discharges them should it never be.
+      */
     def dump(from: Int): Stack.Snapshot =
         val count = size - from
         val out   = new Array[AnyRef](count * 4)
@@ -230,6 +273,13 @@ end Stack
 
 private[kernel] object Stack:
 
+    /** Regions captured out of a stack, in the order it held them.
+      *
+      * Flat: four slots per region, the same handler, state, continuation and owed that the stack keeps in parallel arrays. A `Span[AnyRef]`
+      * rather than an array of region objects, so capturing a stack costs one object whatever its depth.
+      *
+      * A snapshot is immutable and complete, which is what lets the same one be reinstalled on another thread, or more than once.
+      */
     opaque type Snapshot = Span[AnyRef]
 
     private def wrap(entries: Array[AnyRef]): Snapshot = Span.fromUnsafe(entries)
@@ -265,6 +315,11 @@ private[kernel] object Stack:
 
     end extension
 
+    /** A per-thread free list of stacks.
+      *
+      * An evaluation borrows one and releases it when it ends, so the arrays are reused across evaluations on the same thread rather than
+      * allocated per run. Release clears the stack, which is also what bumps its epoch.
+      */
     final private class Pool:
         private var free = new Array[Stack](4)
         private var size = 0

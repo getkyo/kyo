@@ -22,7 +22,7 @@ import scala.annotation.publicInBinary
   * lets a node hold a primitive input without boxing it.
   */
 sealed trait Pending[+A, -S] extends Kyo[A, S]:
-    def frame: Frame = Frame.internal
+    def frame: Frame = Frame.internal // TODO this should be abstract
 end Pending
 
 object Pending:
