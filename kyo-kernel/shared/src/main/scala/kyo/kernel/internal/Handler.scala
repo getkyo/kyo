@@ -17,6 +17,16 @@ import kyo.kernel.Loop.Outcome
 import kyo.kernel.Loop.Outcome2
 import scala.annotation.publicInBinary
 
+/** What a region installs: the clause that answers an effect, plus what the evaluator has to know to run the region around it.
+  *
+  * One instance per region entry, pushed onto the [[Stack]] and matched by [[tag]] when a suspension looks for who answers it. The subclasses
+  * below are the answering shapes the public API offers; everything they have in common is here, and it is all information the evaluator
+  * needs about a region rather than about the effect: whether the clause may resume more than once, whether it hands the continuation out,
+  * and what the region contributes to the context.
+  *
+  * Those three are declared rather than inferred because the evaluator has to decide what to do with a region's obligations before the clause
+  * has run, and by then it is too late to observe what the clause actually does.
+  */
 sealed abstract private[kernel] class Handler[E <: Effect, A, -S]:
     def tag: Tag[E]
 
@@ -55,15 +65,30 @@ end Handler
 
 @publicInBinary private[kernel] object Handler:
 
+    /** A region that answers operations, as opposed to one that only binds a value.
+      *
+      * `done` is what the region produces when the computation inside finishes without the clause ending it, and `recover` is offered a
+      * throwable raised inside the region, answering with a replacement or declining so the unwind carries on.
+      */
     sealed abstract class ArrowHandler[State, E <: Effect, A, B, -S] extends Handler[E, B, S]:
         def done(state: State, v: A): B < S
 
         def recover(state: State, ex: Throwable): Maybe[B < S] = Absent
     end ArrowHandler
 
+    /** The region behind [[kyo.kernel.ArrowEffect.handleCont]]: the clause is handed the continuation and decides what to do with it.
+      *
+      * `run` answers at `E & S`, inside the region, so an operation the clause performs comes back to this same handler. The region carries
+      * no state, hence `Unit`.
+      */
     abstract class ContHandler[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends ArrowHandler[Unit, E, A, B, S]:
         def run[X](input: I[X], cont: Arrow[O[X], A, E & S]): A < (E & S)
 
+        /** Runs the clause, attaching the effect trace to anything it throws.
+          *
+          * The catch is here rather than around the evaluator's call so the suspension and the stack are still in hand: by the time a
+          * throwable reaches the loop, the region it came from may already be off the stack.
+          */
         private[kyo] def answering[X](input: I[X], cont: Arrow[O[X], A, E & S], kyo: Pending[?, ?], stack: Stack): A < (E & S) =
             try run(input, cont)
             catch
@@ -72,10 +97,13 @@ end Handler
                     throw ex
     end ContHandler
 
-    // A region that masks its tag: every request for it, of either kind, reaches this clause as the request
-    // itself re-raised rather than as an input, and no handler or binding it shadows sees it. An arrow
-    // operation arrives by the stack lookup; a context read arrives because entering the region masks the tag
-    // in the context, so the read dispatches here instead of answering from the binding outside.
+    /** A region that masks its tag: every request for it, of either kind, reaches this clause as the request itself re-raised rather than as
+      * an input, and no handler or binding it shadows sees it.
+      *
+      * An arrow operation arrives by the stack lookup. A context read arrives because entering the region masks the tag in the context, so
+      * the read dispatches here instead of answering from the binding outside. That is why the clause takes an operation it cannot inspect:
+      * the two kinds have nothing in common except being re-raisable.
+      */
     abstract class MaskingHandler[E <: Effect, A, B, S] extends ArrowHandler[Unit, E, A, B, S]:
         def run[X](operation: X < E, next: Arrow[X, A, E & S]): A < (E & S)
 
@@ -90,7 +118,15 @@ end Handler
                     throw ex
     end MaskingHandler
 
-    // A LoopHandler's region carries no state; a LoopStateHandler's carries it through the Outcome2.
+    /** The region behind [[kyo.kernel.ArrowEffect.handleLoop]]: the clause is handed the input alone and answers with an outcome.
+      *
+      * `run` answers at `S` while the value it continues with is at `E & S`, which places the clause outside the region it serves. Only the
+      * answer is region currency, which is why `Loop.done` leaves without passing through the region and why an effect the clause performs
+      * goes to a handler further out.
+      *
+      * This region carries no state; [[LoopStateHandler]] is the same shape with state threaded through its `Outcome2`. They are separate
+      * classes rather than one with an ignored state so that neither pays for the other's shape.
+      */
     abstract class LoopHandler[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends ArrowHandler[Unit, E, A, B, S]:
         def run[X](input: I[X]): Outcome[O[X] < (E & S), B < S] < S
 
@@ -100,6 +136,9 @@ end Handler
             stack: Stack,
             idx: Int
         ): Outcome[O[X] < (E & S), B < S] < S =
+            // The clause runs outside the regions between this one and the suspension, so a throw from it leaves
+            // them for this region to answer for: dumping takes them off the stack and records the debt here,
+            // discharged when this region itself unwinds.
             try run(input)
             catch
                 case ex =>
@@ -107,6 +146,12 @@ end Handler
                     EffectTrace.attach(ex, kyo, stack)
                     throw ex
 
+        /** The arrow that reads a settled outcome and either re-enters the region with the answer or leaves with the result.
+          *
+          * A `Continue` rebuilds the region as a fresh `Handle` value over the answer, which is what makes resumption the same operation as
+          * entry rather than a separate path through the evaluator. Anything else is the loop's result, already at the row outside, so it is
+          * handed straight to the caller's continuation. An outcome that has not settled defers and comes back here.
+          */
         private[kyo] def clauseDispatch: Arrow[Outcome[A < (E & S), B < S], B, S] =
             type OutT = Outcome[A < (E & S), B < S]
             new Arrow.Step[OutT, B, S]:
@@ -126,6 +171,15 @@ end Handler
             end new
         end clauseDispatch
 
+        /** Answers one occurrence for a region that is at the top of the stack, applying the continuation to the answer without leaving.
+          *
+          * This is the fused path, which is why it is separate from [[running]]: the region does not have to be exited and re-entered for an
+          * occurrence it can answer in place, so the answer goes straight into `k`.
+          *
+          * A throwable is turned into a deferred re-raise carried by `Loop.continue` rather than thrown from here, so it reaches the
+          * evaluator as an ordinary computation and unwinds through the regions the continuation reinstalls, rather than from wherever this
+          * clause happened to run.
+          */
         def answers[X](
             input: I[X],
             k: Arrow[O[X], A, E & S],
@@ -155,6 +209,11 @@ end Handler
         end answers
     end LoopHandler
 
+    /** [[LoopHandler]] with state threaded from one occurrence to the next through the outcome.
+      *
+      * The state lives in the stack slot for this region, so it survives a suspension without the clause holding it, and the clause reads it
+      * as an argument and writes it by answering with it.
+      */
     abstract class LoopStateHandler[State, I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends ArrowHandler[State, E, A, B, S]:
         def run[X](state: State, input: I[X]): Outcome2[State, O[X] < (E & S), B < S] < S
 
@@ -224,6 +283,12 @@ end Handler
         end answers
     end LoopStateHandler
 
+    /** A region that binds a value rather than answering operations.
+      *
+      * It has no clause: a read finds the value in the [[Context]] and continues in place, never reaching this handler. What is here is the
+      * value's life instead: how it is derived on entry, what a fork takes and what a join puts back, and the lifecycle hooks below that let
+      * a binding own something releasable.
+      */
     abstract class ContextHandler[State, E <: ContextEffect[State], A, -S] extends Handler[E, A, S]:
         def derive(outer: Maybe[State]): State
         def fork(parent: State): State
