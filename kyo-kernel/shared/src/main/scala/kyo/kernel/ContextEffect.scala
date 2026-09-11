@@ -7,34 +7,47 @@ import scala.annotation.nowarn
 
 /** Represents the requirement for a value that will be provided later by a handler.
   *
-  * While ArrowEffect represents functions awaiting implementation, ContextEffect represents values awaiting provision. It captures the need
-  * for a value of type A without specifying where that value comes from. When a handler provides a value, that value becomes available
-  * within the handler's scope - once the handler's scope ends, the value is no longer available to computations.
+  * Where an [[ArrowEffect]] declares operations awaiting an implementation, a context effect declares a value awaiting provision. It says a
+  * computation expects to find an `A` bound around it, and reading that value is the only thing the computation can do with it. A handler
+  * binds the value for an extent, and outside that extent it is not there, so the binding is dynamically scoped rather than threaded through
+  * signatures. Different handlers can bind different values in different scopes, and the row tracks the requirement either way.
   *
-  * This mechanism aligns with dependency injection patterns - handlers act as injectors that provide values within their scope, and
-  * different handlers can provide different values in different scopes. The composition of effects automatically tracks these requirements
-  * through the type system.
+  * A read comes in two forms. The required form adds the effect to the row, so the compiler will not let the computation run until something
+  * binds a value. The defaulted form adds nothing to the row, because it cannot fail.
   *
-  * Behavior at an async boundary is a handler choice. `handleInheritable` makes the value visible to forked computations as is; `handle`
-  * takes explicit fork and join strategies, for values that must stay within one async context, like thread-local data, or that merge back
-  * after a fork.
+  * #### Crossing an async boundary
   *
-  * The polymorphic type parameter A defines what type of value is required:
+  * What a forked computation sees is the handler's choice, and it is the decision to get right when binding one:
+  *   - [[ContextEffect.handleInheritable]] makes the value visible to a fork as it stands.
+  *   - [[ContextEffect.handleNonInheritable]] keeps it out of a fork, for a value tied to one execution context.
+  *   - [[ContextEffect.handle]] takes explicit fork and join strategies, for a value that has to be transformed when a fork takes it or
+  *     merged when the fork rejoins.
+  *
+  * WARNING: a required read whose binding is missing raises at evaluation time. The row is the only thing that makes that unreachable, so
+  * reach for a handler or a default, never for a cast.
+  *
   * @tparam A
   *   The type of value that will be provided by a handler
+  *
+  * @see
+  *   [[ContextEffect.suspend]] For reading the bound value, with or without a default
+  * @see
+  *   [[ContextEffect.handleInheritable]] For binding a value over a computation
+  * @see
+  *   [[ArrowEffect]] For the other kind of effect, an operation answered by a handler
   */
 abstract class ContextEffect[+A] extends Effect
 
 object ContextEffect:
 
-    /** Creates a suspended computation that requests a value from a context effect. This establishes a requirement for a value that must be
-      * satisfied by a handler higher up in the program. The requirement becomes part of the effect type, ensuring that handlers must
-      * provide the requested value before the program can execute.
+    /** Reads the value bound for this context effect, requiring that something has bound one.
+      *
+      * The effect joins the row, so the computation cannot be evaluated until a handler binds a value. Reaching this read with nothing bound
+      * raises at evaluation time, and the row is what makes that unreachable; the overload taking a default is the way to read without
+      * requiring a binding.
       *
       * @param effectTag
-      *   Identifies which context effect to request the value from
-      * @return
-      *   A computation that will receive the requested value when executed
+      *   Identifies the context effect to read
       */
     @nowarn("msg=anonymous")
     inline def suspend[A, E <: ContextEffect[A]](inline effectTag: Tag[E])(using inline _frame: Frame): A < E =
@@ -44,15 +57,15 @@ object ContextEffect:
             def default        = Maybe.empty
             def cont           = Arrow.id
 
-    /** Creates a suspended computation that requests a context value and transforms it immediately upon receipt. This combines the
-      * operations of requesting and transforming a context value into a single step.
+    /** Reads the bound value and transforms it in the same node, rather than reading and mapping afterwards.
+      *
+      * This is what a helper wants where it would otherwise write `suspend(tag).map(f)`: `f` is fused into the read, so the value is
+      * transformed where it arrives instead of through a separate node.
       *
       * @param effectTag
-      *   Identifies which context effect to request the value from
+      *   Identifies the context effect to read
       * @param f
-      *   The transformation to apply to the received value
-      * @return
-      *   A computation containing the transformed value
+      *   Transforms the bound value
       */
     @nowarn("msg=anonymous")
     inline def suspendWith[A, E <: ContextEffect[A], B, S](
@@ -70,16 +83,15 @@ object ContextEffect:
                     case kyo: Pending[A, S2] @unchecked => Effect.defer(kyo, this, cont2)
                     case _                              => cont2(f(Nested.unnest[A](v)), Arrow.id)
 
-    /** Requests a value from a context effect with a specified default value. Unlike standard suspend, this version does not create a
-      * mandatory effect requirement. If no handler provides a value, the computation proceeds with the default value instead. This makes
-      * the context value optional rather than required.
+    /** Reads the bound value, falling back to `default` when nothing has bound one.
+      *
+      * The effect does not join the row, because this read cannot fail. That is what lets a computation using it evaluate with nothing bound
+      * around it at all.
       *
       * @param effectTag
-      *   Identifies which context effect to request the value from
+      *   Identifies the context effect to read
       * @param default
-      *   The value to use when no handler provides one
-      * @return
-      *   A computation that provides either the context value or default
+      *   Used when no handler has bound a value, evaluated only then
       */
     @nowarn("msg=anonymous")
     inline def suspend[A, E <: ContextEffect[A]](
@@ -95,18 +107,16 @@ object ContextEffect:
         end new
     end suspend
 
-    /** Requests an optional context value and transforms it, using a default if no value is available. This combines requesting an optional
-      * context value with immediate transformation. The transformation function receives either the context value if available or the
-      * default value if not.
+    /** Reads the bound value with a fallback and transforms it in the same node.
+      *
+      * `f` receives whichever value the read produced, bound or default, and the effect stays out of the row as in the plain defaulted read.
       *
       * @param effectTag
-      *   Identifies which context effect to request the value from
+      *   Identifies the context effect to read
       * @param default
-      *   The value to use when no handler provides one
+      *   Used when no handler has bound a value, evaluated only then
       * @param f
-      *   The transformation to apply to either the context or default value
-      * @return
-      *   A computation containing the transformed value
+      *   Transforms the value that was read
       */
     @nowarn("msg=anonymous")
     inline def suspendWith[A, E <: ContextEffect[A], B, S](
@@ -138,8 +148,6 @@ object ContextEffect:
       *   The value to provide to the computation
       * @param v
       *   The computation requiring the context value
-      * @return
-      *   The computation result with the context value provided
       */
     inline def handleInheritable[A, E <: ContextEffect[A], B, S](
         inline effectTag: Tag[E],
@@ -159,8 +167,6 @@ object ContextEffect:
       *   The transformation to apply to any existing value
       * @param v
       *   The computation requiring the context value
-      * @return
-      *   The computation result with the context value handled
       */
     inline def handleInheritable[A, E <: ContextEffect[A], B, S](
         inline effectTag: Tag[E],
@@ -179,8 +185,6 @@ object ContextEffect:
       *   Computes the region's value from the outer value, absent when no outer handler provides one
       * @param v
       *   The computation requiring the context value
-      * @return
-      *   The computation result with the context value handled
       */
     inline def handleInheritable[A, E <: ContextEffect[A], B, S](
         inline effectTag: Tag[E]
@@ -197,8 +201,6 @@ object ContextEffect:
       *   The value to provide to the computation
       * @param v
       *   The computation requiring the context value
-      * @return
-      *   The computation result with the context value handled
       */
     inline def handleNonInheritable[A, E <: ContextEffect[A], B, S](
         inline effectTag: Tag[E],
@@ -216,8 +218,6 @@ object ContextEffect:
       *   The transformation to apply to any existing value
       * @param v
       *   The computation requiring the context value
-      * @return
-      *   The computation result with the context value handled
       */
     inline def handleNonInheritable[A, E <: ContextEffect[A], B, S](
         inline effectTag: Tag[E],
@@ -241,8 +241,6 @@ object ContextEffect:
       *   Computes the region's value from the outer value, absent when no outer handler provides one
       * @param v
       *   The computation requiring the context value
-      * @return
-      *   The computation result with the context value handled
       */
     inline def handleNonInheritable[A, E <: ContextEffect[A], B, S](
         inline effectTag: Tag[E]
@@ -271,8 +269,6 @@ object ContextEffect:
       *   Computes the parent's value after a fork completes, from the parent's, the forked start and the forked end values
       * @param v
       *   The computation requiring the context value
-      * @return
-      *   The computation result with the context value handled
       */
     inline def handle[A, E <: ContextEffect[A], B, S](
         inline effectTag: Tag[E]
@@ -300,8 +296,6 @@ object ContextEffect:
       *   Called with the region's value and the failure when the region does not complete normally
       * @param v
       *   The computation requiring the context value
-      * @return
-      *   The computation result with the context value handled
       */
     inline def handle[A, E <: ContextEffect[A], B, S](
         inline effectTag: Tag[E]
@@ -314,7 +308,14 @@ object ContextEffect:
     )(v: B < (E & S))(using inline _frame: Frame): B < S =
         handle(effectTag)((outer: Maybe[A]) => outer.fold(ifUndefined)(ifDefined), fork, join, release = release)(v)
 
-    /** Handles a context effect with the full set of strategies.
+    /** Binds a value over a computation, with the full set of strategies.
+      *
+      * The arms cover the value's whole life in the region: `derive` produces it from whatever an outer handler bound, `fork` and `join`
+      * decide what a forked computation starts with and what the parent holds once that fork rejoins, and exactly one of `done` or `release`
+      * runs at the end, according to whether the region completed normally.
+      *
+      * The narrower entry points are this one with arms filled in. [[handleInheritable]] forks the parent's value as it stands and keeps the
+      * parent's on join; [[handleNonInheritable]] derives a fresh value for the fork instead, as though no outer binding existed.
       *
       * @param effectTag
       *   Identifies which context effect to handle
@@ -330,8 +331,6 @@ object ContextEffect:
       *   Called with the region's value and the failure when the region does not complete normally
       * @param v
       *   The computation requiring the context value
-      * @return
-      *   The computation result with the context value handled
       */
     @nowarn("msg=anonymous")
     inline def handle[A, E <: ContextEffect[A], B, S](
