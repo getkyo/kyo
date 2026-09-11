@@ -70,11 +70,7 @@ val nothing: Unit < Any = Kyo.unit
 
 Neither introduces a suspension. For an ordinary value both expand to the value itself, so the interpreter is never entered and there is nothing for it to unwrap later.
 
-> **Note:** a computation is not liftable into another computation. Where `A < S` meets an expected `A < S < S2`, the `CanLift` constraint fails with an error naming the nested-effect problem and pointing at the two fixes, `.flatten` or splitting the expression into two statements.
-
-> **Note:** a kyo module object refuses to lift as well. Writing `Abort.map(...)` is a compile error rather than a silently lifted `Abort.type < Any`, so a missing argument list is caught where it is written.
-
-> **Note:** one implicit conversion in this module exists purely to fail. When a `Unit < S1` meets a mismatched expected row, `abortCastUnit` is selected and aborts compilation with an explanation of the effect mismatch; it never produces a value.
+> **Note:** the lift takes a plain value and nothing else. A computation, a module object such as `Abort` where an argument list was forgotten, or a `Unit` computation whose row does not match are each refused where they are written, with an error naming the problem, rather than becoming a value that is wrong later. For a computation that ended up inside another, the fixes are `.flatten` or splitting the expression into two statements.
 
 ### Nesting, and flatten
 
@@ -194,11 +190,26 @@ That `eval` is the point: the defaulted read has an empty row, so it runs with n
 
 `suspendWith` fuses a transformation onto the read, in both the required and the defaulted form, the same way it does for an `ArrowEffect` operation.
 
-> **Caution:** a required read whose binding is missing raises at evaluation time. The row is what normally makes that unreachable, so any cast that erases the row turns a compile-time error into a runtime one. That is the single reason not to cast a row away.
+> **Caution:** a required read whose binding is missing raises at evaluation time. The row is what makes that unreachable, and it is the only thing that does, so it is not something to work around. Reach for a handler or a default, never a cast.
 
 ## Answering an effect
 
 A handler supplies the implementation an effect declaration left out, and removes that effect from the row as it does. Three shapes are provided: `handleCont` hands the clause the continuation, `handleLoop` hands it only the operation's input, and `handleLoopState` threads a value from one occurrence to the next. Reach for the most convenient shape that still gives you the control you need, because handing the clause less also gives the evaluator more room.
+
+| Handler | What the clause gets, and when to reach for it |
+| --- | --- |
+| `ArrowEffect.handleCont` | The input and the continuation as an `Arrow`. Apply it once to resume, or never to discard the rest. |
+| `ArrowEffect.handleContRepeated` | The same, for a clause that applies the continuation more than once. Declaring it holds the regions dumped into the continuation, so a bracket inside releases once rather than at the first resumption. |
+| `ArrowEffect.handleContWith` | `handleCont` with the region's result fed straight into a following step, without a separate `map` node. |
+| `ArrowEffect.handleLoop` | Only the input. Control flows through `Loop.Outcome`: `Loop.continue(answer)` answers this occurrence, `Loop.done(value)` ends the region. |
+| `ArrowEffect.handleLoopWith` | `handleLoop` with the result fused into a following step. |
+| `ArrowEffect.handleLoopState` | The input and a state value threaded from one occurrence to the next. |
+| `ArrowEffect.handleLoopStateWith` | `handleLoopState` with the result fused into a following step. |
+| `ArrowEffect.Mask` | No answers at all. It hides an effect from the handlers inside it, so an enclosing one answers instead. |
+| `ContextEffect.handleInheritable` | A value bound for the extent, inherited unchanged by anything forked from it. |
+| `ContextEffect.handle` | A value bound for the extent, with `fork` and `join` deciding what a fork starts from and what this scope keeps afterwards. |
+
+Each of the `handleCont`, `handleLoop` and `handleLoopState` families also has an overload taking a `done` clause, which transforms the region's result, and one taking a `recover` clause, covered under [failure and resources](#recovery-is-a-clause-not-a-wrapper).
 
 ### The continuation in hand
 
@@ -207,8 +218,8 @@ A handler supplies the implementation an effect declaration left out, and remove
 ```scala
 val transformed: Int < Any =
     ArrowEffect.handleCont(Tag[Ask], ask.map(_ + 1))(
-        [C] => (_, cont) => cont(2),
-        a => a * 10
+        handle = [C] => (_, cont) => cont(2),
+        done = a => a * 10
     )
 
 assert(transformed.eval == 30)
@@ -221,8 +232,8 @@ Because `cont` is a value rather than a stack frame, a clause can apply it more 
 ```scala
 val bothAnswers: Int < Any =
     ArrowEffect.handleCont(Tag[Ask], ask.map(_ * 10))(
-        [C] => (_, cont) => cont(1).map(x => cont(2).map(y => x + y)),
-        a => a
+        handle = [C] => (_, cont) => cont(1).map(x => cont(2).map(y => x + y)),
+        done = a => a
     )
 
 assert(bothAnswers.eval == 30)
@@ -241,8 +252,8 @@ When the clause has nothing to say about the continuation and only wants to answ
 ```scala
 def sayUntil[A, S](stop: String)(v: A < (Say & S)): Maybe[A] < S =
     ArrowEffect.handleLoop(Tag[Say], v)(
-        [C] => line => if line == stop then Loop.done(Maybe.empty) else Loop.continue(Kyo.unit),
-        a => Maybe(a)
+        handle = [C] => line => if line == stop then Loop.done(Maybe.empty) else Loop.continue(Kyo.unit),
+        done = a => Maybe(a)
     )
 
 val chatter: Unit < Say = say("a").andThen(say("stop")).andThen(say("b"))
@@ -259,8 +270,8 @@ The region ends with an empty `Maybe` at the first line equal to `stop`, and wit
 ```scala
 def runSay[A, S](v: A < (Say & S)): (Chunk[String], A) < S =
     ArrowEffect.handleLoopState(Tag[Say], Chunk.empty[String], v)(
-        [C] => (log, line) => Loop.continue(log.append(line), Kyo.unit),
-        (log, a) => (log, a)
+        handle = [C] => (log, line) => Loop.continue(log.append(line), Kyo.unit),
+        done = (log, a) => (log, a)
     )
 
 assert(runSay(say("a").andThen(say("b"))).eval == ((Chunk("a", "b"), ())))
@@ -271,7 +282,7 @@ This is also where an effect with several operations is interpreted, since the s
 ```scala
 def runStore[A, S](init: Map[String, String])(v: A < (Store & S)): (Map[String, String], A) < S =
     ArrowEffect.handleLoopState(Tag[Store], init, v)(
-        [C] =>
+        handle = [C] =>
             (state, op) =>
                 op match
                     case Store.Op.Get(key) =>
@@ -279,7 +290,7 @@ def runStore[A, S](init: Map[String, String])(v: A < (Store & S)): (Map[String, 
                         Loop.continue(state, found)
                     case Store.Op.Put(key, value) =>
                         Loop.continue(state.updated(key, value), Kyo.unit),
-        (state, a) => (state, a)
+        done = (state, a) => (state, a)
     )
 
 val stored: (Map[String, String], Maybe[String]) < Any =
@@ -290,6 +301,44 @@ assert(stored.eval == ((Map("k" -> "v"), Maybe("v"))))
 
 > **Note:** every region combinator takes the effect row as a pair, `S` for the body and `S2` for whatever the clause adds beyond it. With a single row the typer would pin the body's row before it saw the clause, and a clause that introduces its own effect would need explicit instantiation at each call site.
 
+### The continuation cannot leave its region
+
+A clause is handed the rest of the computation as a value, and the previous sections lean on that freely. There is one thing it may not do with it: let it out.
+
+The reason is what the continuation carries. It holds the regions that stood between this handler and the suspension, brackets among them, and the handler releases what those regions carry when the clause returns. A continuation that outlived the clause would be a computation whose resources have already been released, resumed by someone who has no idea.
+
+The row says so. A clause receives an `Arrow[O[C], A, E & S & S2 & Region.NoEscape]` and owes back an `A < (E & S & S2 & Region.NoEscape)`, and everything derived from the continuation carries that marker too. Handing it back to the region compiles, because the region's own answer carries the marker and discharges it:
+
+```scala
+val resumed: Int < Any =
+    ArrowEffect.handleCont(Tag[Ask], ask.map(_ + 1))([C] => (_, cont) => cont(41), a => a)
+
+assert(resumed.eval == 42)
+```
+
+Sending it anywhere else does not. Crossing an execution boundary asks for an `Isolate` covering the row, and none can be derived for the marker, so the attempt stops compilation rather than stranding a resource:
+
+```scala doctest:expect=fails-compile scope=isolated
+import kyo.*
+import kyo.kernel.*
+
+sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
+def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())
+
+def cross[A, S, S2](v: A < S)(using Isolate[S, Any, S2]): A < S = v
+
+ArrowEffect.handleCont(Tag[Ask], ask)(
+    handle = [C] => (_, cont) => cross(cont(1)),
+    done = (a: Int) => a
+)
+```
+
+Storing it is refused the same way: a holder typed without the marker does not accept a value that has it, the row being contravariant. Writing an `Isolate` for the marker by hand does not open the gate either.
+
+The marker has no runtime presence. Rows are phantom, and the discharge is a cast on the row alone, so confinement costs nothing at evaluation and is entirely a statement to the compiler.
+
+> **Note:** a peel is the deliberate exception. A handler built to hand the remainder out as a value, which is what the stream combinators are built on, gives its clause an unmarked continuation, and the debt those regions carry moves to the scope below rather than ending with the clause. That entry point is internal to kyo; user code meets it through the combinators built on it.
+
 ### Fusing the region's continuation
 
 Each of the three has a `*With` variant that takes what happens after the region as a separate parameter group. The region's result flows straight into that function instead of becoming a value first, which spares a node on a path that is often hot:
@@ -297,14 +346,33 @@ Each of the three has a `*With` variant that takes what happens after the region
 ```scala
 val scaled: Int < Any =
     ArrowEffect.handleContWith(Tag[Ask], ask.map(_ + 1))(
-        [C] => (_, cont) => cont(2),
-        a => a
+        handle = [C] => (_, cont) => cont(2),
+        done = a => a
     )(b => b * 10)
 
 assert(scaled.eval == 30)
 ```
 
-`handleLoopWith` and `handleLoopStateWith` are the same transformation applied to the other two shapes. Use them where the region's result is consumed immediately; use the plain form where it is not. Each `*With` form has a single overload, with `handle` and `done` both required and no recovery arm, so a region that needs either of those takes the plain form and a `map`.
+`handleLoopWith` and `handleLoopStateWith` are the same transformation applied to the other two shapes:
+
+```scala
+val doubled: Int < Any =
+    ArrowEffect.handleLoopWith(Tag[Say], say("a").andThen(say("b")).andThen(7))(
+        handle = [C] => _ => Loop.continue(Kyo.unit),
+        done = a => a
+    )(n => n * 2)
+
+val logged: String < Any =
+    ArrowEffect.handleLoopStateWith(Tag[Say], Chunk.empty[String], say("a").andThen(say("b")).andThen(7))(
+        handle = [C] => (log, line) => Loop.continue(log.append(line), Kyo.unit),
+        done = (log, a) => (log, a)
+    )((log, n) => s"${log.size} lines, answered $n")
+
+assert(doubled.eval == 14)
+assert(logged.eval == "2 lines, answered 7")
+```
+
+Use them where the region's result is consumed immediately; use the plain form where it is not. Each `*With` form has a single overload, with `handle` and `done` both required and no recovery arm, so a region that needs either of those takes the plain form and a `map`.
 
 ### Binding a value for a scope
 
@@ -354,10 +422,10 @@ This is the same type a handler clause is handed. The `cont` in a `handleCont` c
 ```scala
 val reused: Int < Any =
     ArrowEffect.handleCont(Tag[Ask], ask.map(_ + 1))(
-        [C] =>
+        handle = [C] =>
             (_, cont) =>
                 cont.chain(doubleIt)(0).map(a => cont.chain(doubleIt)(20).map(b => a + b)),
-        a => a
+        done = a => a
     )
 
 assert(reused.eval == 44)
@@ -391,9 +459,9 @@ Nothing here installs a recovery scope around a computation. A throw is answered
 ```scala
 def answeringOrElse[S](n: Int, fallback: Int)(v: => Int < (Ask & S)): Int < S =
     ArrowEffect.handleCont(Tag[Ask], v)(
-        [C] => (_, cont) => cont(n),
-        a => a,
-        _ => Maybe(fallback)
+        handle = [C] => (_, cont) => cont(n),
+        done = a => a,
+        recover = _ => Maybe(fallback)
     )
 
 val checked: Int < Ask = ask.map(a => if a < 0 then throw IllegalArgumentException("negative") else a)
@@ -437,15 +505,15 @@ assert(endings == Chunk((1, Maybe.empty[Throwable])))
 
 The ending is one `Maybe[Throwable]`. `Absent` is a clean end, which is what the transcript above recorded; `Present(t)` carries either the failure an unwind took through the extent or the signal an abandoned remainder is discarded with. Three ways for an extent to end, and two things a release is ever told.
 
-> **Note:** the release is a plain `(A, Maybe[Throwable]) => Unit` rather than a computation, because it runs where nothing is installed to answer for an effect, which is all an evaluator that is ending can offer, and its result is discarded for the same reason. A release exists to act outside the computation, closing a socket or handing a permit back, so nothing it does is observable to the computation it belonged to.
+> **Note:** the release is a plain `(A, Maybe[Throwable]) => Unit` rather than a computation, because it has to run where nothing is installed to answer an effect, and its result is discarded for the same reason. It exists to act outside the computation, closing a socket or handing a permit back, so nothing it does is observable to the computation it belonged to.
 
 The third ending is not hypothetical. A clause that discards its continuation drops the whole remainder of the computation, and every bracket outstanding in that remainder still releases, told the discard signal rather than `Absent`, its extent never having run to an end:
 
 ```scala
 val dropped: Int < Any =
     ArrowEffect.handleCont(Tag[Ask], session)(
-        [C] => (_, _) => -1,
-        a => a
+        handle = [C] => (_, _) => -1,
+        done = a => a
     )
 
 assert(dropped.eval == -1)
@@ -465,8 +533,8 @@ The mirror case is a clause that applies its continuation more than once with a 
 ```scala
 val branched: Int < Any =
     ArrowEffect.handleCont(Tag[Ask], session)(
-        [C] => (_, cont) => cont(10).map(a => cont(20).map(b => a + b)),
-        a => a
+        handle = [C] => (_, cont) => cont(10).map(a => cont(20).map(b => a + b)),
+        done = a => a
     )
 
 val refused: String =
@@ -480,7 +548,22 @@ assert(refused == "refused")
 
 The refusal is a `kyo.Closed`, and it is also the one signal a caller gets that a release ran, since the scope could only be spent if the first branch had already released it. It carries no stack trace at all, which is why its message names the `Bracket` call site the resource was opened at, and why the message explains itself rather than leaving the reader a frame to chase: the first resumption ends the extent and releases, and a handler that resumes the same continuation more than once, as `Choice` does, has that effect whenever the bracket sits between the handler and the suspension it answers.
 
-Three arrangements avoid it, and which is right depends on what the branches need. Acquire inside the branch, and every resumption gets a resource of its own. Put the bracket outside the handler, and its extent is not what gets replayed: the release point sits below the handler, never folded into the captured continuation, and the extent ends once after every branch has run. Or keep the shape and hand the job to `handleContRepeated`, which holds the region instead of giving it back when the clause returns, so one release fires where the handler itself ends.
+Three arrangements avoid it, and which is right depends on what the branches need. Acquire inside the branch, and every resumption gets a resource of its own. Put the bracket outside the handler, and its extent is not what gets replayed: the release point sits below the handler, never folded into the captured continuation, and the extent ends once after every branch has run. Or keep the shape exactly as it is and say what the clause does, which is what `handleContRepeated` is for:
+
+```scala
+endings = Chunk.empty[(Int, Maybe[Throwable])]
+
+val heldOpen: Int < Any =
+    ArrowEffect.handleContRepeated(Tag[Ask], session)(
+        handle = [C] => (_, cont) => cont(10).map(a => cont(20).map(b => a + b)),
+        done = a => a
+    )
+
+assert(heldOpen.eval == 32)
+assert(endings.size == 1)
+```
+
+Both branches ran against a live resource, and the bracket released once, when this handler ended rather than when the first branch did. That is the whole difference: the plain form gives the region back as the clause returns, and this one holds it. Declare it only where the clause really does resume more than once, since holding keeps the obligation open longer than a single-shot clause needs.
 
 ### What a failure carries out
 
@@ -523,7 +606,7 @@ assert(indexed.eval == 13)
 
 A round answers with an `Outcome`, built by `Loop.continue` and `Loop.done`. `Outcome2`, `Outcome3` and `Outcome4` are the same thing for the multi-state arities, and `Continue` through `Continue4` are what a continuing answer carries.
 
-> **Note:** `Loop.continue` and `Loop.done` answer with a computation even though the outcome they carry is settled, because a clause may suspend before it continues. It also lets them type-check as region-clause answers behind nested lambdas, where a raw return would be typed before the conversion and the answer's type minimized, which is why the handler clauses in the previous chapter could write `Loop.continue(...)` directly.
+> **Note:** `Loop.continue` and `Loop.done` answer with a computation even though the outcome they carry is settled, because a clause may suspend before it continues. That is also what lets a handler clause write `Loop.continue(...)` directly, as the ones in the previous chapter do.
 
 > **Note:** a `done` payload that is itself a computation stays unevaluated data. The loop hands it back as a value, and only the caller evaluating it runs it.
 
