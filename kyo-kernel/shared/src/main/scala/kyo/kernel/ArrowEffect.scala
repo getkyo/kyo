@@ -211,6 +211,65 @@ object ArrowEffect:
         end match
     end handleContRepeated
 
+    /** Handles an arrow effect with a clause that may resume more than once, with a recover arm.
+      *
+      * As [[handleContRepeated]], except a failure of the handled computation is offered to recover, exactly as in the recovering
+      * [[handleCont]]. Without this overload a clause needing both would have to drop to [[handleCont]] for the recovery and lose the
+      * holding, which is not a convenience but a change in when the regions it dumps into the continuation discharge.
+      *
+      * @param effectTag
+      *   Identifies which arrow effect to handle
+      * @param v
+      *   The computation requiring the function implementation
+      * @param handle
+      *   The function implementation to provide
+      * @param done
+      *   The function to transform the final result
+      * @param recover
+      *   The function offered a failure of the handled computation
+      * @return
+      *   The computation result with the function implementation provided
+      */
+    @nowarn("msg=anonymous")
+    inline def handleContRepeated[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](
+        inline effectTag: Tag[E],
+        inline v: => A < (E & S)
+    )(
+        inline handle: [C] => (I[C], Arrow[O[C], A, E & S & S2 & Region.NoEscape]) => A < (E & S & S2 & Region.NoEscape),
+        inline done: A => B < (S & S2),
+        inline recover: Throwable => Maybe[B < (S & S2)]
+    )(using inline _frame: Frame): B < (S & S2) =
+        def onDone(v0: A): B < (S & S2)                   = done(v0)
+        def onRecover(ex: Throwable): Maybe[B < (S & S2)] = recover(ex)
+        // The input is forced under the recovery clause: a throw while building it is the region's to answer.
+        try
+            val v0 = v
+            v0 match
+                case _: Pending[?, ?] =>
+                    val h =
+                        new Handler.ContHandler[I, O, E, A, B, S & S2]:
+                            def tag = effectTag
+                            def run[X](input: I[X], next: Arrow[O[X], A, E & S & S2]) =
+                                Region.discharge(handle[X](input, next))
+                            def done(state: Unit, v1: A)                     = onDone(v1)
+                            override def recover(state: Unit, ex: Throwable) = onRecover(ex)
+                            override def repeated                            = true
+
+                    new Pending.HandleArrow[Unit, E, A, B, B, S & S2]:
+                        override def frame = _frame
+                        def value          = v0
+                        def handler        = h
+                        def state          = ()
+                        def cont           = Arrow.id
+                    end new
+                case _ =>
+                    onDone(Nested.unnest(v0))
+            end match
+        catch
+            case ex if !IsFatal(ex) => onRecover(ex).getOrElse(throw ex)
+        end try
+    end handleContRepeated
+
     /** Handles an arrow effect by providing a handler function implementation, with a recover arm.
       *
       * Like the variant without recover, except a failure of the handled computation is offered to recover, which may answer with a

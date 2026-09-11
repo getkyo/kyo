@@ -1180,6 +1180,62 @@ class BracketTest extends AnyFreeSpec:
             assert(outcome.exists(_.exists(_ eq Boom)), s"the release was told: $outcome")
         }
 
+        // The recovering overload exists so a clause needing both does not have to drop to `handleCont` for the
+        // recovery and lose the holding, which is not a convenience: it changes when the dumped regions discharge.
+        "a recovering multi-shot clause still holds its regions" in {
+            var events = List.empty[String]
+            val v =
+                Bracket(Effect.defer(1)) { r =>
+                    ask.map(a => a + r)
+                }((r, _) => events :+= s"release $r")
+            val twice =
+                ArrowEffect.handleContRepeated(Tag[Ask], v)(
+                    [C] => (_, cont) => cont(10).map(a => cont(20).map(b => a + b)),
+                    a => a,
+                    _ => Absent
+                )
+            assert(twice.eval == 32)
+            assert(events == List("release 1"))
+        }
+
+        "a recovering multi-shot clause answers a failure raised in a branch" in {
+            var outcome: Maybe[Maybe[Throwable]] = Absent
+            val v =
+                Bracket(Effect.defer(1)) { r =>
+                    ask.map(a => if a == 20 then throw Boom else a + r)
+                }((_, o) => outcome = Maybe(o))
+            val twice =
+                ArrowEffect.handleContRepeated(Tag[Ask], v)(
+                    [C] => (_, cont) => cont(10).map(a => cont(20).map(b => a + b)),
+                    a => a,
+                    _ => Maybe(-1)
+                )
+            assert(twice.eval == -1)
+            assert(outcome.exists(_.exists(_ eq Boom)), s"the release was told: $outcome")
+        }
+
+        "a recovering multi-shot clause declining lets the failure through" in {
+            val v = Bracket(Effect.defer(1))(r => ask.map(a => if a == 20 then throw Boom else a + r))((_, _) => ())
+            val twice =
+                ArrowEffect.handleContRepeated(Tag[Ask], v)(
+                    [C] => (_, cont) => cont(10).map(a => cont(20).map(b => a + b)),
+                    a => a,
+                    _ => Absent
+                )
+            assert(intercept[RuntimeException](twice.eval) eq Boom)
+        }
+
+        "a recovering multi-shot clause answers a throw raised while its input is built" in {
+            def boomInput: Int < Ask = throw Boom
+            val twice =
+                ArrowEffect.handleContRepeated(Tag[Ask], boomInput)(
+                    [C] => (_, cont) => cont(10).map(a => cont(20).map(b => a + b)),
+                    a => a,
+                    _ => Maybe(-2)
+                )
+            assert(twice.eval == -2)
+        }
+
         "a multi-shot clause that acquires per branch releases each where its branch ends" in {
             var events = List.empty[String]
             val v =

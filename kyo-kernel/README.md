@@ -200,7 +200,7 @@ A handler supplies the implementation an effect declaration left out, and remove
 | `ContextEffect.handleNonInheritable` | The same, except a fork starts the region over rather than inheriting the value, for a value tied to one execution. |
 | `ContextEffect.handle` | A value bound for the extent, with `fork` and `join` deciding what a fork starts from and what this scope keeps afterwards. |
 
-Each of the `handleCont`, `handleLoop` and `handleLoopState` families also has an overload taking a `done` clause, which transforms the region's result, and one taking a `recover` clause, covered under [failure and resources](#recovery-is-a-clause-not-a-wrapper). Each also has a `*With` variant that fuses what happens after the region into the handler itself, covered under [fusing the region's continuation](#the-with-variants-fusing-the-regions-continuation).
+Every handler above takes an optional `done` clause, which transforms the region's result, and an optional `recover` clause, which answers a failure, covered under [failure and resources](#recovery-is-a-clause-not-a-wrapper). Each also has a `*With` variant that fuses what happens after the region into the handler itself, covered under [fusing the region's continuation](#the-with-variants-fusing-the-regions-continuation); those take `handle` and `done` and no recovery, so a region needing one takes the plain form and a `map`.
 
 ### `handleCont`: the continuation in hand
 
