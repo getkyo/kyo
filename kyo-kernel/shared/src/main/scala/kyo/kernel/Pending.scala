@@ -89,12 +89,10 @@ object `<` extends Implicits:
           * leaks. This variant applies `f` as the value arrives, so an interrupt lands on either side of the pair.
           */
         inline def ensureMap[B, S2](inline f: A => B < S2)(using inline _frame: Frame): B < (S & S2) =
-            @nowarn("msg=anonymous") def step: Arrow.Ensure[A, B, S2] =
-                new Arrow.Ensure[A, B, S2]:
-                    def frame                = _frame
-                    override def apply(a: A) = f(a)
+            // Through `Arrow.ensure` rather than `new Arrow.Ensure` here: `Ensure` is `private[kyo]`, so naming it
+            // in this expansion made the method uncallable from outside the package.
             // Cast per `map`'s note above.
-            v.asInstanceOf[A < S].chain(step)
+            v.asInstanceOf[A < S].chain(Arrow.ensure[A](f))
         end ensureMap
 
         /** Maps the value produced by this computation to a new computation and flattens the result.

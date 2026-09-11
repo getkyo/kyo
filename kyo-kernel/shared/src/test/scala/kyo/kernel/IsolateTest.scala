@@ -128,6 +128,45 @@ class IsolateTest extends Test:
             val v               = isolate.run(read)
             assert(forking(7)(v).eval == -99)
         }
+
+        "an inheritable region hands a crossing the value the scope holds" in {
+            val isolate         = summon[Isolate[Any, Any, Any]].crossing
+            val read: Int < Any = ContextEffect.suspend(Tag[Forking], -1)
+            val v               = isolate.run(read)
+            assert(ContextEffect.handleInheritable(Tag[Forking], 7)(v).eval == 7)
+        }
+
+        "a non-inheritable region hands a crossing the value it would have taken with nothing bound outside" in {
+            val isolate         = summon[Isolate[Any, Any, Any]].crossing
+            val read: Int < Any = ContextEffect.suspend(Tag[Forking], -1)
+            val v               = isolate.run(read)
+            assert(ContextEffect.handleNonInheritable(Tag[Forking], 7)(v).eval == 7)
+        }
+
+        // The two differ only where the bound value is derived from what the fork would have carried, so the
+        // derive is what tells them apart: inheriting applies it to the scope's value, not inheriting starts over.
+        "a non-inheritable region starts its derive over in a crossing, where an inheritable one carries the scope's value" in {
+            val isolate         = summon[Isolate[Any, Any, Any]].crossing
+            val read: Int < Any = ContextEffect.suspend(Tag[Forking], -1)
+            val v               = isolate.run(read)
+
+            val inherited =
+                ContextEffect.handleInheritable(Tag[Forking], 1)(
+                    ContextEffect.handleInheritable(Tag[Forking], 0, (outer: Int) => outer + 10)(v)
+                )
+            val notInherited =
+                ContextEffect.handleInheritable(Tag[Forking], 1)(
+                    ContextEffect.handleNonInheritable(Tag[Forking], 0, (outer: Int) => outer + 10)(v)
+                )
+
+            assert(inherited.eval == 11)
+            assert(notInherited.eval == 0)
+        }
+
+        "a non-inheritable region is the scope's own value when nothing forks" in {
+            val read: Int < Any = ContextEffect.suspend(Tag[Forking], -1)
+            assert(ContextEffect.handleNonInheritable(Tag[Forking], 7)(read).eval == 7)
+        }
     }
 
     "isolate application" - {

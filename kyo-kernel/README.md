@@ -197,6 +197,7 @@ A handler supplies the implementation an effect declaration left out, and remove
 | `ArrowEffect.handleLoop` | Only the input. Control flows through `Loop.Outcome`: `Loop.continue(answer)` answers this occurrence, `Loop.done(value)` ends the region. |
 | `ArrowEffect.handleLoopState` | The input and a state value threaded from one occurrence to the next. |
 | `ContextEffect.handleInheritable` | A value bound for the extent, inherited unchanged by anything forked from it. |
+| `ContextEffect.handleNonInheritable` | The same, except a fork starts the region over rather than inheriting the value, for a value tied to one execution. |
 | `ContextEffect.handle` | A value bound for the extent, with `fork` and `join` deciding what a fork starts from and what this scope keeps afterwards. |
 
 Each of the `handleCont`, `handleLoop` and `handleLoopState` families also has an overload taking a `done` clause, which transforms the region's result, and one taking a `recover` clause, covered under [failure and resources](#recovery-is-a-clause-not-a-wrapper). Each also has a `*With` variant that fuses what happens after the region into the handler itself, covered under [fusing the region's continuation](#the-with-variants-fusing-the-regions-continuation).
@@ -410,7 +411,7 @@ assert(layered.eval == 11)
 
 > **Note:** a binding resolves when it is installed, not when it is read. A computation captured under one binding and resumed under a different enclosing binding merges into the one it is resumed under, rather than carrying its original.
 
-`handleInheritable` decides the edges of the extent for you: a forked computation receives the binding unchanged and the scope keeps its own value when that fork ends. `ContextEffect.handle` is the form that asks, and it always asks for both `fork`, what a computation forked from here receives, and `join`, what this scope holds once a fork ends. There is no non-inheriting shorthand beside it, because not inheriting still has to say what the child starts from, and saying that is `fork` itself: `Bracket` forks an inert copy of its region for exactly this reason. Whether `handle` also asks about the extent ending depends on which overload the first argument selects: give it `ifUndefined` and `ifDefined` and there is nothing further, or a `release` as a fifth argument; give it a single `derive: Maybe[A] => A` instead and `done` and `release` are available with defaults. `fork` and `join` belong to [crossing an execution boundary](#isolate-crossing-an-execution-boundary), where the reason they are on this call becomes visible.
+`handleInheritable` decides the edges of the extent for you: a forked computation receives the binding unchanged and the scope keeps its own value when that fork ends. `ContextEffect.handle` is the form that asks, and it always asks for both `fork`, what a computation forked from here receives, and `join`, what this scope holds once a fork ends. `handleNonInheritable` is the other shorthand over it: a fork is handed the value the region would have taken with nothing bound outside it, so it starts the region over instead of continuing it, which is what a value tied to one execution needs. Whether `handle` also asks about the extent ending depends on which overload the first argument selects: give it `ifUndefined` and `ifDefined` and there is nothing further, or a `release` as a fifth argument; give it a single `derive: Maybe[A] => A` instead and `done` and `release` are available with defaults. `fork` and `join` belong to [crossing an execution boundary](#isolate-crossing-an-execution-boundary), where the reason they are on this call becomes visible.
 
 > **Note:** both a handler and a binding are found by subtyping, so a region installed at a subtype's tag answers a read at the supertype's, and not the reverse. A read takes the innermost binding whose tag it conforms to.
 
@@ -474,7 +475,19 @@ val askTimes: Arrow[Int, Int, Ask] =
 assert(Ask.run(2)(askTimes(3)).eval == 6)
 ```
 
-`Arrow` also carries members belonging to the evaluator's protocol rather than to callers, the two-argument `apply` and the `head`/`tail` split among them: they are public only because inline expansions have to reach them, and user code has no reason to call them. `Effect.defer` is split the same way. Its `Arrow`-taking overloads reify the application of a continuation as a node for those expansions to hand back, while `Effect.defer(block)`, taking its block by name, is an ordinary call and the way to turn a piece of plain code into a node the evaluator reaches rather than something that runs where it is written.
+`Effect.defer` reifies the application of a continuation as a node, while `Effect.defer(block)`, taking its block by name, is an ordinary call and the way to turn a piece of plain code into a node the evaluator reaches rather than something that runs where it is written.
+
+### `head` and `tail`: why an arrow exposes its own composition
+
+An `Arrow` has two ways to be applied. `arrow(value)` is the plain one, and the whole of `chain` is visible in it: `Chain` carries two links and can only hand a value to the first, then the result to the second. `apply(value, cont)` is the other, taking the rest of the computation as a second argument, so the result never becomes a value in between. Every hot path in the module uses the second, and `head` and `tail` are what make a composition able to participate in it.
+
+`Chain` does no work of its own, so applying one can only build a node and hand it back to the evaluator to unfold. Rather than call it, every one of those sites pulls it apart, applying `cont.head` to the value with `cont.tail` passed along as the continuation.
+
+For a `Chain` that is its first link applied to the value with its second link fused in behind it, so the composition is walked without a node being built for it. For an atom the split is trivial by construction: an atom is its own `head`, with `Arrow.id` as its `tail`, so the very same expression is the atom applied directly.
+
+That uniformity is the point. The receiver at these sites is the arrow that actually does work, never the `Chain` wrapper that would only have deferred, so a call site does not alternate between the two according to whether the continuation it was handed happened to be composed. Composition stays free at the point of application rather than costing a node and a trip through the evaluator.
+
+Both members are public for that reason, not as an invitation: they exist because the inline expansions that make up the hot paths have to reach them. Reach for `chain` to compose and `arrow(value)` to apply, and leave these two to the machinery.
 
 ## Failure and resources
 
@@ -513,11 +526,11 @@ The extent a recovery covers is the whole life of its region: the receiver being
 
 > **Note:** failure a program declares in its own type, rather than a throw, is `Abort`, and it lives in kyo-prelude one layer above this module. The kernel answers throws.
 
-### `Bracket`: acquire, use, release
+### `ensureMap`: no gap between a value and what it owes
 
-`Bracket(acquire)(use)(release)` binds a resource for the extent of a use and runs the release exactly once, whichever way that extent ends. It is not exported into the `kyo` package, so it arrives through the `import kyo.kernel.*` at the top of this document; there is no `kyo.Bracket`.
+`map` polls the safepoint before applying its function, so an interrupt pending when the value arrives parks the computation and the function never runs. That is right nearly everywhere, and wrong in one place: where the function records an obligation the value itself just created. The resource is open, its release is not registered yet, and a park landing between the two loses it, because nothing yet knows there is anything to close.
 
-What the release is told follows from what the previous chapter established. A clause holds the rest of the computation as a value and may apply it more than once, so an extent can end more than once, with a different value each time, and there is no single value to hand a release. What it is told instead is the resource and how its extent ended, never what the use produced:
+`ensureMap` is `map` with that poll removed. Its function runs as the value arrives, so an interrupt lands on one side of the pair or the other and never inside it:
 
 ```scala
 class Connection:
@@ -526,6 +539,27 @@ class Connection:
     def closings: Chunk[Maybe[Throwable]]     = log
 end Connection
 
+val registry = Chunk.newBuilder[Connection]
+
+val acquired: Connection < Ask =
+    Ask.get.ensureMap { _ =>
+        val conn = Connection()
+        val _    = registry += conn
+        conn
+    }
+
+assert(Ask.run(1)(acquired).eval.closings.isEmpty)
+```
+
+The connection exists and the registry knows about it, with nothing schedulable in between. Under no interruption that is exactly what `map` would have done, which is why no example can show the difference: it is about the one scheduling in which the two diverge. Reach for it only for that pairing, a resource opened and its release registered, or a fiber spawned and its handle stored, and use `map` everywhere else, since skipping the poll also means the computation cannot be preempted at that point.
+
+### `Bracket`: acquire, use, release
+
+`Bracket(acquire)(use)(release)` binds a resource for the extent of a use and runs the release exactly once, whichever way that extent ends. It is not exported into the `kyo` package, so it arrives through the `import kyo.kernel.*` at the top of this document; there is no `kyo.Bracket`.
+
+What the release is told follows from what the previous chapter established. A clause holds the rest of the computation as a value and may apply it more than once, so an extent can end more than once, with a different value each time, and there is no single value to hand a release. What it is told instead is the resource and how its extent ended, never what the use produced:
+
+```scala
 def session(c: Connection): Int < Ask =
     Bracket(c)(_ => Ask.get.map(_ + 1))((conn, ending) => conn.close(ending))
 

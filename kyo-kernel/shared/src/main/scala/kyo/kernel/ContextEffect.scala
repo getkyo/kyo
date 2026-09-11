@@ -189,6 +189,74 @@ object ContextEffect:
     )(v: B < (E & S))(using inline _frame: Frame): B < S =
         handle(effectTag)(derive, (parent: A) => parent, (parent: A, _: A, _: A) => parent)(v)
 
+    /** Handles a context effect with a value that does not cross into forks.
+      *
+      * @param effectTag
+      *   Identifies which context effect to handle
+      * @param value
+      *   The value to provide to the computation
+      * @param v
+      *   The computation requiring the context value
+      * @return
+      *   The computation result with the context value handled
+      */
+    inline def handleNonInheritable[A, E <: ContextEffect[A], B, S](
+        inline effectTag: Tag[E],
+        inline value: A
+    )(v: B < (E & S))(using inline _frame: Frame): B < S =
+        handleNonInheritable(effectTag)((_: Maybe[A]) => value)(v)
+
+    /** Handles a context effect with a value that does not cross into forks, deriving it from the outer one.
+      *
+      * @param effectTag
+      *   Identifies which context effect to handle
+      * @param ifUndefined
+      *   The value to use when no existing value is found
+      * @param ifDefined
+      *   The transformation to apply to any existing value
+      * @param v
+      *   The computation requiring the context value
+      * @return
+      *   The computation result with the context value handled
+      */
+    inline def handleNonInheritable[A, E <: ContextEffect[A], B, S](
+        inline effectTag: Tag[E],
+        inline ifUndefined: A,
+        inline ifDefined: A => A
+    )(v: B < (E & S))(using inline _frame: Frame): B < S =
+        handleNonInheritable(effectTag)((outer: Maybe[A]) => outer.fold(ifUndefined)(ifDefined))(v)
+
+    /** Handles a context effect whose value does not cross into forks.
+      *
+      * Where [[handleInheritable]] hands a fork the value this scope holds, this hands it the value the region would
+      * have taken with nothing bound outside it, so a fork starts the region over rather than continuing it. That is
+      * what a value tied to one execution needs, `Bracket`'s cell being the standing example: a child that inherited
+      * it would release a resource the scope that acquired it is still using.
+      *
+      * `join` keeps the scope's own value, there being nothing a fork could have carried back.
+      *
+      * @param effectTag
+      *   Identifies which context effect to handle
+      * @param derive
+      *   Computes the region's value from the outer value, absent when no outer handler provides one
+      * @param v
+      *   The computation requiring the context value
+      * @return
+      *   The computation result with the context value handled
+      */
+    inline def handleNonInheritable[A, E <: ContextEffect[A], B, S](
+        inline effectTag: Tag[E]
+    )(
+        inline derive: Maybe[A] => A
+    )(v: B < (E & S))(using inline _frame: Frame): B < S =
+        def derived(outer: Maybe[A]): A = derive(outer)
+        handle(effectTag)(
+            derived,
+            fork = (_: A) => derived(Maybe.empty),
+            join = (parent: A, _: A, _: A) => parent
+        )(v)
+    end handleNonInheritable
+
     /** Handles a context effect with explicit fork and join strategies.
       *
       * @param effectTag

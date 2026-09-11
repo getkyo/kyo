@@ -11,6 +11,7 @@ import kyo.kernel.Bracket
 import kyo.kernel.ContextEffect
 import kyo.kernel.Effect
 import kyo.kernel.Isolate
+import kyo.render
 import org.scalatest.freespec.AnyFreeSpec
 
 class ProtoKernelTest extends AnyFreeSpec:
@@ -60,6 +61,32 @@ class ProtoKernelTest extends AnyFreeSpec:
         "eval" in {
             val v: Int < Any = 42
             assert(v.eval == 42)
+        }
+
+        // `ensureMap` expanded into `new Arrow.Ensure`, a `private[kyo]` class, so every call site outside the
+        // package failed to compile. This file is where that is caught: the assertion is secondary to compiling.
+        "ensureMap" in {
+            val r = answer(ask.ensureMap(a => a + 1)).eval
+            assert(r == 2)
+        }
+
+        "ensureMap composes with map" in {
+            val r = answer(ask.ensureMap(a => a + 1).map(b => b * 10)).eval
+            assert(r == 20)
+        }
+
+        "Render of a settled value" in {
+            val v: Int < Any = 42
+            assert(render"$v" == "Kyo(42)")
+        }
+
+        "Render of a lifted computation" in {
+            val nested: (Int < Ask) < Any = kyo.Kyo.lift(ask)
+            assert(render"$nested".startsWith("Kyo("))
+        }
+
+        "Render of a suspension names the effect it waits on" in {
+            assert(render"$ask".contains("Ask"))
         }
     }
 
@@ -277,6 +304,25 @@ class ProtoKernelTest extends AnyFreeSpec:
                 ContextEffect.handleInheritable(Tag[Level], 100, _ * 2)(ContextEffect.suspend(Tag[Level]))
             }
             assert(v.eval == 200)
+        }
+
+        "ContextEffect.handleNonInheritable" in {
+            val v = ContextEffect.suspend(Tag[Level])
+            assert(ContextEffect.handleNonInheritable(Tag[Level], 42)(v).eval == 42)
+        }
+
+        "ContextEffect.handleNonInheritable layering" in {
+            val v = ContextEffect.handleInheritable(Tag[Level], 100, _ * 2) {
+                ContextEffect.handleNonInheritable(Tag[Level], 100, _ * 2)(ContextEffect.suspend(Tag[Level]))
+            }
+            assert(v.eval == 200)
+        }
+
+        "ContextEffect.handleNonInheritable deriving" in {
+            val v = ContextEffect.handleNonInheritable(Tag[Level])((outer: Maybe[Int]) => outer.getOrElse(7) + 1) {
+                ContextEffect.suspend(Tag[Level])
+            }
+            assert(v.eval == 8)
         }
 
         "a region nested under another effect" in {

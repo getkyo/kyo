@@ -67,6 +67,16 @@ object Arrow:
                             out
                         end if
 
+    /** Builds an arrow that applies without taking the safepoint budget, so nothing is preempted between the value
+      * arriving and `f` running. `ensureMap` is the way to reach it; this exists because the expansion has to name
+      * `Ensure`, and only a summon from inside this object can, `Ensure` being `private[kyo]`.
+      */
+    @nowarn("msg=anonymous")
+    inline def ensure[A](using _frame: Frame)[B, S](inline f: A => B < S): Arrow[A, B, S] =
+        new Ensure[A, B, S]:
+            def frame                = _frame
+            override def apply(v: A) = f(v)
+
     @nowarn("msg=anonymous")
     inline def recursive[A, B, S](inline f: (Arrow[A, B, S], A) => B < S)(using _frame: Frame): Arrow[A, B, S] =
         new Step[A, B, S]:
