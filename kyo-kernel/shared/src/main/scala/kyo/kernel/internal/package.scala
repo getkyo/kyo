@@ -20,6 +20,7 @@ private[kernel] def short(v: Any): String =
         case _: Arrow.Transform[?, ?, ?] => "Transform"
         case v                           => v.toString
 
+// TODO let's move to Frame
 private[kernel] def site(frame: Frame): String =
     val callee = frame.calleeName
     if callee.isEmpty then s"${frame.callerName}(${frame.position.show})"

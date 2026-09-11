@@ -5,12 +5,16 @@ import scala.annotation.implicitNotFound
 import scala.quoted.*
 import scala.util.NotGiven
 
-/** CanLift is a "soft" constraint that indicates a type should not contain nested effect computations (A < S), or A is not a module from
-  * kyo (like Abort.type).
+/** The constraint the implicit lift carries, rejecting what should not be lifted into a computation.
   *
-  * This constraint helps:
-  *   - prevent accidental nesting of effects that would require flattening, but cannot be strictly enforced in all generic contexts,
-  *   - prevent calling combinators from (A < S) on modules, like Abort.foldAbort.
+  * Two things are refused. A computation, because lifting one into another nests it, and the fix is `.flatten` or splitting the expression.
+  * And a kyo module object, because `Abort` where `Abort(...)` was meant would otherwise become a value of type `Abort.type < S` and the
+  * missing argument list would go unnoticed.
+  *
+  * It is a soft constraint, and the reason is worth understanding: it works by asking whether the type being lifted is a computation. At a
+  * concrete type it can answer. Inside a generic function it cannot, because the type parameter is abstract and there is nothing to test, so
+  * the lift fires and a nested computation is what comes out. Nesting is therefore not something the conversion offers, it is what happens
+  * exactly where this constraint cannot see what it is looking at.
   *
   * @tparam A
   *   The type to check for nested effects
@@ -72,11 +76,18 @@ end CanLiftMacro
 
 object CanLift:
 
-    // The common case is a plain given guarded by NotGiven; only singletons reach CanLiftMacro.
+    // Three givens rather than one macro, because only the third case needs the macro and the first is almost
+    // every lift in a program. Keeping the macro off that path matters twice over: it is the difference between
+    // a type test and a compiler expansion at every lift site, and a file that summons a same-module macro is
+    // suspended to a retry run, a cascade this module already sits close to.
+
+    /** The common case: anything that is neither a computation nor a singleton, settled by two `NotGiven` tests and no expansion. */
     inline given derived[A](using inline ng: NotGiven[A <:< (Any < Nothing)], inline ns: NotGiven[A <:< Singleton]): CanLift[A] = null
 
+    /** A case object is a singleton but never a kyo module, so it is admitted without asking the macro. */
     inline given derivedCaseObject[A <: Singleton & Product](using inline ng: NotGiven[A <:< (Any < Nothing)]): CanLift[A] = null
 
+    /** Every other singleton, where the module-object check has to run. */
     inline given derivedSingleton[A <: Singleton]: CanLift[A] = CanLiftMacro.checkSingleton[A]
 
     inline given CanLift[Nothing] = null

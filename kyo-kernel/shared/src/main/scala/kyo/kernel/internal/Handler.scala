@@ -107,6 +107,7 @@ end Handler
       * the two kinds have nothing in common except being re-raisable.
       */
     abstract class MaskingHandler[E <: Effect, A, B, S] extends ArrowHandler[Unit, E, A, B, S]:
+
         def run[X](operation: X < E, next: Arrow[X, A, E & S]): A < (E & S)
 
         override private[kernel] def bound(ctx: Context, state: Any): Context = ctx.mask(tag)

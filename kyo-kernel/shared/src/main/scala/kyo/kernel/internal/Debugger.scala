@@ -11,6 +11,7 @@ import kyo.CompileTimeFlag
   * That is deliberate. These hooks sit on the hottest paths in the module, and a runtime check on each would show up in the benchmarks
   * whether or not a debugger was installed.
   */
+// TODO let's properly type the apis here, there's no need to use ANy for everything
 abstract private[kyo] class Debugger:
 
     def enter(): Boolean = true
@@ -45,8 +46,10 @@ private[kyo] object Debugger:
 
     private var current: Debugger = Noop
 
+    // TODO let's add logging here and fail if there's different one installed already
     def install(d: Debugger): Unit = current = d
 
+    // TODO log and fail if nothing is installed
     def uninstall(): Unit = current = Noop
 
     def get: Debugger = current

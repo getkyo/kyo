@@ -9,8 +9,9 @@ import scala.annotation.publicInBinary
   * `A < S` is a union whose second arm is the node family, so a computation stored where an `A` is expected would be indistinguishable from a
   * suspension the evaluator should unfold. Wrapping gives it an arm of its own, and the evaluator carries it opaquely.
   *
-  * The contract is one layer: nest exactly once at the lift boundary, unnest exactly once at delivery. A value that is nested twice, or
-  * delivered still wrapped, is a representation bug rather than a type error, which is why both operations live here and nowhere else.
+  * Layers stack, one per level of nesting in the type: `A < S < S2` carries two if both levels need one. The contract is one layer per
+  * crossing, a lift adding at most one and a delivery removing at most one, so the wrappers and the type stay in step. What breaks it is a
+  * lift firing on a value that is already union-represented, which adds a layer nothing will take off.
   */
 private[kyo] class Nested[+A](val value: A)
 

@@ -5,6 +5,15 @@ import kyo.kernel.Loop
 import kyo.kernel.internal.Debugger
 import kyo.kernel.internal.Pending
 
+/** A [[Debugger]] that prints the evaluator's steps as they happen, indented by region depth.
+  *
+  * For reading what a computation actually did, in order: which nodes were allocated, where the loop went, which region answered what. It
+  * also reports the JVM stack depth at each step, which is how a fused run building frames is told apart from one deferring through the
+  * evaluator.
+  *
+  * Nothing here is on unless the kernel was compiled with `-Dkyo.kernel.internal.Debugger.enabled=true`, since the hooks are erased
+  * otherwise.
+  */
 final class ConsoleDebugger extends Debugger:
 
     private var depth        = 0
@@ -14,6 +23,9 @@ final class ConsoleDebugger extends Debugger:
     private val reported = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap[Any, java.lang.Boolean])
     reported.add(Arrow.id)
 
+    // Every node and arrow should pass through onAlloc before any other hook sees it. One that does not is a
+    // construction site missing its Debugger.onAlloc, which would leave a hole in the trace rather than a
+    // visible error, so this turns it into one.
     private def checkReported(vs: Any*): Unit =
         for v <- vs do
             if (v.isInstanceOf[Pending[?, ?]] || v.isInstanceOf[Arrow[?, ?, ?]]) && !reported.contains(v) then

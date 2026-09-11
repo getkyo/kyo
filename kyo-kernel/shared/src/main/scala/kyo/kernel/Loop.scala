@@ -302,8 +302,6 @@ object Loop:
       *   The initial state value
       * @param run
       *   The function to execute for each iteration, receiving the current state and producing an outcome
-      * @return
-      *   The final result after loop completion
       */
     inline def apply[A, O, S](inline input: A)(inline run: A => Outcome[A, O] < S)(
         using inline _frame: Frame
@@ -349,8 +347,6 @@ object Loop:
       *   The second initial state value
       * @param run
       *   The function to execute for each iteration, receiving both current states and producing an outcome
-      * @return
-      *   The final result after loop completion
       */
     inline def apply[A, B, O, S](input1: A, input2: B)(inline run: (A, B) => Outcome2[A, B, O] < S)(
         using inline _frame: Frame
@@ -398,8 +394,6 @@ object Loop:
       *   The third initial state value
       * @param run
       *   The function to execute for each iteration, receiving all current states and producing an outcome
-      * @return
-      *   The final result after loop completion
       */
     inline def apply[A, B, C, O, S](input1: A, input2: B, input3: C)(
         inline run: (A, B, C) => Outcome3[A, B, C, O] < S
@@ -449,8 +443,6 @@ object Loop:
       *   The fourth initial state value
       * @param run
       *   The function to execute for each iteration, receiving all current states and producing an outcome
-      * @return
-      *   The final result after loop completion
       */
     inline def apply[A, B, C, D, O, S](input1: A, input2: B, input3: C, input4: D)(
         inline run: (A, B, C, D) => Outcome4[A, B, C, D, O] < S
@@ -493,8 +485,6 @@ object Loop:
       *
       * @param run
       *   The function to execute for each iteration, receiving the current index and producing an outcome
-      * @return
-      *   The final result after loop completion
       */
     inline def indexed[O, S](inline run: Int => Outcome[Unit, O] < S)(using
         inline _frame: Frame
@@ -523,8 +513,6 @@ object Loop:
       *   The initial state value
       * @param run
       *   The function to execute for each iteration, receiving the current index and state, and producing an outcome
-      * @return
-      *   The final result after loop completion
       */
     inline def indexed[A, O, S](input: A)(inline run: (Int, A) => Outcome[A, O] < S)(using
         inline _frame: Frame
@@ -555,8 +543,6 @@ object Loop:
       *   The second initial state value
       * @param run
       *   The function to execute for each iteration, receiving the current index and both states
-      * @return
-      *   The final result after loop completion
       */
     inline def indexed[A, B, O, S](input1: A, input2: B)(
         inline run: (Int, A, B) => Outcome2[A, B, O] < S
@@ -589,8 +575,6 @@ object Loop:
       *   The third initial state value
       * @param run
       *   The function to execute for each iteration, receiving the current index and all states
-      * @return
-      *   The final result after loop completion
       */
     inline def indexed[A, B, C, O, S](input1: A, input2: B, input3: C)(
         inline run: (Int, A, B, C) => Outcome3[A, B, C, O] < S
@@ -625,8 +609,6 @@ object Loop:
       *   The fourth initial state value
       * @param run
       *   The function to execute for each iteration, receiving the current index and all states
-      * @return
-      *   The final result after loop completion
       */
     inline def indexed[A, B, C, D, O, S](input1: A, input2: B, input3: C, input4: D)(
         inline run: (Int, A, B, C, D) => Outcome4[A, B, C, D, O] < S

@@ -5,6 +5,11 @@ import kyo.kernel.internal.Debugger
 import kyo.kernel.internal.Eval
 import kyo.kernel.internal.Nested
 
+/** A [[Debugger]] that counts what happened instead of printing it, for a run too large to read step by step.
+  *
+  * `guardsLikeProduction` decides whether `enter` answers as the production build would, so a count can be taken either with the guards a
+  * real run has or without them.
+  */
 final class Counting(guardsLikeProduction: Boolean) extends Debugger:
     private var counts                = Map.empty[String, Int]
     private def bump(k: String): Unit = counts = counts.updated(k, counts.getOrElse(k, 0) + 1)
@@ -24,6 +29,11 @@ final class Counting(guardsLikeProduction: Boolean) extends Debugger:
 end Counting
 
 object DebugSession:
+    /** Evaluates `build()` with a debugger installed, printing a step-by-step trace or a summary, and uninstalls it afterwards.
+      *
+      * `quiet` picks [[Counting]] over [[ConsoleDebugger]]: a trace for a small computation, counts for one whose trace would be unreadable.
+      * The computation is built inside rather than passed as a value so that the nodes it allocates are seen by the debugger too.
+      */
     def run(quiet: Boolean, guardsLikeProduction: Boolean)(build: () => Int < Any): Int =
         val counting = Counting(guardsLikeProduction)
         val debugger = if quiet then counting else ConsoleDebugger()
