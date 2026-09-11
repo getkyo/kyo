@@ -889,9 +889,9 @@ Nor is masking limited to arrow effects. The region shadows its tag in the conte
 
 Masking moves where a value is answered, and that moves where a scope ends with it. A bracket inside a masked computation releases when the outer handler is done with the tunneled continuation, not at the mask boundary. If that outer handler discards the continuation instead of resuming it, the bracket releases there, told the discard signal, exactly as it would without the mask in between.
 
-## From description to result
+## Putting it together
 
-One value can carry every move the module makes. `Ask`, `Say` and `Level` were declared once and have not changed since; `Ask.get`, `say` and `level` suspend against them; `levelIsolate.run` prepares the whole thing to cross into another evaluation; and a handler per arrow effect, plus a binding for the context effect, take the row apart one call at a time, the innermost written first.
+One program can use all three kinds of effect at once, and the row on it is the list of what it still needs: an answer for `Ask.get`, a listener for `say`, and a level bound around it.
 
 ```scala
 val program: Int < (Ask & Say & Level) =
@@ -900,12 +900,16 @@ val program: Int < (Ask & Say & Level) =
             say(s"level $l saw ${answers.size} answers").andThen(answers.sum + l)
         )
     )
-
-val prepared: Int < (Ask & Say & Level) = levelIsolate.run(program)
-
-val result: (Chunk[String], Int) < Any = runLevel(10)(Ask.run(3)(runSay(prepared)))
-
-assert(result.eval == ((Chunk("level 10 saw 2 answers"), 19)))
 ```
 
-The row on `program` is the list of what the value still needs: an answer for `Ask.get`, a listener for `say`, and a level bound around it. Each of the last three calls discharges exactly one of them, and `eval` type-checks on the final line only because nothing is left in the row. Until that line, none of it had run.
+Nothing has run. Each handler discharges exactly one entry, and the type after each line says what is left:
+
+```scala
+val afterSay: (Chunk[String], Int) < (Ask & Level) = runSay(program)
+val afterAsk: (Chunk[String], Int) < Level         = Ask.run(3)(afterSay)
+val afterLevel: (Chunk[String], Int) < Any         = runLevel(10)(afterAsk)
+
+assert(afterLevel.eval == ((Chunk("level 10 saw 2 answers"), 19)))
+```
+
+`eval` appears only on the last line, and only because the row reached `Any`. That is the whole contract of the module: an effect is a promise the compiler holds you to, and a handler is how you keep it. Until the final line, every one of these values was a description that had not run.
