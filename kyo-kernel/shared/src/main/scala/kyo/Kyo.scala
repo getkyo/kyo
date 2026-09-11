@@ -392,6 +392,17 @@ object Kyo:
             source.iterableFactory.from(resultChunk)
     end dropWhile
 
+    /** Splits the collection into two, depending on the result of the predicate, keeping the source's own collection type.
+      *
+      * @param source
+      *   The input collection
+      * @param f
+      *   The effect-producing predicate function
+      * @return
+      *   A tuple `(lefts, rights)` where:
+      *   - `lefts`: All elements that satisfy the predicate
+      *   - `rights`: All elements that do not satisfy the predicate
+      */
     def partition[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, S](source: CC[A])(f: A => Boolean < S)(using
         Frame
     ): (CC[A], CC[A]) < S =
@@ -399,6 +410,15 @@ object Kyo:
             (source.iterableFactory.from(leftChunk), source.iterableFactory.from(rightChunk))
     end partition
 
+    /** Applies `f` to every element and splits the results by which side of the `Either` they landed on, keeping the source's collection type.
+      *
+      * @param source
+      *   The input collection
+      * @param f
+      *   The effect-producing function mapping each element to an `Either`
+      * @return
+      *   A tuple `(lefts, rights)` of the `Left` and `Right` results, each in order
+      */
     def partitionMap[CC[+X] <: Iterable[X] & IterableOps[
         X,
         CC,
@@ -424,6 +444,15 @@ object Kyo:
             source.iterableFactory.from(resultChunk)
     end scanLeft
 
+    /** Groups the elements by the key `f` computes for each, keeping the source's own collection type for the groups.
+      *
+      * @param source
+      *   The input collection
+      * @param f
+      *   The effect-producing function computing each element's key
+      * @return
+      *   A `Map` from key to the elements that produced it, each group keeping the source's relative order
+      */
     def groupBy[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, K, S](source: CC[A])(f: A => K < S)(using
         Frame
     ): Map[K, CC[A]] < S =
@@ -431,6 +460,17 @@ object Kyo:
             Map.from(resultChunk.view.mapValues(source.iterableFactory.from(_)))
     end groupBy
 
+    /** Groups the elements by `key` and maps each through `f` in the same pass, keeping the source's own collection type for the groups.
+      *
+      * @param source
+      *   The input collection
+      * @param key
+      *   The effect-producing function computing each element's key
+      * @param f
+      *   The effect-producing function transforming each element
+      * @return
+      *   A `Map` from key to the transformed elements that produced it, each group keeping the source's relative order
+      */
     def groupMap[CC[+X] <: Iterable[X] & IterableOps[
         X,
         CC,

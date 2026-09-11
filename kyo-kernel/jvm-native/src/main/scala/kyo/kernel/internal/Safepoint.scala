@@ -5,8 +5,6 @@ import kyo.StaticFlag
 import scala.annotation.static
 import scala.annotation.tailrec
 
-private[kyo] class Safepoint
-
 /** The budget that decides when a fused run has to stop building JVM stack and defer instead, and the channel a scheduler stops a fiber
   * through.
   *
@@ -29,6 +27,9 @@ private[kyo] class Safepoint
   * @see
   *   [[Safepoint.period]] For the budget, which defaults per platform and is overridable
   */
+// TODO let's document better how the shared array works, why it's safe, and how we use multiple arrays + Stop to signal. It's not trivial
+private[kyo] class Safepoint
+
 object Safepoint:
 
     opaque type Slot >: Int = Int
