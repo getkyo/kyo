@@ -152,6 +152,7 @@ object Pending:
     end Handle
 
     /** A region answering an [[kyo.kernel.ArrowEffect]], carrying the handler's state and the continuation for the region's own result. */
+    // TODO shouldn't this be HandleWith for consistency?
     abstract class HandleArrow[State, E <: Effect, A, B, C, -S] extends Handle[E, A, C, S]:
         def handler: Handler[E, B, S]
         def state: State

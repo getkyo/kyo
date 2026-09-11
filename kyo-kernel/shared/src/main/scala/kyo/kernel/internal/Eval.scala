@@ -23,11 +23,34 @@ import scala.annotation.publicInBinary
 import scala.annotation.tailrec
 import scala.collection.mutable.ArrayBuffer
 
+/** The evaluator: unfolds a computation's nodes until it produces a value, or until there is nothing further it can do without an answer.
+  *
+  * A computation is a value built by composition, and this is an accelerator for running such values, not the definition of what they mean.
+  * Every branch below is the operational reading of an equation expressible in the public combinators, which is why a gap here is a missing
+  * value rather than a missing instruction.
+  *
+  * `loop` is the whole machine. It carries the node in hand and two continuations, and each arm either reduces the node and loops, or pushes
+  * a region, or hands an answer to a handler. It is a tail-recursive loop rather than a recursive walk, which is where stack safety comes
+  * from: depth in the computation costs heap, not call frames.
+  *
+  * Two things live beside it. [[Stack]] holds the regions installed around the node in hand, and [[Context]] holds the values bound by
+  * context regions; the loop threads the context and mutates the stack, and both are borrowed for one evaluation.
+  *
+  * The loop is far too large to inline and every effect in the program passes through it, so its dispatch is megamorphic. That is the reason
+  * the combinators fuse at their own call sites and reach the loop only when they must, and the reason cold work here is kept out of line
+  * rather than written into the arms.
+  */
 @publicInBinary private[kyo] object Eval:
 
+    /** Evaluates until a value is produced, with no preemption. */
     def apply[A, S](v: A < S): A < S =
         apply(v, armed = false)
 
+    /** Evaluates until a value is produced or the safepoint says to stop, answering what is left as a computation to resume later.
+      *
+      * This is what a scheduler runs a fiber with: the stop flag is what turns a run into a slice, and the remainder that comes back is a
+      * complete value, valid anywhere, so another thread may pick it up.
+      */
     def partial[A](v: A < Any): A < Any =
         val slot = Safepoint.get()
         if Safepoint.consumeStopped(slot) then v
@@ -37,6 +60,8 @@ import scala.collection.mutable.ArrayBuffer
         end if
     end partial
 
+    // `armed` is a parameter rather than a test inside the loop: it is constant for the whole evaluation, so the
+    // stop check folds away entirely for a run that cannot be preempted.
     private def apply[A, S](v: A < S, armed: Boolean): A < S =
 
         val stack = Stack.borrow()
@@ -284,6 +309,12 @@ import scala.collection.mutable.ArrayBuffer
             end match
         end loop
 
+        /** Stops the evaluation and answers what is left as a value that can be resumed anywhere.
+          *
+          * The node in hand and its two continuations fold back into one computation, and every region still installed comes with it as a
+          * snapshot, so resuming reinstalls exactly what was here. An empty stack with no debt is the cheap case: the remainder is the
+          * computation itself, with no `Park` node built for it.
+          */
         def park[T, B, C, S2](v: T < S2, contA: Arrow[T, B, S2], contB: Arrow[B, C, S2]): A < S =
             val parked: Any < Any =
                 if contA.isInstanceOf[Arrow.Id[?]] && contB.isInstanceOf[Arrow.Id[?]] then v.asInstanceOf[Any < Any]
@@ -388,6 +419,15 @@ import scala.collection.mutable.ArrayBuffer
             rebuild(0, Context.empty)
         end rebuilt
 
+        /** Unwinds the stack for a throwable, offering it to each region's recover arm from the innermost outward.
+          *
+          * A region that answers stops the unwind and the evaluation continues from there. One that declines is popped, discharging what it
+          * owes and releasing its state, and the throwable carries on outward. Reaching an empty stack re-raises it with the effect trace
+          * spliced in.
+          *
+          * A context region has no recover arm, so it is always popped. A fatal throwable is offered to nothing: every region is unwound and
+          * released, and it propagates.
+          */
         @tailrec def recovered(ex: Throwable): A < S =
             if stack.isEmpty then
                 val owedNow = stack.takeEvalOwed()
@@ -432,6 +472,12 @@ import scala.collection.mutable.ArrayBuffer
                         end match
                 end match
 
+        /** Runs the loop and catches what it throws, so a recover arm can resume the evaluation rather than only observe the failure.
+          *
+          * A region that recovers answers with a computation, which has to be evaluated from a loop that is itself still guarded, hence the
+          * re-entry here rather than a return into the loop that just unwound. The context is rebuilt from the stack that survived, since the
+          * one the throwing loop carried described regions that are no longer installed.
+          */
         @tailrec def guarded(curr: A < S, ctx: Context): A < S =
             val res =
                 try loop(curr, Arrow.id, Arrow.id, ctx)
@@ -500,6 +546,7 @@ import scala.collection.mutable.ArrayBuffer
         end while
     end held
 
+    /** Discharges obligations nobody will resume, because whoever held the continuation carrying them is done with it. */
     private def drainDiscarded(owed: Chunk[Stack.Snapshot]): Unit =
         if !owed.isEmpty then
             val signal = new KyoException("remainder discarded")(using Frame.internal)
