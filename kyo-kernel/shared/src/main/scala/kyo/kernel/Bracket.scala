@@ -87,6 +87,21 @@ object Bracket:
                 private[kyo] def endedItsExtent: Boolean        = false
     end Cell
 
+    /** Acquires a resource, runs `use` on it under a region that owns the release, and releases it exactly once.
+      *
+      * The release is registered as the acquired value arrives, with nothing schedulable in between, so an interrupt lands on one side of
+      * the pair or the other and never between acquiring the resource and owing its release.
+      *
+      * A throw from `use` drains the region before it propagates, so the release runs and the original failure is what the caller sees; a
+      * failure from the release itself is attached to it as suppressed.
+      *
+      * @param acquire
+      *   Produces the resource, evaluated when the computation runs
+      * @param use
+      *   The extent the resource is held for
+      * @param release
+      *   Runs once when that extent ends, told how it ended rather than what `use` produced
+      */
     def apply[A, S1](acquire: A < S1)[B, S2](use: A => B < S2)(
         release: (A, Maybe[Throwable]) => Unit
     )(using _frame: Frame): B < (S1 & S2) =
