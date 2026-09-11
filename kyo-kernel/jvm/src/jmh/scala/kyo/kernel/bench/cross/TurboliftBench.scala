@@ -5,6 +5,7 @@ import org.openjdk.jmh.annotations.*
 import turbolift.!!
 import turbolift.Extensions.*
 import turbolift.Handler
+import turbolift.effects.IO
 import turbolift.effects.ReaderEffect
 import turbolift.effects.StateEffect
 
@@ -515,9 +516,55 @@ class TurboliftBench:
         (loop(seed - 1): Int !! Ask).handleWith(Ask.handler(1)).runST
     end suspensionBaselineAltInstall
 
+
+    /** A resource bound and released once per round, so the round pays a region install and discharge. */
+    @Benchmark
+    def bracketPerRound: Int =
+        def loop(i: Int, acc: Int): Int !! IO =
+            if i > NarrowDepth then !!.pure(acc)
+            else !!.pure(acc).flatMap(a => !!.pure(a + 1).guarantee(!!.unit)).flatMap(v => loop(i + 1, v))
+        loop(0, seed).runIO.get
+    end bracketPerRound
+
+    /** One resource held across the whole loop, so every step carries an outstanding region. */
+    @Benchmark
+    def bracketAroundLoop: Int =
+        def loop(i: Int): Int !! IO =
+            if i > Depth then !!.pure(i) else !!.pure(i + 1).flatMap(loop)
+        !!.pure(seed).flatMap(a => loop(a - 1).guarantee(!!.unit)).runIO.get
+    end bracketAroundLoop
+
+    /** The release-only form, which installs its region before the body is built. */
+    @Benchmark
+    def bracketEnsuringOnly: Int =
+        def loop(i: Int): Int !! IO =
+            if i > Depth then !!.pure(i) else !!.pure(i + 1).flatMap(loop)
+        loop(seed - 1).guarantee(!!.unit).runIO.get
+    end bracketEnsuringOnly
+
+    /** A transformation applied to every element of a collection. */
+    @Benchmark
+    def foreachOverCollection: Int =
+        elements.mapEff(a => !!.pure(a + seed)).map(_.sum).runST
+    end foreachOverCollection
+
+    /** A fold threading an accumulator through a collection. */
+    @Benchmark
+    def foldOverCollection: Int =
+        elements.foldLeftEff(seed)((acc, a) => !!.pure(acc + a)).runST
+    end foldOverCollection
+
+    /** A fold that keeps only part of the collection, so each element decides whether it contributes. */
+    @Benchmark
+    def collectOverCollection: Int =
+        elements.mapEff(a => !!.pure(if (a & 1) == 0 then Some(a) else None)).map(_.flatten.sum + seed).runST
+    end collectOverCollection
+
 end TurboliftBench
 
 object TurboliftBench:
+
+    val elements: List[Int] = (0 until NarrowDepth).toList
 
     inline def Depth       = 10000
     inline def NarrowDepth = 1000

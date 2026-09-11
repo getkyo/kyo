@@ -1,6 +1,7 @@
 package kyo.kernel.bench.cross
 
 import cats.effect.IO
+import cats.syntax.all.*
 import cats.effect.IOLocal
 import cats.effect.kernel.Ref
 import cats.effect.unsafe.implicits.global
@@ -507,9 +508,55 @@ class CatsEffectBench:
         runSync(ask2.set(1).flatMap(_ => loop(seed - 1)))
     end suspensionBaselineAltEnv
 
+
+    /** A resource bound and released once per round, so the round pays a region install and discharge. */
+    @Benchmark
+    def bracketPerRound: Int =
+        def loop(i: Int, acc: Int): IO[Int] =
+            if i > NarrowDepth then IO.pure(acc)
+            else IO.pure(acc).bracket(a => IO.pure(a + 1))(_ => IO.unit).flatMap(v => loop(i + 1, v))
+        runSync(loop(0, seed))
+    end bracketPerRound
+
+    /** One resource held across the whole loop, so every step carries an outstanding region. */
+    @Benchmark
+    def bracketAroundLoop: Int =
+        def loop(i: Int): IO[Int] =
+            if i > Depth then IO.pure(i) else IO.pure(i + 1).flatMap(loop)
+        runSync(IO.pure(seed).bracket(a => loop(a - 1))(_ => IO.unit))
+    end bracketAroundLoop
+
+    /** The release-only form, which installs its region before the body is built. */
+    @Benchmark
+    def bracketEnsuringOnly: Int =
+        def loop(i: Int): IO[Int] =
+            if i > Depth then IO.pure(i) else IO.pure(i + 1).flatMap(loop)
+        runSync(loop(seed - 1).guarantee(IO.unit))
+    end bracketEnsuringOnly
+
+    /** A transformation applied to every element of a collection. */
+    @Benchmark
+    def foreachOverCollection: Int =
+        runSync(elements.traverse(a => IO.pure(a + seed)).map(_.sum))
+    end foreachOverCollection
+
+    /** A fold threading an accumulator through a collection. */
+    @Benchmark
+    def foldOverCollection: Int =
+        runSync(elements.foldLeftM(seed)((acc, a) => IO.pure(acc + a)))
+    end foldOverCollection
+
+    /** A fold that keeps only part of the collection, so each element decides whether it contributes. */
+    @Benchmark
+    def collectOverCollection: Int =
+        runSync(elements.traverse(a => IO.pure(if (a & 1) == 0 then Some(a) else None)).map(_.flatten.sum + seed))
+    end collectOverCollection
+
 end CatsEffectBench
 
 object CatsEffectBench:
+
+    val elements: List[Int] = (0 until NarrowDepth).toList
 
     inline def Depth       = 10000
     inline def NarrowDepth = 1000

@@ -1,7 +1,10 @@
 package kyo.kernel.bench
 
 import java.util.concurrent.TimeUnit
+import kyo.Chunk
 import kyo.Frame
+import kyo.Kyo
+import kyo.Maybe
 import kyo.Tag
 import kyo.kernel.Arrow
 import kyo.kernel.Loop
@@ -508,6 +511,52 @@ class KernelBench:
         run(ArrowEffect.handleCont(Tag[Ask], loop(seed - 1))([C] => (_, cont) => cont(1), a => a))
     end statefulAnswersPaySuccessorAltRef
 
+
+    /** A resource bound and released once per round, so the round pays a region install and discharge. */
+    @Benchmark
+    def bracketPerRound: Int =
+        def loop(i: Int, acc: Int): Int < Any =
+            if i > NarrowDepth then acc
+            else Bracket(acc)(a => (a + 1): Int < Any)((_, _) => ()).map(v => loop(i + 1, v))
+        run(loop(0, seed))
+    end bracketPerRound
+
+    /** One resource held across the whole loop, so every step carries an outstanding region. */
+    @Benchmark
+    def bracketAroundLoop: Int =
+        def loop(i: Int): Int < Any =
+            if i > Depth then i
+            else ((i + 1): Int < Any).map(loop)
+        run(Bracket(seed)(a => loop(a - 1))((_, _) => ()))
+    end bracketAroundLoop
+
+    /** The release-only form, which installs its region before the body is built. */
+    @Benchmark
+    def bracketEnsuringOnly: Int =
+        def loop(i: Int): Int < Any =
+            if i > Depth then i
+            else ((i + 1): Int < Any).map(loop)
+        run(Bracket.ensuring(_ => ())(loop(seed - 1)))
+    end bracketEnsuringOnly
+
+    /** A transformation applied to every element of a collection. */
+    @Benchmark
+    def foreachOverCollection: Int =
+        run(Kyo.foreach(elements)(a => (a + seed): Int < Any).map(_.sum))
+    end foreachOverCollection
+
+    /** A fold threading an accumulator through a collection. */
+    @Benchmark
+    def foldOverCollection: Int =
+        run(Kyo.foldLeft(elements)(seed)((acc, a) => (acc + a): Int < Any))
+    end foldOverCollection
+
+    /** A fold that keeps only part of the collection, so each element decides whether it contributes. */
+    @Benchmark
+    def collectOverCollection: Int =
+        run(Kyo.collect(elements)(a => (if (a & 1) == 0 then Maybe(a) else Maybe.empty): Maybe[Int] < Any).map(_.sum + seed))
+    end collectOverCollection
+
 end KernelBench
 
 object KernelBench:
@@ -518,6 +567,8 @@ object KernelBench:
     inline def FusedWideDepth = 8
 
     def run(v: Int < Any): Int = v.eval
+
+    val elements: Chunk[Int] = Chunk.from(0 until NarrowDepth)
 
     final case class Box(value: Int)
 

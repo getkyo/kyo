@@ -509,9 +509,57 @@ class ZioBench:
         runSync(st.set(0).flatMap(_ => loop(seed - 1)))
     end statefulAnswersPaySuccessorAltRef
 
+
+    /** A resource bound and released once per round, so the round pays a region install and discharge. */
+    @Benchmark
+    def bracketPerRound: Int =
+        def loop(i: Int, acc: Int): UIO[Int] =
+            if i > NarrowDepth then ZIO.succeed(acc)
+            else
+                ZIO.acquireReleaseWith(ZIO.succeed(acc))(_ => ZIO.unit)(a => ZIO.succeed(a + 1))
+                    .flatMap(v => loop(i + 1, v))
+        runSync(loop(0, seed))
+    end bracketPerRound
+
+    /** One resource held across the whole loop, so every step carries an outstanding region. */
+    @Benchmark
+    def bracketAroundLoop: Int =
+        def loop(i: Int): UIO[Int] =
+            if i > Depth then ZIO.succeed(i) else ZIO.succeed(i + 1).flatMap(loop)
+        runSync(ZIO.acquireReleaseWith(ZIO.succeed(seed))(_ => ZIO.unit)(a => loop(a - 1)))
+    end bracketAroundLoop
+
+    /** The release-only form, which installs its region before the body is built. */
+    @Benchmark
+    def bracketEnsuringOnly: Int =
+        def loop(i: Int): UIO[Int] =
+            if i > Depth then ZIO.succeed(i) else ZIO.succeed(i + 1).flatMap(loop)
+        runSync(loop(seed - 1).ensuring(ZIO.unit))
+    end bracketEnsuringOnly
+
+    /** A transformation applied to every element of a collection. */
+    @Benchmark
+    def foreachOverCollection: Int =
+        runSync(ZIO.foreach(elements)(a => ZIO.succeed(a + seed)).map(_.sum))
+    end foreachOverCollection
+
+    /** A fold threading an accumulator through a collection. */
+    @Benchmark
+    def foldOverCollection: Int =
+        runSync(ZIO.foldLeft(elements)(seed)((acc, a) => ZIO.succeed(acc + a)))
+    end foldOverCollection
+
+    /** A fold that keeps only part of the collection, so each element decides whether it contributes. */
+    @Benchmark
+    def collectOverCollection: Int =
+        runSync(ZIO.foreach(elements)(a => ZIO.succeed(if (a & 1) == 0 then Some(a) else None)).map(_.flatten.sum + seed))
+    end collectOverCollection
+
 end ZioBench
 
 object ZioBench:
+
+    val elements: List[Int] = (0 until NarrowDepth).toList
 
     inline def Depth       = 10000
     inline def NarrowDepth = 1000
