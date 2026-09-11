@@ -24,10 +24,37 @@ import scala.annotation.tailrec
   * One int carries the whole state: the remaining depth in the low bits, a guard bit that keeps the counter from going negative into the
   * arming bit, and the arming bit itself. That way a poll tests one field, and the common answer is a decrement.
   *
+  * #### Three arrays, and which threads touch them
+  *
+  * The state is split by who writes it, which is what keeps the hot path off atomics:
+  *
+  *   - `depths`, the budget and the arming bit. A plain array, because only the slot's owner reads or writes it. Every poll is here, so this
+  *     is the one that has to stay cheap.
+  *   - `slots`, the ownership entry, holding the owning `Thread` or a `Stop` aimed at it. An `AtomicReferenceArray`, because it is the one
+  *     place another thread writes.
+  *   - `slices`, the token of what the owner is currently running. A plain array, owner-only, read by a stopper only through the entry it
+  *     already holds.
+  *
+  * A thread claims a slot once, by compare-and-set, starting from the index its id hashes to and probing on. A slot counts as free when it is
+  * empty or its owner is no longer alive, so slots are recycled without anything having to release them. The claimed index is then cached in
+  * a `ThreadLocal`, and the fast path checks the array entry directly and never reads even that.
+  *
+  * #### How a stop is signalled
+  *
+  * There is no separate flag. [[stop]] replaces the slot's `Thread` entry with a `Stop` carrying that same thread, by compare-and-set, and
+  * the owner learns of it on its next poll, since the entry it would look at anyway is now a different shape. The stop is consumed by putting
+  * the plain thread back.
+  *
+  * A `Stop` may name a slice, and `honored` is what makes that safe: a stop with no slice is unconditional, and one naming a slice counts
+  * only while that slice is still what the slot is running. So a stop aimed at work that has already finished is ignored rather than landing
+  * on whatever ran next, and `endSlice` clears one that was aimed at the slice just ended.
+  *
+  * Nothing here blocks or interrupts. A stop is a request the owner honors when it next polls, which is why a computation that never polls is
+  * never preempted, and why the budget and the stop share one check.
+  *
   * @see
   *   [[Safepoint.period]] For the budget, which defaults per platform and is overridable
   */
-// TODO let's document better how the shared array works, why it's safe, and how we use multiple arrays + Stop to signal. It's not trivial
 private[kyo] class Safepoint
 
 object Safepoint:
@@ -209,6 +236,8 @@ object Safepoint:
         thread.isAlive() && loop(home(thread), 0)
     end stop
 
+    // A stop naming a slice counts only while that slice is still running, so one aimed at work that has already
+    // finished does not land on whatever the slot picked up next.
     @static private def honored(slot: Slot, s: Stop): Boolean =
         (s.slice eq null) || (s.slice eq slices(slot))
 

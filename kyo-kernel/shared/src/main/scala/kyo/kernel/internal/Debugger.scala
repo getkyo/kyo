@@ -46,7 +46,7 @@ private[kyo] object Debugger:
 
     private var current: Debugger = Noop
 
-    // TODO let's add logging here and fail if there's different one installed already
+    // TODO let's add logging here and fail if there's different one installed already. Also fail if enabled is false
     def install(d: Debugger): Unit = current = d
 
     // TODO log and fail if nothing is installed
