@@ -103,7 +103,7 @@ object Bracket:
                             throw ex
                 region(cell, body)
             end apply
-        Effect.defer(acquire).chain(ensure)
+        ensure(Effect.defer(acquire))
     end apply
 
     /** Runs `release` when `body`'s extent ends, with nothing to acquire first.

@@ -92,7 +92,7 @@ object `<` extends Implicits:
             // Through `Arrow.ensure` rather than `new Arrow.Ensure` here: `Ensure` is `private[kyo]`, so naming it
             // in this expansion made the method uncallable from outside the package.
             // Cast per `map`'s note above.
-            v.asInstanceOf[A < S].chain(Arrow.ensure[A](f))
+            Arrow.ensure[A](f)(v.asInstanceOf[A < S])
         end ensureMap
 
         /** Maps the value produced by this computation to a new computation and flattens the result.
@@ -369,11 +369,6 @@ object `<` extends Implicits:
                 case _: Pending[?, ?] => Maybe.empty
                 case v                => Maybe(Nested.unnest(v))
 
-    end extension
-
-    extension [A, S](v: A < S)
-        def chain[B, S2](cont: Arrow[A, B, S2]): B < (S & S2) =
-            cont(v, Arrow.id)
     end extension
 
     extension [A, S, S2](v: A < S < S2)

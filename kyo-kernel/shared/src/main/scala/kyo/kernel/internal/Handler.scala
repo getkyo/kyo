@@ -107,22 +107,22 @@ end Handler
                     EffectTrace.attach(ex, kyo, stack)
                     throw ex
 
-        private[kyo] def clauseDispatch[X0](reentry: Arrow[O[X0], A, E & S]): Arrow[Outcome[O[X0] < (E & S), B < S], B, S] =
-            type OutT = Outcome[O[X0] < (E & S), B < S]
+        private[kyo] def clauseDispatch: Arrow[Outcome[A < (E & S), B < S], B, S] =
+            type OutT = Outcome[A < (E & S), B < S]
             new Arrow.Step[OutT, B, S]:
                 def frame = Frame.internal
                 override def apply[D, S3](out: OutT < S3, cont2: Arrow[B, D, S3]) =
                     out match
                         case p: Pending[OutT, S3] @unchecked =>
                             Effect.defer(p, this, cont2)
-                        case out: Continue[O[X0] < (E & S)] @unchecked =>
-                            Pending.handle[Unit, E, A, B, S](
-                                out._1.chain(reentry),
+                        case out: Continue[A < (E & S)] @unchecked =>
+                            cont2(Pending.handle[Unit, E, A, B, S](
+                                out._1,
                                 LoopHandler.this,
                                 ()
-                            ).chain(cont2)
+                            ))
                         case out =>
-                            Nested.unnest[B < S](Loop.unnest(out.asInstanceOf[OutT])).chain(cont2)
+                            cont2(Nested.unnest[B < S](Loop.unnest(out.asInstanceOf[OutT])))
             end new
         end clauseDispatch
 
@@ -144,7 +144,8 @@ end Handler
                                 Loop.continue(k(Nested.unnest[O[X]](ans)))
                         end match
                     case o =>
-                        o.asInstanceOf[Outcome[A < (E & S), B < S] < S]
+                        if o.isInstanceOf[Pending[?, ?]] then attachReentry[I, O, E, A, B, S, X](k)(o)
+                        else o.asInstanceOf[Outcome[A < (E & S), B < S] < S]
                 end match
             catch
                 case ex: Throwable =>
@@ -171,22 +172,22 @@ end Handler
                     EffectTrace.attach(ex, kyo, stack)
                     throw ex
 
-        private[kyo] def clauseDispatch[X0](reentry: Arrow[O[X0], A, E & S]): Arrow[Outcome2[State, O[X0] < (E & S), B < S], B, S] =
-            type OutT = Outcome2[State, O[X0] < (E & S), B < S]
+        private[kyo] def clauseDispatch: Arrow[Outcome2[State, A < (E & S), B < S], B, S] =
+            type OutT = Outcome2[State, A < (E & S), B < S]
             new Arrow.Step[OutT, B, S]:
                 def frame = Frame.internal
                 override def apply[D, S3](out: OutT < S3, cont2: Arrow[B, D, S3]) =
                     out match
                         case p: Pending[OutT, S3] @unchecked =>
                             Effect.defer(p, this, cont2)
-                        case out: Continue2[State, O[X0] < (E & S)] @unchecked =>
-                            Pending.handle[State, E, A, B, S](
-                                out._2.chain(reentry),
+                        case out: Continue2[State, A < (E & S)] @unchecked =>
+                            cont2(Pending.handle[State, E, A, B, S](
+                                out._2,
                                 LoopStateHandler.this,
                                 out._1
-                            ).chain(cont2)
+                            ))
                         case out =>
-                            Nested.unnest[B < S](Loop.unnest(out.asInstanceOf[OutT])).chain(cont2)
+                            cont2(Nested.unnest[B < S](Loop.unnest(out.asInstanceOf[OutT])))
             end new
         end clauseDispatch
 
@@ -211,7 +212,8 @@ end Handler
                                 Loop.continue(st, k(Nested.unnest[O[X]](ans)))
                         end match
                     case o2 =>
-                        o2.asInstanceOf[Outcome2[State, A < (E & S), B < S] < S]
+                        if o2.isInstanceOf[Pending[?, ?]] then attachReentry2[State, I, O, E, A, B, S, X](k)(o2)
+                        else o2.asInstanceOf[Outcome2[State, A < (E & S), B < S] < S]
                 end match
             catch
                 case ex: Throwable =>
@@ -253,6 +255,51 @@ end Handler
           */
         private[kyo] def discharge(state: State, ex: Throwable): Unit = release(state, ex)
     end ContextHandler
+
+    /** Attaches a cont to an outcome whose clause has not settled yet, turning the clause's answer into the
+      * region's remaining computation.
+      *
+      * The caller must pass the cont of the operation whose answer this outcome carries. That is the whole
+      * obligation, and it is why the attachment happens here rather than where the region is rebuilt: a walk
+      * that fuses across a run of operations answers a different one on each turn, and only the walk knows
+      * which. Applying it to an outcome that already carries a cont would apply two.
+      */
+    private[kyo] def attachReentry[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, X0](
+        reentry: Arrow[O[X0], A, E & S]
+    ): Arrow[Outcome[O[X0] < (E & S), B < S], Outcome[A < (E & S), B < S], S] =
+        type In  = Outcome[O[X0] < (E & S), B < S]
+        type Out = Outcome[A < (E & S), B < S]
+        new Arrow.Step[In, Out, S]:
+            def frame = Frame.internal
+            override def apply[D, S3](out: In < S3, cont2: Arrow[Out, D, S3]) =
+                out match
+                    case p: Pending[In, S3] @unchecked =>
+                        Effect.defer(p, this, cont2)
+                    case out: Continue[O[X0] < (E & S)] @unchecked =>
+                        cont2(Loop.continue[A < (E & S), B < S, S](reentry(out._1)))
+                    case out =>
+                        cont2(out.asInstanceOf[Out < S])
+        end new
+    end attachReentry
+
+    /** [[attachReentry]] for a region that carries its state through the outcome. */
+    private[kyo] def attachReentry2[State, I[_], O[_], E <: ArrowEffect[I, O], A, B, S, X0](
+        reentry: Arrow[O[X0], A, E & S]
+    ): Arrow[Outcome2[State, O[X0] < (E & S), B < S], Outcome2[State, A < (E & S), B < S], S] =
+        type In  = Outcome2[State, O[X0] < (E & S), B < S]
+        type Out = Outcome2[State, A < (E & S), B < S]
+        new Arrow.Step[In, Out, S]:
+            def frame = Frame.internal
+            override def apply[D, S3](out: In < S3, cont2: Arrow[Out, D, S3]) =
+                out match
+                    case p: Pending[In, S3] @unchecked =>
+                        Effect.defer(p, this, cont2)
+                    case out: Continue2[State, O[X0] < (E & S)] @unchecked =>
+                        cont2(Loop.continue[State, A < (E & S), B < S](out._1, reentry(out._2)))
+                    case out =>
+                        cont2(out.asInstanceOf[Out < S])
+        end new
+    end attachReentry2
 
     private[kyo] inline def answersLoop[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, C](
         inline effectTag: Tag[E],
@@ -317,7 +364,10 @@ end Handler
                                 end if
                         end match
                     case o =>
-                        result = o.asInstanceOf[Outcome[A < (E & S), B < S] < S]
+                        result =
+                            if o.isInstanceOf[Pending[?, ?]] then
+                                attachReentry[I, O, E, A, B, S, C](k.asInstanceOf[Arrow[O[C], A, E & S]])(o)
+                            else o.asInstanceOf[Outcome[A < (E & S), B < S] < S]
                         running = false
                 end match
             catch
@@ -395,7 +445,10 @@ end Handler
                                 end if
                         end match
                     case o2 =>
-                        result = o2.asInstanceOf[Outcome2[State, A < (E & S), B < S] < S]
+                        result =
+                            if o2.isInstanceOf[Pending[?, ?]] then
+                                attachReentry2[State, I, O, E, A, B, S, C](k.asInstanceOf[Arrow[O[C], A, E & S]])(o2)
+                            else o2.asInstanceOf[Outcome2[State, A < (E & S), B < S] < S]
                         running = false
                 end match
             catch

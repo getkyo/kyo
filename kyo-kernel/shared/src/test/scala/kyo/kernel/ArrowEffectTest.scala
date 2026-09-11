@@ -13,6 +13,17 @@ class ArrowEffectTest extends Test:
     sealed trait TestEffect2 extends ArrowEffect[Const[String], Const[Int]]
     sealed trait TestEffect3 extends ArrowEffect[Const[Boolean], Const[Double]]
 
+    final case class Wrapped(v: Int) derives CanEqual
+
+    sealed trait MixedOp[A]
+    case object MixedMint        extends MixedOp[String]
+    case class MixedWrap(n: Int) extends MixedOp[Wrapped]
+
+    sealed trait TestEffect4 extends ArrowEffect[MixedOp, Id]
+
+    def mixedMint: String < TestEffect4          = ArrowEffect.suspend[String](Tag[TestEffect4], MixedMint)
+    def mixedWrap(n: Int): Wrapped < TestEffect4 = ArrowEffect.suspend[Wrapped](Tag[TestEffect4], MixedWrap(n))
+
     def testEffect1(i: Int): String < TestEffect1 =
         ArrowEffect.suspend[Any](Tag[TestEffect1], i)
 
@@ -3395,6 +3406,73 @@ class ArrowEffectTest extends Test:
                 )
             val answered: Int < Any = ArrowEffect.handleCont(Tag[Ask], r)([C] => (_, cont) => cont(0), a => a)
             assert(answered.eval == 5)
+        }
+    }
+
+    "a clause that suspends" - {
+
+        // The clause answers one operation by running a nested region for the same tag, so its outcome
+        // reaches the region as a computation rather than a value. The walk that answers operations
+        // fuses across them, so by then it stands at a later operation than the one the region was
+        // entered on, and the answer has to reach that operation's own cont.
+
+        def runMixedState[A, S](state: Int)(v: A < (TestEffect4 & S))(using Frame): A < S =
+            ArrowEffect.handleLoopState(Tag[TestEffect4], state, v)(
+                [C] =>
+                    (st: Int, input: MixedOp[C]) =>
+                        input match
+                            case _: MixedMint.type => Loop.continue(st + 1, "m" * (st + 1))
+                            case w: MixedWrap =>
+                                runMixedState(st)(mixedMint.map(id => Wrapped(id.length * 100 + w.n)))
+                                    .map(b => Loop.continue(st + 1, b))
+            )
+
+        def runMixed[A, S](v: A < (TestEffect4 & S))(using Frame): A < S =
+            ArrowEffect.handleLoop(Tag[TestEffect4], v)(
+                [C] =>
+                    (input: MixedOp[C]) =>
+                        input match
+                            case _: MixedMint.type => Loop.continue("mm")
+                            case w: MixedWrap =>
+                                runMixed(mixedMint.map(id => Wrapped(id.length * 100 + w.n)))
+                                    .map(b => Loop.continue(b))
+            )
+
+        "keeps an earlier operation's answer with its own cont, under state" in {
+            val v: Wrapped < TestEffect4 = mixedMint.map(id => mixedWrap(id.length))
+            assert(runMixedState(0)(v).eval == Wrapped(201))
+        }
+
+        "keeps an earlier operation's answer with its own cont, stateless" in {
+            val v: Wrapped < TestEffect4 = mixedMint.map(id => mixedWrap(id.length))
+            assert(runMixed(v).eval == Wrapped(202))
+        }
+
+        "does not cross the answers of a run of operations around it" in {
+            val v: (String, Wrapped, String) < TestEffect4 =
+                for
+                    a <- mixedMint
+                    b <- mixedWrap(1)
+                    c <- mixedMint
+                yield (a, b, c)
+            assert(runMixedState(0)(v).eval == (("m", Wrapped(201), "mmm")))
+        }
+
+        "attaches the crossing cont when the region is not at the top of the stack" in {
+            // TestEffect1's region is entered inside TestEffect4's and is still installed when the
+            // TestEffect4 operations suspend, so they are answered through the crossing cont rather
+            // than the region's own.
+            val inner: Wrapped < (TestEffect4 & TestEffect1) =
+                testEffect1(1).map(_ => mixedMint.map(id => mixedWrap(id.length)))
+            val nested: Wrapped < TestEffect4 =
+                ArrowEffect.handleLoop(Tag[TestEffect1], inner)([C] => (i: Int) => Loop.continue(i.toString), a => a)
+            assert(runMixedState(0)(nested).eval == Wrapped(201))
+        }
+
+        "answers an operation the nested region left for it" in {
+            val v: (Wrapped, String) < TestEffect4 =
+                mixedWrap(2).map(b => mixedMint.map(id => (b, id)))
+            assert(runMixedState(0)(v).eval == ((Wrapped(102), "mm")))
         }
     }
 

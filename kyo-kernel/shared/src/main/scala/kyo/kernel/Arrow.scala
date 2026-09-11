@@ -10,6 +10,7 @@ import kyo.kernel.internal.short
 import kyo.kernel.internal.site
 import scala.annotation.nowarn
 import scala.annotation.tailrec
+import scala.annotation.targetName
 
 sealed trait Arrow[-A, +B, -S] extends Kyo[B, S]:
 
@@ -18,6 +19,16 @@ sealed trait Arrow[-A, +B, -S] extends Kyo[B, S]:
         this.head(v, this.tail)
 
     def apply[C, S2](v: A < S2, cont: Arrow[B, C, S2]): C < (S & S2)
+
+    /** Applies this arrow to a value, with nothing composed after it. The arrow is the receiver, so a
+      * value needs no arrow-shaped method of its own.
+      *
+      * `@targetName` because this erases to the same signature as `apply(v: A)`: a raw `A` is also an
+      * `A < S2`, the union's first arm.
+      */
+    @targetName("applyPending")
+    def apply[S2](v: A < S2): B < (S & S2) =
+        this(v, Arrow.id)
 
     def chain[C, S2](a: Arrow[B, C, S2]): Arrow[A, C, S & S2] =
         if this.isInstanceOf[Arrow.Id[?]] then

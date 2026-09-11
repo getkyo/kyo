@@ -377,7 +377,7 @@ object Path extends PathPlatformSpecific:
     ): A < (FS & Abort[FileSystemException] & S) =
         FileSystem.letErased(fileSystem) {
             ArrowEffect.handleCont[[A] =>> Op[A], Id, PathWrite, A, S, FS & Abort[FileSystemException]](Tag[PathWrite], program)(
-                [C] => (op, cont) => dispatch(fileSystem, op).chain(cont)
+                [C] => (op, cont) => cont(dispatch(fileSystem, op))
             )
         }
 
@@ -392,7 +392,7 @@ object Path extends PathPlatformSpecific:
     ): A < (FS & Abort[FileSystemException] & S) =
         FileSystem.letReadErased(fileSystem) {
             ArrowEffect.handleCont[[A] =>> Op[A], Id, PathRead, A, S, FS & Abort[FileSystemException]](Tag[PathRead], program)(
-                [C] => (op, cont) => dispatchRead(fileSystem, op).chain(cont)
+                [C] => (op, cont) => cont(dispatchRead(fileSystem, op))
             )
         }
 
@@ -407,7 +407,7 @@ object Path extends PathPlatformSpecific:
             [C] =>
                 (op, cont) =>
                     op match
-                        case WatchOp.Open(path, options) => fileSystem.openWatcher(path, options).chain(cont)
+                        case WatchOp.Open(path, options) => cont(fileSystem.openWatcher(path, options))
                         case WatchOp.Raise(error)        => Abort.error(error)
         )
 
@@ -423,7 +423,7 @@ object Path extends PathPlatformSpecific:
                 (op, cont) =>
                     op match
                         case WatchOp.Open(path, options) =>
-                            FileSystem.useWatchErased(_.openWatcher(path, options)).chain(cont)
+                            cont(FileSystem.useWatchErased(_.openWatcher(path, options)))
                         case WatchOp.Raise(error) => Abort.error(error)
         )
 

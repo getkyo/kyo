@@ -108,13 +108,13 @@ import scala.collection.mutable.ArrayBuffer
                                         exit match
                                             case e: Loop.Continue[C < (EX & S2)] @unchecked =>
                                                 loop(e._1, Arrow.id, Arrow.id, ctx)
-                                            case pending: Pending[Outcome[OX[VX] < (EX & S2), Y < S2], S2] @unchecked =>
+                                            case pending: Pending[Outcome[C < (EX & S2), Y < S2], S2] @unchecked =>
                                                 val next = stack.continuation(idx).asInstanceOf[Arrow[Y, Any, S2]]
                                                 Debugger.onRegionExit(handler, pending)
                                                 stack.pop()
                                                 if stack.owesAny then stack.oweBelow(idx, stack.takePopped())
-                                                type OutT = Outcome[OX[VX] < (EX & S2), Y < S2]
-                                                loop[OutT, Y, Any, S2](pending, handler.clauseDispatch(k), next, ctx)
+                                                type OutT = Outcome[C < (EX & S2), Y < S2]
+                                                loop[OutT, Y, Any, S2](pending, handler.clauseDispatch, next, ctx)
                                             case done =>
                                                 val result =
                                                     Nested.unnest[Y < S2](Loop.unnest(done.asInstanceOf[Outcome[Any, Y < S2]]))
@@ -142,12 +142,13 @@ import scala.collection.mutable.ArrayBuffer
                                                 val entries = dumped(stack, idx, kyo)
                                                 val ctx2    = rebound(entries, ctx)
                                                 val next    = stack.continuation(idx).asInstanceOf[Arrow[Y, Any, S2]]
-                                                Debugger.onRegionExit(handler, pending)
                                                 stack.pop()
                                                 if stack.owesAny then stack.oweBelow(idx, stack.takePopped())
-                                                type OutT = Outcome[OX[VX] < (EX & S2), Y < S2]
+                                                type OutT = Outcome[C < (EX & S2), Y < S2]
                                                 val reentry2 = kyo.crossing(entries, contA.chain(contB))
-                                                loop[OutT, Y, Any, S2](pending, handler.clauseDispatch(reentry2), next, ctx2)
+                                                val answered = Handler.attachReentry[IX, OX, EX, C, Y, S2, VX](reentry2)(pending)
+                                                Debugger.onRegionExit(handler, answered)
+                                                loop[OutT, Y, Any, S2](answered, handler.clauseDispatch, next, ctx2)
                                             case outcome =>
                                                 val entries = dumped(stack, idx, kyo)
                                                 val ctx2    = rebound(entries, ctx)
@@ -170,13 +171,13 @@ import scala.collection.mutable.ArrayBuffer
                                             case e: Loop.Continue2[VX, C < (EX & S2)] @unchecked =>
                                                 stack.setState(idx, e._1)
                                                 loop(e._2, Arrow.id, Arrow.id, ctx)
-                                            case pending: Pending[Outcome2[VX, OX[VX] < (EX & S2), Y < S2], S2] @unchecked =>
+                                            case pending: Pending[Outcome2[VX, C < (EX & S2), Y < S2], S2] @unchecked =>
                                                 val next = stack.continuation(idx).asInstanceOf[Arrow[Y, Any, S2]]
                                                 Debugger.onRegionExit(handler, pending)
                                                 stack.pop()
                                                 if stack.owesAny then stack.oweBelow(idx, stack.takePopped())
-                                                type OutT = Outcome2[VX, OX[VX] < (EX & S2), Y < S2]
-                                                loop[OutT, Y, Any, S2](pending, handler.clauseDispatch(k), next, ctx)
+                                                type OutT = Outcome2[VX, C < (EX & S2), Y < S2]
+                                                loop[OutT, Y, Any, S2](pending, handler.clauseDispatch, next, ctx)
                                             case done =>
                                                 val result =
                                                     Nested.unnest[Y < S2](Loop.unnest(done.asInstanceOf[Outcome2[VX, Any, Y < S2]]))
@@ -205,12 +206,14 @@ import scala.collection.mutable.ArrayBuffer
                                                 val entries = dumped(stack, idx, kyo)
                                                 val ctx2    = rebound(entries, ctx)
                                                 val next    = stack.continuation(idx).asInstanceOf[Arrow[Y, Any, S2]]
-                                                Debugger.onRegionExit(handler, pending)
                                                 stack.pop()
                                                 if stack.owesAny then stack.oweBelow(idx, stack.takePopped())
-                                                type OutT = Outcome2[VX, OX[VX] < (EX & S2), Y < S2]
+                                                type OutT = Outcome2[VX, C < (EX & S2), Y < S2]
                                                 val reentry2 = kyo.crossing(entries, contA.chain(contB))
-                                                loop[OutT, Y, Any, S2](pending, handler.clauseDispatch(reentry2), next, ctx2)
+                                                val answered =
+                                                    Handler.attachReentry2[VX, IX, OX, EX, C, Y, S2, VX](reentry2)(pending)
+                                                Debugger.onRegionExit(handler, answered)
+                                                loop[OutT, Y, Any, S2](answered, handler.clauseDispatch, next, ctx2)
                                             case outcome =>
                                                 val entries = dumped(stack, idx, kyo)
                                                 val ctx2    = rebound(entries, ctx)
@@ -419,7 +422,7 @@ import scala.collection.mutable.ArrayBuffer
                             case Present(r) =>
                                 Debugger.onRecover(handler, ex)
                                 Debugger.onRegionExit(handler, r)
-                                r.chain(stack.continuation(top).asInstanceOf[Arrow[Y, A, S]])
+                                stack.continuation(top).asInstanceOf[Arrow[Y, A, S]](r)
                             case Absent =>
                                 Debugger.onRegionExit(handler, ex)
                                 stack.pop()
