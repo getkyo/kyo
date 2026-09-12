@@ -7,7 +7,6 @@ import kyo.kernel.internal.Nested
 import kyo.kernel.internal.Pending
 import kyo.kernel.internal.Safepoint
 import kyo.kernel.internal.short
-import kyo.kernel.internal.site
 import scala.annotation.nowarn
 import scala.annotation.tailrec
 import scala.annotation.targetName
@@ -236,12 +235,13 @@ object Arrow:
       */
     abstract private[kyo] class Step[-A, B, -S] extends Transform[A, B, S]:
         Debugger.onAlloc(this)
-        override def toString = s"Step(${site(frame)})"
+        override def toString = s"Step(${frame.callSite})"
     end Step
 
-    // TODO do we need to override toString? let's review all Kyo subtypes for that
     abstract private[kyo] class Ensure[-A, B, -S] extends Step[A, B, S]:
         override def apply(v: A): B < S
+
+        override def toString = s"Ensure(${frame.callSite})"
 
         final def apply[C, S2](v: A < S2, cont: Arrow[B, C, S2]): C < (S & S2) =
             v match

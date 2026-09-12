@@ -40,11 +40,13 @@ object Effect:
         cont match
             case cont: Arrow.Chain[A, x, B, S] @unchecked =>
                 new Pending.Defer[A, x, B, S]:
+                    def frame = Frame.internal
                     def value = v
                     def contA = cont.a
                     def contB = cont.b
             case _ =>
                 new Pending.Defer[A, B, B, S]:
+                    def frame = Frame.internal
                     def value = v
                     def contA = cont
                     def contB = Arrow.id
@@ -56,6 +58,7 @@ object Effect:
             defer(v, cont1.asInstanceOf[Arrow[A, C, S]])
         else
             new Pending.Defer[A, B, C, S]:
+                def frame = Frame.internal
                 def value = v
                 def contA = cont1
                 def contB = cont2

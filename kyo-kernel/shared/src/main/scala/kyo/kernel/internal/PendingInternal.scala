@@ -22,7 +22,7 @@ import scala.annotation.publicInBinary
   * lets a node hold a primitive input without boxing it.
   */
 sealed trait Pending[+A, -S] extends Kyo[A, S]:
-    def frame: Frame = Frame.internal // TODO this should be abstract
+    def frame: Frame
 end Pending
 
 object Pending:
@@ -41,7 +41,7 @@ object Pending:
         def contB: Arrow[B, C, S]
 
         override def toString =
-            def slot(a: Arrow[?, ?, ?]): String = if a eq this then s"this(${site(frame)})" else short(a)
+            def slot(a: Arrow[?, ?, ?]): String = if a eq this then s"this(${frame.callSite})" else short(a)
             s"Defer(${short(value)}, ${slot(contA)}, ${slot(contB)})"
     end Defer
 
@@ -89,7 +89,7 @@ object Pending:
         end crossing
 
         override def toString: String =
-            s"Kyo(${tag.show}, ${site(frame)})"
+            s"Kyo(${tag.show}, ${frame.callSite})"
     end Suspend
 
     /** A suspended [[kyo.kernel.ArrowEffect]] operation, carrying the input its clause will be handed. */
@@ -99,6 +99,7 @@ object Pending:
 
         private[kyo] def reraise: O[A] < E =
             new SuspendArrow[I, O, E, A, O[A], E]:
+                def frame = self.frame
                 def tag   = self.tag
                 def input = self.input
                 def cont  = Arrow.id
@@ -115,6 +116,7 @@ object Pending:
 
         private[kyo] def reraise: State < E =
             new SuspendContext[State, E, State, E]:
+                def frame   = self.frame
                 def tag     = self.tag
                 def default = self.default
                 def cont    = Arrow.id
@@ -131,6 +133,7 @@ object Pending:
                 val h  = handler
                 val st = state
                 new HandleArrow[State, E, A, B, B, S]:
+                    def frame   = Frame.internal
                     def value   = kyo
                     def handler = h
                     def state   = st
@@ -178,6 +181,8 @@ object Pending:
         Debugger.onAlloc(this)
 
         def cont: Arrow[Stack, A, S]
+
+        override def toString = s"Snapshot(${frame.callSite})"
     end Snapshot
 
     /** A slice of computation set aside with what it needs to run again elsewhere, or later.
@@ -194,6 +199,8 @@ object Pending:
         val owed: Chunk[Stack.Snapshot] = Chunk.empty
     ) extends Pending[A, S]:
         Debugger.onAlloc(this)
+
+        def frame = Frame.internal
 
         override def toString =
             s"Park(${short(value)}, regions = ${entries.regions})"
