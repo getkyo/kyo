@@ -1,6 +1,7 @@
 package kyo.kernel.internal
 
 import kyo.CompileTimeFlag
+import kyo.bug
 
 /** Hooks the evaluator calls as it runs, for tracing what a computation actually did.
   *
@@ -46,11 +47,33 @@ private[kyo] object Debugger:
 
     private var current: Debugger = Noop
 
-    // TODO let's add logging here and fail if there's different one installed already. Also fail if enabled is false
-    def install(d: Debugger): Unit = current = d
+    /** Installs `d` as the debugger the hooks call.
+      *
+      * Refuses in a build where the hooks are erased, and refuses to replace one that is already installed, because both of those produce an
+      * empty trace that reads as though the code under inspection never ran.
+      */
+    def install(d: Debugger): Unit =
+        if !enabled then
+            bug(
+                "Debugger.install called in a build compiled without the debugger. The hooks are erased at compile time, so nothing " +
+                    "would be recorded. Recompile with -Dkyo.kernel.internal.Debugger.enabled=true."
+            )
+        end if
+        if current ne Noop then
+            bug(
+                s"Debugger.install called while $current is already installed. A debugger is global, so the second would silently " +
+                    "replace the first. Call Debugger.uninstall() before installing another."
+            )
+        end if
+        current = d
+    end install
 
-    // TODO log and fail if nothing is installed
-    def uninstall(): Unit = current = Noop
+    /** Removes the installed debugger. Refuses when there is none, since that means an uninstall is running without its install. */
+    def uninstall(): Unit =
+        if current eq Noop then
+            bug("Debugger.uninstall called with no debugger installed.")
+        current = Noop
+    end uninstall
 
     def get: Debugger = current
 

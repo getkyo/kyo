@@ -36,7 +36,10 @@ class DebuggerTest extends AnyFreeSpec:
         override def onRelease(handler: Any, ex: Any): Unit                 = record("release")
     end Recording
 
+    // Cancelled rather than passed vacuously when the hooks are erased: installing a debugger into such a build
+    // is refused, and a test that silently records nothing would look like coverage it is not.
     def session[A](d: Debugger)(body: => A): A =
+        if !Debugger.enabled then cancel("requires -Dkyo.kernel.internal.Debugger.enabled=true")
         Debugger.install(d)
         try body
         finally Debugger.uninstall()
