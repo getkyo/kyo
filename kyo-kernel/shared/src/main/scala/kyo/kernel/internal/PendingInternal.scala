@@ -45,6 +45,10 @@ object Pending:
             s"Defer(${short(value)}, ${slot(contA)}, ${slot(contB)})"
     end Defer
 
+    abstract class DeferWith[A, B, -S] extends Defer[A, B, B, S] with Arrow.Transform[A, B, S]:
+        def contA = this
+        def contB = Arrow.id
+
     /** An operation waiting for a handler to answer it.
       *
       * `tag` names the effect, which is what a region matches on as the evaluator walks outward looking for a handler, and `cont` is the rest
@@ -111,6 +115,9 @@ object Pending:
                 def cont  = Arrow.id
     end SuspendArrow
 
+    abstract class SuspendArrowWith[I[_], O[_], E <: ArrowEffect[I, O], State, A, S]
+        extends SuspendArrow[I, O, E, State, A, S] with Arrow.Transform[O[State], A, S]
+
     /** A suspended [[kyo.kernel.ContextEffect]] read.
       *
       * `default` present is the defaulted form, which is why such a read keeps the effect out of its row: no binding is required, because the
@@ -127,6 +134,9 @@ object Pending:
                 def default = self.default
                 def cont    = Arrow.id
     end SuspendContext
+
+    abstract class SuspendContextWith[State, E <: ContextEffect[State], A, S]
+        extends SuspendContext[State, E, A, S] with Arrow.Transform[State, A, S]
 
     /** Enters a region: builds the node that installs `handler` with `state` over `v`.
       *
@@ -171,6 +181,9 @@ object Pending:
             else s"HandleArrow(${short(value)}, $handler, $state, ${if cont eq this then "this" else short(cont)})"
     end HandleArrow
 
+    abstract class HandleArrowWith[State, E <: Effect, A, B, C, -S]
+        extends HandleArrow[State, E, A, B, C, S] with Arrow.Transform[B, C, S]
+
     /** A region binding a [[kyo.kernel.ContextEffect]].
       *
       * Binding a value transforms nothing, so this carries no continuation of its own and the region's result is the computation's, which is
@@ -190,6 +203,8 @@ object Pending:
 
         override def toString = s"Snapshot(${frame.callSite})"
     end Snapshot
+
+    abstract class SnapshotWith[A, -S] extends Snapshot[A, S] with Arrow.Transform[Stack, A, S]
 
     /** A slice of computation set aside with what it needs to run again elsewhere, or later.
       *
@@ -211,25 +226,5 @@ object Pending:
         override def toString =
             s"Park(${short(value)}, regions = ${entries.regions})"
     end Park
-
-    // Each `*With` node is its own continuation: the site's transformation is inlined into the node's `apply`
-    // rather than sitting in a separate arrow behind it, which is what fuses a `map` or a `done` into the node it
-    // follows and saves the evaluator a hop. `Arrow.Transform` is what lets a node stand in an arrow position.
-
-    // TODO let's move these two their non-with versions
-    abstract class DeferWith[A, B, -S] extends Defer[A, B, B, S] with Arrow.Transform[A, B, S]:
-        def contA = this
-        def contB = Arrow.id
-
-    abstract class SuspendArrowWith[I[_], O[_], E <: ArrowEffect[I, O], State, A, S]
-        extends SuspendArrow[I, O, E, State, A, S] with Arrow.Transform[O[State], A, S]
-
-    abstract class SuspendContextWith[State, E <: ContextEffect[State], A, S]
-        extends SuspendContext[State, E, A, S] with Arrow.Transform[State, A, S]
-
-    abstract class SnapshotWith[A, -S] extends Snapshot[A, S] with Arrow.Transform[Stack, A, S]
-
-    abstract class HandleArrowWith[State, E <: Effect, A, B, C, -S]
-        extends HandleArrow[State, E, A, B, C, S] with Arrow.Transform[B, C, S]
 
 end Pending

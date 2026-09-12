@@ -224,6 +224,12 @@ object Arrow:
                             out
                         end if
 
+    /** An arrow that is its own head, with `id` as its tail: the shape of every arrow but `Chain`.
+      *
+      * A `Pending` node mixes this in to stand in an arrow position as its own continuation, the site's transformation inlined into the
+      * node's `apply` rather than sitting in a separate arrow behind it. That is what fuses a `map` or a `done` into the node it follows and
+      * saves the evaluator a hop; the `*With` nodes are exactly those.
+      */
     private[kyo] trait Transform[-A, B, -S] extends Arrow[A, B, S]:
         type X = B
         def head = this
