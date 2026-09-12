@@ -138,10 +138,11 @@ object Batch:
             ArrowEffect.handleFirst(Tag[Batch], v)(
                 handle = [C] =>
                     (input, cont) =>
-                        val contAny = cont.asInstanceOf[ContAny[A, S]]
                         input match
-                            case Call(v, source) => Expanded(v, source.asInstanceOf[SourceAny[S]], contAny): Item
-                            case Eval(v)         => ToExpand(v, contAny): Item
+                            case Call(v, source) =>
+                                Expanded(v, source.asInstanceOf[SourceAny[S]], cont.asInstanceOf[ContCall[A, S]]): Item
+                            case Eval(v) =>
+                                ToExpand(v, cont.asInstanceOf[ContEval[A, S]]): Item
                 ,
                 done = (a: Item) => a
             )
@@ -211,11 +212,15 @@ object Batch:
         case class Call[A, B, S](v: A, source: Source[A, B, S]) extends Op[B < (Batch & S)]
 
         enum Pending[A, S]:
-            case ToExpand(op: Seq[Any], cont: ContAny[A, S])
-            case Expanded(value: Any, source: SourceAny[S], cont: ContAny[A, S])
+            case ToExpand(op: Seq[Any], cont: ContEval[A, S])
+            case Expanded(value: Any, source: SourceAny[S], cont: ContCall[A, S])
 
         // the captured cont is the kernel's Arrow, a complete value applied strictly at the two call sites, so
-        // the kernel's multi-shot replay discipline carries the batching
-        type ContAny[A, S] = Arrow[Any, ToExpand[A, S] | Expanded[A, S] | A, Batch & S]
+        // the kernel's multi-shot replay discipline carries the batching. The input type keeps what the op
+        // answers with: an element for Eval, the source's result computation for Call. Typed over a computation,
+        // the arrow is handed that computation as data and splices it at the call site, under the regions
+        // installed there; typed over Any it would run it where the resume is.
+        type ContEval[A, S] = Arrow[Any, ToExpand[A, S] | Expanded[A, S] | A, Batch & S]
+        type ContCall[A, S] = Arrow[Any < (Batch & S), ToExpand[A, S] | Expanded[A, S] | A, Batch & S]
     end internal
 end Batch

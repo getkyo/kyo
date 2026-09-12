@@ -43,11 +43,8 @@ class ArrowEffectTest extends Test:
     sealed trait Say extends ArrowEffect[Const[String], Const[Unit]]
     def say(s: String): Unit < Say = ArrowEffect.suspend[Any](Tag[Say], s)
 
-    // The Batch shape: a source effect whose call is peeled, and a stateful effect whose region can sit between
-    // the peel and the call. `Peeled` is what the peel hands out, resumed from outside the region later.
-    sealed trait Src extends ArrowEffect[Const[Int], Const[Int]]
-    def src(i: Int): Int < Src = ArrowEffect.suspend[Any](Tag[Src], i)
-
+    // The Batch shape: a source effect answering with a computation, whose call is peeled and resumed from outside
+    // the region later, and a stateful effect whose region can sit between the peel and the call.
     sealed trait Cnt extends ArrowEffect[Const[Int], Const[Int]]
     def bump(d: Int): Int < Cnt = ArrowEffect.suspend[Any](Tag[Cnt], d)
     def counting[A, S](init: Int)(v: A < (Cnt & S)): (Int, A) < S =
@@ -56,10 +53,29 @@ class ArrowEffectTest extends Test:
             (st, a) => (st, a)
         )
 
-    final class Peeled(val input: Int, val cont: Arrow[Int, Any, Src & Cnt])
+    sealed trait Src extends ArrowEffect[Const[Int], Const[Int < Cnt]]
+    def src(i: Int): Int < (Src & Cnt) = ArrowEffect.suspendWith[Any](Tag[Src], i)(identity)
+
+    final class Peeled(val input: Int, val cont: Arrow[Int < Cnt, Any, Src & Cnt])
 
     def peel(v: Any < (Src & Cnt)): Any < Cnt =
         ArrowEffect.handleFirst(Tag[Src], v)([C] => (input, cont) => Peeled(input, cont), a => a)
+
+    // items 1 and 2 run their source call under a counter of their own; 3, 4 and 5 under the one outside
+    def item(a: Int): Int < (Src & Cnt) =
+        if a < 3 then counting(42)(src(a)).map(_._2)
+        else src(a)
+
+    def resumeAll(resume: Peeled => Any < Cnt)(items: Chunk[Any]): Chunk[Int] < Cnt =
+        if !items.exists(_.isInstanceOf[Peeled]) then items.asInstanceOf[Chunk[Int]]
+        else
+            Kyo.foreach(items) {
+                case t: Peeled => resume(t)
+                case v         => v
+            }.map(resumeAll(resume))
+
+    def batched(resume: Peeled => Any < Cnt): (Int, Chunk[Int]) < Any =
+        counting(0)(Kyo.foreach(Chunk(1, 2, 3, 4, 5))(a => peel(item(a))).map(resumeAll(resume)))
 
     private val Period = Safepoint.period()
 
@@ -258,29 +274,21 @@ class ArrowEffectTest extends Test:
             assert(!reached)
         }
 
-        // Ignored until the spelling for handing a continuation a computation as data is decided: as written the
-        // resume runs `bump` at the caller's level, which is what `cont(computation)` means, and the expectation
-        // below is the spliced reading Batch relies on.
-        "a peeled continuation resumed outside reinstalls the stateful region it carries" ignore {
-            // The Batch shape. The peel hands the continuation out as a value and the region ends; the answer is
-            // computed afterwards and the continuation resumed outside, applied to a suspension rather than a
-            // value. For some items that continuation carries a handleLoopState region dumped from between the
-            // peel and the suspension, and the answer's own effect has to be answered by that region once it is
-            // reinstalled, not by the one outside.
-            def item(a: Int): Int < (Src & Cnt) =
-                if a < 3 then counting(42)(src(a)).map(_._2)
-                else src(a)
+        "a continuation typed over a computation splices the answer at the call site" in {
+            // The peel hands the continuation out and the region ends; the answer, a computation, is handed to it
+            // later from outside. Typed over a computation, the continuation takes it as data and splices it at
+            // the suspension point, under the counter dumped from between the peel and the call, so items 1 and 2
+            // bump their own counter and the rest bump the one outside.
+            assert(batched(t => peel(t.cont(bump(t.input)))).eval == ((12, Chunk(43, 44, 3, 7, 12))))
+        }
 
-            def drive(items: Chunk[Any]): Chunk[Int] < Cnt =
-                if !items.exists(_.isInstanceOf[Peeled]) then items.asInstanceOf[Chunk[Int]]
-                else
-                    Kyo.foreach(items) {
-                        case t: Peeled => peel(t.cont(bump(t.input)))
-                        case v         => v
-                    }.map(drive)
-
-            val r = counting(0)(Kyo.foreach(Chunk(1, 2, 3, 4, 5))(a => peel(item(a))).map(drive))
-            assert(r.eval == ((12, Chunk(43, 44, 3, 7, 12))))
+        "a continuation typed over Any runs the answer where the resume is" in {
+            // The same resume through an erased continuation: `Any < S2` takes the computation unlifted and runs it
+            // at the caller's level, where no inner counter is installed, so every item bumps the one outside.
+            assert(batched { t =>
+                val erased: Arrow[Any, Any, Src & Cnt] = t.cont.asInstanceOf[Arrow[Any, Any, Src & Cnt]]
+                peel(erased(bump(t.input)))
+            }.eval == ((15, Chunk(1, 3, 6, 10, 15))))
         }
 
         "re-handling the remainder round by round sees every operation" in {
