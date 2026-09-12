@@ -2,6 +2,8 @@ package kyo.kernel.internal
 
 import kyo.CompileTimeFlag
 import kyo.bug
+import kyo.kernel.<
+import kyo.kernel.Arrow
 
 /** Hooks the evaluator calls as it runs, for tracing what a computation actually did.
   *
@@ -12,30 +14,29 @@ import kyo.bug
   * That is deliberate. These hooks sit on the hottest paths in the module, and a runtime check on each would show up in the benchmarks
   * whether or not a debugger was installed.
   */
-// TODO let's properly type the apis here, there's no need to use ANy for everything
 abstract private[kyo] class Debugger:
 
     def enter(): Boolean = true
 
     def onAlloc(value: Any): Unit = ()
 
-    def onUnfused(arrow: Any): Unit = ()
+    def onUnfused(arrow: Arrow[?, ?, ?]): Unit = ()
 
-    def onLoop(value: Any, contA: Any, contB: Any): Unit = ()
+    def onLoop(value: Any < Nothing, contA: Arrow[?, ?, ?], contB: Arrow[?, ?, ?]): Unit = ()
 
-    def onContext(suspend: Any, state: Any): Unit = ()
+    def onContext(node: Pending[?, ?], state: Any): Unit = ()
 
-    def onRegionEnter(handler: Any, state: Any): Unit = ()
+    def onRegionEnter(handler: Handler[?, ?, ?], state: Any): Unit = ()
 
-    def onRegionExit(handler: Any, result: Any): Unit = ()
+    def onRegionExit(handler: Handler[?, ?, ?], result: Any): Unit = ()
 
-    def onForeign(suspend: Any, handler: Any): Unit = ()
+    def onForeign(suspend: Pending.Suspend[?, ?, ?, ?], handler: Handler[?, ?, ?]): Unit = ()
 
-    def onRelease(handler: Any, ex: Any): Unit = ()
+    def onRelease(handler: Handler[?, ?, ?], ex: Throwable): Unit = ()
 
-    def onRecover(handler: Any, ex: Any): Unit = ()
+    def onRecover(handler: Handler[?, ?, ?], ex: Throwable): Unit = ()
 
-    def onHandle(suspend: Any, handler: Any, state: Any): Unit = ()
+    def onHandle(suspend: Pending.Suspend[?, ?, ?, ?], handler: Handler[?, ?, ?], state: Any): Unit = ()
 
     def onResult(value: Any): Unit = ()
 end Debugger
@@ -79,17 +80,24 @@ private[kyo] object Debugger:
 
     inline def whenEnabled(inline f: Unit): Unit = inline if enabled then f
 
-    inline def onAlloc(value: Any): Unit                              = inline if enabled then get.onAlloc(value)
-    inline def onUnfused(arrow: Any): Unit                            = inline if enabled then get.onUnfused(arrow)
-    inline def onLoop(value: Any, contA: Any, contB: Any): Unit       = inline if enabled then get.onLoop(value, contA, contB)
-    inline def onContext(suspend: Any, state: Any): Unit              = inline if enabled then get.onContext(suspend, state)
-    inline def onRegionEnter(handler: Any, state: Any): Unit          = inline if enabled then get.onRegionEnter(handler, state)
-    inline def onRegionExit(handler: Any, result: Any): Unit          = inline if enabled then get.onRegionExit(handler, result)
-    inline def onForeign(suspend: Any, handler: Any): Unit            = inline if enabled then get.onForeign(suspend, handler)
-    inline def onRecover(handler: Any, ex: Any): Unit                 = inline if enabled then get.onRecover(handler, ex)
-    inline def onRelease(handler: Any, ex: Any): Unit                 = inline if enabled then get.onRelease(handler, ex)
-    inline def onHandle(suspend: Any, handler: Any, state: Any): Unit = inline if enabled then get.onHandle(suspend, handler, state)
-    inline def onResult(value: Any): Unit                             = inline if enabled then get.onResult(value)
+    inline def onAlloc(value: Any): Unit              = inline if enabled then get.onAlloc(value)
+    inline def onUnfused(arrow: Arrow[?, ?, ?]): Unit = inline if enabled then get.onUnfused(arrow)
+
+    inline def onLoop(value: Any < Nothing, contA: Arrow[?, ?, ?], contB: Arrow[?, ?, ?]): Unit =
+        inline if enabled then get.onLoop(value, contA, contB)
+
+    inline def onContext(node: Pending[?, ?], state: Any): Unit           = inline if enabled then get.onContext(node, state)
+    inline def onRegionEnter(handler: Handler[?, ?, ?], state: Any): Unit = inline if enabled then get.onRegionEnter(handler, state)
+    inline def onRegionExit(handler: Handler[?, ?, ?], result: Any): Unit = inline if enabled then get.onRegionExit(handler, result)
+    inline def onRecover(handler: Handler[?, ?, ?], ex: Throwable): Unit  = inline if enabled then get.onRecover(handler, ex)
+    inline def onRelease(handler: Handler[?, ?, ?], ex: Throwable): Unit  = inline if enabled then get.onRelease(handler, ex)
+    inline def onResult(value: Any): Unit                                 = inline if enabled then get.onResult(value)
+
+    inline def onForeign(suspend: Pending.Suspend[?, ?, ?, ?], handler: Handler[?, ?, ?]): Unit =
+        inline if enabled then get.onForeign(suspend, handler)
+
+    inline def onHandle(suspend: Pending.Suspend[?, ?, ?, ?], handler: Handler[?, ?, ?], state: Any): Unit =
+        inline if enabled then get.onHandle(suspend, handler, state)
 
     object Noop extends Debugger
 end Debugger

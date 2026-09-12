@@ -4,6 +4,7 @@ import kyo.Const
 import kyo.Tag
 import kyo.discard
 import kyo.kernel.<
+import kyo.kernel.Arrow
 import kyo.kernel.ArrowEffect
 import kyo.kernel.Bracket
 import kyo.kernel.Effect
@@ -28,12 +29,12 @@ class DebuggerTest extends AnyFreeSpec:
         val events = ListBuffer.empty[String]
         private def record(kind: String): Unit =
             this.synchronized(discard(events += kind))
-        override def onLoop(value: Any, contA: Any, contB: Any): Unit       = record("loop")
-        override def onHandle(suspend: Any, handler: Any, state: Any): Unit = record("handle")
-        override def onRegionEnter(handler: Any, state: Any): Unit          = record("regionEnter")
-        override def onRegionExit(handler: Any, result: Any): Unit          = record("regionExit")
-        override def onResult(value: Any): Unit                             = record("result")
-        override def onRelease(handler: Any, ex: Any): Unit                 = record("release")
+        override def onLoop(value: Any < Nothing, contA: Arrow[?, ?, ?], contB: Arrow[?, ?, ?]): Unit            = record("loop")
+        override def onHandle(suspend: Pending.Suspend[?, ?, ?, ?], handler: Handler[?, ?, ?], state: Any): Unit = record("handle")
+        override def onRegionEnter(handler: Handler[?, ?, ?], state: Any): Unit                                  = record("regionEnter")
+        override def onRegionExit(handler: Handler[?, ?, ?], result: Any): Unit                                  = record("regionExit")
+        override def onResult(value: Any): Unit                                                                  = record("result")
+        override def onRelease(handler: Handler[?, ?, ?], ex: Throwable): Unit                                   = record("release")
     end Recording
 
     // Cancelled rather than passed vacuously when the hooks are erased: installing a debugger into such a build
@@ -48,17 +49,13 @@ class DebuggerTest extends AnyFreeSpec:
     "the hooks are no-ops and the gate is open by default" in {
         val d = new Debugger {}
         assert(d.enter())
-        d.onLoop(1, 2, 3)
-        d.onHandle(1, 2, 3)
-        d.onRegionEnter(1, 2)
-        d.onRegionExit(1, 2)
+        d.onLoop(1, Arrow.id, Arrow.id)
         d.onResult(1)
-        d.onRelease(1, 2)
-        d.onRecover(1, 2)
-        d.onForeign(1, 2)
-        d.onContext(1, 2)
         d.onAlloc(1)
-        d.onUnfused(1)
+        d.onUnfused(Arrow.id)
+        (ask: Any) match
+            case s: Pending.Suspend[?, ?, ?, ?] => d.onContext(s, 1)
+            case other                          => fail(s"ask should be a suspension, was $other")
         succeed
     }
 

@@ -3,7 +3,9 @@ package kyo.kernel.debug
 import kyo.kernel.*
 import kyo.kernel.internal.Debugger
 import kyo.kernel.internal.Eval
+import kyo.kernel.internal.Handler
 import kyo.kernel.internal.Nested
+import kyo.kernel.internal.Pending
 
 /** A [[Debugger]] that counts what happened instead of printing it, for a run too large to read step by step.
   *
@@ -16,14 +18,14 @@ final class Counting(guardsLikeProduction: Boolean) extends Debugger:
 
     override def enter(): Boolean = !guardsLikeProduction
 
-    override def onAlloc(value: Any): Unit                              = bump("alloc " + value.getClass.getSimpleName)
-    override def onUnfused(arrow: Any): Unit                            = bump("unfused " + arrow.getClass.getSimpleName)
-    override def onLoop(value: Any, contA: Any, contB: Any): Unit       = bump("loop")
-    override def onRegionEnter(handler: Any, state: Any): Unit          = bump("regionEnter")
-    override def onRegionExit(handler: Any, result: Any): Unit          = bump("regionExit")
-    override def onForeign(suspend: Any, handler: Any): Unit            = bump("foreign")
-    override def onHandle(suspend: Any, handler: Any, state: Any): Unit = bump("handle")
-    override def onResult(value: Any): Unit                             = bump("result")
+    override def onAlloc(value: Any): Unit              = bump("alloc " + value.getClass.getSimpleName)
+    override def onUnfused(arrow: Arrow[?, ?, ?]): Unit = bump("unfused " + arrow.getClass.getSimpleName)
+    override def onLoop(value: Any < Nothing, contA: Arrow[?, ?, ?], contB: Arrow[?, ?, ?]): Unit            = bump("loop")
+    override def onRegionEnter(handler: Handler[?, ?, ?], state: Any): Unit                                  = bump("regionEnter")
+    override def onRegionExit(handler: Handler[?, ?, ?], result: Any): Unit                                  = bump("regionExit")
+    override def onForeign(suspend: Pending.Suspend[?, ?, ?, ?], handler: Handler[?, ?, ?]): Unit            = bump("foreign")
+    override def onHandle(suspend: Pending.Suspend[?, ?, ?, ?], handler: Handler[?, ?, ?], state: Any): Unit = bump("handle")
+    override def onResult(value: Any): Unit                                                                  = bump("result")
 
     def report: String = counts.toList.sortBy(-_._2).map((k, n) => f"$n%7d  $k").mkString("\n")
 end Counting

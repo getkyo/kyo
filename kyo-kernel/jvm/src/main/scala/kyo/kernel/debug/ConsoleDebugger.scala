@@ -1,8 +1,10 @@
 package kyo.kernel.debug
 
+import kyo.kernel.<
 import kyo.kernel.Arrow
 import kyo.kernel.Loop
 import kyo.kernel.internal.Debugger
+import kyo.kernel.internal.Handler
 import kyo.kernel.internal.Pending
 
 /** A [[Debugger]] that prints the evaluator's steps as they happen, indented by region depth.
@@ -60,13 +62,13 @@ final class ConsoleDebugger extends Debugger:
         println(s"$pad🧮 alloc: $value")
     end onAlloc
 
-    override def onUnfused(arrow: Any): Unit =
+    override def onUnfused(arrow: Arrow[?, ?, ?]): Unit =
         checkReported(arrow)
         unfusedCount += 1
         println(s"$pad✂️ apply: $arrow")
     end onUnfused
 
-    override def onLoop(value: Any, contA: Any, contB: Any): Unit =
+    override def onLoop(value: Any < Nothing, contA: Arrow[?, ?, ?], contB: Arrow[?, ?, ?]): Unit =
         checkReported(value, contA, contB)
         log(
             s"""|🔁 loop
@@ -76,16 +78,16 @@ final class ConsoleDebugger extends Debugger:
         )
     end onLoop
 
-    override def onContext(suspend: Any, state: Any): Unit =
-        checkReported(suspend, state)
+    override def onContext(node: Pending[?, ?], state: Any): Unit =
+        checkReported(node, state)
         log(
             s"""|📖 context
-                |suspend: $suspend
+                |node: $node
                 |state: $state""".stripMargin
         )
     end onContext
 
-    override def onRegionEnter(handler: Any, state: Any): Unit =
+    override def onRegionEnter(handler: Handler[?, ?, ?], state: Any): Unit =
         checkReported(state)
         log(
             s"""|📥 region enter
@@ -96,7 +98,7 @@ final class ConsoleDebugger extends Debugger:
         depth += 1
     end onRegionEnter
 
-    override def onRegionExit(handler: Any, result: Any): Unit =
+    override def onRegionExit(handler: Handler[?, ?, ?], result: Any): Unit =
         checkReported(result)
         depth -= 1
         log(
@@ -107,7 +109,7 @@ final class ConsoleDebugger extends Debugger:
         )
     end onRegionExit
 
-    override def onForeign(suspend: Any, handler: Any): Unit =
+    override def onForeign(suspend: Pending.Suspend[?, ?, ?, ?], handler: Handler[?, ?, ?]): Unit =
         checkReported(suspend)
         log(
             s"""|🫧 foreign suspend
@@ -116,21 +118,21 @@ final class ConsoleDebugger extends Debugger:
         )
     end onForeign
 
-    override def onRelease(handler: Any, ex: Any): Unit =
+    override def onRelease(handler: Handler[?, ?, ?], ex: Throwable): Unit =
         log(
             s"""|🧹 release
                 |handler: $handler
                 |ex: $ex""".stripMargin
         )
 
-    override def onRecover(handler: Any, ex: Any): Unit =
+    override def onRecover(handler: Handler[?, ?, ?], ex: Throwable): Unit =
         log(
             s"""|🩹 recover
                 |handler: $handler
                 |ex: $ex""".stripMargin
         )
 
-    override def onHandle(suspend: Any, handler: Any, state: Any): Unit =
+    override def onHandle(suspend: Pending.Suspend[?, ?, ?, ?], handler: Handler[?, ?, ?], state: Any): Unit =
         checkReported(suspend, state)
         log(
             s"""|⚡ handle
