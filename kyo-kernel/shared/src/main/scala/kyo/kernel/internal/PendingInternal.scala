@@ -64,8 +64,14 @@ object Pending:
 
         /** The continuation for an answer that has to re-enter regions the evaluator has already left.
           *
-          * Applying it to a settled answer parks a slice carrying that answer, this suspension's own continuation and `resume`, together with
-          * the snapshot of regions to reinstall before it runs again.
+          * Applied to a computation, it runs that computation where the clause is and only the settled answer crosses: the answer is the
+          * clause's currency, so an effect it performs is the clause's handler's to answer, not one of the regions being crossed into. Applied
+          * to a settled answer, it parks a slice carrying the answer, this suspension's own continuation and `resume`, together with the
+          * snapshot of regions to reinstall before it runs again.
+          *
+          * A computation meant to be delivered as data instead, spliced in at the suspension point under those regions, is nested first;
+          * nested, it is settled here and takes the second path. That is the only way a computation reaches the interior regions, and it
+          * has to be asked for.
           *
           * Only `cont` is involved, so this carries a context read crossing back to the region that masked it as readily as an arrow
           * operation crossing to its handler.
