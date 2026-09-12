@@ -19,7 +19,8 @@ class IsolateTest extends Test:
     sealed trait Forking extends ContextEffect[Int]
 
     def forking[A, S](value: Int)(v: A < (Forking & S))(using Frame): A < S =
-        ContextEffect.handle(Tag[Forking])(
+        ContextEffect.handle(
+            Tag[Forking],
             (_: Maybe[Int]) => value,
             fork = (_: Int) => -99,
             join = (parent: Int, _: Int, _: Int) => parent
@@ -612,7 +613,8 @@ class IsolateTest extends Test:
                 contextual.capture { st =>
                     contextual.restore(contextual.isolate(st, read)).map(child => read.map(origin => (child, origin)))
                 }
-            val r = ContextEffect.handle(Tag[Bind])(
+            val r = ContextEffect.handle(
+                Tag[Bind],
                 _.getOrElse(10),
                 fork = (parent: Int) => parent * 2,
                 join = (parent: Int, _: Int, _: Int) => parent
@@ -634,7 +636,8 @@ class IsolateTest extends Test:
                 contextual.capture { st =>
                     contextual.restore(contextual.isolate(st, read))
                 }
-            val r = ContextEffect.handle(Tag[Bind])(
+            val r = ContextEffect.handle(
+                Tag[Bind],
                 _.getOrElse(10),
                 fork = (parent: Int) => parent * 2,
                 join = (parent: Int, forked: Int, child: Int) =>
@@ -650,7 +653,8 @@ class IsolateTest extends Test:
                 contextual.capture { st =>
                     contextual.restore(contextual.isolate(st, read)).map(child => read.map(after => (child, after)))
                 }
-            val r = ContextEffect.handle(Tag[Bind])(
+            val r = ContextEffect.handle(
+                Tag[Bind],
                 _.getOrElse(10),
                 fork = (parent: Int) => parent * 2,
                 join = (parent: Int, _: Int, child: Int) => parent + child
@@ -664,14 +668,16 @@ class IsolateTest extends Test:
                 contextual.capture { st =>
                     contextual.restore(contextual.isolate(st, read.map(a => readOuter.map(_ + a))))
                 }
-            val inner = ContextEffect.handle(Tag[Bind])(
+            val inner = ContextEffect.handle(
+                Tag[Bind],
                 _.getOrElse(1),
                 fork = (parent: Int) => parent,
                 join = (parent: Int, _: Int, _: Int) =>
                     order = "bind" :: order
                     parent
             )(body)
-            val r = ContextEffect.handle(Tag[OuterBind])(
+            val r = ContextEffect.handle(
+                Tag[OuterBind],
                 _.getOrElse(2),
                 fork = (parent: Int) => parent,
                 join = (parent: Int, _: Int, _: Int) =>
@@ -685,7 +691,8 @@ class IsolateTest extends Test:
         "a region exited before the merge is not joined" in {
             var joins = 0
             val captured: (Stack.Snapshot, Stack.Snapshot, Int) < Any =
-                ContextEffect.handle(Tag[Bind])(
+                ContextEffect.handle(
+                    Tag[Bind],
                     _.getOrElse(10),
                     fork = (parent: Int) => parent,
                     join = (parent: Int, _: Int, _: Int) =>
@@ -712,7 +719,8 @@ class IsolateTest extends Test:
                     val iso = contextual.isolate(st, read)
                     contextual.restore(iso).map(a => contextual.restore(iso).map(b => (a, b)))
                 }
-            val r = ContextEffect.handle(Tag[Bind])(
+            val r = ContextEffect.handle(
+                Tag[Bind],
                 _.getOrElse(10),
                 fork = (parent: Int) =>
                     forks += 1
@@ -750,8 +758,8 @@ class IsolateTest extends Test:
 
         "a merging join updates the layer that was visible at the fork" in {
             val v =
-                ContextEffect.handle(Tag[TestEffect1])(100, (_: Int) => 100, (s: Int) => s, (p: Int, f: Int, _: Int) => p + f) {
-                    ContextEffect.handle(Tag[TestEffect1])(5, (_: Int) => 5, (s: Int) => s, (p: Int, f: Int, _: Int) => p + f) {
+                ContextEffect.handle(Tag[TestEffect1], 100, (_: Int) => 100, (s: Int) => s, (p: Int, f: Int, _: Int) => p + f) {
+                    ContextEffect.handle(Tag[TestEffect1], 5, (_: Int) => 5, (s: Int) => s, (p: Int, f: Int, _: Int) => p + f) {
                         Isolate.internal.Contextual.run(()).map(_ => ContextEffect.suspend(Tag[TestEffect1]))
                     }
                 }
@@ -760,7 +768,7 @@ class IsolateTest extends Test:
 
         "a merging join outlives an arrow region that closes after the restore" in {
             val v =
-                ContextEffect.handle(Tag[TestEffect1])(5, (_: Int) => 5, (s: Int) => s, (p: Int, f: Int, _: Int) => p + f) {
+                ContextEffect.handle(Tag[TestEffect1], 5, (_: Int) => 5, (s: Int) => s, (p: Int, f: Int, _: Int) => p + f) {
                     ArrowEffect.handleCont(Tag[NotContextEffect], Isolate.internal.Contextual.run(()))([C] => (_, cont) => cont(0), a => a)
                         .map(_ => ContextEffect.suspend(Tag[TestEffect1]))
                 }
@@ -769,7 +777,8 @@ class IsolateTest extends Test:
 
         "an isolate cycle fires done once, for the region the user installed, with the joined state" in {
             val log = ListBuffer[String]()
-            val r: Int < Any = ContextEffect.handle(Tag[TestEffect1])(
+            val r: Int < Any = ContextEffect.handle(
+                Tag[TestEffect1],
                 (o: Maybe[Int]) => o.getOrElse(10),
                 fork = (p: Int) => p * 2,
                 join = (p: Int, _: Int, c: Int) => p + c,
@@ -781,11 +790,11 @@ class IsolateTest extends Test:
 
         "a read after a restored crossing sees the scope it restores in, and the join lands on the live region" in {
             val v =
-                ContextEffect.handle(Tag[TestEffect1])(1, (_: Int) => 1, (s: Int) => s, (p: Int, f: Int, _: Int) => p + f) {
-                    ContextEffect.handle(Tag[TestEffect1])(2, (_: Int) => 2, (s: Int) => s, (p: Int, f: Int, _: Int) => p + f) {
+                ContextEffect.handle(Tag[TestEffect1], 1, (_: Int) => 1, (s: Int) => s, (p: Int, f: Int, _: Int) => p + f) {
+                    ContextEffect.handle(Tag[TestEffect1], 2, (_: Int) => 2, (s: Int) => s, (p: Int, f: Int, _: Int) => p + f) {
                         Isolate.internal.Contextual.nest(())
                     }.map { nested =>
-                        ContextEffect.handle(Tag[TestEffect1])(10, (_: Int) => 10, (s: Int) => s, (p: Int, f: Int, _: Int) => p + f) {
+                        ContextEffect.handle(Tag[TestEffect1], 10, (_: Int) => 10, (s: Int) => s, (p: Int, f: Int, _: Int) => p + f) {
                             nested.map(_ => ContextEffect.suspend(Tag[TestEffect1]))
                         }.map(inner => ContextEffect.suspend(Tag[TestEffect1]).map(outer => (inner, outer)))
                     }
@@ -823,7 +832,7 @@ class IsolateTest extends Test:
         }
 
         "a fork of a fork asks the same strategies" in {
-            val v = ContextEffect.handle(Tag[TestEffect1])(2, (_: Int) => 2, (n: Int) => n + 1, (p: Int, _: Int, _: Int) => p)(
+            val v = ContextEffect.handle(Tag[TestEffect1], 2, (_: Int) => 2, (n: Int) => n + 1, (p: Int, _: Int, _: Int) => p)(
                 crossing(crossing(read1))
             )
             assert(v.eval.eval.eval == 4)
@@ -851,7 +860,8 @@ class IsolateTest extends Test:
                 [C] => (_, cont) => cont(1).map(x => cont(2).map(y => x * 100 + y)),
                 a => a
             )
-            val r: (Int, Int) < Any = ContextEffect.handle(Tag[TestEffect1])(
+            val r: (Int, Int) < Any = ContextEffect.handle(
+                Tag[TestEffect1],
                 (o: Maybe[Int]) => o.getOrElse(10),
                 fork = (p: Int) => p * 2,
                 join = (p: Int, _: Int, c: Int) => p + c,
@@ -867,7 +877,8 @@ class IsolateTest extends Test:
                 requestStop()
                 Effect.defer(c + 1)
             })
-            val prog: (Int, Int) < Any = ContextEffect.handle(Tag[TestEffect1])(
+            val prog: (Int, Int) < Any = ContextEffect.handle(
+                Tag[TestEffect1],
                 (o: Maybe[Int]) => o.getOrElse(10),
                 fork = (p: Int) => p * 2,
                 join = (p: Int, _: Int, c: Int) => p + c,
@@ -884,7 +895,8 @@ class IsolateTest extends Test:
             var stash = Maybe.empty[Arrow[Int, Int, Ask & TestEffect1]]
             val log   = ListBuffer[String]()
             def region[A](label: String)(v: A < TestEffect1): A < Any =
-                ContextEffect.handle(Tag[TestEffect1])(
+                ContextEffect.handle(
+                    Tag[TestEffect1],
                     (o: Maybe[Int]) => o.getOrElse(10),
                     fork = (p: Int) => p * 2,
                     join = (p: Int, _: Int, c: Int) =>

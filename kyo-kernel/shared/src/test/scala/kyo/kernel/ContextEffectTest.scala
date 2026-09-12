@@ -275,7 +275,8 @@ class ContextEffectTest extends AnyFreeSpec:
     "completion and release" - {
 
         def held[A, S](value: Int, onExit: Int => Unit)(v: A < (Count & S)): A < S =
-            ContextEffect.handle(Tag[Count])(
+            ContextEffect.handle(
+                Tag[Count],
                 derive = (_: Maybe[Int]) => value,
                 fork = (s: Int) => s,
                 join = (parent: Int, _: Int, _: Int) => parent,
@@ -323,7 +324,8 @@ class ContextEffectTest extends AnyFreeSpec:
         }
 
         def logged[A, S](log: ListBuffer[String])(v: A < (Count & S)): A < S =
-            ContextEffect.handle(Tag[Count])(
+            ContextEffect.handle(
+                Tag[Count],
                 derive = (_: Maybe[Int]) => 1,
                 fork = (s: Int) => s,
                 join = (parent: Int, _: Int, _: Int) => parent,
@@ -355,10 +357,12 @@ class ContextEffectTest extends AnyFreeSpec:
             val v: Int < Any =
                 ContextEffect.handleInheritable(Tag[Count], 5)(
                     Effect.defer(
-                        ContextEffect.handleInheritable(Tag[Count]) { (outer: Maybe[Int]) =>
-                            seen = Maybe(outer)
-                            outer.getOrElse(0) + 1
-                        }(42: Int < Count)
+                        ContextEffect.handleInheritable(
+                            Tag[Count],
+                            (outer: Maybe[Int]) =>
+                                seen = Maybe(outer)
+                                outer.getOrElse(0) + 1
+                        )(42: Int < Count)
                     )
                 )
             assert(v.eval == 42)
@@ -412,7 +416,8 @@ class ContextEffectTest extends AnyFreeSpec:
 
     "reading audit pins" - {
         def hooked[A, S](log: ListBuffer[String], name: String, value: Int)(v: A < (Count & S)): A < S =
-            ContextEffect.handle(Tag[Count])(
+            ContextEffect.handle(
+                Tag[Count],
                 derive = (_: Maybe[Int]) => value,
                 fork = (s: Int) => s,
                 join = (parent: Int, _: Int, _: Int) => parent,
@@ -437,7 +442,8 @@ class ContextEffectTest extends AnyFreeSpec:
         "a throwing done is followed by one release carrying the failure" in {
             val log  = ListBuffer[String]()
             val boom = new RuntimeException("boom")
-            val r: Int < Any = ContextEffect.handle(Tag[Count])(
+            val r: Int < Any = ContextEffect.handle(
+                Tag[Count],
                 derive = (_: Maybe[Int]) => 7,
                 fork = (p: Int) => p,
                 join = (p: Int, _: Int, _: Int) => p,

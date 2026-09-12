@@ -319,7 +319,7 @@ class KernelTest extends AnyFreeSpec:
         }
 
         "ContextEffect.handleNonInheritable deriving" in {
-            val v = ContextEffect.handleNonInheritable(Tag[Level])((outer: Maybe[Int]) => outer.getOrElse(7) + 1) {
+            val v = ContextEffect.handleNonInheritable(Tag[Level], (outer: Maybe[Int]) => outer.getOrElse(7) + 1) {
                 ContextEffect.suspend(Tag[Level])
             }
             assert(v.eval == 8)
@@ -526,18 +526,19 @@ class KernelTest extends AnyFreeSpec:
         def level: Int < Level = ContextEffect.suspend(Tag[Level])
 
         "a fork strategy is accepted at the handle site" in {
-            val r = ContextEffect.handle(Tag[Level])(7, (l: Int) => l, (l: Int) => l + 1, (parent: Int, _: Int, _: Int) => parent)(level)
+            val r = ContextEffect.handle(Tag[Level], 7, (l: Int) => l, (l: Int) => l + 1, (parent: Int, _: Int, _: Int) => parent)(level)
             assert(r.eval == 7)
         }
 
         "a join strategy is accepted at the handle site" in {
-            val r = ContextEffect.handle(Tag[Level])(7, (l: Int) => l, (l: Int) => l, (parent: Int, _: Int, _: Int) => parent)(level)
+            val r = ContextEffect.handle(Tag[Level], 7, (l: Int) => l, (l: Int) => l, (parent: Int, _: Int, _: Int) => parent)(level)
             assert(r.eval == 7)
         }
 
         "the done and release hooks are accepted at the handle site" in {
             var completed = false
-            val r = ContextEffect.handle(Tag[Level])(
+            val r = ContextEffect.handle(
+                Tag[Level],
                 derive = (_: Maybe[Int]) => 7,
                 fork = (l: Int) => l,
                 join = (parent: Int, _: Int, _: Int) => parent,

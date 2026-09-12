@@ -345,7 +345,8 @@ class BracketTest extends AnyFreeSpec:
             sealed trait Cfg extends ContextEffect[Int]
             val body: Int < Ask =
                 Bracket(Effect.defer(1)) { a =>
-                    ContextEffect.handle(Tag[Cfg])(
+                    ContextEffect.handle(
+                        Tag[Cfg],
                         (_: Maybe[Int]).getOrElse(0),
                         fork = (parent: Int) => parent,
                         join = (parent: Int, _: Int, _: Int) => parent,

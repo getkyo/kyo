@@ -744,10 +744,12 @@ class LoopTest extends AnyFreeSpec:
     "repeat enters a context region each time" in {
         var entered = 0
         val region: Int < Any =
-            ContextEffect.handleInheritable(Tag[Cfg]) { (_: Maybe[Int]) =>
-                entered += 1
-                1
-            }(ContextEffect.suspend(Tag[Cfg]))
+            ContextEffect.handleInheritable(
+                Tag[Cfg],
+                (_: Maybe[Int]) =>
+                    entered += 1
+                    1
+            )(ContextEffect.suspend(Tag[Cfg]))
         Loop.repeat(3)(region).eval
         assert(entered == 3)
     }

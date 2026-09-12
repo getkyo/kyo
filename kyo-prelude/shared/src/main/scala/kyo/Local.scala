@@ -99,7 +99,8 @@ abstract class Local[A] extends Serializable:
         ifUndefined: Map[Local[?], AnyRef],
         ifDefined: Map[Local[?], AnyRef] => Map[Local[?], AnyRef]
     )(v: B < S)(using Frame): B < S =
-        ContextEffect.handle(Tag[State])(
+        ContextEffect.handle(
+            Tag[State],
             ifUndefined,
             ifDefined,
             fork = map =>

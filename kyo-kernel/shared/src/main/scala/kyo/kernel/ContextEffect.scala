@@ -150,7 +150,7 @@ object ContextEffect:
         inline effectTag: Tag[E],
         inline value: A
     )(v: B < (E & S))(using inline _frame: Frame): B < S =
-        handleInheritable(effectTag)((_: Maybe[A]) => value)(v)
+        handleInheritable(effectTag, (_: Maybe[A]) => value)(v)
 
     /** Handles a context effect by either providing a new value or transforming an existing one. This allows for layered handling of
       * context values, where a handler can either establish a new value when none exists or modify a value that was provided by an outer
@@ -172,7 +172,7 @@ object ContextEffect:
     )(v: B < (E & S))(
         using inline _frame: Frame
     ): B < S =
-        handleInheritable(effectTag)((outer: Maybe[A]) => outer.fold(ifUndefined)(ifDefined))(v)
+        handleInheritable(effectTag, (outer: Maybe[A]) => outer.fold(ifUndefined)(ifDefined))(v)
 
     /** Handles a context effect by deriving the region's value from the outer one, if any. The value is inherited across async boundaries.
       *
@@ -183,13 +183,11 @@ object ContextEffect:
       * @param v
       *   The computation requiring the context value
       */
-    // TODO not sure why this is using a separate param group and the others aren't. I imagine it's inference, let's either have all with two param groups or none
     inline def handleInheritable[A, E <: ContextEffect[A], B, S](
-        inline effectTag: Tag[E]
-    )(
+        inline effectTag: Tag[E],
         inline derive: Maybe[A] => A
     )(v: B < (E & S))(using inline _frame: Frame): B < S =
-        handle(effectTag)(derive, (parent: A) => parent, (parent: A, _: A, _: A) => parent)(v)
+        handle(effectTag, derive, (parent: A) => parent, (parent: A, _: A, _: A) => parent)(v)
 
     /** Handles a context effect with a value that does not cross into forks.
       *
@@ -204,7 +202,7 @@ object ContextEffect:
         inline effectTag: Tag[E],
         inline value: A
     )(v: B < (E & S))(using inline _frame: Frame): B < S =
-        handleNonInheritable(effectTag)((_: Maybe[A]) => value)(v)
+        handleNonInheritable(effectTag, (_: Maybe[A]) => value)(v)
 
     /** Handles a context effect with a value that does not cross into forks, deriving it from the outer one.
       *
@@ -222,7 +220,7 @@ object ContextEffect:
         inline ifUndefined: A,
         inline ifDefined: A => A
     )(v: B < (E & S))(using inline _frame: Frame): B < S =
-        handleNonInheritable(effectTag)((outer: Maybe[A]) => outer.fold(ifUndefined)(ifDefined))(v)
+        handleNonInheritable(effectTag, (outer: Maybe[A]) => outer.fold(ifUndefined)(ifDefined))(v)
 
     /** Handles a context effect whose value does not cross into forks.
       *
@@ -241,12 +239,12 @@ object ContextEffect:
       *   The computation requiring the context value
       */
     inline def handleNonInheritable[A, E <: ContextEffect[A], B, S](
-        inline effectTag: Tag[E]
-    )(
+        inline effectTag: Tag[E],
         inline derive: Maybe[A] => A
     )(v: B < (E & S))(using inline _frame: Frame): B < S =
         def derived(outer: Maybe[A]): A = derive(outer)
-        handle(effectTag)(
+        handle(
+            effectTag,
             derived,
             fork = (_: A) => derived(Maybe.empty),
             join = (parent: A, _: A, _: A) => parent
@@ -269,14 +267,13 @@ object ContextEffect:
       *   The computation requiring the context value
       */
     inline def handle[A, E <: ContextEffect[A], B, S](
-        inline effectTag: Tag[E]
-    )(
+        inline effectTag: Tag[E],
         inline ifUndefined: A,
         inline ifDefined: A => A,
         inline fork: A => A,
         inline join: (A, A, A) => A
     )(v: B < (E & S))(using inline _frame: Frame): B < S =
-        handle(effectTag)((outer: Maybe[A]) => outer.fold(ifUndefined)(ifDefined), fork, join)(v)
+        handle(effectTag, (outer: Maybe[A]) => outer.fold(ifUndefined)(ifDefined), fork, join)(v)
 
     /** Handles a context effect with explicit fork and join strategies and a release hook.
       *
@@ -296,15 +293,14 @@ object ContextEffect:
       *   The computation requiring the context value
       */
     inline def handle[A, E <: ContextEffect[A], B, S](
-        inline effectTag: Tag[E]
-    )(
+        inline effectTag: Tag[E],
         inline ifUndefined: A,
         inline ifDefined: A => A,
         inline fork: A => A,
         inline join: (A, A, A) => A,
         inline release: (A, Throwable) => Unit
     )(v: B < (E & S))(using inline _frame: Frame): B < S =
-        handle(effectTag)((outer: Maybe[A]) => outer.fold(ifUndefined)(ifDefined), fork, join, release = release)(v)
+        handle(effectTag, (outer: Maybe[A]) => outer.fold(ifUndefined)(ifDefined), fork, join, release = release)(v)
 
     /** Binds a value over a computation, with the full set of strategies.
       *
@@ -332,8 +328,7 @@ object ContextEffect:
       */
     @nowarn("msg=anonymous")
     inline def handle[A, E <: ContextEffect[A], B, S](
-        inline effectTag: Tag[E]
-    )(
+        inline effectTag: Tag[E],
         inline derive: Maybe[A] => A,
         inline fork: A => A,
         inline join: (A, A, A) => A,

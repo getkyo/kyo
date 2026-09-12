@@ -146,7 +146,8 @@ object Scope:
             // A fork shares registration but not membership: a run opened inside a fork is its own root, and closing
             // it from here would release a resource its owner is still using. `StreamCoreExtensionsTest:890` pins
             // the registration half, that a resource's lifetime does not depend on whether a combinator forked.
-            ContextEffect.handle(Tag[Scope])(
+            ContextEffect.handle(
+                Tag[Scope],
                 derive = (outer: Maybe[Finalizer]) =>
                     outer.foreach { enclosing =>
                         import AllowUnsafe.embrace.danger

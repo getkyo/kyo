@@ -318,9 +318,9 @@ class PollTest extends kyo.test.Test[Any]:
             val ranFirst = Poll.run(Chunk.empty):
                 Poll.runFirst[T.T2](poll).map:
                     case Right(cont) =>
-                        Poll.runFirst[T.T1](cont(Present(T.T2("zero")))).map:
+                        Poll.runFirst[T.T1](cont(Present(T.T2("zero")): Maybe[T.T2])).map:
                             case Right(cont) =>
-                                Poll.run(Chunk.empty)(cont(Present(T.T1(0))))
+                                Poll.run(Chunk.empty)(cont(Present(T.T1(0)): Maybe[T.T1]))
                             case Left(a) => a
                     case Left(a) => a
 

@@ -749,14 +749,16 @@ class EvalTest extends AnyFreeSpec:
                     Effect.defer(readA.map(_ + c))
                 }
             val inner: Int < CfgB =
-                ContextEffect.handle(Tag[CfgA])(
+                ContextEffect.handle(
+                    Tag[CfgA],
                     _.getOrElse(1),
                     fork = (parent: Int) => parent,
                     join = (parent: Int, _: Int, _: Int) => parent,
                     release = (_: Int, _: Throwable) => discard(log += "inner")
                 )(body)
             val outer: Int < Any =
-                ContextEffect.handle(Tag[CfgB])(
+                ContextEffect.handle(
+                    Tag[CfgB],
                     _.getOrElse(2),
                     fork = (parent: Int) => parent,
                     join = (parent: Int, _: Int, _: Int) => parent,
@@ -776,14 +778,16 @@ class EvalTest extends AnyFreeSpec:
             def readA: Int < CfgA         = ContextEffect.suspend(Tag[CfgA])
             val body: Int < (CfgA & CfgB) = readA.map(a => readA.map(_ + a))
             val inner: Int < CfgB =
-                ContextEffect.handle(Tag[CfgA])(
+                ContextEffect.handle(
+                    Tag[CfgA],
                     _.getOrElse(1),
                     fork = (parent: Int) => parent,
                     join = (parent: Int, _: Int, _: Int) => parent,
                     release = (_: Int, _: Throwable) => discard(log += "inner")
                 )(body)
             val outer: Int < Any =
-                ContextEffect.handle(Tag[CfgB])(
+                ContextEffect.handle(
+                    Tag[CfgB],
                     _.getOrElse(2),
                     fork = (parent: Int) => parent,
                     join = (parent: Int, _: Int, _: Int) => parent,
@@ -813,7 +817,8 @@ class EvalTest extends AnyFreeSpec:
             val log     = ListBuffer[String]()
             sealed trait Cfg extends ContextEffect[Int]
             val region: Int < Any =
-                ContextEffect.handle(Tag[Cfg])(
+                ContextEffect.handle(
+                    Tag[Cfg],
                     derive = (_: Maybe[Int]) =>
                         derives += 1
                         derives
@@ -834,7 +839,8 @@ class EvalTest extends AnyFreeSpec:
             var bracket = 0
             sealed trait Cfg extends ContextEffect[Int]
             def hooked[A, S](value: Int)(v: A < (Cfg & S)): A < S =
-                ContextEffect.handle(Tag[Cfg])(
+                ContextEffect.handle(
+                    Tag[Cfg],
                     derive = (_: Maybe[Int]) => value,
                     fork = (s: Int) => s,
                     join = (p: Int, _: Int, _: Int) => p,
@@ -875,7 +881,8 @@ class EvalTest extends AnyFreeSpec:
                     Effect.defer(read.map(_ + c))
                 }
             val handled: Int < Any =
-                ContextEffect.handle(Tag[Cfg])(
+                ContextEffect.handle(
+                    Tag[Cfg],
                     _.getOrElse(7),
                     fork = (parent: Int) => parent,
                     join = (parent: Int, _: Int, _: Int) => parent,
@@ -892,7 +899,8 @@ class EvalTest extends AnyFreeSpec:
             sealed trait Cfg extends ContextEffect[Int]
             val body: Int < Cfg = ContextEffect.suspend(Tag[Cfg]).map(_ => (throw Boom): Int)
             val handled: Int < Any =
-                ContextEffect.handle(Tag[Cfg])(
+                ContextEffect.handle(
+                    Tag[Cfg],
                     _.getOrElse(7),
                     fork = (parent: Int) => parent,
                     join = (parent: Int, _: Int, _: Int) => parent,
@@ -913,7 +921,8 @@ class EvalTest extends AnyFreeSpec:
                 _ => Maybe(9)
             )
             val handled: Int < Any =
-                ContextEffect.handle(Tag[Cfg])(
+                ContextEffect.handle(
+                    Tag[Cfg],
                     _.getOrElse(7),
                     fork = (parent: Int) => parent,
                     join = (parent: Int, _: Int, _: Int) => parent,
@@ -936,14 +945,16 @@ class EvalTest extends AnyFreeSpec:
                     Effect.defer(readA.map(_ + c))
                 }
             val inner: Int < CfgB =
-                ContextEffect.handle(Tag[CfgA])(
+                ContextEffect.handle(
+                    Tag[CfgA],
                     _.getOrElse(1),
                     fork = (parent: Int) => parent,
                     join = (parent: Int, _: Int, _: Int) => parent,
                     release = (_: Int, _: Throwable) => throw Bad
                 )(body)
             val handled: Int < Any =
-                ContextEffect.handle(Tag[CfgB])(
+                ContextEffect.handle(
+                    Tag[CfgB],
                     _.getOrElse(2),
                     fork = (parent: Int) => parent,
                     join = (parent: Int, _: Int, _: Int) => parent,
@@ -968,14 +979,16 @@ class EvalTest extends AnyFreeSpec:
                     Effect.defer(readA.map(_ + c))
                 }
             val inner: Int < CfgB =
-                ContextEffect.handle(Tag[CfgA])(
+                ContextEffect.handle(
+                    Tag[CfgA],
                     _.getOrElse(1),
                     fork = (parent: Int) => parent,
                     join = (parent: Int, _: Int, _: Int) => parent,
                     release = (_: Int, ex: Throwable) => throw ex
                 )(body)
             val handled: Int < Any =
-                ContextEffect.handle(Tag[CfgB])(
+                ContextEffect.handle(
+                    Tag[CfgB],
                     _.getOrElse(2),
                     fork = (parent: Int) => parent,
                     join = (parent: Int, _: Int, _: Int) => parent,
@@ -1124,7 +1137,8 @@ class EvalTest extends AnyFreeSpec:
             val log = ListBuffer[String]()
             sealed trait Cfg extends ContextEffect[Int]
             val body: Int < Ask =
-                ContextEffect.handle(Tag[Cfg])(
+                ContextEffect.handle(
+                    Tag[Cfg],
                     _.getOrElse(7),
                     fork = (parent: Int) => parent,
                     join = (parent: Int, _: Int, _: Int) => parent,
@@ -1144,7 +1158,8 @@ class EvalTest extends AnyFreeSpec:
             sealed trait CfgA extends ContextEffect[Int]
             sealed trait CfgB extends ContextEffect[Int]
             def scoped[E <: ContextEffect[Int]](tag: Tag[E], name: String)(v: Int < (Ask & E)): Int < Ask =
-                ContextEffect.handle(tag)(
+                ContextEffect.handle(
+                    tag,
                     (_: Maybe[Int]).getOrElse(0),
                     fork = (parent: Int) => parent,
                     join = (parent: Int, _: Int, _: Int) => parent,
@@ -1169,7 +1184,8 @@ class EvalTest extends AnyFreeSpec:
             val log = ListBuffer[Int]()
             sealed trait Cfg extends ContextEffect[Int]
             val body: Int < Ask =
-                ContextEffect.handle(Tag[Cfg])(
+                ContextEffect.handle(
+                    Tag[Cfg],
                     _.getOrElse(7),
                     fork = (parent: Int) => parent,
                     join = (parent: Int, _: Int, _: Int) => parent,
@@ -1186,7 +1202,8 @@ class EvalTest extends AnyFreeSpec:
             sealed trait CfgB extends ContextEffect[Int]
             var drops = 0
             val body: Int < Ask =
-                ContextEffect.handle(Tag[CfgA])(
+                ContextEffect.handle(
+                    Tag[CfgA],
                     _.getOrElse(1),
                     fork = (parent: Int) => parent,
                     join = (parent: Int, _: Int, _: Int) => parent,
@@ -1198,7 +1215,8 @@ class EvalTest extends AnyFreeSpec:
             var completions = 0
             var releases    = 0
             val clean: Int < Any =
-                ContextEffect.handle(Tag[CfgB])(
+                ContextEffect.handle(
+                    Tag[CfgB],
                     _.getOrElse(2),
                     fork = (parent: Int) => parent,
                     join = (parent: Int, _: Int, _: Int) => parent,
