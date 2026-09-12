@@ -168,7 +168,6 @@ object Arrow:
             def frame                = _frame
             override def apply(v: A) = f(v)
             def apply[C, S2](v: A < S2, cont: Arrow[B, C, S2]) =
-                // TODO we have a more efficient representation for this in <.map, check if we can use it. Review all similar impls in kyo-kernel
                 v match
                     case v: Pending[A, S2] @unchecked =>
                         Effect.defer(v, this, cont)
