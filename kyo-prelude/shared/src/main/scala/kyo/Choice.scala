@@ -95,7 +95,7 @@ object Choice:
       *   A computation that produces a sequence of all possible outcomes
       */
     def run[A, S](v: A < (Choice & S))(using Frame): Chunk[A] < S =
-        ArrowEffect.handleContRepeated(Tag[Choice], v.map(Chunk[A](_)))(
+        ArrowEffect.handleCont(Tag[Choice], v.map(Chunk[A](_)))(
             [C] =>
                 (input, cont) =>
                     Kyo.foreach(Chunk.from(input))(v => Choice.run(cont(v))).map(_.flattenChunk.flattenChunk),
@@ -122,7 +122,7 @@ object Choice:
                         if pending.isEmpty then Loop.done
                         else
                             Kyo.foreach(pending) { v =>
-                                ArrowEffect.handleFirstRepeated(Tag[Choice], v)(
+                                ArrowEffect.handleFirst(Tag[Choice], v)(
                                     handle = [C] => (input, cont) => Chunk.from(input).map(cont(_)),
                                     done = r => Chunk(r: A < (Choice & S))
                                 )

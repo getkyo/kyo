@@ -1173,7 +1173,7 @@ class BracketTest extends AnyFreeSpec:
                     ask.map(a => if a == 20 then throw Boom else a + r)
                 }((_, o) => outcome = Maybe(o))
             val twice =
-                ArrowEffect.handleContRepeated(Tag[Ask], v)(
+                ArrowEffect.handleCont(Tag[Ask], v)(
                     [C] => (_, cont) => cont(10).map(a => cont(20).map(b => a + b)),
                     a => a
                 )
@@ -1190,7 +1190,7 @@ class BracketTest extends AnyFreeSpec:
                     ask.map(a => a + r)
                 }((r, _) => events :+= s"release $r")
             val twice =
-                ArrowEffect.handleContRepeated(Tag[Ask], v)(
+                ArrowEffect.handleCont(Tag[Ask], v)(
                     [C] => (_, cont) => cont(10).map(a => cont(20).map(b => a + b)),
                     a => a,
                     _ => Absent
@@ -1206,7 +1206,7 @@ class BracketTest extends AnyFreeSpec:
                     ask.map(a => if a == 20 then throw Boom else a + r)
                 }((_, o) => outcome = Maybe(o))
             val twice =
-                ArrowEffect.handleContRepeated(Tag[Ask], v)(
+                ArrowEffect.handleCont(Tag[Ask], v)(
                     [C] => (_, cont) => cont(10).map(a => cont(20).map(b => a + b)),
                     a => a,
                     _ => Maybe(-1)
@@ -1218,7 +1218,7 @@ class BracketTest extends AnyFreeSpec:
         "a recovering multi-shot clause declining lets the failure through" in {
             val v = Bracket(Effect.defer(1))(r => ask.map(a => if a == 20 then throw Boom else a + r))((_, _) => ())
             val twice =
-                ArrowEffect.handleContRepeated(Tag[Ask], v)(
+                ArrowEffect.handleCont(Tag[Ask], v)(
                     [C] => (_, cont) => cont(10).map(a => cont(20).map(b => a + b)),
                     a => a,
                     _ => Absent
@@ -1229,7 +1229,7 @@ class BracketTest extends AnyFreeSpec:
         "a recovering multi-shot clause answers a throw raised while its input is built" in {
             def boomInput: Int < Ask = throw Boom
             val twice =
-                ArrowEffect.handleContRepeated(Tag[Ask], boomInput)(
+                ArrowEffect.handleCont(Tag[Ask], boomInput)(
                     [C] => (_, cont) => cont(10).map(a => cont(20).map(b => a + b)),
                     a => a,
                     _ => Maybe(-2)
@@ -1402,7 +1402,7 @@ class BracketTest extends AnyFreeSpec:
                     }
                 }((_, _) => closed = true)
             val branches: Int < Ask =
-                ArrowEffect.handleFirstRepeated(Tag[Ask], v)(
+                ArrowEffect.handleFirst(Tag[Ask], v)(
                     handle = [C] =>
                         (_, cont) =>
                             closedAtClause = closed
