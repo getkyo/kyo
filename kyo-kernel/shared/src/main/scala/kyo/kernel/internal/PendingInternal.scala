@@ -1,6 +1,5 @@
 package kyo.kernel.internal
 
-import kyo.Chunk
 import kyo.Frame
 import kyo.Maybe
 import kyo.Tag
@@ -209,15 +208,15 @@ object Pending:
     /** A slice of computation set aside with what it needs to run again elsewhere, or later.
       *
       * `entries` is the snapshot of regions to reinstall before `value` resumes, so a parked slice carries its own context rather than
-      * depending on where it is picked up. `owed` carries the obligations those regions have not discharged yet, which the evaluator hands to
-      * the stack it resumes on.
+      * depending on where it is picked up. `releases` carries what the evaluation itself owed below those regions, which the evaluator hands
+      * to the stack it resumes on.
       *
-      * An empty `entries` is the degenerate case: nothing to reinstall, so the evaluator takes the debt and continues in place.
+      * An empty `entries` is the degenerate case: nothing to reinstall, so the evaluator takes the releases and continues in place.
       */
     final class Park[+A, -S](
         val value: Any < Any,
         val entries: Stack.Snapshot,
-        val owed: Chunk[Stack.Snapshot] = Chunk.empty
+        val releases: Stack.Releases = Stack.Releases.empty
     ) extends Pending[A, S]:
         Debugger.onAlloc(this)
 
