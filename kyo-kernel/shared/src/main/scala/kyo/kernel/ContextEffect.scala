@@ -342,12 +342,14 @@ object ContextEffect:
         def released(state: A, ex: Throwable): Unit = release(state, ex)
         val h =
             new Handler.ContextHandler[A, E, B, S]:
-                def tag                                                    = effectTag
-                def derive(outer: Maybe[A])                                = derived(outer)
-                def fork(parent: A)                                        = forked(parent)
-                def join(parent: A, forked: A, child: A)                   = joined(parent, forked, child)
-                override private[kyo] def done(state: A)                   = completed(state)
-                override private[kyo] def release(state: A, ex: Throwable) = released(state, ex)
+                def tag                                  = effectTag
+                def derive(outer: Maybe[A])              = derived(outer)
+                def fork(parent: A)                      = forked(parent)
+                def join(parent: A, forked: A, child: A) = joined(parent, forked, child)
+                // one hook for both endings: the region completed normally, or a failure unwound it
+                def release(state: A, failure: Maybe[Throwable]) =
+                    if failure.isEmpty then completed(state)
+                    else released(state, failure.get)
 
         new Pending.HandleContext[A, E, B, S]:
             override def frame = _frame

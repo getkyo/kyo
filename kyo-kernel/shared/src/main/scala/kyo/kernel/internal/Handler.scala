@@ -30,7 +30,6 @@ import scala.annotation.publicInBinary
 sealed abstract private[kernel] class Handler[E <: Effect, A, -S]:
     def tag: Tag[E]
 
-
 @publicInBinary private[kernel] object Handler:
 
     sealed abstract class ArrowHandler[State, E <: Effect, A, B, -S] extends Handler[E, B, S]:
@@ -51,6 +50,7 @@ sealed abstract private[kernel] class Handler[E <: Effect, A, -S]:
                 case ex =>
                     EffectTrace.attach(ex, kyo, cont, stack)
                     throw ex
+    end ContHandler
 
     abstract class MaskingHandler[E <: Effect, A, B, S] extends ArrowHandler[Unit, E, A, B, S]:
         def run[X](operation: X < E, next: Arrow[X, A, E & S]): A < (E & S)
@@ -61,6 +61,7 @@ sealed abstract private[kernel] class Handler[E <: Effect, A, -S]:
                 case ex =>
                     EffectTrace.attach(ex, kyo, next, stack)
                     throw ex
+    end MaskingHandler
 
     /** The peel behind [[kyo.kernel.ArrowEffect.handleFirst]]: the clause answers the first operation and carries its continuation out as
       * the region's own result, so the remainder leaves the region as a value. It is the only escaping handler; the regions it dumped move
@@ -78,6 +79,7 @@ sealed abstract private[kernel] class Handler[E <: Effect, A, -S]:
                 case ex =>
                     EffectTrace.attach(ex, kyo, cont, stack)
                     throw ex
+    end FirstHandler
 
     abstract class LoopHandler[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends ArrowHandler[Unit, E, A, B, S]:
         def run[X](input: I[X]): Outcome[O[X] < (E & S), B < S] < S
@@ -159,6 +161,7 @@ sealed abstract private[kernel] class Handler[E <: Effect, A, -S]:
                     Loop.continue(Effect.deferInline[A, E & S](throw ex)(using frame))
             end try
         end answers
+    end LoopHandler
 
     abstract class LoopStateHandler[State, I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends ArrowHandler[State, E, A, B, S]:
         def run[X](state: State, input: I[X]): Outcome2[State, O[X] < (E & S), B < S] < S
@@ -227,12 +230,14 @@ sealed abstract private[kernel] class Handler[E <: Effect, A, -S]:
                     Loop.continue(at, Effect.deferInline[A, E & S](throw ex)(using frame))
             end try
         end answers
+    end LoopStateHandler
 
     abstract class ContextHandler[State, E <: ContextEffect[State], A, -S] extends Handler[E, A, S]:
         def derive(outer: Maybe[State]): State
         def fork(parent: State): State
         def join(parent: State, forked: State, child: State): State
-        def release(state: State, failure: Maybe[Throwable]): Unit 
+        def release(state: State, failure: Maybe[Throwable]): Unit
+    end ContextHandler
 
     /** Attaches a cont to an outcome whose clause has not settled yet, turning the clause's answer into the
       * region's remaining computation.

@@ -311,7 +311,7 @@ object Isolate:
                 def derive(outer: Maybe[State]): State                      = origin.derive(outer)
                 def fork(parent: State): State                              = origin.fork(parent)
                 def join(parent: State, forked: State, child: State): State = origin.join(parent, forked, child)
-                override private[kyo] def reenter(state: State): Unit       = origin.reenter(state)
+                def release(state: State, failure: Maybe[Throwable]): Unit  = origin.release(state, failure)
             end Forked
 
             private def fork(entries: Stack.Snapshot): Stack.Snapshot =

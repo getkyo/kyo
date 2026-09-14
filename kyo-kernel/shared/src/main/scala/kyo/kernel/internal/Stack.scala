@@ -230,8 +230,8 @@ final private[kernel] class Stack:
       * below, which runs them once, when its own extent ends.
       */
     def dump(from: Int): Stack.Snapshot =
-        val count             = size - from
-        val out               = new Array[AnyRef](count * 4)
+        val count                 = size - from
+        val out                   = new Array[AnyRef](count * 4)
         var moved: Stack.Releases = Stack.Releases.empty
         @tailrec def loop(i: Int): Unit =
             if i < count then
@@ -282,47 +282,51 @@ private[kernel] object Stack:
     opaque type Releases = Null | (Maybe[Throwable] => Unit) | Chunk[Maybe[Throwable] => Unit]
 
     object Releases:
-        val empty: Releases                                = null
-        def apply(f: Maybe[Throwable] => Unit): Releases   = f
+        val empty: Releases                              = null
+        def apply(f: Maybe[Throwable] => Unit): Releases = f
 
     extension (self: Releases)
-        def isEmpty: Boolean = self == null
+        // Reference identity rather than `==`: the union has a function arm, which has no multiversal equality.
+        def isEmpty: Boolean = self.asInstanceOf[AnyRef] eq null
 
         /** Appends one release, keeping a single bare and materializing a `Chunk` only when a second arrives. */
         def add(f: Maybe[Throwable] => Unit): Releases =
-            self match
-                case null                                          => f
-                case c: Chunk[Maybe[Throwable] => Unit] @unchecked => c.append(f)
-                case g                                             => Chunk(g.asInstanceOf[Maybe[Throwable] => Unit], f)
+            if self.isEmpty then f
+            else
+                self match
+                    case c: Chunk[Maybe[Throwable] => Unit] @unchecked => c.append(f)
+                    case g                                             => Chunk(g.asInstanceOf[Maybe[Throwable] => Unit], f)
 
         /** Appends `that` after this one. */
         def concat(that: Releases): Releases =
-            self match
-                case null => that
-                case c: Chunk[Maybe[Throwable] => Unit] @unchecked =>
-                    that match
-                        case null                                           => self
-                        case c2: Chunk[Maybe[Throwable] => Unit] @unchecked => c.concat(c2)
-                        case f2                                             => c.append(f2.asInstanceOf[Maybe[Throwable] => Unit])
-                case g =>
-                    that match
-                        case null                                           => self
-                        case c2: Chunk[Maybe[Throwable] => Unit] @unchecked => Chunk(g.asInstanceOf[Maybe[Throwable] => Unit]).concat(c2)
-                        case f2 => Chunk(g.asInstanceOf[Maybe[Throwable] => Unit], f2.asInstanceOf[Maybe[Throwable] => Unit])
+            if self.isEmpty then that
+            else if that.isEmpty then self
+            else
+                self match
+                    case c: Chunk[Maybe[Throwable] => Unit] @unchecked =>
+                        that match
+                            case c2: Chunk[Maybe[Throwable] => Unit] @unchecked => c.concat(c2)
+                            case f2                                             => c.append(f2.asInstanceOf[Maybe[Throwable] => Unit])
+                    case g =>
+                        that match
+                            case c2: Chunk[Maybe[Throwable] => Unit] @unchecked =>
+                                Chunk(g.asInstanceOf[Maybe[Throwable] => Unit]).concat(c2)
+                            case f2 => Chunk(g.asInstanceOf[Maybe[Throwable] => Unit], f2.asInstanceOf[Maybe[Throwable] => Unit])
 
         /** Runs each release once, innermost first, with `failure`. A throw is handed to `onError` so the rest still run. */
         inline def run(failure: Maybe[Throwable])(inline onError: Throwable => Unit): Unit =
-            self match
-                case null => ()
-                case c: Chunk[Maybe[Throwable] => Unit] @unchecked =>
-                    var i = c.size - 1
-                    while i >= 0 do
-                        try c(i)(failure)
+            if !self.isEmpty then
+                self match
+                    case c: Chunk[Maybe[Throwable] => Unit] @unchecked =>
+                        var i = c.size - 1
+                        while i >= 0 do
+                            try c(i)(failure)
+                            catch case ex if !IsFatal(ex) => onError(ex)
+                            i -= 1
+                        end while
+                    case f =>
+                        try f.asInstanceOf[Maybe[Throwable] => Unit](failure)
                         catch case ex if !IsFatal(ex) => onError(ex)
-                        i -= 1
-                case f =>
-                    try f.asInstanceOf[Maybe[Throwable] => Unit](failure)
-                    catch case ex if !IsFatal(ex) => onError(ex)
     end extension
 
     /** Regions captured out of a stack, in the order it held them.
@@ -358,12 +362,12 @@ private[kernel] object Stack:
     end Snapshot
 
     extension (self: Snapshot)
-        def regions: Int                          = self.size / 4
-        def isEmpty: Boolean                      = self.size == 0
-        def handler(i: Int): Handler[?, ?, ?]     = self(i * 4).asInstanceOf[Handler[?, ?, ?]]
-        def state(i: Int): Any                    = self(i * 4 + 1)
-        def continuation(i: Int): Arrow[?, ?, ?]  = self(i * 4 + 2).asInstanceOf[Arrow[?, ?, ?]]
-        def releases(i: Int): Releases            = self(i * 4 + 3).asInstanceOf[Releases]
+        def regions: Int                         = self.size / 4
+        def isEmpty: Boolean                     = self.size == 0
+        def handler(i: Int): Handler[?, ?, ?]    = self(i * 4).asInstanceOf[Handler[?, ?, ?]]
+        def state(i: Int): Any                   = self(i * 4 + 1)
+        def continuation(i: Int): Arrow[?, ?, ?] = self(i * 4 + 2).asInstanceOf[Arrow[?, ?, ?]]
+        def releases(i: Int): Releases           = self(i * 4 + 3).asInstanceOf[Releases]
 
     end extension
 
