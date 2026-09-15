@@ -69,9 +69,11 @@ class SystemTest extends kyo.test.Test[Any]:
     }
 
     "lineSeparator" in {
+        // Compared against the host OS rather than `java.lang.System.lineSeparator()`: Scala.js hardcodes that call to "\n",
+        // so comparing against it would pass on Windows Node with the wrong separator.
         for
             separator <- System.lineSeparator
-            expected = j.System.lineSeparator()
+            expected = if kyo.internal.Platform.isWindows then "\r\n" else "\n"
         yield assert(separator == expected)
     }
 

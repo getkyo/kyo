@@ -96,6 +96,13 @@ class BrowserDetectionTest extends Test:
             assert(ex.getMessage.contains("browser"))
         }
 
+        "throws FfiLoadError.Unsupported, not a ReferenceError, when process is absent" in {
+            deleteGlobal("process")
+            discard(intercept[FfiLoadError.Unsupported] {
+                discard(NativeLoader.load("any_lib"))
+            })
+        }
+
         "does not raise the browser gate in Node (process defined)" in {
             // In Node the browser gate is off, so load does not raise the browser FfiLoadError.Unsupported. An arbitrary
             // unresolvable id still fails with LibraryNotFound (real path resolution is covered by NativeLoaderJsSpec); that
