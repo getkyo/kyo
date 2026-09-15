@@ -4,30 +4,17 @@ import java.io.InputStream
 import java.io.OutputStream
 import kyo.*
 import scala.scalajs.js
-import scala.scalajs.js.annotation.*
 import scala.scalajs.js.typedarray.Uint8Array
 
-// --- Node.js child_process facades ---
+// --- Node.js child_process facades, reached through NodeModules ---
 
 @js.native
-@JSImport("node:child_process", JSImport.Namespace)
-private[kyo] object NodeChildProcess extends js.Object:
+private[kyo] trait NodeChildProcessApi extends js.Object:
     def spawn(command: String, args: js.Array[String], options: js.Dynamic): NodeChildProcessInstance =
         js.native
     def spawnSync(command: String, args: js.Array[String], options: js.Dynamic): js.Dynamic =
         js.native
-end NodeChildProcess
-
-// Namespace imports accessed dynamically. @JSImport compiles to require() under CommonJS and
-// to import under ESModule, so these work on both the JS and WASM backends, unlike a
-// js.Dynamic.global.require call (require is not a global in a Node ES module).
-@js.native
-@JSImport("node:fs", JSImport.Namespace)
-private[kyo] object NodeFsModule extends js.Object
-
-@js.native
-@JSImport("node:path", JSImport.Namespace)
-private[kyo] object NodePathModule extends js.Object
+end NodeChildProcessApi
 
 @js.native
 private[kyo] trait NodeChildProcessInstance extends js.Object:
@@ -450,7 +437,7 @@ final private[kyo] class NodeCommandUnsafe(
         end match
     end childEnv
 
-    /** Builds the options object for NodeChildProcess.spawn. */
+    /** Builds the options object for NodeModules.childProcess.spawn. */
     private def buildOptions()(using AllowUnsafe): js.Dynamic =
         val opts = js.Dynamic.literal()
 
@@ -542,8 +529,8 @@ final private[kyo] class NodeCommandUnsafe(
         else
             val cmd = args.head
             try
-                val fs       = NodeFsModule.asInstanceOf[js.Dynamic]
-                val nodePath = NodePathModule.asInstanceOf[js.Dynamic]
+                val fs       = NodeModules.fs.asInstanceOf[js.Dynamic]
+                val nodePath = NodeModules.path.asInstanceOf[js.Dynamic]
                 val X_OK     = fs.constants.X_OK.asInstanceOf[Int]
                 // Helper: check if a file exists and is executable
                 def isExec(p: String): Boolean =
@@ -560,9 +547,6 @@ final private[kyo] class NodeCommandUnsafe(
                 then
                     if isExec(cmd) then Absent
                     else Present(ProgramNotFoundException(cmd))
-                else if !Platform.isNodeLike then
-                    // No `process`, so no PATH to scan: not a proof the program is missing, so spawn decides.
-                    Absent
                 else
                     // Bare command name: scan PATH
                     val pathEnv = NodeProcess.env("PATH")
@@ -605,6 +589,8 @@ final private[kyo] class NodeCommandUnsafe(
 
     def spawn()(using AllowUnsafe, Frame): Result[CommandException, Process.Unsafe] =
         if args.isEmpty then Result.fail(ProgramNotFoundException(""))
+        // Checked before the program lookup, whose catch-all would read a missing module as "let spawn decide".
+        else if !NodeModules.isAvailable("node:child_process") then Result.panic(NodeModules.unsupported("node:child_process"))
         else
             // Validate program exists synchronously so spawn() can return Result.Failure without
             // waiting for the async 'error' event (which would prevent synchronous error reporting).
@@ -615,7 +601,7 @@ final private[kyo] class NodeCommandUnsafe(
                     // synchronously (Node.js would otherwise fire an asynchronous 'error' event).
                     val wdError = workDir.flatMap { path =>
                         val dirPath = path.unsafe.show
-                        val exists  = NodeFsModule.asInstanceOf[js.Dynamic].existsSync(dirPath).asInstanceOf[Boolean]
+                        val exists  = NodeModules.fs.existsSync(dirPath)
                         if !exists then Present(WorkingDirectoryNotFoundException(path))
                         else Absent
                     }
@@ -628,7 +614,7 @@ final private[kyo] class NodeCommandUnsafe(
                                     // === Single-process spawn ===
                                     val opts   = buildOptions()
                                     val jsArgs = js.Array(args.drop(1).toSeq*)
-                                    val child  = NodeChildProcess.spawn(args.head, jsArgs, opts)
+                                    val child  = NodeModules.childProcess.spawn(args.head, jsArgs, opts)
                                     val proc   = new NodeProcessUnsafe(child, stderrEnded = redirectError)
 
                                     // Register an error handler to prevent Node.js from crashing on unhandled
@@ -679,7 +665,7 @@ final private[kyo] class NodeCommandUnsafe(
                                     val children = chain.map { cmd =>
                                         val opts   = pipeOpts(cmd)
                                         val jsArgs = js.Array(cmd.args.drop(1).toSeq*)
-                                        NodeChildProcess.spawn(cmd.args.head, jsArgs, opts)
+                                        NodeModules.childProcess.spawn(cmd.args.head, jsArgs, opts)
                                     }
 
                                     // Wire pipes: stdout of N -> stdin of N+1

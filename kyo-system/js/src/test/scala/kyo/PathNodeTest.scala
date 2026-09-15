@@ -1,6 +1,6 @@
 package kyo
 
-import kyo.internal.NodeFs
+import kyo.internal.NodeModules
 
 class PathNodeTest extends kyo.test.Test[Any]:
 
@@ -12,10 +12,10 @@ class PathNodeTest extends kyo.test.Test[Any]:
                 Path.tempDir("kyo-node-write-only").map { dir =>
                     val path = dir / "write-only.bin"
                     path.writeBytes(bytes(1)).andThen {
-                        Sync.Unsafe.defer(NodeFs.chmodSync(path.unsafe.show, 128)).andThen {
+                        Sync.Unsafe.defer(NodeModules.fs.chmodSync(path.unsafe.show, 128)).andThen {
                             FileSystem.host.openWriteChannel(path, FileSystem.WriteOpen.Existing).map(_.writeAt(0L, bytes(9)))
                         }.andThen {
-                            Sync.Unsafe.defer(NodeFs.chmodSync(path.unsafe.show, 384)).andThen {
+                            Sync.Unsafe.defer(NodeModules.fs.chmodSync(path.unsafe.show, 384)).andThen {
                                 path.readBytes.map(content => assert(content.is(bytes(9))))
                             }
                         }
@@ -82,7 +82,7 @@ class PathNodeTest extends kyo.test.Test[Any]:
                 noFollow = dir / "no-follow-link"
                 follow   = dir / "followed.txt"
                 _              <- source.write("content")
-                _              <- Sync.Unsafe.defer(NodeFs.symlinkSync(source.unsafe.show, link.unsafe.show))
+                _              <- Sync.Unsafe.defer(NodeModules.fs.symlinkSync(source.unsafe.show, link.unsafe.show))
                 _              <- link.copy(noFollow, Path.CopyOptions(followLinks = false))
                 _              <- link.copy(follow, Path.CopyOptions(followLinks = true))
                 noFollowIsLink <- noFollow.isSymbolicLink

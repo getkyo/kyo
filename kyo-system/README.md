@@ -453,6 +453,8 @@ val ownedByCaller: Path < (Sync & Abort[FileStructureException]) =
 
 On JVM and Scala Native, `path.toJava: java.nio.file.Path` converts to the standard library type without a cast. It is not available on Scala.js.
 
+On Scala.js, building a `Path` and reading its `parts` and `isAbsolute` work on every host, a browser included. File operations and `Command` reach Node's built-in modules through `process.getBuiltinModule`, which Node 20.16 and 22.3, Bun 1.2.6 and Deno 2.1 provide; on a host without them they fail with an `UnsupportedOperationException` that names the module and the host.
+
 ## Running commands
 
 When a deploy script, build tool, or health check needs to run an external program, `Command` builds an immutable process description and an execution method launches it. Each builder method returns a new `Command`; construction performs no I/O.

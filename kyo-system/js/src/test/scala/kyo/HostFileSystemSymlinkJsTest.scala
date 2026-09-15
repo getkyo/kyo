@@ -1,6 +1,6 @@
 package kyo
 
-import kyo.internal.NodeFs
+import kyo.internal.NodeModules
 
 /** Runs the shared read contract against the host with symbolic links enabled, on Node.
   *
@@ -15,7 +15,7 @@ class HostFileSystemSymlinkJsTest extends FileSystemReadTest:
 
     override protected def createSymbolicLink(link: Path, target: Path)(using Frame): Unit < (Sync & Abort[FileSystemException]) =
         // Unsafe: creates a real symbolic link, which no Path operation exposes
-        Sync.Unsafe.defer(NodeFs.symlinkSync(target.unsafe.show, link.unsafe.show))
+        Sync.Unsafe.defer(NodeModules.fs.symlinkSync(target.unsafe.show, link.unsafe.show))
 
     protected def createFileSystem(using
         Frame

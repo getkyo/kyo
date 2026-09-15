@@ -12,7 +12,7 @@ class SystemPlatformSpecificJsWasmTest extends kyo.test.Test[Any]:
     // The leaves swap process-global state (the process global, process.env, the seed) around synchronous reads.
     override def config = super.config.sequential
 
-    /** Runs `f` with `process` deleted from the global object, so it is an UNDECLARED identifier — the state a
+    /** Runs `f` with `process` deleted from the global object, so it is an undeclared identifier: the state a
       * browser is in, and the one where a bare read throws while `typeof process` still answers "undefined".
       * Restored in a `finally` because the test runner talks over `process.stdout`.
       */

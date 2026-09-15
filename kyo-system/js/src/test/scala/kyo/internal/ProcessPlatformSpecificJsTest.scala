@@ -1,13 +1,13 @@
 package kyo.internal
 
-import java.nio.charset.StandardCharsets
 import kyo.*
+import scala.scalajs.js as sjs
 
-/** The Node child-process backend on a host whose `process` global is gone, the state a browser is in.
+/** The Node child-process backend on a host without Node's `child_process` module: a browser page, which has no `process` global at all,
+  * or a Node that predates `process.getBuiltinModule`.
   *
-  * A child's environment is built from `process.env` for the modes that inherit it. With no `process` there is nothing to inherit, so the
-  * child sees exactly the variables the command sets. Each leaf spawns with `process` deleted and restores it before waiting, because the
-  * test runner talks over `process.stdout`. The shell runs by absolute path, so the program lookup is not what is under test.
+  * Spawning panics with an `UnsupportedOperationException` naming the module and the host. `CommandException` has no case for a host that
+  * cannot spawn, and every case it has (a missing program, a denied permission) would misreport one.
   */
 class ProcessPlatformSpecificJsTest extends kyo.test.Test[Any]:
 
@@ -15,59 +15,51 @@ class ProcessPlatformSpecificJsTest extends kyo.test.Test[Any]:
 
     override def config = super.config.sequential
 
+    /** Runs `f` with `process` deleted from the global object. Restored in a `finally` because the test runner talks over `process.stdout`. */
     private def withoutProcessGlobal[A](f: => A): A =
-        val global = scala.scalajs.js.Dynamic.global.globalThis
-        val saved  = scala.scalajs.js.Dynamic.global.process
-        scala.scalajs.js.special.delete(global, "process")
+        val global = sjs.Dynamic.global.globalThis
+        val saved  = sjs.Dynamic.global.process
+        discard(sjs.special.delete(global, "process"))
         try f
         finally global.updateDynamic("process")(saved)
         end try
     end withoutProcessGlobal
 
-    /** Spawns `command` with no `process` global and returns what the child printed. */
-    private def outputWithoutProcess(command: Command)(using Frame): String < (Async & Abort[CommandException]) =
-        withoutProcessGlobal(command.unsafe.spawn()) match
-            case Result.Success(child) =>
-                Scope.run(child.safe.collectOutput).map((out, _) => new String(out.toArray, StandardCharsets.UTF_8))
-            case Result.Failure(error) => Abort.fail(error)
-            case Result.Panic(error)   => Abort.panic(error)
+    /** Runs `f` with `process.getBuiltinModule` removed. */
+    private def withoutGetBuiltinModule[A](f: => A): A =
+        val process = sjs.Dynamic.global.process
+        val saved   = process.getBuiltinModule
+        discard(sjs.special.delete(process, "getBuiltinModule"))
+        try f
+        finally process.updateDynamic("getBuiltinModule")(saved)
+        end try
+    end withoutGetBuiltinModule
 
-    private val printVars = "printf %s \"${KYO_W1_APPENDED-unset}:${HOME-unset}\""
+    private def message(host: Platform.Host): String =
+        s"kyo-system needs Node's node:child_process module for this operation (Node 20.16 or 22.3, Bun 1.2.6, Deno 2.1, or later); this host is $host"
+
+    /** The panic's class name and message, or a description of what came back instead. */
+    private def panicOf(result: Result[CommandException, Process.Unsafe]): (String, String) =
+        result match
+            case Result.Panic(error) => (error.getClass.getName, error.getMessage)
+            case other               => ("no panic", other.toString)
 
     "with no process global" - {
-        "envAppend gives the child only the appended variables" in {
-            assume(!Platform.isWindows, "POSIX shell")
-            outputWithoutProcess(Command("/bin/sh", "-c", printVars).envAppend(Map("KYO_W1_APPENDED" -> "yes"))).map { out =>
-                assert(out == "yes:unset")
-            }
+        "spawning panics naming the module and the host instead of throwing ReferenceError" in {
+            val (result, host) = withoutProcessGlobal((Command("/bin/sh", "-c", "true").unsafe.spawn(), Platform.host))
+            assert(panicOf(result) == ("java.lang.UnsupportedOperationException", message(host)))
         }
 
-        "envRemove gives the child an empty environment" in {
-            assume(!Platform.isWindows, "POSIX shell")
-            outputWithoutProcess(Command("/bin/sh", "-c", printVars).envRemove(Seq("KYO_W1_APPENDED"))).map { out =>
-                assert(out == "unset:unset")
-            }
+        "a pipeline panics the same way" in {
+            val (result, host) =
+                withoutProcessGlobal((Command("/bin/sh", "-c", "true").andThen(Command("/bin/cat")).unsafe.spawn(), Platform.host))
+            assert(panicOf(result) == ("java.lang.UnsupportedOperationException", message(host)))
         }
+    }
 
-        "envAppend then envRemove applies both to nothing inherited" in {
-            assume(!Platform.isWindows, "POSIX shell")
-            val command = Command("/bin/sh", "-c", printVars)
-                .envAppend(Map("KYO_W1_APPENDED" -> "yes", "HOME" -> "/appended-home"))
-                .envRemove(Seq("HOME"))
-            outputWithoutProcess(command).map(out => assert(out == "yes:unset"))
-        }
-
-        "a pipeline stage's envAppend gives it only the appended variables" in {
-            assume(!Platform.isWindows, "POSIX shell")
-            val command = Command("/bin/sh", "-c", printVars).envAppend(Map("KYO_W1_APPENDED" -> "yes"))
-                .andThen(Command("/bin/cat"))
-            outputWithoutProcess(command).map(out => assert(out == "yes:unset"))
-        }
-
-        "a bare program name is still spawned" in {
-            assume(!Platform.isWindows, "POSIX shell")
-            outputWithoutProcess(Command("sh", "-c", "printf %s found")).map(out => assert(out == "found"))
-        }
+    "without process.getBuiltinModule, spawning panics naming the module and the host" in {
+        val result = withoutGetBuiltinModule(Command("/bin/sh", "-c", "true").unsafe.spawn())
+        assert(panicOf(result) == ("java.lang.UnsupportedOperationException", message(Platform.host)))
     }
 
 end ProcessPlatformSpecificJsTest
