@@ -526,11 +526,56 @@ final private[kyo] class NodePathUnsafe(raw: String) extends Path.Unsafe:
     def show: String        = pathStr
     def isAbsolute: Boolean = NodePath.isAbsolute(pathStr)
 
+    private[kyo] def hostPath: Maybe[String] = Present(pathStr)
+
     override def equals(other: Any): Boolean = other match
         case that: NodePathUnsafe => this.pathStr == that.pathStr
         case _                    => false
 
     override def hashCode(): Int = pathStr.hashCode
+
+    override private[kyo] def syncDirectory()(using Frame, AllowUnsafe): Result[FileWriteException, Unit] =
+        try
+            val directory = if pathStr.isEmpty then "." else pathStr
+            try
+                val fd = NodeFs.openSync(directory, "r")
+                try
+                    if !NodeFs.fstatSync(fd).isDirectory() then Result.fail(FileNotADirectoryException(safe))
+                    else
+                        NodeFs.fsyncSync(fd)
+                        Result.unit
+                finally NodeFs.closeSync(fd)
+                end try
+            catch
+                case e: js.JavaScriptException if NodeError.codeOf(e) == "ENOENT" =>
+                    // Windows also reports ENOENT when an ancestor is a file. Inspect ancestors
+                    // only after failure so missing paths and non-directories stay distinct.
+                    @scala.annotation.tailrec
+                    def hasFileAncestor(path: String): Boolean =
+                        val isDirectory: Maybe[Boolean] =
+                            try Present(NodeFs.statSync(path).isDirectory())
+                            catch
+                                case e: js.JavaScriptException if NodeError.isMissing(e) => Absent
+                        isDirectory match
+                            case Present(value) => !value
+                            case Absent =>
+                                val parent = NodePath.dirname(path)
+                                parent != path && hasFileAncestor(parent)
+                        end match
+                    end hasFileAncestor
+                    if hasFileAncestor(NodePath.dirname(directory)) then Result.fail(FileNotADirectoryException(safe))
+                    else Result.fail(FileNotFoundException(safe))
+            end try
+        catch
+            case e: js.JavaScriptException =>
+                val error = NodeError.codeOf(e) match
+                    case "ENOENT"           => FileNotFoundException(safe)
+                    case "EACCES" | "EPERM" => FileAccessDeniedException(safe)
+                    case "ENOTDIR"          => FileNotADirectoryException(safe)
+                    case "EINVAL"           => FileInvalidPathException(pathStr, FileSystemOperation.SyncDirectory)
+                    case _                  => FileIOException(safe, FileSystemOperation.SyncDirectory, e)
+                Result.fail(error)
+            case e: Throwable => Result.panic(e)
 
     // --- Inspection ---
 
@@ -871,20 +916,27 @@ final private[kyo] class NodePathUnsafe(raw: String) extends Path.Unsafe:
 
     // Numeric non-append flags preserve explicit readSync/writeSync positions. Combining O_CREAT
     // with the requested access mode creates atomically without truncating existing content.
+    private def prepareChannelParent(open: FileSystem.WriteOpen)(using Frame): Result[FileStructureException, Unit] =
+        if open == FileSystem.WriteOpen.Existing then Result.unit
+        else
+            // A parent conflict cannot be resolved by choosing a different filename.
+            catchFs(FileSystemOperation.Create)(ensureParent()).mapFailure {
+                case _: FileAlreadyExistsException => FileNotADirectoryException(safe)
+                case error                         => error
+            }
+
     private def openRawChannel(mode: Path.RawChannelAccess): Path.RawChannel =
         val constants = NodeFs.constants
         mode match
             case Path.RawChannelAccess.Read =>
                 new NodeRawChannel(NodeFs.openSync(pathStr, "r"), safe)
             case Path.RawChannelAccess.Write(open) =>
-                if open != FileSystem.WriteOpen.Existing then ensureParent()
                 val flags = open match
                     case FileSystem.WriteOpen.Existing  => constants.O_WRONLY
                     case FileSystem.WriteOpen.Create    => constants.O_WRONLY | constants.O_CREAT
                     case FileSystem.WriteOpen.CreateNew => constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL
                 new NodeRawChannel(NodeFs.openSync(pathStr, flags), safe)
             case Path.RawChannelAccess.ReadWrite(open) =>
-                if open != FileSystem.WriteOpen.Existing then ensureParent()
                 val flags = open match
                     case FileSystem.WriteOpen.Existing  => constants.O_RDWR
                     case FileSystem.WriteOpen.Create    => constants.O_RDWR | constants.O_CREAT
@@ -899,12 +951,12 @@ final private[kyo] class NodePathUnsafe(raw: String) extends Path.Unsafe:
         AllowUnsafe,
         Frame
     ): Result[FileWriteException | FileStructureException, Path.RawChannel] =
-        catchChannelWrite(openRawChannel(Path.RawChannelAccess.Write(open)))
+        prepareChannelParent(open).flatMap(_ => catchChannelWrite(openRawChannel(Path.RawChannelAccess.Write(open))))
     def openReadWriteChannelRaw(open: FileSystem.WriteOpen)(using
         AllowUnsafe,
         Frame
     ): Result[FileReadException | FileWriteException | FileStructureException, Path.RawChannel] =
-        catchChannelWrite(openRawChannel(Path.RawChannelAccess.ReadWrite(open)))
+        prepareChannelParent(open).flatMap(_ => catchChannelWrite(openRawChannel(Path.RawChannelAccess.ReadWrite(open))))
 
     // --- Advisory lock ---
 
@@ -962,10 +1014,10 @@ final private[kyo] class NodePathUnsafe(raw: String) extends Path.Unsafe:
     private def catchChannelWrite[A](expr: => A)(using Frame): Result[FileWriteException | FileStructureException, A] =
         try Result.succeed(expr)
         catch
-            case e: js.JavaScriptException
-                if !js.isUndefined(e.exception.asInstanceOf[js.Dynamic].code) &&
-                    e.exception.asInstanceOf[js.Dynamic].code.asInstanceOf[String] == "EEXIST" =>
+            case e: js.JavaScriptException if NodeError.codeOf(e) == "EEXIST" =>
                 Result.fail(FileAlreadyExistsException(safe))
+            case e: js.JavaScriptException if NodeError.codeOf(e) == "ENOTDIR" =>
+                Result.fail(FileNotADirectoryException(safe))
             case e: js.JavaScriptException => Result.fail(NodeError.translateWrite(safe, e))
             case e: Throwable              => Result.panic(e)
 
