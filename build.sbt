@@ -1210,33 +1210,9 @@ lazy val `kyo-ffi-it` =
             // Point the JS runtime at the plugin-compiled library via KYO_FFI_<LIBID>_PATH. The os/arch/ext
             // tags mirror the plugin's own CCompiler output name so the path matches the file ffiCompile
             // wrote, including the linux-musl split and the empty (no `lib`) prefix on Windows.
-            Test / jsEnv := {
-                val ffiOut = target.value / "ffi"
-                val osName = sys.props.getOrElse("os.name", "").toLowerCase
-                val osTag =
-                    if (osName.contains("mac")) "darwin"
-                    else if (osName.contains("win")) "windows"
-                    else if (osName.contains("linux"))
-                        if (
-                            new java.io.File("/lib/ld-musl-x86_64.so.1").exists()
-                            || new java.io.File("/lib/ld-musl-aarch64.so.1").exists()
-                        ) "linux-musl"
-                        else "linux"
-                    else osName
-                val ext    = if (osTag == "darwin") "dylib" else if (osTag == "windows") "dll" else "so"
-                val prefix = if (osTag == "windows") "" else "lib"
-                val arch = sys.props.getOrElse("os.arch", "") match {
-                    case "x86_64" | "amd64"  => "x86_64"
-                    case "aarch64" | "arm64" => "aarch64"
-                    case other               => other
-                }
-                val bundled = ffiOut / s"${prefix}kyo_it_bundled-$osTag-$arch.$ext"
-                new NodeJSEnv(
-                    NodeJSEnv.Config()
-                        .withArgs(List("--max_old_space_size=5120"))
-                        .withEnv(Map("KYO_FFI_KYO_IT_BUNDLED_PATH" -> bundled.getAbsolutePath))
-                )
-            },
+            kyoNodeEnv := Map(
+                "KYO_FFI_KYO_IT_BUNDLED_PATH" -> (target.value / "ffi" / ffiArtifactName("kyo_it_bundled", ffiHostOsArch)).getAbsolutePath
+            ),
             // koffi bootstrap (idempotent npm install, hooked on Test / compile) via the kyo-ffi plugin.
             ffiKoffiJsBootstrap("kyo-ffi-it-js-test")
         )
@@ -1527,11 +1503,7 @@ lazy val `kyo-config` =
             // test body runs. RolloutEnvTest asserts a StaticFlag rollout expression resolves against the
             // topology path Node reports, so the variable has to be in the test process environment from the
             // start rather than written by a test.
-            Test / jsEnv := new NodeJSEnv(
-                NodeJSEnv.Config()
-                    .withArgs(List("--max_old_space_size=5120"))
-                    .withEnv(Map("KYO_ROLLOUT_PATH" -> "prod/us-east-1"))
-            )
+            kyoNodeEnv := Map("KYO_ROLLOUT_PATH" -> "prod/us-east-1")
         )
         .wasmSettings(
             `wasm-settings`,
@@ -1601,36 +1573,13 @@ lazy val `kyo-stats-machine` =
             // unresolvable at Node runtime (@kyo/ffi-native is not installed), so koffi's load throws off
             // macOS instead of the reader degrading. The os/arch/ext tags mirror the plugin's own
             // CCompiler output name so the path matches the file it wrote, including the linux-musl split.
-            Test / jsEnv := {
-                val ffiOut = target.value / "ffi"
-                val osName = sys.props.getOrElse("os.name", "").toLowerCase
-                val osTag =
-                    if (osName.contains("mac")) "darwin"
-                    else if (osName.contains("win")) "windows"
-                    else if (osName.contains("linux"))
-                        if (
-                            new java.io.File("/lib/ld-musl-x86_64.so.1").exists()
-                            || new java.io.File("/lib/ld-musl-aarch64.so.1").exists()
-                        ) "linux-musl"
-                        else "linux"
-                    else osName
-                val ext    = if (osTag == "darwin") "dylib" else if (osTag == "windows") "dll" else "so"
-                val prefix = if (osTag == "windows") "" else "lib"
-                val arch = sys.props.getOrElse("os.arch", "") match {
-                    case "x86_64" | "amd64"  => "x86_64"
-                    case "aarch64" | "arm64" => "aarch64"
-                    case other               => other
-                }
-                val shim = ffiOut / s"${prefix}machine_macos-$osTag-$arch.$ext"
-                new NodeJSEnv(
-                    NodeJSEnv.Config()
-                        .withArgs(List("--max_old_space_size=5120"))
-                        .withEnv(Map(
-                            "KYO_MACHINE_DISABLED"       -> "true",
-                            "KYO_FFI_MACHINE_MACOS_PATH" -> shim.getAbsolutePath
-                        ))
-                )
-            },
+            // The Wasm row (ESModule) has no `require` global, so KoffiFacade resolves koffi through node:module.createRequire, which
+            // searches NODE_PATH for the bootstrapped package; the CommonJS row ignores it.
+            kyoNodeEnv := Map(
+                "KYO_MACHINE_DISABLED"       -> "true",
+                "KYO_FFI_MACHINE_MACOS_PATH" -> (target.value / "ffi" / ffiArtifactName("machine_macos", ffiHostOsArch)).getAbsolutePath,
+                "NODE_PATH"                  -> (target.value / "node_modules").getAbsolutePath
+            ),
             // koffi bootstrap (idempotent npm install, hooked on Test / compile) via the kyo-ffi plugin.
             // The CommonJS linker setting above stays in this .jsSettings block: the plugin is a Scala 2.12
             // sbt plugin with no sbt-scalajs dependency, so it cannot carry a scalaJSLinkerConfig setting.
@@ -2113,11 +2062,7 @@ lazy val `kyo-net` =
             `js-settings`,
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
             // Point the Node runtime at the plugin-compiled koffi natives and bootstrap koffi into node_modules before tests run.
-            Test / jsEnv := new NodeJSEnv(
-                NodeJSEnv.Config()
-                    .withArgs(List("--max_old_space_size=5120"))
-                    .withEnv(kyoNetFfiEnvMap(target.value))
-            ),
+            kyoNodeEnv := kyoNetFfiEnvMap(target.value),
             Test / compile := (Test / compile).dependsOn(kyoNetKoffiInstall).value
         )
         // Wasm runs the same koffi posix transport on Node as JS (it `import`s koffi at module load), so it needs the identical koffi bootstrap
@@ -2236,34 +2181,12 @@ lazy val `kyo-aeron` =
         .jsSettings(
             `js-settings`,
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
-            Test / jsEnv := {
-                val targetDir = target.value
-                val ffiOut    = targetDir / "ffi"
-                val os        = sys.props.getOrElse("os.name", "").toLowerCase
-                val ext =
-                    if (os.contains("mac")) "dylib"
-                    else if (os.contains("win")) "dll"
-                    else "so"
-                val arch =
-                    sys.props.getOrElse("os.arch", "") match {
-                        case "x86_64" | "amd64"  => "x86_64"
-                        case "aarch64" | "arm64" => "aarch64"
-                        case other               => other
-                    }
-                val osDetect =
-                    if (os.contains("mac")) "darwin"
-                    else if (os.contains("win")) "windows"
-                    else if (os.contains("linux")) "linux"
-                    else os
-                // Windows has no `lib` prefix on the shared library, matching the plugin's CCompiler output.
-                val prefix = if (os.contains("win")) "" else "lib"
-                val lib    = ffiOut / s"${prefix}kyo_aeron-$osDetect-$arch.$ext"
-                new NodeJSEnv(
-                    NodeJSEnv.Config()
-                        .withArgs(List("--max_old_space_size=5120"))
-                        .withEnv(Map("KYO_FFI_KYO_AERON_PATH" -> lib.getAbsolutePath))
-                )
-            },
+            // NODE_PATH: the Wasm row (ESModule) resolves koffi through node:module.createRequire, which searches it for the
+            // bootstrapped package; the CommonJS row ignores it.
+            kyoNodeEnv := Map(
+                "KYO_FFI_KYO_AERON_PATH" -> (target.value / "ffi" / ffiArtifactName("kyo_aeron", ffiHostOsArch)).getAbsolutePath,
+                "NODE_PATH"              -> (target.value / "node_modules").getAbsolutePath
+            ),
             Test / compile := (Test / compile).dependsOn(Def.task {
                 val log        = streams.value.log
                 val targetBase = target.value
@@ -3441,7 +3364,8 @@ lazy val `js-settings` = Seq(
     fork                                        := false,
     bspEnabled                                  := false,
     Test / parallelExecution                    := false,
-    jsEnv                                       := new NodeJSEnv(NodeJSEnv.Config().withArgs(List("--max_old_space_size=5120"))),
+    // Node's arguments and environment for the test rows are KyoJsRows' kyoNodeArgs and kyoNodeEnv (defaults there), which it
+    // turns into Test / jsEnv and WasmTest / jsEnv so the two rows never drift apart.
     // The java.time API for the public signatures that name it. Its data artifacts (the IANA zone database, the
     // CLDR locales, the currency table) stay out of every kyo module: they register reflectively, so the linker
     // keeps them in every program that has them on the classpath, whatever it calls. An application that resolves
@@ -3695,11 +3619,7 @@ lazy val `kyo-test-runner` =
             // ConsoleReporter reads NO_COLOR once, when its object initializes, before any test body runs.
             // ConsoleReporterJsWasmTest asserts the JS read sees it, so it is in the test process environment
             // from the start rather than written by a test.
-            Test / jsEnv := new NodeJSEnv(
-                NodeJSEnv.Config()
-                    .withArgs(List("--max_old_space_size=5120"))
-                    .withEnv(Map("NO_COLOR" -> "1"))
-            )
+            kyoNodeEnv := Map("NO_COLOR" -> "1")
         )
         .wasmSettings(
             `wasm-settings`,
