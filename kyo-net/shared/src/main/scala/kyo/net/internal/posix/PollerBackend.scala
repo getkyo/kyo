@@ -44,11 +44,17 @@ private[net] trait PollerBackend:
       */
     def deregister(pollerFd: Int, fd: Int, fdClosing: Boolean, scratch: PollScratch)(using AllowUnsafe, Frame): Unit
 
-    /** Disable the kqueue EVFILT_WRITE filter on `fd` without removing it. Called from `dispatchWritable` after the write completes so the
-      * write-ready filter does not keep firing spuriously while no write is pending. On epoll this is a no-op (write interest is expressed
-      * atomically in the per-fd interest union and the ET mask already collapses write-only events correctly).
+    /** Report every interest registration the backend has discovered was rejected since the last call, then clear the record.
+      *
+      * A backend that batches interest changes cannot always answer "did this registration succeed" when the registering call returns, because
+      * the batch has not reached the kernel yet. Such a backend returns success optimistically and discovers the real per-entry outcome when the
+      * batch is submitted, by which point the caller that could have failed the pending operation is long gone. This is the way back: the driver
+      * calls it after each change drain and fails the operations whose registrations never took, instead of leaving them waiting for readiness
+      * the kernel will never report.
+      *
+      * Default: a no-op, for backends that submit each change immediately and so report failures through the registering call's own return.
       */
-    def disableWrite(pollerFd: Int, fd: Int, scratch: PollScratch)(using AllowUnsafe, Frame): Unit = ()
+    def drainFailedRegistrations(scratch: PollScratch, handler: RegistrationFailureHandler)(using AllowUnsafe, Frame): Unit = ()
 
     /** Fill the `scratch.fds` and `scratch.flags` arrays with decoded event data after a `timeoutMs` wait (`timeoutMs < 0` means
       * indefinite: blocks until an event or a wake arrives). The `@Ffi.blocking` `epoll_wait` / `kevent` runs inline on JVM/Native
@@ -124,6 +130,19 @@ private[net] trait PollerBackend:
 
 end PollerBackend
 
+/** Receives the interest registrations a batching backend discovered the kernel had rejected, reported by
+  * [[PollerBackend.drainFailedRegistrations]].
+  *
+  * A single-method trait rather than a `(Int, Boolean, Int) => Unit`, because a function value cannot carry a `using` clause: the handler needs
+  * a `Frame` for the failure it raises, and taking one per call means the frame comes from the live call site (the poll cycle's drain) instead
+  * of being captured when the handler was built. The driver holds one long-lived instance, so the poll loop still allocates nothing per cycle.
+  *
+  * `isWrite` false means the rejected registration was for read interest, which covers both read and accept registrations. `ownerId` is the id
+  * of the handle that registered, so the receiver can drop a rejection whose fd has since been recycled into a different handle.
+  */
+private[posix] trait RegistrationFailureHandler:
+    def onRejected(fd: Int, isWrite: Boolean, errno: Int, ownerId: Long)(using AllowUnsafe, Frame): Unit
+
 /** Kqueue-specific buffers held inside [[PollScratch]], allocated once at driver init and closed when the driver closes.
   *
   * `keventNow` and `kevent` take raw `Buffer[Byte]` changelists / eventlists (the same `Buffer[Byte]` the epoll arm uses), sized as a whole
@@ -144,22 +163,56 @@ end PollerBackend
 final private[net] class KqueuePollData(
     val armBuf: kyo.ffi.Buffer[Byte],
     val eventsBuffer: kyo.ffi.Buffer[Byte],
-    val changelistBuf: kyo.ffi.Buffer[Byte]
+    val changelistBuf: kyo.ffi.Buffer[Byte],
+    val flushEventsBuf: kyo.ffi.Buffer[Byte]
 ):
     // Poll-loop-carrier-owned memo: one entry per driver. Single owner: the poll-loop carrier for this driver's scratch.
     var pollMemoMs: Int      = -1
     var pollMemoTs: Timespec = null.asInstanceOf[Timespec]
 
     // Number of changes currently encoded in changelistBuf, ready to be passed to the next kevent call. Reset to 0 inside poll() after the
-    // changelist is submitted. Accumulates across drainChanges cycles: drainChanges appends starting at nChanges; backend.disableWrite (called
-    // from dispatchWritable during drainReady) also appends here so the EV_DISABLE lands in the next poll's changelist. Single owner: the
-    // poll-loop carrier for this scratch (drainChanges, drainReady, and poll all run on the same carrier).
+    // changelist is submitted, and inside change() when a full batch is flushed mid-drain. Accumulates across drainChanges cycles: drainChanges
+    // appends starting at nChanges. Single owner: the poll-loop carrier for this scratch (drainChanges and poll both run on that carrier).
     var nChanges: Int = 0
+
+    // Registrations the mid-drain flush found the kernel had rejected, held until the driver drains them. The registering call has already
+    // returned 0 to its caller by the time the batch reaches the kernel, so a per-entry errno discovered at flush time has no caller left to
+    // return to; without this record the pending read or write it belongs to would wait forever for readiness the kernel will never report.
+    // Parallel arrays rather than a case class per failure: the poll loop allocates nothing per cycle, and failures are rare enough that the
+    // arrays stay at their initial length in every run that has no rejected registration.
+    var failedFds: Array[Int]         = new Array[Int](8)
+    var failedIsWrite: Array[Boolean] = new Array[Boolean](8)
+    var failedErrnos: Array[Int]      = new Array[Int](8)
+    var failedOwnerIds: Array[Long]   = new Array[Long](8)
+    var failedCount: Int              = 0
+
+    /** Record one rejected registration, growing the parallel arrays when they are full. Dropping on overflow would reintroduce exactly the
+      * silent loss this record exists to close, so the arrays grow instead of capping.
+      *
+      * `ownerId` is the registering handle's id, carried on the knote as `udata` and returned verbatim on the receipt. An fd number alone cannot
+      * identify the operation to fail: by the time the rejection is read, the fd may already have been closed and recycled into a different
+      * handle, and failing "the pending op on fd N" would then kill an unrelated live connection.
+      */
+    def recordFailedRegistration(fd: Int, isWrite: Boolean, errno: Int, ownerId: Long): Unit =
+        if failedCount == failedFds.length then
+            val grown = failedCount * 2
+            failedFds = java.util.Arrays.copyOf(failedFds, grown)
+            failedIsWrite = java.util.Arrays.copyOf(failedIsWrite, grown)
+            failedErrnos = java.util.Arrays.copyOf(failedErrnos, grown)
+            failedOwnerIds = java.util.Arrays.copyOf(failedOwnerIds, grown)
+        end if
+        failedFds(failedCount) = fd
+        failedIsWrite(failedCount) = isWrite
+        failedErrnos(failedCount) = errno
+        failedOwnerIds(failedCount) = ownerId
+        failedCount += 1
+    end recordFailedRegistration
 
     def close()(using AllowUnsafe): Unit =
         armBuf.close()
         eventsBuffer.close()
         changelistBuf.close()
+        flushEventsBuf.close()
     end close
 end KqueuePollData
 

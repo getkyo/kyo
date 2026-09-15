@@ -1,6 +1,6 @@
 package kyo.internal
 
-/** Aeron offer return-value sentinels, mirroring the Aeron 1.50.2 offer return codes.
+/** Aeron offer return-value sentinels, mirroring the Aeron 1.51.1 offer return codes.
   *
   * `Topic.mapOfferResult` maps the raw `Long` from `AeronTransport.offer` through these to typed
   * `TopicException` leaves, so the mapping is identical across JVM, Native, and JS.

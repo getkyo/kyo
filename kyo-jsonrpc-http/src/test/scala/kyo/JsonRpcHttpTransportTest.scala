@@ -61,9 +61,10 @@ class JsonRpcHttpTransportTest extends kyo.test.Test[Any]:
     )(using Frame): A < (S & Async & Scope & Abort[HttpException]) =
         HttpServer.init(0, "127.0.0.1")(
             HttpHandler.webSocket("ws/garbage") { (_, ws) =>
-                // Send "not json" then sleep briefly so our bridge has time to read it
-                // before the server closes the connection.
-                ws.put(HttpWebSocket.Payload.Text("not json")).andThen(Async.sleep(500.millis))
+                // Send a malformed text frame, then hold the connection open by draining inbound until the client closes it. The client's read of
+                // the frame therefore always precedes the server tearing the socket down, with no timer racing the read: ws.stream.run completes
+                // exactly when the client-side scope closes the transport.
+                ws.put(HttpWebSocket.Payload.Text("not json")).andThen(ws.stream.run.unit)
             }
         ).map(server =>
             test(HttpUrl.parse(s"http://127.0.0.1:${server.port}").getOrThrow)
@@ -125,9 +126,11 @@ class JsonRpcHttpTransportTest extends kyo.test.Test[Any]:
                         if closes() >= 1 then ()
                         else untilClosed
                     )
-                Abort.run[Timeout](Async.timeout(2.seconds)(untilClosed)).map {
+                // Converging poll: closes() rises to 1 the moment the server's handler observes the client close, normally within a few
+                // milliseconds of scope exit. The ceiling is a hang-guard, so it only expires if the close is never observed (a real leak).
+                Abort.run[Timeout](Async.timeout(30.seconds)(untilClosed)).map {
                     case Result.Success(_) => succeed
-                    case Result.Failure(_) => fail("server did not observe WS close within 2s")
+                    case Result.Failure(_) => fail("server did not observe WS close within the hang-guard")
                     case Result.Panic(t)   => fail(s"panic: ${t.getMessage}")
                 }
             }

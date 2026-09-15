@@ -43,7 +43,7 @@ class TransportFailureTaxonomyTest extends Test:
     }
 
     "connectUnix to a missing socket fails NetUnixConnectException" - eachBackend { transport =>
-        val path = s"/tmp/kyo-net-missing-${java.lang.System.nanoTime()}.sock"
+        val path = s"/tmp/kyo-net-missing-${TlsTestCertShared.uniquePathTag()}.sock"
         Abort.run[NetException | Closed](transport.connectUnix(path).safe.get).map { result =>
             val ok = result match
                 case Result.Failure(_: NetUnixConnectException) => true

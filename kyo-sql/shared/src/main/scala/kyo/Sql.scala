@@ -207,11 +207,15 @@ object Sql:
       *
       * Common uses:
       *   - Function call arguments: `Sql.call[Int]("greatest", Sql.literal(10), Sql.literal(20))`
-      *   - Comparison RHS: `users.age > Sql.literal(18)` (the implicit conversion does the same thing)
+      *   - Comparison RHS: `users.age > Sql.literal(18)`
       *
       * A `VALUES` source is not one of them: [[Sql.values]] takes rows of `T` and decomposes them itself.
       *
       * To lift an absent value, pass `Maybe.Absent`. The backend spells absence on the wire; nothing here names it.
+      *
+      * A lifted value does not escape the one-way nullability rule: `rightOptional` is withheld from a [[Sql.Literal]] operand, so a lifted
+      * `Maybe` cannot be compared against a NOT NULL column. The rule's justification for admitting an optional between two COLUMNS does not
+      * extend to a literal.
       *
       * @param value
       *   the Scala value to lift; passed inline so static-SQL macros can capture its compile-time value when it's a literal
@@ -562,6 +566,21 @@ object Sql:
         // -- Coalesce / absentIf ----------------------------------------------
         final def coalesce(others: Term[A]*): Term[A] = Coalesce(this +: Chunk.from(others))
 
+        /** `COALESCE(this, fallback...)` over fallbacks differing from the column by nullability, answering the NON-OPTIONAL type.
+          *
+          * The result type is the point: a nullable column with a fallback that cannot be absent cannot itself answer absent, so
+          * `status.coalesce("unknown")` is `Term[String]`. The reverse direction is refused; a fallback that may be absent makes nothing
+          * non-optional.
+          */
+        @targetName("coalesceRawOptional")
+        final inline def coalesce[B](inline first: B, others: B*)(using
+            ev: SqlComparableLiteral[this.type, A, B],
+            c: SqlSchema.Column[B]
+        ): Term[B] =
+            // At least one fallback: with none this types a nullable column as non-optional, which the row then fails
+            // to decode.
+            Coalesce(this.asInstanceOf[Term[B]] +: (first +: Chunk.from(others)).map(v => lit(v, c)))
+
         @targetName("coalesceRaw")
         final def coalesce(others: A*)(using c: SqlSchema.Column[A]): Term[A] =
             Coalesce(this +: Chunk.from(others).map(v => lit(v, c)))
@@ -572,6 +591,19 @@ object Sql:
         @targetName("absentIfRaw")
         final def absentIf(other: A)(using c: SqlSchema.Column[A]): Term[Maybe[A]] =
             AbsentIf(this, lit(other, c))
+
+        /** `NULLIF(this, other)` over a sentinel differing from the column by nullability: `code.absentIf("")` maps the empty string onto the
+          * absence a nullable column already permits.
+          *
+          * Answers `Term[A]`, not `Term[Maybe[A]]`: the evidence holds only where `A` is itself optional, so wrapping again would answer a
+          * nested `Maybe` no row can produce.
+          */
+        @targetName("absentIfRawOptional")
+        final inline def absentIf[B](other: B)(using
+            ev: SqlComparableLiteral[this.type, A, B],
+            c: SqlSchema.Column[B]
+        ): Term[A] =
+            AbsentIf(this, lit(other, c).asInstanceOf[Term[A]]).asInstanceOf[Term[A]]
 
         // -- Cast ------------------------------------------------------------
 
@@ -614,11 +646,21 @@ object Sql:
         final def isNotUnknown(using ev: A =:= Maybe[Boolean]): Term[Boolean] = IsNotUnknown(ev.substituteCo[[T] =>> Term[T]](this))
 
         // -- Numeric-only ops (gated by SqlNumeric[A]) ----------------------
+        //
+        // Each raw form has a third overload for a value differing from the column by nullability, on the one-way rule
+        // `==` follows. The result stays `Term[A]`, so `Maybe[Int] + 1` is a `Term[Maybe[Int]]`.
         final inline def +(inline other: Term[A])(using SqlNumeric[A]): Term[A] = Arithmetic[A](this, Arithmetic.Op.Add, other)
 
         @targetName("plusRaw")
         final inline def +(inline other: A)(using n: SqlNumeric[A], c: SqlSchema.Column[A]): Term[A] =
             Arithmetic[A](this, Arithmetic.Op.Add, lit(other, c))
+
+        @targetName("plusRawOptional")
+        final inline def +[B](inline other: B)(using
+            SqlNumeric[A],
+            SqlComparableLiteral[this.type, A, B],
+            SqlSchema.Column[B]
+        ): Term[A] = Arithmetic[A](this, Arithmetic.Op.Add, liftedAs[B](other))
 
         final inline def -(inline other: Term[A])(using SqlNumeric[A]): Term[A] = Arithmetic[A](this, Arithmetic.Op.Sub, other)
 
@@ -626,11 +668,25 @@ object Sql:
         final inline def -(inline other: A)(using n: SqlNumeric[A], c: SqlSchema.Column[A]): Term[A] =
             Arithmetic[A](this, Arithmetic.Op.Sub, lit(other, c))
 
+        @targetName("minusRawOptional")
+        final inline def -[B](inline other: B)(using
+            SqlNumeric[A],
+            SqlComparableLiteral[this.type, A, B],
+            SqlSchema.Column[B]
+        ): Term[A] = Arithmetic[A](this, Arithmetic.Op.Sub, liftedAs[B](other))
+
         final inline def *(inline other: Term[A])(using SqlNumeric[A]): Term[A] = Arithmetic[A](this, Arithmetic.Op.Mul, other)
 
         @targetName("mulRaw")
         final inline def *(inline other: A)(using n: SqlNumeric[A], c: SqlSchema.Column[A]): Term[A] =
             Arithmetic[A](this, Arithmetic.Op.Mul, lit(other, c))
+
+        @targetName("mulRawOptional")
+        final inline def *[B](inline other: B)(using
+            SqlNumeric[A],
+            SqlComparableLiteral[this.type, A, B],
+            SqlSchema.Column[B]
+        ): Term[A] = Arithmetic[A](this, Arithmetic.Op.Mul, liftedAs[B](other))
 
         /** `this / other`, the fractional quotient.
           *
@@ -684,12 +740,16 @@ object Sql:
         // asStr must remain inline so that callers used in staticSql expressions are macro-liftable.
         private inline def asStr(using ev: A =:= String): Term[String] = ev.substituteCo[[T] =>> Term[T]](this)
 
+        /** Lifts `other` at the receiver's own parameter. The cast is erasure-only: the evidence has decided the two denote one SQL type, and
+          * a `Term` is a description nothing reads the parameter of at run time.
+          */
+        private inline def liftedAs[B](inline other: B)(using c: SqlSchema.Column[B]): Term[A] =
+            lit(other, c).asInstanceOf[Term[A]]
+
         /** The same term seen as text, for a column whose type is `String` or `Maybe[String]`.
           *
-          * The pattern operators answer `Term[Boolean]` whatever the operand's nullability, because a NULL operand makes
-          * the predicate UNKNOWN and a WHERE drops the row, which is what a caller asking `LIKE` on a column that permits
-          * NULL means. The node carries `Term[String]` and the cast is erasure-only: `Term` is a pure description and
-          * nothing reads the parameter at run time. `asStr` above stays for the operators that RETURN text, where the
+          * The pattern operators answer `Term[Boolean]` whatever the operand's nullability, because a NULL operand makes the predicate
+          * UNKNOWN and a WHERE drops the row. The cast is erasure-only. `asStr` above stays for the operators that RETURN text, where the
           * operand's nullability belongs in the result type and this substitution would lose it.
           */
         private inline def asTextual: Term[String]                                        = this.asInstanceOf[Term[String]]
@@ -828,6 +888,18 @@ object Sql:
         inline def nthValue(inline n: Term[Int]): WindowFunction[V] = WindowFunction.NthValue(this, n)
     end Column
 
+    /** A Scala value lifted into a [[Term]], carrying the evidence that says how to bind it and the name of the type it was lifted from.
+      *
+      * Always a bind parameter, never SQL text, which keeps a value's own characters out of the statement. Its identity as a distinct node is
+      * what the nullability rules key on; see [[Sql.literal]].
+      *
+      * @param value
+      *   the lifted value
+      * @param schema
+      *   the single-column evidence that binds it, which decides wire format and per-backend type dispatch
+      * @param typeName
+      *   the Scala type's name, carried for diagnostics rather than for rendering
+      */
     final case class Literal[A](value: A, schema: SqlSchema.Column[A], typeName: String) extends Term[A]
 
     /** A term carrying an explicit label. Created via `term.as("name")`, used by `groupBy` / `select` for labelled projections. The label
@@ -1215,12 +1287,26 @@ object Sql:
 
     // --- OrderSpec / WindowSpec / Frame / FrameBound ---
 
-    final case class OrderSpec(expr: Term[?], direction: OrderSpec.Direction, absent: OrderSpec.AbsentPlacement) derives CanEqual
+    final case class OrderSpec(expr: Term[?], direction: OrderSpec.Direction, absent: OrderSpec.AbsentPlacement) derives CanEqual:
+        /** An absent value sorts as the largest: last under `ASC`, first under `DESC`. Resolved here so a flavor never decides, since the
+          * engines disagree by default and do so silently.
+          */
+        def resolvedAbsent: OrderSpec.AbsentPlacement =
+            absent match
+                case OrderSpec.AbsentPlacement.Default =>
+                    direction match
+                        case OrderSpec.Direction.Asc  => OrderSpec.AbsentPlacement.Last
+                        case OrderSpec.Direction.Desc => OrderSpec.AbsentPlacement.First
+                case named => named
+    end OrderSpec
+
     object OrderSpec:
         enum Direction derives CanEqual:
             case Asc, Desc
 
-        /** Where absent values sort relative to present ones, or [[AbsentPlacement.Default]] to leave it to the flavor. */
+        /** Where absent values sort relative to present ones. [[Default]] takes the placement that treats an absent value as the largest,
+          * resolved by [[OrderSpec.resolvedAbsent]] rather than left to the flavor.
+          */
         enum AbsentPlacement derives CanEqual:
             case Default, First, Last
     end OrderSpec
@@ -2200,6 +2286,29 @@ object Sql:
     end Insert
 
     object Insert:
+
+        /** Holds a reported affected-row count to what the statement could possibly have affected.
+          *
+          * An INSERT of N rows affects at most N rows, which is a property of the statement rather than of any engine. One engine reports an
+          * upsert that updated a row as TWO, counting the row it matched and the row it changed, where the other reports one.
+          *
+          * Capping rather than halving, since halving is one engine's arithmetic. Two lanes it does not reach, so the divergence survives in
+          * both: an `INSERT ... SELECT` has no row count to cap against, and a pipelined insert never passes here.
+          *
+          * Public rather than `private[kyo]` because the static-render macro splices a call to it into the caller's own compilation unit.
+          */
+        def capAffected(insert: Insert[?, ?], outcome: SqlClient.InsertOutcome): SqlClient.InsertOutcome =
+            val limit: Maybe[Long] =
+                insert.source match
+                    case Values(rows)           => Present(rows.size.toLong)
+                    case PartialValues(_)       => Present(1L)
+                    case _: FromSelect[?, ?, ?] => Absent
+            limit match
+                case Present(n) if outcome.affectedRows > n => outcome.copy(affectedRows = n)
+                case _                                      => outcome
+            end match
+        end capAffected
+
         sealed abstract class Source[T, F]
 
         /** `VALUES (…), (…)` rows for an INSERT, stored as decomposed pure data: outer `Chunk` = rows, inner `Chunk` = one
@@ -2258,16 +2367,24 @@ object Sql:
             def runDynamic(using frame: Frame): SqlClient.InsertOutcome < (Abort[SqlException] & DB) =
                 DB.state.map { state =>
                     state.client.render(ins).map(r =>
-                        r.sqlForOrFail(state.client.dialect.id).map(sql => state.client.internalExecuteInsert(sql, r.params, state.config))
+                        r.sqlForOrFail(state.client.dialect.id).map(sql =>
+                            state.client.internalExecuteInsert(sql, r.params, state.config)
+                                .map(outcome => Insert.capAffected(ins, outcome))
+                        )
                     )
                 }
         end extension
 
+        /** The accumulating half of an INSERT: the table's columns, its name, its column names, and the detected auto-key.
+          *
+          * `autoKey` has no default, for the reason [[Update.Builder]]'s `sets` does not: a default reaches the compile-time render as a call
+          * to a synthetic accessor whose body it cannot see, and one unreadable field makes the statement unfoldable.
+          */
         final case class Builder[T, F](
             columns: Record[F],
             tableName: String,
             columnNames: Chunk[String],
-            autoKey: Maybe[String] = Maybe.empty
+            autoKey: Maybe[String]
         ):
             /** Sends one row per `T`, every column in declaration order, including a detected auto-key column.
               *
@@ -2534,9 +2651,11 @@ object Sql:
 
         object Returning:
             extension [T, F, A](inline ret: Returning[T, F, A])
+                /** Try the static-emission path; fall back to the runtime renderer if the AST is not reducible at compile time. */
                 inline def run(using ev: SqlSchema[A], frame: Frame): Chunk[A] < (Abort[SqlException] & DB) =
                     ${ kyo.internal.SqlRunMacro.runDeleteReturningImpl[T, F, A]('ret, 'ev, 'frame) }
 
+                /** Requires compile-time AST reduction; produces a compile error if the AST is not reducible. */
                 inline def runStatic(using ev: SqlSchema[A], frame: Frame): Chunk[A] < (Abort[SqlException] & DB) =
                     ${ kyo.internal.SqlRunMacro.runDeleteReturningStaticImpl[T, F, A]('ret, 'ev, 'frame) }
             end extension

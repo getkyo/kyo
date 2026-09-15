@@ -2,6 +2,7 @@ package kyo.mysql
 
 import kyo.*
 import kyo.OwnContainer
+import kyo.internal.SqlTestContainers
 
 /** Integration test for caching_sha2_password full-auth via pure-Scala RSA-OAEP.
   *
@@ -25,7 +26,10 @@ class CachingSha2FullAuthIntegrationTest extends SqlContainerTest:
     "caching_sha2_password full-auth via pure-Scala RSA-OAEP succeeds against fresh MySQL container".tagged("kyo.OwnContainer") in {
         Scope.run {
             // Fresh container = cold auth cache → server will issue full-auth (AuthMoreData 0x04).
-            ContainerPredef.MySQL.initWith(ContainerPredef.MySQL.Config.default) { mysql =>
+            // Through `SqlTestContainers` rather than `ContainerPredef.MySQL.initWith` directly, so the
+            // container carries the `kyo-sql-singleton` and `kyo-sql-owner-pid` labels and a killed test
+            // process leaves something the reaper can find.
+            SqlTestContainers.initScopedMysql(ContainerPredef.MySQL.Config.default, "mysql-caching-sha2-full-auth").map { mysql =>
                 mysql.container.mappedPort(mysql.config.port).flatMap { port =>
                     // Connect without TLS: forces the RSA-OAEP encrypted full-auth path.
                     MysqlClient.init(

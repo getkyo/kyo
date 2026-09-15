@@ -56,12 +56,19 @@ final private[kyo] class JsUnsafeBuffer(
                     i += 1
     end copyTo
 
-    def copyToArray(arr: Array[Byte], srcOffset: Long, len: Int)(using AllowUnsafe): Unit =
+    def copyToArray(arr: Array[Byte], srcOffset: Long, destPos: Int, len: Int)(using AllowUnsafe): Unit =
         var i = 0
         while i < len do
-            arr(i) = view.getInt8(srcOffset.toInt + i)
+            arr(destPos + i) = view.getInt8(srcOffset.toInt + i)
             i += 1
     end copyToArray
+
+    def copyFromArray(arr: Array[Byte], srcPos: Int, destOffset: Long, len: Int)(using AllowUnsafe): Unit =
+        var i = 0
+        while i < len do
+            view.setInt8(destOffset.toInt + i, arr(srcPos + i))
+            i += 1
+    end copyFromArray
 
     def view(offset: Long, byteSize: Long)(using AllowUnsafe): UnsafeBuffer =
         val newU8a  = new Uint8Array(u8a.buffer, u8a.byteOffset + offset.toInt, byteSize.toInt)

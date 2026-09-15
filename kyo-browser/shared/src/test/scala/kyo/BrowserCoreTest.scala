@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.BrowserElementNotActionableException.Reason
+import kyo.internal.Actionability
 import kyo.internal.BrowserEval
 import kyo.internal.CdpBackend
 import kyo.internal.CdpNoParams
@@ -637,17 +638,20 @@ class BrowserCoreTest extends BrowserTest:
             </body>""")
             for
                 _       <- Browser.goto(p)
+                gate    <- Actionability.check(Browser.Selector.id("b"), requireFillable = false, requireEnabled = true)
                 urlPre  <- Browser.url
-                start   <- Clock.nowMonotonic
                 _       <- Browser.click(Browser.Selector.id("b"))
-                end     <- Clock.nowMonotonic
                 urlPost <- Browser.url
                 clicked <- Browser.eval("String(window.__kyoClicked === true)")
             yield
-                val elapsed = (end - start).toMillis
-                // Behavior: a no-nav-intent click leaves the URL unchanged (NavigationWatcher saw no nav frame) AND the
-                // JS handler ran (`__kyoClicked === true`). Together these prove armAround's short-circuit fired without
-                // depending on a tight wall clock.
+                // `navigatesOnClick` IS the branch condition in Browser.click: false routes the click through mutation
+                // settlement and never arms the NavigationWatcher. Asserting it directly is what separates a
+                // short-circuit from a nav path that waited out its grace window and returned the same state, which the
+                // two checks below cannot distinguish on their own; both hold either way.
+                val nonNav = gate match
+                    case Result.Success(ref) => !ref.navigatesOnClick
+                    case _                   => false
+                assert(nonNav, s"the gate must classify a plain button as non-navigating, so click takes the short-circuit; got $gate")
                 assert(
                     urlPost == urlPre,
                     s"expected URL unchanged after no-nav-intent click but pre='$urlPre' post='$urlPost' (nav frame observed)"
@@ -655,13 +659,6 @@ class BrowserCoreTest extends BrowserTest:
                 assert(
                     clicked == "true",
                     s"expected window.__kyoClicked === true after click (handler must have run) but got '$clicked'"
-                )
-                // Soft timing envelope: armAround's no-nav-intent short-circuit avoids the navigation grace window, so the
-                // click should still return well under a relaxed CI-tolerant bound. Hard tightness is enforced by the
-                // deterministic checks above.
-                assert(
-                    elapsed < 1500,
-                    s"expected a no-nav-intent click to return quickly (<1500ms soft envelope) but took ${elapsed}ms"
                 )
             end for
         }
@@ -1706,12 +1703,11 @@ class BrowserCoreTest extends BrowserTest:
     "count returns 0 immediately for a missing selector without waiting for the retry schedule" in {
         withBrowser {
             onPage("<div>no items here</div>") {
-                val start = java.lang.System.currentTimeMillis()
-                Browser.withConfig(_.retrySchedule(Schedule.fixed(5.seconds).take(10))) {
+                // 1-hour retry schedule: count on a missing selector must short-circuit to 0 without arming it. A count
+                // that wrongly waited the schedule would hang into the per-leaf timeout instead of racing a wall-clock bound.
+                Browser.withConfig(_.retrySchedule(Schedule.fixed(1.hour))) {
                     Browser.count(Browser.Selector.css("li.missing")).map { n =>
-                        val elapsed = java.lang.System.currentTimeMillis() - start
                         assert(n == 0, s"Expected 0 for missing selector but got $n")
-                        assert(elapsed < 2000, s"Expected count to return immediately (<2000ms) but took ${elapsed}ms")
                     }
                 }
             }

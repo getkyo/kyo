@@ -27,7 +27,7 @@ class TransportUnixSocketTest extends Test:
         "connectUnix + listenUnix round-trips a known message through an echo handler" in {
             val transport = NetPlatform.transport
             assumeUnixSockets(transport)
-            val path = s"/tmp/kyo-uds-${java.lang.System.nanoTime()}.sock"
+            val path = s"/tmp/kyo-uds-${TlsTestCertShared.uniquePathTag()}.sock"
             for
                 accepted <- Channel.init[Unit](1)
                 listener <- transport.listenUnix(path, 16) { serverConn =>
@@ -74,7 +74,7 @@ class TransportUnixSocketTest extends Test:
         "a finite deadline does not disturb a Unix connect that completes" in {
             val transport = NetPlatform.transport
             assumeUnixSockets(transport)
-            val path = s"/tmp/kyo-uds-deadline-${java.lang.System.nanoTime()}.sock"
+            val path = s"/tmp/kyo-uds-deadline-${TlsTestCertShared.uniquePathTag()}.sock"
             transport.listenUnix(path, 16)(_ => ()).safe.get.map { listener =>
                 Scope.ensure(Sync.defer(listener.close())).andThen {
                     Abort.run[NetException | Closed](transport.connectUnix(path, 5.seconds).safe.get).map { outcome =>

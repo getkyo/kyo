@@ -1,2 +1,2 @@
 addSbtPlugin("io.getkyo"    % "kyo-ffi-plugin" % sys.props("plugin.version"))
-addSbtPlugin("org.scala-js" % "sbt-scalajs"    % "1.21.0")
+addSbtPlugin("org.scala-js" % "sbt-scalajs"    % sys.props("scalajs.version"))

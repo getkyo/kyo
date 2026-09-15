@@ -139,6 +139,14 @@ lazy val `kyo-settings` = Seq(
     // expansion reaches users as a broken build in their code, not ours. The Scala 2.13 cross-builds (the
     // kyo-scheduler family) do not have the flag.
     scalacOptions ++= (if (scalaVersion.value.startsWith("3")) Seq("-Xcheck-macros") else Nil),
+    // `KYO_RETAIN_TREES=true sbt <module>/test` compiles with `-Yretain-trees`, which changes what
+    // `Symbol.tree` returns: the retained source declaration instead of one the compiler fabricates
+    // from the symbol info. A macro that reads a declaration through that call sees a different tree
+    // shape under the flag, so a build that enables it (some do project-wide) can crash a derivation
+    // that compiles everywhere else. Kyo's macros must answer the same in both modes; this is how to
+    // check that. Off by default: retaining the trees of every dependency costs a few hundred MB per
+    // module, which CI does not have to spare.
+    scalacOptions ++= (if (sys.env.get("KYO_RETAIN_TREES").contains("true")) Seq("-Yretain-trees") else Nil),
     Test / scalacOptions --= scalacOptionTokens(Set(ScalacOptions.warnNonUnitStatement)).value,
     // Not in CI: parallel cross-version compilations of one module format the same shared
     // sources concurrently, and the loser logs "scalafmt: failed for 1 sources" on every
@@ -365,7 +373,6 @@ lazy val kyoJVM: Project = project
         `kyo-prelude`.jvm,
         `kyo-parse`.jvm,
         `kyo-core`.jvm,
-        `kyo-system`.jvm,
         `kyo-offheap`.jvm,
         `kyo-ffi`.jvm,
         `kyo-ffi-codegen`,
@@ -396,6 +403,7 @@ lazy val kyoJVM: Project = project
         `kyo-sql-postgres`.jvm,
         `kyo-sql-mysql`.jvm,
         `kyo-sql-tests`.jvm,
+        `kyo-system`.jvm,
         `kyo-http`.jvm,
         `kyo-flow`.jvm,
         `kyo-ai`.jvm,
@@ -453,7 +461,6 @@ lazy val kyoJS = project
         `kyo-prelude`.js,
         `kyo-parse`.js,
         `kyo-core`.js,
-        `kyo-system`.js,
         `kyo-ffi`.js,
         `kyo-ffi-it`.js,
         `kyo-net`.js,
@@ -483,6 +490,7 @@ lazy val kyoJS = project
         `kyo-sql-postgres`.js,
         `kyo-sql-mysql`.js,
         `kyo-sql-tests`.js,
+        `kyo-system`.js,
         `kyo-http`.js,
         `kyo-aeron`.js,
         `kyo-flow`.js,
@@ -525,7 +533,6 @@ lazy val kyoNative = project
         `kyo-config`.native,
         `kyo-scheduler`.native,
         `kyo-core`.native,
-        `kyo-system`.native,
         `kyo-offheap`.native,
         `kyo-ffi`.native,
         `kyo-ffi-it`.native,
@@ -549,6 +556,7 @@ lazy val kyoNative = project
         `kyo-sql-postgres`.native,
         `kyo-sql-mysql`.native,
         `kyo-sql-tests`.native,
+        `kyo-system`.native,
         `kyo-http`.native,
         `kyo-aeron`.native,
         `kyo-flow`.native,
@@ -606,9 +614,9 @@ lazy val kyoWasm = project
         `kyo-sql-postgres`.wasm,
         `kyo-sql-mysql`.wasm,
         `kyo-sql-tests`.wasm,
+        `kyo-system`.wasm,
         `kyo-scheduler`.wasm,
         `kyo-core`.wasm,
-        `kyo-system`.wasm,
         `kyo-ffi`.wasm,
         `kyo-direct`.wasm,
         `kyo-stm`.wasm,
@@ -811,6 +819,7 @@ lazy val `kyo-schema` =
         .crossType(CrossType.Full)
         .dependsOn(`kyo-data` % "test->test;compile->compile")
         .dependsOn(`kyo-core` % "test->compile")
+        .dependsOn(`kyo-system` % "test->compile")
         .in(file("kyo-schema"))
         .withKyoTest
         .settings(`kyo-settings`)
@@ -820,6 +829,18 @@ lazy val `kyo-schema` =
         .jvmConfigure(_.settings(doctestSources := Seq.empty))
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`, Test / scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)))
+        .wasmSettings(`wasm-settings`)
+
+lazy val `kyo-system` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-system"))
+        .dependsOn(`kyo-core`)
+        .withKyoTest
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`)
+        .jsSettings(`js-settings`, scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)))
         .wasmSettings(`wasm-settings`)
 
 lazy val `kyo-schema-json` =
@@ -859,7 +880,11 @@ lazy val `kyo-schema-tests` =
         // The shared kyo-schema README exercises every format; only this project's Test
         // classpath sees the core plus all six format modules, so it hosts the validation.
         .jvmConfigure(_.settings(
-            doctestSources := Seq((ThisBuild / baseDirectory).value / "kyo-schema" / "README.md")
+            doctestSources := Seq((ThisBuild / baseDirectory).value / "kyo-schema" / "README.md"),
+            // Differential-oracle deps (ProtobufDifferentialTest): protobuf-java is the wire
+            // oracle, Proteus the code-first schema-mapping oracle. JVM test scope only.
+            libraryDependencies += "com.google.protobuf"    % "protobuf-java" % "4.35.0" % Test,
+            libraryDependencies += "com.github.ghostdogpr" %% "proteus-core"  % "0.6.0"  % Test
         ))
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`, Test / scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)))
@@ -909,7 +934,6 @@ lazy val `kyo-schema-ion` =
         .crossType(CrossType.Full)
         .dependsOn(`kyo-schema` % "test->test;compile->compile")
         .dependsOn(`kyo-core` % "test->compile")
-        .dependsOn(`kyo-system` % "test->compile")
         .in(file("kyo-schema-ion"))
         .withKyoTest
         .settings(`kyo-settings`)
@@ -943,7 +967,6 @@ lazy val `kyo-sql` =
         .dependsOn(`kyo-schema-json`)
         .dependsOn(`kyo-net`)
         .dependsOn(`kyo-pod` % "test->compile")
-        .dependsOn(`kyo-system` % "test->compile")
         .in(file("kyo-sql"))
         .withKyoTest
         .settings(`kyo-settings`)
@@ -969,7 +992,6 @@ lazy val `kyo-sql-postgres` =
         .crossType(CrossType.Full)
         .dependsOn(`kyo-sql` % "test->test;compile->compile")
         .dependsOn(`kyo-pod` % "test->compile")
-        .dependsOn(`kyo-system` % "test->compile")
         .in(file("kyo-sql-postgres"))
         .withKyoTest
         .settings(`kyo-settings`)
@@ -989,7 +1011,6 @@ lazy val `kyo-sql-mysql` =
         .crossType(CrossType.Full)
         .dependsOn(`kyo-sql` % "test->test;compile->compile")
         .dependsOn(`kyo-pod` % "test->compile")
-        .dependsOn(`kyo-system` % "test->compile")
         .in(file("kyo-sql-mysql"))
         .withKyoTest
         .settings(`kyo-settings`)
@@ -1058,18 +1079,6 @@ lazy val `kyo-core` =
             // Same java.util.logging shim as JS.
             libraryDependencies += ("org.scala-js" %%% "scalajs-java-logging" % "1.0.0").cross(CrossVersion.for3Use2_13)
         )
-
-lazy val `kyo-system` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
-        .crossType(CrossType.Full)
-        .in(file("kyo-system"))
-        .dependsOn(`kyo-core`)
-        .withKyoTest
-        .settings(`kyo-settings`)
-        .jvmSettings(mimaCheck(false))
-        .nativeSettings(`native-settings`)
-        .jsSettings(`js-settings`, scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) })
-        .wasmSettings(`wasm-settings`)
 
 lazy val `kyo-offheap` =
     crossProject(JVMPlatform, NativePlatform)
@@ -1148,7 +1157,8 @@ lazy val `kyo-ffi-it` =
             ffiLibraries := Seq(
                 FfiLibrary(
                     id = "kyo_it_bundled",
-                    cSources = (baseDirectory.value / ".." / "shared" / "src" / "main" / "c" ** "*.c").get
+                    cSources = (baseDirectory.value / ".." / "shared" / "src" / "main" / "c" ** "*.c").get,
+                    cHeaders = (baseDirectory.value / ".." / "shared" / "src" / "main" / "c" ** "*.h").get
                 )
             )
         )
@@ -1271,7 +1281,15 @@ lazy val `kyo-ffi-plugin` =
                     Seq(
                         "-Xmx1024M",
                         "-Dplugin.version=" + version.value,
-                        "-Dkyo.version=" + version.value
+                        "-Dkyo.version=" + version.value,
+                        // The sub-builds link against kyo artifacts this build publishLocal'd, so their
+                        // Scala.js and Scala Native plugins must be the ones those artifacts were built
+                        // with. Pinning the versions here rather than in each fixture's plugins.sbt
+                        // keeps the two from drifting: a stale sbt-scala-native fails at nativeLink on
+                        // an undefined runtime symbol, a stale sbt-scalajs at fastLinkJS on an IR
+                        // version it cannot read. Mirrors kyo-doctest-plugin's scalaVersion pin.
+                        "-Dscalajs.version=" + scalaJSVersion,
+                        "-Dscalanative.version=" + nativeVersion
                     )
             },
             scriptedBufferLog                      := false,
@@ -1312,6 +1330,19 @@ lazy val `kyo-ffi-plugin` =
                 val d0 = (`kyo-ffi-codegen` / publishLocal).value
                 scriptedDependencies.value
             },
+            // Run the scripted suite as part of the plugin's regular test task so CI gates it via
+            // `kyo-ffi-plugin/test`, as kyo-compat-plugin, kyo-doctest-plugin and kyo-test-sbt-publish
+            // already do. No workflow invokes `scripted` directly, so without this binding these
+            // suites run nowhere.
+            Test / test := (Test / test).dependsOn(Def.taskDyn {
+                // Skipped on Windows: sbt's scripted framework boots a nested sbt whose Win32
+                // named-pipe boot-server lock flakily fails to create (error 1336), failing the batch
+                // reload before any test runs (sbt/sbt#6777). Same exemption the sibling plugins take.
+                if (sys.props.getOrElse("os.name", "").toLowerCase.contains("win"))
+                    Def.task(streams.value.log.info("scripted skipped on Windows (sbt#6777 boot-server named-pipe flake)"))
+                else
+                    Def.task((scripted.toTask("")).value)
+            }).value,
             publish   := {},
             publishM2 := {}
         )
@@ -1382,8 +1413,7 @@ lazy val `kyo-tasty` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-tasty"))
-        .dependsOn(`kyo-core`, `kyo-schema`)
-        .dependsOn(`kyo-system`)
+        .dependsOn(`kyo-core`, `kyo-schema`, `kyo-system`)
         .dependsOn(`kyo-schema-json` % "test->compile")
         .withKyoTest
         .settings(
@@ -1518,8 +1548,7 @@ lazy val `kyo-stats-machine` =
         .crossType(CrossType.Full)
         .in(file("kyo-stats-machine"))
         .enablePlugins(KyoFfiPlugin)
-        .dependsOn(`kyo-ffi`)
-        .dependsOn(`kyo-system`)
+        .dependsOn(`kyo-ffi`, `kyo-system`)
         .withKyoTest
         .settings(
             `kyo-settings`,
@@ -1531,7 +1560,14 @@ lazy val `kyo-stats-machine` =
             ffiLibraries := Seq(
                 FfiLibrary(
                     id = "machine_macos",
-                    cSources = Seq((baseDirectory.value / ".." / "shared" / "src" / "main" / "c" / "machine_macos.c").getAbsoluteFile)
+                    cSources = Seq((baseDirectory.value / ".." / "shared" / "src" / "main" / "c" / "machine_macos.c").getAbsoluteFile),
+                    // Mach calls only, so the JVM/JS shared library is built and bundled for darwin alone.
+                    // Without this the release built on Linux shipped a Linux artifact for a binding no Linux
+                    // process ever loads, while shipping no darwin artifact at all. Off darwin, Ffi.load raises
+                    // a catchable LibraryNotFound that MachineMacos degrades to Absent. Scala Native still
+                    // compiles the C into the binary on every OS, which is what the file's #ifdef stubs keep
+                    // resolvable; osTargets governs the JVM/JS shared library only.
+                    osTargets = Seq("darwin")
                 )
             )
         )
@@ -1695,6 +1731,16 @@ def npmCommand: String =
 // runtime-correct name was not found here and the build silently fell back to the TLS stub.
 def hostOsArch: String = ffiHostOsArch
 
+// The OS targets kyo-net's BoringSSL shim is built and bundled for. Windows ships no BoringSSL native
+// by ruling (NIO + the JDK's TLS), so bundling it there packages a DLL that can only ever report
+// unavailable. Every consumer reaches it through a capability probe or a staged-bundle gate, so a
+// platform it is not declared for degrades to the JDK floor rather than failing.
+//
+// kyonet_posix_uring declares no osTargets. kyo_epoll.c and kyo_uring.c define every entry point on
+// every target, Windows included, so the binding resolves wherever the library loads and epoll's
+// absence is an errno rather than a missing symbol.
+def kyoNetBoringSslOsTargets: Seq[String] = Seq("linux", "linux-musl", "darwin")
+
 // The staged BoringSSL tree for the host os-arch, present only after build-boringssl.sh ran.
 def boringSslStagedDir(baseDir: File): File =
     baseDir / "build" / "boringssl" / "staged" / hostOsArch
@@ -1847,8 +1893,7 @@ lazy val `kyo-net` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .enablePlugins(KyoFfiPlugin)
-        .dependsOn(`kyo-core`, `kyo-config`)
-        .dependsOn(`kyo-system`)
+        .dependsOn(`kyo-core`, `kyo-config`, `kyo-system`)
         .dependsOn(`kyo-ffi`)
         .in(file("kyo-net"))
         .withKyoTest
@@ -1883,12 +1928,14 @@ lazy val `kyo-net` =
                             libDirs = Seq(stagedDir / "lib"),
                             linkLibs = Seq("ssl", "crypto"),
                             linkFlags = boringSslCxxRuntimeFlags,
-                            staticLink = true
+                            staticLink = true,
+                            osTargets = kyoNetBoringSslOsTargets
                         )
                     else
                         FfiLibrary(
                             id = "kyonet_boringssl",
-                            cSources = (sharedBase / "src" / "main" / "c-boringssl-stub" ** "*.c").get
+                            cSources = (sharedBase / "src" / "main" / "c-boringssl-stub" ** "*.c").get,
+                            osTargets = kyoNetBoringSslOsTargets
                         )
                 // System OpenSSL (kyonet_openssl): the kyo_net_openssl.c shim, registered only in the Native TLS registry
                 // (SystemOpenSslProvider). On Native its C sources are declared UNCONDITIONALLY, because whether the system
@@ -1917,6 +1964,7 @@ lazy val `kyo-net` =
                     FfiLibrary(
                         id = "kyonet_posix_uring",
                         cSources = (sharedBase / "src" / "main" / "c" ** "*.c").get,
+                        cHeaders = (sharedBase / "src" / "main" / "c" ** "*.h").get,
                         linkLibsByOs = Map("linux" -> Seq("uring")),
                         staticLink = true
                     ),
@@ -2137,8 +2185,8 @@ lazy val `kyo-aeron` =
                         linkFlags = linuxSystemLinkFlags,
                         // Aeron supports Windows only under MSVC (its sources gate on _MSC_VER) and forces
                         // the dynamic CRT (/MD), so on Windows the shim compiles with cl and /MD.
-                        // staticLink=true would add /MT (static CRT) and clash with aeron's /MD; the aeron
-                        // .lib is embedded by the link regardless, so Windows uses staticLink=false.
+                        // The aeron .lib is embedded by the link regardless, so Windows uses
+                        // staticLink=false; the /MD above states the CRT model the archive was built with.
                         cFlags = if (isWindows) Seq("/MD") else Nil,
                         compilerByOs = if (isWindows) Map("windows" -> "cl") else Map.empty,
                         staticLink = !isWindows
@@ -2159,8 +2207,9 @@ lazy val `kyo-aeron` =
         .nativeSettings(
             `native-settings`,
             // The UDP round-trip and URI-validation suites bind fixed high ports, which collide if
-            // suites run concurrently. (The JS and Wasm blocks need no equivalent: they inherit the
-            // global Test/parallelExecution := false.)
+            // suites run concurrently. `native-settings-base` now sets this too, for its own
+            // reason; kept here so a change there cannot silently reintroduce the port collision.
+            // (The JS and Wasm blocks need no equivalent: they inherit it from `js-settings`.)
             Test / parallelExecution := false,
             nativeConfig := {
                 val base = nativeConfig.value
@@ -2301,8 +2350,7 @@ lazy val `kyo-compiler` =
     crossProject(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-compiler"))
-        .dependsOn(`kyo-core`, `kyo-aeron`, `kyo-ai` % Test)
-        .dependsOn(`kyo-system`)
+        .dependsOn(`kyo-core`, `kyo-aeron`, `kyo-ai` % Test, `kyo-system`)
         .withKyoTest
         .settings(
             `kyo-settings`,
@@ -2321,7 +2369,6 @@ lazy val `kyo-http` =
         .crossType(CrossType.Full)
         .in(file("kyo-http"))
         .dependsOn(`kyo-core`, `kyo-config`, `kyo-schema-json`)
-        .dependsOn(`kyo-system` % Test)
         .dependsOn(`kyo-net` % "compile->compile;test->test")
         .withKyoTest
         .settings(
@@ -2361,8 +2408,7 @@ lazy val `kyo-ai` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-ai"))
-        .dependsOn(`kyo-core`, `kyo-schema-json`, `kyo-http`, `kyo-actor`, `kyo-jsonrpc`, `kyo-jsonrpc-http`, `kyo-mcp`)
-        .dependsOn(`kyo-system`)
+        .dependsOn(`kyo-core`, `kyo-schema-json`, `kyo-http`, `kyo-actor`, `kyo-jsonrpc`, `kyo-jsonrpc-http`, `kyo-mcp`, `kyo-system`)
         .withKyoTest
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
@@ -2434,7 +2480,6 @@ lazy val `kyo-mcp` =
         .in(file("kyo-mcp"))
         .withKyoTest
         .dependsOn(`kyo-jsonrpc`)
-        .dependsOn(`kyo-system` % Test)
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
         // Test-only dep so the JVM demo MCP servers (jvm/src/test/scala/demo) can drive
@@ -2450,6 +2495,7 @@ lazy val `kyo-lsp` =
         .in(file("kyo-lsp"))
         .withKyoTest
         .dependsOn(`kyo-jsonrpc`)
+        .dependsOn(`kyo-system`)
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
@@ -2735,8 +2781,21 @@ lazy val `kyo-pod` =
         .crossType(CrossType.Full)
         .in(file("kyo-pod"))
         .dependsOn(`kyo-core`, `kyo-http`)
+        // Direct, not through kyo-http: `Container.init` opens a host-side TCP connection to prove a published
+        // port is actually served before it hands the caller a handle.
+        .dependsOn(`kyo-net`)
         .dependsOn(`kyo-system`)
         .withKyoTest
+        .settings(
+            // The container-leak check in BasePodTest diffs `Container.list(all = true)` around each leaf, so it
+            // attributes to that leaf any container created while it ran. That is exact only while one container
+            // operation is in flight per daemon, which `runBackends` documents and which sequential leaves give
+            // WITHIN a suite. Across suites it does not hold: ContainerItTest forks per runtime while the
+            // orchestration and predef suites auto-detect, so two of them target the same daemon at once and each
+            // reports the other's containers as its own leak. Serial suites make the invariant the check relies on
+            // actually true; a parallel module run reports seventeen such failures and a serial one reports none.
+            Test / parallelExecution := false
+        )
         .settings(
             `kyo-settings`
         )
@@ -2841,8 +2900,7 @@ lazy val `kyo-browser` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-browser"))
-        .dependsOn(`kyo-http`, `kyo-jsonrpc`, `kyo-jsonrpc-http`)
-        .dependsOn(`kyo-system`)
+        .dependsOn(`kyo-http`, `kyo-jsonrpc`, `kyo-jsonrpc-http`, `kyo-system`)
         .withKyoTest
         .settings(
             `kyo-settings`
@@ -2911,7 +2969,6 @@ lazy val `kyo-slack` =
         .crossType(CrossType.Full)
         .in(file("kyo-slack"))
         .dependsOn(`kyo-http`, `kyo-schema-json`)
-        .dependsOn(`kyo-system` % Test)
         .withKyoTest
         .settings(
             `kyo-settings`
@@ -2951,8 +3008,7 @@ lazy val `kyo-i18n` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-i18n"))
-        .dependsOn(`kyo-core`)
-        .dependsOn(`kyo-system`)
+        .dependsOn(`kyo-core`, `kyo-system`)
         .withKyoTest
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
@@ -2966,7 +3022,6 @@ lazy val `kyo-ui` =
         .in(file("kyo-ui"))
         .dependsOn(`kyo-core`, `kyo-http`)
         .dependsOn(`kyo-browser` % Test)
-        .dependsOn(`kyo-system` % Test)
         .withKyoTest
         .settings(
             `kyo-settings`
@@ -3073,11 +3128,11 @@ lazy val `kyo-examples` =
         .crossType(CrossType.Full)
         .in(file("kyo-examples"))
         .dependsOn(`kyo-http`)
-        .dependsOn(`kyo-system`)
         .dependsOn(`kyo-schema-json`)
         .dependsOn(`kyo-direct`)
         .dependsOn(`kyo-core`)
         .dependsOn(`kyo-actor`)
+        .dependsOn(`kyo-system`)
         .disablePlugins(MimaPlugin)
         .settings(
             `kyo-settings`,
@@ -3170,10 +3225,10 @@ lazy val `kyo-doctest` =
         .crossType(CrossType.Full)
         .in(file("kyo-doctest"))
         .dependsOn(`kyo-core`)
-        .dependsOn(`kyo-system`)
         .dependsOn(`kyo-schema-json`)
         .dependsOn(`kyo-parse`)
         .dependsOn(`kyo-direct` % Test)
+        .dependsOn(`kyo-system`)
         .withKyoTest
         .disablePlugins(MimaPlugin)
         .jvmConfigure(_.disablePlugins(KyoDoctestPlugin))
@@ -3263,8 +3318,17 @@ def readFfiNativeManifest(cp: Seq[Attributed[File]], relDir: Seq[String], inBuil
 // the kyoNative aggregate (which has no native sources, hence no Test / nativeLink to transform) can
 // take these without the per-module link hook below.
 lazy val `native-settings-base` = Seq(
-    fork                                              := false,
-    bspEnabled                                        := false,
+    fork       := false,
+    bspEnabled := false,
+    // One test task per module, not one per suite. The scala-native TestAdapter keys its runner
+    // processes by sbt task thread id, and sbt's cached task pool reaps a thread after 60s idle, so
+    // one task per suite gives one FRESH runner process per suite whenever consecutive suites are
+    // more than a minute apart. Every kyo-sql suite is, which turned the per-process container
+    // singleton into per-suite provisioning: 24 worker processes and ~2 container starts each in one
+    // module. Serial tasks keep the module on one thread and therefore one worker. Nothing is lost in
+    // concurrency: Native leaf parallelism is already capped at 1 by kyo-test's LeafPool. Matches what
+    // `js-settings` does globally and what kyo-aeron already does for Native.
+    Test / parallelExecution                          := false,
     Test / testForkedParallel                         := false,
     Test / envVars += "SCALANATIVE_THREAD_STACK_SIZE" -> "33554432",
     libraryDependencies += "io.github.cquiroz"       %%% "scala-java-time" % "2.7.0",

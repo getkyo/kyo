@@ -106,12 +106,12 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
     "findClass(kyo.fixtures.JavaSimpleFixture) returns Present with isJava via temp dir" in {
         // Write the .class file to a temp dir and use ClasspathOrchestrator.init with a real path.
         Scope.run {
-            Path.tempDir("kyo-cf2-java").map { tmpDir =>
+            Path.run(Path.tempDir("kyo-cf2-java")).map { tmpDir =>
                 val subDir = tmpDir / "kyo" / "fixtures"
-                subDir.mkDir.map { _ =>
-                    (subDir / "JavaSimpleFixture.class").writeBytes(
+                Path.run(subDir.mkDir).map { _ =>
+                    Path.run((subDir / "JavaSimpleFixture.class").writeBytes(
                         Span.from(kyo.fixtures.EmbeddedJavaFixtures.javaSimpleFixtureClassfile)
-                    ).map { _ =>
+                    )).map { _ =>
                         Scope.run {
                             Abort.run[TastyError](
                                 ClasspathOrchestrator.init(

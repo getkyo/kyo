@@ -102,14 +102,26 @@ class HandshakeEngineFreeTest extends Test:
 
     /** Re-count the port-attributed sockets repeatedly, returning the lowest observation, stopping early once it settles to `base`. A failed
       * handshake routes its fd close through the driver asynchronously, so the last connection's descriptor can still be open at the instant the soak
-      * loop returns; the short retries let those async closes drain. A real per-iteration leak never drains back to `base`, so the minimum stays high.
+      * loop returns; the retries let those async closes drain. A real per-iteration leak never drains back to `base`, so the minimum stays high.
+      *
+      * The budget is a generous 30s hang-guard, not an expected-drain time: because the result is the MINIMUM across polls, a correct soak settles
+      * to `base` the moment its async closes complete (a few polls in) and returns early, while a genuine leak keeps `port` pinned at one end of a
+      * descriptor forever and can never reach `base`. Only a real leak runs the budget out. A tight budget instead risked reading a slow-but-correct
+      * drain (async closes still in flight under CI load) as a leak; a longer budget cannot mask a real one, since the minimum is monotone.
       */
     private def settledOwnCount(sockets: SocketBindings, port: Int, base: Int)(using Frame): Int < Async =
-        Loop(0, Int.MaxValue) { (i, best) =>
-            Sync.defer(countSocketsOnPort(sockets, port)).map { p =>
-                val b = math.min(best, p)
-                if b <= base || i >= 12 then Loop.done(b)
-                else Async.sleep(40.millis).andThen(Loop.continue(i + 1, b))
+        Clock.nowMonotonic.map { start =>
+            Loop(Int.MaxValue) { best =>
+                Sync.defer(countSocketsOnPort(sockets, port)).map { p =>
+                    val b = math.min(best, p)
+                    if b <= base then Loop.done(b)
+                    else
+                        Clock.nowMonotonic.map { now =>
+                            if now - start >= 30.seconds then Loop.done(b)
+                            else Async.sleep(40.millis).andThen(Loop.continue(b))
+                        }
+                    end if
+                }
             }
         }
     end settledOwnCount

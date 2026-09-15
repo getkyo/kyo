@@ -10,13 +10,17 @@ import kyo.SqlCodec
 import kyo.SqlCodec.Format
 import kyo.SqlDecodeColumnAbsentException
 import kyo.SqlDecodeColumnNotFoundException
+import kyo.SqlDecodeColumnNotRenderableException
 import kyo.SqlDecodeColumnOutOfBoundsException
 import kyo.SqlDecodeException
 import kyo.SqlRow
 import kyo.SqlSchema
+import kyo.SqlValue
 import kyo.bug
 import kyo.internal.SqlPositionalRowCodec
+import kyo.internal.SqlValueRender
 import kyo.internal.postgres.types.PostgresDecoder
+import kyo.internal.postgres.types.PostgresEncoder
 
 /** The PostgreSQL backend's [[SqlRow.Codec]]: decodes a row's columns through [[PostgresRowReader]].
   *
@@ -32,49 +36,111 @@ final private[kyo] case class PostgresRowCodec(format: Format) extends SqlPositi
         new PostgresRowReader(sliced, format, matchesFieldAt)
 
     override def columnKind(typeToken: Int): SqlRow.ColumnKind =
-        PostgresRowCodec.kinds.getOrElse(typeToken, SqlRow.ColumnKind.Unknown)
+        PostgresRowCodec.kindOf(typeToken)
 
     override def typeName(typeToken: Int): Maybe[String] =
-        Maybe.fromOption(PostgresRowCodec.typeNames.get(typeToken))
+        PostgresRowCodec.nameOf(typeToken)
 
-    /** Renders a column as the server renders it, so one stored value reads as one string whichever protocol carried the row.
+    /** A `float4` column is the narrower of the two widths this backend maps to one kind. */
+    override private[kyo] def isSingleWidthFloat(typeToken: Int): Boolean =
+        typeToken == PostgresRowCodec.float4Token
+
+    /** Reads a column into the neutral value it holds, under BOTH wire formats.
       *
-      * The shared codec reads each kind at the widest Scala type in its family and prints the Scala value, which agrees with the server
-      * for some types and not others. It disagrees for whole column types rather than at the edges: PostgreSQL writes a bool `t`, a
-      * timestamp `2026-08-25 10:00:00`, a time `10:00:00`, and a float8 1e10 `10000000000`, where Java writes `true`,
-      * `2026-08-25T10:00`, `10:00`, and `1.0E10`. Under the text protocol the server already sent its rendering and the bytes are handed
-      * back, so every type routed here is one whose binary rendering had to be brought into line with that.
+      * The kinds routed here are the ones whose wire this backend reads itself: a date carries an era, a time reaches 24:00:00, an interval
+      * carries a calendar and a time part at once, and each has special values no Scala type holds. Everything else the shared codec reads.
       *
-      * Two of them have no Scala type to read at all. An `interval` is free to carry both a calendar and a time part, which
-      * `java.time.Duration` and `java.time.Period` each refuse half of, and it is routed under BOTH formats because which of its four
-      * renderings the server writes is a session setting. An `inet` is a wire struct, which the shared fallback would answer as UTF-8.
+      * Nothing is passed through by wire format: the text protocol's bytes are the server's rendering, chosen by settings this connection is
+      * never told about, so each decoder parses and re-renders.
       */
-    override def text(row: SqlRow, idx: Int)(using Frame): String < Abort[SqlDecodeException] =
-        import SqlRow.ColumnKind
+    override def columnValue(row: SqlRow, idx: Int)(using Frame): SqlValue < Abort[SqlDecodeException] =
         val typeToken = row.columns(idx).typeToken
-        inline def renderWith(decoder: PostgresDecoder[String]) =
-            PostgresRowCodec.columnDecoded[String](row, idx)(using summon[Frame], decoder)
-        // The interval is the one routed under both formats, for the session-setting reason above.
-        if columnKind(typeToken) == ColumnKind.Interval then renderWith(PostgresDecoder.intervalText)
-        else if format == Format.Text then super.text(row, idx)
-        else if typeToken == PostgresRowCodec.inetToken then renderWith(PostgresDecoder.inetText)
+        decoderFor(typeToken) match
+            case Maybe.Present(decoder) =>
+                PostgresRowCodec.columnDecoded[SqlValue](row, idx)(using summon[Frame], decoder)
+            case Maybe.Absent => super.columnValue(row, idx)
+        end match
+    end columnValue
+
+    /** The decoder that renders a value of `typeToken`, or [[Maybe.Absent]] for a type the shared codec renders from a neutral read.
+      *
+      * Keyed by type rather than by column, so an array's elements go through exactly the rendering their own type would get as a column.
+      */
+    private def decoderFor(typeToken: Int): Maybe[PostgresDecoder[SqlValue]] =
+        import SqlRow.ColumnKind
+        // An `inet` is a wire struct with no Scala type here at all, keyed by token rather than by kind.
+        if typeToken == PostgresRowCodec.inetToken then Maybe(PostgresDecoder.inetValue)
         else
             columnKind(typeToken) match
-                case ColumnKind.Bool           => renderWith(PostgresDecoder.boolText)
-                case ColumnKind.Date           => renderWith(PostgresDecoder.dateText)
-                case ColumnKind.DateTime       => renderWith(PostgresDecoder.timestampText)
-                case ColumnKind.Timestamp      => renderWith(PostgresDecoder.timestamptzText)
-                case ColumnKind.Time           => renderWith(PostgresDecoder.timeText)
-                case ColumnKind.TimeWithOffset => renderWith(PostgresDecoder.timetzText)
-                case ColumnKind.Decimal        => renderWith(PostgresDecoder.numericText)
+                case ColumnKind.Bool           => Maybe(PostgresDecoder.boolValue)
+                case ColumnKind.Date           => Maybe(PostgresDecoder.dateValue)
+                case ColumnKind.DateTime       => Maybe(PostgresDecoder.timestampValue)
+                case ColumnKind.Timestamp      => Maybe(PostgresDecoder.timestamptzValue)
+                case ColumnKind.Time           => Maybe(PostgresDecoder.timeValue)
+                case ColumnKind.TimeWithOffset => Maybe(PostgresDecoder.timetzValue)
+                case ColumnKind.Decimal        => Maybe(PostgresDecoder.numericValue)
+                case ColumnKind.Interval       => Maybe(PostgresDecoder.intervalValue)
                 case ColumnKind.Float          =>
-                    // float4 and float8 share a kind, and reading a float4 at Double widens it before it is rendered:
-                    // 0.1 becomes 0.10000000149011612 where the server writes 0.1.
-                    if typeToken == PostgresRowCodec.float4Token then renderWith(PostgresDecoder.float4Text)
-                    else renderWith(PostgresDecoder.float8Text)
-                case _ => super.text(row, idx)
+                    // The two widths share a kind and do not render alike, and reading the narrower one at the wider
+                    // type widens it first: 0.1 becomes 0.10000000149011612.
+                    if typeToken == PostgresRowCodec.float4Token then Maybe(PostgresDecoder.float4Value)
+                    else Maybe(PostgresDecoder.float8Value)
+                case ColumnKind.Integer => Maybe(PostgresDecoder.integerValue)
+                case ColumnKind.Uuid    => Maybe(PostgresDecoder.uuidValue)
+                case ColumnKind.Bytes   => Maybe(PostgresDecoder.byteaValue)
+                case ColumnKind.Array   => Maybe(arrayValue)
+                // Text is its own rendering under both formats and Json needs only the jsonb version byte stripped.
+                // The shared codec reaches the same answers for a scalar column; they are named here because an ARRAY
+                // element has no shared-codec path and would otherwise have no decoder at all.
+                case ColumnKind.Text => Maybe(PostgresDecoder.textValue)
+                case ColumnKind.Json => Maybe(PostgresDecoder.jsonValue)
+                // Unknown has no rendering, which the shared codec settles by refusing.
+                case _ => Maybe.empty
         end if
-    end text
+    end decoderFor
+
+    /** Reads an array by reading each element at its own element type.
+      *
+      * Unlike the typed array reads there is no single Scala element type to agree on, so each element goes through the same dispatch its own
+      * type would get as a column. An element type this module does not render makes the whole array unrenderable, which is the answer the
+      * scalar column of that type already gets. An absent element stays absent, which the typed reads refuse because no Scala element type
+      * holds one.
+      */
+    private lazy val arrayValue: PostgresDecoder[SqlValue] = new PostgresDecoder[SqlValue]:
+        val oids: Set[Int] = Set.empty
+        def read(format: Format, bytes: Span[Byte], columnOid: Int)(using frame: Frame): SqlValue =
+            val arr   = new PostgresArrayReader(bytes, format, frame)
+            val count = arr.openArray()
+            // Only the BINARY header names an element type; a text rendering names none, so the column's own type
+            // supplies it. The header wins where it spoke, in case it disagrees.
+            val elemOid =
+                if arr.elementOid != PostgresEncoder.OID_UNSPECIFIED then arr.elementOid
+                else
+                    PostgresRowCodec.elementOidOf(columnOid).getOrElse {
+                        throw SqlDecodeColumnNotRenderableException(
+                            s"element of ${PostgresRowCodec.nameOf(columnOid).getOrElse("array")}",
+                            PostgresRowCodec.nameOf(columnOid)
+                        )
+                    }
+            val decoder = decoderFor(elemOid).getOrElse {
+                // An unrenderable element type makes the whole array unrenderable, the answer the scalar column gets.
+                throw SqlDecodeColumnNotRenderableException(
+                    s"element of ${PostgresRowCodec.nameOf(columnOid).getOrElse("array")}",
+                    PostgresRowCodec.nameOf(elemOid)
+                )
+            }
+            val elemForm = arr.elementFormat
+            val builder  = Chunk.newBuilder[Maybe[SqlValue]]
+            var i        = 0
+            while i < count do
+                arr.nextElement() match
+                    case Maybe.Present(elemBytes) => builder += Maybe(decoder.read(elemForm, elemBytes, elemOid))
+                    case Maybe.Absent             => builder += Maybe.empty
+                end match
+                i += 1
+            end while
+            SqlValue.Elements(builder.result())
+        end read
 
 end PostgresRowCodec
 
@@ -100,7 +166,8 @@ private[kyo] object PostgresRowCodec:
       * One table, so the three answers a caller gets about a column cannot drift apart: [[kyo.SqlRow.columnTypeName]],
       * [[kyo.SqlRow.columnKind]], and whether a text decode of it is refused. An OID absent from it answers `Absent`,
       * [[kyo.SqlRow.ColumnKind.Unknown]], and is NOT refused, which is the honest report for the dynamic OIDs (`citext`, an enum type, a
-      * domain) whose values this connection cannot resolve to a type.
+      * domain) whose values this connection cannot resolve to a type. Its two fates differ: readable as a `String`, not renderable by
+      * [[kyo.SqlRow.text]], which refuses every `Unknown` kind.
       *
       * `textReadable` is a per-type fact rather than one derived from `kind`, because the kind does not decide it: `json` and `jsonb`
       * are both [[kyo.SqlRow.ColumnKind.Json]], and `json` carries the document text on the wire while `jsonb` prefixes it with a version
@@ -151,8 +218,8 @@ private[kyo] object PostgresRowCodec:
         // numeric struct, so a Decimal kind routed `text` into the numeric renderer, which read the cents as a
         // numeric header and answered `0E-100` for $1.00. Its own rendering is locale-chosen (`lc_monetary`
         // supplies the symbol and separators, and the server does not report that setting to the connection), so
-        // there is no kind here whose renderer would be right; Unknown is the honest answer and leaves `text` on
-        // the documented byte fallback, which is the server's own rendering under the text protocol.
+        // there is no kind here whose renderer would be right. Unknown is the honest answer, and it makes `text`
+        // REFUSE the column under both wire formats rather than answer one protocol's bytes.
         790  -> TypeInfo("money", SqlRow.ColumnKind.Unknown, textReadable = false),
         829  -> TypeInfo("macaddr", SqlRow.ColumnKind.Unknown, textReadable = false),
         1560 -> TypeInfo("bit", SqlRow.ColumnKind.Unknown, textReadable = false),
@@ -204,29 +271,88 @@ private[kyo] object PostgresRowCodec:
         2951 -> TypeInfo("uuid[]", SqlRow.ColumnKind.Array, textReadable = false)
     )
 
+    /** The PostgreSQL name of `columnOid`, for any type this backend names. Absent otherwise, which is what says an OID carries no known
+      * meaning and so is not evidence of anything.
+      */
+    private[postgres] def typeNameOf(columnOid: Int): Maybe[String] =
+        nameOf(columnOid)
+
     /** The PostgreSQL name of `columnOid` when a text read of it would reinterpret its bytes rather than render its value.
       *
       * Absent for a text-readable type and for an OID this backend cannot name, which are the two cases a text read is allowed to
       * proceed on. This is what [[kyo.internal.postgres.types.PostgresDecoder.requireTextColumn]] refuses against.
       */
-    /** The PostgreSQL name of `columnOid`, for any type this backend names. Absent otherwise, which is what says an OID carries no known
-      * meaning and so is not evidence of anything.
-      */
-    private[postgres] def typeNameOf(columnOid: Int): Maybe[String] =
-        Maybe.fromOption(typeNames.get(columnOid))
-
     private[postgres] def nonTextColumnType(columnOid: Int): Maybe[String] =
         types.get(columnOid) match
             case Some(info) if !info.textReadable => Maybe(info.name)
             case _                                => Maybe.empty
 
-    private val typeNames: Map[Int, String]        = types.view.mapValues(_.name).toMap
-    private val kinds: Map[Int, SqlRow.ColumnKind] = types.view.mapValues(_.kind).toMap
+    /** The kind and name lookups as flat arrays indexed by the type token, derived from [[types]] so a type added there reaches both.
+      *
+      * Arrays rather than the map, because these are read once per column per row and a `Map[Int, V]` boxes its key on every lookup.
+      */
+    private val kindByToken: Array[SqlRow.ColumnKind] =
+        val arr = Array.fill[SqlRow.ColumnKind](types.keys.max + 1)(SqlRow.ColumnKind.Unknown)
+        types.foreach((oid, info) => arr(oid) = info.kind)
+        arr
+    end kindByToken
+
+    private val nameByToken: Array[Maybe[String]] =
+        val arr = Array.fill[Maybe[String]](types.keys.max + 1)(Maybe.empty)
+        types.foreach((oid, info) => arr(oid) = Maybe(info.name))
+        arr
+    end nameByToken
+
+    private[postgres] def kindOf(typeToken: Int): SqlRow.ColumnKind =
+        if typeToken < 0 || typeToken >= kindByToken.length then SqlRow.ColumnKind.Unknown
+        else kindByToken(typeToken)
+
+    private[postgres] def nameOf(typeToken: Int): Maybe[String] =
+        if typeToken < 0 || typeToken >= nameByToken.length then Maybe.empty
+        else nameByToken(typeToken)
+
+    /** The element type each array type holds.
+      *
+      * A text rendering is just `{...}` and names no element type, so without this an element under the simple protocol has nothing to
+      * dispatch on. Fixed protocol data, not a catalog lookup: built-in OIDs do not vary by installation.
+      */
+    private val elementOids: Map[Int, Int] = Map(
+        OID_INT4_ARRAY  -> OID_INT4,
+        OID_TEXT_ARRAY  -> OID_TEXT,
+        OID_JSONB_ARRAY -> OID_JSONB,
+        199             -> OID_JSON,
+        651             -> 650,
+        791             -> 790,
+        1000            -> OID_BOOL,
+        1001            -> OID_BYTEA,
+        1003            -> 19,
+        1005            -> OID_INT2,
+        1014            -> 1042,
+        1015            -> 1043,
+        1016            -> OID_INT8,
+        1021            -> OID_FLOAT4,
+        1022            -> OID_FLOAT8,
+        1028            -> 26,
+        1040            -> 829,
+        1041            -> OID_INET,
+        1115            -> OID_TIMESTAMP,
+        1182            -> OID_DATE,
+        1183            -> OID_TIME,
+        1185            -> OID_TIMESTAMPTZ,
+        1187            -> OID_INTERVAL,
+        1231            -> OID_NUMERIC,
+        1270            -> OID_TIMETZ,
+        2951            -> OID_UUID
+    )
+
+    /** The element type of the array type `columnOid`, or [[Maybe.Absent]] for an array type this module cannot name. */
+    private[postgres] def elementOidOf(columnOid: Int): Maybe[Int] =
+        Maybe.fromOption(elementOids.get(columnOid))
 
     /** The `inet` OID, which `text` renders specially. Named here because no neutral [[kyo.SqlRow.ColumnKind]] describes an address, so
       * the type token is what the rendering keys on rather than the kind every other column is dispatched by.
       */
-    private[postgres] val inetToken: Int = OID_INET
+    private val inetToken: Int = OID_INET
 
     /** The `float4` OID, which `text` renders apart from `float8` despite the two sharing a neutral kind: the kind says how wide a Scala
       * type reads them, and reading a `float4` at `Double` widens the value before it is rendered.

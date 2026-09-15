@@ -266,6 +266,10 @@ final case class HandshakeV10(
   *   optional human-readable information string
   * @param sessionStateInfo
   *   optional session-state-change data (present if CLIENT_SESSION_TRACK and SERVER_SESSION_STATE_CHANGED)
+  *
+  * `sessionStateInfo` is raw bytes rather than a decoded string because its framing is binary: it is a sequence of entries carrying
+  * length-encoded lengths, and a length of 128 or more is not a valid UTF-8 sequence, so decoding it first would replace that byte and lose
+  * the frame. [[MysqlSessionTracking]] reads it.
   */
 final case class OkPacket(
     affectedRows: Long,
@@ -273,7 +277,7 @@ final case class OkPacket(
     statusFlags: Short,
     warnings: Short,
     info: Maybe[String],
-    sessionStateInfo: Maybe[String]
+    sessionStateInfo: Maybe[Span[Byte]]
 ) extends BackendMessage
 
 /** Error response from the server.

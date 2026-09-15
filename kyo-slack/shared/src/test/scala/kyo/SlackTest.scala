@@ -41,10 +41,14 @@ class SlackTest extends kyo.test.Test[Any]:
     // around the loop body. The loop is driven directly with the SlackWebApi.local binding
     // around the loop body, the exact scope the handler runs under, so the ambient token
     // resolves on the handler fiber. The handler reads the bound token via
-    // SlackWebApi.local.use AND issues a real Slack.authTest against an unreachable base
-    // url: it fails with a SlackTransportException (the token resolved and the request was
-    // attempted), NOT a SlackHandshakeException (which an UNbound token would produce). This
-    // gives the init handler path Web-API parity with the scoped run.
+    // SlackWebApi.local.use AND issues a Slack.authTest against a deterministically-invalid
+    // base url: it fails with a SlackTransportException (the token resolved and the request
+    // was built with it), NOT a SlackHandshakeException (which an UNbound token would
+    // produce). This gives the init handler path Web-API parity with the scoped run. The
+    // base url is unparseable, so authTest fails in-tick at URL parse rather than on a real
+    // connect whose failure latency could outlive the handler's ackDeadline window (the
+    // engine race-cancels a handler that outlives ackDeadline, which would drop the
+    // apiOutcome.put and hang the leaf on a load-dependent, platform-dependent edge).
     "a Web API call from inside an init + receive handler resolves the bound token" in {
         SlackTransport.inMemory(Chunk(helloFrame, eventFrame)).map { case (transport, _) =>
             SlackSocketEngine.initUnscoped(transport, "wss://test/socket", cfg).map { engine =>
@@ -64,22 +68,41 @@ class SlackTest extends kyo.test.Test[Any]:
                             case _ => SlackAck.Ack: SlackAck
                         end handler
                         // Bind the bot token around the loop body, exactly where receive binds it,
-                        // and point the Web API at an unreachable base so authTest attempts a real
-                        // request and fails at the transport (proving the token resolved).
-                        SlackWebApi.baseUrl.let("http://127.0.0.1:1/api") {
+                        // and point the Web API at a deterministically-unparseable base so authTest
+                        // fails synchronously at URL parse (an HttpException, recovered into a
+                        // SlackTransportException) rather than on a real connect. An in-tick parse
+                        // failure cannot race the handler's ackDeadline, so the outcome is the same
+                        // on every platform under any load.
+                        SlackWebApi.baseUrl.let("broken://slack-webapi.invalid") {
                             SlackWebApi.local.let(Present(cfg.bot)) {
-                                Fiber.initUnscoped(Abort.run[SlackException](engine.receiveLoop(handler))).map { _ =>
+                                Fiber.initUnscoped(Abort.run[SlackException](engine.receiveLoop(handler))).map { loopFiber =>
                                     tokenSeen.stream().take(1).run.map { tokens =>
                                         assert(
                                             tokens.head == Present(cfg.bot),
                                             s"handler must observe the bound token, got: ${tokens.head}"
                                         )
-                                        apiOutcome.stream().take(1).run.map { outcomes =>
-                                            outcomes.head match
-                                                case _: SlackTransportException => assert(true)
-                                                case _: SlackHandshakeException =>
-                                                    assert(false, "token was NOT bound around the loop (the init Local bug)")
-                                                case other => assert(false, s"expected SlackTransportException, got: $other")
+                                        // Join the finite receive loop, then read the recorded outcome
+                                        // WITHOUT blocking. The handler records apiOutcome during frame
+                                        // delivery, so the outcome is present by the time the loop ends;
+                                        // a non-blocking poll turns a lost outcome (a future regression
+                                        // that drops the handler's continuation) into an immediate
+                                        // diagnostic failure instead of a silent park to the leaf cap.
+                                        loopFiber.getResult.map { loopResult =>
+                                            Abort.run[Closed](apiOutcome.poll).map {
+                                                case Result.Success(Present(outcome)) =>
+                                                    outcome match
+                                                        case _: SlackTransportException => assert(true)
+                                                        case _: SlackHandshakeException =>
+                                                            assert(false, "token was NOT bound around the loop (the init Local bug)")
+                                                        case other => assert(false, s"expected SlackTransportException, got: $other")
+                                                case Result.Success(Absent) =>
+                                                    assert(
+                                                        false,
+                                                        s"receive loop ended without recording the Web API outcome (loop result: $loopResult)"
+                                                    )
+                                                case failure =>
+                                                    assert(false, s"apiOutcome poll failed: $failure")
+                                            }
                                         }
                                     }
                                 }

@@ -5,6 +5,11 @@ import java.util.concurrent.atomic.AtomicInteger as JAtomicInteger
 
 class AsyncTest extends kyo.test.Test[Any]:
 
+    // Timing-sensitive leaves (runAndBlock, sleeps, timeouts, interrupt/latch scenarios) are starved
+    // by concurrent leaves on slower CI runners, tripping the per-leaf timeout. Run sequentially,
+    // consistent with the other timing-sensitive kyo-core suites (ClockTest/ChannelTest/etc.).
+    override def config = super.config.sequential
+
     "run" - {
         "value" in {
             for
@@ -858,13 +863,6 @@ class AsyncTest extends kyo.test.Test[Any]:
         val a: Int < Abort[Nothing] = 42
         val b: Int < Async          = a
         succeed("compile-time subtyping check: Abort[Nothing] <: Async")
-    }
-
-    "defaultConcurrency flag key matches the documented -D property" in {
-        // StaticFlag derives its key from the enclosing objects' JVM class name, so renaming or
-        // renesting `async.concurrency.default` would silently change the key and break the
-        // -Dkyo.async.concurrency.default override documented in kyo-core/README.md.
-        assert(async.concurrency.default.name == "kyo.async.concurrency.default")
     }
 
     "collectAll concurrency" - {
@@ -1874,12 +1872,43 @@ class AsyncTest extends kyo.test.Test[Any]:
                 assert(count == 1)
         }
 
+        "interrupting a timeout interrupts the computation it guards" in {
+            // Liveness: the finalizer completes only if the guarded computation was actually reached by the interrupt. A timeout that
+            // spawned its computation without wiring the interrupt through would leave it parked here forever.
+            for
+                started     <- Promise.init[Unit, Any]
+                interrupted <- Promise.init[Unit, Any]
+                // The deadline is far beyond any run, so it cannot be what ends the computation. Only the caller's interrupt reaching
+                // through the timeout can complete the finalizer below, and the harness budget is what reports it if nothing does.
+                fiber <- Fiber.initUnscoped(Async.timeout(1.hour)(
+                    Sync.ensure(interrupted.completeUnitDiscard)(
+                        started.completeUnitDiscard.andThen(Async.never)
+                    )
+                ))
+                _ <- started.get
+                _ <- fiber.interrupt
+                _ <- interrupted.get
+            yield succeed("the guarded computation was interrupted with its caller")
+            end for
+        }
+
         "Duration.Zero timeout still interrupts (#1339)".onlyJvm in {
             for
                 result <- Abort.run[Timeout] {
                     Async.timeout(Duration.Zero)(Async.sleep(1.day))
                 }
             yield assert(result.isFailure)
+        }
+    }
+
+    "defaultConcurrency knob" - {
+        val computedDefault = Runtime.getRuntime().availableProcessors() * 2
+
+        "is backed by the kyo.async.concurrency.default StaticFlag" in {
+            val flag: StaticFlag[Int] = kyo.async.concurrency.default
+            assert(flag.name == "kyo.async.concurrency.default")
+            assert(flag.default == computedDefault)
+            assert(Async.defaultConcurrency == flag())
         }
     }
 

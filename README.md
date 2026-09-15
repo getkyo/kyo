@@ -1,11 +1,12 @@
 <img src="https://raw.githubusercontent.com/getkyo/kyo/main/kyo.png" width="200" alt="Kyo">
 
-[![Build](https://img.shields.io/github/actions/workflow/status/getkyo/kyo/build-main.yml?branch=main&logo=github&label=build)](https://github.com/getkyo/kyo/actions/workflows/build-main.yml)
+[![Build](https://img.shields.io/github/actions/workflow/status/getkyo/kyo/ci.yml?branch=main&logo=github&label=build)](https://github.com/getkyo/kyo/actions/workflows/ci.yml)
 [![Maven Central](https://img.shields.io/maven-central/v/io.getkyo/kyo-core_3?logo=apachemaven&label=maven%20central)](https://search.maven.org/search?q=g:io.getkyo)
 [![Scala 3](https://img.shields.io/badge/scala-3-DC322F?logo=scala&logoColor=white)](https://www.scala-lang.org)
 [![Scaladoc](https://img.shields.io/badge/scaladoc-latest-blue)](https://javadoc.io/doc/io.getkyo/kyo-core_3)
 [![Discord](https://img.shields.io/discord/1087005439859904574?logo=discord&logoColor=white&label=discord&color=5865F2)](https://discord.gg/KxxkBbW8bq)
 [![License](https://img.shields.io/github/license/getkyo/kyo?color=blue)](LICENSE.txt)
+[![Sponsor](https://img.shields.io/badge/sponsor-EA4AAA?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/fwbrasil)
 
 Kyo is a Scala 3 toolkit for building applications. Its starting point is what it makes impossible: an error path left unhandled does not compile. An effect used without being declared in the signature is rejected at the call site. A resource cannot outlive its scope, even when something fails partway through. Concurrent work started together cannot leak its children. A durable workflow's progress survives a crash and resumes from the last completed step. One source tree compiles to JVM, JavaScript, Scala Native, and WebAssembly.
 

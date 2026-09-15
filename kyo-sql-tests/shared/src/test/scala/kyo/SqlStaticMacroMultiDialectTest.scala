@@ -61,13 +61,17 @@ class SqlStaticMacroMultiDialectTest extends Test:
     // time. That reduction happens during inlining, so the spliced tree is an ordinary constructor call the lift can fold:
     // asserting the per-dialect SQL is what proves it, because a tree the macro could not fold would fall back to the
     // runtime renderer and produce no constants at all.
+    // EVERY dialect's divisor is wrapped, which is how dividing by zero comes to mean one thing on both. It is not
+    // enough to guard the engine that raises in a SELECT: the other engine raises too in a data-change statement, where
+    // its default sql_mode carries ERROR_FOR_DIVISION_BY_ZERO, and division reaches an UPDATE ... SET through the typed
+    // lane. So the guard is the baseline's and both dialects carry it.
     "a static fold lifts both divisions and gives each dialect its own operator" in {
         val quotient = SqlStaticProbe.render(Sql.from[Person]("p").select(c => c.p.age / c.p.age))
-        assert(quotient.sqlFor(Idiom.Id("postgres")).get.contains("""(CAST("p"."age" AS NUMERIC) / "p"."age")"""))
-        assert(quotient.sqlFor(Idiom.Id("mysql")).get.contains("(`p`.`age` / `p`.`age`)"))
+        assert(quotient.sqlFor(Idiom.Id("postgres")).get.contains("""(CAST("p"."age" AS NUMERIC) / NULLIF("p"."age", 0))"""))
+        assert(quotient.sqlFor(Idiom.Id("mysql")).get.contains("(`p`.`age` / NULLIF(`p`.`age`, 0))"))
         val truncated = SqlStaticProbe.render(Sql.from[Person]("p").select(c => c.p.age.divideTruncating(c.p.age)))
-        assert(truncated.sqlFor(Idiom.Id("postgres")).get.contains("""("p"."age" / "p"."age")"""))
-        assert(truncated.sqlFor(Idiom.Id("mysql")).get.contains("(`p`.`age` DIV `p`.`age`)"))
+        assert(truncated.sqlFor(Idiom.Id("postgres")).get.contains("""("p"."age" / NULLIF("p"."age", 0))"""))
+        assert(truncated.sqlFor(Idiom.Id("mysql")).get.contains("(`p`.`age` DIV NULLIF(`p`.`age`, 0))"))
     }
 
     "a static fold lifts the aggregate nodes, whose result type is no longer their operand's" in {

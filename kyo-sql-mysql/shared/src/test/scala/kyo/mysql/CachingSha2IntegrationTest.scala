@@ -32,7 +32,10 @@ class CachingSha2IntegrationTest extends SqlContainerTest:
     private def withCachingSha2Container[A](
         f: ConnDetails => A < (Async & Abort[SqlException])
     )(using Frame): A < (Async & Abort[Throwable] & Scope) =
-        ContainerPredef.MySQL.initWith(ContainerPredef.MySQL.Config.default) { mysql =>
+        // Through `SqlTestContainers` rather than `ContainerPredef.MySQL.initWith` directly, so the
+        // container carries the `kyo-sql-singleton` and `kyo-sql-owner-pid` labels and a killed test
+        // process leaves something the reaper can find.
+        SqlTestContainers.initScopedMysql(ContainerPredef.MySQL.Config.default, "mysql-caching-sha2").map { mysql =>
             mysql.container.mappedPort(mysql.config.port).flatMap { port =>
                 val details = ConnDetails(
                     mysql.container.host,

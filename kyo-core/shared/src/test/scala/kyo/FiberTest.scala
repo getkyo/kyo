@@ -921,14 +921,21 @@ class FiberTest extends kyo.test.Test[Any]:
         }
 
         "preserves original order with max limit" in {
-            for
-                fiber <- Fiber.internal.gather(2)(Seq(
-                    Async.delay(100.millis)(1),
-                    Async.delay(1.millis)(2),
-                    Async.delay(10.millis)(3)
-                ))
-                result <- fiber.get
-            yield assert(result == Chunk(2, 3))
+            // Virtual time makes the ordering deterministic: the 1ms and 10ms delays complete (in that order) strictly before the 100ms one, so
+            // gather(2) collects elements 2 and 3 and returns them in original order. A background advancer drives the virtual clock; nothing here
+            // depends on the real delays staying well separated under load.
+            Clock.withTimeControl { control =>
+                for
+                    fiber <- Fiber.internal.gather(2)(Seq(
+                        Async.delay(100.millis)(1),
+                        Async.delay(1.millis)(2),
+                        Async.delay(10.millis)(3)
+                    ))
+                    advancer <- Fiber.initUnscoped(Loop.forever(control.advance(1.milli)))
+                    result   <- fiber.get
+                    _        <- advancer.interrupt
+                yield assert(result == Chunk(2, 3))
+            }
         }
 
         "handles concurrent completions" in {

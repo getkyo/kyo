@@ -109,7 +109,10 @@ class SqlConfigTlsModeIntegrationTest extends SqlContainerTest:
 
     "sslmode=disable connects without TLS".tagged("kyo.OwnContainer") in {
         Scope.run {
-            ContainerPredef.Postgres.initWith(ContainerPredef.Postgres.Config.default) { pg =>
+            // Through `SqlTestContainers` rather than `ContainerPredef.Postgres.initWith` directly, so the
+            // container carries the `kyo-sql-singleton` and `kyo-sql-owner-pid` labels and a killed test
+            // process leaves something the reaper can find.
+            SqlTestContainers.initScopedPostgres(ContainerPredef.Postgres.Config.default, "postgres-tls-mode-leaf").map { pg =>
                 pg.container.mappedPort(pg.config.port).flatMap { port =>
                     val url = s"postgres://${pg.username}:${pg.password}@${pg.container.host}:$port/${pg.database}?sslmode=disable"
                     SqlClient.init(url).flatMap { client =>
@@ -294,8 +297,8 @@ class SqlConfigTlsModeIntegrationTest extends SqlContainerTest:
         withTlsContainer { ctx =>
             // Write a malformed PEM file to a temp path using kyo.Path (cross-platform).
             Path.tempUnscoped(prefix = "kyo-sql-bad-cert-", suffix = ".pem").flatMap { tempPath =>
-                tempPath.writeBytes(Span.from("NOT A VALID PEM CERTIFICATE".getBytes(StandardCharsets.UTF_8))).flatMap { _ =>
-                    Scope.ensure(Abort.run[FileSystemException](tempPath.remove).unit).andThen {
+                Path.run(tempPath.writeBytes(Span.from("NOT A VALID PEM CERTIFICATE".getBytes(StandardCharsets.UTF_8)))).flatMap { _ =>
+                    Scope.ensure(Abort.run[FileSystemException](Path.run(tempPath.remove)).unit).andThen {
                         val badPath = tempPath.toString
                         val url =
                             s"postgres://${ctx.user}:${ctx.password}@${ctx.host}:${ctx.port}/${ctx.db}?sslmode=verify-ca&sslrootcert=$badPath"
@@ -367,7 +370,10 @@ class SqlConfigTlsModeIntegrationTest extends SqlContainerTest:
     "sslmode=allow connects plaintext when server permits plaintext".tagged("kyo.OwnContainer") in {
         Scope.run {
             // Plain Postgres container (no cert mount → no TLS support)
-            ContainerPredef.Postgres.initWith(ContainerPredef.Postgres.Config.default) { pg =>
+            // Through `SqlTestContainers` rather than `ContainerPredef.Postgres.initWith` directly, so the
+            // container carries the `kyo-sql-singleton` and `kyo-sql-owner-pid` labels and a killed test
+            // process leaves something the reaper can find.
+            SqlTestContainers.initScopedPostgres(ContainerPredef.Postgres.Config.default, "postgres-tls-mode-leaf").map { pg =>
                 pg.container.mappedPort(pg.config.port).flatMap { port =>
                     val url = s"postgres://${pg.username}:${pg.password}@${pg.container.host}:$port/${pg.database}?sslmode=allow"
                     SqlClient.init(url).flatMap { client =>
@@ -393,7 +399,15 @@ class SqlConfigTlsModeIntegrationTest extends SqlContainerTest:
         withRequireSslContainer { ctx =>
             // sslmode=allow: tries plaintext first → gets SQLSTATE 28000 → retries with TLS.
             // The reconnect succeeds because the container also has TLS certs (same as the main fixture).
-            val url = s"postgres://${ctx.user}:${ctx.password}@${ctx.host}:${ctx.port}/${ctx.db}?sslmode=allow"
+            // No establish budget (`connectTimeout=0` reads back as `Duration.Infinity`), for the same reason as the
+            // MySQL twin of this leaf. The pool applies ONE budget to the whole of `factory.open`, and `allow` against
+            // a server that refuses plaintext performs TWO connect-plus-handshake rounds inside it: a plaintext
+            // attempt far enough to draw SQLSTATE 28000, then a full TLS reconnect. Every sibling leaf pays one, so the
+            // default is sized for one and this is the first leaf to cross it under runner load.
+            // Any finite value here would be a second wall clock racing the first: too low and a slow runner is
+            // indistinguishable from a broken upgrade, too high and it bounds nothing. The property under test is that
+            // the upgrade COMPLETES, so the suite timeout is the failure detector.
+            val url = s"postgres://${ctx.user}:${ctx.password}@${ctx.host}:${ctx.port}/${ctx.db}?sslmode=allow&connectTimeout=0"
             Scope.run {
                 SqlClient.init(url).flatMap { client =>
                     DB.run(client) {
@@ -430,7 +444,10 @@ class SqlConfigTlsModeIntegrationTest extends SqlContainerTest:
     "sslmode=prefer falls back to plaintext when server refuses TLS".tagged("kyo.OwnContainer") in {
         Scope.run {
             // Plain Postgres container: no cert → SSLRequest returns 'N' → plaintext fallback.
-            ContainerPredef.Postgres.initWith(ContainerPredef.Postgres.Config.default) { pg =>
+            // Through `SqlTestContainers` rather than `ContainerPredef.Postgres.initWith` directly, so the
+            // container carries the `kyo-sql-singleton` and `kyo-sql-owner-pid` labels and a killed test
+            // process leaves something the reaper can find.
+            SqlTestContainers.initScopedPostgres(ContainerPredef.Postgres.Config.default, "postgres-tls-mode-leaf").map { pg =>
                 pg.container.mappedPort(pg.config.port).flatMap { port =>
                     val url = s"postgres://${pg.username}:${pg.password}@${pg.container.host}:$port/${pg.database}?sslmode=prefer"
                     SqlClient.init(url).flatMap { client =>
@@ -477,7 +494,10 @@ class SqlConfigTlsModeIntegrationTest extends SqlContainerTest:
         withRequireSslContainer { ctx =>
             // hostssl-only pg_hba.conf forces the allow upgrade.
             // After reconnect with TLS, every subsequent query on the connection is encrypted.
-            val url = s"postgres://${ctx.user}:${ctx.password}@${ctx.host}:${ctx.port}/${ctx.db}?sslmode=allow"
+            // No establish budget, for the reason given at the `sslmode=allow upgrades to TLS` leaf above: the forced upgrade spends TWO
+            // connect-plus-handshake rounds inside the ONE budget the pool applies to `factory.open`. This leaf is the more exposed of the
+            // two, because its three queries draw connections from the pool and each one that is established pays those two rounds again.
+            val url = s"postgres://${ctx.user}:${ctx.password}@${ctx.host}:${ctx.port}/${ctx.db}?sslmode=allow&connectTimeout=0"
             Scope.run {
                 SqlClient.init(url).flatMap { client =>
                     DB.run(client) {
@@ -714,7 +734,21 @@ object SqlConfigTlsModeIntegrationTest:
                                         case Result.Panic(t) =>
                                             Abort.fail(ContainerBackendException(s"ca.pem copy panic: ${t.getMessage}"))
                                         case Result.Success(_) =>
-                                            startTlsContainer(tempDirPath)
+                                            // 0700 from tempDirUnscoped is unreadable to the container that
+                                            // bind-mounts it, whose entrypoint then exits before the health check
+                                            // runs. Throwaway self-signed material.
+                                            Abort.run[Throwable](Command("chmod", "-R", "a+rX", tempDir).text).flatMap {
+                                                case Result.Failure(e) =>
+                                                    Abort.fail(ContainerBackendException(
+                                                        s"cert directory chmod failed: ${e.getMessage}"
+                                                    ))
+                                                case Result.Panic(t) =>
+                                                    Abort.fail(ContainerBackendException(
+                                                        s"cert directory chmod panic: ${t.getMessage}"
+                                                    ))
+                                                case Result.Success(_) =>
+                                                    startTlsContainer(tempDirPath)
+                                            }
                                     }
                             }
                     }
@@ -744,6 +778,10 @@ object SqlConfigTlsModeIntegrationTest:
                 "POSTGRES_DB"       -> database
             )))
             .port(5432, 0)
+            // A database fixture must prove its published port is SERVED, not merely bound: the daemon records
+            // the binding before its forwarder dials the container, so a caller handed the port on the binding
+            // alone gets a refused connect. Every ContainerPredef fixture sets this; a hand-rolled one must say so.
+            .requireService(true)
             .bind(tempDirPath, Path("/etc/ssl-pg"), readOnly = true)
             .command("sh", "-c", wrapperScript)
             .healthCheck(Container.HealthCheck.exec(
@@ -798,6 +836,10 @@ object SqlConfigTlsModeIntegrationTest:
                 "POSTGRES_DB"       -> database
             )))
             .port(5432, 0)
+            // A database fixture must prove its published port is SERVED, not merely bound: the daemon records
+            // the binding before its forwarder dials the container, so a caller handed the port on the binding
+            // alone gets a refused connect. Every ContainerPredef fixture sets this; a hand-rolled one must say so.
+            .requireService(true)
             .bind(certsDir, Path("/etc/ssl-pg"), readOnly = true)
             .command("sh", "-c", wrapperScript)
             .healthCheck(Container.HealthCheck.exec(

@@ -37,11 +37,19 @@ final class ProtobufWriter extends Writer:
     private var repeatedFieldNumber: Int    = 0
     private var inArray: Boolean            = false
 
-    // Saved (inArray, repeatedFieldNumber) pairs. A nested objectStart and a nested
-    // arrayStart each push the current array state and the matching objectEnd / arrayEnd
+    // Saved (inArray, repeatedFieldNumber, inBareRecord) triples. A nested objectStart and a
+    // nested arrayStart each push the current array state and the matching objectEnd / arrayEnd
     // restores it, so a repeated message's own fields are written under their own field
     // numbers (not the enclosing list's) and nested arrays restore the outer array context.
-    private var arrayStateStack: List[(Boolean, Int)] = Nil
+    private var arrayStateStack: List[(Boolean, Int, Boolean)] = Nil
+
+    // True while writing the elements of a NESTED collection (a collection directly inside
+    // another collection). Such a collection is one length-delimited record under the enclosing
+    // repeated field number, and its elements are written bare into the record buffer: scalars as
+    // raw varint/fixed bytes, strings/bytes/messages/deeper collections as length-prefixed blobs
+    // with no tag. This is what preserves inner-collection boundaries (including empty inner
+    // collections) that proto3's flat repeated encoding cannot express.
+    private var inBareRecord: Boolean = false
 
     // Per-array packed accumulator for repeated SCALAR fields. arrayStart pushes a fresh buffer,
     // each scalar element appends its raw value bytes (no per-element tag), and arrayEnd flushes
@@ -86,13 +94,21 @@ final class ProtobufWriter extends Writer:
     private def current: java.io.ByteArrayOutputStream = bufferStack.head
 
     def objectStart(name: String, size: Int): Unit =
-        if currentFieldNumber > 0 then
+        if inBareRecord then
+            // Bare element message inside a nested-collection record: emitted length-prefixed with
+            // no tag. The -1 sentinel on fieldNumberStack tells objectEnd to skip the tag.
+            fieldNumberStack = -1 :: fieldNumberStack
+            arrayStateStack = (inArray, repeatedFieldNumber, inBareRecord) :: arrayStateStack
+            inArray = false
+            inBareRecord = false
+            bufferStack = new java.io.ByteArrayOutputStream(128) :: bufferStack
+        else if currentFieldNumber > 0 then
             // Nested message: push a new buffer and remember the outer field number
             // so objectEnd can length-prefix the nested bytes under the correct tag,
             // even after inner fieldBytes calls overwrite currentFieldNumber. Save the
             // array context and reset it: the message's own fields are not array elements.
             fieldNumberStack = currentFieldNumber :: fieldNumberStack
-            arrayStateStack = (inArray, repeatedFieldNumber) :: arrayStateStack
+            arrayStateStack = (inArray, repeatedFieldNumber, inBareRecord) :: arrayStateStack
             inArray = false
             bufferStack = new java.io.ByteArrayOutputStream(128) :: bufferStack
     end objectStart
@@ -103,20 +119,27 @@ final class ProtobufWriter extends Writer:
             bufferStack = bufferStack.tail
             val outerFieldNumber = fieldNumberStack.head
             fieldNumberStack = fieldNumberStack.tail
-            // Write tag for nested message field using the field number captured at
-            // objectStart, not the currentFieldNumber (which may have been clobbered
-            // by inner fieldBytes calls during the nested write).
-            writeTag(outerFieldNumber, LengthDelimited)
-            writeVarint(nested.length.toLong)
-            current.write(nested)
-            // Restore the outer field number so sibling writes after this objectEnd
-            // continue to use the parent message's currentFieldNumber (e.g. repeated
-            // nested messages in a List field share the same field number).
-            currentFieldNumber = outerFieldNumber
+            if outerFieldNumber == -1 then
+                // Bare element message inside a nested-collection record: length prefix only.
+                writeVarint(nested.length.toLong)
+                current.write(nested)
+            else
+                // Write tag for nested message field using the field number captured at
+                // objectStart, not the currentFieldNumber (which may have been clobbered
+                // by inner fieldBytes calls during the nested write).
+                writeTag(outerFieldNumber, LengthDelimited)
+                writeVarint(nested.length.toLong)
+                current.write(nested)
+                // Restore the outer field number so sibling writes after this objectEnd
+                // continue to use the parent message's currentFieldNumber (e.g. repeated
+                // nested messages in a List field share the same field number).
+                currentFieldNumber = outerFieldNumber
+            end if
             arrayStateStack match
-                case (ia, rfn) :: rest =>
+                case (ia, rfn, bare) :: rest =>
                     inArray = ia
                     repeatedFieldNumber = rfn
+                    inBareRecord = bare
                     arrayStateStack = rest
                 case Nil => ()
             end match
@@ -157,32 +180,72 @@ final class ProtobufWriter extends Writer:
     end closeMapEntry
 
     def arrayStart(size: Int): Unit =
-        arrayStateStack = (inArray, repeatedFieldNumber) :: arrayStateStack
-        packedBufferStack = new java.io.ByteArrayOutputStream(64) :: packedBufferStack
-        repeatedFieldNumber = currentFieldNumber
+        arrayStateStack = (inArray, repeatedFieldNumber, inBareRecord) :: arrayStateStack
+        if inArray then
+            // Nested collection: one length-delimited record; elements are written bare into the
+            // record buffer. The buffer sits on BOTH stacks: scalars append through packedTarget
+            // (packedBufferStack head), strings/messages/deeper collections through current
+            // (bufferStack head).
+            val record = new java.io.ByteArrayOutputStream(64)
+            bufferStack = record :: bufferStack
+            packedBufferStack = record :: packedBufferStack
+            inBareRecord = true
+        else
+            packedBufferStack = new java.io.ByteArrayOutputStream(64) :: packedBufferStack
+            repeatedFieldNumber = currentFieldNumber
+            inBareRecord = false
+        end if
         inArray = true
     end arrayStart
 
     def arrayEnd(): Unit =
-        packedBufferStack match
-            case buf :: bufRest =>
-                if buf.size() > 0 then
-                    // Flush the accumulated scalars as one packed length-delimited record.
-                    val packed = buf.toByteArray
-                    writeTag(repeatedFieldNumber, LengthDelimited)
-                    writeVarint(packed.length.toLong)
-                    current.write(packed)
-                end if
-                packedBufferStack = bufRest
-            case Nil => ()
-        end match
-        arrayStateStack match
-            case (ia, rfn) :: rest =>
-                inArray = ia
-                repeatedFieldNumber = rfn
-                arrayStateStack = rest
-            case Nil => inArray = false
-        end match
+        if inBareRecord then
+            // Close the nested-collection record: pop it, restore the parent context, then emit it
+            // there. In a depth-1 parent the record is tagged with the repeated field number; in a
+            // bare parent (depth three or more) it is a bare length-prefixed blob. An empty inner
+            // collection emits a zero-length record, keeping it distinct from an absent one.
+            val record = current.toByteArray
+            bufferStack = bufferStack.tail
+            packedBufferStack = packedBufferStack.tail
+            arrayStateStack match
+                case (ia, rfn, bare) :: rest =>
+                    inArray = ia
+                    repeatedFieldNumber = rfn
+                    inBareRecord = bare
+                    arrayStateStack = rest
+                case Nil =>
+                    inArray = false
+                    inBareRecord = false
+            end match
+            if inBareRecord then
+                writeVarint(record.length.toLong)
+            else
+                writeTag(repeatedFieldNumber, LengthDelimited)
+                writeVarint(record.length.toLong)
+            end if
+            current.write(record)
+        else
+            packedBufferStack match
+                case buf :: bufRest =>
+                    if buf.size() > 0 then
+                        // Flush the accumulated scalars as one packed length-delimited record.
+                        val packed = buf.toByteArray
+                        writeTag(repeatedFieldNumber, LengthDelimited)
+                        writeVarint(packed.length.toLong)
+                        current.write(packed)
+                    end if
+                    packedBufferStack = bufRest
+                case Nil => ()
+            end match
+            arrayStateStack match
+                case (ia, rfn, bare) :: rest =>
+                    inArray = ia
+                    repeatedFieldNumber = rfn
+                    inBareRecord = bare
+                    arrayStateStack = rest
+                case Nil => inArray = false
+            end match
+        end if
     end arrayEnd
 
     private def packedTarget: java.io.ByteArrayOutputStream =
@@ -208,11 +271,17 @@ final class ProtobufWriter extends Writer:
     end long
 
     def string(value: String): Unit =
-        val fn    = if inArray then repeatedFieldNumber else currentFieldNumber
         val bytes = value.getBytes("UTF-8")
-        writeTag(fn, LengthDelimited)
-        writeVarint(bytes.length.toLong)
-        current.write(bytes)
+        if inBareRecord then
+            // Bare element inside a nested-collection record: length prefix only, no tag.
+            writeVarint(bytes.length.toLong)
+            current.write(bytes)
+        else
+            val fn = if inArray then repeatedFieldNumber else currentFieldNumber
+            writeTag(fn, LengthDelimited)
+            writeVarint(bytes.length.toLong)
+            current.write(bytes)
+        end if
     end string
 
     def double(value: Double): Unit =
@@ -248,8 +317,37 @@ final class ProtobufWriter extends Writer:
 
     def nil(): Unit = () // protobuf has no null representation; omit the field
 
+    // Field number each entry message of the active non-string map is tagged with. The Writer
+    // default envelope routes every entry through objectStart, which captures currentFieldNumber
+    // at that moment; without pinning it here the first entry of a TOP-LEVEL map has no field
+    // number at all and every later entry inherits the previous entry's "value" field id (2).
+    private var entryFieldStack: List[Int] = Nil
+
+    override def mapEntriesStart(size: Int): Unit =
+        // A top-level map has no enclosing field; entries go under synthetic field 1 so the entry
+        // messages are well-formed and the reader can recognize the repetition.
+        val fn = if currentFieldNumber > 0 then currentFieldNumber else 1
+        entryFieldStack = fn :: entryFieldStack
+        currentFieldNumber = fn
+        arrayStart(size)
+    end mapEntriesStart
+
+    override def mapEntryStart(): Unit =
+        currentFieldNumber = entryFieldStack.head
+        objectStart("", 2)
+        field("key", 1)
+    end mapEntryStart
+
+    override def mapEntriesEnd(): Unit =
+        arrayEnd()
+        entryFieldStack = entryFieldStack.tail
+    end mapEntriesEnd
+
     def mapStart(size: Int): Unit =
-        mapFrames = new MapFrame(currentFieldNumber, bufferStack.size, false) :: mapFrames
+        // A top-level map has no enclosing field; entries go under synthetic field 1 so each
+        // entry message is framed (openMapEntry's objectStart requires a positive field number).
+        val fn = if currentFieldNumber > 0 then currentFieldNumber else 1
+        mapFrames = new MapFrame(fn, bufferStack.size, false) :: mapFrames
     end mapStart
 
     def mapEnd(): Unit =
@@ -261,11 +359,17 @@ final class ProtobufWriter extends Writer:
     end mapEnd
 
     def bytes(value: Span[Byte]): Unit =
-        val fn  = if inArray then repeatedFieldNumber else currentFieldNumber
         val arr = value.toArray
-        writeTag(fn, LengthDelimited)
-        writeVarint(arr.length.toLong)
-        current.write(arr)
+        if inBareRecord then
+            // Bare element inside a nested-collection record: length prefix only, no tag.
+            writeVarint(arr.length.toLong)
+            current.write(arr)
+        else
+            val fn = if inArray then repeatedFieldNumber else currentFieldNumber
+            writeTag(fn, LengthDelimited)
+            writeVarint(arr.length.toLong)
+            current.write(arr)
+        end if
     end bytes
 
     def bigInt(value: BigInt): Unit         = string(value.toString)

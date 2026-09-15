@@ -12,6 +12,7 @@ import kyo.SqlDecodeException
 import kyo.SqlNaming
 import kyo.SqlRow
 import kyo.SqlSchema
+import kyo.SqlValue
 
 /** A backend [[SqlRow.Codec]] that decodes a row's columns positionally through a backend reader.
   *
@@ -31,51 +32,59 @@ abstract class SqlPositionalRowCodec extends SqlRow.Codec:
       */
     def newReader(sliced: SqlRow, matchesFieldAt: Maybe[(Int, String) => Boolean])(using Frame): SqlCodec.Reader
 
-    /** Renders one column as text by decoding it at the type its own column reports, then rendering that value.
+    /** Whether the column `typeToken` names holds a four-byte float rather than an eight-byte one.
       *
-      * Under [[kyo.SqlCodec.Format.Text]] every value is already its rendering, so the bytes are the answer and no decode happens. Under
-      * [[kyo.SqlCodec.Format.Binary]] the value is a wire representation that has to be read before it can be rendered, and what reads it
-      * is the [[kyo.SqlSchema.Column]] for the Scala type the column's [[kyo.SqlRow.ColumnKind]] names. Each kind maps to the widest Scala
-      * type in its family, so one integral read covers `int2` through `int8` and one float read covers both binary float widths.
-      *
-      * A kind with no lossless Scala rendering falls back to the bytes as UTF-8: [[kyo.SqlRow.ColumnKind.Unknown]] is a type the backend
-      * did not recognise, and an [[kyo.SqlRow.ColumnKind.Array]] or [[kyo.SqlRow.ColumnKind.Bytes]] column has no single scalar reading.
-      * That fallback is a rendering of last resort and can answer mojibake for a binary value, which is exactly why it is not what
-      * `decode[String]` does.
-      *
-      * [[kyo.SqlRow.ColumnKind.Interval]] falls there too, for the same reason read the other way round: `java.time.Duration` carries an
-      * interval's time part and `java.time.Period` its calendar part, and an interval may carry both, so neither type spans the kind. A
-      * backend that reports it renders it from its own wire fields by overriding this method, which is where the layout is known.
+      * One [[kyo.SqlRow.ColumnKind.Float]] covers both widths, and they do not render alike: reading a four-byte column at the wider type
+      * widens 0.1 to 0.10000000149011612 before it is rendered. A backend with a single width leaves this alone.
       */
-    override def text(row: SqlRow, idx: Int)(using Frame): String < Abort[SqlDecodeException] =
+    private[kyo] def isSingleWidthFloat(typeToken: Int): Boolean = false
+
+    /** Renders one column as the string [[kyo.SqlRow.text]] promises: one per stored value, whatever carried the row.
+      *
+      * The kinds here are the ones a neutral read spans, decoded and handed to [[SqlValueRender]] under BOTH wire formats; see its header
+      * for why the text format is parsed and re-rendered rather than passed through.
+      *
+      * The rest need the wire itself and belong to the backend, which overrides this and calls the same renderer: a date carries an era, a
+      * time is a signed span wider than a day, an interval carries a calendar and a time part at once, and an array carries its elements'
+      * own kind. Text and Json are their own rendering under both formats and are returned as they stand.
+      */
+    override def columnValue(row: SqlRow, idx: Int)(using Frame): SqlValue < Abort[SqlDecodeException] =
         import SqlRow.ColumnKind
         def read[A](using SqlSchema[A]): A < Abort[SqlDecodeException] =
             val sliced = row.slice(idx, idx + 1)
             SqlRow.Codec.catchingColumn(Maybe(idx))(summon[SqlSchema[A]].read(newReader(sliced, Maybe.empty)))
         end read
-        format match
-            case Format.Text => super.text(row, idx)
-            case Format.Binary =>
-                columnKind(row.columns(idx).typeToken) match
-                    case ColumnKind.Integer => read[Long].map(_.toString)
-                    // toPlainString: a fixed-point column's rendering never takes exponent notation, and
-                    // BigDecimal.toString does once the adjusted exponent is below -6, so a DECIMAL(10,7) holding
-                    // 0.0000001 rendered `1E-7` under the binary protocol against the server's `0.0000001`.
-                    case ColumnKind.Decimal        => read[BigDecimal].map(_.bigDecimal.toPlainString)
-                    case ColumnKind.Float          => read[Double].map(_.toString)
-                    case ColumnKind.Bool           => read[Boolean].map(_.toString)
-                    case ColumnKind.Text           => read[String]
-                    case ColumnKind.Json           => read[JsonText].map(_.text)
-                    case ColumnKind.Uuid           => read[java.util.UUID].map(_.toString)
-                    case ColumnKind.Date           => read[java.time.LocalDate].map(_.toString)
-                    case ColumnKind.Time           => read[java.time.LocalTime].map(_.toString)
-                    case ColumnKind.TimeWithOffset => read[java.time.OffsetTime].map(_.toString)
-                    case ColumnKind.DateTime       => read[java.time.LocalDateTime].map(_.toString)
-                    case ColumnKind.Timestamp      => read[java.time.Instant].map(_.toString)
-                    case ColumnKind.Interval | ColumnKind.Array | ColumnKind.Bytes | ColumnKind.Unknown =>
-                        super.text(row, idx)
+        val typeToken = row.columns(idx).typeToken
+        columnKind(typeToken) match
+            // BigInt, not Long: an unsigned 64-bit column reaches past what a signed Long holds.
+            case ColumnKind.Integer => read[BigInt].map(SqlValue.Integer(_))
+            case ColumnKind.Decimal => read[BigDecimal].map(SqlValue.Decimal(_))
+            case ColumnKind.Float =>
+                if isSingleWidthFloat(typeToken) then read[Float].map(SqlValue.Float4(_))
+                else read[Double].map(SqlValue.Float8(_))
+            case ColumnKind.Bool => read[Boolean].map(SqlValue.Bool(_))
+            case ColumnKind.Text => read[String].map(SqlValue.Text(_))
+            case ColumnKind.Json => read[JsonText].map(j => SqlValue.Json(j.text))
+            case ColumnKind.Uuid => read[java.util.UUID].map(SqlValue.Uuid(_))
+            case ColumnKind.Timestamp =>
+                read[java.time.Instant].map(i => SqlValue.Timestamp(i.getEpochSecond, i.getNano / 1000))
+            case ColumnKind.Bytes => read[kyo.Span[Byte]].map(SqlValue.Bytes(_))
+            case ColumnKind.Date | ColumnKind.Time | ColumnKind.TimeWithOffset | ColumnKind.DateTime |
+                ColumnKind.Interval | ColumnKind.Array | ColumnKind.Unknown =>
+                unrenderedColumn(row, idx)
         end match
-    end text
+    end columnValue
+
+    /** The answer for a column nothing renders: the same refusal under BOTH wire formats.
+      *
+      * Handing back the text protocol's bytes would break the contract: `money` has no neutral decode to render from, since `lc_monetary`
+      * supplies both its fraction digits and its symbol, so it would read `$12.34` through a simple query and raise through a prepared one.
+      *
+      * The cost is that such a column is not readable as text at all, which it never was under the binary format.
+      */
+    private def unrenderedColumn(row: SqlRow, idx: Int)(using Frame): SqlValue < Abort[SqlDecodeException] =
+        val column = row.columns(idx)
+        Abort.fail(kyo.SqlDecodeColumnNotRenderableException(column.name, typeName(column.typeToken)))
 
     /** Decodes `schema` from the row's columns starting at `offset`.
       *

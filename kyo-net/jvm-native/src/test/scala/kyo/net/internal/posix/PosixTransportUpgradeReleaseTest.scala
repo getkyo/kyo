@@ -61,6 +61,28 @@ private class FinishWithCertHookEngine(onCertSha: () => Unit) extends TlsEngine:
     def free()(using AllowUnsafe): Unit        = freed.set(true)
 end FinishWithCertHookEngine
 
+/** A scripted [[TlsEngine]] that builds successfully and then throws `cause` out of `feedCiphertext`, which is how the upgrade's
+  * staged-ciphertext feed fails after the engine already exists. `fed` records that the feed was genuinely reached (an empty staging would skip
+  * it and leave the leaf proving nothing); `freed` records the engine release the failure path owes.
+  */
+private class ThrowOnFeedEngine(cause: Throwable) extends TlsEngine:
+    val freed = new JAtomicBoolean(false)
+    val fed   = new JAtomicBoolean(false)
+
+    def handshakeStep()(using AllowUnsafe): Int = 0
+    def feedCiphertext(buf: Buffer[Byte], len: Int)(using AllowUnsafe): Int =
+        fed.set(true)
+        throw cause
+    def drainCiphertext(buf: Buffer[Byte], len: Int)(using AllowUnsafe): Int = 0
+    def readPlain(buf: Buffer[Byte], len: Int)(using AllowUnsafe): Int       = 0
+    def writePlain(buf: Buffer[Byte], len: Int)(using AllowUnsafe): Int      = len
+    def hasBufferedPlaintext(using AllowUnsafe): Boolean                     = false
+    def readBuffered()(using AllowUnsafe): Span[Byte]                        = Span.empty
+    def certSha256()(using AllowUnsafe): Maybe[Span[Byte]]                   = Absent
+    def shutdownStep()(using AllowUnsafe): Int                               = 0
+    def free()(using AllowUnsafe): Unit                                      = freed.set(true)
+end ThrowOnFeedEngine
+
 /** Release discipline of an abandoned or failed STARTTLS upgrade in [[PosixTransport]]: every release of the detached fd must route through
   * the driver's close (`closeUnwiredHandle` -> `driver.closeHandle`), never a bare `PosixHandle.close`.
   *
@@ -84,6 +106,12 @@ class PosixTransportUpgradeReleaseTest extends Test:
     private val transportConfig = kyo.net.NetConfig.default
 
     private def sock = Ffi.load[SocketBindings]
+
+    /** Whether the connection is holding unconsumed inbound bytes, which is what `detachForUpgrade` hands the upgrade as its staging. A closed
+      * channel counts as no bytes: the caller polls this to reach a staged state, and a close means that state is unreachable.
+      */
+    private def hasBytes[A](ch: Channel.Unsafe[A])(using AllowUnsafe, Frame): Boolean =
+        ch.empty().contains(false)
 
     private def awaitCondition(bound: Duration)(cond: => Boolean)(using Frame): Boolean < Async =
         val deadline = java.lang.System.nanoTime() + bound.toNanos
@@ -348,6 +376,130 @@ class PosixTransportUpgradeReleaseTest extends Test:
                                     }
                                 }
                             }
+                        }
+                    }
+                }
+            }.map(_ => succeed)
+        }
+    }
+
+    "an engine build that throws something other than a NetTlsException" - {
+
+        "must settle the upgrade as a panic and release the fd, rather than strand both" in {
+            PosixTestSockets.assumePoller()
+            val driver = PollerIoDriver.init()
+            discard(driver.start())
+            // Not a NetTlsException, so the buildEngine arm inside the upgrade does not handle it: this is the throw the containment at the
+            // detach-handover boundary has to catch. The real shape is a TLS provider that lets a raw failure escape its build (the JDK
+            // floor's CertificateException for a file that exists but holds no certificate); an identity-checked RuntimeException pins the
+            // mechanism without depending on which provider the host stages.
+            val boom = new RuntimeException("engine build failed outside the NetTlsException taxonomy")
+            val transport =
+                TestTransports.forTesting(
+                    driver,
+                    Ffi.load[SocketBindings],
+                    backendIsEpoll = false,
+                    buildEngine = (_, _, _) => throw boom
+                )
+            Sync.ensure(Sync.defer(driver.close())) {
+                PosixTestSockets.loopbackPair().map { case (client, accepted) =>
+                    Sync.ensure(Sync.defer(discard(sock.close(accepted)))) {
+                        val handle    = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                        val plaintext = transport.openWith(handle, driver, transportConfig.channelCapacity)
+                        assert(plaintext.start(), "the plaintext connection must start")
+                        // The post-detach body runs inside a completion callback, and completion callbacks are run under a catch-all that
+                        // logs rather than propagates. An unhandled throw there settles nothing, so this get is what fails when the
+                        // containment is missing: it parks forever on a promise no path can complete, and the leaf's own cap reports it.
+                        Abort.run[NetException](transport.upgradeToTls(plaintext, NetTlsConfig(trustAll = true), 16).safe.get).map {
+                            outcome =>
+                                // Defensive, as in the leaves above: a regression that let this upgrade succeed must not leak its connection.
+                                outcome.foreach(_.close())
+                                outcome match
+                                    case Result.Panic(t) =>
+                                        // Identity, not just the type: the caller has to receive the original throwable, because that is what
+                                        // classifies the failure upstream (kyo-sql's TlsUpgrade reads the panic's cause to report a connect
+                                        // failure). A substituted or wrapped throwable would pass a type check and still lose the diagnosis.
+                                        assert(t eq boom, s"the caller must receive the engine build's own throwable, got $t")
+                                    case other =>
+                                        fail(
+                                            s"an engine build throwing outside the NetTlsException taxonomy must panic the upgrade, got $other"
+                                        )
+                                end match
+                                // The detach already handed the fd to the upgrade, and no engine exists to own it, so the escape path is the
+                                // only thing that can release it: the plaintext connection's own close cannot take an Upgrading fd and this
+                                // transport is never swept. Left open, the fd sits until the peer FINs it into CLOSE_WAIT.
+                                awaitCondition(10.seconds)(handle.readBuffer.isClosed).map { released =>
+                                    assert(released, "the escape path must release the detached fd it was left holding")
+                                }
+                        }
+                    }
+                }
+            }.map(_ => succeed)
+        }
+
+        "must free the ENGINE too when the throw lands after the engine was built" in {
+            PosixTestSockets.assumePoller()
+            val driver = PollerIoDriver.init()
+            discard(driver.start())
+            // The window between the engine build and the upgrade's owner hook has two throw sites of its own, `feedStaged` and
+            // `feedCoalescedHandshake`, and by then the release owes the engine as well as the fd. The leaf above cannot reach that: it throws
+            // during the build, when no engine exists yet. Reaching it needs staged ciphertext, since `feedStaged` only enters the engine for
+            // spans that carry bytes, which is why the peer writes first and the upgrade waits for those bytes to be sitting unconsumed.
+            val boom   = new RuntimeException("staged-ciphertext feed failed outside the NetTlsException taxonomy")
+            val engine = new ThrowOnFeedEngine(boom)
+            val transport =
+                TestTransports.forTesting(driver, Ffi.load[SocketBindings], backendIsEpoll = false, buildEngine = (_, _, _) => engine)
+            Sync.ensure(Sync.defer(driver.close())) {
+                PosixTestSockets.loopbackPair().map { case (client, accepted) =>
+                    Sync.ensure(Sync.defer(discard(sock.close(accepted)))) {
+                        val handle    = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                        val plaintext = transport.openWith(handle, driver, transportConfig.channelCapacity)
+                        assert(plaintext.start(), "the plaintext connection must start")
+                        val payload = "staged-ciphertext".getBytes("UTF-8")
+                        assert(
+                            sock.sendNow(
+                                accepted,
+                                Buffer.fromArray[Byte](payload),
+                                payload.length.toLong,
+                                0
+                            ).value == payload.length.toLong,
+                            "the peer write that produces the staging must land in full"
+                        )
+                        // Barrier, not a sleep: the bytes must be off the socket and sitting unconsumed in the inbound channel, because that
+                        // is exactly what `detachForUpgrade` hands back as `staged`. Upgrading before they land would feed an empty chunk and
+                        // silently exercise the leaf above instead of this one.
+                        awaitCondition(
+                            5.seconds
+                        )(hasBytes(plaintext.inbound)).map {
+                            staged =>
+                                assert(
+                                    staged,
+                                    "the peer's bytes never reached the inbound channel, so nothing would be staged for the engine"
+                                )
+                                Abort.run[NetException](transport.upgradeToTls(plaintext, NetTlsConfig(trustAll = true), 16).safe.get).map {
+                                    outcome =>
+                                        outcome.foreach(_.close())
+                                        outcome match
+                                            case Result.Panic(t) =>
+                                                assert(t eq boom, s"the caller must receive the feed's own throwable, got $t")
+                                            case other =>
+                                                fail(
+                                                    s"a staged-ciphertext feed throwing outside the NetTlsException taxonomy must panic the upgrade, got $other"
+                                                )
+                                        end match
+                                        assert(
+                                            engine.fed.get(),
+                                            "the leaf did not reach `feedStaged`, so it proves nothing about the post-build window"
+                                        )
+                                        // Both obligations, because by this point the upgrade owns both and the fd-only release the pre-build
+                                        // path uses would strand the engine's native memory with no other owner able to reach it.
+                                        awaitCondition(10.seconds)(handle.readBuffer.isClosed && engine.freed.get()).map { released =>
+                                            assert(
+                                                released,
+                                                s"fd released=${handle.readBuffer.isClosed} engine freed=${engine.freed.get()}"
+                                            )
+                                        }
+                                }
                         }
                     }
                 }

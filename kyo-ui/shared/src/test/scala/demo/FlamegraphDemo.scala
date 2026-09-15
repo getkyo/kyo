@@ -353,7 +353,7 @@ object FlamegraphDemo extends KyoApp:
     run {
         val port = args.headMaybe.flatMap(s => Maybe.fromOption(s.toIntOption)).getOrElse(0)
         for
-            folded <- profilePath.read
+            folded <- Path.runReadOnly(profilePath.read)
             tree = parse(folded)
             handlers <- UI.runHandlers("/")(app(tree))
             server   <- HttpServer.init(port, "localhost")(handlers*)

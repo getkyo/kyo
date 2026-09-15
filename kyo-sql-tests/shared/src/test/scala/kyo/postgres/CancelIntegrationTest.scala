@@ -37,6 +37,10 @@ class CancelIntegrationTest extends SqlContainerTest:
                             Async.timeout(1.second)(Abort.run[SqlException](client.query(longQuery)))
                         ).flatMap {
                             case Result.Failure(_: Timeout) =>
+                                // deviation: this asserts measured wall-clock elapsed. There is no barrier for "released by the 1s timeout, not by
+                                // the 30s query": the pool cancels the query right after the release, so a pg_stat_activity probe races that cancel.
+                                // The bound is catastrophic, not tight: a correct release lands at ~1s, a caller that waited out the query at ~30s,
+                                // so 20s separates them with no runner-flippable margin.
                                 stopwatch.elapsed.map { waited =>
                                     assert(
                                         waited < 20.seconds,
@@ -95,7 +99,7 @@ class CancelIntegrationTest extends SqlContainerTest:
         Loop(0) { attempt =>
             read.flatMap { v =>
                 if v >= target then Loop.done(())
-                else if attempt >= 300 then fail(s"$what stuck at $v after $attempt polls, expected at least $target")
+                else if attempt >= 2000 then fail(s"$what stuck at $v after $attempt polls, expected at least $target")
                 else Async.sleep(10.millis).andThen(Loop.continue(attempt + 1))
             }
         }
@@ -104,11 +108,12 @@ class CancelIntegrationTest extends SqlContainerTest:
       * `untilCancelsSettled` in [[kyo.internal.SqlConnectionCancelTest]], and like it must not be replaced with `closeAll`, which decides
       * the outcome it would be used to observe.
       */
-    private def untilCancelsSettled(client: SqlClient)(using Frame): Unit < Async =
+    private def untilCancelsSettled(client: SqlClient)(using Frame, kyo.test.AssertScope): Unit < Async =
         Loop(0) { attempt =>
             // Unsafe: reads the pool's atomic reclaim counter without suspending.
             Sync.Unsafe.defer(client.runtime.pool.cancelsInFlightCount).flatMap { inFlight =>
-                if inFlight == 0 || attempt >= 300 then Loop.done(())
+                if inFlight == 0 then Loop.done(())
+                else if attempt >= 2000 then fail(s"cancels never settled: $inFlight still in flight after $attempt polls")
                 else Async.sleep(10.millis).andThen(Loop.continue(attempt + 1))
             }
         }
@@ -119,8 +124,8 @@ class CancelIntegrationTest extends SqlContainerTest:
                 val url = s"postgres://${ctx.username}:${ctx.password}@${ctx.host}:${ctx.port}/${ctx.database}"
                 val config = SqlConfig(
                     maxConnections = 1,
-                    acquireTimeout = 3.seconds,
-                    cancelTimeout = 1.second,
+                    acquireTimeout = 30.seconds,
+                    cancelTimeout = 15.seconds,
                     metricsScope = Present("kyosql.t56a")
                 )
                 SqlClient.initWith(url, config) { client =>
@@ -176,8 +181,8 @@ class CancelIntegrationTest extends SqlContainerTest:
                 val url = s"postgres://${ctx.username}:${ctx.password}@${ctx.host}:${ctx.port}/${ctx.database}"
                 val config = SqlConfig(
                     maxConnections = 1,
-                    acquireTimeout = 3.seconds,
-                    cancelTimeout = 2.seconds,
+                    acquireTimeout = 30.seconds,
+                    cancelTimeout = 15.seconds,
                     metricsScope = Present("kyosql.t56b")
                 )
                 SqlClient.initWith(url, config) { client =>

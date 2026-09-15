@@ -442,7 +442,7 @@ private[kyo] object UnsafeServerDispatch:
                         // conn), eliminating the put/close race that surfaced under caliban WS load on arm64 CI.
                         val closeFn: (Int, String) => Unit < Async = (code, reason) =>
                             closeReasonRef.set(Present((code, reason))).andThen {
-                                outbound.close.unit
+                                outbound.closeDiscard
                             }
                         val ws      = new HttpWebSocket(inbound, outbound, closeReasonRef, peerClosedPromise, closeFn)
                         val request = HttpRequest(HttpMethod.GET, url, headers, Record.empty)
@@ -470,7 +470,7 @@ private[kyo] object UnsafeServerDispatch:
                                         case Result.Failure(_) => Kyo.unit
                                         case Result.Panic(t)   => Log.warn("HttpWebSocket server reader panicked", t)
                                         case Result.Success(_) => Kyo.unit
-                                    log.andThen(inbound.close.unit).andThen(peerClosedPromise.completeUnit.unit)
+                                    log.andThen(inbound.closeDiscard).andThen(peerClosedPromise.completeUnit.unit)
                                 }
                             }.map { monitorFiber =>
                                 Fiber.initUnscoped {
@@ -495,14 +495,14 @@ private[kyo] object UnsafeServerDispatch:
                                                     Abort.run[Any](WebSocketCodec.writeClose(conn, code, reason, mask = false)).unit
                                                 case Absent => Kyo.unit
                                             }
-                                        }.andThen(outbound.close.unit)
+                                        }.andThen(outbound.closeDiscard)
                                     }
                                 }.map { writeFiber =>
                                     Sync.ensure(
                                         readFiber.interrupt.unit
                                             .andThen(writeFiber.interrupt.unit)
                                             .andThen(monitorFiber.interrupt.unit)
-                                            .andThen(outbound.close.unit)
+                                            .andThen(outbound.closeDiscard)
                                     ) {
                                         Abort.run[Any](wsHandler.wsHandler(request, ws)).map { _ =>
                                             // After handler returns: if no close reason was registered AND the reader
@@ -513,9 +513,9 @@ private[kyo] object UnsafeServerDispatch:
                                                 case Absent =>
                                                     readFiber.done.map { isDone =>
                                                         if isDone then Kyo.unit
-                                                        else closeReasonRef.set(Present((1000, ""))).andThen(outbound.close.unit)
+                                                        else closeReasonRef.set(Present((1000, ""))).andThen(outbound.closeDiscard)
                                                     }
-                                                case _ => outbound.close.unit
+                                                case _ => outbound.closeDiscard
                                             }.andThen(writeFiber.get.unit)
                                         }
                                     }
@@ -644,29 +644,57 @@ private[kyo] object UnsafeServerDispatch:
                     )
                 case Result.Success(bodyBytes) =>
 
-                    // Decode + invoke via HttpHandler.serve* -- types resolved through endpoint, no casts
-                    val serveResult =
-                        if lookup.isStreamingRequest then
-                            val bodyStream =
-                                if bodyBytes.isEmpty then Stream.empty[Span[Byte]]
-                                else Stream.init(Seq(bodyBytes))
-                            endpoint.serveStreaming(captures, queryParam, headers, bodyStream, path, method)
-                        else
-                            endpoint.serveBuffered(captures, queryParam, headers, bodyBytes, path, method)
+                    // Decode + invoke via HttpHandler.serve* -- types resolved through endpoint, no casts.
+                    //
+                    // When several routes are registered on the same node and method
+                    // — `/block/{height}` and `/block/{hash}` differ only in what
+                    // their captures accept — a path that fails to decode is not an
+                    // error yet: it means this candidate did not match. Follow the
+                    // chain and try the next. The loop runs at most once per
+                    // registered alternative and only on a request that would
+                    // otherwise be rejected; the single-route case exits on the
+                    // first iteration having done one extra array read.
+                    @tailrec def serveCandidate(
+                        current: HttpHandler[?, ?, ?],
+                        currentCaptures: Dict[String, String]
+                    ): Unit < Async =
+                        val serveResult =
+                            if lookup.isStreamingRequest then
+                                val bodyStream =
+                                    if bodyBytes.isEmpty then Stream.empty[Span[Byte]]
+                                    else Stream.init(Seq(bodyBytes))
+                                current.serveStreaming(currentCaptures, queryParam, headers, bodyStream, path, method)
+                            else
+                                current.serveBuffered(currentCaptures, queryParam, headers, bodyBytes, path, method)
 
-                    serveResult match
-                        case Result.Failure(error) =>
-                            val status = error match
-                                case _: HttpUnsupportedMediaTypeException => HttpStatus(415)
-                                case _                                    => HttpStatus(400)
-                            writeDecodeError(streamCtx, status, error)
-                        case Result.Panic(e) =>
-                            Log.error("UnsafeServerDispatch: serve decode panic", e).andThen(
-                                Sync.Unsafe.defer(writeInternalError(streamCtx))
-                            )
-                        case Result.Success(handlerComputation) =>
-                            dispatchHandler(handlerComputation, endpoint, streamCtx, isHead)
-                    end match
+                        serveResult match
+                            case Result.Failure(error) =>
+                                // Only a path decode failure can mean "wrong
+                                // candidate". A bad query param, header or body is
+                                // a genuine client error on a route that did match,
+                                // and must not silently fall through to another.
+                                val pathMismatch = error match
+                                    case _: HttpPathDecodeException => true
+                                    case _                          => false
+                                if pathMismatch && router.advanceToNextCandidate(lookup) then
+                                    val next = router.endpoint(lookup)
+                                    serveCandidate(next, buildCaptures(request, lookup, router.captureNames(lookup)))
+                                else
+                                    val status = error match
+                                        case _: HttpUnsupportedMediaTypeException => HttpStatus(415)
+                                        case _                                    => HttpStatus(400)
+                                    writeDecodeError(streamCtx, status, error)
+                                end if
+                            case Result.Panic(e) =>
+                                Log.error("UnsafeServerDispatch: serve decode panic", e).andThen(
+                                    Sync.Unsafe.defer(writeInternalError(streamCtx))
+                                )
+                            case Result.Success(handlerComputation) =>
+                                dispatchHandler(handlerComputation, current, streamCtx, isHead)
+                        end match
+                    end serveCandidate
+
+                    serveCandidate(endpoint, captures)
             }
         end if
     end serveRequest

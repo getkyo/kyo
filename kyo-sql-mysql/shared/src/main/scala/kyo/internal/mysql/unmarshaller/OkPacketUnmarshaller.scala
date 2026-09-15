@@ -42,8 +42,12 @@ object OkPacketUnmarshaller extends Unmarshaller[OkPacket]:
                                 if buf.remaining > 0 then buf.readLenencString().map(Maybe.Present(_))
                                 else Maybe.Absent
                             infoEffect.flatMap { info =>
-                                val sessionStateInfoEffect: Maybe[String] < Abort[SqlDecodeException] =
-                                    if buf.remaining > 0 then buf.readLenencString().map(Maybe.Present(_))
+                                // Raw bytes, not a decoded string: the block's own entry lengths are binary, and one of
+                                // 128 or more is not a valid UTF-8 sequence, so decoding here would replace it and the
+                                // framing would be unreadable.
+                                val sessionStateInfoEffect: Maybe[Span[Byte]] < Abort[SqlDecodeException] =
+                                    if buf.remaining > 0 then
+                                        buf.readLenencInt().flatMap(len => buf.readBytes(len.toInt).map(Maybe.Present(_)))
                                     else Maybe.Absent
                                 sessionStateInfoEffect.map { sessionStateInfo =>
                                     OkPacket(affectedRows, lastInsertId, statusFlags, warnings, info, sessionStateInfo)

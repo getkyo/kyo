@@ -3,6 +3,14 @@ package kyo
 import Record.*
 import scala.language.implicitConversions
 
+/** An opaque type whose upper bound is the field intersection it stands for. Every `Fields` derivation has to look through the bound to
+  * find the fields, which is the one path that reads how the type was declared rather than what it is applied to.
+  */
+object OpaqueFields:
+    opaque type Contact <: "name" ~ String & "age" ~ Int   = "name" ~ String & "age" ~ Int
+    opaque type Boxed[A] <: "value" ~ A & "label" ~ String = "value" ~ A & "label" ~ String
+end OpaqueFields
+
 case class Person(name: String, age: Int)
 case class Point(x: Int, y: Int)
 case class Wrapper[A](value: A, label: String)
@@ -146,6 +154,63 @@ class FieldsTest extends kyo.test.Test[Any]:
         val renders = summon[Fields.SummonAll[F, Render]]
         assert(renders.contains("f1"))
         assert(renders.contains("f30"))
+    }
+
+    // --- Types that declare their fields as an upper bound ---
+
+    "bounded opaque: Fields.names" in {
+        val names = Fields.names[OpaqueFields.Contact]
+        assert(names == Set("name", "age"))
+    }
+
+    "bounded opaque: Fields.fields" in {
+        val fs = Fields.fields[OpaqueFields.Contact]
+        assert(fs.size == 2)
+        assert(fs.find(_.name == "name").get.tag =:= Tag[String])
+        assert(fs.find(_.name == "age").get.tag =:= Tag[Int])
+    }
+
+    "bounded opaque: Have resolves value type" in {
+        val have                                                                 = summon[Fields.Have[OpaqueFields.Contact, "name"]]
+        val _: Fields.Have[OpaqueFields.Contact, "name"] { type Value = String } = have
+        succeed("Have resolves the value type through the bound; the ascription above is the compile-time check")
+    }
+
+    "bounded opaque: Have rejects missing field" in {
+        typeCheckFailure("""summon[Fields.Have[OpaqueFields.Contact, "missing"]]""")("Fields.Have")
+    }
+
+    "bounded opaque: Comparable" in {
+        val _ = summon[Fields.Comparable[OpaqueFields.Contact]]
+        succeed("Comparable derives through the bound; the summon above is the compile-time check")
+    }
+
+    "bounded opaque: SameNames matches the case class with the same fields" in {
+        val _ = summon[Fields.SameNames[OpaqueFields.Contact, Person]]
+        succeed("SameNames reads both sides' names through the bound; the summon above is the compile-time check")
+    }
+
+    "parameterized bounded opaque: Fields.names" in {
+        val names = Fields.names[OpaqueFields.Boxed[Int]]
+        assert(names == Set("value", "label"))
+    }
+
+    "parameterized bounded opaque: field types follow the argument" in {
+        val fs = Fields.fields[OpaqueFields.Boxed[Int]]
+        assert(fs.find(_.name == "value").get.tag =:= Tag[Int])
+        assert(fs.find(_.name == "label").get.tag =:= Tag[String])
+        val other = Fields.fields[OpaqueFields.Boxed[Boolean]]
+        assert(other.find(_.name == "value").get.tag =:= Tag[Boolean])
+    }
+
+    "parameterized bounded opaque: Have resolves the substituted value type" in {
+        val have                                                                  = summon[Fields.Have[OpaqueFields.Boxed[Int], "value"]]
+        val _: Fields.Have[OpaqueFields.Boxed[Int], "value"] { type Value = Int } = have
+        succeed("Have substitutes the argument into the bound; the ascription above is the compile-time check")
+    }
+
+    "bounded opaque: SameNames rejects different fields" in {
+        typeCheckFailure("""summon[Fields.SameNames[OpaqueFields.Contact, Point]]""")
     }
 
 end FieldsTest

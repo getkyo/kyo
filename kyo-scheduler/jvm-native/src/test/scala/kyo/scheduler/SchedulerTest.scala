@@ -102,9 +102,20 @@ class SchedulerTest extends AnyFreeSpec with NonImplicitAssertions {
     }
 
     "busyFiberTraces" - {
-        "returns empty when the scheduler is idle" in withScheduler { scheduler =>
-            eventually(assert(scheduler.loadAvg() == 0))
-            assert(scheduler.busyFiberTraces().isEmpty)
+        // loadAvg scans currentWorkers, busyFiberTraces scans allocatedWorkers, and the latter is the wider
+        // range. A task queued on an allocated worker past currentWorkers, whose thread has not mounted yet,
+        // is invisible to loadAvg and visible here as BusyWorker("", ""): no mount name and no current task.
+        // Gating on loadAvg therefore does not establish what this asserts, so wait for the snapshot itself.
+        //
+        // The window is narrow enough that a single pass cannot tell a settled scheduler from a lucky one, so
+        // the leaf runs against a fresh scheduler many times over. A regression that reopens the window fails
+        // here instead of intermittently on one CI pole.
+        "returns empty when the scheduler is idle" in {
+            (1 to idleSnapshotRepeats).foreach { _ =>
+                withScheduler { scheduler =>
+                    eventually(assert(scheduler.busyFiberTraces().isEmpty))
+                }
+            }
         }
 
         "covers all busy workers, not first-only" in withScheduler { scheduler =>
@@ -191,7 +202,9 @@ class SchedulerTest extends AnyFreeSpec with NonImplicitAssertions {
                     // wedge. The 4x host load runs throughout, so the regulator sees sustained jitter and shrinks the pool. Assert on
                     // the loop's own read that broke the wait, not a fresh re-sample: under heavy load the BlockingMonitor is
                     // CPU-starved and its blocked flags flicker, so a second sample can momentarily dip below 4.
-                    val deadline = java.lang.System.nanoTime() + 10000000000L
+                    // 60s hang-guard: the barrier is "at least 4 carriers eventually park"; under sustained 4x host load the parking can take many
+                    // seconds, so the deadline only breaks a pool that never parks, never a slow one.
+                    val deadline = java.lang.System.nanoTime() + 60000000000L
                     var blk0     = 0
                     while (
                         {
@@ -199,11 +212,11 @@ class SchedulerTest extends AnyFreeSpec with NonImplicitAssertions {
                         } && java.lang.System.nanoTime() < deadline
                     )
                         Thread.sleep(5)
-                    assert(blk0 >= 4, s"carriers never became blocked within 10s (blocked=$blk0)")
+                    assert(blk0 >= 4, s"carriers never became blocked within the hang-guard (blocked=$blk0)")
                     // Fresh runnable canary: it must be served. Without the floor the jitter-driven regulator shrinks the pool below
                     // the blocked count and the canary is starved; the floor keeps minWorkers runnable carriers, so it runs.
                     s.schedule(TestTask(_run = () => { canary.countDown(); Task.Done }))
-                    val served = canary.await(8, java.util.concurrent.TimeUnit.SECONDS)
+                    val served = canary.await(60, java.util.concurrent.TimeUnit.SECONDS)
                     val st     = s.status()
                     val r      = st.concurrency.regulator
                     val blk    = st.workers.count(w => (w ne null) && w.isBlocked)
@@ -234,14 +247,21 @@ class SchedulerTest extends AnyFreeSpec with NonImplicitAssertions {
         val liveCfg = Scheduler.Config.default.copy(cores = 2, coreWorkers = 2, minWorkers = 2, maxWorkers = 4)
 
         "an adequately sized dedicated timer pool keeps the regulator firing" in withScheduler(liveCfg) { s =>
-            // probesSent increments every ~10ms; a live regulator fires many within a few seconds. Poll to a bounded deadline.
-            val deadline = java.lang.System.nanoTime() + 3000000000L
+            // probesSent increments every ~10ms; a live regulator fires many within a few seconds. Poll to a 30s hang-guard: the barrier is that
+            // the regulator eventually fires, so only a frozen pool runs the deadline out.
+            val deadline = java.lang.System.nanoTime() + 30000000000L
             while (s.status().concurrency.regulator.probesSent <= 10 && java.lang.System.nanoTime() < deadline)
                 Thread.sleep(10)
             val probes = s.status().concurrency.regulator.probesSent
             assert(probes > 10, s"regulator never fired in the harness (probesSent=$probes) despite an 8-thread dedicated timer pool")
         }
     }
+
+    /** How many times the idle-snapshot leaf reruns against a fresh scheduler. The race it guards surfaced once
+      * on windows-x64 and never on this host, so a single pass says nothing; repeating it makes a reopened
+      * window fail wherever the suite runs rather than on one pole every few weeks.
+      */
+    private val idleSnapshotRepeats = 100
 
     private def withScheduler[A](testCode: Scheduler => A): A =
         withScheduler(Scheduler.Config.default)(testCode)

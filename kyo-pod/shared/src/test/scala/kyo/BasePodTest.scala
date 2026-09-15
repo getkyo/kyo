@@ -93,12 +93,12 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
                 }
 
                 "shell" in {
-                    // The http arm above needs a socket to talk to; this one needs a binary to exec. A
-                    // runtime reached through a mounted socket with no CLI installed (a build container, and
-                    // any CI runner wired the same way) is genuinely available for HTTP and cannot serve
-                    // Shell at all. Cancelled rather than unregistered so the skip is visible in the run's
-                    // own totals instead of the leaf silently not existing.
-                    assume(ContainerRuntime.hasCli(runtime), s"$runtime CLI is not on PATH; the Shell backend needs it")
+                    // The http arm above needs a socket to talk to; this one needs a CLI that reaches the
+                    // daemon. A runtime reached through a mounted socket with no CLI installed (a build
+                    // container, and any CI runner wired the same way) is genuinely available for HTTP and
+                    // cannot serve Shell at all. Cancelled rather than unregistered so the skip is visible in
+                    // the run's own totals instead of the leaf silently not existing.
+                    requireRuntimeCli(runtime)
                     Container.withBackendConfig(_.Shell(runtime))(checkingContainerLeak(v))
                 }
             }
@@ -122,12 +122,12 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
                 }
 
                 "shell" in {
-                    // The http arm above needs a socket to talk to; this one needs a binary to exec. A
-                    // runtime reached through a mounted socket with no CLI installed (a build container, and
-                    // any CI runner wired the same way) is genuinely available for HTTP and cannot serve
-                    // Shell at all. Cancelled rather than unregistered so the skip is visible in the run's
-                    // own totals instead of the leaf silently not existing.
-                    assume(ContainerRuntime.hasCli(runtime), s"$runtime CLI is not on PATH; the Shell backend needs it")
+                    // The http arm above needs a socket to talk to; this one needs a CLI that reaches the
+                    // daemon. A runtime reached through a mounted socket with no CLI installed (a build
+                    // container, and any CI runner wired the same way) is genuinely available for HTTP and
+                    // cannot serve Shell at all. Cancelled rather than unregistered so the skip is visible in
+                    // the run's own totals instead of the leaf silently not existing.
+                    requireRuntimeCli(runtime)
                     Container.withBackendConfig(_.Shell(runtime))(checkingContainerLeak(v))
                 }
             }
@@ -201,4 +201,41 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
       */
     private[kyo] def ensureCleanup(c: Container)(using Frame): Unit < (Async & Abort[Any] & Scope) =
         Scope.ensure(Abort.run[ContainerException](c.remove(force = true)).unit)
+
+    /** Ensures `image` is present, retrying a failing registry but never a genuinely absent image.
+      *
+      * A precondition pull reaches the real registry, and Docker Hub intermittently answers 5xx: a manifest
+      * HEAD can return 500 for an image that exists. `Container.init` deliberately fails fast
+      * on a registry error (a permanently absent image never becomes present by retrying), so the
+      * resilience belongs at the test call site rather than in the library.
+      *
+      * Scoping the retry to `ContainerOperationException` is what keeps it from hiding a defect. Both
+      * backends classify a failing registry there: the shell backend reports the pull's own failure, and the
+      * HTTP backend maps a 5xx through its generic-status branch, having deliberately excluded 5xx from the
+      * missing-image conflation. `ContainerImageMissingException` is a `ContainerNotFoundException`, so an
+      * absent image still aborts on the first attempt and the leaves that assert on it are unaffected. A
+      * real failure fails again on every attempt and still reds the leaf; only a fault that clears on its
+      * own is absorbed.
+      *
+      * The backoff is real time, unavoidably: the registry is a real service and a virtual clock would not
+      * advance it. No leaf asserts on the elapsed time, so nothing here is a timing pass condition.
+      */
+    private[kyo] def ensureImage(image: ContainerImage)(using Frame): Unit < (Async & Abort[ContainerException]) =
+        Retry[ContainerOperationException](
+            Schedule.exponentialBackoff(initial = 1.second, factor = 2, maxBackoff = 8.seconds).jitter(0.2).take(3)
+        ) {
+            ContainerImage.ensure(image)
+        }
+
+    /** Cancels the leaf when `runtime`'s CLI is absent, for leaves that construct a Shell backend themselves.
+      *
+      * The shell backend shells out to `podman` or `docker`, so a host that reaches a daemon over a socket alone,
+      * such as one mounted into a container, has no binary for it to run. `runBackends` gates its own shell arm the
+      * same way; a leaf that picks the backend in its body has to say so itself. Cancelling names the reason, which
+      * is what a leaf that cannot apply here should do rather than failing on a missing binary.
+      */
+    private[kyo] def requireRuntimeCli(runtime: String)(using Frame, kyo.test.AssertScope): Unit =
+        if !ContainerRuntime.cliExists(runtime) then
+            cancel(s"the $runtime CLI is not available on this host, so the shell backend cannot run")
+
 end BasePodTest

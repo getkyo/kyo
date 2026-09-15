@@ -34,7 +34,14 @@ import kyo.ffi.Ffi
   */
 private[net] object EpollPollerBackend extends PollerBackend:
 
-    private def ep(using AllowUnsafe): EpollBindings = Ffi.load[EpollBindings]
+    // bound once for the reason KqueuePollerBackend.kq is: the shared stateless binding was
+    // reloaded per poll cycle on the io driver's hot loop. Lazy so the registry's touch of this
+    // object does not dlopen before the availability probe passed.
+    // Unsafe: first use is always under a caller that holds AllowUnsafe, and each binding method
+    // still requires AllowUnsafe per call.
+    private lazy val ep: EpollBindings =
+        import AllowUnsafe.embrace.danger
+        Ffi.load[EpollBindings]
 
     def create()(using AllowUnsafe): Int = ep.epoll_create1(0).value
 

@@ -52,31 +52,31 @@ class DeclarationTableTest extends kyo.test.Test[Any]:
     // Verifies AtomicRef CAS-swap visibility across fibers.
     "AtomicRef CAS-swap visibility: reader sees either empty or fully-populated dict" in {
         import AllowUnsafe.embrace.danger
-        Async.timeout(1.second) {
-            val table   = DeclarationTable.init()
-            val members = (1 to 4).map(i => Tasty.Name(s"m$i") -> makeSymbol(s"m$i"))
-            for
-                latch <- Latch.init(1)
-                readerFiber <- Fiber.initUnscoped(
-                    latch.await.andThen {
-                        Sync.defer {
-                            val dict = table.all
-                            val sz   = dict.size
-                            // Reader unblocks only after writer has populated: must see 4.
-                            assert(sz == 4, s"Expected fully-populated table (size=4) but saw size=$sz")
-                        }
+        // The Latch+Fiber handshake is the barrier: the reader awaits the latch, the writer populates then releases, so the reader always observes
+        // the fully-populated dict. No in-test timeout is needed; a genuine deadlock is caught by the suite's per-leaf cap.
+        val table   = DeclarationTable.init()
+        val members = (1 to 4).map(i => Tasty.Name(s"m$i") -> makeSymbol(s"m$i"))
+        for
+            latch <- Latch.init(1)
+            readerFiber <- Fiber.initUnscoped(
+                latch.await.andThen {
+                    Sync.defer {
+                        val dict = table.all
+                        val sz   = dict.size
+                        // Reader unblocks only after writer has populated: must see 4.
+                        assert(sz == 4, s"Expected fully-populated table (size=4) but saw size=$sz")
                     }
-                )
-                _ <- Sync.defer {
-                    val b = DictBuilder.init[Tasty.Name, Tasty.Symbol]
-                    members.foreach { case (k, v) => discard(b.add(k, v)) }
-                    table.populate(b.result())
                 }
-                _ <- latch.release
-                _ <- readerFiber.get
-            yield succeed
-            end for
-        }
+            )
+            _ <- Sync.defer {
+                val b = DictBuilder.init[Tasty.Name, Tasty.Symbol]
+                members.foreach { case (k, v) => discard(b.add(k, v)) }
+                table.populate(b.result())
+            }
+            _ <- latch.release
+            _ <- readerFiber.get
+        yield succeed
+        end for
     }
 
 end DeclarationTableTest

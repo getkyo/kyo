@@ -191,7 +191,7 @@ final private[kyo] class Connection[Handle] private (
       *
       * This method is idempotent. On second call it returns Absent (channel was already closed).
       */
-    def detachForUpgrade()(using AllowUnsafe, Frame): Maybe[Chunk[Span[Byte]]] =
+    def detachForUpgrade()(using AllowUnsafe, Frame): Fiber.Unsafe[Maybe[Chunk[Span[Byte]]], Any] =
         // Win the detach by CASing Established -> Upgrading: the Upgrading state keeps the fd open and
         // bars teardown, so the socket can be handed to the TLS upgrade. A second detach, or a detach
         // after a close already won, loses the CAS and returns Absent (idempotent), so the fd is never
@@ -201,6 +201,11 @@ final private[kyo] class Connection[Handle] private (
         then
             // Close inbound and capture any bytes the ReadPump already staged but nobody consumed.
             // These are raw network bytes (TLS ciphertext) that the handshake engine needs.
+            //
+            // The capture is a handover rather than a return value because the driver is detached below, AFTER this line: a ReadPump
+            // offer carrying the peer's first flight can still be committing right here. Missing it would strand the handshake waiting
+            // for bytes that were read and dropped, so the result is delivered once that offer lands. The handover settles inline
+            // whenever no offer is in flight, which is the ordinary case.
             val buffered = inbound.close()
             // The outbound close result is intentionally discarded: detachForUpgrade hands the fd to the TLS upgrade, so any queued outbound
             // bytes are abandoned by design (the upgrade re-drives the socket); unlike inbound, whose staged ciphertext the handshake needs.
@@ -209,8 +214,8 @@ final private[kyo] class Connection[Handle] private (
             // driver.cancel so a driver can keep its transport registration for the upgrade: the NIO driver keeps the SelectionKey (avoiding a
             // cancel+re-register race), while other drivers fall back to cancel. Intentionally does NOT call driver.closeHandle so the fd stays open.
             driver.detachForUpgrade(handle)
-            buffered.map(Chunk.from(_))
-        else Absent
+            buffered.map(_.map(Chunk.from(_)))
+        else Fiber.Unsafe.fromResult(Result.succeed(Absent))
         end if
     end detachForUpgrade
 
@@ -430,9 +435,10 @@ private[kyo] object Connection:
                     closingPromise.completeDiscard(Result.succeed(()))
                     discard(in.close())
                     discard(out.close())
-            private[kyo] def onClosing: Fiber.Unsafe[Unit, Any]                        = closingPromise
-            def detachForUpgrade()(using AllowUnsafe, Frame): Maybe[Chunk[Span[Byte]]] = Absent // not upgradable: no driver or socket
-            private[net] def start()(using AllowUnsafe, Frame): Boolean                = true   // no pumps; immediately usable
+            private[kyo] def onClosing: Fiber.Unsafe[Unit, Any] = closingPromise
+            // not upgradable: no driver or socket, so the answer is known immediately
+            def detachForUpgrade()(using AllowUnsafe, Frame)            = Fiber.Unsafe.fromResult(Result.succeed(Absent))
+            private[net] def start()(using AllowUnsafe, Frame): Boolean = true // no pumps; immediately usable
             // Plaintext, driverless connection: no peer certificate to hash and no close_notify exchange to observe.
             def serverCertificateHash: Maybe[Span[Byte]] = Absent
             def status: kyo.net.Connection.Status        = kyo.net.Connection.Status.Active

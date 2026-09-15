@@ -384,33 +384,54 @@ object Connection:
         // A finalizer on the connect fiber closes a connection an interrupt drops before `body` runs; after `body`, engine `a` is claimed
         // into `custodyLocal` (orphan finalizer closes it if the handover drops). Claim `a`, not the raw socket, whose close a TLS upgrade no-ops.
         Scope.run {
-            Sync.Unsafe.defer(kyo.net.NetPlatform.transport.connect(host, port).safe).map { connFiber =>
-                Scope.ensure { error =>
-                    if error.isDefined then
-                        connFiber.interrupt.andThen(connFiber.getResult).map {
-                            case Result.Success(rawConn) => Sync.Unsafe.defer(if rawConn.isOpen then rawConn.close() else ())
-                            case _                       => ()
+            // The close is registered BEFORE the connect is launched, and the ordering is the whole point. `transport.connect` returns a
+            // fiber that owns a socket from the instant it is called, so registering the finalizer on the far side of a `map` leaves a
+            // window in which an interrupt lands with nobody holding the obligation to close it: the connect still succeeds, hands its
+            // connection to a promise the interrupted computation never reads, and the descriptor stays ESTABLISHED for the life of the
+            // process. Measured over a 100-cycle interrupt stress, 8 of 192 connects took that window. `Scope.acquireRelease` is not a
+            // substitute; it has the same shape (`acquire.map(r => ensure(release(r)))`) and the same window.
+            //
+            // The cell is what breaks the ordering cycle, since the finalizer needs a fiber the connect has not produced yet. It is
+            // filled in the same unsafe block that launches, so nothing suspends between owning the socket and being able to close it,
+            // and a finalizer that runs before the launch simply finds `Absent` and has nothing to do.
+            Sync.Unsafe.defer(AtomicRef.Unsafe.init(Maybe.empty[kyo.Fiber[kyo.net.Connection, Abort[kyo.net.NetException]]])).map {
+                connCell =>
+                    Scope.ensure { error =>
+                        if error.isDefined then
+                            Sync.Unsafe.defer(connCell.get()).map {
+                                case Present(connFiber) =>
+                                    connFiber.interrupt.andThen(connFiber.getResult).map {
+                                        case Result.Success(rawConn) => Sync.Unsafe.defer(if rawConn.isOpen then rawConn.close() else ())
+                                        case _                       => ()
+                                    }
+                                case Absent => ()
+                            }
+                        else ()
+                    }.andThen {
+                        Sync.Unsafe.defer {
+                            val f = kyo.net.NetPlatform.transport.connect(host, port).safe
+                            connCell.set(Maybe(f))
+                            f
+                        }.map { connFiber =>
+                            Abort.run[kyo.net.NetException](connFiber.get).map {
+                                case Result.Failure(cause) =>
+                                    // Carry the NetException through as the cause rather than substituting a placeholder. The placeholder this
+                                    // replaces, `new Exception("connect refused")`, read as the socket's own answer while discarding it: a DNS
+                                    // failure, a refused connect, an unavailable I/O backend and a connect timeout all arrived as the same four
+                                    // words with no cause attached, and a report built on that message named the wrong layer.
+                                    Abort.fail(SqlConnectionConnectFailedException(host, port, cause))
+                                case Result.Panic(t) =>
+                                    onPanic(t).map(Abort.fail(_))
+                                case Result.Success(rawConn) =>
+                                    closingOnFailure(rawConn)(body(rawConn).map { a =>
+                                        custodyLocal.use {
+                                            case Present(custody) => Sync.Unsafe.defer(custody.claim(() => ownerClose(a)))
+                                            case Absent           => ()
+                                        }.andThen(a)
+                                    })
+                            }
                         }
-                    else ()
-                }.andThen {
-                    Abort.run[kyo.net.NetException](connFiber.get).map {
-                        case Result.Failure(cause) =>
-                            // Carry the NetException through as the cause rather than substituting a placeholder. The placeholder this
-                            // replaces, `new Exception("connect refused")`, read as the socket's own answer while discarding it: a DNS
-                            // failure, a refused connect, an unavailable I/O backend and a connect timeout all arrived as the same four
-                            // words with no cause attached, and a report built on that message named the wrong layer.
-                            Abort.fail(SqlConnectionConnectFailedException(host, port, cause))
-                        case Result.Panic(t) =>
-                            onPanic(t).map(Abort.fail(_))
-                        case Result.Success(rawConn) =>
-                            closingOnFailure(rawConn)(body(rawConn).map { a =>
-                                custodyLocal.use {
-                                    case Present(custody) => Sync.Unsafe.defer(custody.claim(() => ownerClose(a)))
-                                    case Absent           => ()
-                                }.andThen(a)
-                            })
                     }
-                }
             }
         }
 

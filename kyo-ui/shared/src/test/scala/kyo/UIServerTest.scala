@@ -60,4 +60,21 @@ class UIServerTest extends UITest:
         end for
     }
 
+    "WebSocket reconnects and reactive updates resume after connection drop" in {
+        val app: UI < Async =
+            for ref <- Signal.initRef("before")
+            yield UI.div(
+                UI.button("update").id("btn").onClick(ref.set("after")),
+                ref.map(v => UI.span(v).id("val"))
+            )
+        withUI(app) {
+            for
+                _ <- Browser.assertText(Selector.id("val"), "before")
+                _ <- Browser.eval("window.__kyoWs.close()")
+                _ <- Browser.click(Selector.id("btn"))
+                _ <- Browser.assertText(Selector.id("val"), "after")
+            yield ()
+        }
+    }
+
 end UIServerTest

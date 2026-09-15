@@ -220,3 +220,73 @@ class KyoFfiPluginTest extends AnyFunSuite with Matchers {
         KyoFfiPlugin.partitionPortableFlags(Seq("-lssl"), Set("crypto"))._1 shouldBe Seq("-lssl")
     }
 }
+
+/** The completeness half of `ffiPackagingCheck`: which (library, platform) pairs a release is still
+  * owed. Requiredness comes from the declared libraries rather than from the staged tree, which is
+  * what lets it report a native that is missing everywhere.
+  */
+class MissingRequiredNativesTest extends AnyFunSuite with Matchers {
+
+    private def lib(id: String, osTargets: Seq[String] = Nil) =
+        FfiLibrary(id = id, cSources = Seq(new File(s"$id.c")), osTargets = osTargets)
+
+    private val allKeys = Seq("linux-x86_64", "darwin-aarch64", "windows-x86_64")
+
+    test("a library with no native anywhere is reported for every required key") {
+        // A tree-derived check cannot report this: with no artifact anywhere the library contributes
+        // no observed id, so nothing is required of it and the release ships a jar with a hole.
+        val missing = KyoFfiPlugin.missingRequiredNatives(Seq(lib("ghost")), allKeys, Set.empty)
+        missing should contain theSameElementsAs Seq(
+            "ghost has no native for linux-x86_64",
+            "ghost has no native for darwin-aarch64",
+            "ghost has no native for windows-x86_64"
+        )
+    }
+
+    test("a complete library is reported for nothing") {
+        val have = allKeys.map("full" -> _).toSet
+        KyoFfiPlugin.missingRequiredNatives(Seq(lib("full")), allKeys, have) shouldBe empty
+    }
+
+    test("only the platform a library actually lacks is reported") {
+        val have = Set("partial" -> "linux-x86_64", "partial" -> "darwin-aarch64")
+        KyoFfiPlugin.missingRequiredNatives(Seq(lib("partial")), allKeys, have) shouldBe
+            Seq("partial has no native for windows-x86_64")
+    }
+
+    test("osTargets narrows what a library is required for, per key") {
+        // A darwin-only library owes nothing on linux or windows, even though its siblings do.
+        val have = Set("mac_only" -> "darwin-aarch64")
+        KyoFfiPlugin.missingRequiredNatives(Seq(lib("mac_only", Seq("darwin"))), allKeys, have) shouldBe empty
+    }
+
+    test("a darwin-only library missing its own platform is still reported") {
+        // The publish host is linux; buildsOn must be asked about each required key rather than
+        // about the host, or this library is excused exactly when it is broken.
+        KyoFfiPlugin.missingRequiredNatives(Seq(lib("mac_only", Seq("darwin"))), allKeys, Set.empty) shouldBe
+            Seq("mac_only has no native for darwin-aarch64")
+    }
+
+    test("musl is required only when osTargets names it") {
+        val keys = Seq("linux-x86_64", "linux-musl-x86_64")
+        val have = Set("glibc_only" -> "linux-x86_64")
+        KyoFfiPlugin.missingRequiredNatives(Seq(lib("glibc_only", Seq("linux"))), keys, have) shouldBe empty
+        KyoFfiPlugin.missingRequiredNatives(
+            Seq(lib("both", Seq("linux", "linux-musl"))),
+            keys,
+            Set("both" -> "linux-x86_64")
+        ) shouldBe Seq("both has no native for linux-musl-x86_64")
+    }
+
+    test("a library declaring no C sources is required of nothing") {
+        val declared = Seq(FfiLibrary(id = "absent_on_purpose", cSources = Nil))
+        KyoFfiPlugin.missingRequiredNatives(declared, allKeys, Set.empty) shouldBe empty
+    }
+
+    test("every declared library is checked, not just the ones with artifacts") {
+        val have    = allKeys.map("present" -> _).toSet
+        val missing = KyoFfiPlugin.missingRequiredNatives(Seq(lib("present"), lib("ghost")), allKeys, have)
+        missing.map(_.takeWhile(_ != ' ')).distinct shouldBe Seq("ghost")
+        missing.size shouldBe 3
+    }
+}

@@ -3,6 +3,7 @@ package kyo
 import kyo.Browser.*
 import kyo.BrowserElementNotActionableException.Reason
 import kyo.internal.Actionability
+import kyo.internal.BrowserEval
 
 class BrowserActionabilityTest extends BrowserTest:
 
@@ -23,6 +24,85 @@ class BrowserActionabilityTest extends BrowserTest:
                 Browser.click(Browser.Selector.id("target")).andThen {
                     Browser.eval("String(!!window.__kyoClicked)").map { clicked =>
                         assert(clicked == "true", s"expected click handler to fire but got $clicked")
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Click delivery confirmation ──
+    // The gate above runs entirely BEFORE the dispatch, so it cannot see whether the event it sends arrives. These cover the
+    // post-dispatch probe: what it counts, what it must never fail, and that it reads false when nothing was delivered.
+
+    "the delivery probe reads missed when nothing was clicked after arming" in {
+        withBrowser {
+            onPage("""<body><button id="t" style="width:80px;height:30px">Go</button></body>""") {
+                BrowserEval.armClickProbe.andThen(BrowserEval.clickDelivery).map { delivery =>
+                    assert(
+                        delivery == BrowserEval.ClickDelivery.Missed,
+                        s"the probe must not report a delivery when no click was dispatched, got $delivery"
+                    )
+                }
+            }
+        }
+    }
+
+    "the delivery probe reads received once a click reaches the document" in {
+        withBrowser {
+            onPage("""<body><button id="t" style="width:80px;height:30px">Go</button></body>""") {
+                BrowserEval.armClickProbe
+                    .andThen(Browser.eval("document.getElementById('t').click(); 'done'"))
+                    .andThen(BrowserEval.clickDelivery)
+                    .map(delivery =>
+                        assert(
+                            delivery == BrowserEval.ClickDelivery.Received,
+                            s"a click that reached the document must read as delivered, got $delivery"
+                        )
+                    )
+            }
+        }
+    }
+
+    // A probe that is gone carries no evidence either way, and the distinction is the whole point of the third state: a navigation
+    // between arming and reading wipes it, and reporting that as a delivery hides an unconfirmed click behind a confirmed one.
+    // Deleting the object reproduces exactly the state a navigation leaves behind, without needing a real navigation.
+    "the delivery probe reads unsubstantiated when the probe object is gone" in {
+        withBrowser {
+            onPage("""<body><button id="t" style="width:80px;height:30px">Go</button></body>""") {
+                BrowserEval.armClickProbe
+                    .andThen(Browser.eval("delete window.__kyoClickProbe; 'done'"))
+                    .andThen(BrowserEval.clickDelivery)
+                    .map(delivery =>
+                        assert(
+                            delivery == BrowserEval.ClickDelivery.Unsubstantiated,
+                            s"a missing probe substantiates nothing and must not read as a delivery, got $delivery"
+                        )
+                    )
+            }
+        }
+    }
+
+    // The probe asserts delivery, never that anything acted on the event. A button nobody listens to is a legitimate click and
+    // must not fail, or every no-op click in the repo starts erroring.
+    "click on a button with no handler succeeds" in {
+        withBrowser {
+            onPage("""<body><button id="t" style="width:80px;height:30px">Go</button></body>""") {
+                Browser.click(Browser.Selector.id("t")).andThen(succeed)
+            }
+        }
+    }
+
+    // A page that swallows its own clicks at window capture still RECEIVED them. Failing here would make kyo-browser reject
+    // legitimate applications, so the probe listens on document capture and counts the event regardless of what the page does.
+    "click on a page that stops click propagation still succeeds" in {
+        withBrowser {
+            onPage("""<body>
+            <button id="t" style="width:80px;height:30px" onclick="window.__kyoClicked=true">Go</button>
+            <script>window.addEventListener('click', function(e) { e.stopPropagation(); }, true);</script>
+        </body>""") {
+                Browser.click(Browser.Selector.id("t")).andThen {
+                    Browser.eval("String(!!window.__kyoClicked)").map { clicked =>
+                        assert(clicked == "false", s"the page should have swallowed its own handler but got $clicked")
                     }
                 }
             }

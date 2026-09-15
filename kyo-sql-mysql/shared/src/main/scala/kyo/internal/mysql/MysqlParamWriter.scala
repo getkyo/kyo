@@ -106,13 +106,12 @@ final class MysqlParamWriter()(using frame: Frame) extends SqlCodec.Writer(frame
         _params += BoundMysqlParam(BigDecimal(value), MysqlEncoder.bigDecimalEncoder)
 
     override def duration(value: java.time.Duration): Unit =
-        // Guard against day-count overflow before the encoder writes bytes.
-        // Duration.toDays() returns getSeconds()/86400; check eagerly so the caller
-        // receives a typed leaf rather than an unchecked ArithmeticException.
-        val abs       = if value.isNegative then value.negated() else value
-        val totalDays = abs.toDays
-        if totalDays > Int.MaxValue.toLong then
-            throw SqlRequestDurationOverflowException(totalDays, "the MySQL TIME day-count range")
+        // The bound is the span a TIME column holds, not the day count the wire struct carries: the struct's field is
+        // four bytes and takes any span, while the column tops out at 838:59:59 and silently CLAMPS anything past it,
+        // reporting the write as successful.
+        val abs = if value.isNegative then value.negated() else value
+        if abs.getSeconds > MysqlTime.MaxSpanSeconds then
+            throw SqlRequestDurationOverflowException(abs.getSeconds, MysqlTime.SpanLimitDescription)
         end if
         _params += BoundMysqlParam(value, MysqlEncoder.durationEncoder)
     end duration

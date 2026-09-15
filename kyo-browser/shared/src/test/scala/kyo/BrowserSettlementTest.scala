@@ -886,10 +886,10 @@ class BrowserSettlementTest extends BrowserTest:
 
     // ── Settle.NetworkIdle positive (3-fetch fixture) ────────────────────────
 
-    /** Empirical property: `Browser.goto(p, Settle.NetworkIdle)` returns AFTER the last in-flight fetch completes plus the configured
-      * `networkIdleWindow`. The fixture fires 3 fetches at 100ms / 200ms / 300ms after DOMContentLoaded; the call MUST NOT return on the
-      * Load event alone (which would yield elapsed under ~200ms). Lower bound `>= 200.millis` is the load-bearing claim; upper bound absorbs
-      * Chrome roundtrip + network-idle window + CI jitter.
+    /** `Browser.goto(p, Settle.NetworkIdle)` returns only AFTER the last in-flight fetch completes plus the configured
+      * `networkIdleWindow`. The fixture fires 3 fetches after DOMContentLoaded and increments `window.__done` as each
+      * settles; the test reads `__done` right after goto returns and requires all 3. A call that returned on the Load
+      * event, before the fetches drained, is caught by the missing count, not by a wall-clock bound.
       */
     "Settle.NetworkIdle waits for chatty fetches to quiesce (3-fetch positive case)" in {
         // Three deferred fetches plus a same-origin /ping endpoint. data: URLs cannot host cross-origin fetch targets without CORS
@@ -934,9 +934,10 @@ class BrowserSettlementTest extends BrowserTest:
 
     // ── Settle.Load with slow <img> ──────────────────────────────────────────
 
-    /** Empirical property: `Browser.goto(p, Settle.Load)` waits for the `load` event, which only fires after every subresource (including
-      * `<img>`) finishes. With a server-delayed image, elapsed must be >= the server delay; an early return would mean `Settle.Load` is
-      * firing on DOMContentLoaded.
+    /** `Browser.goto(p, Settle.Load)` waits for the `load` event, which only fires after every subresource (including
+      * `<img>`) finishes. With a server-delayed image, the test reads `document.images[0].complete` right after goto
+      * returns and requires it true; a return on DOMContentLoaded would observe the image still incomplete, caught by
+      * the state read rather than by measuring elapsed against the server delay.
       */
     "Settle.Load waits for slow <img> subresource to load before returning" in {
         // Minimal valid 1x1 transparent GIF89a (35 bytes). Chrome fires `load` only on valid image bytes; a bogus payload would fire
@@ -1031,19 +1032,21 @@ class BrowserSettlementTest extends BrowserTest:
             <script>
                 document.getElementById('trigger').onclick = () => {
                     document.getElementById('root').textContent = 'init';
-                    setTimeout(() => { document.getElementById('root').textContent = 'a'; }, 50);
-                    setTimeout(() => { document.getElementById('root').textContent = 'b'; }, 80);
-                    setTimeout(() => { document.getElementById('root').textContent = 'c'; }, 110);
-                    setTimeout(() => { document.getElementById('root').textContent = 'd'; }, 140);
-                    setTimeout(() => { document.getElementById('root').textContent = 'e'; }, 170);
+                    setTimeout(() => { document.getElementById('root').textContent = 'a'; }, 300);
+                    setTimeout(() => { document.getElementById('root').textContent = 'b'; }, 600);
+                    setTimeout(() => { document.getElementById('root').textContent = 'c'; }, 900);
+                    setTimeout(() => { document.getElementById('root').textContent = 'd'; }, 1200);
+                    setTimeout(() => { document.getElementById('root').textContent = 'e'; }, 1500);
                 };
             </script>
         </body>"""
 
-    /** A tight `mutationQuiescenceWindow(10.millis)` releases in the first gap of 30ms-spaced mutations, so `#root` shows an early token
-      * (never the final 'e') at click return; the 500ms-window foil below asserts the opposite. The contrast is the claim, no clock.
+    /** A tight `mutationQuiescenceWindow(10.millis)` releases in the first gap of 300ms-spaced mutations, so `#root` shows an early token
+      * (never the final 'e') at click return; the 500ms-window foil below asserts the opposite. The contrast is the claim, no clock. The
+      * mutations are spaced 300ms so the `#root` read after the click returns completes long before 'e' lands at 1500ms; a tighter spacing let
+      * a slow CDP read catch 'e' under load.
       */
-    "mutationQuiescenceWindow(10ms) lets 30ms-spaced mutations resolve in the first window" in {
+    "mutationQuiescenceWindow(10ms) lets 300ms-spaced mutations resolve in the first window" in {
         val p = page(quiescenceMatrixHtml)
         withBrowser {
             for
@@ -1052,7 +1055,8 @@ class BrowserSettlementTest extends BrowserTest:
                 finalText <- Browser.text(Browser.Selector.id("root"))
             yield
                 // A broken tight window would absorb later mutations and return only after 'e' landed; the early-token read fails
-                // then. The wide-window foil at :1092 asserts 'e', so the contrast pins the window config, no clock.
+                // then. The wide-window foil (the sibling that keeps the full window) asserts 'e', so the contrast pins the
+                // window config, with no clock.
                 assert(
                     finalText != "e",
                     s"mutationQuiescenceWindow(10ms) must release before the final mutation 'e' lands, but observed '$finalText'"
@@ -1061,20 +1065,31 @@ class BrowserSettlementTest extends BrowserTest:
         }
     }
 
-    /** Empirical property: with a wide `mutationQuiescenceWindow(500.millis)` and 30ms-spaced mutations (all 5 fall inside the window),
-      * settlement waits for the LAST mutation + 500ms quiet. Elapsed must exceed the wide window's lower bound; an early return would mean
-      * the window was ignored.
+    /** With a wide quiescence window AND a wide first-mutation grace, settlement waits for all five 300ms-spaced mutations and `#root`
+      * reads 'e'; the tight-window foil above releases early and reads a non-'e' token. The differing final text proves the window governs
+      * release.
+      *
+      * deviation: this drives Chrome's real setTimeout timers, which have no virtual clock. Two coupled races are widened together.
+      * (1) mutationFirstMutationGrace: the settlement loop's `sawMutation` arms only on a mutation AFTER the click's synchronous 'init'
+      * (already counted in the loop's startCount), i.e. the first setTimeout at 300ms. If that mutation does not land within the grace
+      * after the settle loop starts, the loop returns early via its no-mutation path with 'init'; the default 100ms grace loses that race
+      * depending on CDP round-trip overhead, so it is raised to 2s. (2) mutationQuiescenceWindow: each 300ms-spaced mutation must land
+      * within the window of the previous to keep resetting it, so it is 2s (a ~6x margin over the spacing). The settlement timeout is 6s
+      * so quiescence (last mutation ~1500ms plus the 2s window) completes inside it.
       */
-    "mutationQuiescenceWindow(500ms) waits for all 30ms-spaced mutations to quiesce" in {
+    "mutationQuiescenceWindow(2s) waits for all 300ms-spaced mutations to quiesce" in {
         val p = page(quiescenceMatrixHtml)
         withBrowser {
             for
-                _         <- Browser.goto(p)
-                _         <- Browser.withConfig(_.mutationQuiescenceWindow(500.millis))(Browser.click(Browser.Selector.id("trigger")))
+                _ <- Browser.goto(p)
+                _ <- Browser.withConfig(
+                    _.mutationFirstMutationGrace(2.seconds).mutationQuiescenceWindow(2.seconds).mutationSettlementTimeout(6.seconds)
+                )(Browser.click(Browser.Selector.id("trigger")))
                 finalText <- Browser.text(Browser.Selector.id("root"))
             yield
-                // A wide 500ms window absorbs every 30ms-spaced mutation, so settlement returns only after 'e' lands. Paired with the
-                // tight-window leaf above (releases before 'e'), the differing final text proves the window governs release, no clock.
+                // The wide first-mutation grace guarantees the first 300ms mutation arms the gate, and the wide window then absorbs every
+                // 300ms-spaced mutation (spacing well under the window, so it resets on each), so settlement returns only after 'e' lands.
+                // Paired with the tight-window leaf above (releases before 'e'), the differing final text proves the window governs release.
                 assert(finalText == "e", s"expected the last mutation 'e' to land before settlement returns but got '$finalText'")
             end for
         }

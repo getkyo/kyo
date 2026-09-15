@@ -187,8 +187,12 @@ class CallbackRegistryConcurrencyTest extends Test:
         }
 
         "with Backpressure enabled, claim blocks until another thread releases a slot" in {
-            val prev = java.lang.System.getProperty("kyo.ffi.native.retainedCallbackPoolBackpressure")
+            val prev   = java.lang.System.getProperty("kyo.ffi.native.retainedCallbackPoolBackpressure")
+            val prevTo = java.lang.System.getProperty("kyo.ffi.native.retainedCallbackPoolBackpressureTimeoutMs")
             setProp("kyo.ffi.native.retainedCallbackPoolBackpressure", "true")
+            // Large backpressure timeout so the blocker's park below is released only by the test's slot release (a barrier), never by the
+            // production deadline racing it under CI load.
+            setProp("kyo.ffi.native.retainedCallbackPoolBackpressureTimeoutMs", "600000")
             val tok  = new Object()
             val held = new scala.collection.mutable.ArrayBuffer[Int]()
             try
@@ -223,14 +227,14 @@ class CallbackRegistryConcurrencyTest extends Test:
                 blocker.setDaemon(true)
                 blocker.start()
                 blockerStart.await()
-                val deadline = System.nanoTime() + 2_000_000_000L
+                val deadline = System.nanoTime() + 30_000_000_000L
                 while !isParked(blocker) && System.nanoTime() < deadline do
                     Thread.onSpinWait()
                 end while
                 assert(blockerResult eq null)
                 val releasedIdx = held.remove(held.length - 1)
                 CallbackRegistry.releaseRetainedSlot_P_U(releasedIdx)
-                blocker.join(5000)
+                blocker.join(60000)
                 assert(blockerResult ne null)
                 blockerResult match
                     case null                 => fail("blocker did not finish")
@@ -246,6 +250,7 @@ class CallbackRegistryConcurrencyTest extends Test:
                 end while
                 CallbackRegistry.unregisterGuard(tok)
                 setProp("kyo.ffi.native.retainedCallbackPoolBackpressure", prev)
+                setProp("kyo.ffi.native.retainedCallbackPoolBackpressureTimeoutMs", prevTo)
             end try
         }
 

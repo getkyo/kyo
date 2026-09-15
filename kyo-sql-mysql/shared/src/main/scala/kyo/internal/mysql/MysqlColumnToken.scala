@@ -1,5 +1,8 @@
 package kyo.internal.mysql
 
+import kyo.Maybe
+import kyo.internal.mysql.types.MysqlEncoder
+
 /** The single backend token [[kyo.SqlRow.Column]] carries for a MySQL result column.
   *
   * `SqlRow.Column` holds one opaque `Int` per column whose meaning belongs to the backend that produced the row (a type OID on the
@@ -11,15 +14,12 @@ package kyo.internal.mysql
   *   - the UNSIGNED bit of [[ColumnDefinition41.flags]] says whether the value's top bit is a sign or a magnitude. Without it a
   *     `BIGINT UNSIGNED` above 2^63 and an `INT UNSIGNED` above 2^31 both read as negative numbers.
   *
-  * Layout: the type byte in bits 0 to 7, the flags word in bits 8 to 23, and [[Specified]] in bit 24. That last bit is what separates a real
-  * `TYPE_DECIMAL` column (type byte 0, no flags) from [[Unspecified]], which a row assembled without server metadata carries. Encoding the
-  * absence as a distinguishable bit rather than as the value zero is the difference between a token that can say "I do not know" and one that
-  * lies about a `DECIMAL` column.
+  * Layout: the type byte in bits 0 to 7, the flags word in bits 8 to 23, [[Specified]] in bit 24, and the derived binary-collation bit in
+  * bit 25. `Specified` is what separates a real `TYPE_DECIMAL` column (type byte 0, no flags) from [[Unspecified]], which a row assembled
+  * without server metadata carries. Encoding the absence as a distinguishable bit rather than as the value zero is the difference between a
+  * token that can say "I do not know" and one that lies about a `DECIMAL` column.
   */
 private[kyo] object MysqlColumnToken:
-
-    import kyo.Maybe
-    import kyo.internal.mysql.types.MysqlEncoder
 
     /** A column whose server metadata is not available. Every read then falls back to the value's byte width. */
     val Unspecified: Int = 0
@@ -67,6 +67,15 @@ private[kyo] object MysqlColumnToken:
     def nonTextColumnType(token: Int): Maybe[String] =
         if !isSpecified(token) then Maybe.empty
         else MysqlRowCodec.nonTextColumnType(columnType(token), isBinaryString(token))
+
+    /** The MySQL name of `token`'s column type when its kind conflicts with `accepted`, and [[Maybe.empty]] when the read may proceed.
+      *
+      * The general form of [[nonTextColumnType]]: a read names the kinds its target type can be decoded from, and a column of any other named
+      * kind is refused. [[Unspecified]] and an unnamed type byte both pass, since neither is evidence of a mismatch.
+      */
+    def conflictingColumnType(token: Int, accepted: Set[kyo.SqlRow.ColumnKind]): Maybe[String] =
+        if !isSpecified(token) then Maybe.empty
+        else MysqlRowCodec.conflictingColumnType(columnType(token), isBinaryString(token), accepted)
 
     /** Whether `token` names a column whose value arrives as its text rendering. False for an [[Unspecified]] token, which knows nothing
       * either way, and for a type byte the table does not name.

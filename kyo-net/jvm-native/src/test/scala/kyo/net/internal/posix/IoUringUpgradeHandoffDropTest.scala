@@ -96,7 +96,11 @@ class IoUringUpgradeHandoffDropTest extends Test:
                                 assert(parked, "chunk B's recv never reaped / its put never parked (a hang, not the race under test)")
 
                                 handle.upgrading = true
-                                val buffered = conn.detachForUpgrade()
+                                // The detach hands its bytes over through a fiber. This leaf parks chunk B's put deliberately, so the
+                                // handover is exactly what must not be read early: settling it is part of what the leaf asserts.
+                                val buffered = conn.detachForUpgrade().poll() match
+                                    case Present(Result.Success(v)) => v.eval
+                                    case other                      => fail(s"detachForUpgrade did not settle synchronously: $other")
                                 val bufferedBytes: Array[Byte] =
                                     buffered.map(chunks => chunks.toArray.flatMap(_.toArray)).getOrElse(Array.emptyByteArray)
                                 assert(

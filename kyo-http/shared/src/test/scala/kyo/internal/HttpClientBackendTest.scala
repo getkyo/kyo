@@ -5,6 +5,9 @@ import kyo.*
 import kyo.internal.client.*
 import kyo.internal.http1.*
 import kyo.internal.util.*
+import kyo.net.DeferredConnectTransport
+import kyo.net.RecordingConnection
+import kyo.net.internal.transport.Connection as TransportConnection
 
 /** Integration and unit tests for HttpClientBackend.
   *
@@ -702,6 +705,36 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
       * A kyo server cannot produce these responses: its own serializer rejects a non-ASCII header value, so a peer writing
       * canned bytes is the only way to drive the client with what a foreign server can legally send.
       */
+    /** A connect whose caller has already gone must not strand the connection it establishes.
+      *
+      * The handoff to the caller is at-most-once. When the caller settles first, through a request timeout or any other interrupt, the
+      * connect still completes and builds a connection that nobody will ever read and nobody else holds; discarding the outcome of that
+      * handoff therefore strands its socket for the life of the process. The transport takes the opposite posture for its own connect,
+      * closing what it cannot deliver, and this pins the client to the same rule.
+      *
+      * The ordering is staged rather than raced: `DeferredConnectTransport` parks the connect until `release()`, so the caller's promise
+      * is settled FIRST and the connect lands SECOND, which is exactly the interleaving an interrupted caller produces. Nothing here
+      * depends on timing.
+      */
+    "a connect whose caller already settled closes the connection it established" in {
+        val (clientConn, _) = TransportConnection.inMemoryPair()
+        val recording       = new RecordingConnection(clientConn)
+        val transport       = new DeferredConnectTransport(recording)
+        val backend         = HttpClientBackend.init(transport, 2, 60.seconds)
+        val connectFiber    = backend.connect(HttpUrl.parse("http://test.invalid/").getOrThrow, 60.seconds, HttpTlsConfig.default)
+        // Settle the caller before the connect can hand anything over: from here the handoff is guaranteed to fail.
+        connectFiber.safe.interrupt.andThen {
+            Sync.Unsafe.defer(transport.release()).andThen {
+                Abort.run[Any](connectFiber.safe.getResult).andThen {
+                    assert(
+                        recording.wasClosed,
+                        "a connection established after its caller settled has no owner, so the connect must close it"
+                    )
+                }
+            }
+        }
+    }
+
     private def withRawPeer[A](response: String)(
         test: Int => A < (Async & Abort[Any] & Scope)
     )(using Frame): A < (Async & Abort[Any] & Scope) =

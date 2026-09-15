@@ -5,7 +5,7 @@ class WithClasspathCacheDirTest extends kyo.test.Test[Any]:
 
     "withClasspath(roots, Present(cacheDir)) writes snapshot on miss, reads on hit" in {
         Scope.run {
-            Path.tempDir("kyo-wc-cachedir").map { tmpDirPath =>
+            Path.run(Path.tempDir("kyo-wc-cachedir")).map { tmpDirPath =>
                 val tmpDir = tmpDirPath.toString
                 System.property[String]("java.class.path").map { maybeCp =>
                     val cpRaw = maybeCp.getOrElse("")
@@ -21,16 +21,18 @@ class WithClasspathCacheDirTest extends kyo.test.Test[Any]:
                             }
                             .toSeq
                     // Fall back to all classpath entries if the fixtures jar is not separately discoverable.
-                    val rootsK: Chunk[Path] < (Sync & Abort[FileStructureException]) =
+                    val rootsK: Chunk[Path] < (Sync & Abort[FileSystemException]) =
                         if cpRoots.nonEmpty then Chunk.from(cpRoots).map(p => Path(p))
                         else
                             val candidates = cpRaw.split(Path.pathSeparator).toSeq
                             Kyo.collect(Chunk.from(candidates)) { p =>
                                 val pp = Path(p)
-                                pp.isRegularFile.map { isFile =>
-                                    pp.isDirectory.map { isDir =>
-                                        if (isFile && p.endsWith(".jar")) || isDir then Maybe(pp)
-                                        else Maybe.Absent
+                                Path.runReadOnly {
+                                    pp.isRegularFile.map { isFile =>
+                                        pp.isDirectory.map { isDir =>
+                                            if (isFile && p.endsWith(".jar")) || isDir then Maybe(pp)
+                                            else Maybe.Absent
+                                        }
                                     }
                                 }
                             }.map(_.take(1))
@@ -43,7 +45,7 @@ class WithClasspathCacheDirTest extends kyo.test.Test[Any]:
                                 Tasty.withClasspath(roots, Maybe.Present(tmpDir)) {
                                     Tasty.classpath.map(_.symbols.size)
                                 }.map { n2 =>
-                                    tmpDirPath.list(glob"*.krfl").map { krflFiles =>
+                                    Path.runReadOnly(tmpDirPath.list(glob"*.krfl")).map { krflFiles =>
                                         val krflCount = krflFiles.size
                                         assert(krflCount >= 1, s"at least one .krfl file must be written to $tmpDir; got $krflCount")
                                         assert(n1 == n2, s"both withClasspath calls must return same symbol count; got $n1 vs $n2")

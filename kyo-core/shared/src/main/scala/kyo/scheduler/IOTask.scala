@@ -191,6 +191,10 @@ object IOTask:
     private val _frame                = Frame.internal
     private inline given frame: Frame = _frame
 
+    // Install the scheduler's Diagnostics dumper at kyo-core's first touch of the scheduler: this object initializes when the first
+    // fiber task is created, so a leaf that later hangs has the scheduler's live worker state in its Diagnostics.dumpAll() instead of blank.
+    SchedulerDiagnostics.init()
+
     /** When `parent` is present, it is linked to interrupt the new task BEFORE the task is scheduled. This closes the window where the parent
       * is interrupted after a child starts but before the child is registered for interruption, orphaning the child. Doing it here, before
       * `schedule`, means the child cannot run unlinked. The caller reads the parent once (from the Safepoint interceptor) and passes it, so

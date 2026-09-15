@@ -269,7 +269,7 @@ The native I/O backend and BoringSSL are the primary on every posix platform; th
 
 The JVM `kyo-net` jar is pure-JVM NIO with JDK TLS and carries no native libraries. The native completion transport (`io_uring`/`epoll`/`kqueue`) and the vendored BoringSSL TLS engine ship in per-platform classifier jars, following the netty distribution model: a build adds the classifier for its host to opt into the native transport, and a build without those dependencies runs on the NIO floor.
 
-Two classifier families ship per `<os>-<arch>` (`linux-x86_64`, `linux-aarch64`, `linux-musl-x86_64`, `linux-musl-aarch64`, `darwin-x86_64`, `darwin-aarch64`; there is no Windows native): the transport-native family (classifier `<os>-<arch>`, carrying the posix readiness native) and the vendored-BoringSSL family (classifier `<os>-<arch>-boringssl`). An `all-natives` classifier aggregates every platform for a fat build.
+Two classifier families ship per `<os>-<arch>`: the transport-native family (classifier `<os>-<arch>`, carrying the posix readiness native) and the vendored-BoringSSL family (classifier `<os>-<arch>-boringssl`). The transport family covers `linux-x86_64`, `linux-aarch64`, `linux-musl-x86_64`, `linux-musl-aarch64`, `darwin-x86_64`, `darwin-aarch64`, `windows-x86_64` and `windows-aarch64`; the Windows natives carry the epoll and io_uring shims, whose entry points are defined on every target and answer `ENOSYS` there, so the bindings resolve and the backend selection demotes to NIO. BoringSSL ships no Windows classifier: Windows is NIO plus the JDK's TLS by ruling. An `all-natives` classifier aggregates every platform for a fat build.
 
 ```
 // add the native transport + BoringSSL TLS for your host's <os>-<arch> (e.g. linux-x86_64, darwin-aarch64):

@@ -80,8 +80,11 @@ class InMemoryConnectionTest extends Test:
 
         "detachForUpgrade returns Absent (not upgradable)" in {
             val (a, _)   = Connection.inMemoryPair()
-            val detached = a.detachForUpgrade()
-            assert(detached.isEmpty, s"detachForUpgrade must return Absent, got $detached")
+            val detached = a.detachForUpgrade().poll()
+            assert(
+                detached.exists { case Result.Success(v) => v.eval.isEmpty; case _ => false },
+                s"detachForUpgrade must report Absent, got $detached"
+            )
         }
     }
 end InMemoryConnectionTest

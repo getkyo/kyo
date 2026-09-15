@@ -120,4 +120,78 @@ class SqlErrorMappingConformanceTest extends SqlBackendTest:
         }
     }
 
+    /** A violated CHECK constraint carries the same integrity marker a duplicate key does.
+      *
+      * Measured, and this one escapes the dispatcher entirely: PostgreSQL reports a CHECK violation under SQLSTATE `23514` while MySQL
+      * reports errno 3819 under `HY000`. Dispatch is by SQLSTATE prefix, so the `23` family catches the PostgreSQL case and the `HY` one
+      * falls through to the generic server error. A caller recovering on [[SqlIntegrityViolation]], which the scaladoc invites, handles a
+      * constraint failure on one engine and misses the identical failure on the other.
+      *
+      * Not a capability difference: both engines enforce CHECK constraints, and MySQL relays its own errno in `extra("code")`, which the
+      * dispatcher does not consult. Its unique and not-null violations both carry `23000`, so prefix dispatch already works for those two
+      * and CHECK is the specific escapee, which is why the duplicate-key leaf above passes today and this one does not.
+      *
+      * The marker is what is asserted rather than the SQLSTATE. Which code each engine reports is the engine's business; that a caller can
+      * recover the FAILURE CLASS is the contract this module owes.
+      */
+    "a violated CHECK constraint maps to the integrity-violation family" - {
+        forEachBackend(SqlConfig(maxConnections = 2)) { (backend, client, _) =>
+            val table = backend.quoteIdent("err_map_check")
+            for
+                _      <- client.executeRaw(s"CREATE TABLE $table (v INT CHECK (v > 0))")
+                result <- Abort.run[SqlException](client.executeRaw(s"INSERT INTO $table (v) VALUES (-1)")(using Frame.derive))
+            yield result match
+                case Result.Failure(e) =>
+                    assert(
+                        e.isInstanceOf[SqlIntegrityViolation],
+                        s"${backend.label}: expected a CHECK violation to carry the SqlIntegrityViolation marker, got ${e.getClass.getName}"
+                    )
+                case Result.Success(_) =>
+                    fail(s"${backend.label}: expected the CHECK violation to fail the insert, but it succeeded")
+                case Result.Panic(t) =>
+                    fail(s"${backend.label}: unexpected panic: ${t.getMessage}")
+            end for
+        }
+    }
+
+    /** A statement with no SQL in it is refused by the client, identically on every backend.
+      *
+      * The engines disagreed here and neither answer was useful: one has a protocol response for an empty statement and reported success with
+      * no affected rows, the other rejected it as a syntax error. So the same call was silence on one deployment and a failure on the other,
+      * for what is a caller mistake on both.
+      *
+      * Since no driver change makes the second engine accept it, the conformable answer is the narrower one, and it is given before a
+      * connection is reached: [[kyo.SqlRequestEmptyStatementException]] rather than either server's. The answer is pinned rather than merely
+      * compared, because two engines agreeing on a SERVER error would satisfy agreement too, and that is the outcome the client guard exists
+      * to replace.
+      */
+    "a statement with no SQL in it is refused by the client" in {
+        agreeAcrossBackends(expected = Present("refused with SqlRequestEmptyStatementException")) { (_, client, _) =>
+            client.executeRaw("")(using Frame.derive).map(affected => s"the empty statement affected $affected rows")
+        }
+    }
+
+    /** A statement of nothing but whitespace is refused the same way as an empty one.
+      *
+      * Beside the leaf above because it is the form a caller actually reaches: SQL assembled from a template or read from a file arrives with
+      * a newline in it, and a guard that tested emptiness alone would let it through to the divergence.
+      */
+    "a statement of only whitespace is refused by the client" in {
+        agreeAcrossBackends(expected = Present("refused with SqlRequestEmptyStatementException")) { (_, client, _) =>
+            client.executeRaw("  \n\t ")(using Frame.derive).map(affected => s"the blank statement affected $affected rows")
+        }
+    }
+
+    /** An empty FRAGMENT is refused too, which is the lane the raw-String guard cannot see.
+      *
+      * `sql""` renders an empty statement and reaches the wire through the executable path rather than through the raw-String entry points,
+      * so guarding only those left the divergence open on the form a caller is most likely to produce by accident: a fragment interpolated
+      * from a value that turned out to be empty.
+      */
+    "an empty fragment is refused by the client" in {
+        agreeAcrossBackends(expected = Present("refused with SqlRequestEmptyStatementException")) { (_, client, _) =>
+            client.query(sql"")(using Frame.derive).map(rows => s"the empty fragment answered ${rows.size} rows")
+        }
+    }
+
 end SqlErrorMappingConformanceTest

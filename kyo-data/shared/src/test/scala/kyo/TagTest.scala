@@ -183,6 +183,10 @@ class TagTest extends kyo.test.Test[Any]:
         opaque type Pair[A, B] = (A, B)
         opaque type Nested[A]  = Box[Box[A]]
 
+        opaque type Covariant[+A]     = List[A]
+        opaque type Contravariant[-A] = A => Unit
+        opaque type Mixed[+A, -B]     = B => A
+
     end OpaqueTypes
 
     "with opaque types" - {
@@ -260,8 +264,249 @@ class TagTest extends kyo.test.Test[Any]:
                 test[Nested[Int], Box[Box[Int]]]
                 test[Nested[Int], List[List[Int]]]
             }
+
+            "different type arguments are different types" - {
+                test[Box[Int], Box[String]]
+                test[Box[String], Box[Int]]
+                test[Pair[Int, String], Pair[String, Int]]
+                test[Nested[Int], Nested[String]]
+            }
+
+            "invariant type parameter" - {
+                test[Box[Int], Box[Any]]
+                test[Box[Any], Box[Int]]
+            }
+
+            "covariant type parameter" - {
+                test[Covariant[Int], Covariant[Any]]
+                test[Covariant[Any], Covariant[Int]]
+            }
+
+            "contravariant type parameter" - {
+                test[Contravariant[Any], Contravariant[Int]]
+                test[Contravariant[Int], Contravariant[Any]]
+            }
+
+            "mixed variance" - {
+                test[Mixed[Int, Any], Mixed[Any, Int]]
+                test[Mixed[Any, Int], Mixed[Int, Any]]
+            }
         }
 
+    }
+
+    // Inside the template that declares an opaque type, and inside its companion, the compiler
+    // replaces the opaque type with its underlying type wherever it infers, before any macro runs.
+    // Nothing there can say whether a Long means Meters or Long, so such a derivation is refused;
+    // naming the opaque type in Tag.derive survives the substitution and agrees with the outside.
+    // The refusal probes sit inside the scope because that is where the substitution happens.
+    object ScopedMeters:
+        opaque type Meters = Long
+        object Meters:
+            def apply(value: Long): Meters = value
+
+            def infer[A](a: A)(using t: Tag[A]): Tag[A] = t
+
+            def bare: Tag[Meters]                = Tag.derive[Meters]
+            def nested: Tag[List[Meters]]        = Tag.derive[List[Meters]]
+            def deeper: Tag[Map[String, Meters]] = Tag.derive[Map[String, Meters]]
+            def inUnion: Tag[Meters | String]    = Tag.derive[Meters | String]
+            def unrelated: Tag[List[Int]]        = Tag.derive[List[Int]]
+
+            def summoned(using kyo.test.AssertScope, Frame): Unit =
+                typeCheckFailure("Tag[Meters]")("[Tag.opaque.collapsed]")
+            def inferred(using kyo.test.AssertScope, Frame): Unit =
+                typeCheckFailure("infer(Meters(1L))")("[Tag.opaque.collapsed]")
+            def underlying(using kyo.test.AssertScope, Frame): Unit =
+                typeCheckFailure("Tag.derive[Long]")("[Tag.opaque.collapsed]")
+            def nestedUnderlying(using kyo.test.AssertScope, Frame): Unit =
+                typeCheckFailure("Tag.derive[List[Long]]")("[Tag.opaque.collapsed]")
+            def inArgument(using kyo.test.AssertScope, Frame): Unit =
+                typeCheckFailure("Tag.derive[Map[String, Long]]")("[Tag.opaque.collapsed]")
+            def declaredGiven(using kyo.test.AssertScope, Frame): Unit =
+                typeCheckFailure("given metersTag: Tag[Meters] = Tag.derive[Meters]")("[Tag.opaque.given]")
+        end Meters
+    end ScopedMeters
+
+    // A second brand over the same underlying type, in its own scope.
+    object ScopedFeet:
+        opaque type Feet = Long
+        object Feet:
+            def bare: Tag[Feet] = Tag.derive[Feet]
+    end ScopedFeet
+
+    // Two brands over one underlying type in one scope: the underlying names both.
+    object ScopedAmbiguous:
+        opaque type Feet   = Double
+        opaque type Metres = Double
+        object Probe:
+            def ambiguous(using kyo.test.AssertScope, Frame): Unit =
+                typeCheckFailure("Tag.derive[Double]")("[Tag.opaque.collapsed]")
+    end ScopedAmbiguous
+
+    // A union underlying type. A union with extra members may be the opaque type in a union.
+    object ScopedUnion:
+        opaque type Id = String | Long
+        object Id:
+            def bare: Tag[Id]               = Tag.derive[Id]
+            def nested: Tag[List[Id]]       = Tag.derive[List[Id]]
+            def wildcard: Tag[Set[? <: Id]] = Tag.derive[Set[? <: Id]]
+            def member: Tag[String]         = Tag.derive[String]
+            def union(using kyo.test.AssertScope, Frame): Unit =
+                typeCheckFailure("Tag.derive[Long | String]")("[Tag.opaque.collapsed]")
+            def wider(using kyo.test.AssertScope, Frame): Unit =
+                typeCheckFailure("Tag.derive[String | Long | Int]")("[Tag.opaque.collapsed]")
+        end Id
+    end ScopedUnion
+
+    // A parameterized opaque type collapses to its underlying applied to the node's arguments.
+    object ScopedBoxed:
+        opaque type Boxed[A] = List[A]
+        object Boxed:
+            def bare: Tag[Boxed[Int]]                = Tag.derive[Boxed[Int]]
+            def nested: Tag[Map[String, Boxed[Int]]] = Tag.derive[Map[String, Boxed[Int]]]
+            def other: Tag[Vector[Int]]              = Tag.derive[Vector[Int]]
+            def underlying(using kyo.test.AssertScope, Frame): Unit =
+                typeCheckFailure("Tag.derive[List[Int]]")("[Tag.opaque.collapsed]")
+            def argument(using kyo.test.AssertScope, Frame): Unit =
+                typeCheckFailure("Tag.derive[Boxed[List[Int]]]")("[Tag.opaque.collapsed]")
+        end Boxed
+    end ScopedBoxed
+
+    // An opaque type constructor used unapplied reaches the macro as the underlying type lambda.
+    object ScopedHigher:
+        trait Higher[F[_]]
+        opaque type Boxed[A] = List[A]
+        object Boxed:
+            val value: Higher[Boxed] = new Higher[Boxed] {}
+
+            def infer[F[_]](x: Higher[F])(using t: Tag[Higher[F]]): Tag[Higher[F]] = t
+
+            def explicitInside: Tag[Higher[Boxed]] = Tag.derive[Higher[Boxed]]
+            // The constructor inferred for F collapses to the underlying type lambda.
+            def inferred(using kyo.test.AssertScope, Frame): Unit =
+                typeCheckFailure("infer(value)")("[Tag.opaque.collapsed]")
+            def underlying(using kyo.test.AssertScope, Frame): Unit =
+                typeCheckFailure("Tag.derive[Higher[List]]")("[Tag.opaque.collapsed]")
+        end Boxed
+    end ScopedHigher
+
+    // One opaque type over another, each in its own scope. Inside Level2 an Outer collapses to
+    // Inner, which is opaque there, so Inner itself cannot be named on a tag surface in Level2.
+    object ScopedChain:
+        object Level1:
+            opaque type Inner = Int
+            object Inner:
+                def apply(value: Int): Inner = value
+                def bare: Tag[Inner]         = Tag.derive[Inner]
+            end Inner
+        end Level1
+
+        object Level2:
+            import Level1.Inner
+            opaque type Outer = Inner
+            object Outer:
+                def bare: Tag[Outer] = Tag.derive[Outer]
+                def plain: Tag[Int]  = Tag.derive[Int]
+                def inner(using kyo.test.AssertScope, Frame): Unit =
+                    typeCheckFailure("Tag.derive[Inner]")("[Tag.opaque.collapsed]")
+            end Outer
+        end Level2
+    end ScopedChain
+
+    "with an opaque type in its own scope" - {
+        import ScopedMeters.*
+        import ScopedFeet.*
+
+        "a tag derived inside by name equals one derived outside" - {
+            "bare" in assert(Meters.bare =:= Tag[Meters])
+            "nested in a type argument" in assert(Meters.nested =:= Tag[List[Meters]])
+            "nested deeper" in assert(Meters.deeper =:= Tag[Map[String, Meters]])
+            "in a union" in assert(Meters.inUnion =:= Tag[Meters | String])
+            "an unrelated type" in assert(Meters.unrelated =:= Tag[List[Int]])
+        }
+
+        "and is not the underlying type's tag" - {
+            "bare" in assert(Meters.bare =!= Tag[Long])
+            "nested in a type argument" in assert(Meters.nested =!= Tag[List[Long]])
+        }
+
+        "two opaque types over the same underlying stay distinct" - {
+            "derived inside their own scopes" in assert(Meters.bare =!= Feet.bare)
+            "derived outside" in assert(Tag[Meters] =!= Tag[Feet])
+        }
+
+        "a derivation that cannot tell the opaque type from its underlying is refused" - {
+            "summoned rather than derived by name" in Meters.summoned
+            "inferred from a value" in Meters.inferred
+            "the bare underlying type" in Meters.underlying
+            "nested in a type argument" in Meters.nestedUnderlying
+            "in one argument of several" in Meters.inArgument
+            "when two opaque types share the underlying" in ScopedAmbiguous.Probe.ambiguous
+        }
+
+        "a given Tag for the opaque type is refused in its scope" in Meters.declaredGiven
+
+        "with a union underlying type" - {
+            import ScopedUnion.*
+            "bare" in assert(Id.bare =:= Tag[Id])
+            "nested in a type argument" in assert(Id.nested =:= Tag[List[Id]])
+            "in a wildcard bound" in assert(Id.wildcard =:= Tag[Set[? <: Id]])
+            "not the underlying union's tag" in assert(Id.nested =!= Tag[List[String | Long]])
+            "a single member is not the union" in assert(Id.member =:= Tag[String])
+            "the underlying union is refused" in Id.union
+            "a wider union is refused" in Id.wider
+        }
+
+        "with type parameters" - {
+            import ScopedBoxed.*
+            "bare" in assert(Boxed.bare =:= Tag[Boxed[Int]])
+            "nested in a type argument" in assert(Boxed.nested =:= Tag[Map[String, Boxed[Int]]])
+            "an unrelated constructor" in assert(Boxed.other =:= Tag[Vector[Int]])
+            "not the underlying type's tag" in assert(Boxed.bare =!= Tag[List[Int]])
+            "distinct per type argument" in assert(Tag[Boxed[Int]] =!= Tag[Boxed[String]])
+            "the underlying applied is refused" in Boxed.underlying
+            "the underlying as an argument is refused" in Boxed.argument
+        }
+
+        "used unapplied in a higher-kinded position" - {
+            import ScopedHigher.*
+            "explicitly written inside the scope" in {
+                assert(Boxed.explicitInside =:= Tag[Higher[Boxed]])
+            }
+            "and is not the underlying type constructor's tag" in {
+                assert(Boxed.explicitInside =!= Tag[Higher[List]])
+            }
+            "inferred inside the scope it is refused" in Boxed.inferred
+            "the underlying constructor is refused" in Boxed.underlying
+        }
+
+        "the scoped types answer subtyping the way the compiler does" - {
+            import ScopedMeters.*
+            import ScopedBoxed.*
+            test[Meters, Long]
+            test[Long, Meters]
+            test[Meters, Any]
+            test[Boxed[Int], List[Int]]
+            test[List[Int], Boxed[Int]]
+            test[Boxed[Int], Boxed[String]]
+        }
+
+        "one opaque type over another" - {
+            import ScopedChain.Level1.Inner
+            import ScopedChain.Level2.Outer
+            "each agrees with its own scope" in {
+                assert(Inner.bare =:= Tag[Inner])
+                assert(Outer.bare =:= Tag[Outer])
+                assert(Outer.plain =:= Tag[Int])
+            }
+            "and all three stay distinct" in {
+                assert(Tag[Outer] =!= Tag[Inner])
+                assert(Tag[Inner] =!= Tag[Int])
+                assert(Tag[Outer] =!= Tag[Int])
+            }
+            "the inner type is refused where the outer collapses to it" in Outer.inner
+        }
     }
 
     "show" - {
@@ -897,6 +1142,8 @@ class TagTest extends kyo.test.Test[Any]:
         }
 
         "opaque types" - {
+            import Opaques.*
+
             "simple opaque type" in {
                 def testOpaque = Tag[MyInt]
                 typeCheck("testOpaque")
@@ -914,10 +1161,15 @@ class TagTest extends kyo.test.Test[Any]:
         }
     }
 
-    opaque type MyInt     = Int
-    opaque type MyList[A] = List[A]
-    opaque type Inner[A]  = List[A]
-    opaque type Outer[B]  = Inner[B]
+    // Declared in their own object so their aliases are transparent only inside it. Declared at
+    // class level they would be transparent throughout the suite, which both makes every derivation
+    // mentioning Int or List ambiguous and silently turns Tag[MyInt] here into Tag[Int].
+    object Opaques:
+        opaque type MyInt     = Int
+        opaque type MyList[A] = List[A]
+        opaque type Inner[A]  = List[A]
+        opaque type Outer[B]  = Inner[B]
+    end Opaques
 
     "type lambdas in super types" - {
         "simple super type with type lambda" - {
@@ -1114,9 +1366,14 @@ class TagTest extends kyo.test.Test[Any]:
         test[C, A & B]
     }
 
-    opaque type V <: Vector[Any] = Vector[Any]
+    // In its own object so `Vector[Any]` below still means `Vector[Any]`; declared at class level
+    // the compiler would substitute V for it throughout the suite.
+    object Bounded:
+        opaque type V <: Vector[Any] = Vector[Any]
+    end Bounded
 
     "opaque type bounds with variance (bug #1368)" in {
+        import Bounded.*
         abstract class Variant[+A]:
             def method[AA >: A](using Tag[AA]): Unit
 
@@ -1162,6 +1419,33 @@ class TagTest extends kyo.test.Test[Any]:
 
             "A | B | C == B | C | A" in {
                 assert(Tag[SA | SB | SC].show == Tag[SB | SC | SA].show)
+            }
+        }
+
+        // An opaque type's arguments reach the encoding, so whatever canonical order the encoder
+        // gives a union or an intersection has to survive being one.
+        "opaque type arguments are canonical" - {
+            import OpaqueTypes.*
+            trait SA
+            trait SB
+
+            "Box[A | B] == Box[B | A]" in {
+                assert(Tag[Box[SA | SB]].show == Tag[Box[SB | SA]].show)
+                assert(Tag[Box[SA | SB]].hash == Tag[Box[SB | SA]].hash)
+            }
+
+            "Box[A & B] == Box[B & A]" in {
+                assert(Tag[Box[SA & SB]].show == Tag[Box[SB & SA]].show)
+                assert(Tag[Box[SA & SB]].hash == Tag[Box[SB & SA]].hash)
+            }
+
+            "Pair[A & B, Int] == Pair[B & A, Int]" in {
+                assert(Tag[Pair[SA & SB, Int]].show == Tag[Pair[SB & SA, Int]].show)
+                assert(Tag[Pair[SA & SB, Int]].hash == Tag[Pair[SB & SA, Int]].hash)
+            }
+
+            "argument order is not canonicalized away" in {
+                assert(Tag[Pair[Int, String]].show != Tag[Pair[String, Int]].show)
             }
         }
 

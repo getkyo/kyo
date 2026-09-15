@@ -42,9 +42,18 @@ object Agent:
         def ask(in: In)(using Frame): Out < (Async & Abort[Closed | Error]) =
             self.ask(Message[In, Out](in, _))
 
-        /** Closes the agent's mailbox, preventing it from receiving any new messages. */
-        def close(using Frame): Maybe[Seq[In]] < Sync =
+        /** Closes the agent's mailbox, preventing it from receiving any new messages.
+          *
+          * The returned inputs are complete: one whose send was accepted is among them, and a refused send never reached the mailbox.
+          * Delivering that costs a suspension, because a send that began before this close can still be committing when it runs. Use
+          * `closeDiscard` to close without the unprocessed inputs and stay in `Sync`.
+          */
+        def close(using Frame): Maybe[Seq[In]] < Async =
             (self: Actor[Error, Message[In, Out], Any]).close.map(_.map(_.map(_.input)))
+
+        /** Closes the agent's mailbox, discarding any unprocessed inputs. The `Sync`-only counterpart to `close`. */
+        def closeDiscard(using Frame): Unit < Sync =
+            (self: Actor[Error, Message[In, Out], Any]).closeDiscard
     end extension
 
     /** Creates an agent with an explicit config and any mix of enablements (tools, prompts, thoughts, modes).

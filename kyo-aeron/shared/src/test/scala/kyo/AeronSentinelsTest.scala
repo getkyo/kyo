@@ -4,7 +4,7 @@ import kyo.internal.AeronSentinels
 
 class AeronSentinelsTest extends Test:
 
-    "sentinel values match Aeron 1.50.2" - {
+    "sentinel values match Aeron 1.51.1" - {
         "NotConnected == -1L" in {
             assert(AeronSentinels.NotConnected == -1L)
         }

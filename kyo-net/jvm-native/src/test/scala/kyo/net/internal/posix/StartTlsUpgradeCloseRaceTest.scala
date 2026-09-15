@@ -70,9 +70,13 @@ class StartTlsUpgradeCloseRaceTest extends Test:
                             latchFired.get() == iterations,
                             s"latch fired ${latchFired.get()}/$iterations times: the close did not land in the upgrade window every run"
                         )
+                        // EVERY iteration must abort, not merely one of them. The client never sends a ClientHello, so the server's
+                        // re-handshake cannot complete on its own, and `latchFired` above already asserts the close landed inside the
+                        // upgrade window every run. Those two together make the abort forced rather than raced, so the exact count is
+                        // the honest assertion: `> 0` would pass while 39 iterations silently took some other path.
                         assert(
-                            abortBranch.get() > 0,
-                            s"the close-mid-upgrade abort branch was never exercised (abortBranch=${abortBranch.get()})"
+                            abortBranch.get() == iterations,
+                            s"every close-mid-upgrade must abort, but only ${abortBranch.get()}/$iterations did"
                         )
                         succeed
                     }
@@ -121,29 +125,44 @@ class StartTlsUpgradeCloseRaceTest extends Test:
                                     closeFiber.get.map { _ =>
                                         // Idempotent extra close of the plaintext connection.
                                         serverPlain.close()
-                                        // Real close count from spy (mirrors LatchingSockets.closesOf(serverFd)).
-                                        val closes = spy.closeCounts.getOrDefault(serverFd, 0)
-                                        assert(
-                                            closes == 1,
-                                            s"[iter $iter] upgrading fd=$serverFd closed $closes times (expected exactly 1: no double-close, no leak)"
-                                        )
-                                        upgradeResult match
-                                            case Result.Failure(e: NetConnectionClosedException) =>
-                                                assert(
-                                                    e.operation == Operation.Handshake || e.operation == Operation.Upgrade,
-                                                    s"[iter $iter] close-mid-upgrade failure must name handshake or upgrade, got operation=${e.operation}"
-                                                )
-                                                discard(abortBranch.incrementAndGet())
-                                                Loop.continue
-                                            case Result.Success(conn) =>
-                                                conn.close()
-                                                assert(!conn.isOpen, s"[iter $iter] upgraded connection left open after a concurrent close")
-                                                Loop.continue
-                                            case Result.Failure(other) =>
-                                                fail(s"[iter $iter] close-mid-upgrade failed with an unexpected NetException leaf: $other")
-                                            case Result.Panic(e) =>
-                                                fail(s"[iter $iter] upgrade racing close panicked (crash, not a clean state): $e")
-                                        end match
+                                        // Await the real close(fd) before counting it. The fd close is DEFERRED behind a credit: closeHandle
+                                        // installs `fdCloseSink` and only `freeResources`, running on whichever carrier releases the last guard
+                                        // holder, performs the syscall. When that last holder is the poll carrier's own dispatch bracket, the
+                                        // upgrade settles (freeResources fails the parked upgrade waiter before it discharges the credit) and the
+                                        // close fiber completes while the syscall is still pending, so both of this leaf's other barriers can be
+                                        // satisfied with the count still at zero. Sampling here read a state nothing had waited for.
+                                        // `spy.closed` exists for exactly this and is used the same way by the other close-during-io leaves; a
+                                        // genuine leak never completes it and surfaces as the per-leaf timeout rather than a miscounted close.
+                                        spy.closed(serverFd).safe.get.map { _ =>
+                                            // Real close count from spy (mirrors LatchingSockets.closesOf(serverFd)).
+                                            val closes = spy.closeCounts.getOrDefault(serverFd, 0)
+                                            assert(
+                                                closes == 1,
+                                                s"[iter $iter] upgrading fd=$serverFd closed $closes times (expected exactly 1: no double-close, no leak)"
+                                            )
+                                            upgradeResult match
+                                                case Result.Failure(e: NetConnectionClosedException) =>
+                                                    assert(
+                                                        e.operation == Operation.Handshake || e.operation == Operation.Upgrade,
+                                                        s"[iter $iter] close-mid-upgrade failure must name handshake or upgrade, got operation=${e.operation}"
+                                                    )
+                                                    discard(abortBranch.incrementAndGet())
+                                                    Loop.continue
+                                                case Result.Success(conn) =>
+                                                    conn.close()
+                                                    assert(
+                                                        !conn.isOpen,
+                                                        s"[iter $iter] upgraded connection left open after a concurrent close"
+                                                    )
+                                                    Loop.continue
+                                                case Result.Failure(other) =>
+                                                    fail(
+                                                        s"[iter $iter] close-mid-upgrade failed with an unexpected NetException leaf: $other"
+                                                    )
+                                                case Result.Panic(e) =>
+                                                    fail(s"[iter $iter] upgrade racing close panicked (crash, not a clean state): $e")
+                                            end match
+                                        }
                                     }
                                 }
                             }

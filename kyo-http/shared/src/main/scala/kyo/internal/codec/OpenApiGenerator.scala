@@ -102,12 +102,15 @@ private[kyo] object OpenApiGenerator:
             case HttpPath.Literal(_) => Seq.empty
             case HttpPath.Capture(fieldName, wireName, codec) =>
                 val name = if wireName.nonEmpty then wireName else fieldName
+                val json = inferCodecJson(codec)
                 Seq(HttpOpenApi.Parameter(
                     name = name,
                     in = "path",
                     required = Some(true),
-                    json = inferCodecJson(codec),
-                    description = None
+                    json = json,
+                    // A path capture has no route-level description the way a query
+                    // param does, so the codec's is the only one available.
+                    description = json.description
                 ))
             case HttpPath.Concat(left, right) =>
                 extractPathParams(left) ++ extractPathParams(right)
@@ -121,8 +124,18 @@ private[kyo] object OpenApiGenerator:
                 ))
     end extractPathParams
 
-    /** Infer OpenAPI json type from HttpCodec by probing with sample values. */
+    /** The codec's own schema when it declares one, otherwise inferred.
+      *
+      * Probing can only recover a JSON *type*, which is all there is to learn
+      * from a `HttpCodec[String]`. A codec that accepts a constrained subset —
+      * built with `HttpCodec.pattern`, say — knows its `pattern` and description,
+      * and that is strictly better than a guess.
+      */
     private def inferCodecJson(codec: HttpCodec[?]): HttpOpenApi.SchemaObject =
+        codec.schema.getOrElse(inferredCodecJson(codec))
+
+    /** Infer OpenAPI json type from HttpCodec by probing with sample values. */
+    private def inferredCodecJson(codec: HttpCodec[?]): HttpOpenApi.SchemaObject =
         def tryProbe(input: String)(pf: PartialFunction[Any, HttpOpenApi.SchemaObject]): Maybe[HttpOpenApi.SchemaObject] =
             codec.decode(input).toMaybe.flatMap(result => if pf.isDefinedAt(result) then Present(pf(result)) else kyo.Absent)
 
@@ -149,7 +162,7 @@ private[kyo] object OpenApiGenerator:
                     `$ref` = None
                 )
         }).getOrElse(HttpOpenApi.SchemaObject.string)
-    end inferCodecJson
+    end inferredCodecJson
 
     private def buildRequestBody(route: HttpRoute[?, ?, ?]): Option[HttpOpenApi.RequestBody] =
         route.request.fields.toSeq.collectFirst {
@@ -226,9 +239,9 @@ private[kyo] object OpenApiGenerator:
       *   - Nullable(inner) → recurse on inner (optionality is captured in the parent's required list).
       *   - OneOf(variants) → if all variants map to an empty Obj, emit enum with variant names; otherwise emit oneOf.
       */
-    private def jsonSchemaToHttpOpenApi(js: JsonSchema): HttpOpenApi.SchemaObject =
+    private[kyo] def jsonSchemaToHttpOpenApi(js: JsonSchema): HttpOpenApi.SchemaObject =
         js match
-            case JsonSchema.Obj(properties, required, additionalProperties, _, _, _) =>
+            case JsonSchema.Obj(properties, required, additionalProperties, description, _, _) =>
                 val propsMap =
                     if properties.isEmpty then None
                     else
@@ -247,38 +260,95 @@ private[kyo] object OpenApiGenerator:
                     additionalProperties = addProps,
                     oneOf = None,
                     `enum` = None,
-                    `$ref` = None
+                    `$ref` = None,
+                    description = description.toOption
                 )
 
-            case JsonSchema.Arr(items, _, _, _, _) =>
-                HttpOpenApi.SchemaObject.array(jsonSchemaToHttpOpenApi(items))
+            case JsonSchema.Arr(items, minItems, maxItems, uniqueItems, description) =>
+                HttpOpenApi.SchemaObject(
+                    `type` = Some("array"),
+                    format = None,
+                    items = Some(jsonSchemaToHttpOpenApi(items)),
+                    properties = None,
+                    required = None,
+                    additionalProperties = None,
+                    oneOf = None,
+                    `enum` = None,
+                    `$ref` = None,
+                    minItems = minItems.toOption,
+                    maxItems = maxItems.toOption,
+                    uniqueItems = uniqueItems.toOption,
+                    description = description.toOption
+                )
 
-            case JsonSchema.Str(_, _, _, format, _) =>
-                format match
-                    case Present(f) =>
-                        HttpOpenApi.SchemaObject(
-                            `type` = Some("string"),
-                            format = Some(f),
-                            items = None,
-                            properties = None,
-                            required = None,
-                            additionalProperties = None,
-                            oneOf = None,
-                            `enum` = None,
-                            `$ref` = None
-                        )
-                    case Absent => HttpOpenApi.SchemaObject.string
+            case JsonSchema.Str(minLength, maxLength, pattern, format, description) =>
+                HttpOpenApi.SchemaObject(
+                    `type` = Some("string"),
+                    format = format.toOption,
+                    items = None,
+                    properties = None,
+                    required = None,
+                    additionalProperties = None,
+                    oneOf = None,
+                    `enum` = None,
+                    `$ref` = None,
+                    minLength = minLength.toOption,
+                    maxLength = maxLength.toOption,
+                    pattern = pattern.toOption,
+                    description = description.toOption
+                )
 
-            case JsonSchema.Num(_, _, _, _, _) =>
-                HttpOpenApi.SchemaObject.number
+            case JsonSchema.Num(minimum, exclusiveMinimum, maximum, exclusiveMaximum, description) =>
+                HttpOpenApi.SchemaObject(
+                    `type` = Some("number"),
+                    format = Some("double"),
+                    items = None,
+                    properties = None,
+                    required = None,
+                    additionalProperties = None,
+                    oneOf = None,
+                    `enum` = None,
+                    `$ref` = None,
+                    minimum = minimum.toOption,
+                    exclusiveMinimum = exclusiveMinimum.toOption,
+                    maximum = maximum.toOption,
+                    exclusiveMaximum = exclusiveMaximum.toOption,
+                    description = description.toOption
+                )
 
-            case JsonSchema.Integer(_, _, _, _, _) =>
-                HttpOpenApi.SchemaObject.integer
+            case JsonSchema.Integer(minimum, exclusiveMinimum, maximum, exclusiveMaximum, description) =>
+                HttpOpenApi.SchemaObject(
+                    `type` = Some("integer"),
+                    format = Some("int32"),
+                    items = None,
+                    properties = None,
+                    required = None,
+                    additionalProperties = None,
+                    oneOf = None,
+                    `enum` = None,
+                    `$ref` = None,
+                    minimum = minimum.toOption.map(_.toDouble),
+                    exclusiveMinimum = exclusiveMinimum.toOption.map(_.toDouble),
+                    maximum = maximum.toOption.map(_.toDouble),
+                    exclusiveMaximum = exclusiveMaximum.toOption.map(_.toDouble),
+                    description = description.toOption
+                )
 
-            case JsonSchema.Bool(_) =>
-                HttpOpenApi.SchemaObject.boolean
+            case JsonSchema.Bool(description) =>
+                HttpOpenApi.SchemaObject(
+                    `type` = Some("boolean"),
+                    format = None,
+                    items = None,
+                    properties = None,
+                    required = None,
+                    additionalProperties = None,
+                    oneOf = None,
+                    `enum` = None,
+                    `$ref` = None,
+                    description = description.toOption
+                )
 
-            case JsonSchema.Null(_) =>
+            case JsonSchema.Null(description) =>
                 HttpOpenApi.SchemaObject(
                     `type` = Some("null"),
                     format = None,
@@ -288,7 +358,8 @@ private[kyo] object OpenApiGenerator:
                     additionalProperties = None,
                     oneOf = None,
                     `enum` = None,
-                    `$ref` = None
+                    `$ref` = None,
+                    description = description.toOption
                 )
 
             case JsonSchema.Nullable(inner) =>

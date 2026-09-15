@@ -223,6 +223,10 @@ class MysqlCancelIntegrationTest extends SqlContainerTest:
                             Async.timeout(1.second)(Abort.run[SqlException](client.query(longQuery)))
                         ).flatMap {
                             case Result.Failure(_: Timeout) =>
+                                // deviation: this asserts measured wall-clock elapsed. There is no barrier for "released by the 1s timeout, not by
+                                // the 30s query": the pool cancels the query right after the release, so an information_schema.processlist probe
+                                // races that cancel. The bound is catastrophic, not tight: a correct release lands at ~1s, a caller that waited out
+                                // the query at ~30s, so 20s separates them with no runner-flippable margin.
                                 stopwatch.elapsed.map { waited =>
                                     assert(
                                         waited < 20.seconds,

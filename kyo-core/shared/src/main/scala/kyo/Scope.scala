@@ -173,21 +173,34 @@ object Scope:
 
                         def close(ex: Maybe[Error[Any]])(using Frame): Unit < Sync =
                             Sync.Unsafe.defer {
-                                queue.close() match
-                                    case Absent => ()
-                                    case Present(tasks) =>
-                                        if tasks.isEmpty then
-                                            promise.completeUnitDiscard
-                                        else
-                                            Async.foreachDiscard(tasks.reverse, parallelism) { task =>
-                                                Abort.run[Throwable](task(ex))
-                                                    .map(_.foldError(
-                                                        _ => (),
-                                                        ex => Log.error("Scope finalizer failed", ex.exception)
-                                                    ))
-                                            }
-                                                .handle(Fiber.initUnscoped[Nothing, Unit, Any, Any])
-                                                .map(promise.becomeDiscard)
+                                // The queue hands its backlog over asynchronously, because an `ensure` that began before this close may
+                                // still be committing its task and no synchronous answer could include it. Nothing here waits for that:
+                                // the finalizers already ran on a detached fiber with `await` parked on `promise`, so registering a
+                                // continuation keeps this `Sync` and leaves both of `run`'s close paths, including the panic path that
+                                // cannot suspend, exactly as they were.
+                                queue.close().safe.onComplete { backlog =>
+                                    backlog.foldError(
+                                        _.map {
+                                            case Absent => Kyo.unit
+                                            case Present(tasks) =>
+                                                if tasks.isEmpty then
+                                                    promise.completeUnitDiscard
+                                                else
+                                                    Async.foreachDiscard(tasks.reverse, parallelism) { task =>
+                                                        Abort.run[Throwable](task(ex))
+                                                            .map(_.foldError(
+                                                                _ => (),
+                                                                ex => Log.error("Scope finalizer failed", ex.exception)
+                                                            ))
+                                                    }
+                                                        .handle(Fiber.initUnscoped[Nothing, Unit, Any, Any])
+                                                        .map(promise.becomeDiscard)
+                                        },
+                                        // The backlog handover is completed with a success by whoever wins the drain, so this is
+                                        // unreachable; leaving `promise` alone lets `await` surface the real failure.
+                                        _ => Kyo.unit
+                                    )
+                                }
                             }
 
                         def await(using Frame): Unit < Async = promise.get

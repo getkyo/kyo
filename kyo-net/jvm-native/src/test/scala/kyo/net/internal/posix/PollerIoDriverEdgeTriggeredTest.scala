@@ -28,8 +28,9 @@ import kyo.net.internal.transport.ReadOutcome
   *     then delivers `Span.empty` without a spurious Closed. On epoll ET, EPOLLRDHUP fires once alongside EPOLLIN; after the data is
   *     consumed via the first recv, the driver sets `readMightHaveMore = true` (because `eofPending` is set) to force re-dispatch on
   *     the next `awaitRead`, where a second recv returns 0 (FIN) and delivers `Span.empty`.
-  *   - `changelistBatchingNoDeadlock`: confirms that on kqueue (where `disableWrite` batches EV_DISABLE into the changelist), both write
-  *     promises resolve, registerWrite fires exactly twice, and at least one poll cycle carried a non-empty changelist (batch path active).
+  *   - `changelistBatchingNoDeadlock`: confirms that on kqueue (where interest changes are batched into a changelist rather than issued as
+  *     individual syscalls), both write promises resolve, registerWrite fires exactly twice, and at least one poll cycle carried a non-empty
+  *     changelist (batch path active).
   *     Gated on kqueue: epoll EPOLLET fires the write edge only on write-buffer transitions; a loopback fd that is always writable fires
   *     once on ADD and not again without a not-writable->writable transition, making a second sequential awaitWritable incompatible with
   *     the epoll ET model.
@@ -44,8 +45,8 @@ import kyo.net.internal.transport.ReadOutcome
   *   - `wakeLatencyBounded`: confirms that a `awaitRead` submitted while the poll loop is parked wakes the loop (via `backend.wake`) and
   *     delivers the readiness promptly, not just after the 100ms timeout.
   *
-  * Gate: `PosixTestSockets.assumePoller()` for most leaves; `changelistBatchingNoDeadlock` uses `assumeKqueue()` because it tests
-  * kqueue-specific EV_DISABLE changelist batching and a second sequential awaitWritable that requires EV_CLEAR re-evaluation semantics
+  * Gate: `PosixTestSockets.assumePoller()` for most leaves; `changelistBatchingNoDeadlock` uses `assumeKqueue()` because it tests the
+  * kqueue-specific changelist batching and a second sequential awaitWritable that requires EV_CLEAR re-evaluation semantics
   * not available under epoll EPOLLET. No leaf sleeps; all synchronize on real promises.
   */
 class PollerIoDriverEdgeTriggeredTest extends Test:
@@ -339,9 +340,9 @@ class PollerIoDriverEdgeTriggeredTest extends Test:
 
     "changelistBatchingNoDeadlock: two sequential write arms each resolve; registerWrite fires exactly twice; kqueue batches interest changes" in {
         PosixTestSockets.assumeKqueue()
-        // The ET kqueue path batches EV_DISABLE into the changelist inside disableWrite (called from dispatchWritable). This test confirms
-        // that the batching does not deadlock the poll loop: both write promises resolve, the registerWrite count is exactly 2 (one per
-        // awaitWritable call), and at least one poll cycle carried a non-empty changelist (the batched EV_DISABLE submission).
+        // The ET kqueue path accumulates interest changes in a changelist and submits them with the poll wait. This test confirms that the
+        // batching does not deadlock the poll loop: both write promises resolve, the registerWrite count is exactly 2 (one per awaitWritable
+        // call), and at least one poll cycle carried a non-empty changelist (the batched registration submission).
         // Gate: kqueue only. On epoll EPOLLET the fd stays armed and only fires an edge on write-buffer transition (not-writable to
         // writable). A loopback fd that is always writable fires the EPOLLOUT edge exactly once on ADD; a second awaitWritable after
         // dispatchWritable consumed the first edge finds no new transition and parks until timeout. The changelist batch is also
@@ -374,14 +375,14 @@ class PollerIoDriverEdgeTriggeredTest extends Test:
                     // registerWrite fires once per awaitWritable call: 2 write arms must produce exactly 2 registerWrite calls.
                     val wc = backend.registerWriteCount.get()
                     assert(wc == 2, s"exactly 2 registerWrite calls expected for 2 awaitWritable arms; got $wc")
-                    // On kqueue, EV_DISABLE from dispatchWritable is batched into the changelist and submitted atomically with the next kevent
-                    // call. At least one poll cycle must have carried a non-empty changelist, confirming the batch path is active.
+                    // On kqueue the registrations above are batched into the changelist and submitted atomically with the next kevent call.
+                    // At least one poll cycle must have carried a non-empty changelist, confirming the batch path is active.
                     // epoll does not use the changelist (nChanges is always 0 there), so this assertion is kqueue-only.
                     if PosixConstants.isMacOrBsd then
                         val batchedCycles = backend.pollWithChangesCount.get()
                         assert(
                             batchedCycles > 0,
-                            s"kqueue: at least one poll cycle must carry a non-empty changelist (EV_DISABLE batch); got batchedCycles=$batchedCycles"
+                            s"kqueue: at least one poll cycle must carry a non-empty changelist; got batchedCycles=$batchedCycles"
                         )
                     end if
                 }

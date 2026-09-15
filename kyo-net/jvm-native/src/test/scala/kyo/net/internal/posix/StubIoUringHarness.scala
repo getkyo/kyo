@@ -76,6 +76,28 @@ class StubIoUringBindings extends IoUringBindings:
     @volatile private var sendBarrierTarget     = Int.MaxValue
     val sendBarrierP: Promise.Unsafe[Unit, Any] = Promise.Unsafe.init[Unit, Any]()
 
+    private val prepConnectFdQueue = new java.util.concurrent.ConcurrentLinkedQueue[Integer]
+
+    /** Every fd a connect SQE was prepped against, in submission order. */
+    private val prepCancelKeyQueue = new java.util.concurrent.ConcurrentLinkedQueue[java.lang.Long]
+
+    /** Keys a cancel SQE was prepped against, in submission order. */
+    def prepCancelKeys: Chunk[Long] = Chunk.from(prepCancelKeyQueue.toArray(Array.empty[java.lang.Long]).toSeq).map(_.longValue)
+
+    def prepConnectFds: Chunk[Int] = Chunk.from(prepConnectFdQueue.toArray(Array.empty[Integer]).toSeq).map(_.intValue)
+
+    /** Make the next connect prep raise, the way marshalling a released buffer does. */
+    @volatile var failPrepConnect: Boolean = false
+
+    @volatile private var connectBarrierFd         = Int.MinValue
+    val connectBarrierP: Promise.Unsafe[Unit, Any] = Promise.Unsafe.init[Unit, Any]()
+
+    /** Complete [[connectBarrierP]] when a connect SQE is prepped against `fd`. The engine FIFO is ordered, so awaiting a LATER arm's fd is
+      * how a test observes that an EARLIER arm has already drained, without a sleep and without waiting on a promise the earlier arm may
+      * deliberately never complete.
+      */
+    def setConnectBarrierFd(fd: Int): Unit = connectBarrierFd = fd
+
     // When true, the next kyo_uring_submit_and_wait_timeout throws instead of parking. CAS to false on use so it fires exactly once.
     // The authorized injection for the crash-containment guard: a reap cycle must contain a Throwable from anywhere in its body, run its
     // terminal teardown, and complete its done-fiber as a panic, rather than dying silently and leaving the ring held.
@@ -147,9 +169,25 @@ class StubIoUringBindings extends IoUringBindings:
         AllowUnsafe
     ): Unit = ()
 
+    // Record every connect SQE's fd and fire the barrier when the awaited one is prepped. The fd is what the observation needs: a connect
+    // arm that reaches the ring against a handle whose fd was already closed would prep against a number the kernel may have handed to
+    // another socket, so which fd was armed is the whole question, not how many were.
     override def kyo_uring_prep_connect(sqe: Ffi.Handle[IoUringSqe], fd: Int, addr: Buffer[Byte], addrlen: Int)(using
         AllowUnsafe
-    ): Unit = ()
+    ): Unit =
+        discard(prepConnectFdQueue.add(fd))
+        if fd == connectBarrierFd then connectBarrierP.completeDiscard(Result.succeed(()))
+        // Stands in for marshalling a connect target whose owner has already released it, which on JVM raises out of the Panama
+        // downcall rather than returning a code. The SQE is acquired by then, so this is the one way a test can put the driver in
+        // the state where a slot is committed to the ring and the op it was acquired for does not exist.
+        if failPrepConnect then throw new IllegalStateException("Already closed")
+    end kyo_uring_prep_connect
+
+    // Keys a cancel SQE was prepped against, in order. A cancel is the only way an in-flight connect is ever retired, so a test asserting
+    // that a stranded connect gets reclaimed has to be able to see whether the cancel was actually submitted and for which op.
+    override def kyo_uring_prep_cancel64(sqe: Ffi.Handle[IoUringSqe], userData: Long, flags: Int)(using AllowUnsafe): Unit =
+        discard(prepCancelKeyQueue.add(userData))
+    end kyo_uring_prep_cancel64
 
     override def kyo_uring_prep_poll_multishot(sqe: Ffi.Handle[IoUringSqe], fd: Int, pollMask: Int)(using AllowUnsafe): Unit = ()
 
@@ -157,6 +195,8 @@ class StubIoUringBindings extends IoUringBindings:
 
     // armWake calls set_data64(sqe, WakeKey=-1L); filter it so the raw-send key in lastDataKey
     // is not overwritten before the KICK test captures it.
+    override def kyo_uring_prep_nop(sqe: Ffi.Handle[IoUringSqe])(using AllowUnsafe): Unit = ()
+
     override def kyo_uring_sqe_set_data64(sqe: Ffi.Handle[IoUringSqe], data: Long)(using AllowUnsafe): Unit =
         if data != WakeKeyConst then lastDataKey = data
 

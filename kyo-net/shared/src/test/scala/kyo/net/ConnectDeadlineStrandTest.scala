@@ -21,9 +21,9 @@ class ConnectDeadlineStrandTest extends Test:
 
     "sequential connects under a finite connect deadline never spuriously time out" in {
         given Frame = Frame.internal
-        // A generous 2s connect deadline: a CORRECTLY delivered loopback connect-completion beats it by orders of magnitude even
-        // under load, so a failure here is a genuinely dropped/never-delivered write-readiness (the lost-wakeup), not a few-ms
-        // latency tail against a too-tight bound. (TransportHandshakeTimeoutTest exercises a tight 60ms deadline;
+        // A generous 30s connect deadline: a CORRECTLY delivered loopback connect-completion beats it by orders of magnitude even
+        // under load, so a failure here is a genuinely dropped/never-delivered write-readiness (the lost-wakeup), not a latency
+        // tail against a too-tight bound. (TransportHandshakeTimeoutTest exercises a tight 60ms deadline;
         // this guard isolates DELIVERY correctness from deadline tightness, so it is not host-load-flaky.)
         val transport = NetPlatform.transport
         transport.listen("127.0.0.1", 0, 128) { conn => conn.close() }.safe.get.map { listener =>
@@ -36,7 +36,7 @@ class ConnectDeadlineStrandTest extends Test:
                 if i >= total then Loop.done(i)
                 else
                     val t0 = java.lang.System.nanoTime()
-                    Abort.run[NetException](transport.connect("127.0.0.1", listener.port, 2.seconds).safe.get).map { outcome =>
+                    Abort.run[NetException](transport.connect("127.0.0.1", listener.port, 30.seconds).safe.get).map { outcome =>
                         val latNs = java.lang.System.nanoTime() - t0
                         maxLatNs.updateAndGet(p => math.max(p, latNs))
                         outcome match
@@ -65,13 +65,13 @@ class ConnectDeadlineStrandTest extends Test:
         // NetConnectException; (2) the OP_CONNECT arm's guarded wakeup coalescing under the burst loses the connect-completion edge, which
         // surfaced as NetConnectTimeoutException at the connect deadline. A burst of simultaneous connects against one listener that accepts and
         // immediately closes drives both: every connect MUST complete (succeed; a peer that already closed yields a clean connected-then-EOF, not
-        // a connect failure). Any NetConnectException / NetConnectTimeoutException is a dropped connect arm. The generous 2s deadline isolates
+        // a connect failure). Any NetConnectException / NetConnectTimeoutException is a dropped connect arm. The generous 30s deadline isolates
         // delivery correctness from deadline tightness so this is not host-load-flaky.
         val transport   = NetPlatform.transport
         val concurrency = 128
         transport.listen("127.0.0.1", 0, 256) { conn => conn.close() }.safe.get.map { listener =>
             Async.foreach(0 until concurrency, concurrency) { _ =>
-                Abort.run[NetException](transport.connect("127.0.0.1", listener.port, 2.seconds).safe.get).map {
+                Abort.run[NetException](transport.connect("127.0.0.1", listener.port, 30.seconds).safe.get).map {
                     case Result.Success(conn) =>
                         conn.close()
                         Absent

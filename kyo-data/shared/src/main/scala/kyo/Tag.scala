@@ -59,6 +59,17 @@ object Tag:
       *
       * Within the `kyo` package, this method fails instead of falling back to a dynamic tag for performance reasons.
       *
+      * Inside the template that declares an opaque type, and inside its companion object, the compiler substitutes the underlying type for
+      * the opaque one wherever it has to infer, and it does so before this macro runs. A tag derived there would describe the underlying
+      * type while every derivation outside the scope describes the opaque type, so the two would disagree and a value handed across that
+      * boundary would be looked up under a different key than it was stored under. Nothing at that point can say which type was meant, so
+      * a derivation whose type mentions the underlying type of an opaque type transparent there is refused, whether it was inferred or
+      * written. Naming the opaque type explicitly in `Tag.derive[X]` always survives the substitution and derives the same tag as
+      * anywhere else. An implicit query such as `Tag[X]` or a `using Tag[X]` parameter may or may not survive, depending on how the
+      * compiler resolves it; when it does not, the derivation is refused rather than misnamed. A `given Tag[X]` must not be defined in
+      * that scope either: it is a `Tag` for the underlying type there and would answer every such query. The remedy for a refusal is to
+      * pass `Tag.derive[X]` explicitly, or to move the derivation out of the scope.
+      *
       * @tparam A
       *   The type for which to derive a Tag
       * @return

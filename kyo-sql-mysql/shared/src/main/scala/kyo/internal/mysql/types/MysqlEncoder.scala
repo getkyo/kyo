@@ -7,6 +7,7 @@ import kyo.Span
 import kyo.SqlRequestDurationOverflowException
 import kyo.db.Idiom
 import kyo.internal.mysql.MysqlBufferWriter
+import kyo.internal.mysql.MysqlTime
 
 /** Encodes a Scala value into MySQL binary-protocol wire bytes for use in [[ComStmtExecute]].
   *
@@ -273,25 +274,22 @@ object MysqlEncoder:
     // Duration.ZERO encodes as a single 0x00 byte (length = 0).
     // Non-fractional (no sub-second component): 8 bytes body → total 9 bytes with length prefix.
     // Fractional (nanoseconds > 0): 12 bytes body → total 13 bytes with length prefix.
-    // Range: MySQL TIME supports -838:59:59 to 838:59:59 (days up to 34).
-    // Days exceeding Int.MaxValue raise SqlRequestDurationOverflowException.
+    // Range: MySQL TIME holds -838:59:59 to 838:59:59. A span past that is refused here rather than sent, because the
+    // server substitutes its own ceiling and reports success. See MysqlTime.MaxSpanSeconds.
 
     val durationEncoder: MysqlEncoder[java.time.Duration] = new MysqlEncoder[java.time.Duration]:
         def mysqlType: Int = TYPE_TIME
         def write(value: java.time.Duration, buf: MysqlBufferWriter): Unit =
             val isNegative = value.isNegative
             val abs        = if isNegative then value.negated() else value
-            // toDays can overflow Int if the duration is extremely large; throw the typed leaf
-            // so callers see SqlRequestDurationOverflowException. MysqlParamWriter.duration()
-            // performs the same check up-front with a call-site Frame; this is the safety net
-            // for direct encoder use, using Frame.internal because the trait signature does
-            // not thread a Frame implicit through every encoder.
-            val totalDays = abs.toDays
-            if totalDays > Int.MaxValue.toLong then
+            // MysqlParamWriter.duration() performs the same check up-front with a call-site Frame; this is the
+            // safety net for direct encoder use, using Frame.internal because the trait signature does not
+            // thread a Frame implicit through every encoder.
+            if abs.getSeconds > MysqlTime.MaxSpanSeconds then
                 given Frame = Frame.internal
-                throw SqlRequestDurationOverflowException(totalDays, "the MySQL TIME day-count range")
+                throw SqlRequestDurationOverflowException(abs.getSeconds, MysqlTime.SpanLimitDescription)
             end if
-            val days    = totalDays.toInt
+            val days    = abs.toDays.toInt
             val hours   = abs.toHoursPart
             val minutes = abs.toMinutesPart
             val seconds = abs.toSecondsPart

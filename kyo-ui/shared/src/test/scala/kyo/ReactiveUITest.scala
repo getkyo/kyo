@@ -16,6 +16,12 @@ class ReactiveUITest extends UITest:
         assert(op.html == "<span>hello</span>")
     }
 
+    "HtmlOp.ReplaceRange carries region id and inner html" in {
+        val op = HtmlOp.ReplaceRange("r000000010030", "<span>hello</span>")
+        assert(op.regionId == "r000000010030")
+        assert(op.html == "<span>hello</span>")
+    }
+
     "HtmlOp.Remove carries path" in {
         val op = HtmlOp.Remove(Seq("root", "child"))
         assert(op.path == Seq("root", "child"))

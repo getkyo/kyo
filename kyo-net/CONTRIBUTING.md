@@ -170,7 +170,7 @@ The `kyo-ffi-plugin` source generator (`ffiGenerate`) is `FileFunction.cached` a
 
 ### TLS test variants
 
-The production TLS path is BoringSSL, which is built and staged per host by `kyo-net/build/boringssl/build-boringssl.sh`. When the staged tree is absent the build links a stub that reports BoringSSL unavailable, so TLS falls back to the JVM `jdk` floor or the Native `openssl` provider.
+The production TLS path is BoringSSL, which is built and staged per host by `kyo-net/build/boringssl/build-boringssl.sh`. When the staged tree is absent the build links a stub that reports BoringSSL unavailable, so TLS falls back to the JVM `jdk` floor or the Native `openssl` provider. Windows is the one platform with no stub either: `kyonet_boringssl` names `osTargets` and is not bundled there, so the capability probe classifies it `NotBundled` and TLS falls to the same floor.
 
 - Run the Linux suite in a container matching CI with `scripts/build.sh --env podman sbt '<sbt-command>'`. Set `STAGE_BORINGSSL=1` to build and stage the vendored BoringSSL inside the container and exercise the production TLS path (leave it unset to keep runs fast on the non-TLS surface); set `KYO_TEST_LEAK_DEBUG=1` to run leaves serially and have the leak check name the test that opened each leaked descriptor.
 - Force a specific TLS provider with `-Dkyo.net.tls=jdk` (the pure-JDK `SSLEngine` floor), `-Dkyo.net.tls=boringssl`, or `-Dkyo.net.tls=openssl`. A forced-but-unavailable provider fails with `NetTlsProviderUnavailableException` rather than falling through, which is how the JDK-floor variant is exercised against the same suite.

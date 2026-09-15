@@ -384,8 +384,10 @@ class PostgresParamWriterTest extends Test:
         val ex = intercept[SqlRequestDurationOverflowException] {
             w.duration(overflowDuration)
         }
-        val expectedDays = overflowDuration.getSeconds / 86_400L
-        assert(ex.totalDays == expectedDays, s"expected totalDays $expectedDays, got: ${ex.totalDays}")
+        assert(
+            ex.totalSeconds == overflowDuration.getSeconds,
+            s"expected totalSeconds ${overflowDuration.getSeconds}, got: ${ex.totalSeconds}"
+        )
         // The bound must be PostgreSQL's own. The limit is a parameter of the exception rather than a constant in
         // its message, so a Postgres user overflowing an interval is never told about MySQL's TIME range, and the
         // text is asserted here because nothing else reads it.

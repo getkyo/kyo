@@ -296,14 +296,16 @@ class JsTransportTlsTest extends Test:
     }
 
     "a handshake that completes within the deadline is NOT reaped (timer disarmed)" in {
-        // Control arm: the same finite deadline, but a real kyo TLS client completes the handshake well within it. The connection must work
-        // normally (echo round-trip), proving the deadline timer is disarmed on a successful handshake and does not reap a healthy connection.
+        // Control arm: a finite deadline, but a real kyo TLS client completes the handshake well within it. The connection must work normally
+        // (echo round-trip), proving the deadline timer is disarmed on a successful handshake and does not reap a healthy connection. The deadline
+        // is 30s, large enough that JS single-thread CI load cannot push the real handshake past it and reap the healthy connection this arm
+        // is asserting survives; the correctness signal is the round-trip, not the deadline's length.
         import AllowUnsafe.embrace.danger
         val transport =
             JsTransport.init(poolSize = 1)
         val clientTls = NetTlsConfig(trustAll = true, sniHostname = Present("localhost"))
         for
-            listener <- transport.listenTls("127.0.0.1", 0, 128, serverTlsMaterial.copy(handshakeTimeout = 2.seconds)) { serverConn =>
+            listener <- transport.listenTls("127.0.0.1", 0, 128, serverTlsMaterial.copy(handshakeTimeout = 30.seconds)) { serverConn =>
                 discard(Sync.Unsafe.evalOrThrow {
                     Fiber.initUnscoped {
                         Abort.run[Closed](serverConn.inbound.safe.take.map(chunk => serverConn.outbound.safe.put(chunk))).unit
@@ -313,14 +315,21 @@ class JsTransportTlsTest extends Test:
             port = listener.port
             client <- transport.connectTls("127.0.0.1", port, clientTls).safe.get
             _      <- client.outbound.safe.put(Span.from("ping".getBytes("UTF-8")))
-            echo   <- client.inbound.safe.take
+            // Awaiting the take IS the barrier: a healthy round-trip delivers the echo in microseconds. A lost echo hangs until the suite's
+            // per-leaf cap, which is the hang guard.
+            echo <- Abort.run[Closed](client.inbound.safe.take)
         yield
             client.close()
             listener.close()
-            assert(
-                new String(echo.toArrayUnsafe, "UTF-8") == "ping",
-                s"the completed handshake's connection must work; got ${echo.size} bytes"
-            )
+            echo match
+                case Result.Success(bytes) =>
+                    assert(
+                        new String(bytes.toArrayUnsafe, "UTF-8") == "ping",
+                        s"the completed handshake's connection must work; got ${bytes.size} bytes"
+                    )
+                case other =>
+                    fail(s"the completed handshake's echo did not arrive, so the connection did not round-trip: $other")
+            end match
         end for
     }
 

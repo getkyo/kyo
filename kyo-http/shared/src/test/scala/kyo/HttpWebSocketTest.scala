@@ -1016,7 +1016,7 @@ class HttpWebSocketTest extends BaseHttpTest with internal.UnixSocketTestHelperI
                             Fiber.Promise.init[Unit, Any].map { pc2 =>
                                 val ws1 = new HttpWebSocket(ch2to1, ch1to2, ref, pc1, closeFn)
                                 val ws2 = new HttpWebSocket(ch1to2, ch2to1, ref, pc2, closeFn)
-                                Sync.ensure(ch1to2.close.unit.andThen(ch2to1.close.unit)) {
+                                Sync.ensure(ch1to2.closeDiscard.andThen(ch2to1.closeDiscard)) {
                                     Async.raceFirst(
                                         Abort.run[Closed](ws1.take()).unit,
                                         Abort.run[Closed](ws2.close(1001, "going away")).unit
@@ -1042,7 +1042,7 @@ class HttpWebSocketTest extends BaseHttpTest with internal.UnixSocketTestHelperI
                             Fiber.Promise.init[Unit, Any].map { pc2 =>
                                 val ws1 = new HttpWebSocket(ch2to1, ch1to2, ref, pc1, closeFn)
                                 val ws2 = new HttpWebSocket(ch1to2, ch2to1, ref, pc2, closeFn)
-                                Sync.ensure(ch1to2.close.unit.andThen(ch2to1.close.unit)) {
+                                Sync.ensure(ch1to2.closeDiscard.andThen(ch2to1.closeDiscard)) {
                                     Async.raceFirst(
                                         Abort.run[Closed](ws1.take()).unit,
                                         Abort.run[Closed](ws2.close(4000, "app error")).unit
