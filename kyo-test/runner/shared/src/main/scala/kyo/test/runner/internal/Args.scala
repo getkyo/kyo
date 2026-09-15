@@ -57,6 +57,10 @@ private[runner] object Args:
         final case class Error(message: String) extends Result derives CanEqual
     end Result
 
+    /** The failure a test framework runner raises for an [[Result.Error]], so the build tool fails the run rather than running nothing. */
+    def invalid(message: String): IllegalArgumentException =
+        new IllegalArgumentException(s"kyo-test: $message (see --help for the supported flags)")
+
     // Parse an integer string, returning kyo.Result.succeed(int) or kyo.Result.fail(error message).
     private[runner] def parseInt(s: String, flag: String): kyo.Result[String, Int] =
         s.toIntOption match

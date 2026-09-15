@@ -127,4 +127,12 @@ class NativeFrameworkTest extends AnyFunSuite with NonImplicitAssertions:
         assert(names.contains("kyo.test.SuiteFingerprintMarker"), s"Missing SuiteFingerprintMarker in: ${names.mkString(", ")}")
     }
 
+    // An unrecognised flag (a typo such as `--include` for `--filter=`) must fail the run. Answering with no tasks makes sbt report
+    // "No tests to run" and succeed, so a mistyped selection passes silently.
+    test("tasks fails the run on an unknown argument instead of returning no tasks") {
+        val runner = makeRunner("--include", "**leaf**")
+        val thrown = intercept[IllegalArgumentException](runner.tasks(Array(taskDefFor(classOf[NativeNextSingleLeafSuite]))))
+        assert(thrown.getMessage.contains("unknown argument: '--include'"), s"unexpected message: ${thrown.getMessage}")
+    }
+
 end NativeFrameworkTest

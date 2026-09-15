@@ -26,12 +26,8 @@ final private[runner] class SbtRunner(
 
     locally:
         parsedArgs match
-            case Args.Result.Help =>
-                java.lang.System.out.println(Args.usage)
-            case Args.Result.Error(msg) =>
-                java.lang.System.err.println(s"[kyo-test] CLI error: $msg")
-            case Args.Result.Ok(_) =>
-                ()
+            case Args.Result.Help => java.lang.System.out.println(Args.usage)
+            case _                => ()
 
     private[internal] val baseConfig: RunConfig =
         val fromArgs =
@@ -82,13 +78,16 @@ final private[runner] class SbtRunner(
     private[runner] val discoveryErrors: AtomicReference[Chunk[String]] =
         new AtomicReference(Chunk.empty)
 
+    /** One task per suite. Throws `IllegalArgumentException` when the arguments do not parse, which fails the sbt test task: answering
+      * with no tasks would report "No tests to run" and succeed, so a mistyped flag would pass silently.
+      */
     def tasks(taskDefs: Array[TaskDef]): Array[Task] =
         parsedArgs match
             case Args.Result.Ok(_) =>
                 discoveryErrors.set(SuiteDiscovery.discoverDetailed(testClassLoader).errors)
                 taskDefs.map(td => new SbtTask(td, baseConfig, testClassLoader, results, forked))
-            case _ =>
-                Array.empty
+            case Args.Result.Error(msg) => throw Args.invalid(msg)
+            case Args.Result.Help       => Array.empty
 
     def done(): String =
         runEndOfRunChecks()

@@ -26,12 +26,8 @@ final private[runner] class JsRunner(
 
     locally:
         parsedArgs match
-            case Args.Result.Help =>
-                java.lang.System.out.println(Args.usage)
-            case Args.Result.Error(msg) =>
-                java.lang.System.err.println(s"[kyo-test] CLI error: $msg")
-            case Args.Result.Ok(_) =>
-                ()
+            case Args.Result.Help => java.lang.System.out.println(Args.usage)
+            case _                => ()
 
     private[internal] val baseConfig: RunConfig =
         parsedArgs match
@@ -46,10 +42,14 @@ final private[runner] class JsRunner(
     private val results =
         scala.collection.mutable.ListBuffer.empty[TestReport]
 
+    /** One task per suite. Throws `IllegalArgumentException` when the arguments do not parse, which fails the sbt test task: answering
+      * with no tasks would report "No tests to run" and succeed, so a mistyped flag would pass silently.
+      */
     def tasks(taskDefs: Array[TaskDef]): Array[Task] =
         parsedArgs match
-            case Args.Result.Ok(_) => taskDefs.map(td => new JsTask(td, baseConfig, testClassLoader, results))
-            case _                 => Array.empty
+            case Args.Result.Ok(_)      => taskDefs.map(td => new JsTask(td, baseConfig, testClassLoader, results))
+            case Args.Result.Error(msg) => throw Args.invalid(msg)
+            case Args.Result.Help       => Array.empty
 
     /** Returns [[JsTask]] instances directly, avoiding polymorphic dispatch through [[sbt.testing.Task]] on Scala.js.
       *
@@ -59,8 +59,9 @@ final private[runner] class JsRunner(
       */
     private[runner] def jsTasksTyped(taskDefs: Array[TaskDef]): Array[JsTask] =
         parsedArgs match
-            case Args.Result.Ok(_) => taskDefs.map(td => new JsTask(td, baseConfig, testClassLoader, results))
-            case _                 => Array.empty
+            case Args.Result.Ok(_)      => taskDefs.map(td => new JsTask(td, baseConfig, testClassLoader, results))
+            case Args.Result.Error(msg) => throw Args.invalid(msg)
+            case Args.Result.Help       => Array.empty
 
     /** Not used: kyo-test does not support the master/worker communication model.
       *

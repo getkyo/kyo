@@ -148,4 +148,16 @@ class JsFrameworkTest extends AsyncFunSuite with NonImplicitAssertions:
         Future.successful(succeed)
     }
 
+    // An unrecognised flag (a typo such as `--include` for `--filter=`) must fail the run. Answering with no tasks makes sbt report
+    // "No tests to run" and succeed, so a mistyped selection passes silently.
+    test("tasks fails the run on an unknown argument instead of returning no tasks") {
+        val runner   = makeRunner("--include", "**leaf**")
+        val defs     = Array(taskDefFor(classOf[JsNextSingleLeafSuite]))
+        val viaTasks = intercept[IllegalArgumentException](runner.tasks(defs))
+        val viaTyped = intercept[IllegalArgumentException](runner.jsTasksTyped(defs))
+        assert(viaTasks.getMessage.contains("unknown argument: '--include'"), s"unexpected message: ${viaTasks.getMessage}")
+        assert(viaTyped.getMessage.contains("unknown argument: '--include'"), s"unexpected message: ${viaTyped.getMessage}")
+        Future.successful(succeed)
+    }
+
 end JsFrameworkTest
