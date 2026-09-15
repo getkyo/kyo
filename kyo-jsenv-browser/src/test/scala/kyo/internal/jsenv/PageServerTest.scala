@@ -19,6 +19,25 @@ class PageServerTest extends kyo.test.Test[Any]:
         assert(PageServer.jsString("") == "\"\"")
     }
 
+    "jsString escapes each surrogate code unit, paired or not" in {
+        val input = "a" + 0xd83d.toChar + 0xde00.toChar + "b" + 0xdc00.toChar
+        assert(PageServer.jsString(input) == "\"a\\ud83d\\ude00b\\udc00\"")
+    }
+
+    "unescapeUnits restores backslashes and code unit escapes" in {
+        assert(PageServer.unescapeUnits("plain") == Result.succeed("plain"))
+        assert(PageServer.unescapeUnits("a\\\\b") == Result.succeed("a\\b"))
+        assert(PageServer.unescapeUnits("x\\ud800y\\uDC00") == Result.succeed("x" + 0xd800.toChar + "y" + 0xdc00.toChar))
+        assert(PageServer.unescapeUnits("\\\\ud800") == Result.succeed("\\ud800"))
+    }
+
+    "unescapeUnits rejects an escape the page never produces" in {
+        assert(PageServer.unescapeUnits("a\\nb").isFailure)
+        assert(PageServer.unescapeUnits("a\\u12").isFailure)
+        assert(PageServer.unescapeUnits("a\\uzzzz").isFailure)
+        assert(PageServer.unescapeUnits("trailing\\").isFailure)
+    }
+
     "page loads an ESModule main module as a module script after the com setup" in {
         val html = PageServer.page("main.js", PageServer.ModuleKind.ESModule)
         assert(html.contains("""<script type="module" src="main.js""""))

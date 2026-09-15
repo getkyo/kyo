@@ -143,13 +143,13 @@ private[kyo] object BrowserRunner:
         val handler: CdpEvent.Generic => Unit < Sync = event =>
             event.params match
                 case call: ConsoleApiCalledWire =>
-                    val text = call.args.flatMap(arg => arg.value.orElse(arg.description).toChunk).mkString(" ")
+                    val text = call.args.map(_.text).mkString(" ")
                     call.`type` match
                         case "error" | "warning" | "assert" | "trace" => output.err(text)
                         case _                                        => output.out(text)
                 case thrown: ExceptionThrownWire =>
                     val details = thrown.exceptionDetails
-                    val text    = details.exception.flatMap(_.description).map(d => s"${details.text} $d").getOrElse(details.text)
+                    val text    = details.exception.map(thrown => s"${details.text} ${thrown.text}").getOrElse(details.text)
                     fail(output, exit, text)
                 case _: TargetCrashedWire => fail(output, exit, "the page's renderer crashed")
                 case _                    => Kyo.unit
@@ -168,7 +168,10 @@ private[kyo] object BrowserRunner:
         val handler: CdpEvent.Generic => Unit < Async = event =>
             event.params match
                 case call: BindingCalledWire if call.name == PageServer.sendBinding =>
-                    Abort.run[Closed](com.outbound.safe.put(ComFrame.encode(call.payload))).unit
+                    PageServer.unescapeUnits(call.payload) match
+                        case Result.Success(message) => Abort.run[Closed](com.outbound.safe.put(ComFrame.encode(message))).unit
+                        case Result.Failure(error)   => fail(output, exit, error)
+                        case Result.Panic(error)     => fail(output, exit, error.toString)
                 case call: BindingCalledWire if call.name == PageServer.readyBinding => ready.release
                 case call: BindingCalledWire if call.name == PageServer.failBinding  => fail(output, exit, call.payload)
                 case _                                                               => Kyo.unit

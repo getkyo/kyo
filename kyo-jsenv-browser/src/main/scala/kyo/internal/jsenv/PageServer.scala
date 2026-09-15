@@ -1,6 +1,7 @@
 package kyo.internal.jsenv
 
 import kyo.*
+import scala.annotation.tailrec
 
 /** Serves a linked Scala.js output directory and the page that runs it.
   *
@@ -63,6 +64,18 @@ private[jsenv] object PageServer:
            |(function () {
            |  var onMessage = null;
            |  var queued = [];
+           |  // CDP carries a binding payload as UTF-8 JSON, which cannot hold an unpaired surrogate, so backslashes and every surrogate
+           |  // code unit are escaped here and restored by the runner.
+           |  function escapeUnits(message) {
+           |    var escaped = "";
+           |    for (var i = 0; i < message.length; i++) {
+           |      var unit = message.charCodeAt(i);
+           |      if (unit === 92) escaped += String.fromCharCode(92, 92);
+           |      else if (unit >= 0xd800 && unit <= 0xdfff) escaped += String.fromCharCode(92, 117) + ("000" + unit.toString(16)).slice(-4);
+           |      else escaped += message.charAt(i);
+           |    }
+           |    return escaped;
+           |  }
            |  window.scalajsCom = {
            |    init: function (callback) {
            |      if (onMessage !== null) throw new Error("Com already initialized");
@@ -74,7 +87,7 @@ private[jsenv] object PageServer:
            |      });
            |    },
            |    send: function (message) {
-           |      $sendBinding(message);
+           |      $sendBinding(escapeUnits(message));
            |    }
            |  };
            |  window.$receiveFunction = function (message) {
@@ -91,16 +104,38 @@ private[jsenv] object PageServer:
            |""".stripMargin
     end page
 
-    /** `value` as a JavaScript string literal. */
+    /** Restores a message the page escaped before sending it through [[sendBinding]]: a doubled backslash is a backslash, and a backslash,
+      * `u` and four hex digits is that UTF-16 code unit.
+      */
+    def unescapeUnits(payload: String): Result[String, String] =
+        val message = new StringBuilder(payload.length)
+        def isHex(from: Int): Boolean =
+            (from until from + 4).forall(i => Character.digit(payload.charAt(i), 16) >= 0)
+        @tailrec def loop(i: Int): Result[String, String] =
+            if i >= payload.length then Result.succeed(message.toString)
+            else if payload.charAt(i) != '\\' then
+                discard(message.append(payload.charAt(i)))
+                loop(i + 1)
+            else if i + 1 < payload.length && payload.charAt(i + 1) == '\\' then
+                discard(message.append('\\'))
+                loop(i + 2)
+            else if i + 5 < payload.length && payload.charAt(i + 1) == 'u' && isHex(i + 2) then
+                discard(message.append(Integer.parseInt(payload.substring(i + 2, i + 6), 16).toChar))
+                loop(i + 6)
+            else Result.fail(s"malformed escape at offset $i of a message from the page")
+        loop(0)
+    end unescapeUnits
+
+    /** `value` as a JavaScript string literal. Surrogate code units are escaped so the literal survives CDP's UTF-8 JSON. */
     def jsString(value: String): String =
         val literal = new StringBuilder("\"")
         value.foreach {
-            case '"'                                                        => literal.append("\\\"")
-            case '\\'                                                       => literal.append("\\\\")
-            case '\n'                                                       => literal.append("\\n")
-            case '\r'                                                       => literal.append("\\r")
-            case c if c < ' ' || c == '\u2028' || c == '\u2029' || c == '<' => literal.append(f"\\u${c.toInt}%04x")
-            case c                                                          => literal.append(c)
+            case '"'                                                                         => literal.append("\\\"")
+            case '\\'                                                                        => literal.append("\\\\")
+            case '\n'                                                                        => literal.append("\\n")
+            case '\r'                                                                        => literal.append("\\r")
+            case c if c < ' ' || c.isSurrogate || c == '\u2028' || c == '\u2029' || c == '<' => literal.append(f"\\u${c.toInt}%04x")
+            case c                                                                           => literal.append(c)
         }
         literal.append('"').toString
     end jsString
