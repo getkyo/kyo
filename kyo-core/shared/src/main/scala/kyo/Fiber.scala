@@ -4,7 +4,6 @@ import java.lang.invoke.VarHandle
 import java.util.Arrays
 import kyo.Result.Panic
 import kyo.internal.Reducible
-import kyo.kernel.Bracket
 import kyo.kernel.ContextEffect
 import kyo.kernel.internal.Safepoint
 import kyo.scheduler.IOPromise
@@ -135,25 +134,20 @@ object Fiber:
         reduce: Reducible[Abort[E]],
         frame: Frame
     ): Fiber[A, reduce.SReduced & S2] < (Sync & S & Scope) =
-        // The scope's finalizer interrupts the fiber and waits for it to have released, not on the fiber itself:
-        // `IOPromise.interrupt` completes that promise before the body unwinds. `Bracket.ensuring` reports every ending,
-        // including a fiber abandoned before its first slice.
-        Sync.Unsafe.defer((IOPromise[Nothing, Maybe[Throwable]](), Scope.Finalizer.Unsafe.init(1))).map { (ended, own) =>
-            val reporting = Bracket.ensuring(cause => ended.completeDiscard(Result.succeed(cause)))(v)
-            // The fiber gets a scope of its own: a nested run is then a child of THIS scope, the release below ends it with what
-            // actually ended the fiber, and `await` orders its releases ahead of the enclosing scope's. Reusing the caller's
-            // finalizer closes the run with the CALLER's verdict, so a lease told the ending was clean pools a connection whose
-            // statement is still on the wire (SqlConnectionCancelTest, "Scope teardown while a statement is in flight").
-            val owned = ContextEffect.handleInheritable(Tag[Scope], own)(reporting)
+        // The fiber gets a scope of its own, standalone rather than the enclosing scope's child, so a nested run is its
+        // child and its resources close with what actually ended the FIBER, not the enclosing scope's verdict. The
+        // release runs when the enclosing scope closes: interrupt the fiber, close its scope with the fiber's result (an
+        // interrupted lease sees the panic and cancels, one that finished on its own closes clean), then `await` the
+        // drain. The `await` is load-bearing: it orders the fiber's releases ahead of the enclosing scope's own
+        // finalizers, which a mere close (the run backstop's) does not, since the drain runs on a detached fiber.
+        Sync.Unsafe.defer {
+            val own   = Scope.Finalizer.Unsafe.init(1)
+            val owned = ContextEffect.handleInheritable(Tag[Scope], own)(v)
             Scope.acquireRelease(initUnscoped[E, A, S, S2](owned)) { fiber =>
+                // Erasure-forced: a fiber is its promise.
+                val promise = fiber.asInstanceOf[IOPromise[Any, Any]]
                 fiber.interrupt
-                    .andThen(Async.useResult(ended) {
-                        // The scope is told what ended the fiber: an interrupted lease sees a panic and cancels, a fiber
-                        // that finished on its own closes clean.
-                        case Result.Success(cause) => own.close(cause.map(Panic(_)))
-                        case _                     => own.close(Absent)
-                    })
-                    .andThen(own.await)
+                    .andThen(Async.useResult(promise)(result => own.close(result.error).andThen(own.await)))
             }
         }
 
@@ -364,6 +358,29 @@ object Fiber:
           */
         inline def interruptDiscard(inline error: => Result.Error[E])(using Frame): Unit < Sync =
             Sync.Unsafe.defer(Unsafe.interruptDiscard(self)(error))
+
+        /** Interrupts the Fiber and waits until it has released what it held.
+          *
+          * A fiber's result is available once its finalizers have run, so this returns after them. Whether this call
+          * interrupted the fiber, an earlier one did, or it finished on its own, the wait ends the same way: with the
+          * fiber released.
+          */
+        def interruptAwait(using frame: Frame): Unit < Async =
+            interruptAwait(Result.Panic(Interrupted(frame)))
+
+        /** Interrupts the Fiber with a specific error and waits until it has released what it held.
+          *
+          * @param error
+          *   The error to interrupt the Fiber with
+          */
+        inline def interruptAwait(inline error: => Result.Error[E])(using Frame): Unit < Async =
+            // One defer: the interrupt is a synchronous promise write, then a single join awaits the result, which a
+            // fiber makes available once its finalizers have run. The result is discarded, so the fiber's own effects
+            // are never run here, and the wait itself is pure `Async`.
+            Sync.Unsafe.defer {
+                discard(self.lower.interrupt(error))
+                Async.useResult(self.lower)(_ => ())
+            }
 
         /** Polls the Fiber for a result without blocking.
           *

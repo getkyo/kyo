@@ -1283,8 +1283,6 @@ class FiberTest extends kyo.test.Test[Any]:
             yield assert(first && !second)
         }
 
-        // PORTED FROM robustness; needs Fiber.interruptAwait, absent on this branch
-        /*
         "interruptAwait returns once the finalizers ran" in {
             for
                 released <- AtomicBoolean.init(false)
@@ -1297,7 +1295,6 @@ class FiberTest extends kyo.test.Test[Any]:
                 seen <- released.get
             yield assert(seen)
         }
-         */
 
         // An interrupt taken on a slice wins over a value the body produces on that same slice: `interrupt()`
         // returned true, so the fiber ends interrupted, never a success. The value is dropped; a resource a body
