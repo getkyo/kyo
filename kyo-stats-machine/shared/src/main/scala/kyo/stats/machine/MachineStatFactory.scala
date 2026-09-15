@@ -26,7 +26,7 @@ private[kyo] class MachineStatFactory extends ExporterFactory:
     // no AllowUnsafe; starting the sampler here is the classpath-presence activation boundary.
     import AllowUnsafe.embrace.danger
     MachineStatFactory.constructed.set(true)
-    val _                                                                  = MachineStatFactory.triggerStart(System.live.unsafe)
+    val _                                                                  = MachineStatFactory.triggerStart()
     override def traceExporter()(using AllowUnsafe): Option[TraceExporter] = None
 end MachineStatFactory
 
@@ -45,42 +45,17 @@ private[kyo] object MachineStatFactory:
       */
     private[machine] val constructed = AtomicBoolean.Unsafe.init(false)
 
-    /** Names of the opt-out env var and system property. */
-    private val disableEnv  = "KYO_MACHINE_DISABLED"
-    private val disableProp = "kyo.machine.disabled"
-
-    /** Reads the opt-out once from the given environment reader. A truthy value suppresses the sampler; unset or
-      * unparseable enables (a graceful, fail-open default). Takes a `System.Unsafe` so the read source is
-      * injectable: production passes `System.live.unsafe`; a test passes a staged reader with a chosen env/prop
-      * map, since `System.let` swaps `System.local` and cannot reach `System.live`, and a real env var cannot be
-      * set inside a running JVM. No effect is needed at the read (the SPI factory constructor has no Frame, the
-      * established kyo-stats-otlp pattern).
+    /** Starts the sampler at most once across all factory constructions (CAS-gated), unless opted out. The
+      * sampler runs in a detached fiber (`Fiber.initUnscoped`) so it outlives the triggering call's own
+      * scope; the tick loop inside `MachineSampler.run` keeps that fiber's own scope open until interrupt.
+      * Returns true iff this call won the CAS and started the sampler, so a test can distinguish a start
+      * from an opt-out suppression from a CAS-lost one.
       *
-      * The lever is a direct env/property read, not a `kyo.config.StaticFlag`, on purpose: it is read at
-      * classpath-presence activation, which runs at `kyo.Stat` class init, before and independently of any
-      * kyo-config initialization, and must resolve on JVM, Node and Native alike. It reads through
-      * `System.Unsafe.env`, so it resolves `process.env` on Node, where `java.lang.System.getenv` returns null;
-      * the nearest sibling, kyo-stats-otlp, reads its own activation env the same bootstrap-time way.
-      *
-      * The environment variable deliberately takes precedence over the system property: the env var is the
-      * per-host bootstrap lever set on the deployment, and the system property is the local development override.
-      * This precedence is intentional, distinct from the property-first order a `StaticFlag` resolves.
+      * `disabled` defaults to the `kyo.machine.disabled` flag and is a parameter so a test can drive both
+      * arms without a process-wide property; a `StaticFlag` resolves once at class load and cannot be staged.
       */
-    private def disabled(env: System.Unsafe)(using AllowUnsafe): Boolean =
-        val raw = env.env(disableEnv).orElse(env.property(disableProp))
-        raw match
-            case Present(v) => v.trim.equalsIgnoreCase("true")
-            case Absent     => false
-    end disabled
-
-    /** Starts the sampler at most once across all factory constructions (CAS-gated), unless the given reader
-      * reports opt-out. The sampler runs in a detached fiber (`Fiber.initUnscoped`) so it outlives the
-      * triggering call's own scope; the tick loop inside `MachineSampler.run` keeps that fiber's own scope
-      * open until interrupt. Returns true iff this call won the CAS and started the sampler (so a test can
-      * distinguish a start from an opt-out suppression from a CAS-lost suppression).
-      */
-    def triggerStart(env: System.Unsafe)(using AllowUnsafe): Boolean =
-        if !disabled(env) && started.compareAndSet(false, true) then
+    def triggerStart(disabled: Boolean = kyo.machine.disabled())(using AllowUnsafe): Boolean =
+        if !disabled && started.compareAndSet(false, true) then
             given Frame = Frame.internal
             val fiber = Sync.Unsafe.evalOrThrow {
                 Fiber.initUnscoped {

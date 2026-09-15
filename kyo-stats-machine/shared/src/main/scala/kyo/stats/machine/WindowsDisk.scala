@@ -123,7 +123,7 @@ private[machine] object WindowsDisk:
             // off Windows, so the first call against an unresolved symbol throws an Error rather than an
             // exception. Containing it here keeps a non-Windows host reporting no disk rows instead of
             // killing the sampler fiber; every other fatal throwable still propagates.
-            case ex: Throwable if scala.util.control.NonFatal(ex) || ex.isInstanceOf[LinkageError] => ()
+            case ex: Throwable if Machine.degradable(ex) => ()
     end diskFreeInto
 
 end WindowsDisk

@@ -12,6 +12,20 @@ class MachineSamplerTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
+    "configuration" - {
+
+        // Parsing and env/property resolution belong to kyo-config and Duration's Flag.Reader, which test
+        // them; what this module owns is the defaults it publishes and the fact that the sampler reads them.
+        "the published defaults are one second and a four second disk bound" in {
+            assert(kyo.machine.interval() == 1.second)
+            assert(kyo.machine.diskReadTimeout() == 4.seconds)
+        }
+
+        "the disk bound sits above the cadence, so a slow mount is not abandoned every cycle" in {
+            assert(kyo.machine.diskReadTimeout() > kyo.machine.interval())
+        }
+    }
+
     "readInto" - {
 
         "passes the SAME retained Decode instance every tick (one Decode per proc file, identity stable)" in {
@@ -208,6 +222,37 @@ class MachineSamplerTest extends kyo.test.Test[Any]:
                     _ <- fiber.interrupt
                     snapshot = recorded.get()
                 yield assert(snapshot == Chunk(1.seconds, 2.seconds, 3.seconds, 4.seconds, 5.seconds))
+                end for
+            }
+        }
+
+        "a configured interval is the cadence the loop actually ticks at" in {
+            // The lever has to move the producer, not just parse: everything downstream inherits this
+            // cadence, so a consumer polling ten times a second reads the same value ten times unless the
+            // sampler itself ticks faster.
+            val recorded = AtomicRef.Unsafe.init(Chunk.empty[Duration])
+            Clock.withTimeControl { tc =>
+                for
+                    handles <- MachineHandles.init
+                    clock   <- Clock.get
+                    machine = new Machine:
+                        def read()(using AllowUnsafe): Unit      = discard(recorded.updateAndGet(_.append(clock.unsafe.nowMonotonic())))
+                        def readDisks()(using AllowUnsafe): Unit = ()
+                        def close()(using AllowUnsafe): Unit     = ()
+                    interval = 100.millis
+                    fiber <- Fiber.initUnscoped(Clock.let(clock)(Scope.run(MachineSampler.runWith(handles, _ => machine, interval))))
+                    _     <- tc.advance(Duration.Zero, 100.millis) // let the fiber reach the fast-fiber schedule registration first
+                    _     <- tc.advance(100.millis)
+                    _     <- tc.advance(100.millis)
+                    _     <- tc.advance(100.millis)
+                    _     <- tc.advance(100.millis)
+                    _     <- tc.advance(100.millis)
+                    _     <- fiber.interrupt
+                    snapshot = recorded.get()
+                yield
+                    assert(interval == 100.millis)
+                    // Five ticks in half a second, where the default cadence would have produced none.
+                    assert(snapshot == Chunk(100.millis, 200.millis, 300.millis, 400.millis, 500.millis))
                 end for
             }
         }
