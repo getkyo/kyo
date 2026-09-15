@@ -8,6 +8,83 @@ import scala.annotation.nowarn
 
 class TagTest extends kyo.test.Test[Any]:
 
+    "ordinary operations are portable in the macro host" in {
+        val errors = scala.compiletime.testing.typeCheckErrors(
+            "kyo.internal.TagTestMacro.assertPortableOperations()"
+        )
+        assert(errors.isEmpty, errors.toString)
+    }
+
+    "colliding nominal hashes" - {
+        class Aa
+        class BB
+
+        "the independently derived encodings collide" in {
+            val a = Tag[Aa]
+            val b = Tag[BB]
+            val encodedA = Tag.internal.encode[Aa](a.tpe.staticDB)
+            val encodedB = Tag.internal.encode[BB](b.tpe.staticDB)
+            assert(encodedA != encodedB)
+            assert(encodedA.hashCode == encodedB.hashCode)
+            assert(TagHash.of(a) == TagHash.of(b))
+            assert(a.show != b.show)
+        }
+
+        "distinct types agree with the compiler" - {
+            test[Aa, BB]
+        }
+
+        "same types agree with the compiler" - {
+            test[Aa, Aa]
+        }
+
+        "a cached successful subtype does not admit a colliding type" in {
+            val accepted = Tag[List[Aa]]
+            val rejected = Tag[List[BB]]
+            val target = Tag[Seq[Aa]]
+            assert(TagHash.of(accepted) == TagHash.of(rejected))
+            assert(TagHash.of(accepted) != TagHash.of(target))
+            for _ <- 0 until 3 do
+                assert(accepted <:< target)
+                assert(!(rejected <:< target))
+        }
+
+        "a cached rejected subtype does not reject a colliding type" in {
+            val rejected = Tag[Vector[Aa]]
+            val accepted = Tag[Vector[BB]]
+            val target = Tag[Seq[BB]]
+            assert(TagHash.of(accepted) == TagHash.of(rejected))
+            assert(TagHash.of(accepted) != TagHash.of(target))
+            for _ <- 0 until 3 do
+                assert(!(rejected <:< target))
+                assert(accepted <:< target)
+        }
+    }
+
+    "dynamic captured lambda bodies" - {
+        trait Higher[F[_]]
+        def original[A: Tag]: Tag[Higher[[X] =>> Either[A, X]]] = Tag.dynamic[Higher[[X] =>> Either[A, X]]]
+        def renamed[A: Tag]: Tag[Higher[[Y] =>> Either[A, Y]]] = Tag.dynamic[Higher[[Y] =>> Either[A, Y]]]
+
+        "alpha-equivalent bodies agree with the compiler" - {
+            test[Higher[[X] =>> Either[Int, X]], Higher[[Y] =>> Either[Int, Y]]](using
+                original[Int], renamed[Int], summon[RegisterFunction], summon[Frame]
+            )
+        }
+
+        "different captured bodies agree with the compiler" - {
+            test[Higher[[X] =>> Either[Int, X]], Higher[[X] =>> Either[String, X]]](using
+                original[Int], original[String], summon[RegisterFunction], summon[Frame]
+            )
+        }
+
+        "dynamic and static bodies agree with the compiler" - {
+            test[Higher[[X] =>> Either[Int, X]], Higher[[X] =>> Either[Int, X]]](using
+                original[Int], Tag[Higher[[X] =>> Either[Int, X]]], summon[RegisterFunction], summon[Frame]
+            )
+        }
+    }
+
     "without variance" - {
         "equal tags" - {
             class Test[A]

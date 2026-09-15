@@ -13,6 +13,52 @@ abstract class RegisterFunction:
 object TagTestMacro:
     case class Test(name: String, body: () => Unit)
 
+    inline def assertPortableOperations(): Unit = ${ assertPortableOperationsImpl }
+
+    private def assertPortableOperationsImpl(using q: Quotes): Expr[Unit] =
+        import q.reflect.*
+
+        def check(name: String, actual: Boolean, expected: Boolean): Unit =
+            if actual != expected then
+                report.errorAndAbort(s"Tag macro-host $name: expected $expected, obtained $actual")
+
+        def compare[A: Type, B: Type](left: Tag[A], right: Tag[B]): Unit =
+            val a = TypeRepr.of[A]
+            val b = TypeRepr.of[B]
+            val label = s"${a.show}, ${b.show}"
+            check(s"equality ($label)", left =:= right, a =:= b)
+            check(s"inequality ($label)", left =!= right, !(a =:= b))
+            check(s"subtype ($label)", left <:< right, a <:< b)
+            check(s"supertype ($label)", left >:> right, b <:< a)
+        end compare
+
+        def list[A: Tag]: Tag[List[A]] = Tag.dynamic[List[A]]
+        def nested[A: Tag, B: Tag]: Tag[Map[A, List[B]]] = Tag.dynamic[Map[A, List[B]]]
+
+        // These are ordinary API calls executed by the macro host, outside the returned quote.
+        compare(Tag[Int], Tag[String])
+        compare(Tag[Int], Tag[Int])
+        compare(Tag[true], Tag[false])
+        compare(Tag[1], Tag[Int])
+        compare(Tag[Int], Tag[1])
+        compare(list[Int], Tag[List[Int]])
+        compare(list[Int], list[Int])
+        compare(list[Int], list[String])
+        compare(list[Int], Tag[Seq[Int]])
+        compare(list[Int], Tag[Seq[String]])
+        compare(nested[String, Int], Tag[Map[String, List[Int]]])
+        compare(nested[String, Int], nested[Int, String])
+        compare(Tag[Int | String], Tag[String | Int])
+        check("Int public hash", Tag[Int].hash == -1492440803, true)
+        check("String public hash", Tag[String].hash == -59591402, true)
+        check("Int show", Tag[Int].show == "scala.Int", true)
+        check("String show", Tag[String].show == "java.lang.String", true)
+        check("dynamic show", list[Int].show == Tag[List[Int]].show, true)
+        check("dynamic hash repeat", nested[String, Int].hash == nested[String, Int].hash, true)
+        check("dynamic hash argument identity", nested[String, Int].hash != nested[Int, String].hash, true)
+        '{ () }
+    end assertPortableOperationsImpl
+
     inline def test[T1, T2](using k1: Tag[T1], k2: Tag[T2], register: RegisterFunction, frame: Frame): Unit =
         test[T1, T2]()
 
