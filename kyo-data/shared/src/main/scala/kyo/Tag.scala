@@ -326,9 +326,9 @@ object Tag:
             else Runtime.getRuntime().availableProcessors() * 8
 
         private val cacheEntries = 128
-        final private case class Comparison(a: Tag[?], b: Tag[?], mode: Mode, result: Boolean)
+        final private case class Comparison[A, B](a: Tag[A], b: Tag[B], mode: Mode, result: Boolean)
         private val cacheSlots = Array.fill(threadSlots) {
-            new AtomicReferenceArray[Maybe[Comparison]](Array.fill[Maybe[Comparison] & AnyRef](cacheEntries)(Absent))
+            new AtomicReferenceArray[Maybe[Comparison[?, ?]]](Array.fill[Maybe[Comparison[?, ?]] & AnyRef](cacheEntries)(Absent))
         }
 
         private def dynamicHashCode(tag: String, map: Map[Entry.Id, Any]): Int =
