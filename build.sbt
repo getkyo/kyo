@@ -3480,11 +3480,21 @@ lazy val `kyo-test-sbt-publish` =
             }.value,
             // Gate the suite through the normal test task so CI picks it up with no bespoke step.
             // Skipped on Windows: scripted's nested sbt flakily fails to create its named-pipe boot
-            // server there (sbt/sbt#6777), failing the batch reload before any test runs.
+            // server there (sbt/sbt#6777), failing the batch reload before any test runs. js-browser
+            // runs its tests in chrome-headless-shell, which Chrome for Testing does not publish for
+            // Linux on arm64, so that host runs the other sub-builds.
             Test / test := (Test / test).dependsOn(Def.taskDyn {
-                if (sys.props.getOrElse("os.name", "").toLowerCase.contains("win"))
+                val os   = sys.props.getOrElse("os.name", "").toLowerCase
+                val arch = sys.props.getOrElse("os.arch", "").toLowerCase
+                if (os.contains("win"))
                     Def.task(streams.value.log.info("scripted skipped on Windows (sbt#6777)"))
-                else
+                else if (os.contains("linux") && (arch == "aarch64" || arch == "arm64")) {
+                    val tests = (sbtTestDirectory.value / "kyo-test").listFiles().toSeq.map(_.getName).filterNot(_ == "js-browser").sorted
+                    Def.task {
+                        streams.value.log.info("scripted kyo-test/js-browser skipped: no chrome-headless-shell for linux-arm64")
+                        (scripted.toTask(tests.map(name => s" kyo-test/$name").mkString)).value
+                    }
+                } else
                     Def.task((scripted.toTask("")).value)
             }).value
         )

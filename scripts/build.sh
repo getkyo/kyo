@@ -16,7 +16,7 @@ set -uo pipefail
 # <action>    one of test, testDiff, compile, link, linkCheck (default: test), or
 #             `sbt <raw command>` to run one arbitrary sbt command in the env
 #             (e.g. build.sh --env direct sbt 'kyo-netJVM/test'); no platform arg
-# <platform>  one or more of JVM, JS, Native, Wasm, all (default: all)
+# <platform>  one or more of JVM, JS, Native, Wasm, Browser, BrowserWasm, all (default: all)
 #
 # Every env delegates the WHAT to the same ci-test.sh, so a local run and a CI
 # run execute identical runner code.
@@ -55,7 +55,7 @@ apt_mirror="${KYO_APT_MIRROR:-}"
 ENV_KIND="direct"
 ARCH="native"
 ACTIONS="test testDiff compile link linkCheck"
-PLATFORMS="JVM JS Native Wasm"
+PLATFORMS="JVM JS Native Wasm Browser BrowserWasm"
 
 usage() {
     echo "Usage: build.sh [--env direct|podman|podman-ci] [--arch native|x86|arm] <action> <platform...>" >&2
@@ -103,7 +103,7 @@ else
     fi
     for p in "$@"; do
         if [ "$p" = "all" ]; then
-            PLAT_LIST="JVM JS Native Wasm"
+            PLAT_LIST="$PLATFORMS"
         elif contains_word "$p" "$PLATFORMS"; then
             PLAT_LIST="$PLAT_LIST $p"
         else

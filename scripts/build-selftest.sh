@@ -153,7 +153,7 @@ if [ "$rc" -eq 2 ]
 then record ok "unknown env exits 2"
 else record no "unknown env exits 2"; fi
 
-# 11. test all expands to four ci-test.sh invocations, fail-fast on the second platform
+# 11. test all fails fast on the second platform
 # ci-test.sh stub: JVM exits 0, JS exits 1, any later call exits 0.
 {
     printf '#!/usr/bin/env bash\n'
@@ -171,6 +171,13 @@ call_count=$(citest_call_count)
 if [ "$rc" -eq 1 ] && [ "$call_count" = "2" ]
 then record ok "test all fails fast on second platform; exactly 2 ci-test.sh calls"
 else record no "test all fails fast on second platform; exactly 2 ci-test.sh calls (rc=$rc calls=$call_count)"; fi
+
+# 11b. test all runs every platform, the browser rows included, in order
+make_citest_stub 0; reset_logs
+rc=0; run_build --env direct test all >/dev/null 2>&1 || rc=$?
+if [ "$rc" -eq 0 ] && [ "$(cat "$CITEST_LOG")" = "$(printf 'JVM test\nJS test\nNative test\nWasm test\nBrowser test\nBrowserWasm test')" ]
+then record ok "test all runs JVM, JS, Native, Wasm, Browser, and BrowserWasm in order"
+else record no "test all runs JVM, JS, Native, Wasm, Browser, and BrowserWasm in order (rc=$rc calls=$(tr '\n' ' ' < "$CITEST_LOG"))"; fi
 
 # 12. the pre-run echo is unconditional
 make_citest_stub 0; reset_logs
@@ -211,5 +218,5 @@ then echo "  SELFTEST-BUG: negative control passed (vacuous harness)"; FAIL=$((F
 
 echo ""
 echo "Results: $PASS/$TOTAL passed, $FAIL failed"
-[ "$FAIL" -eq 0 ] && [ "$TOTAL" -eq 14 ]
+[ "$FAIL" -eq 0 ] && [ "$TOTAL" -eq 15 ]
 exit $?

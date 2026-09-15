@@ -7,12 +7,13 @@ set -uo pipefail
 #   ci-test.sh <platform> <action>
 #   ci-test.sh --self-test
 #
-# <platform>  one of JVM, JS, Native, Wasm.
+# <platform>  one of JVM, JS, Native, Wasm, Browser, BrowserWasm.
 # <action>    one of test, testDiff, compile, link, linkCheck.
 #
-# linkCheck is one sbt process running the `linkCheck <platform>` command, and a no-op on JVM.
+# linkCheck is one sbt process running the `linkCheck <platform>` command, and a no-op on JVM and on
+# the browser rows, which link what the JS and Wasm rows link.
 #
-# JVM, JS, and Wasm run as three separate sbt processes (compile-main, then
+# JVM, JS, Wasm, Browser, and BrowserWasm run as three separate sbt processes (compile-main, then
 # compile-test, then run) so the driver never holds the whole compile heap while
 # the test phase forks. Each of those processes chains its Scala passes in one
 # ordered command string, so one process covers the primary version and the 2.x
@@ -51,7 +52,7 @@ set -uo pipefail
 # caller (a CI workflow, or build.sh --env podman-ci) owns the environment, so
 # this one runner is correct in every environment.
 
-PLATFORMS="JVM JS Native Wasm"
+PLATFORMS="JVM JS Native Wasm Browser BrowserWasm"
 # linkCheck links representative programs the way an application does and checks what it gets: runnable under
 # plain node, no data it cannot reach, a size ceiling, and no data-only dependency (project/LinkCheck.scala).
 ACTIONS="test testDiff compile link linkCheck"
@@ -216,6 +217,16 @@ if [ "${1:-}" = "--self-test" ]; then
        && call_nth_is 1 "testKyo --phase compile-main --all Wasm" && exit_is 0
     then record ok "JS and Wasm take the same three-process split"
     else record no "JS and Wasm take the same three-process split"; fi
+
+    # 2b. The browser rows take the JS split too, heap cap included.
+    run_runner Browser test 'exit 0'
+    browser_ok=no
+    if calls_count 3 && call_nth_is 3 "-J-Xmx6G testKyo --all Browser" && exit_is 0; then browser_ok=yes; fi
+    run_runner BrowserWasm testDiff 'exit 0'
+    if [ "$browser_ok" = yes ] && calls_count 3 && call_nth_is 1 "testKyo --phase compile-main  BrowserWasm" \
+       && call_nth_is 3 "-J-Xmx6G testKyo  BrowserWasm" && exit_is 0
+    then record ok "Browser and BrowserWasm take the same three-process split"
+    else record no "Browser and BrowserWasm take the same three-process split"; fi
 
     # 3. Phase-split fails fast on a compile-main failure.
     run_runner JVM test 'exit 1'
@@ -606,14 +617,16 @@ echo "Tests: succeeded 100, failed 0"; echo "[testKyo] completed"; exit 0'
     else record no "CONTAINER_SWEEP=0 touches no container runtime at all"; fi
     rm -f "$SELFDIR/podman" "$SELFDIR/podman-ps"
 
-    # 54: linkCheck is one sbt process on JS, Wasm, and Native, and runs nothing on the JVM.
+    # 54: linkCheck is one sbt process on JS, Wasm, and Native, and runs nothing on the JVM or the browser rows.
     lc_ok=yes
     for p in JS Wasm Native; do
         run_runner "$p" linkCheck 'exit 0'
         { calls_count 1 && call_nth_is 1 "linkCheck $p" && exit_is 0; } || lc_ok=no
     done
-    run_runner JVM linkCheck 'exit 0'
-    { calls_count 0 && exit_is 0; } || lc_ok=no
+    for p in JVM Browser BrowserWasm; do
+        run_runner "$p" linkCheck 'exit 0'
+        { calls_count 0 && exit_is 0; } || lc_ok=no
+    done
     run_runner JS linkCheck 'exit 1'
     { calls_count 1 && exit_is 1; } || lc_ok=no
     if [ "$lc_ok" = yes ]
@@ -635,7 +648,7 @@ echo "Tests: succeeded 100, failed 0"; echo "[testKyo] completed"; exit 0'
 
     echo ""
     echo "Results: $PASS/$TOTAL passed, $FAIL failed"
-    [ "$FAIL" -eq 0 ] && [ "$TOTAL" -eq 56 ]
+    [ "$FAIL" -eq 0 ] && [ "$TOTAL" -eq 57 ]
     exit $?
 fi
 
@@ -772,8 +785,9 @@ run_arg() {
     esac
 }
 
-# Run-phase driver heap cap for the out-of-JVM targets. JS/Wasm run in Node and Native runs the linked
-# binary, so the run-phase driver holds no test heap, yet .jvmopts pins -Xmx12G for the compile phases. On
+# Run-phase driver heap cap for the out-of-JVM targets. JS/Wasm run in Node, the browser rows in a forked runner
+# JVM and Chrome, and Native runs the linked binary, so the run-phase driver holds no test heap, yet .jvmopts pins
+# -Xmx12G for the compile phases. On
 # a 16GB runner a 12GB run-phase driver (measured 9-11GB RSS) leaves under 1GB for the Node/Wasm runtime
 # plus podman, so kyo-pod container suites hit `sh: Cannot fork` (EAGAIN) and OOM kills. Cap it for those
 # targets; JVM and the compile/heavy-link phases keep the full heap (they are the heap-heavy ones).
@@ -1129,9 +1143,10 @@ KYO_SCHED_FILE="$sched_file" bash "$monitor" &
 monitor_pid=$!
 
 if [ "$ACTION" = "linkCheck" ]; then
-    # An application links nothing extra on the JVM, so there is nothing to check there.
-    if [ "$PLATFORM" = "JVM" ]; then
-        log "linkCheck is a no-op for JVM"; rc=0
+    # An application links nothing extra on the JVM, so there is nothing to check there. The browser rows run the links the
+    # JS and Wasm rows check.
+    if [ "$PLATFORM" = "JVM" ] || [ "$PLATFORM" = "Browser" ] || [ "$PLATFORM" = "BrowserWasm" ]; then
+        log "linkCheck is a no-op for $PLATFORM"; rc=0
     else
         sbt_resolve_retry "linkCheck $PLATFORM"; rc=$?
     fi

@@ -98,12 +98,14 @@ final private[runner] class SbtRunner(
                 taskDefs.map(td => new SbtTask(td, baseConfig, testClassLoader, results, forked))
             case Args.Result.Error(msg) => throw Args.invalid(msg)
             case Args.Result.Help       => Array.empty
+        end match
+    end tasks
 
     def done(): String =
         runEndOfRunChecks()
         parsedArgs match
-            case Args.Result.Error(msg) => msg
-            case Args.Result.Help       => ""
+            case Args.Result.Error(msg)                     => msg
+            case Args.Result.Help                           => ""
             case Args.Result.Ok(_) if !tasksRequested.get() => ""
             case Args.Result.Ok(_) =>
                 import scala.jdk.CollectionConverters.*

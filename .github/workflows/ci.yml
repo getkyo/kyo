@@ -8,6 +8,10 @@ name: ci
 # instantiate on Windows: every module, with or without native code, dies at startup on an
 # emitted import whose module name is empty).
 #
+# Browser and BrowserWasm run the JS projects' tests in Chrome (project/KyoJsRows.scala): both on
+# linux-x64, and Browser on windows-x64. Chrome for Testing publishes no chrome-headless-shell for
+# linux-arm64 or windows-arm64, so those poles have no browser rows.
+#
 # Dispatching a custom run lives in ci-dispatch.yml. Keeping it out of this file is what stops a
 # pull request from reporting a set of skipped jobs it can never run: a job whose condition is
 # false still appears as a Skipped check, so the only way to not report one is to not define it
@@ -43,9 +47,9 @@ jobs:
       fail-fast: false
       matrix:
         pole:
-          - { os: linux-x64,   image: ubuntu-latest,    targets: '["JVM","JS","Native","Wasm"]' }
+          - { os: linux-x64,   image: ubuntu-latest,    targets: '["JVM","JS","Native","Wasm","Browser","BrowserWasm"]' }
           - { os: linux-arm64, image: ubuntu-24.04-arm, targets: '["JVM","JS","Native","Wasm"]' }
-          - { os: windows-x64, image: windows-latest,   targets: '["JVM","JS"]' }
+          - { os: windows-x64, image: windows-latest,   targets: '["JVM","JS","Browser"]' }
           # windows-11-arm is free for public repos and the same 4 vCPU / 16 GB tier as the rest, so
           # the existing memory tuning carries over. It exists because the release publishes a
           # windows-aarch64 kyo-aeron native and kyo-aeron has no fallback tier: a native nothing runs

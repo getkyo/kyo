@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       targets:
-        description: 'Space-separated platform subset to dispatch (subset of JVM JS Native Wasm).'
+        description: 'Space-separated platform subset to dispatch (subset of JVM JS Native Wasm Browser BrowserWasm).'
         type: string
         required: false
         default: 'JVM JS Native Wasm'
@@ -80,7 +80,8 @@ jobs:
           done
 
           # One pole per requested os, carrying the intersection of the pole's supported
-          # targets with the requested targets (neither Windows pole has Native or Wasm). A
+          # targets with the requested targets (neither Windows pole has Native or Wasm, and only
+          # linux-x64 and windows-x64 have Chrome for Testing for the browser rows). A
           # pole whose intersection is empty is dropped so the matrix never spawns a
           # no-op build.yml call.
           poles=$(jq -cn --arg oses "$oses" --arg targets "$targets" '
@@ -89,10 +90,10 @@ jobs:
             | split(" ")
             | map(select(length > 0))
             | map(
-                if . == "linux-x64" then {os: ., image: "ubuntu-latest", supported: ["JVM","JS","Native","Wasm"]}
+                if . == "linux-x64" then {os: ., image: "ubuntu-latest", supported: ["JVM","JS","Native","Wasm","Browser","BrowserWasm"]}
                 elif . == "linux-arm64" then {os: ., image: "ubuntu-24.04-arm", supported: ["JVM","JS","Native","Wasm"]}
                 elif . == "windows-arm64" then {os: ., image: "windows-11-arm", supported: ["JVM","JS"]}
-                else {os: ., image: "windows-latest", supported: ["JVM","JS"]}
+                else {os: ., image: "windows-latest", supported: ["JVM","JS","Browser"]}
                 end
               )
             | map({os, image, targets: (.supported | map(. as $t | select($req | index($t))))})

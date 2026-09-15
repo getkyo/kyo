@@ -1,8 +1,9 @@
 name: build
-# Reusable workflow: builds + tests one arch across the JVM, JS, Native, and Wasm targets.
+# Reusable workflow: builds + tests one arch across the JVM, JS, Native, Wasm, Browser, and BrowserWasm
+# targets.
 #
-# Parallel across targets: `max-parallel: 4` runs all four targets at once, each as its own
-# matrix job on its own runner, so they never share a runner's memory or daemons.
+# Parallel across targets: `max-parallel: 6` runs every target at once, each as its own matrix job on
+# its own runner, so they never share a runner's memory or daemons.
 #
 # Serial within a target: SBT_TASK_LIMIT=1 (set in env below) runs one sbt task at a time inside
 # each job, bounding peak memory to a single module's compile/link/test on the 16GB runners.
@@ -21,7 +22,7 @@ on:
         type: string
         required: true
       targets:
-        description: 'JSON array of platforms the matrix runs (subset of ["JVM","JS","Native","Wasm"]).'
+        description: 'JSON array of platforms the matrix runs (subset of ["JVM","JS","Native","Wasm","Browser","BrowserWasm"]).'
         type: string
         required: false
         default: '["JVM","JS","Native","Wasm"]'
@@ -52,7 +53,7 @@ jobs:
     timeout-minutes: 360
     strategy:
       fail-fast: false
-      max-parallel: 4
+      max-parallel: 6
       matrix:
         # Never empty. An empty vector does not spawn zero jobs; it fails with "Matrix vector
         # 'target' does not contain any values". Emptiness is handled by the callers (ci.yml over a
@@ -64,8 +65,8 @@ jobs:
       # Serialize the whole CI build: one sbt task at a time. Compile and Scala.js/Wasm link run
       # in-process in the sbt driver heap, and the Native optimizer plus forked LLVM/podman/chrome
       # run alongside it; on the 16GB runners two of those at once either exhaust the 12GB heap
-      # (java.lang.OutOfMemoryError) or overcommit the box (kernel OOM-kill, exit 143). max-parallel:4
-      # still runs the four targets on separate runners, so this costs no wall-clock on the JVM pole.
+      # (java.lang.OutOfMemoryError) or overcommit the box (kernel OOM-kill, exit 143). max-parallel:6
+      # still runs the targets on separate runners, so this costs no wall-clock on the JVM pole.
       SBT_TASK_LIMIT: 1
       # The sbt driver heap is governed by the checked-in .jvmopts (12G): the sbt runner appends
       # .jvmopts after these env opts on the java command line, so an -Xmx set here would never
@@ -149,9 +150,10 @@ jobs:
       # This links small programs the way an application does (project/LinkCheck.scala), runs each under plain
       # node, and fails on data markers, a data-only dependency, or a size past kyo-link-check/ceilings.txt.
       # It runs in every mode, since a change anywhere below the programs can grow what they link, and after a red
-      # test step too, since the two report independent things.
+      # test step too, since the two report independent things. The browser rows link what the JS and Wasm rows link, so
+      # their link is checked there.
       - name: link check ${{ matrix.target }} (${{ inputs.os }})
-        if: ${{ !cancelled() && matrix.target != 'JVM' }}
+        if: ${{ !cancelled() && (matrix.target == 'JS' || matrix.target == 'Wasm' || matrix.target == 'Native') }}
         shell: bash
         run: ./scripts/ci-test.sh "${{ matrix.target }}" linkCheck
 
