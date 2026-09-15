@@ -102,7 +102,7 @@ object IonSchema:
       * string materialized. The write happens synchronously on the calling thread. The stream is
       * flushed once rendering completes but is never closed; the caller owns its lifecycle.
       *
-      * Requires `AllowUnsafe`: this writes directly to a caller-supplied [[OutputStream]] outside
+      * Requires `AllowUnsafe`: this writes directly to a caller-supplied `OutputStream` outside
       * the effect system, so the caller opts into the side effect.
       */
     def encodeTo(schema: IonSchema, out: OutputStream)(using AllowUnsafe): Unit =
@@ -147,7 +147,7 @@ object IonSchema:
       * string materialized. The write happens synchronously on the calling thread. The stream is
       * flushed once rendering completes but is never closed; the caller owns its lifecycle.
       *
-      * Requires `AllowUnsafe`: this writes directly to a caller-supplied [[OutputStream]] outside
+      * Requires `AllowUnsafe`: this writes directly to a caller-supplied `OutputStream` outside
       * the effect system, so the caller opts into the side effect.
       */
     inline def encodeTo[A](out: OutputStream, config: Config = Config.Default)(using schema: Schema[A], allow: AllowUnsafe): Unit =

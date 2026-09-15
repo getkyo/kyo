@@ -434,7 +434,7 @@ object ContainerPredef:
           *   - `--performance-schema=OFF`: the performance_schema engine reserves ~350MB of shared memory at boot.
           *   - `--innodb-log-file-size=32M`: default is 48MB per log file × 2 files; 32M × 2 keeps the redo log lean.
           *
-          * Users who need a production-shaped MySQL can compose their own args via [[serverArgs]] on top of these.
+          * Users who need a production-shaped MySQL can compose their own args via `serverArgs` on top of these.
           */
         val defaultServerArgs: Chunk[String] = Chunk(
             "--innodb-buffer-pool-size=64M",

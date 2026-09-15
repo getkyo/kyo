@@ -1864,7 +1864,7 @@ object Path extends PathPlatformSpecific:
 
     /** The outcome of a single non-blocking lock attempt.
       *
-      * Separates "no" from "not yet", which `Result` alone cannot carry. Only [[Pending]] is worth
+      * Separates "no" from "not yet", which `Result` alone cannot carry. Only [[LockAttempt.Pending]] is worth
       * retrying on its own: a conflict clears when the holder releases, which is the waiting
       * caller's concern, while a pending answer clears without anyone releasing anything.
       */

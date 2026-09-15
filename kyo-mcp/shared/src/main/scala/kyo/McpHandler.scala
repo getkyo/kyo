@@ -10,12 +10,12 @@ package kyo
   *
   * Construct values via the companion factories:
   *
-  *   - [[tool]] / [[toolRaw]] ; `tools/call` endpoints (structured-typed vs raw `ToolOutcome`)
-  *   - [[resource]] ; fixed-URI `resources/read` endpoint
-  *   - [[resourceTemplate]] ; URI-template `resources/read` endpoint
-  *   - [[prompt]] ; `prompts/get` endpoint
-  *   - [[completion]] / [[completionWith]] ; `completion/complete` endpoint (1-arg / 3-arg)
-  *   - [[custom]] ; arbitrary JSON-RPC method
+  *   - `tool` / `toolRaw` ; `tools/call` endpoints (structured-typed vs raw `ToolOutcome`)
+  *   - `resource` ; fixed-URI `resources/read` endpoint
+  *   - `resourceTemplate` ; URI-template `resources/read` endpoint
+  *   - `prompt` ; `prompts/get` endpoint
+  *   - `completion` / [[completionWith]] ; `completion/complete` endpoint (1-arg / 3-arg)
+  *   - `custom` ; arbitrary JSON-RPC method
   *
   * Each factory takes the handler closure directly. `[In]` is annotated at the call site;
   * `[Out]` is inferred from the handler's return type via clause interleaving so callers only
@@ -513,7 +513,7 @@ object McpHandler:
 
     /** Constructs a tool handler returning a full [[ToolOutcome]] for total control
       * (multiple content leaves, a pure-content tool, in-band `isError`). The lower-level
-      * escape; reach for [[tool]] when one returned value should drive the structured output.
+      * escape; reach for `tool` when one returned value should drive the structured output.
       */
     inline def toolRaw[In](
         name: String,
@@ -539,7 +539,7 @@ object McpHandler:
       * time: the engine only dispatches `resources/read` to this handler when the inbound URI
       * equals the registered `uri`. The engine stamps the registered URI onto each [[ResourceBody]]
       * returned by the handler. For URI-template resources where the URI is dynamic per request,
-      * use [[resourceTemplate]].
+      * use `resourceTemplate`.
       *
       * @param subscribe when `true`, this resource opts into the subscription protocol (SS3.4).
       *                  The server advertises `resources.subscribe = true` when any resource handler

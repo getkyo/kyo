@@ -5,7 +5,7 @@ import kyo.Codec
 /** Serialization format for a schema-driven snapshot, wrapping a kyo-schema [[kyo.Codec]] with the text-versus-binary distinction
   * the codec itself does not carry.
   *
-  * A snapshot codec is either [[Text]] or [[Binary]]. The KIND (which of the two cases) decides two things a raw `Codec` cannot
+  * A snapshot codec is either [[SnapshotCodec.Text]] or [[SnapshotCodec.Binary]]. The KIND (which of the two cases) decides two things a raw `Codec` cannot
   * express: whether the stored file holds a UTF-8 string or raw wire bytes, and whether a mismatch report can carry a unified
   * textual diff (only `Text` can). The seven companion presets cover every codec kyo-schema ships (`Yaml`, `Json`, `Ion`,
   * `Protobuf`, `Bson`, `MsgPack`, `IonBinary`); `Text` and `Binary` remain the open extension point for any custom `Codec`.

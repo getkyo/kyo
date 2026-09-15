@@ -244,16 +244,16 @@ private[kyo] object Connection:
       * Distinct from the public close-reason enum `kyo.net.Connection.Status`: this tracks the internal
       * open/upgrading/closing progression, not the close reason surfaced to a caller.
       *
-      *   - [[Created]]: built, pumps not yet started.
-      *   - [[Established]]: pumps running, normal I/O.
-      *   - [[Upgrading]]: a STARTTLS detach won; the fd is kept open and NOT torn down (the connection is
+      *   - [[State.Created]]: built, pumps not yet started.
+      *   - [[State.Established]]: pumps running, normal I/O.
+      *   - [[State.Upgrading]]: a STARTTLS detach won; the fd is kept open and NOT torn down (the connection is
       *     closed to its own pumps yet its socket lives on for the TLS upgrade). The fd is owned by that
       *     upgrade, so this state is terminal for the connection's OWN teardown path: `closeFn` never
       *     takes an Upgrading fd, and a `close()` is routed to the upgrade's owner to abandon it instead
       *     (see `Connection.upgradeAbandon`). It is NOT a state the connection ever leaves: a successful
       *     upgrade builds a fresh connection over the same fd rather than moving this one on.
-      *   - [[Closing]]: a close was initiated; the outbound side is draining before teardown.
-      *   - [[Closed]]: terminal; the handle has been released exactly once.
+      *   - [[State.Closing]]: a close was initiated; the outbound side is draining before teardown.
+      *   - [[State.Closed]]: terminal; the handle has been released exactly once.
       */
     private[kyo] enum State derives CanEqual:
         case Created
@@ -283,10 +283,10 @@ private[kyo] object Connection:
       * release MUST NOT gate on the inbound channel draining: a pooled connection with no reader would
       * then never release, leaking the peer-FIN'd fd in CLOSE_WAIT.
       *
-      *   - [[Live]]: no close requested.
-      *   - [[ReleaseRequested]]: close requested; parked waiters being unblocked.
-      *   - [[AwaitingInFlight]]: write-side drained; awaiting the in-flight count to reach zero.
-      *   - [[Released]]: terminal; the fd is closed exactly once, resources freed exactly once.
+      *   - [[Teardown.Live]]: no close requested.
+      *   - [[Teardown.ReleaseRequested]]: close requested; parked waiters being unblocked.
+      *   - [[Teardown.AwaitingInFlight]]: write-side drained; awaiting the in-flight count to reach zero.
+      *   - [[Teardown.Released]]: terminal; the fd is closed exactly once, resources freed exactly once.
       */
     private[kyo] enum Teardown derives CanEqual:
         case Live

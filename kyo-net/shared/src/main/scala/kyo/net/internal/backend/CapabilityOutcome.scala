@@ -28,7 +28,7 @@ private[net] enum CapabilityOutcome derives CanEqual:
 
     /** The probe RAN TO COMPLETION and reported that the host cannot provide the capability: the OS gate passed, the library loaded, nothing
       * threw, and the answer was still no. The io_uring probe returning a clean `false` on a kernel without io_uring, or under a seccomp /
-      * RLIMIT_MEMLOCK sandbox, is the canonical case and the commonest real degrade. Distinct from [[UnsupportedOS]], which is "this
+      * RLIMIT_MEMLOCK sandbox, is the canonical case and the commonest real degrade. Distinct from [[CapabilityOutcome.UnsupportedOS]], which is "this
       * candidate does not apply here" rather than "it applies and this host cannot serve it".
       */
     case Unavailable(reason: String)
@@ -55,7 +55,7 @@ private[net] enum CapabilityOutcome derives CanEqual:
       */
     case ProbeFailed(cause: Throwable)
 
-    /** True only for [[Available]]. The gate selection reads; every other case means the candidate is skipped. */
+    /** True only for [[CapabilityOutcome.Available]]. The gate selection reads; every other case means the candidate is skipped. */
     def isAvailable: Boolean = this match
         case Available => true
         case _         => false

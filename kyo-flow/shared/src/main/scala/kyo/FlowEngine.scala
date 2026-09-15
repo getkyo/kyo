@@ -908,7 +908,7 @@ final class FlowEngine private (
     /** Which arm an error that ended an attempt belongs to.
       *
       * The two that are not a verdict on the work are worth naming. A [[FlowStoreException]] is a fact about the store, so it is
-      * infrastructure and leaves the execution as claimable as it was. An [[Interrupted]] is a designed way for an attempt to end,
+      * infrastructure and leaves the execution as claimable as it was. An [[Attempt.Interrupted]] is a designed way for an attempt to end,
       * by the engine closing or by the renewal fiber stopping an executor whose lease lapsed, and it is an ordinary throwable that
       * is no [[FlowException]], so without an arm of its own a shutdown terminalises every execution the engine was carrying.
       *
@@ -1157,7 +1157,7 @@ object FlowEngine:
         /** The unwind ran to its end, and what it ends as is a total function of the cause it ran for.
           *
           * `Failure` keeps the message and kind the forward pass produced; `Cancellation` terminalises `Cancelled`. It is separate
-          * from [[DomainFailed]] because a cancellation is not a verdict on the work and must not land as a `Failed` carrying the
+          * from [[Attempt.DomainFailed]] because a cancellation is not a verdict on the work and must not land as a `Failed` carrying the
           * cancel exception's own class name, and because a RESUMED unwind has no exception left to read a kind off: the cause its
           * interrupted attempt recorded is the only thing that still knows.
           */
@@ -1165,7 +1165,7 @@ object FlowEngine:
 
         /** There was nothing to run: the row was already terminal when the attempt reached it.
           *
-          * It writes nothing and releases nothing, unlike an empty [[Suspended]], which would say the ledger is a finished attempt's
+          * It writes nothing and releases nothing, unlike an empty [[Attempt.Suspended]], which would say the ledger is a finished attempt's
           * statement of what the execution waits for. This attempt learned nothing about the rows and holds a claim it took no work
           * under, so the claim lapses like every other ending with no verdict.
           */

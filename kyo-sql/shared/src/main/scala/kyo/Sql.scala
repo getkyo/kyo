@@ -1412,7 +1412,7 @@ object Sql:
               *     query result.
               *   - [[SqlUnsupportedException]], the [[SqlSchema]] decoder called a structural read operation (array element, map entry)
               *     that the backend does not yet implement. Re-derive the schema without the unsupported structural type, or supply a
-              *     custom decoder via [[SqlCodec.of]].
+              *     custom decoder via `SqlCodec.of`.
               */
             inline def run(using ev: SqlSchema[A], frame: Frame): Chunk[A] < (Abort[SqlException] & DB) =
                 ${ kyo.internal.SqlRunMacro.runQueryImpl[A]('q, 'ev, 'frame) }

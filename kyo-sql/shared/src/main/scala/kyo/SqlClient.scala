@@ -766,7 +766,7 @@ end SqlClient
   * chance before that failure: a scheme no compile-time factory claims is looked for among the backends the running program can discover.
   * See [[kyo.db.Backend]] for the two tiers and which one wins a scheme both claim.
   *
-  * The mirrors ([[transaction]], [[executeRaw]], [[address]]) read the [[DB]] effect's client and delegate to it, so a program that supplied
+  * The mirrors (`transaction`, `executeRaw`, `address`) read the [[DB]] effect's client and delegate to it, so a program that supplied
   * one through [[DB.run]] need not thread a receiver through every layer.
   */
 object SqlClient:
@@ -819,7 +819,7 @@ object SqlClient:
                 case Value(_)                => true
                 case NoAutoKey | Unavailable => false
 
-            /** Extracts the id when [[Value]], or returns the default-supplier's result otherwise, with `fold`-style ergonomics. */
+            /** Extracts the id when [[GeneratedKey.Value]], or returns the default-supplier's result otherwise, with `fold`-style ergonomics. */
             inline def foldKey[A](gk: GeneratedKey)(ifAbsent: => A)(f: Long => A): A = gk match
                 case Value(k)                => f(k)
                 case NoAutoKey | Unavailable => ifAbsent

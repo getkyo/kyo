@@ -254,12 +254,12 @@ object SqlRow:
       * against `int8`, `varchar` against `text`) are ones the codecs already handle and a generic caller does not choose between.
       * [[SqlRow.columnTypeName]] is the engine's own spelling for the same column, for showing a human.
       *
-      *   - [[Integer]], [[Decimal]], [[Float]]: exact integral, exact scaled decimal, and approximate binary floating point.
-      *   - [[Bool]], [[Text]], [[Json]], [[Uuid]], [[Bytes]]: the non-numeric scalars.
-      *   - [[Date]], [[Time]], [[TimeWithOffset]], [[DateTime]], [[Timestamp]], [[Interval]]: the temporal family, split the way the SQL
+      *   - [[ColumnKind.Integer]], [[ColumnKind.Decimal]], [[ColumnKind.Float]]: exact integral, exact scaled decimal, and approximate binary floating point.
+      *   - [[ColumnKind.Bool]], [[ColumnKind.Text]], [[ColumnKind.Json]], [[ColumnKind.Uuid]], [[ColumnKind.Bytes]]: the non-numeric scalars.
+      *   - [[ColumnKind.Date]], [[ColumnKind.Time]], [[ColumnKind.TimeWithOffset]], [[ColumnKind.DateTime]], [[ColumnKind.Timestamp]], [[ColumnKind.Interval]]: the temporal family, split the way the SQL
       *     types are.
-      *   - [[Array]]: a one-dimensional array column.
-      *   - [[Unknown]]: a type the backend has no neutral kind for, and a row assembled without server metadata.
+      *   - [[ColumnKind.Array]]: a one-dimensional array column.
+      *   - [[ColumnKind.Unknown]]: a type the backend has no neutral kind for, and a row assembled without server metadata.
       */
     enum ColumnKind derives CanEqual:
         case Integer, Decimal, Float, Bool, Text, Json, Uuid, Bytes, Date, Time, TimeWithOffset, DateTime, Timestamp, Interval, Array,

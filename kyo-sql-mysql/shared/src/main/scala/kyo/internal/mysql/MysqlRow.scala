@@ -5,11 +5,11 @@ import kyo.SqlCodec.Format
 
 /** A single row from a MySQL result set.
   *
-  * Stores the raw bytes for each column alongside the column metadata from [[ColumnDefinition41]] and the wire [[Format]] the values came
+  * Stores the raw bytes for each column alongside the column metadata from [[ColumnDefinition41]] and the wire `Format` the values came
   * back in (Text for simple-query, Binary for extended / prepared-stmt). SQL NULL columns are represented as [[Maybe.Absent]].
   *
   * This is separate from the shared [[kyo.SqlRow]] to keep MySQL column metadata ([[ColumnDefinition41]]) decoupled from the
-  * Postgres-oriented [[kyo.internal.postgres.FieldDescription]] type.
+  * Postgres-oriented `kyo.internal.postgres.FieldDescription` type.
   *
   * WARNING: `MysqlRow.columns` is `Chunk[ColumnDefinition41]`, not the `Chunk[FieldDescription]` exposed by [[kyo.SqlRow.fields]]. Code
   * that bridges [[MysqlRow]] to [[kyo.SqlRow]] (e.g. inside [[kyo.SqlClient]]) must convert column definitions explicitly and forward the

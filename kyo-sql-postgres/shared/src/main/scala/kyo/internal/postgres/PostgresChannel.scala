@@ -19,7 +19,7 @@ import kyo.net.Connection
   *
   * ==COPY cleanup race protection==
   *
-  * Mirrors the [[kyo.internal.mysql.MysqlChannel]] cleanup-latch pattern, extended with an exactly-once claim. A COPY registers a
+  * Mirrors the `kyo.internal.mysql.MysqlChannel` cleanup-latch pattern, extended with an exactly-once claim. A COPY registers a
   * [[PostgresChannel.PendingCopyCleanup]] for the duration of the transfer via [[beginCleanup]]; the exchange resolves it at the
   * ReadyForQuery barrier on its own paths, and a [[send]]/[[receive]] that arrives while it is still pending either runs the abort
   * cleanup itself (claim won: the transfer was abandoned, and its finalizer may be parked until an enclosing scope closes) or waits for
@@ -206,7 +206,7 @@ final class PostgresChannel(
 end PostgresChannel
 
 object PostgresChannel:
-    /** Creates a [[PostgresChannel]] over the given safe [[Connection]] with default marshallers and unmarshallers.
+    /** Creates a [[PostgresChannel]] over the given safe `Connection` with default marshallers and unmarshallers.
       *
       * `socketTimeout` bounds each read; [[Duration.Infinity]], the default, leaves reads unbounded.
       */

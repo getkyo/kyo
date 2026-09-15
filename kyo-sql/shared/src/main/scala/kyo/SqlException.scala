@@ -409,7 +409,7 @@ final case class SqlConnectionResetFailedException(errorCode: Int, errorMessage:
   *
   * `requested` names what the caller asked for, verbatim: the client type at a [[kyo.DB.clientAs]] narrow, or the dialect an
   * engine-only operation belongs to. `activeDriver` is the dialect the client actually speaks. `requested` is a plain string rather
-  * than an [[Idiom.Id]] because the thing asked for is not always a dialect.
+  * than an `Idiom.Id` because the thing asked for is not always a dialect.
   */
 final case class SqlConnectionBackendMismatchException(
     requested: String,

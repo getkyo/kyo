@@ -134,7 +134,7 @@ sealed abstract class Flow[In, Out, S] derives CanEqual:
         AndThen(this, Step[Out, S2](name, fn, Meta(description, tags, timeout, retry), Maybe.empty))
     end step
 
-    /** Like `step`, but registers a compensation handler carrying the step's own effects. See [[outputCompensated]]. */
+    /** Like `step`, but registers a compensation handler carrying the step's own effects. See `outputCompensated`. */
     def stepCompensated[S2](
         name: String,
         description: String = "",
@@ -219,7 +219,7 @@ sealed abstract class Flow[In, Out, S] derives CanEqual:
 
     /** Loop with 1 state value under a declared `description`, `timeout`, `retry` and `tags`.
       *
-      * The knobs arrive as a [[Meta]] rather than as four defaulted parameters because Scala allows only one overload of a name to define
+      * The knobs arrive as a `Meta` rather than as four defaulted parameters because Scala allows only one overload of a name to define
       * default arguments, and the stateless [[loop]] is that overload. `timeout` and `retry` govern one iteration, as they do there.
       */
     def loop[N <: String & Singleton, A: Tag: Schema, V: Tag: Schema, S2](
@@ -246,7 +246,7 @@ sealed abstract class Flow[In, Out, S] derives CanEqual:
         loop[N, A, B, V, S2](name, init1, init2, Meta())(body)
 
     /** Loop with 2 state values under a declared `description`, `timeout`, `retry` and `tags`. See the one-state [[loop]] overload for why
-      * the knobs arrive as a [[Meta]].
+      * the knobs arrive as a `Meta`.
       */
     def loop[N <: String & Singleton, A: Tag: Schema, B: Tag: Schema, V: Tag: Schema, S2](
         name: N,
@@ -272,7 +272,7 @@ sealed abstract class Flow[In, Out, S] derives CanEqual:
       *
       * The handler is NODE level and receives the record the loop's own value is in, which is the value the loop converged on: a loop that
       * booked a shipment per iteration undoes the booking it ended with. It is pushed only once the loop produced that value, so a loop
-      * that was cancelled between iterations has nothing to undo and registers nothing. See [[outputCompensated]] for the effect row the
+      * that was cancelled between iterations has nothing to undo and registers nothing. See `outputCompensated` for the effect row the
       * handler carries.
       */
     def loopCompensated[N <: String & Singleton, V: Tag: Schema, S2](
@@ -397,7 +397,7 @@ sealed abstract class Flow[In, Out, S] derives CanEqual:
       * to depend on, which is the same independence between items that makes a per-item handler the right shape in the first place. A
       * fan-out whose items must be undone in a particular order is a batch, and its handler belongs on the node that owns the batch.
       *
-      * See [[outputCompensated]] for the effect row the handler carries and why it is the body's own.
+      * See `outputCompensated` for the effect row the handler carries and why it is the body's own.
       */
     def foreachCompensated[N <: String & Singleton, E, V, S2](
         name: N,
@@ -484,7 +484,7 @@ sealed abstract class Flow[In, Out, S] derives CanEqual:
 
     /** Loop on a schedule with 1 state value under a declared `description`, `timeout`, `retry` and `tags`.
       *
-      * The knobs arrive as a [[Meta]] rather than as four defaulted parameters because Scala allows only one overload of a name to define
+      * The knobs arrive as a `Meta` rather than as four defaulted parameters because Scala allows only one overload of a name to define
       * default arguments, and the stateless [[loopOn]] is that overload.
       */
     def loopOn[N <: String & Singleton, A: Tag: Schema, V: Tag: Schema, S2](
@@ -509,7 +509,7 @@ sealed abstract class Flow[In, Out, S] derives CanEqual:
         loopOn[N, A, B, V, S2](name, schedule, init1, init2, Meta())(body)
 
     /** Loop on a schedule with 2 state values under a declared `description`, `timeout`, `retry` and `tags`. See the one-state [[loopOn]]
-      * overload for why the knobs arrive as a [[Meta]].
+      * overload for why the knobs arrive as a `Meta`.
       */
     def loopOn[N <: String & Singleton, A: Tag: Schema, B: Tag: Schema, V: Tag: Schema, S2](
         name: N,
@@ -789,7 +789,7 @@ object Flow:
     /** Execute multiple flows in parallel and merge all their outputs. All branches must complete.
       *
       * The branches run in their own fibers, and the `Isolate` carries a custom effect row across that boundary the same way
-      * [[zip]]'s does: captured here, restored per completed branch. Pure and `Async` rows derive an isolate automatically; a
+      * `zip`'s does: captured here, restored per completed branch. Pure and `Async` rows derive an isolate automatically; a
       * stateful row needs one in scope, and a row no isolate can be built for does not compose, deliberately. A body that needs
       * such an effect can handle it inside its own step instead.
       */
@@ -931,7 +931,7 @@ object Flow:
       * the one that holds the fields for an input.
       *
       * @see
-      *   [[kyo.FlowStore.recordWait]] which writes a row, and [[kyo.FlowStore.ExecutionState.waits]] which reads them back
+      *   `kyo.FlowStore.recordWait` which writes a row, and [[kyo.FlowStore.ExecutionState.waits]] which reads them back
       */
     enum Wake derives CanEqual, Schema:
 
@@ -1056,7 +1056,7 @@ object Flow:
 
         /** One node's compensation handler ran to completion.
           *
-          * Per NODE, where [[CompensationStarted]], [[CompensationCompleted]] and [[CompensationFailed]] are per UNWIND. An unwind that
+          * Per NODE, where [[Event.CompensationStarted]], [[Event.CompensationCompleted]] and [[Event.CompensationFailed]] are per UNWIND. An unwind that
           * is interrupted part-way leaves some handlers run and some not, and only a per-node record can tell them apart, which is what
           * a recovered execution reads to re-run exactly the handlers that never landed.
           */
@@ -1106,7 +1106,7 @@ object Flow:
 
         /** An input node found its value and went on, which is the transition that clears the wait row it had written.
           *
-          * The node's own completion, and distinct from [[InputReceived]], which is the value ARRIVING through `signal` on the other
+          * The node's own completion, and distinct from [[Event.InputReceived]], which is the value ARRIVING through `signal` on the other
           * side. A delivery and a consumption are two facts, and one event cannot stand for both: the value can arrive long before an
           * executor replays far enough to use it, and it can arrive for a node the execution never reaches.
           */
@@ -1115,12 +1115,12 @@ object Flow:
         /** A subflow's input mapper supplied a child input's value, recorded at entry before the child's first node ran.
           *
           * The third way a value reaches an input, and the three stay distinguishable in history: a start seed leaves the field and
-          * no input event at all, a `signal` leaves [[InputWaiting]], [[InputReceived]] and [[InputDischarged]], and a mapper leaves
+          * no input event at all, a `signal` leaves [[Event.InputWaiting]], [[Event.InputReceived]] and [[Event.InputDischarged]], and a mapper leaves
           * exactly one of these. `inputName` is the child input's durable path (`review~amount`), which is where the value was
           * written; the field and this event are one transition, so a reader of the history and replay reading the field never
           * disagree about whether the child ran against a recorded value.
           *
-          * Not [[InputDischarged]], which is the node's own consumption of a value it waited for. A mapper-fed input never parks, so
+          * Not [[Event.InputDischarged]], which is the node's own consumption of a value it waited for. A mapper-fed input never parks, so
           * it has no wait row to clear, and writing a discharge here would put a consumption record before the node was reached.
           */
         case InputSupplied(flowId: Flow.Id.Workflow, executionId: Flow.Id.Execution, inputName: String, timestamp: Instant)
@@ -1229,7 +1229,7 @@ object Flow:
           * so there is no per-branch question to answer. A dispatch branch that charges a premium fee is otherwise as unrecoverable as
           * a step that charges one without a handler.
           *
-          * Handlers run in reverse order when a later step fails, and only on failure, never on suspension. See [[outputCompensated]]
+          * Handlers run in reverse order when a later step fails, and only on failure, never on suspension. See `outputCompensated`
           * for the effect row the handler carries.
           */
         def otherwiseCompensated[S2](body: Record[Out] => V < S2, name: String, description: String = "")(

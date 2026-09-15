@@ -118,9 +118,9 @@ private[kyo] object NioHandle:
     /** The STARTTLS upgrade-read handoff state (see [[NioHandle.upgradeHandoff]]). The selector carrier (the producer, [[NioIoDriver]]'s
       * `dispatchReadPlain`) and the handshake carrier (the consumer, [[NioTransport]]'s `driveHandshake`) run on different carriers; this one
       * state, swung by CAS, lets exactly one side win each transition so the bytes always meet the parked waiter:
-      *   - [[Idle]]: neither side has acted yet.
-      *   - [[Carryover]]: the selector read a peer flight before the handshake parked; the handshake's next read consumes it.
-      *   - [[Waiter]]: the handshake parked before the selector read; the selector fulfils this fiber-parking promise with the bytes.
+      *   - [[UpgradeHandoff.Idle]]: neither side has acted yet.
+      *   - [[UpgradeHandoff.Carryover]]: the selector read a peer flight before the handshake parked; the handshake's next read consumes it.
+      *   - [[UpgradeHandoff.Waiter]]: the handshake parked before the selector read; the selector fulfils this fiber-parking promise with the bytes.
       */
     private[kyo] enum UpgradeHandoff:
         case Idle

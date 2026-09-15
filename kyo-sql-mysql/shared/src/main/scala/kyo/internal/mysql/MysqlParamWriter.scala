@@ -14,7 +14,7 @@ import kyo.internal.mysql.types.MysqlEncoder
 /** Maps `Codec.Writer` primitive calls to MySQL [[BoundMysqlParam]] instances.
   *
   * Each primitive method appends one [[BoundMysqlParam]] to an internal buffer. The MySQL type byte and wire-format selection mirrors the
-  * existing [[MysqlEncoder]] singletons exactly: the byte output is byte-for-byte identical to calling those encoders directly.
+  * existing `MysqlEncoder` singletons exactly: the byte output is byte-for-byte identical to calling those encoders directly.
   *
   * After all writes, retrieve the accumulated params via [[params]].
   */
