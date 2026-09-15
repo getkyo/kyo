@@ -297,8 +297,41 @@ final private[kyo] case class ScreencastFrameMetadata(
 final private[kyo] case class ScreencastFrameWire(data: String, metadata: ScreencastFrameMetadata, sessionId: Int) derives Schema
 
 // Runtime console events
-final private[kyo] case class RemoteObjectValue(`type`: String, value: Maybe[String] = Absent, description: Maybe[String] = Absent)
-    derives Schema
+/** A CDP `Runtime.RemoteObject` as console and exception events carry it. `value` is the argument itself for a primitive (a JSON string,
+  * number, boolean or null), `unserializableValue` stands in for a number JSON cannot hold (`NaN`, `-0`, `Infinity`, a bigint), and
+  * `description` is CDP's rendering of anything else.
+  */
+final private[kyo] case class RemoteObjectValue(
+    `type`: String,
+    subtype: Maybe[String] = Absent,
+    value: Maybe[Structure.Value] = Absent,
+    unserializableValue: Maybe[String] = Absent,
+    description: Maybe[String] = Absent
+) derives Schema:
+
+    /** The argument as `String(argument)` renders a primitive in the page (`42`, `true`, `null`, `undefined`), and CDP's description of
+      * an object, function or symbol.
+      */
+    def text: String =
+        `type` match
+            case "undefined"                            => "undefined"
+            case "object" if subtype == Present("null") => "null"
+            case "string" | "number" | "boolean" | "bigint" =>
+                unserializableValue.orElse(description).orElse(value.map(RemoteObjectValue.render)).getOrElse(`type`)
+            case _ => description.getOrElse(`type`)
+end RemoteObjectValue
+
+private[kyo] object RemoteObjectValue:
+    private[kyo] def render(value: Structure.Value): String =
+        value match
+            case Structure.Value.Str(s)     => s
+            case Structure.Value.Bool(b)    => b.toString
+            case Structure.Value.Integer(n) => n.toString
+            case Structure.Value.Decimal(d) => if d.isWhole then d.toLong.toString else d.toString
+            case Structure.Value.BigNum(n)  => n.toString
+            case Structure.Value.Null       => "null"
+            case other                      => other.toString
+end RemoteObjectValue
 final private[kyo] case class CallFrameWire(url: Maybe[String] = Absent, lineNumber: Maybe[Int] = Absent, columnNumber: Maybe[Int] = Absent)
     derives Schema
 final private[kyo] case class StackTraceWire(callFrames: Seq[CallFrameWire] = Nil) derives Schema

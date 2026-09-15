@@ -2,6 +2,7 @@ package kyo
 
 import kyo.internal.CdpEvent
 import kyo.internal.ConsoleApiCalledWire
+import kyo.internal.RemoteObjectValue
 
 /** Pure decoder tests for the console reshape: the CDP `Runtime.consoleAPICalled` type map (`decodeConsoleApiCalled`), the drain-path level
   * map (`decodeConsoleMessage`), and the wire-level `Browser.parseConsoleEvent` Absent paths.
@@ -127,6 +128,44 @@ class BrowserConsoleDecodeTest extends BrowserTest:
         // ConsoleApiCalledWire nor an ExceptionThrownWire projects to Absent.
         val nonConsole = CdpEvent.Generic(method = "Page.loadEventFired", params = ConsoleMessageWire("log", "x", 0L), sessionId = Absent)
         assert(Browser.parseConsoleEvent(nonConsole).isEmpty, "non-console params type should decode to Absent")
+    }
+
+    // ---- console argument rendering ----
+
+    // The params of a Runtime.consoleAPICalled event for console.log('count', 42, NaN, -0, 10n, false, null, undefined, {}, f, Symbol('tag')),
+    // as Chrome sends them: primitives carry `value` in their JSON type, numbers JSON cannot hold carry `unserializableValue`, and objects,
+    // functions and symbols carry only a description.
+    private val mixedArgumentsJson =
+        """{"type":"log","args":[
+          |{"type":"string","value":"count"},
+          |{"type":"number","value":42,"description":"42"},
+          |{"type":"number","unserializableValue":"NaN","description":"NaN"},
+          |{"type":"number","unserializableValue":"-0","description":"-0"},
+          |{"type":"bigint","unserializableValue":"10n","description":"10n"},
+          |{"type":"boolean","value":false},
+          |{"type":"object","subtype":"null","value":null},
+          |{"type":"undefined"},
+          |{"type":"object","className":"Object","description":"Object","objectId":"1"},
+          |{"type":"function","className":"Function","description":"function f() {}","objectId":"2"},
+          |{"type":"symbol","description":"Symbol(tag)","objectId":"3"}
+          |],"executionContextId":1,"timestamp":1.0}""".stripMargin
+
+    "decodeConsoleApiCalled renders every argument kind the way the page converts it to a string" in {
+        Json.decode[ConsoleApiCalledWire](mixedArgumentsJson) match
+            case Result.Success(wire) =>
+                Abort.run[BrowserReadException](Browser.decodeConsoleApiCalled(wire, 0L)).map {
+                    case Result.Success(message) =>
+                        assert(message.text == "count 42 NaN -0 10n false null undefined Object function f() {} Symbol(tag)")
+                    case other => fail(s"expected a message but got $other")
+                }
+            case other => fail(s"the event params should decode, got $other")
+    }
+
+    "RemoteObjectValue.text renders a number from its value when CDP sends no description" in {
+        assert(RemoteObjectValue("number", value = Present(Structure.Value.Decimal(1.5))).text == "1.5")
+        assert(RemoteObjectValue("number", value = Present(Structure.Value.Decimal(7.0))).text == "7")
+        assert(RemoteObjectValue("number", value = Present(Structure.Value.Integer(7))).text == "7")
+        assert(RemoteObjectValue("boolean", value = Present(Structure.Value.Bool(true))).text == "true")
     }
 
 end BrowserConsoleDecodeTest

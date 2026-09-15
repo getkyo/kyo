@@ -279,7 +279,7 @@ class CdpBackendSmokeTest extends BrowserTest:
                     backend.consoleEventDispatchers.updateAndGet(_.update("c1", handler)).andThen {
                         val params = ConsoleApiCalledWire(
                             `type` = "log",
-                            args = Seq(RemoteObjectValue(`type` = "string", value = Present("hello")))
+                            args = Seq(RemoteObjectValue(`type` = "string", value = Present(Structure.Value.Str("hello"))))
                         )
                         val extras = JsonRpcExtrasEncoder.const(Structure.Value.Record(Chunk("sessionId" -> Structure.Value.Str("c1"))))
                         Abort.run[Closed](
@@ -300,7 +300,7 @@ class CdpBackendSmokeTest extends BrowserTest:
                                             assert(w.args.size == 1, s"expected one decoded arg but got ${w.args.size}")
                                             val arg = w.args.head
                                             assert(arg.`type` == "string", s"expected arg type 'string' but got ${arg.`type`}")
-                                            assert(arg.value == Present("hello"), s"expected arg value 'hello' but got ${arg.value}")
+                                            assert(arg.text == "hello", s"expected arg text 'hello' but got ${arg.text}")
                                         case other => fail(s"expected ConsoleApiCalledWire payload but got $other")
                                     end match
                                 }

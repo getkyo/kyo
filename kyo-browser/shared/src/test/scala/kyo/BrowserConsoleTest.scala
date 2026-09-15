@@ -232,6 +232,25 @@ class BrowserConsoleTest extends BrowserTest:
         }
     }
 
+    // CDP carries each console argument as a RemoteObject whose `value` is the argument itself: a number, a boolean or null, not only a
+    // string. A call mixing them is still one message, with each argument rendered as JavaScript converts it to a string.
+    "recordConsole captures a call whose arguments are not all strings" in {
+        withBrowser {
+            onPage("<html><body><div>mixed</div></body></html>") {
+                Browser.recordConsole {
+                    Browser.eval("console.log('count', 42, 1.5, true, null, undefined); 'ok'")
+                        .andThen(Browser.waitForStable(1.second))
+                }.map { case (messages, _) =>
+                    val byLevel = messages.map(m => (m.level, m.text))
+                    assert(
+                        byLevel.contains((Browser.ConsoleLevel.Log, "count 42 1.5 true null undefined")),
+                        s"Expected (Log, 'count 42 1.5 true null undefined') in $byLevel"
+                    )
+                }
+            }
+        }
+    }
+
     "recordConsole captures uncaught errors via exceptionThrown" in {
         withBrowser {
             onPage("<html><body><div>throw</div></body></html>") {

@@ -2656,7 +2656,7 @@ object Browser:
             case other =>
                 Abort.fail(BrowserProtocolErrorException.decodeFailure("recordConsole", s"unknown console type '$other'"))
         levelE.map { lv =>
-            val text = wire.args.flatMap(a => a.value.orElse(a.description).toChunk).mkString(" ")
+            val text = wire.args.map(_.text).mkString(" ")
             val location = wire.stackTrace.flatMap(st =>
                 Maybe.fromOption(st.callFrames.headOption).flatMap(cf => cf.url.map(u => u + ":" + cf.lineNumber.getOrElse(0)))
             )
@@ -3275,7 +3275,7 @@ object Browser:
                 val d = exWire.exceptionDetails
                 // CDP reports `text` as the bare "Uncaught" prefix and carries the real error message in
                 // `exception.description`; join them so the message is meaningful.
-                val text = d.exception.flatMap(_.description).map(desc => d.text + " " + desc).getOrElse(d.text)
+                val text = d.exception.map(thrown => d.text + " " + thrown.text).getOrElse(d.text)
                 // Prefer the top-level `url:line`; fall back to the first stack frame when the throw carries no url.
                 val topFrame = d.stackTrace.flatMap(st => Maybe.fromOption(st.callFrames.headOption))
                 val location =
