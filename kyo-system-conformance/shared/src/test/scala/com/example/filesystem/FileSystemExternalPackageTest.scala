@@ -25,6 +25,7 @@ class FileSystemReadExternalPackageTest extends FileSystemReadConformanceTest[Sy
 end FileSystemReadExternalPackageTest
 
 class FileSystemWriteExternalPackageTest extends FileSystemWriteConformanceTest[Sync]:
+    override protected def supportsDirectorySync: Boolean = !kyo.internal.Platform.isWindows
     protected def withFileSystem[A](
         use: (FileSystem.Write[Sync], Path) => A < (Sync & Async & Scope & Abort[FileSystemException])
     )(using Frame): A < (Async & Scope & Abort[FileSystemException]) =
