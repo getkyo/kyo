@@ -1,8 +1,12 @@
 import org.scalajs.jsenv.nodejs.NodeJSEnv
 import org.scalajs.linker.interface.ESVersion
 import org.scalajs.linker.interface.ModuleKind
+import org.scalajs.linker.interface.StandardConfig
+import org.scalajs.jsenv.JSEnv
 import org.scalajs.sbtplugin.ScalaJSPlugin
 import org.scalajs.sbtplugin.ScalaJSPlugin.autoImport.*
+import kyo.test.sbt.KyoTestJsPlugin
+import kyo.test.sbt.KyoTestJsPlugin.autoImport.*
 import sbt.*
 import sbt.Keys.*
 
@@ -12,9 +16,15 @@ import sbt.Keys.*
   * project: `WasmTest` extends `Test`, reuses `Test`'s compiled classes and classpath, and changes only the link (WasmGC, ES2022, ESModule)
   * and the Node flag that loads it. Users link the one `_sjs1` artifact either way, so the row tests exactly the IR they link.
   *
+  * The browser rows run the same classes in Chrome through kyo-test's browser environment (`kyoTestBrowserEnv`, from sbt-kyo-test):
+  * `BrowserTest` links JS as an ES module, `BrowserWasmTest` links WasmGC. kyo wires kyo-test by hand rather than through its sbt plugin,
+  * so the rows add the plugin's [[KyoTestJsPlugin.browserSettings]] and run kyo-test-browser from this build's own project.
+  *
   * {{{
-  * sbt kyo-coreJS/test            # Node, JS output
-  * sbt kyo-coreJS/WasmTest/test   # Node, WasmGC output
+  * sbt kyo-coreJS/test                   # Node, JS output
+  * sbt kyo-coreJS/WasmTest/test          # Node, WasmGC output
+  * sbt kyo-coreJS/BrowserTest/test       # Chrome, JS output
+  * sbt kyo-coreJS/BrowserWasmTest/test   # Chrome, WasmGC output
   * }}}
   *
   * Node's configuration is two settings, so a module states it once for both rows: [[autoImport.kyoNodeArgs]] and
@@ -26,7 +36,9 @@ import sbt.Keys.*
   * accepts only ESModule output.
   *
   * `testKyo`'s Wasm platform runs `WasmTest/test` on every JS project whose [[autoImport.kyoWasmRow]] is true (the default); a project
-  * built only as JavaScript, such as the website bundle, sets it to false.
+  * built only as JavaScript, such as the website bundle, sets it to false. Its Browser and BrowserWasm platforms run `BrowserTest/test`
+  * and `BrowserWasmTest/test` on the projects whose [[autoImport.kyoBrowserRow]] is true, the BrowserWasm one only where the Wasm row
+  * runs too.
   */
 object KyoJsRows extends AutoPlugin {
 
@@ -36,6 +48,10 @@ object KyoJsRows extends AutoPlugin {
     object autoImport {
         val WasmTest: Configuration = Configuration.of("WasmTest", "wasmtest").extend(Test)
 
+        val BrowserTest: Configuration = Configuration.of("BrowserTest", "browsertest").extend(Test)
+
+        val BrowserWasmTest: Configuration = Configuration.of("BrowserWasmTest", "browserwasmtest").extend(Test)
+
         val kyoNodeArgs: SettingKey[Seq[String]] =
             settingKey[Seq[String]]("Node arguments for this module's test rows; WasmTest adds --experimental-wasm-exnref")
 
@@ -44,6 +60,9 @@ object KyoJsRows extends AutoPlugin {
 
         val kyoWasmRow: SettingKey[Boolean] =
             settingKey[Boolean]("Whether testKyo's Wasm row runs this project's WasmTest configuration")
+
+        val kyoBrowserRow: SettingKey[Boolean] =
+            settingKey[Boolean]("Whether testKyo's Browser rows run this project's BrowserTest and BrowserWasmTest configurations")
     }
     import autoImport.*
 
@@ -54,26 +73,48 @@ object KyoJsRows extends AutoPlugin {
         new NodeJSEnv(NodeJSEnv.Config().withArgs(args.toList).withEnv(env))
 
     /** The WasmGC link: the backend requires ES2022 and ESModule output. */
-    def wasmLinkerConfig(config: org.scalajs.linker.interface.StandardConfig): org.scalajs.linker.interface.StandardConfig =
+    def wasmLinkerConfig(config: StandardConfig): StandardConfig =
         config
             .withESFeatures(_.withESVersion(ESVersion.ES2022).withUseWebAssembly(true))
             .withModuleKind(ModuleKind.ESModule)
 
-    override def projectConfigurations: Seq[Configuration] = Seq(WasmTest)
+    override def projectConfigurations: Seq[Configuration] = Seq(WasmTest, BrowserTest, BrowserWasmTest)
+
+    // testKyo reads the row switches when it selects modules, so no task or setting refers to them and sbt's unused-key lint would flag
+    // them on every load.
+    override def globalSettings: Seq[Setting[?]] = Seq(
+        excludeLintKeys ++= Set[Def.KeyedInitialize[?]](kyoWasmRow, kyoBrowserRow)
+    )
+
+    /** A row over `Test`'s compiled classes and classpath: it differs in its link and where the link runs, never in what it compiles. */
+    private def row(config: Configuration, link: StandardConfig => StandardConfig, env: Def.Initialize[Task[JSEnv]]): Seq[Setting[?]] =
+        inConfig(config)(Defaults.testSettings ++ ScalaJSPlugin.testConfigSettings) ++ Seq(
+            config / compile             := (Test / compile).value,
+            config / fullClasspath       := (Test / fullClasspath).value,
+            config / scalaJSLinkerConfig := link((Test / scalaJSLinkerConfig).value),
+            config / jsEnv               := env.value,
+            config / parallelExecution   := (Test / parallelExecution).value,
+            config / testFrameworks      := (Test / testFrameworks).value,
+            config / testOptions         := (Test / testOptions).value
+        )
 
     override def projectSettings: Seq[Setting[?]] =
-        inConfig(WasmTest)(Defaults.testSettings ++ ScalaJSPlugin.testConfigSettings) ++ Seq(
-            kyoNodeArgs := Seq("--max_old_space_size=5120"),
-            kyoNodeEnv  := Map.empty,
-            kyoWasmRow  := true,
-            jsEnv       := nodeEnv(kyoNodeArgs.value, kyoNodeEnv.value),
-            // Same compiled classes and classpath as Test: the row differs in its link, never in what it compiles.
-            WasmTest / compile             := (Test / compile).value,
-            WasmTest / fullClasspath       := (Test / fullClasspath).value,
-            WasmTest / scalaJSLinkerConfig := wasmLinkerConfig((Test / scalaJSLinkerConfig).value),
-            WasmTest / jsEnv               := nodeEnv(kyoNodeArgs.value :+ wasmExceptionFlag, kyoNodeEnv.value),
-            WasmTest / parallelExecution   := (Test / parallelExecution).value,
-            WasmTest / testFrameworks      := (Test / testFrameworks).value,
-            WasmTest / testOptions         := (Test / testOptions).value
-        )
+        Seq(
+            kyoNodeArgs   := Seq("--max_old_space_size=5120"),
+            kyoNodeEnv    := Map.empty,
+            kyoWasmRow    := true,
+            kyoBrowserRow := true,
+            jsEnv         := nodeEnv(kyoNodeArgs.value, kyoNodeEnv.value)
+        ) ++
+            row(WasmTest, wasmLinkerConfig, Def.task(nodeEnv(kyoNodeArgs.value :+ wasmExceptionFlag, kyoNodeEnv.value))) ++
+            KyoTestJsPlugin.browserSettings ++ Seq(
+                kyoTestBrowserClasspath := (LocalProject("kyo-test-browserJVM") / Runtime / fullClasspath).value.files
+            ) ++
+            // A page loads an ES module or a classic script, never CommonJS, so the JS browser row links an ES module whatever Test links.
+            row(BrowserTest, _.withModuleKind(ModuleKind.ESModule), kyoTestBrowserEnv) ++
+            row(BrowserWasmTest, wasmLinkerConfig, kyoTestBrowserEnv) ++ Seq(
+                // Each run the test adapter starts is a JVM and a Chrome of its own, so a module's suites share one run at a time.
+                BrowserTest / parallelExecution     := false,
+                BrowserWasmTest / parallelExecution := false
+            )
 }

@@ -297,8 +297,8 @@ Global / onLoad := {
             case "JVM"    => kyoJVM
             case "JS"     => kyoJS
             case "NATIVE" => kyoNative
-            // The Wasm row is the JS projects' WasmTest configuration.
-            case "WASM"   => kyoJS
+            // The Wasm and browser rows are configurations of the JS projects (KyoJsRows).
+            case "WASM" | "BROWSER" | "BROWSERWASM" => kyoJS
             case platform => throw new IllegalArgumentException("Invalid platform: " + platform)
         }
 
@@ -451,13 +451,15 @@ lazy val kyoJVM: Project = project
 
 lazy val kyoJS = project
     .in(file("js"))
-    // Registering WasmTest here lets `kyoJS/WasmTest/test` parse and fan out to every member that has the configuration.
-    .configs(WasmTest)
+    // Registering the rows here lets `kyoJS/WasmTest/test` (and the browser rows) parse and fan out to every member that has them.
+    .configs(WasmTest, BrowserTest, BrowserWasmTest)
     .settings(
         name := "kyoJS",
         `kyo-settings`,
         publish / skip := true,
-        inConfig(WasmTest)(Defaults.testSettings)
+        inConfig(WasmTest)(Defaults.testSettings),
+        inConfig(BrowserTest)(Defaults.testSettings),
+        inConfig(BrowserWasmTest)(Defaults.testSettings)
     )
     .disablePlugins(MimaPlugin, KyoDoctestPlugin)
     .aggregate(
@@ -3455,14 +3457,14 @@ lazy val `kyo-test-sbt-publish` =
                 "-Dkyo.scalaVersion=" + scala3Version
             ),
             scriptedBufferLog := false,
-            // The sub-builds resolve kyo-test-runner from ivy-local, and publishLocal is not
-            // transitive, so the whole classpath closure has to be published first. Derived from the
-            // build graph rather than listed: the closure reaches kyo-config through
-            // kyo-scheduler -> kyo-stats-registry, which a hand-maintained list silently misses.
+            // The sub-builds resolve kyo-test-runner (and js-browser resolves kyo-test-browser) from
+            // ivy-local, and publishLocal is not transitive, so the whole classpath closure has to be
+            // published first. Derived from the build graph rather than listed: the closure reaches
+            // kyo-config through kyo-scheduler -> kyo-stats-registry, which a hand-maintained list silently misses.
             scriptedDependencies := Def.taskDyn {
                 val build = thisProjectRef.value.build
                 val deps  = buildDependencies.value.classpathTransitive
-                val roots = Seq("kyo-test-runnerJVM", "kyo-test-runnerJS", "kyo-test-runnerNative")
+                val roots = Seq("kyo-test-runnerJVM", "kyo-test-runnerJS", "kyo-test-runnerNative", "kyo-test-browserJVM")
                     .map(id => ProjectRef(build, id))
                 val closure = roots.flatMap(r => r +: deps.getOrElse(r, Nil)).distinct
                 Def.task {

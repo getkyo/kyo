@@ -1,0 +1,14 @@
+# The suite asserts it runs in a page, so a green run here cannot come from Node.
+> testOnly BrowserSuite
+
+# A red suite has to be reported as red: a run that discovered nothing, or whose page never started, would pass silently.
+-> testOnly FailingSuite
+
+# The same suites linked as a classic script.
+> set scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.NoModule) }
+> testOnly BrowserSuite
+-> testOnly FailingSuite
+
+# CommonJS cannot load in a page; the run fails instead of hanging.
+> set scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
+-> testOnly BrowserSuite

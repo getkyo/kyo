@@ -664,3 +664,32 @@ JUnit, MUnit, and every other framework the project registers.
 > wiring problem, not of a suite that has nothing to run.
 
 > **Note:** suite discovery from the command-line runner is JVM-only (it reads the `META-INF/services/kyo.test.Test` service-loader file); on JS and Native the CLI discovers nothing, so run those platforms through sbt, whose own fingerprint-based discovery finds every `Test` subclass. `JUnitXmlReporter` is JVM-only as well.
+
+### Running Scala.js tests in a browser
+
+Scala.js tests run on Node by default. To run them in Chrome instead, point the test configuration's `jsEnv` at `kyoTestBrowserEnv` and link an ES module:
+
+```scala doctest:expect=skipped
+lazy val myProject = project
+  .enablePlugins(ScalaJSPlugin, SbtKyoTestPlugin)
+  .settings(
+    scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.ESModule) },
+    Test / jsEnv := kyoTestBrowserEnv.value
+  )
+```
+
+Each run starts `kyo-test-browser`, a small JVM program that serves the linked output on a loopback port, opens it in a Chrome of its own, and carries the test framework's messages between sbt and the page. `SbtKyoTestPlugin` fetches the program the first time the environment is used, and the first launch downloads chrome-headless-shell from Chrome for Testing into `kyo-browser` under the user cache directory (`KYO_BROWSER_CACHE` overrides it). Suites, filters, and reporters behave as they do on Node.
+
+The page loads the link as it would in production, so:
+
+- The link must be an ES module (`ModuleKind.ESModule`) or a classic script (`ModuleKind.NoModule`). A page cannot load CommonJS, and a CommonJS link fails the run with a message saying so. A WebAssembly link (`withUseWebAssembly(true)`) is an ES module and runs as well.
+- Node's globals and built-in modules (`process`, `require`, `node:fs`) do not exist. A suite that needs them belongs on Node.
+- `console.log` and `console.info` reach sbt's standard output; `console.error`, `console.warn`, `console.assert`, and `console.trace` reach its standard error. An uncaught exception or unhandled rejection fails the run, as it does on Node.
+- Chrome for Testing publishes chrome-headless-shell for macOS, Linux x64, and Windows, but not for Linux arm64, where a run fails at launch.
+
+| Key | Default | Purpose |
+|---|---|---|
+| `kyoTestBrowserEnv` | | The environment to assign to `jsEnv` |
+| `kyoTestChromeVersion` | `None`, the latest Stable release | A chrome-headless-shell version to pin, such as `Some("151.0.7922.76")` |
+| `kyoTestBrowserJavaOptions` | `Seq("-Xmx1g")` | JVM options for the `kyo-test-browser` process |
+| `kyoTestBrowserClasspath` | resolved by `SbtKyoTestPlugin` | `kyo-test-browser`'s runtime classpath, for a build that wires kyo-test by hand |

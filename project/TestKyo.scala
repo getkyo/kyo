@@ -26,8 +26,9 @@ import scala.sys.process.*
   *   - `testKyo origin/feature JVM` diff vs a specific ref
   *   - `testKyo --dry-run JVM` show what would run without executing
   *
-  * The Wasm platform has no projects of its own: it selects the JS projects whose `kyoWasmRow` is set (see KyoJsRows) and runs
-  * their `WasmTest` configuration, over the same compiled classes as the JS row.
+  * The Wasm, Browser, and BrowserWasm platforms have no projects of their own: each selects JS projects and runs one of their
+  * KyoJsRows configurations over the same compiled classes as the JS row. Wasm runs `WasmTest` where `kyoWasmRow` is set, Browser
+  * runs `BrowserTest` where `kyoBrowserRow` is set, and BrowserWasm runs `BrowserWasmTest` where both are.
   *
   * A run is a sequence of passes: the primary Scala version, then one per Scala 2.x cross-build
   * version. All passes go out as ONE `;`-chained command string (per pass: version switch, module
@@ -37,7 +38,10 @@ import scala.sys.process.*
   */
 object TestKyo {
 
-    private val platformNames = Set("JVM", "JS", "Native", "Wasm")
+    private val platformNames = Set("JVM", "JS", "Native", "Wasm", "Browser", "BrowserWasm")
+
+    /** The KyoJsRows configuration a platform's test phase runs, for the platforms that run one. */
+    private val rowConfigs = Map("Wasm" -> "WasmTest", "Browser" -> "BrowserTest", "BrowserWasm" -> "BrowserWasmTest")
 
     // Root aggregate projects: testing one runs every leaf via aggregation, so the diff
     // and full-run paths both exclude them and treat any change scoped to one as "run all".
@@ -66,8 +70,8 @@ object TestKyo {
       * memory-constrained CI runners.
       */
     private def taskFor(phase: String, name: String, quick: Boolean, platform: Option[String]): String = {
-        // The Wasm row compiles exactly what the JS row compiles; only its test run links WebAssembly.
-        val testConfig = if (platform.contains("Wasm")) "WasmTest/" else ""
+        // The JS rows compile exactly what the JS row compiles; only their test runs differ in the link and where it runs.
+        val testConfig = platform.flatMap(rowConfigs.get).fold("")(config => s"$config/")
         phase match {
             case "compile-main" => s"$name/Compile/compile"
             case "compile-test" => s"$name/Test/compile"
@@ -241,11 +245,11 @@ object TestKyo {
         def crossVersions(name: String): Seq[String] =
             allRefs.find(_.project == name).flatMap(ref => (ref / crossScalaVersions).get(structure.data)).getOrElse(Nil)
 
-        val wasmRow = wasmRowProjects(extracted)
+        val rows = jsRows(extracted)
 
         def platformMatch(name: String): Boolean =
             !aggregateProjects.contains(name) && (a.platform match {
-                case Some(p) => matchesPlatform(name, p, wasmRow)
+                case Some(p) => matchesPlatform(name, p, rows)
                 case None    => true
             })
 
@@ -321,9 +325,9 @@ object TestKyo {
             }
 
         val directlyChanged = (changedFiles.flatMap(fileToProjects(_, allNames)) ++ buildSbtProjects).toSet
-        val wasmRow         = wasmRowProjects(extracted)
+        val rows            = jsRows(extracted)
         val filtered = a.platform match {
-            case Some(p) => directlyChanged.filter(matchesPlatform(_, p, wasmRow))
+            case Some(p) => directlyChanged.filter(matchesPlatform(_, p, rows))
             case None    => directlyChanged
         }
 
@@ -380,26 +384,33 @@ object TestKyo {
 
     // --- Helpers ---
 
+    /** The JS projects each KyoJsRows switch selects. */
+    final private case class JsRows(wasm: Set[String], browser: Set[String])
+
     /** Check if a project name matches the given platform. JS and Native projects are matched by their
-      * explicit suffix; the Wasm row is the JS projects in `wasmRow`; JVM is the residual: cross-project JVM
-      * variants carry a `JVM` suffix, and the suffix-less plain projects (kyo-compat-plugin, kyo-doctest-plugin,
-      * and similar JVM-only definitions) carry no platform suffix and are JVM-only.
+      * explicit suffix; the Wasm, Browser, and BrowserWasm rows are the JS projects their switches select; JVM
+      * is the residual: cross-project JVM variants carry a `JVM` suffix, and the suffix-less plain projects
+      * (kyo-compat-plugin, kyo-doctest-plugin, and similar JVM-only definitions) carry no platform suffix and are JVM-only.
       */
-    private def matchesPlatform(name: String, platform: String, wasmRow: Set[String]): Boolean =
+    private def matchesPlatform(name: String, platform: String, rows: JsRows): Boolean =
         platform match {
-            case "JVM"    => !name.endsWith("JS") && !name.endsWith("Native")
-            case "JS"     => name.endsWith("JS")
-            case "Native" => name.endsWith("Native")
-            case "Wasm"   => wasmRow.contains(name)
-            case _        => false
+            case "JVM"         => !name.endsWith("JS") && !name.endsWith("Native")
+            case "JS"          => name.endsWith("JS")
+            case "Native"      => name.endsWith("Native")
+            case "Wasm"        => rows.wasm.contains(name)
+            case "Browser"     => rows.browser.contains(name)
+            case "BrowserWasm" => rows.wasm.contains(name) && rows.browser.contains(name)
+            case _             => false
         }
 
-    /** The JS projects the Wasm row runs: those with KyoJsRows' `kyoWasmRow` set. */
-    private def wasmRowProjects(extracted: Extracted): Set[String] =
-        extracted.structure.allProjectRefs.filter { ref =>
-            ref.project.endsWith("JS") &&
-            (ref / KyoJsRows.autoImport.kyoWasmRow).get(extracted.structure.data).contains(true)
-        }.map(_.project).toSet
+    /** The JS projects with each of KyoJsRows' row switches set. */
+    private def jsRows(extracted: Extracted): JsRows = {
+        def selectedBy(switch: SettingKey[Boolean]): Set[String] =
+            extracted.structure.allProjectRefs.filter { ref =>
+                ref.project.endsWith("JS") && (ref / switch).get(extracted.structure.data).contains(true)
+            }.map(_.project).toSet
+        JsRows(selectedBy(KyoJsRows.autoImport.kyoWasmRow), selectedBy(KyoJsRows.autoImport.kyoBrowserRow))
+    }
 
     /** Strip the platform suffix to the cross-project base name, so `--exclude` names a module once
       * (`kyo-schema-tests`) and matches every platform variant. JVM-only projects (kyo-compat-plugin) return unchanged.

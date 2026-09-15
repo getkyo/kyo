@@ -14,7 +14,8 @@ import scala.util.Properties
   * Test / jsEnv := kyoTestBrowserEnv.value
   * }}}
   * The environment starts kyo-test-browser, whose classpath [[SbtKyoTestBrowserPlugin]] resolves for projects that enable
-  * [[SbtKyoTestPlugin]]. A build that wires kyo-test by hand sets `kyoTestBrowserClasspath` to that artifact's runtime classpath.
+  * [[SbtKyoTestPlugin]]. A build that wires kyo-test by hand adds [[browserSettings]] to its Scala.js projects and sets
+  * `kyoTestBrowserClasspath` to that artifact's runtime classpath.
   */
 object KyoTestJsPlugin extends AutoPlugin {
     override def trigger  = allRequirements
@@ -35,7 +36,11 @@ object KyoTestJsPlugin extends AutoPlugin {
     override def projectSettings: Seq[Setting[?]] = Seq(
         testFrameworks := testFrameworks.value
             .filterNot(_.implClassNames.contains("kyo.test.runner.SbtFramework")) :+
-            new TestFramework("kyo.test.runner.JsFramework"),
+            new TestFramework("kyo.test.runner.JsFramework")
+    ) ++ browserSettings
+
+    /** The keys behind `kyoTestBrowserEnv`, for a Scala.js project that does not enable this plugin. */
+    val browserSettings: Seq[Setting[?]] = Seq(
         kyoTestChromeVersion      := None,
         kyoTestBrowserJavaOptions := Seq("-Xmx1g"),
         kyoTestBrowserClasspath := {

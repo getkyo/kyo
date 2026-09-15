@@ -92,6 +92,12 @@ object KyoTestBrowserJSEnv {
 
     private val validator = ExternalJSRun.supports(RunConfig.Validator())
 
+    // The com channel's states: messages queue until the runner connects, then go straight to the socket until the run closes.
+    private sealed trait State
+    private final case class AwaitingConnection(queued: List[String]) extends State
+    private final case class Connected(socket: Socket, out: DataOutputStream, in: DataInputStream) extends State
+    private case object Closing extends State
+
     /** The sbt side of a run's com channel.
       *
       * The runner connects once; messages sent before it does are queued and written, in order, on connection. A message is read on a
@@ -99,11 +105,6 @@ object KyoTestBrowserJSEnv {
       * its own; the run completes once the process has ended, so closing never fails a run that was going to succeed. The runner ending
       * first (the page failed, or Chrome died) closes the channel from its side and completes the run with the process's outcome.
       */
-    private sealed trait State
-    private final case class AwaitingConnection(queued: List[String]) extends State
-    private final case class Connected(socket: Socket, out: DataOutputStream, in: DataInputStream) extends State
-    private case object Closing extends State
-
     private final class ComRun(run: JSRun, onMessage: String => Unit, server: ServerSocket) extends JSComRun {
 
         private[this] val completion = Promise[Unit]()
