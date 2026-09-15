@@ -13,11 +13,18 @@ trait PlatformStatic:
     /** Whether the application is linked with the WebAssembly (WasmGC) backend. Resolved by the linker, not by scalac. */
     transparent inline def isWasm: Boolean = LinkingInfo.isWebAssembly
 
-    /** `thenp` when `cond` holds and `elsep` otherwise, resolved at link time: the untaken branch is compiled into the artifact but left out of
-      * the linked output. `cond` may combine only `isJVM`, `isJS`, `isNative`, and `isWasm`.
+    /** `thenp` when `cond` holds and `elsep` otherwise, resolved before run time. `cond` may combine only `isJVM`, `isJS`, `isNative`, and
+      * `isWasm`.
+      *
+      * A condition that reduces to a constant (one without `isWasm`) is resolved when compiling, exactly as `inline if`: the untaken branch is
+      * never emitted. A condition that depends on `isWasm` goes to `LinkingInfo.linkTimeIf`, so the untaken branch is compiled into the
+      * artifact but left out of the linked output.
       */
     transparent inline def linkTimeIf[T](inline cond: Boolean)(inline thenp: T)(inline elsep: T): T =
-        LinkingInfo.linkTimeIf(cond)(thenp)(elsep)
+        inline cond match
+            case true  => thenp
+            case false => elsep
+            case _     => LinkingInfo.linkTimeIf(cond)(thenp)(elsep)
 
     given platformOsCanEqual: CanEqual[Platform.Os, Platform.Os]       = CanEqual.derived
     given platformArchCanEqual: CanEqual[Platform.Arch, Platform.Arch] = CanEqual.derived
