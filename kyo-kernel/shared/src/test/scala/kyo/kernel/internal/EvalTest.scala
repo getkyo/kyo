@@ -1198,6 +1198,20 @@ class EvalTest extends AnyFreeSpec:
             assert(log.toList == List(7))
         }
 
+        // A resource that is itself a computation is carried boxed once it settles, and every settled arm unnests
+        // before delivering; the region's hook receives it unnested too.
+        "a release for a resource that is itself a computation receives the computation, not its box" in {
+            val resource: Int < Ask = ask
+            var released            = Maybe.empty[Any]
+            val v: Int < Any        = Bracket(Kyo.lift(resource))(_ => 1)((a, _) => released = Maybe(a))
+            assert(v.eval == 1)
+            assert(released.isDefined, "the release never ran")
+            assert(
+                released.get.asInstanceOf[AnyRef] eq resource.asInstanceOf[AnyRef],
+                s"the release saw ${released.get}, not the resource"
+            )
+        }
+
         "a pooled stack reused by a later eval carries no stale obligations" in {
             sealed trait CfgA extends ContextEffect[Int]
             sealed trait CfgB extends ContextEffect[Int]
