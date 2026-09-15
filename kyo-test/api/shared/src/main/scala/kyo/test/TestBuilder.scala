@@ -73,7 +73,7 @@ end TestBuilder
   *
   * Each marker is a phantom type only: it never has a value, it exists purely to drive [[gateOf]] at compile time. The platform-filter
   * methods on String/TestBuilder return a [[PlatformTestBuilder]] tagged with one of these, and the terminal `in`/`-` reduces `gateOf[P]` to
-  * a single inline-constant Boolean for the platform currently compiling, so the leaf body is emitted only when that constant is true.
+  * a single Boolean known before run time, so the leaf body reaches the output only where it is true.
   *
   * @see
   *   [[gateOf]] the transparent inline reduction from a marker to `kyo.internal.Platform.is*`
@@ -118,8 +118,8 @@ end PlatformSet
   * `transparent inline` plus the `inline erasedValue[P] match` leaves only `kyo.internal.Platform` identity members in the result.
   * `isJVM`, `isJS`, and `isNative` are compile-time constants on every platform, and so is `isWasm` on the JVM and Native. On Scala.js
   * `isWasm` is a link-time property instead: one compiled artifact is linked as JS or as WasmGC. The terminal `in`/`-` therefore branches
-  * with `Platform.linkTimeIf(gateOf[P])`, an `inline if` wherever the result is a constant and a `LinkingInfo.linkTimeIf` on Scala.js, so
-  * the dead arm never reaches the output either way.
+  * with `Platform.linkTimeIf(gateOf[P])`: an `inline if` wherever the result is a constant, and a `LinkingInfo.linkTimeIf` for a result
+  * that depends on `isWasm` on Scala.js, so the dead arm never reaches the output either way.
   *
   * Platform filters compose: chaining (`.notNative.notWasm`) wraps the markers in [[PlatformSet.Both]], so `P` becomes
   * `Both[NotNative, NotWasm]`. The `Both` case reduces `gateOf[Both[a, b]]` to `gateOf[a] && gateOf[b]`, so the leaf is enabled only where
@@ -155,7 +155,7 @@ transparent inline def gateOf[P]: Boolean =
   * @param builder
   *   the underlying decorator metadata; the platform restriction lives in `P`, not in this value
   * @see
-  *   [[gateOf]] which `in`/`-` evaluate at compile time
+  *   [[gateOf]] which `in`/`-` resolve before run time
   */
 final case class PlatformTestBuilder[P](builder: TestBuilder)
 

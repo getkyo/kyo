@@ -256,8 +256,8 @@ abstract class TestBase[S] extends KyoTestReflect with TypeCheck:
     // `in`/`-` branches on `Platform.linkTimeIf(gateOf[P])`: enabled -> register exactly as the
     // unfiltered DSL; disabled -> discard the body UNAPPLIED so its code never reaches the output.
     // On the JVM and Native every marker reduces to a constant and this is an `inline if`. On Scala.js
-    // the JVM/JS/Native markers still reduce to constants, while a wasm marker leaves
-    // `LinkingInfo.isWebAssembly` in the condition, which the linker resolves per link: the same
+    // the JVM/JS/Native markers still reduce to constants, resolved the same way, while a wasm marker
+    // leaves `LinkingInfo.isWebAssembly` in the condition, which the linker resolves per link: the same
     // compiled test classes serve a JS link and a WasmGC link.
 
     extension [P](pb: PlatformTestBuilder[P])

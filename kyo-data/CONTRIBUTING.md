@@ -27,8 +27,9 @@ change must also satisfy.
 
 The public data types live in `shared/src/main/scala/kyo/` and are shared across all four
 platforms. Per-platform sources exist, but they are confined to `kyo/internal/`: the queue
-implementations and `UnsafeBuffer` / `Platform` bridges under `jvm/`, `js/`, `native/`, `wasm/`,
-and the shared-by-pairs `jvm-native/` and `js-wasm/` directories. Adding a per-platform source
+implementations and `UnsafeBuffer` bridges under `jvm/`, `js/`, `native/`, and the shared-by-pairs
+`jvm-native/` and `js-wasm/` directories. Platform, host, and OS detection is not here: it is
+`kyo.internal.Platform` in kyo-config, the lowest module, so every module sees it. Adding a per-platform source
 outside `kyo/internal/` is not an established pattern here.
 
 ### The module compiles at `-release 25`

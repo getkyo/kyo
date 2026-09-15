@@ -273,7 +273,7 @@ When a `Passed` or `Failed` result reports `attempts > 1`, a retry decorator res
 
 ### Platform: `jvm`/`js`/`native`/`wasm`, `notX`, `onlyX`
 
-Three families select platforms. `.jvm` / `.js` / `.native` / `.wasm` add a platform to the include set (additive). `.notJvm` / `.notJs` / `.notNative` / `.notWasm` remove one. `.onlyJvm` / `.onlyJs` / `.onlyNative` / `.onlyWasm` restrict to exactly one. On a non-matching platform the leaf is compile-excluded: the body is never emitted, no code for the leaf reaches the platform's output, and the leaf is absent entirely. It produces no `TestResult` and is never reported. Filters compose: a second filter intersects with the first, so `.notNative.notWasm` excludes the leaf on both Native and WebAssembly while leaving it on the JVM and Scala.js.
+Three families select platforms. `.jvm` / `.js` / `.native` / `.wasm` add a platform to the include set (additive). `.notJvm` / `.notJs` / `.notNative` / `.notWasm` remove one. `.onlyJvm` / `.onlyJs` / `.onlyNative` / `.onlyWasm` restrict to exactly one. On a non-matching platform the leaf is excluded: no code for the leaf reaches the platform's output, and the leaf is absent entirely. The JVM, JS, and Native filters exclude it at compile time. On Scala.js the WebAssembly filters exclude it when the test classes are linked, since the same classes are linked as JS or as WasmGC. It produces no `TestResult` and is never reported. Filters compose: a second filter intersects with the first, so `.notNative.notWasm` excludes the leaf on both Native and WebAssembly while leaving it on the JVM and Scala.js.
 
 ```scala
 class PlatformTest extends Test[Any]:

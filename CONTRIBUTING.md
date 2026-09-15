@@ -1116,7 +1116,7 @@ A dumper runs on the reporter's thread, concurrently with the component it inspe
 
 ### Platform-Conditional Tests
 
-Platform gates restrict a leaf or group to one or more platforms. On a disabled platform the body is compile-excluded (absent, not skipped):
+Platform gates restrict a leaf or group to one or more platforms. On a disabled platform the body is excluded from the output (absent, not skipped). The JVM, JS, and Native gates exclude it at compile time. On Scala.js the WebAssembly gates (`.wasm`, `.onlyWasm`, `.notWasm`) exclude it at link time instead, because the same compiled test classes are linked as JS or as WasmGC; a wasm-gated body is therefore compiled into the Scala.js test classes and must build for JS:
 
 ```scala
 "jvm only" .jvm in { ... }
