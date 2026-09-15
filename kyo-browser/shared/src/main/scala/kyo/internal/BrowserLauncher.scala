@@ -106,11 +106,11 @@ private[kyo] object BrowserLauncher:
       *
       * Uses `pgrep -f` to list the processes whose argv contains a user-data-dir matching `pattern`. A candidate is killed only when its
       * run is gone: the directory names its owning process (see [[userDataDirPrefix]]) and that process is no longer running, or the
-      * directory names no owner at all (one created before directories carried it). A Chrome whose owner is alive is left running, whichever
-      * process on the machine owns it: a second test JVM, a Node test run, or a browser test runner each sweep at startup, and none may kill
-      * another's Chrome. A candidate's argv comes from `ps -o args=` and an owner's liveness from `ps -o pid=`; when either cannot be read
-      * the candidate is left alone. This is a best-effort sweep: if `pgrep` is not found (Windows, minimal Docker) the call silently
-      * succeeds.
+      * directory names no owner (one created by an older launcher) and the process that launched the candidate has exited, leaving it
+      * adopted by pid 1. A Chrome whose run is alive is left running, whichever process on the machine owns it: a second test JVM, a Node
+      * test run, or a browser test runner each sweep at startup, and none may kill another's Chrome. A candidate's parent and argv come
+      * from `ps -o ppid= -o args=` and an owner's liveness from `ps -o pid=`; when either cannot be read the candidate is left alone. This
+      * is a best-effort sweep: if `pgrep` is not found (Windows, minimal Docker) the call silently succeeds.
       *
       * `SharedChrome.ensureStarted` calls it with [[userDataDirPrefix]]. The `pattern` parameter is a test seam that lets a unique-tag
       * fixture target only its own sentinel processes. The `command` parameter is a second test seam that allows injecting an absolute path
@@ -148,15 +148,30 @@ private[kyo] object BrowserLauncher:
     private def kill(pid: Long)(using Frame): Unit < Async =
         Abort.run[CommandException](Command("kill", "-9", pid.toString).waitFor).unit
 
-    /** Whether the candidate `pid` belongs to a run that is gone. False when its argv cannot be read (it exited, or `ps` is missing). */
+    /** Whether the candidate `pid` belongs to a run that is gone. False when its process line cannot be read (it exited, or `ps` is
+      * missing).
+      */
     private def isLeftBehind(pid: Long)(using Frame): Boolean < Async =
-        Abort.run[CommandException](Command("ps", "-ww", "-o", "args=", "-p", pid.toString).text).map {
-            case Result.Success(args) if args.trim.nonEmpty =>
-                userDataDirOwner(args) match
-                    case Present(owner) => isRunning(owner).map(running => !running)
-                    case Absent         => true
+        Abort.run[CommandException](Command("ps", "-ww", "-o", "ppid=", "-o", "args=", "-p", pid.toString).text).map {
+            case Result.Success(line) =>
+                processLine(line) match
+                    case Present((parent, args)) =>
+                        userDataDirOwner(args) match
+                            case Present(owner) => isRunning(owner).map(running => !running)
+                            // No owner in the name: the Chrome is left behind once the process that launched it has exited
+                            // and it has been adopted by pid 1.
+                            case Absent => parent == 1L
+                    case Absent => false
             case _ => false
         }
+
+    /** Splits a `ps -o ppid= -o args=` line into the parent pid and the argv. */
+    private[internal] def processLine(line: String): Maybe[(Long, String)] =
+        val trimmed = line.trim
+        val space   = trimmed.indexWhere(_.isWhitespace)
+        if space < 0 then Absent
+        else Maybe.fromOption(trimmed.substring(0, space).toLongOption).map(parent => (parent, trimmed.substring(space).trim))
+    end processLine
 
     /** Whether process `pid` exists. True when that cannot be read, so an unreadable owner is never taken for a gone one. */
     private def isRunning(pid: Long)(using Frame): Boolean < Async =
