@@ -107,7 +107,7 @@ class BufferMmapTest extends Test:
         }
 
         "non-existent file throws IOException" in {
-            interceptThrown[Exception] {
+            interceptThrown[java.io.IOException] {
                 Buffer.mmapReadOnly("/nonexistent/path/to/file.bin")
             }
         }

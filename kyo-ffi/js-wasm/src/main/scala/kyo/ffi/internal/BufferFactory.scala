@@ -64,18 +64,26 @@ private[ffi] object BufferFactory extends BufferFactoryBase:
       * copied into a JS ArrayBuffer. The API is identical to JVM/Native for portability.
       */
     def mmapReadOnly(path: String, offset: Long, size: Long): Buffer[Byte] =
-        mmapImpl(path, offset, size)
+        mmapImpl("Buffer.mmapReadOnly", path, offset, size)
 
     /** JS fallback: same as [[mmapReadOnly]] -- writes go to the in-memory copy only and are NOT persisted to the file. This is a
       * documented limitation of the JS platform.
       */
     def mmapReadWrite(path: String, offset: Long, size: Long): Buffer[Byte] =
-        mmapImpl(path, offset, size)
+        mmapImpl("Buffer.mmapReadWrite", path, offset, size)
 
-    private def mmapImpl(path: String, offset: Long, size: Long): Buffer[Byte] =
+    /** Reads the file through `node:fs`. A host without the module fails with an `UnsupportedOperationException` naming `operation`, and a
+      * failed read with the `IOException` the mmap contract declares, carrying Node's error.
+      */
+    private def mmapImpl(operation: String, path: String, offset: Long, size: Long): Buffer[Byte] =
         // Unsafe: read the file region into a JS ArrayBuffer (not a true mmap on JS) and wrap it.
         import AllowUnsafe.embrace.danger
-        val nodeBuffer = NodeFs.readFileSync(path)
+        val fs = NodeFs.module.getOrElse(throw NodeFs.unsupported(operation))
+        val nodeBuffer =
+            try fs.readFileSync(path)
+            catch
+                case e: scala.scalajs.js.JavaScriptException =>
+                    throw new java.io.IOException(s"$operation could not read $path: ${e.getMessage}", e)
         val fileLength = nodeBuffer.length.asInstanceOf[Int]
         val start      = offset.toInt
         val end        = if size < 0 then fileLength else math.min(start + size.toInt, fileLength)

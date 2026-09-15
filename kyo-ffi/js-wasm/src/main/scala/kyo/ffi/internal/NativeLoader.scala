@@ -2,6 +2,7 @@ package kyo.ffi.internal
 
 import kyo.Chunk
 import kyo.ffi.FfiLoadError
+import kyo.internal.HostConfig
 import kyo.internal.Platform
 import kyo.internal.PlatformJs
 import scala.scalajs.js
@@ -38,11 +39,11 @@ object NativeLoader:
         // 1. Env-var override (operator-controlled) -- honored only when it points at a file that exists.
         // security: do not set from untrusted input, resolves a filesystem path to load as native code.
         val envKey = s"KYO_FFI_${libraryId.toUpperCase.replace('-', '_')}_PATH"
-        val env    = PlatformJs.jsGlobal("process").fold(js.undefined.asInstanceOf[js.Dynamic])(_.env.selectDynamic(envKey))
-        if !js.isUndefined(env) && env != null then
-            val p = env.asInstanceOf[String]
-            candidates += s"env $envKey=$p"
-            if fileExists(p) then return p
+        // HostConfig reads are total: a host whose environment refuses reads (Deno without --allow-env) reads as unset.
+        val env = HostConfig.env(envKey)
+        if env != null then
+            candidates += s"env $envKey=$env"
+            if fileExists(env) then return env
         end if
 
         // 2. Best-effort npm package lookup via require.resolve. `require.resolve` is itself a presence check (it
@@ -83,9 +84,9 @@ object NativeLoader:
         )
     end jsResolve
 
-    /** `true` when `path` exists on the filesystem (Node `fs.existsSync`); `false` on any error. */
+    /** `true` when `path` exists on the filesystem (Node `fs.existsSync`); `false` on any error and on a host without `node:fs`. */
     private def fileExists(path: String): Boolean =
-        try NodeFs.existsSync(path)
+        try NodeFs.module.exists(_.existsSync(path))
         catch case _: Throwable => false
 
     /** `require.resolve(resolvePath)` if `require` is available and the path resolves, else `None`. */

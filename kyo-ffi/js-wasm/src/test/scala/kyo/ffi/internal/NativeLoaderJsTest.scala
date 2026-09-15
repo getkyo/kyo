@@ -131,7 +131,25 @@ class NativeLoaderJsTest extends Test:
         end try
     }
 
+    "an env read that throws, as Deno's does without --allow-env, raises LibraryNotFound" in {
+        sys.props.update(prefixProp, "@nope/never-installed")
+        val ex = withEnvThatThrows(intercept[FfiLoadError.LibraryNotFound](NativeLoader.jsResolve(libId)))
+        assert(ex.libraryId == libId)
+    }
+
     // --- helpers ---
+
+    /** `process.env` replaced by a proxy that throws from every trap, as Deno's does without `--allow-env`. */
+    private def withEnvThatThrows[A](f: => A): A =
+        val process                    = sjs.Dynamic.global.process
+        val saved                      = process.env
+        val refuse: sjs.Function0[Any] = () => sjs.special.`throw`(sjs.Dynamic.newInstance(sjs.Dynamic.global.Error)("NotCapable"))
+        val traps = sjs.Dynamic.literal(get = refuse, has = refuse, ownKeys = refuse, getOwnPropertyDescriptor = refuse)
+        process.updateDynamic("env")(sjs.Dynamic.newInstance(sjs.Dynamic.global.Proxy)(sjs.Dynamic.literal(), traps))
+        try f
+        finally process.updateDynamic("env")(saved)
+        end try
+    end withEnvThatThrows
 
     private def setEnv(key: String, value: String): Unit =
         sjs.Dynamic.global.process.env.updateDynamic(key)(value)
