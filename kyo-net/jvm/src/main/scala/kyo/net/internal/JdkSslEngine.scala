@@ -176,10 +176,7 @@ final private[net] class JdkSslEngine(engine: SSLEngine) extends TlsEngine:
             val n   = Math.min(len, netOut.remaining())
             val arr = new Array[Byte](n)
             netOut.get(arr)
-            var i = 0
-            while i < n do
-                buf.set(i, arr(i))
-                i += 1
+            buf.copyFromArray(arr, 0, 0, n)
             // Keep netOut compacted in read mode for the next drain.
             netOut = readModeRemainder(netOut)
             n
@@ -234,10 +231,7 @@ final private[net] class JdkSslEngine(engine: SSLEngine) extends TlsEngine:
         val n   = Math.min(len, appIn.remaining())
         val arr = new Array[Byte](n)
         appIn.get(arr)
-        var i = 0
-        while i < n do
-            buf.set(i, arr(i))
-            i += 1
+        buf.copyFromArray(arr, 0, 0, n)
         appIn = readModeRemainder(appIn)
         n
     end copyAppIn

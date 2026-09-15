@@ -58,46 +58,20 @@ private[net] object EpollEvent:
     /** Total byte size of `struct epoll_event`: 12 on packed x86_64, 16 on naturally-aligned arches. */
     val size: Int = if isX86_64 then 12 else 16
 
-    /** Write `event` into `buf` at `offset` using the host layout (little-endian: `events` at `offset`, `data` at `offset + dataOffset`). */
+    // The fields are written through the byte-offset wide accessors in the platform's native byte
+    // order, which is what a kernel-facing struct is: the kernel reads these bytes on this host.
+    // Every supported epoll target is little-endian, so this coincides with the LE layout the
+    // struct comment documents. The accessors write the full width in one access; the byte-by-byte
+    // predecessor paid a boxing generic dispatch per byte on the poll loop.
+
+    /** Write `event` into `buf` at `offset` using the host layout (`events` at `offset`, `data` at `offset + dataOffset`). */
     def encode(buf: Buffer[Byte], offset: Int, event: EpollEvent)(using AllowUnsafe): Unit =
-        putIntLe(buf, offset, event.events)
-        putLongLe(buf, offset + dataOffset, event.data)
+        buf.setIntAt(offset, event.events)
+        buf.setLongAt(offset + dataOffset, event.data)
 
     /** Read the `struct epoll_event` at `offset` from `buf` using the host layout. */
     def decode(buf: Buffer[Byte], offset: Int)(using AllowUnsafe): EpollEvent =
-        EpollEvent(getIntLe(buf, offset), getLongLe(buf, offset + dataOffset))
-
-    private def putIntLe(buf: Buffer[Byte], offset: Int, value: Int)(using AllowUnsafe): Unit =
-        var i = 0
-        while i < 4 do
-            buf.set(offset + i, ((value >> (i * 8)) & 0xff).toByte)
-            i += 1
-    end putIntLe
-
-    private def putLongLe(buf: Buffer[Byte], offset: Int, value: Long)(using AllowUnsafe): Unit =
-        var i = 0
-        while i < 8 do
-            buf.set(offset + i, ((value >> (i * 8)) & 0xff).toByte)
-            i += 1
-    end putLongLe
-
-    private def getIntLe(buf: Buffer[Byte], offset: Int)(using AllowUnsafe): Int =
-        var v = 0
-        var i = 0
-        while i < 4 do
-            v |= (buf.get(offset + i) & 0xff) << (i * 8)
-            i += 1
-        v
-    end getIntLe
-
-    private def getLongLe(buf: Buffer[Byte], offset: Int)(using AllowUnsafe): Long =
-        var v = 0L
-        var i = 0
-        while i < 8 do
-            v |= (buf.get(offset + i).toLong & 0xff) << (i * 8)
-            i += 1
-        v
-    end getLongLe
+        EpollEvent(buf.getIntAt(offset), buf.getLongAt(offset + dataOffset))
 
 end EpollEvent
 
@@ -140,12 +114,12 @@ private[net] object KEvent:
       * current owner is a stale event for a closed-and-recycled fd and is dropped (the kqueue recycled-fd stale-event guard, see PollerIoDriver).
       */
     def encodeChange(buf: Buffer[Byte], fd: Int, filter: Short, flags: Short, udata: Long)(using AllowUnsafe): Unit =
-        putLongLe(buf, 0, fd.toLong) // ident
-        putShortLe(buf, 8, filter)   // filter
-        putShortLe(buf, 10, flags)   // flags
-        putIntLe(buf, 12, 0)         // fflags
-        putLongLe(buf, 16, 0L)       // data
-        putLongLe(buf, 24, udata)    // udata (owning handle id; the stale-event discriminator)
+        buf.setLongAt(0, fd.toLong) // ident
+        buf.setShortAt(8, filter)   // filter
+        buf.setShortAt(10, flags)   // flags
+        buf.setIntAt(12, 0)         // fflags
+        buf.setLongAt(16, 0L)       // data
+        buf.setLongAt(24, udata)    // udata (owning handle id; the stale-event discriminator)
     end encodeChange
 
     /** Write the changelist entry for `fd` at element `slot` of `buf` (slot is a 0-based index; byte offset = slot * size). Identical to the
@@ -155,12 +129,12 @@ private[net] object KEvent:
       */
     def encodeChange(buf: Buffer[Byte], slot: Int, fd: Int, filter: Short, flags: Short, udata: Long)(using AllowUnsafe): Unit =
         val base = slot * size
-        putLongLe(buf, base + 0, fd.toLong) // ident
-        putShortLe(buf, base + 8, filter)   // filter
-        putShortLe(buf, base + 10, flags)   // flags
-        putIntLe(buf, base + 12, 0)         // fflags
-        putLongLe(buf, base + 16, 0L)       // data
-        putLongLe(buf, base + 24, udata)    // udata (owning handle id; the stale-event discriminator)
+        buf.setLongAt(base + 0, fd.toLong) // ident
+        buf.setShortAt(base + 8, filter)   // filter
+        buf.setShortAt(base + 10, flags)   // flags
+        buf.setIntAt(base + 12, 0)         // fflags
+        buf.setLongAt(base + 16, 0L)       // data
+        buf.setLongAt(base + 24, udata)    // udata (owning handle id; the stale-event discriminator)
     end encodeChange
 
     /** OR `extra` into the `flags` of the already-encoded entry at element `slot`, leaving every other field untouched. Used by the changelist
@@ -168,7 +142,7 @@ private[net] object KEvent:
       */
     def addFlags(buf: Buffer[Byte], slot: Int, extra: Short)(using AllowUnsafe): Unit =
         val offset = slot * size + 10
-        putShortLe(buf, offset, (getShortLe(buf, offset) | extra).toShort)
+        buf.setShortAt(offset, (buf.getShortAt(offset) | extra).toShort)
     end addFlags
 
     /** Write a one-element `EVFILT_USER` changelist at element 0 of `buf` with explicit `fflags`. Used by the kqueue poll-loop wakeup: the
@@ -177,30 +151,30 @@ private[net] object KEvent:
       * rather than dispatched to a connection. Identical layout to [[encodeChange]] except `filter` is `EVFILT_USER` and `fflags` is settable.
       */
     def encodeUser(buf: Buffer[Byte], ident: Long, flags: Short, fflags: Int)(using AllowUnsafe): Unit =
-        putLongLe(buf, 0, ident)                       // ident (fixed wakeup key)
-        putShortLe(buf, 8, PosixConstants.EVFILT_USER) // filter
-        putShortLe(buf, 10, flags)                     // flags
-        putIntLe(buf, 12, fflags)                      // fflags (NOTE_TRIGGER on the trigger call)
-        putLongLe(buf, 16, 0L)                         // data
-        putLongLe(buf, 24, ident)                      // udata
+        buf.setLongAt(0, ident)                       // ident (fixed wakeup key)
+        buf.setShortAt(8, PosixConstants.EVFILT_USER) // filter
+        buf.setShortAt(10, flags)                     // flags
+        buf.setIntAt(12, fflags)                      // fflags (NOTE_TRIGGER on the trigger call)
+        buf.setLongAt(16, 0L)                         // data
+        buf.setLongAt(24, ident)                      // udata
     end encodeUser
 
     /** Read the `ident` (watched fd as `uintptr_t`) of the event at element `i`. */
-    def ident(buf: Buffer[Byte], i: Int)(using AllowUnsafe): Long = getLongLe(buf, i * size + 0)
+    def ident(buf: Buffer[Byte], i: Int)(using AllowUnsafe): Long = buf.getLongAt(i * size + 0)
 
     /** Read the `filter` (e.g. `EVFILT_READ` / `EVFILT_WRITE`) of the event at element `i`. */
-    def filter(buf: Buffer[Byte], i: Int)(using AllowUnsafe): Short = getShortLe(buf, i * size + 8)
+    def filter(buf: Buffer[Byte], i: Int)(using AllowUnsafe): Short = buf.getShortAt(i * size + 8)
 
     /** Read the `flags` (e.g. `EV_ERROR` / `EV_EOF`) of the event at element `i`. */
-    def flags(buf: Buffer[Byte], i: Int)(using AllowUnsafe): Short = getShortLe(buf, i * size + 10)
+    def flags(buf: Buffer[Byte], i: Int)(using AllowUnsafe): Short = buf.getShortAt(i * size + 10)
 
     /** Read the `data` (bytes available / errno) of the event at element `i`. */
-    def data(buf: Buffer[Byte], i: Int)(using AllowUnsafe): Long = getLongLe(buf, i * size + 16)
+    def data(buf: Buffer[Byte], i: Int)(using AllowUnsafe): Long = buf.getLongAt(i * size + 16)
 
     /** Read the `udata` (the per-registration cookie the kernel returns verbatim; the driver encodes the owning handle id here) of the event at
       * element `i`. Used by the poll loop to drop a stale event for a closed-and-recycled fd whose `udata` no longer matches the fd's current owner.
       */
-    def udata(buf: Buffer[Byte], i: Int)(using AllowUnsafe): Long = getLongLe(buf, i * size + 24)
+    def udata(buf: Buffer[Byte], i: Int)(using AllowUnsafe): Long = buf.getLongAt(i * size + 24)
 
     /** Decode the whole `struct kevent` at element `i`. Used by the binding integration test's round-trip assertion; the poll hot path uses
       * the per-field readers instead so it never allocates a `KEvent`.
@@ -208,53 +182,14 @@ private[net] object KEvent:
     def decode(buf: Buffer[Byte], i: Int)(using AllowUnsafe): KEvent =
         val base = i * size
         KEvent(
-            ident = getLongLe(buf, base + 0),
-            filter = getShortLe(buf, base + 8),
-            flags = getShortLe(buf, base + 10),
-            fflags = getIntLe(buf, base + 12),
-            data = getLongLe(buf, base + 16),
-            udata = getLongLe(buf, base + 24)
+            ident = buf.getLongAt(base + 0),
+            filter = buf.getShortAt(base + 8),
+            flags = buf.getShortAt(base + 10),
+            fflags = buf.getIntAt(base + 12),
+            data = buf.getLongAt(base + 16),
+            udata = buf.getLongAt(base + 24)
         )
     end decode
-
-    private def putShortLe(buf: Buffer[Byte], offset: Int, value: Short)(using AllowUnsafe): Unit =
-        buf.set(offset, (value & 0xff).toByte)
-        buf.set(offset + 1, ((value >> 8) & 0xff).toByte)
-
-    private def putIntLe(buf: Buffer[Byte], offset: Int, value: Int)(using AllowUnsafe): Unit =
-        var i = 0
-        while i < 4 do
-            buf.set(offset + i, ((value >> (i * 8)) & 0xff).toByte)
-            i += 1
-    end putIntLe
-
-    private def putLongLe(buf: Buffer[Byte], offset: Int, value: Long)(using AllowUnsafe): Unit =
-        var i = 0
-        while i < 8 do
-            buf.set(offset + i, ((value >> (i * 8)) & 0xff).toByte)
-            i += 1
-    end putLongLe
-
-    private def getShortLe(buf: Buffer[Byte], offset: Int)(using AllowUnsafe): Short =
-        ((buf.get(offset) & 0xff) | ((buf.get(offset + 1) & 0xff) << 8)).toShort
-
-    private def getIntLe(buf: Buffer[Byte], offset: Int)(using AllowUnsafe): Int =
-        var v = 0
-        var i = 0
-        while i < 4 do
-            v |= (buf.get(offset + i) & 0xff) << (i * 8)
-            i += 1
-        v
-    end getIntLe
-
-    private def getLongLe(buf: Buffer[Byte], offset: Int)(using AllowUnsafe): Long =
-        var v = 0L
-        var i = 0
-        while i < 8 do
-            v |= (buf.get(offset + i).toLong & 0xff) << (i * 8)
-            i += 1
-        v
-    end getLongLe
 
 end KEvent
 
@@ -329,10 +264,7 @@ private[net] object SockAddr:
             zero(buf, inet4Size)
             putFamily(buf, family)
             putPortNetOrder(buf, 2, port)
-            var i = 0
-            while i < 4 do
-                buf.set(4 + i, addr(i))
-                i += 1
+            buf.copyFromArray(addr, 0, 4, 4)
             Maybe((buf, inet4Size))
         end if
     end encodeInet4Raw
@@ -356,10 +288,7 @@ private[net] object SockAddr:
             zero(buf, inet6Size)
             putFamily(buf, family)
             putPortNetOrder(buf, 2, port)
-            var i = 0
-            while i < 16 do
-                buf.set(8 + i, addr(i))
-                i += 1
+            buf.copyFromArray(addr, 0, 8, 16)
             Maybe((buf, inet6Size))
         end if
     end encodeInet6Raw
@@ -376,10 +305,7 @@ private[net] object SockAddr:
             val buf = Buffer.alloc[Byte](unixSize)
             zero(buf, unixSize)
             putFamily(buf, family)
-            var i = 0
-            while i < bytes.length do
-                buf.set(2 + i, bytes(i))
-                i += 1
+            buf.copyFromArray(bytes, 0, 2, bytes.length)
             Maybe((buf, unixSize))
         end if
     end encodeUnix

@@ -39,7 +39,8 @@ abstract class UnsafeBuffer(
 
     // Bulk operations
     def copyTo(target: UnsafeBuffer, srcOffset: Long, targetOffset: Long, bytes: Long)(using AllowUnsafe): Unit
-    def copyToArray(arr: Array[Byte], srcOffset: Long, len: Int)(using AllowUnsafe): Unit
+    def copyToArray(arr: Array[Byte], srcOffset: Long, destPos: Int, len: Int)(using AllowUnsafe): Unit
+    def copyFromArray(arr: Array[Byte], srcPos: Int, destOffset: Long, len: Int)(using AllowUnsafe): Unit
 
     // Lifecycle
     /** Close this buffer. Idempotent -- second call is a no-op. */

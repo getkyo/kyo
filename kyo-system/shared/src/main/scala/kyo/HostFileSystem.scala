@@ -2,11 +2,12 @@ package kyo
 
 import java.io.IOException
 import java.nio.charset.Charset
+import kyo.Path.WatchOptions
 import kyo.internal.Platform
 
 private[kyo] object HostFileSystem:
 
-    def apply(): FileSystem.Write[Sync] = new HostFileSystem
+    def apply(): FileSystem.Write[Sync] & FileSystem.Watch = new HostFileSystem
 
     // Fires inside the claim node in tryLock, once the OS lock is held and recorded and before
     // tryLock returns. Default no-op; private[kyo] so tests in this package can reach it, and
@@ -40,7 +41,7 @@ private[kyo] object HostFileSystem:
       *
       * The two are not the same question. macOS default volumes are case-insensitive while the
       * platform is not Windows, so inferring from the operating system reports the wrong policy on
-      * every such machine, and the value feeds `list(path, glob)`.
+      * every such machine, and the value feeds `list(path, glob)` and every watcher's glob.
       *
       * Probed against the filesystem's own temporary directory, so a host instance answers for its
       * own volume rather than for the process temp volume. The result is cached per instance: it is
@@ -69,7 +70,7 @@ private[kyo] object HostFileSystem:
         }
     end probeCaseSensitivity
 
-    final class HostFileSystem extends FileSystem.Write[Sync]:
+    final class HostFileSystem extends FileSystem.Write[Sync], FileSystem.Watch:
 
         // Memo cell for the one-off volume probe below. A plain atomic rather than Kyo's: the cell
         // has to exist at construction, outside any Sync context, and it carries no effect of its
@@ -132,6 +133,9 @@ private[kyo] object HostFileSystem:
         def stat(path: Path)(using Frame): Path.PathStat < (Sync & Abort[FileReadException]) =
             // Unsafe: bridges Path.Unsafe.stat into the safe tier
             Sync.Unsafe.defer(Abort.get(path.unsafe.stat()))
+        override private[kyo] def stableIdentity(path: Path)(using Frame): Maybe[String] < (Sync & Abort[FileReadException]) =
+            // Unsafe: bridges the platform file identity used only for polling move correlation
+            Sync.Unsafe.defer(Abort.get(path.unsafe.stableIdentity()))
         def openRead(path: Path)(using Frame): Path.ReadHandle < (Sync & Abort[FileReadException]) =
             // Unsafe: bridges Path.Unsafe.openRead into the safe tier
             Sync.Unsafe.defer(Abort.get(path.unsafe.openRead()))
@@ -430,5 +434,10 @@ private[kyo] object HostFileSystem:
             Frame
         ): Path.Lock < (Sync & Async & Scope & Abort[FileReadException | FileLockException]) =
             FileSystem.awaitLock(path, wait)(tryLock(path, mode, sentinelSuffix))
+
+        def openWatcher(path: Path, options: WatchOptions)(using
+            Frame
+        ): Path.Watcher < (Sync & Async & Scope & Abort[FileWatchException]) =
+            PathWatch.polling(this, path, options)
     end HostFileSystem
 end HostFileSystem

@@ -1001,8 +1001,27 @@ The teaching sections above cover when to reach for each knob. This is the looku
 | `ffiTargetPlatform` | `String` | auto-detected | manual override: `"JVM"` / `"Native"` / `"JS"` |
 | `ffiStrictDiscovery` | `Boolean` | `false` | fail build when `ffiGenerate` discovers zero `Ffi` traits |
 | `ffiSystemLibraries` | `Seq[String]` | common POSIX/Windows libs | library ids valid without declaration in `ffiLibraries` |
+| `ffiTargetOsArch` | `Option[String]` | `-Dkyo.ffi.targetOsArch`, else the host | the `<os>-<arch>` an artifact is built, named and packaged for |
+| `ffiPrebuiltDir` | `Option[File]` | `None` | directory of prebuilt natives to merge in; every id in it must be declared by this project |
+| `ffiPrebuiltPool` | `Option[File]` | `None` | directory of prebuilt natives shared by several projects; each takes only the ids it declares |
+| `ffiRequiredPlatforms` | `Seq[String]` | `Nil` | platform keys `ffiPackagingCheck` requires a native for, per bundled library |
+| `ffiStubLibraries` | `Seq[String]` | `Nil` | library ids whose C sources are a placeholder rather than the real binding |
 
 > **Caution:** `ffiCFlags` replaces the default list when assigned with `:=`. Assigning `ffiCFlags := Seq("-DFOO")` drops `-O2 -fPIC -Wall`; use `ffiCFlags += "-DFOO"` to keep the defaults and append.
+
+Most of these settings are build-wide: set one at `ThisBuild` and every project sees it. That is how
+a CI matrix leg names its target and passes its cross-compilation flags without editing the build.
+
+```scala doctest:expect=skipped
+// One arm64 macOS runner producing the x86_64 Mac target.
+ThisBuild / ffiTargetOsArch := Some("darwin-x86_64")
+ThisBuild / ffiCFlags ++= Seq("-arch", "x86_64")
+```
+
+The exceptions describe what a single project contains rather than how the build is being driven, so
+they are set per project and a build-wide value for them has no meaning: `ffiLibraryId`,
+`ffiLibraries`, `ffiCSources`, `ffiCHeaders`, `ffiIncludes`, `ffiLinkLibs` and `ffiStubLibraries`.
+Setting one of those at `ThisBuild` has no effect.
 
 `ffiCHeaders` is rarely set directly: the parent directory of each listed header is added to the C compiler's `-I` flags, and the default auto-detect under `src/main/c/` usually covers it.
 

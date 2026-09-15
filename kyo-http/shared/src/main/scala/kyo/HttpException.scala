@@ -248,7 +248,9 @@ case class HttpHandlerException(error: Any)(using Frame)
   * @see
   *   [[kyo.HttpUrlParseException]] Failed to parse a URL
   * @see
-  *   [[kyo.HttpFieldDecodeException]] Failed to decode a path/query/header/cookie field
+  *   [[kyo.HttpPathDecodeException]] Failed to decode a path capture
+  * @see
+  *   [[kyo.HttpFieldDecodeException]] Failed to decode a query/header/cookie field
   * @see
   *   [[kyo.HttpMissingFieldException]] Required field missing from the request
   * @see
@@ -307,6 +309,33 @@ case class HttpFieldDecodeException private (
 object HttpFieldDecodeException:
     def apply(fieldName: String, fieldType: String, method: String, url: String, cause: Throwable)(using Frame): HttpFieldDecodeException =
         new HttpFieldDecodeException(fieldName, fieldType, cause.getMessage, method, HttpException.stripQuery(url), cause)
+
+/** Failed to decode a path capture.
+  *
+  * Separate from [[HttpFieldDecodeException]] because the router acts on it. When
+  * several routes share a URL template, a path segment that does not decode means
+  * this candidate did not match, and the next one is tried. A query, header or
+  * cookie failure is a genuine client error on a route that *did* match and must
+  * never fall through to another. That distinction decides which of the two
+  * happens, so it is carried by the type rather than by comparing a field name.
+  */
+case class HttpPathDecodeException private (
+    fieldName: String,
+    detail: String,
+    method: String,
+    url: String,
+    cause: String | Throwable
+)(using Frame)
+    extends HttpDecodeException(
+        s"""Failed to decode path '$fieldName'.
+           |
+           |  Detail: $detail
+           |  While processing: ${HttpException.showRequest(method, url)}""".stripMargin,
+        cause
+    )
+object HttpPathDecodeException:
+    def apply(fieldName: String, method: String, url: String, cause: Throwable)(using Frame): HttpPathDecodeException =
+        new HttpPathDecodeException(fieldName, cause.getMessage, method, HttpException.stripQuery(url), cause)
 
 /** Required field missing from the request. */
 case class HttpMissingFieldException private (fieldName: String, fieldType: String, method: String, url: String)(using Frame)

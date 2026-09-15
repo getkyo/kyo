@@ -3,7 +3,6 @@ package kyo.ffi.internal
 import java.nio.charset.StandardCharsets
 import kyo.ffi.Buffer
 import kyo.internal.UnsafeLayout
-import scala.reflect.ClassTag
 
 /** Shared [[Buffer]] conversion helpers (`fromArray`, `copyToArray`, `fromUtf8`), parameterized over the platform's allocation function. */
 private[ffi] object BufferConversions:
@@ -22,16 +21,24 @@ private[ffi] object BufferConversions:
     end fromArray
 
     /** Copy a range `[from, from + len)` of `b` into a freshly allocated on-heap [[scala.Array]]. */
-    def copyToArray[A: ClassTag](b: Buffer[A], from: Int, len: Int): Array[A] =
-        // Unsafe: bridges to Buffer.get which requires AllowUnsafe at the public boundary; this is an internal implementation.
+    def copyToArray[A](b: Buffer[A], from: Int, len: Int)(using ct: kyo.ConcreteTag[A]): Array[A] =
+        // Unsafe: bridges to Buffer accessors which require AllowUnsafe at the public boundary; this is an internal implementation.
         import kyo.AllowUnsafe.embrace.danger
-        val arr = new Array[A](len)
-        var i   = 0
-        while i < len do
-            arr(i) = b.get(from + i)
-            i += 1
-        end while
-        arr
+        // Byte buffers take the bulk path: the generic loop below boxes every element through the
+        // erased `get`, and Buffer[Byte] reads sit on the network receive paths.
+        if ct.toClass eq java.lang.Byte.TYPE then
+            val arr = new Array[Byte](len)
+            b.asInstanceOf[Buffer[Byte]].copyToArray(arr, 0, from, len)
+            arr.asInstanceOf[Array[A]]
+        else
+            val arr = kyo.ConcreteTag.newArray[A](len)
+            var i   = 0
+            while i < len do
+                arr(i) = b.get(from + i)
+                i += 1
+            end while
+            arr
+        end if
     end copyToArray
 
     /** Encode `s` as UTF-8 and store it null-terminated in a fresh [[Buffer]] of [[Byte]] using `alloc`. */

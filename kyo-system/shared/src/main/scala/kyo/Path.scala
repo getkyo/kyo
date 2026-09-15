@@ -91,6 +91,70 @@ object Path extends PathPlatformSpecific:
       */
     final case class PathStat(lastModifiedMs: Long, sizeBytes: Long) derives CanEqual
 
+    /** Selects how deeply a watcher observes a directory.
+      *
+      * [[Immediate]] observes only direct children of the watched root. [[Recursive]] also observes
+      * descendants at every depth. The watched root itself is not passed through the glob filter.
+      * Its disappearance is instead reported as [[Change.Invalidated]].
+      *
+      * Depth is applied before glob matching, and paths emitted by either mode retain their complete
+      * backend path.
+      */
+    enum WatchDepth derives CanEqual:
+        case Immediate
+        case Recursive
+    end WatchDepth
+
+    /** Selects the case policy used when matching a watch glob.
+      *
+      * [[FileSystemDefault]] delegates to the backend's native policy. [[Sensitive]] compares every
+      * glob component case sensitively. [[Insensitive]] compares every glob component without case.
+      *
+      * This setting changes only event selection. It does not rewrite the paths contained in emitted
+      * [[Change]] values.
+      */
+    enum MatchCase derives CanEqual:
+        case FileSystemDefault
+        case Sensitive
+        case Insensitive
+    end MatchCase
+
+    /** A normalized filesystem change emitted by a [[Watcher]].
+      *
+      * Creation, modification, and removal events identify one path. A move identifies both its former
+      * and current paths. Moves crossing a watch filter boundary are normalized to removal or creation.
+      * [[Overflow]] reports that bounded event delivery lost detail, while [[Invalidated]] reports that
+      * the watched root is no longer usable.
+      *
+      * Paths use the namespace of the filesystem that acquired the watcher.
+      */
+    enum Change derives CanEqual:
+        case Created(path: Path)
+        case Modified(path: Path)
+        case Removed(path: Path)
+        case Moved(from: Path, to: Path)
+        case Overflow(root: Path)
+        case Invalidated(root: Path)
+    end Change
+
+    /** Configures filesystem watching and event selection.
+      *
+      * `depth` controls traversal below the watched root. `glob` is matched against paths relative to
+      * that root using `caseSensitivity`. `capacity` bounds pending changes and must be positive. When
+      * it is exceeded, queued detail is replaced by [[Change.Overflow]]. `followLinks` controls whether
+      * linked directories and their targets participate in observation.
+      *
+      * The defaults observe direct children, match all names using the backend's case policy, retain 256
+      * pending changes, and do not follow links.
+      */
+    final case class WatchOptions(
+        depth: WatchDepth = WatchDepth.Immediate,
+        glob: Glob = Glob.all,
+        caseSensitivity: MatchCase = MatchCase.FileSystemDefault,
+        capacity: Int = 256,
+        followLinks: Boolean = false
+    ) derives CanEqual
+
     /** Where a byte-level read begins.
       *
       * `Start` reads the file from its first byte, so a follower replays existing content before emitting new content. `End` skips whatever
@@ -269,6 +333,11 @@ object Path extends PathPlatformSpecific:
         case WriteString(handle: Path.WriteHandle, value: String, charset: Charset) extends Op[Unit]
     end Op
 
+    private[kyo] enum WatchOp[A]:
+        case Open(path: Path, options: WatchOptions)        extends WatchOp[Watcher]
+        case Raise(error: Result.Error[FileWatchException]) extends WatchOp[Nothing]
+    end WatchOp
+
     // --- Runners ---
 
     /** Runs `program`, discharging both write and read capabilities against the Local-selected
@@ -327,6 +396,37 @@ object Path extends PathPlatformSpecific:
             )
         }
 
+    /** Runs `program` against an explicit watch-capable filesystem, discharging [[PathWatch]]. */
+    def runWatchWith[A, S](fileSystem: FileSystem.Watch)(program: A < (PathWatch & S))(using
+        Frame
+    ): A < (Async & Scope & Abort[FileWatchException] & S) =
+        ArrowEffect.handle[[A] =>> WatchOp[A], Id, PathWatch, A, S, Async & Scope & Abort[FileWatchException]](
+            Tag[PathWatch],
+            program
+        )(
+            [C] =>
+                (op, cont) =>
+                    op match
+                        case WatchOp.Open(path, options) => fileSystem.openWatcher(path, options).map(cont)
+                        case WatchOp.Raise(error)        => Abort.error(error)
+        )
+
+    /** Runs `program`, discharging [[PathWatch]] against the Local-selected watch backend. */
+    def runWatch[A, S](program: A < (PathWatch & S))(using
+        Frame
+    ): A < (Async & Scope & Abort[FileWatchException] & S) =
+        ArrowEffect.handle[[A] =>> WatchOp[A], Id, PathWatch, A, S, Async & Scope & Abort[FileWatchException]](
+            Tag[PathWatch],
+            program
+        )(
+            [C] =>
+                (op, cont) =>
+                    op match
+                        case WatchOp.Open(path, options) =>
+                            FileSystem.useWatchErased(_.openWatcher(path, options)).map(cont)
+                        case WatchOp.Raise(error) => Abort.error(error)
+        )
+
     /** Stateless isolation for read operations. Each child captures the Local-selected backend and
       * installs an independent Path handler around its computation.
       */
@@ -370,6 +470,27 @@ object Path extends PathPlatformSpecific:
                     ArrowEffect.suspend(Tag[PathWrite], Op.Raise(panic))
             }
     end isolateWrite
+
+    /** Stateless isolation for watch operations. See [[isolateRead]]. */
+    given isolateWatch: Isolate[PathWatch, Async, PathWatch] with
+        type State        = FileSystem.Watch
+        type Transform[A] = Result[FileWatchException, A]
+
+        def capture[A, S](f: State => A < S)(using Frame): A < (PathWatch & Async & S) =
+            FileSystem.useWatchErased(f)
+
+        def isolate[A, S](state: State, value: A < (S & PathWatch))(using Frame): Result[FileWatchException, A] < (Async & S) =
+            Abort.run[FileWatchException](Scope.run(runWatchWith(state)(value)))
+
+        def restore[A, S](value: Result[FileWatchException, A] < S)(using Frame): A < (PathWatch & S) =
+            value.map {
+                case Result.Success(result) => result
+                case Result.Failure(error) =>
+                    ArrowEffect.suspend(Tag[PathWatch], WatchOp.Raise(Result.Failure(error)))
+                case panic: Result.Panic =>
+                    ArrowEffect.suspend(Tag[PathWatch], WatchOp.Raise(panic))
+            }
+    end isolateWatch
 
     private def dispatch[S, C](service: FileSystem.Write[S], op: Op[C])(using Frame): C < (S & Abort[FileSystemException]) =
         op match
@@ -1136,10 +1257,29 @@ object Path extends PathPlatformSpecific:
         inline def removeAll(using inline frame: Frame): Unit < PathWrite =
             ArrowEffect.suspend(Tag[PathWrite], Path.Op.RemoveAll(self))
 
+        /** Acquires a watcher after its backend registration is active. */
+        def openWatcher(options: WatchOptions = WatchOptions())(using Frame): Watcher < PathWatch =
+            ArrowEffect.suspend(Tag[PathWatch], Path.WatchOp.Open(self, options))
+
         /** Returns the underlying `Unsafe` implementation for direct use in unsafe code. */
         def unsafe: Path.Unsafe = self
 
     end extension
+
+    /** A scope-managed source of normalized filesystem changes.
+      *
+      * Watchers are acquired with [[Path.openWatcher]] only after their
+      * backend registration is active. Their event stream remains valid
+      * for the lifetime of the acquisition scope and suspends asynchronously
+      * while waiting for changes.
+      *
+      * Backend failures are reported through [[FileWatchException]]. Event
+      * loss and watched-root loss are values in the stream instead, represented
+      * by [[Change.Overflow]] and [[Change.Invalidated]].
+      */
+    trait Watcher:
+        def events: Stream[Change, Async & Scope & Abort[FileWatchException]]
+    end Watcher
 
     // --- System directories ---
 
@@ -1444,6 +1584,7 @@ object Path extends PathPlatformSpecific:
         def openReadLines(charset: Charset)(using AllowUnsafe, Frame): Result[FileReadException, Path.LineReadHandle]
         def size()(using AllowUnsafe, Frame): Result[FileReadException, Long]
         def stat()(using AllowUnsafe, Frame): Result[FileReadException, PathStat]
+        private[kyo] def stableIdentity()(using AllowUnsafe, Frame): Result[FileReadException, Maybe[String]]
 
         // --- Write ---
 

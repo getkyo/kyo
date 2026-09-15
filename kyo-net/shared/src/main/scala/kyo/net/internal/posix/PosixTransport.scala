@@ -1507,7 +1507,13 @@ final private[net] class PosixTransport private[posix] (
     /** The non-blocking fcntl shim (loaded once), used to set client / accepted sockets non-blocking on every architecture (RI: variadic
       * fcntl is ABI-unsafe on arm64).
       */
-    private def shim(using AllowUnsafe): PosixShimBindings = Ffi.load[PosixShimBindings]
+    // bound once for the reason KqueuePollerBackend.kq is: the shared stateless binding was
+    // reloaded per call. Lazy so touching the transport object does not dlopen before selection.
+    // Unsafe: first use is always under a caller that holds AllowUnsafe, and each binding method
+    // still requires AllowUnsafe per call.
+    private lazy val shim: PosixShimBindings =
+        import AllowUnsafe.embrace.danger
+        Ffi.load[PosixShimBindings]
 
     /** Extract the value of an already-inline-completed `@Ffi.blocking` fiber via `poll()` (non-parking peek). Returns `Absent` when the fiber
       * is still pending: on JVM/Native the `@Ffi.blocking` call inline-completes so that never happens, and on JS/Wasm the paths that need an

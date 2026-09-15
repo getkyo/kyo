@@ -124,10 +124,10 @@ class SslLibProviderOwnershipTest extends Test:
     end StubBindings
 
     private class StubProvider(bindings: StubBindings) extends SslLibProvider:
-        def name                                                     = "stub"
-        def priority                                                 = 0
-        def libraryIds: Chunk[String]                                = Chunk("stub")
-        private[internal] def lib(using AllowUnsafe): SslLibBindings = bindings
+        def name                                  = "stub"
+        def priority                              = 0
+        def libraryIds: Chunk[String]             = Chunk("stub")
+        private[internal] val lib: SslLibBindings = bindings
     end StubProvider
 
     private def build(bindings: StubBindings, config: NetTlsConfig = NetTlsConfig(), hostname: String = "example.com") =

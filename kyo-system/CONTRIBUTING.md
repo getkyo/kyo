@@ -14,10 +14,11 @@ The module owns these capability boundaries:
 |---|---|---|
 | Filesystem reads | `Path`, `FileSystem.Read` | `PathRead` |
 | Filesystem writes | `Path`, `FileSystem.Write` | `PathWrite` |
+| Filesystem observation | `Path.Watcher`, `FileSystem.Watch` | `PathWatch` |
 | Commands and processes | `Command`, `Process` | `Sync`, `Async`, `Scope` |
 | Environment | `System` | `Sync` |
 
-`PathWrite <: PathRead`: write authority includes read authority.
+`PathWrite <: PathRead`: write authority includes read authority. `PathWatch` is independent.
 `Path.runReadOnly` intentionally cannot discharge a `PathWrite` operation. Keep this negative
 capability law visible in return types and compile-time tests.
 
@@ -40,13 +41,14 @@ kyo-system/
 ## Filesystem authority and selection
 
 `FileSystem.Read[S]` contains only inspection and read operations. `FileSystem.Write[S]` extends it
-with mutation, typed write channels, and structure changes.
+with mutation, typed write channels, and structure changes. A backend mixes in
+`FileSystem.Watch[S]` only when it can satisfy the complete watcher contract.
 
 The built-in factories are:
 
 | Factory | Authority | Purpose |
 |---|---|---|
-| `FileSystem.host` | write | Local host filesystem |
+| `FileSystem.host` | write and watch | Local host filesystem |
 
 `FileSystem.let(backend)(program)` changes the backend used by the default Path runners for a
 dynamic scope. Selection uses `Local`, propagates to child fibers, and restores the previous backend
@@ -115,7 +117,7 @@ scope.
 - `Create` opens an existing file or creates it.
 - `CreateNew` fails if any target already exists.
 
-## Locks
+## Locks and watchers
 
 Locks are advisory, scope-managed values. `Path.LockMode` selects shared or exclusive compatibility.
 `Path.LockWait` selects immediate, unbounded, or deadline-bounded acquisition. Fiber waiting must use
@@ -130,6 +132,11 @@ file data I/O never opens, which closes that hole by construction, and it is the
 Node lockfile protocol already used. The lock does not exclude a foreign process that locks the
 data file directly through the OS.
 
+Watchers use the independent `PathWatch` capability. Acquisition returns only after backend
+registration is active. Events are normalized as `Path.Change`; overflow and root invalidation are
+stream values. Invalidation is terminal: emit it exactly once, close the stream, and release the
+registration.
+
 ## Error contracts
 
 `FileSystemException` is the umbrella. Concrete exceptions mix in only the marker traits for the
@@ -139,6 +146,7 @@ operations that can raise them:
 - `FileWriteException`
 - `FileStructureException`
 - `FileLockException`
+- `FileWatchException`
 
 Use `FileIOException(path, operation, cause)` only when no more precise leaf describes the failure.
 Preserve `Result.Panic` as a panic. Do not translate interruption, programmer defects, or unexpected
@@ -146,7 +154,7 @@ throwables into expected filesystem failures.
 
 ## Adding an operation
 
-1. Decide whether the operation needs read or write authority.
+1. Decide whether the operation needs read, write, or watch authority.
 2. Add a focused shared test that proves behavior and its precise failure case.
 3. Add the safe Path surface and reified operation when it is a Path capability operation.
 4. Add the narrowest `FileSystem` tier method and precise effect row.
@@ -168,9 +176,10 @@ Use the reusable suites for backend laws:
 - `FileSystemWriteTest`
 - `FileSystemChannelTest`
 - `FileSystemLockTest`
+- `FileSystemWatchTestSuite`
 
 Test capability rows with `typeCheck` and `typeCheckErrors`. Use deterministic `Async` coordination
-for lock tests. Never use sleeps or blocking primitives to make scheduling tests pass.
+for watcher and lock tests. Never use sleeps or blocking primitives to make scheduling tests pass.
 
 Before submission, run the affected module tests on all four platforms and the module doctest. Read
 formatted files again after sbt completes because compilation formats sources.
