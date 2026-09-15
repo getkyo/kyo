@@ -4,7 +4,7 @@
 
 `A < S` is the type the whole module exists to serve: a value that will produce an `A` after performing the effects listed in `S`. It is a description of work rather than a running program: an operation in `S` does not happen until a handler answers it, and `eval` only type-checks once `S` has been narrowed to `Any`, so the effect row is a checklist the compiler makes you empty before the computation can run. What `map` does depends on what it is handed. Over a value that has already settled it applies the function on the spot, because there is nothing left to wait for; over one holding a suspension it composes onto the description instead, and the function runs when that suspension is answered. Plain values are computations already (`42` is an `Int < Any`), which is why `map` doubles as `flatMap` and why most code never mentions lifting at all.
 
-An effect is a set of operations with no implementation. `ArrowEffect[Input, Output]` declares operations that take an input and answer with an output; `ContextEffect[A]` declares a value the computation expects to find bound around it. Performing an operation suspends: the description gains a node saying what was asked, and the rest of the computation becomes a continuation hanging off it. That continuation is an ordinary value, an `Arrow`, rather than a stack frame. A handler (`ArrowEffect.handleCont` and its loop-shaped siblings) or a binding (`ContextEffect.handleInheritable`) supplies the answers and removes that effect from the row, and because the handler is holding the continuation as a value it may apply it once, or never, or, where it declares that it will, more than once. That single property is where backtracking, early exit, streaming and retry all come from.
+An effect is a set of operations with no implementation. `ArrowEffect[Input, Output]` declares operations that take an input and answer with an output; `ContextEffect[A]` declares a value the computation expects to find bound around it. Performing an operation suspends: the description gains a node saying what was asked, and the rest of the computation becomes a continuation hanging off it. That continuation is an ordinary value, an `Arrow`, rather than a stack frame. A handler (`ArrowEffect.handleCont` and its loop-shaped siblings) or a binding (`ContextEffect.handleInheritable`) supplies the answers and removes that effect from the row, and because the handler is holding the continuation as a value it may apply it once, more than once, or never. That single property is where backtracking, early exit, streaming and retry all come from.
 
 Everything in this module stands on those two paragraphs. The concrete effects a program actually names (`Abort`, `Env`, `Var`, `Emit`, `Async`) are defined elsewhere in terms of them. The module compiles and runs on the JVM, JavaScript, Scala Native and Wasm, with only the safepoint and its failure reporting split per platform.
 
@@ -192,15 +192,14 @@ A handler supplies the implementation an effect declaration left out, and remove
 
 | Handler | What the clause gets, and when to reach for it |
 | --- | --- |
-| `ArrowEffect.handleCont` | The input and the continuation as an `Arrow`. Apply it once to resume, or never to discard the rest. |
-| `ArrowEffect.handleContRepeated` | The same, for a clause that applies the continuation more than once. Declaring it holds the regions dumped into the continuation, so a bracket inside releases once rather than at the first resumption. |
+| `ArrowEffect.handleCont` | The input and the continuation as an `Arrow`. Apply it once to resume, more than once to branch, or never to discard the rest. The regions dumped into the continuation are held by this handler and released once, where it ends, so every application runs against a live bracket. |
 | `ArrowEffect.handleLoop` | Only the input. Control flows through `Loop.Outcome`: `Loop.continue(answer)` answers this occurrence, `Loop.done(value)` ends the region. |
 | `ArrowEffect.handleLoopState` | The input and a state value threaded from one occurrence to the next. |
 | `ContextEffect.handleInheritable` | A value bound for the extent, inherited unchanged by anything forked from it. |
 | `ContextEffect.handleNonInheritable` | The same, except a fork starts the region over rather than inheriting the value, for a value tied to one execution. |
 | `ContextEffect.handle` | A value bound for the extent, with `fork` and `join` deciding what a fork starts from and what this scope keeps afterwards. |
 
-Every handler above takes an optional `done` clause, which transforms the region's result, and an optional `recover` clause, which answers a failure, covered under [failure and resources](#recovery-is-a-clause-not-a-wrapper). Each also has a `*With` variant that fuses what happens after the region into the handler itself, covered under [fusing the region's continuation](#the-with-variants-fusing-the-regions-continuation); those take `handle` and `done` and no recovery, so a region needing one takes the plain form and a `map`.
+Every `ArrowEffect` handler above takes an optional `done` clause, which transforms the region's result, and an optional `recover` clause, which answers a failure, covered under [failure and resources](#recovery-is-a-clause-not-a-wrapper). Each of those also has a `*With` variant that fuses what happens after the region into the handler itself, covered under [fusing the region's continuation](#the-with-variants-fusing-the-regions-continuation); those take `handle` and `done` and no recovery, so a region needing one takes the plain form and a `map`.
 
 ### `handleCont`: the continuation in hand
 
@@ -218,11 +217,11 @@ assert(transformed.eval == 30)
 
 The second clause is the `done` clause, which transforms the region's final value; the shorter overload used for `Ask.run` earlier omits it and returns the body's own result.
 
-Because `cont` is a value rather than a stack frame, a clause can apply it more than once, or not at all. One that will apply it more than once declares so by reaching for `handleContRepeated`:
+Because `cont` is a value rather than a stack frame, a clause can apply it more than once, or not at all:
 
 ```scala
 val bothAnswers: Int < Any =
-    ArrowEffect.handleContRepeated(Tag[Ask], Ask.get.map(_ * 10))(
+    ArrowEffect.handleCont(Tag[Ask], Ask.get.map(_ * 10))(
         handle = [C] => (_, cont) => cont(1).map(x => cont(2).map(y => x + y)),
         done = a => a
     )
@@ -232,9 +231,9 @@ assert(bothAnswers.eval == 30)
 
 That is the whole mechanism behind non-determinism and backtracking: the region after the suspension ran twice, once per answer, and the clause combined the results. A clause that ignores `cont` entirely ends the computation at the operation, which is how early exit and short-circuiting are built.
 
-The declaration is what makes the second application safe. The continuation carries the regions that stood between the handler and the suspension, and a plain `handleCont` hands those back when the clause returns, so the first application is what ends them. Where one of them is a bracket, a second application would re-enter a scope that has already been released, and is refused. `handleContRepeated` holds that obligation until the handler itself ends instead. Reach for the plain form everywhere else, since holding keeps the obligation longer than a single-shot clause needs. The refusal and the ways around it are in [a released scope, entered again](#a-released-scope-entered-again).
+What makes the second application safe is who owns the regions the continuation carries. The continuation holds the regions that stood between the handler and the suspension, brackets among them, and rather than each application ending them, the handler holds what they owe and settles it once, where its own region ends. So every application runs against a live resource, and a bracket inside the region releases once however many times the clause resumed. The one thing a clause may not do with the continuation is keep it past its region, and [a released scope, entered again](#a-released-scope-entered-again) is what happens to a continuation that outlives the region that owned it.
 
-> **Note:** the continuation is an `Arrow`, deliberately not a `Function1`. `Function1` is specialized on both parameters, so mixing it into every handler node would emit the whole forwarder grid, measured at 19776 generated definitions across this module with no genuine call site. An `Arrow` is applied the same way, `cont(value)`.
+> **Note:** the continuation is an `Arrow`, deliberately not a `Function1`. `Function1` is specialized on both parameters, so mixing it into every handler node would emit the whole grid of specialized `apply` forwarders, none with a genuine call site anywhere in the module. An `Arrow` is applied the same way, `cont(value)`.
 
 ### `handleLoop`: one answer per occurrence
 
@@ -313,7 +312,7 @@ Only the answer handed back through `Loop.continue` is region currency, so an op
 
 A clause is handed the rest of the computation as a value, and the previous sections lean on that freely. There is one thing it may not do with it: let it out.
 
-The reason is what the continuation carries. It holds the regions that stood between this handler and the suspension, brackets among them, and the handler releases what those regions carry when the clause returns. A continuation that outlived the clause would be a computation whose resources have already been released, resumed by someone who has no idea.
+The reason is what the continuation carries. It holds the regions that stood between this handler and the suspension, brackets among them, and the handler releases what those regions carry when its own region ends. A continuation that outlived that region would be a computation whose resources have already been released, resumed by someone who has no idea.
 
 The row says so. `Region.NoEscape` is added to the continuation's row, and to the row the clause owes back, so anything derived from the continuation carries the marker too. Only one thing discharges it, which is returning to the region that added it, so handing the continuation back compiles:
 
@@ -350,7 +349,7 @@ ArrowEffect.handleCont(Tag[Ask], Ask.get)(
 )
 ```
 
-Sending it to another fiber is refused by the same row, because crossing an execution boundary asks for an `Isolate` covering the computation's effects and none can be derived for the marker. Writing one for the marker by hand does not open the gate either.
+Sending it to another fiber is refused by the same row, because crossing an execution boundary asks for an `Isolate` covering the computation's effects, and the derivation refuses a row naming the marker before it looks for any instance, so supplying one for the marker does not open the gate.
 
 The marker has no runtime presence. Rows are phantom, and the discharge is a cast on the row alone, so confinement costs nothing at evaluation and is entirely a statement to the compiler.
 
@@ -409,9 +408,9 @@ val layered: Int < Any =
 assert(layered.eval == 11)
 ```
 
-> **Note:** a binding resolves when it is installed, not when it is read. A computation captured under one binding and resumed under a different enclosing binding merges into the one it is resumed under, rather than carrying its original.
+> **Note:** a binding's value is derived when its region is entered, not when it is read. A region already entered keeps that value for its whole extent, across a park and a resumption under a different enclosing binding included; a region not yet entered derives from whatever is bound around it at the moment it is.
 
-`handleInheritable` decides the edges of the extent for you: a forked computation receives the binding unchanged and the scope keeps its own value when that fork ends. `ContextEffect.handle` is the form that asks, and it always asks for both `fork`, what a computation forked from here receives, and `join`, what this scope holds once a fork ends. `handleNonInheritable` is the other shorthand over it: a fork is handed the value the region would have taken with nothing bound outside it, so it starts the region over instead of continuing it, which is what a value tied to one execution needs. Whether `handle` also asks about the extent ending depends on which overload the first argument selects: give it `ifUndefined` and `ifDefined` and there is nothing further, or a `release` as a fifth argument; give it a single `derive: Maybe[A] => A` instead and `done` and `release` are available with defaults. `fork` and `join` belong to [crossing an execution boundary](#isolate-crossing-an-execution-boundary), where the reason they are on this call becomes visible.
+`handleInheritable` decides the edges of the extent for you: a forked computation receives the binding unchanged and the scope keeps its own value when that fork ends. `ContextEffect.handle` is the form that asks, and it always asks for both `fork`, what a computation forked from here receives, and `join`, what this scope holds once a fork ends. `handleNonInheritable` is the other shorthand over it: a fork is handed the value the region would have taken with nothing bound outside it, so it starts the region over instead of continuing it, which is what a value tied to one execution needs. `handle` can also ask about the extent ending, through a `release` strategy handed the bound value and how the extent ended: with `ifUndefined` and `ifDefined` as the value arguments it is an optional sixth argument, and with a single `derive: Maybe[A] => A` in their place it has a no-op default. `fork` and `join` belong to [crossing an execution boundary](#isolate-crossing-an-execution-boundary), where the reason they are on this call becomes visible.
 
 > **Note:** both a handler and a binding are found by subtyping, so a region installed at a subtype's tag answers a read at the supertype's, and not the reverse. A read takes the innermost binding whose tag it conforms to.
 
@@ -452,7 +451,7 @@ This is the same type a handler clause is handed. The `cont` in a `handleCont` c
 
 ```scala
 val reused: Int < Any =
-    ArrowEffect.handleContRepeated(Tag[Ask], Ask.get.map(_ + 1))(
+    ArrowEffect.handleCont(Tag[Ask], Ask.get.map(_ + 1))(
         handle = [C] =>
             (_, cont) =>
                 cont.chain(doubleIt)(0).map(a => cont.chain(doubleIt)(20).map(b => a + b)),
@@ -592,11 +591,11 @@ assert(Ask.run(41)(session(clean)).eval == 42)
 assert(clean.closings == Chunk(Maybe.empty[Throwable]))
 ```
 
-The ending is one `Maybe[Throwable]`. `Absent` is a clean end, which is what `clean` recorded; `Present(t)` carries either the failure an unwind took through the extent or the signal an abandoned remainder is discarded with. Three ways for an extent to end, and two things a release is ever told.
+The ending is one `Maybe[Throwable]`. `Absent` is a clean end, which is what `clean` recorded, and it is also what a dropped remainder's release is told; `Present(t)` carries the failure an unwind took through the extent. Three ways for an extent to end, and two things a release is ever told.
 
 > **Note:** the release is a plain `(A, Maybe[Throwable]) => Unit` rather than a computation, because it has to run where nothing is installed to answer an effect, and its result is discarded for the same reason. It exists to act outside the computation, closing a socket or handing a permit back, so nothing it does is observable to the computation it belonged to.
 
-The third ending is not hypothetical. A clause that discards its continuation drops the whole remainder of the computation, and every bracket outstanding in that remainder still releases, told the discard signal rather than `Absent`, its extent never having run to an end:
+The third ending is not hypothetical. A clause that discards its continuation drops the whole remainder of the computation, and every bracket outstanding in that remainder still releases, when the handler that dropped it ends, told `Absent`, the clean ending that handler reached:
 
 ```scala
 val abandoned = Connection()
@@ -608,10 +607,10 @@ val dropped: Int < Any =
     )
 
 assert(dropped.eval == -1)
-assert(abandoned.closings.head.exists(_.isInstanceOf[KyoException]))
+assert(abandoned.closings == Chunk(Maybe.empty[Throwable]))
 ```
 
-The clause answered `-1` without ever applying `cont`, so the `Ask.get.map(_ + id)` behind it never ran and the region completed at the operation. The bracket inside the dropped remainder released on the way out, and this is the path where how the extent ended is information the release could not have worked out for itself.
+The clause answered `-1` without ever applying `cont`, so the `Ask.get.map(_ + 1)` behind it never ran and the region completed at the operation. The bracket inside the dropped remainder had moved what it owed to the handler holding its continuation, and released when that handler's region ended, exactly once, told the clean ending that handler reached rather than anything about its own extent, which never ran to an end.
 
 `Bracket.ensuring(release)(body)` is the entry point for the case with nothing to acquire: release first, body second and by name, and the release handed only the ending. It is not sugar for `Bracket(())`, and the difference shows exactly here. `apply` cannot install its region until the acquire's value arrives, the release being owed that value, so a computation abandoned before it ever ran has no region and nothing to release. `ensuring` installs its region from the start, so its release runs whether or not a single step ever did.
 
@@ -619,44 +618,22 @@ The clause answered `-1` without ever applying `cont`, so the `Ask.get.map(_ + i
 
 ### A released scope, entered again
 
-The mirror case is a clause that applies its continuation more than once with a bracket inside the region. The first branch ends the use, so the resource is released; the second branch would resume code that closed over a resource that no longer exists. Rather than hand that branch a released resource, entering the scope again is refused:
-
-```scala
-val spent = Connection()
-
-val branched: Int < Any =
-    ArrowEffect.handleCont(Tag[Ask], session(spent))(
-        handle = [C] => (_, cont) => cont(10).map(a => cont(20).map(b => a + b)),
-        done = a => a
-    )
-
-val refused: String =
-    try
-        val _ = branched.eval
-        "no refusal"
-    catch case _: Closed => "refused"
-
-assert(refused == "refused")
-```
-
-The refusal is a `kyo.Closed`, and it is also the one signal a caller gets that a release ran, since the scope could only be spent if the first branch had already released it. It carries no stack trace at all, which is why its message names the `Bracket` call site the resource was opened at, and why the message explains itself rather than leaving the reader a frame to chase: the first resumption ends the extent and releases, and a handler that resumes the same continuation more than once, as `Choice` does, has that effect whenever the bracket sits between the handler and the suspension it answers.
-
-Three arrangements avoid it, and which is right depends on what the branches need. Acquire inside the branch, and every resumption gets a resource of its own. Put the bracket outside the handler, and its extent is not what gets replayed: the release point sits below the handler, never folded into the captured continuation, and the extent ends once after every branch has run. Or keep the shape exactly as it is and say what the clause does, which is what `handleContRepeated` is for:
+The mirror case, a clause that applies its continuation more than once with a bracket inside the region, looks like it should be one: each branch resumes code that closed over the resource, and the first branch reaches the end of the use. It is not, because the resource outlives that branch. The bracket moved what it owed to the handler holding the continuation, and that handler settles it once, where its own region ends. Both branches run against the live resource and the release runs once, after the second:
 
 ```scala
 val held = Connection()
 
-val heldOpen: Int < Any =
-    ArrowEffect.handleContRepeated(Tag[Ask], session(held))(
+val branched: Int < Any =
+    ArrowEffect.handleCont(Tag[Ask], session(held))(
         handle = [C] => (_, cont) => cont(10).map(a => cont(20).map(b => a + b)),
         done = a => a
     )
 
-assert(heldOpen.eval == 32)
-assert(held.closings.size == 1)
+assert(branched.eval == 32)
+assert(held.closings == Chunk(Maybe.empty[Throwable]))
 ```
 
-Both branches ran against a live resource, and the bracket released once, when this handler ended rather than when the first branch did. That is the whole difference: the plain form gives the region back as the clause returns, and this one holds it. Declare it only where the clause really does resume more than once, since holding keeps the obligation open longer than a single-shot clause needs.
+What is refused is entering a scope after it has been released. The row rules that out for a clause's own continuation, so it is reachable only by a computation resumed after the region that owned it has ended: a parked slice evaluated a second time, or a remainder that a stream peel handed out, consumed after the computation that peeled it finished. Rather than hand that resumption a released resource, re-entering the scope is refused with a `kyo.Closed`. It carries no stack trace at all, which is why its message names the `Bracket` call site the resource was opened at, and why the message explains itself rather than leaving the reader a frame to chase: it says which of the two ways released the scope, an extent that ran to its end or an owning scope that exited with the remainder still unconsumed, and what to change in each case. Acquire inside the branch, so every resumption gets a resource of its own; put the bracket outside the handler, so its extent is not what gets replayed; or consume a peeled remainder inside the scope that peeled it.
 
 ### `EffectTrace`: what a failure carries out
 
@@ -900,7 +877,8 @@ The second is `join`, which computes what the scope holds once a fork has ended.
 
 ```scala
 def withMergedLevel[A, S](n: Int)(v: A < (Level & S)): A < S =
-    ContextEffect.handle(Tag[Level])(
+    ContextEffect.handle(
+        Tag[Level],
         n,
         (outer: Int) => outer,
         (parent: Int) => parent,
@@ -910,9 +888,9 @@ def withMergedLevel[A, S](n: Int)(v: A < (Level & S)): A < S =
 assert(withMergedLevel(2)(levelPlus(40)).eval == 42)
 ```
 
-Note the shape, since it is not `handleInheritable`'s: the tag stands alone in the first list, the strategies fill the second, and the computation comes last. In order the four are the two that decide the bound value, `ifUndefined` and `ifDefined`, then `fork` and `join`. Keeping the parent's value, which is what `handleInheritable`'s join does, is the do-nothing answer to the second question.
+The shape is `handleInheritable`'s with two more strategies in the same list and the computation last. In order the four are the two that decide the bound value, `ifUndefined` and `ifDefined`, then `fork` and `join`. Keeping the parent's value, which is what `handleInheritable`'s join does, is the do-nothing answer to the second question.
 
-`done` and `release` answer a different question, and they fire whether or not anything ever forked. `done` is what the bound value owes when its region completes normally, and `release` is what it owes when the region ends with a failure, which it is handed. Between them they are how a bound value that owns something outside the computation gets to close it at either exit.
+`release` answers a different question, and it fires whether or not anything ever forked. It is what the bound value owes when its region ends, and it is handed the value together with how the extent ended: `Absent` for a clean end, the failure when an unwind took the region down. It is how a bound value that owns something outside the computation gets to close it at either exit, and it is the same strategy `Bracket` is built on.
 
 ## `Mask`: hiding an effect from inner handlers
 
@@ -944,7 +922,7 @@ assert(Ask.run(7)(outerAnswered).eval == ((Chunk("7"), 7)))
 
 Nor is masking limited to arrow effects. The region shadows its tag in the context as well as on the stack, so a `ContextEffect` read inside a mask of its effect tunnels past an inner binding and is answered by the binding outside, exactly as an operation tunnels past an inner handler.
 
-Masking moves where a value is answered, and that moves where a scope ends with it. A bracket inside a masked computation releases when the outer handler is done with the tunneled continuation, not at the mask boundary. If that outer handler discards the continuation instead of resuming it, the bracket releases there, told the discard signal, exactly as it would without the mask in between.
+Masking moves where a value is answered, and that moves where a scope ends with it. A bracket inside a masked computation releases when the outer handler is done with the tunneled continuation, not at the mask boundary. If that outer handler discards the continuation instead of resuming it, the bracket releases when that handler ends, told `Absent`, exactly as it would without the mask in between.
 
 ## Putting it together
 

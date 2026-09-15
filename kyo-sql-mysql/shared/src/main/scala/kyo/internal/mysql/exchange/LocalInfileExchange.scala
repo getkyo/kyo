@@ -81,14 +81,12 @@ private[mysql] object LocalInfileExchange:
                             case Result.Failure(_: Timeout) => true
                             case _                          => false
                         if cancellationLike then
-                            // No round-trip on this edge. Its result is not trusted either way, since the branch
-                            // below marks the channel corrupted even when the terminator appears to succeed, so
-                            // the only thing waiting on a server still consuming the upload buys is the whole
-                            // budget spent holding this connection's pool permit, which is returned when the
-                            // lease's scope closes. A caller that then wants a connection is made to wait on
-                            // cleanup it did not ask for and can fail to acquire one at all, instead of being
-                            // handed this connection and failing fast as unusable. Closing the socket ends the
-                            // load by itself: the server sees the EOF.
+                            // No round-trip on this edge. Its result is not trusted either way, since the branch below marks the
+                            // channel corrupted even when the terminator appears to succeed, so waiting on a server still consuming
+                            // the upload only spends the budget holding this connection's pool permit (returned when the lease's
+                            // scope closes) and makes the next caller wait on cleanup it did not ask for, possibly failing to acquire
+                            // a connection at all instead of being handed this one and failing fast as unusable. Closing the socket
+                            // ends the load by itself: the server sees the EOF.
                             channel.markCorrupted(OperationName).andThen(channel.endCleanup()).andThen(latch.release)
                         else
                             Async.uninterruptible {

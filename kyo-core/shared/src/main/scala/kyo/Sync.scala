@@ -78,12 +78,10 @@ object Sync:
     def acquireReleaseWith[A, S1](acquire: => A < (Sync & S1))(
         release: (A, Result[Any, Any]) => Any < (Sync & Abort[Throwable])
     )[B, E, S2](use: A => B < (Abort[E] & S2))(using ConcreteTag[E], Frame): B < (Sync & S1 & Abort[E] & S2) =
-        // The kernel bracket owns the exactly-once guarantee and reports how the extent ended. An abort is
-        // none of the endings it knows, so the use runs under its own Abort region, the failure is routed to
-        // the release here and raised again past the bracket, typed as it came.
-        //
-        // First failure wins: a handler that replays ends the extent once per resumption, so a branch that
-        // aborted must not be overwritten by a later one that succeeded.
+        // The kernel bracket owns the exactly-once guarantee and reports how the extent ended, but knows no abort: the use runs under
+        // its own Abort region, its failure routed to the release here and raised again past the bracket, typed as it came. First failure
+        // wins: a replaying handler ends the extent once per resumption, so a branch that aborted must not be overwritten by a later one
+        // that succeeded.
         Sync.Unsafe.defer {
             val aborted = AtomicRef.Unsafe.init[Maybe[Result.Error[Any]]](Absent)(using AllowUnsafe.embrace.danger)
             // Unsafe: the kernel's release is synchronous, so the effectful release runs to completion here
@@ -141,17 +139,11 @@ object Sync:
         ct: ConcreteTag[E],
         inline frame: Frame
     ): A < (Sync & Abort[E] & S) =
-        // `Bracket.ensuring` rather than a bracket over a `()` acquire: a bracket cannot install its region
-        // until the acquire's value arrives, so a computation abandoned before it ran would get no finalizer.
-        // `ensuring` installs the region as a node the abandonment walk finds whether or not a step ran.
-        //
-        // The abort routing is `acquireReleaseWith`'s: the kernel does not know `Abort`, so without it the
-        // finalizer would be told the discard signal rather than the caller's failure.
-        //
-        // The finalizer is called only from the release: under a handler that replays, each branch ends the
-        // extent but the release runs once, so calling it from the body would close the resource at the first
-        // branch's ending. First failure wins, so a branch that aborted is not overwritten by a later one
-        // that succeeded.
+        // `Bracket.ensuring` rather than a bracket over a `()` acquire: a bracket cannot install its region until the acquire's value
+        // arrives, so a computation abandoned before it ran would get no finalizer, while `ensuring` installs the region as a node the
+        // abandonment walk finds whether or not a step ran. Abort routing and first-failure-wins are `acquireReleaseWith`'s; the finalizer
+        // runs only from the release, not the body, since a replaying handler ends the extent per branch but the release runs once (from
+        // the body it would close at the first branch's ending).
         Sync.Unsafe.defer {
             val aborted = AtomicRef.Unsafe.init[Maybe[Result.Error[Any]]](Absent)(using AllowUnsafe.embrace.danger)
             Bracket.ensuring { failure =>

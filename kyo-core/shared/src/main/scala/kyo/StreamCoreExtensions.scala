@@ -7,11 +7,10 @@ import scala.util.NotGiven
 object StreamCoreExtensions:
     val defaultAsyncStreamBufferSize = 1024
 
-    /** Emits what the producers put on `channel`, until one of them signals the end.
-      *
-      * Every caller must pair this with `Sync.ensure(producers.interrupt)`: the consumer can stop first (a
-      * downstream `take` is the ordinary way), and closing the channel does not reach a producer parked inside a
-      * source stream's own step, which then stays parked for the life of the program holding what it acquired.
+    /** Emits what the producers put on `channel`, until one of them signals the end. Every caller must pair this with
+      * `Sync.ensure(producers.interrupt)`: the consumer can stop first (a downstream `take` is the ordinary way), and closing the channel
+      * does not reach a producer parked inside a source stream's own step, which then stays parked for the life of the program holding
+      * what it acquired.
       */
     private def emitMaybeChunksFromChannel[V](channel: Channel[Maybe[Chunk[V]]])(using Tag[Emit[Chunk[V]]], Frame) =
         val emit = Loop.foreach:
@@ -454,9 +453,9 @@ object StreamCoreExtensions:
                                             case Result.Failure(e) =>
                                                 // Not Closed, must be E
                                                 fiberError.set(Present(Right(e)))
-                                // The consumer's exit is where the element fibers have to be stopped: closing the
-                                // channel alone discards whatever is still in it and leaves those fibers running
-                                // with everything they hold, so the drain-and-interrupt runs here too.
+                                // The consumer's exit is where the element fibers must be stopped: closing the channel
+                                // alone discards whatever is still in it and leaves those fibers running with everything
+                                // they hold, so the drain-and-interrupt runs here.
                                 Sync.ensure(cleanup.unit):
                                     Abort.run[Closed](emit).unit
                                 .andThen(fiberError)
@@ -679,9 +678,9 @@ object StreamCoreExtensions:
                                             case Result.Failure(e) =>
                                                 // Not Closed, must be E
                                                 fiberError.set(Present(Right(e)))
-                                // The consumer's exit is where the element fibers have to be stopped: closing the
-                                // channel alone discards whatever is still in it and leaves those fibers running
-                                // with everything they hold, so the drain-and-interrupt runs here too.
+                                // The consumer's exit is where the element fibers must be stopped: closing the channel
+                                // alone discards whatever is still in it and leaves those fibers running with everything
+                                // they hold, so the drain-and-interrupt runs here.
                                 Sync.ensure(cleanup.unit):
                                     Abort.run[Closed](emit).unit
                                 .andThen(fiberError)
@@ -1152,9 +1151,9 @@ object StreamCoreExtensions:
                                     else
                                         Loop.done
 
-                    // The push fork stays outside the internal scope: that Scope.run manages only the tick timer,
-                    // and a producer forked inside it would scope the source stream's resources to this combinator
-                    // instead of the caller's ambient scope.
+                    // The push fork stays outside the internal scope: that Scope.run manages only the tick timer, and a
+                    // producer forked inside it would scope the source stream's resources to this combinator, not the
+                    // caller's ambient scope.
                     push.map: fiber =>
                         (for
                             _ <- tick

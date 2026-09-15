@@ -24,20 +24,18 @@ import scala.annotation.tailrec
 
 /** The evaluator: unfolds a computation's nodes until it produces a value, or until there is nothing further it can do without an answer.
   *
-  * A computation is a value built by composition, and this is an accelerator for running such values, not the definition of what they mean.
-  * Every branch below is the operational reading of an equation expressible in the public combinators, which is why a gap here is a missing
-  * value rather than a missing instruction.
+  * A computation is a value built by composition; this runs such values, it does not define what they mean. Every branch below is the
+  * operational reading of an equation expressible in the public combinators, so a gap here is a missing value, not a missing instruction.
   *
-  * `loop` is the whole machine. It carries the node in hand and two continuations, and each arm either reduces the node and loops, or pushes
-  * a region, or hands an answer to a handler. It is a tail-recursive loop rather than a recursive walk, which is where stack safety comes
-  * from: depth in the computation costs heap, not call frames.
+  * `loop` is the whole machine: it carries the node in hand and two continuations, and each arm reduces the node and loops, pushes a region,
+  * or hands an answer to a handler. Being tail-recursive rather than a recursive walk is where stack safety comes from: depth costs heap, not
+  * call frames.
   *
-  * [[Stack]] lives beside it, holding the regions installed around the node in hand. There is no separate context: a context read resolves
-  * from the stack the way an operation does, and a region's release lives in its own stack entry. The stack is borrowed for one evaluation.
+  * [[Stack]] lives beside it, holding the regions installed around the node. There is no separate context: a context read resolves from the
+  * stack the way an operation does, and a region's release lives in its own stack entry. The stack is borrowed for one evaluation.
   *
-  * The loop is far too large to inline and every effect in the program passes through it, so its dispatch is megamorphic. That is the reason
-  * the combinators fuse at their own call sites and reach the loop only when they must, and the reason cold work here is kept out of line
-  * rather than written into the arms.
+  * The loop is far too large to inline and every effect passes through it, so its dispatch is megamorphic. That is why the combinators fuse
+  * at their own call sites and reach the loop only when they must, and why cold work here is kept out of line rather than in the arms.
   */
 @publicInBinary private[kyo] object Eval:
 
@@ -47,8 +45,8 @@ import scala.annotation.tailrec
 
     /** Evaluates until a value is produced or the safepoint says to stop, answering what is left as a computation to resume later.
       *
-      * This is what a scheduler runs a fiber with: the stop flag is what turns a run into a slice, and the remainder that comes back is a
-      * complete value, valid anywhere, so another thread may pick it up.
+      * What a scheduler runs a fiber with: the stop flag turns a run into a slice, and the remainder is a complete value, valid anywhere, so
+      * another thread may pick it up.
       */
     def partial[A](v: A < Any): A < Any =
         val slot = Safepoint.get()
@@ -59,8 +57,7 @@ import scala.annotation.tailrec
         end if
     end partial
 
-    // `armed` is a parameter rather than a test inside the loop: it is constant for the whole evaluation, so the
-    // stop check folds away entirely for a run that cannot be preempted.
+    // `armed` is a constant parameter, not a per-loop test, so the stop check folds away for a run that cannot be preempted.
     private def apply[A, S](v: A < S, armed: Boolean): A < S =
         // one stack and one safepoint slot per evaluation
         val stack = Stack.borrow()
@@ -71,7 +68,7 @@ import scala.annotation.tailrec
         @tailrec def loop[T, B, C, S2](v: T < S2, contA: Arrow[T, B, S2], contB: Arrow[B, C, S2]): A < S =
             Debugger.onLoop(v, contA, contB)
             v match
-                // a deferral: unfold it, its two continuations going in front of ours
+                // a deferral: its two continuations go in front of ours
                 case kyo: Pending.Defer[?, ?, T, S2] @unchecked =>
                     if armed && Safepoint.stopped(slot) then
                         park(v, contA, contB)
@@ -80,7 +77,6 @@ import scala.annotation.tailrec
 
                 case kyo: Pending.Suspend[?, ?, T, S2] @unchecked =>
                     kyo match
-                        // a context read: resolve the binding from the stack the way an operation resolves its handler
                         case kyo: Pending.SuspendContext[VX, CX, T, CX & S2] @unchecked =>
                             val idx = stack.find(kyo.tag)
                             if idx < 0 then
@@ -94,8 +90,8 @@ import scala.annotation.tailrec
                                         Debugger.onContext(kyo, state)
                                         loop(kyo.cont(state, contA.chain(contB)), Arrow.id, Arrow.id)
                                     case _ =>
-                                        // a masking region shadows the binding, so the read dispatches to it the
-                                        // route an arrow operation takes, re-raised rather than answered from a value
+                                        // a masking region shadows the binding: the read dispatches to it the way an
+                                        // arrow operation does, re-raised rather than answered from a value
                                         val entries = if idx == stack.depth - 1 then Stack.Snapshot.empty else dumped(stack, idx, kyo)
                                         val result  = maskedRead(kyo, entries, contA.chain(contB))
                                         if armed && Safepoint.stopped(slot) then park(result, Arrow.id, Arrow.id)
@@ -120,8 +116,8 @@ import scala.annotation.tailrec
                                             else kyo.crossing(entries, contA.chain(contB))
                                         val result = handler.answering(kyo.input, continuation, kyo, stack)
                                         Debugger.onResult(result)
-                                        // The stop is honored on the clause's answer: one that re-raises the
-                                        // operation would otherwise dispatch straight back here with no deferral to park at.
+                                        // Stop honored on the clause's answer: one that re-raises the operation would
+                                        // otherwise dispatch straight back here with no deferral to park at.
                                         if armed && Safepoint.stopped(slot) then park(result, Arrow.id, Arrow.id)
                                         else loop(result, Arrow.id, Arrow.id)
                                     // a masking clause: the same, handed the operation re-raised instead of its input
@@ -135,11 +131,9 @@ import scala.annotation.tailrec
                                         if armed && Safepoint.stopped(slot) then park(result, Arrow.id, Arrow.id)
                                         else loop(result, Arrow.id, Arrow.id)
                                     // a first clause: answers the operation and carries its continuation out as the region's result, so the
-                                    // region exits with the peeled value. Single-shot (the default): each dumped region keeps its release in
-                                    // the remainder's snapshot and the whole remainder is owed to the scope below, so a consumed remainder
-                                    // closes each region at its own end (settle pulls it from the owed lane) and a dropped one is drained there.
-                                    // Repeated: the dumped regions are held, their releases moved to the scope below and run once after every
-                                    // resumption, so a resource shared across a streamed choice's branches stays live across all of them.
+                                    // region exits with the peeled value. Single-shot (the default): each dumped region closes at its own end
+                                    // (settle pulls it from the owed lane, else it is drained). Repeated: the dumped regions are held and
+                                    // released once after every resumption, so a resource shared across a streamed choice's branches stays live.
                                     case handler: Handler.FirstHandler[IX, OX, EX, C, Y, S2] @unchecked =>
                                         val repeated = handler.repeated
                                         val entries  = if atTop then Stack.Snapshot.empty else dumped(stack, idx, kyo, escaping = !repeated)
@@ -189,8 +183,8 @@ import scala.annotation.tailrec
                                                 stack.truncate(idx)
                                                 loop(result, next, Arrow.id)
                                         end match
-                                    // a loop clause with regions above it: answered outside them, the same three outcomes as
-                                    // above with the answer crossing back into the regions it left
+                                    // a loop clause with regions above it: answered outside them, same three outcomes as above,
+                                    // the answer crossing back into the regions it left
                                     case handler: Handler.LoopHandler[IX, OX, EX, C, Y, S2] @unchecked =>
                                         val outcome0 = handler.running(kyo.input, kyo, stack, idx)
                                         // Load-bearing despite nothing reading it: see `Stack.sink`.
@@ -202,11 +196,9 @@ import scala.annotation.tailrec
                                                 ans match
                                                     case _ if !ans.isInstanceOf[Pending[?, ?]] =>
                                                         loop(ans, kyo.cont, contA.chain(contB))
-                                                    // the operation raised again, bare: this region is the one that answers it and
-                                                    // nothing runs outside the regions, so it dispatches from where it stood, regions
-                                                    // live. A clause re-raises with a stop when it cannot answer yet, and the stop parks
-                                                    // the fiber at the operation with every region carried by takeAll, so a bracket
-                                                    // around the operation keeps its release and closes at its own end on resume.
+                                                    // the operation raised again, bare: this region answers it in place, regions live. A stop
+                                                    // re-raise (clause cannot answer yet) parks at the operation with every region carried by
+                                                    // takeAll, so a bracket around it keeps its release and closes at its own end on resume.
                                                     case again: Pending.SuspendArrow[IX, OX, EX, VX, ?, ?] @unchecked
                                                         if again.tag.erased =:= kyo.tag.erased && again.cont.isInstanceOf[Arrow.Id[?]] =>
                                                         if armed && Safepoint.stopped(slot) then park(again, kyo.cont, contA.chain(contB))
@@ -328,7 +320,6 @@ import scala.annotation.tailrec
                                 end match
                             end if
 
-                // entering a region: push it, then run what is inside
                 case kyo: Pending.HandleArrow[?, ?, ?, ?, T, S2] @unchecked =>
                     Debugger.onRegionEnter(kyo.handler, kyo.state)
                     stack.push(kyo.handler, kyo.state, kyo.cont.chain(contA.chain(contB)))
@@ -337,8 +328,8 @@ import scala.annotation.tailrec
                 // entering a binding: derive its value from the one bound outside, push it, and install its release
                 case kyo: Pending.HandleContext[VX, CX, T, S2] @unchecked =>
                     val handler = kyo.handler
-                    // the value an outer region of the same tag bound, for the derive, resolved from the stack the
-                    // way a read resolves it: Absent when nothing binds it or a mask shadows it
+                    // the value an outer region of the same tag bound, for the derive, resolved from the stack like a
+                    // read: Absent when nothing binds it or a mask shadows it
                     val outerIdx = stack.find(handler.tag)
                     val outer =
                         if outerIdx < 0 then Absent
@@ -379,9 +370,9 @@ import scala.annotation.tailrec
                             stack.handler(top) match
                                 case hc: Handler.ContextHandler[VX, CX, AX, ?] @unchecked =>
                                     Debugger.onRegionExit(hc, res)
-                                    // the region's own release runs its clean end, reading the entry's live state (a
-                                    // fork's join may have written it); this is before the pop, while the entry is live.
-                                    // A remainder still owed to it was never resumed, so its regions drain as discarded.
+                                    // the region's own release runs its clean end against the entry's live state (a fork's
+                                    // join may have written it), before the pop while the entry is live. A remainder still
+                                    // owed to it was never resumed, so its regions drain as discarded.
                                     if stack.owesAny then
                                         drainCleanOwn(stack.takeReleases(top), stack.state(top))
                                         val owed = stack.takeOwedRemainders(top)
@@ -397,7 +388,6 @@ import scala.annotation.tailrec
                                     loop(result, next, Arrow.id)
                             end match
                     else
-                        // something composed after it: apply the head, keep the tail
                         contA match
                             case contA: Arrow.Chain[T, Any, B, S2] @unchecked =>
                                 loop(res, contA.a, contA.b.chain(contB))
@@ -408,9 +398,9 @@ import scala.annotation.tailrec
 
         /** Stops the evaluation and answers what is left as a value that can be resumed anywhere.
           *
-          * The node in hand and its two continuations fold back into one computation, and every region still installed comes with it as a
-          * snapshot, so resuming reinstalls exactly what was here. An empty stack with no releases is the cheap case: the remainder is the
-          * computation itself, with no `Park` node built for it.
+          * The node in hand and its two continuations fold into one computation, and every region still installed comes with it as a
+          * snapshot, so resuming reinstalls exactly what was here. Cheap case, an empty stack with no releases: the remainder is the
+          * computation itself, no `Park` built.
           */
         def park[T, B, C, S2](v: T < S2, contA: Arrow[T, B, S2], contB: Arrow[B, C, S2]): A < S =
             val parked: Any < Any =
@@ -418,8 +408,8 @@ import scala.annotation.tailrec
                 else Effect.defer(v, contA, contB).asInstanceOf[Any < Any]
             val evalRs = stack.takeEvalReleases()
             // The eval's own owed lane travels in the Park, symmetric with `evalRs`; each region's lane travels beside
-            // the snapshot in `entryOwed` (captured before `takeAll` empties the stack), re-owed to the reinstalled
-            // region the way its release is, so a lane owed to a peel scope drains at that scope, not at eval end.
+            // its snapshot in `entryOwed` (captured before `takeAll` empties the stack) and re-owes to the reinstalled
+            // region like its release, so a lane owed to a peel scope drains there, not at eval end.
             val owed      = stack.takeEvalOwedRemainders()
             val entryOwed = if stack.owesAny then stack.takeEntryOwed() else Chunk.empty
             if stack.isEmpty then
@@ -452,9 +442,9 @@ import scala.annotation.tailrec
 
         /** Reinstalls the regions a parked slice carries, restoring the releases each owed.
           *
-          * A dump snapshot carries no releases, because a dumping handler moved them to its own entry, so a reinstalled region resumes with
-          * none and the holder runs them once at its end. A park snapshot carries them, because a parked computation is itself resuming and
-          * runs its regions' extents to an end where it resumes.
+          * A dump snapshot carries no releases (the dumping handler moved them to its own entry), so a reinstalled region resumes with none
+          * and the holder runs them once at its end. A park snapshot carries them, because a parked computation is itself resuming and runs
+          * its regions' extents to an end where it resumes.
           */
         def installed(kyo: Pending.Park[?, ?], resume: Arrow[Any, Any, Any]): Unit =
             val entries   = kyo.entries
@@ -490,23 +480,19 @@ import scala.annotation.tailrec
             install(0)
         end installed
 
-        // A clean end runs what it owed, told the extent ended without a failure. A finalizer that throws on a clean
-        // end fails the computation, so the throw propagates rather than being swallowed. `drainClean` is for a
-        // holder's or the evaluation's own end, whose releases are the captured closures moved onto it; `drainCleanOwn`
-        // is for a context region's own end, resolving its own release against the entry's live `state`.
-        // held/discarded releases: their region did not complete in place, and the holder already has, so a throw is
-        // reported rather than propagated past a computation that is already done.
+        // A clean end runs what it owed, told the extent ended without a failure. `drainClean` is for a holder's or the
+        // evaluation's own end, whose releases are captured closures moved onto it: a held/discarded release's region did
+        // not complete in place and the holder already has, so a throw is reported, not propagated past a done computation.
         def drainClean(releases: Stack.Releases): Unit =
             releases.run(Absent)(t => Report.unhandled(t))
 
-        // a region's own clean completion: the own release runs through `complete` (the extent ran to an end in place),
-        // and a finalizer that throws here fails the computation, so the throw propagates.
+        // a context region's own clean completion: the own release runs through `complete` (the extent ran to an end in
+        // place), and a finalizer that throws here fails the computation, so the throw propagates.
         def drainCleanOwn(releases: Stack.Releases, state: Any): Unit =
             releases.runOwnComplete(state)(t => throw t)
 
-        // A remainder owed to a region that ended without resuming it was dropped: its regions are drained here, each
-        // release resolved against the state its snapshot carried, since the walk runs with no live entry to read. A
-        // throw is reported on a clean end and suppressed onto the failure on an unwind, as a discarded release is.
+        // A dropped remainder (its region ended without resuming it) is drained here, each release resolved against the
+        // state its snapshot carried since no entry is live; a throw is reported on a clean end, suppressed on an unwind.
         def drainRemainders(snapshots: Chunk[Stack.Snapshot], failure: Maybe[Throwable]): Unit =
             var s = 0
             while s < snapshots.size do
@@ -524,9 +510,8 @@ import scala.annotation.tailrec
             end while
         end drainRemainders
 
-        // An escaping region moves what it owes to the scope below rather than running it, because it handed its
-        // continuation out; every other region runs it, as a discarded remainder. Remainders owed to the region move
-        // the same way: an escaping region passes them down, a non-escaping one drains them as discarded.
+        // An escaping region moves what it owes to the scope below rather than running it (it handed its continuation
+        // out); every other region runs it, as a discarded remainder. Remainders owed to the region move the same way.
         def arrowExit(handler: Handler.ArrowHandler[?, ?, ?, ?, ?], top: Int): Unit =
             val escaping = handler.isInstanceOf[Handler.FirstHandler[?, ?, ?, ?, ?, ?]]
             val owed     = if stack.owesAny then stack.takeOwedRemainders(top) else Chunk.empty
@@ -544,11 +529,10 @@ import scala.annotation.tailrec
 
         /** Unwinds the stack for a throwable, offering it to each region's recover arm from the innermost outward.
           *
-          * A region that answers stops the unwind and the evaluation continues from there. One that declines is popped, running what it owed
-          * with the failure. Reaching an empty stack re-raises it with the effect trace spliced in.
-          *
-          * A context region has no recover arm, so it is always popped, and its own release, in its entry, runs with the failure. A fatal
-          * throwable is offered to nothing: every region is unwound and released, and it propagates.
+          * A region that answers stops the unwind and evaluation continues from there; one that declines is popped, running what it owed with
+          * the failure. An empty stack re-raises with the effect trace spliced in. A context region has no recover arm, so it is always
+          * popped, its own release running with the failure. A fatal throwable is offered to nothing: every region is unwound and released,
+          * and it propagates.
           */
         @tailrec def recovered(ex: Throwable): A < S =
             if stack.isEmpty then
@@ -649,9 +633,8 @@ import scala.annotation.tailrec
         entries
     end dumped
 
-    // The unwind of a failed region runs what it owed with the failure, attaching a throw from a release as
-    // suppressed rather than letting it replace the failure being carried. `drainFailedOwn` resolves a context
-    // region's own release against the entry's live `state`.
+    // The unwind of a failed region runs what it owed with the failure, a throw from a release attached as suppressed
+    // rather than replacing it. `drainFailedOwn` resolves a context region's own release against the entry's live `state`.
     private def drainFailed(releases: Stack.Releases, ex: Throwable): Unit =
         releases.run(Maybe(ex))(t => if t ne ex then ex.addSuppressed(t))
 
@@ -666,14 +649,13 @@ import scala.annotation.tailrec
     def release[A, S](v: A < S, ex: Throwable): Unit =
         release(v, ex, Absent, _ => (), 0)
 
-    /** Releases the regions `v` still holds, and hands `f` the input of the first operation under them that
-      * `effectTag` answers, so a caller that owes something to an operation the computation never reached
-      * can settle it without walking the computation a second time. `f` runs before anything is released.
+    /** Releases the regions `v` still holds, and hands `f` the input of the first operation under them that `effectTag` answers, so a caller
+      * owing something to an operation the computation never reached can settle it without a second walk. `f` runs before anything is
+      * released.
       *
-      * An operation under a deferral exists only once the deferral has run, so this evaluates them to reach it,
-      * bounded: for a caller abandoning a computation whole, running a little of what was about to run is the
-      * price of not stranding what it was about to wait on. A caller releasing a cont it refused wants
-      * [[release]] above, which evaluates nothing.
+      * An operation under a deferral exists only once the deferral has run, so this evaluates them to reach it, bounded: running a little of
+      * what was about to run is the price of not stranding what a caller abandoning the whole computation was about to wait on. A caller
+      * releasing a cont it refused wants [[release]] above, which evaluates nothing.
       */
     def release[I[_], O[_], E <: ArrowEffect[I, O], A, S](v: A < S, ex: Throwable, effectTag: Tag[E])(
         f: [C] => I[C] => Unit
@@ -688,10 +670,9 @@ import scala.annotation.tailrec
             val h = hc.asInstanceOf[Handler.ContextHandler[Any, ContextEffect[Any], Any, Any]]
             collected = collected.add(failure => h.release(state, failure))
 
-        // An `Arrow.Ensure` waiting on an already-settled value is a release nobody will run, so the cont is
-        // carried down and offered the value when one is reached. Only an `Ensure` may run here. A chain's head
-        // is its left arrow, itself a chain when one was built onto another, so walking `head` down finds the
-        // step that would have received the value.
+        // An `Arrow.Ensure` waiting on an already-settled value is a release nobody will run, so the cont is carried
+        // down and offered the value when one is reached. Only an `Ensure` may run here. A chain's head is its left
+        // arrow (a chain when built onto another), so walking `head` down finds the step that would have received it.
         @tailrec def leftmost(cont: Arrow[Any, Any, Any]): Arrow[Any, Any, Any] =
             val h = cont.head
             // Erasure-forced: the type joining a chain's links is existential from out here.
@@ -710,18 +691,16 @@ import scala.annotation.tailrec
             v match
                 case p: Pending[?, ?] =>
                     p match
-                        // A deferral whose value is still a computation is walked, which reaches what is under
-                        // it for free. One whose value is settled holds its body in the cont, so reaching it
-                        // means running a step, and only that spends the budget.
+                        // A deferral whose value is still a computation is walked, reaching what is under it for free; one
+                        // whose value is settled holds its body in the cont, so reaching it runs a step, and only that spends budget.
                         case kyo: Pending.Defer[a, b, c, s] @unchecked =>
                             // Erasure-forced: the types joining a chain's links are existential from out here.
                             val after = kyo.contB.chain(cont).asInstanceOf[Arrow[Any, Any, Any]]
                             val below = kyo.contA.chain(after).asInstanceOf[Arrow[Any, Any, Any]]
                             kyo.value match
                                 case _: Pending[?, ?] => collect(kyo.value, below, fuel)
-                                // `Arrow.id` rather than the node's own cont, so a unit of budget buys one
-                                // step: an arrow is free to run as many as it likes once handed one. What
-                                // follows that step is carried, since a release waiting on this value sits there.
+                                // `Arrow.id` rather than the node's own cont, so a unit of budget buys one step (an arrow
+                                // runs as many as it likes once handed one); what follows is carried, a release may wait there.
                                 case _ if fuel > 0 =>
                                     ensuring(kyo.value, below)
                                     collect(kyo.contA(kyo.value, Arrow.id), after, fuel - 1)
@@ -765,9 +744,8 @@ import scala.annotation.tailrec
                         case _: Pending.Suspend[?, ?, ?, ?] => ()
                         case _: Pending.Snapshot[?, ?]      => ()
                 case settled => ensuring(settled, cont)
-        // A deferral declines to run while the Safepoint is stopped, and it always is here: this walks a
-        // computation whose fiber has just been interrupted. The walk gets its own state so stepping
-        // reaches what a deferral holds, and the caller's is put back.
+        // A deferral declines to run while the Safepoint is stopped, and it always is here (this walks a just-interrupted
+        // fiber's computation), so the walk gets its own state to reach what a deferral holds, and the caller's is put back.
         if fuel > 0 then
             val slot  = Safepoint.get()
             val saved = Safepoint.save(slot)

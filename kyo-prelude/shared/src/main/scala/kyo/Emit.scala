@@ -157,8 +157,8 @@ object Emit:
 
     /** Runs an Emit effect, allowing custom handling of each emitted value with a boolean result determining whether to continue.
       *
-      * A false result ends the emitter rather than just stopping the calls to `f`: the emitter's continuation is never resumed, so an
-      * unbounded emitter terminates. The result is a `Maybe` because an emitter that was ended never produced a value.
+      * A false result ends the emitter, not just the calls to `f`: its continuation is never resumed, so an unbounded emitter terminates.
+      * The result is `Maybe` because an emitter ended this way produced no value.
       *
       * @param v
       *   The computation with Emit effect

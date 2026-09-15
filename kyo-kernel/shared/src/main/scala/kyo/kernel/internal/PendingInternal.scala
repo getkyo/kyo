@@ -16,10 +16,10 @@ import scala.annotation.publicInBinary
   *
   * Each subclass is one thing the evaluator can encounter: a deferral holding a value with the continuations waiting on it, a suspension
   * awaiting an answer, a region entry, a parked slice, or a stack snapshot. With [[kyo.kernel.Arrow]] these are the whole of what a
-  * computation is made of, which is why a new node kind implies a new combinator rather than a patch to the evaluator.
+  * computation is made of, so a new node kind implies a new combinator rather than a patch to the evaluator.
   *
-  * The nodes are abstract classes so that each construction site implements the members anonymously and keeps its own types, which is what
-  * lets a node hold a primitive input without boxing it.
+  * The nodes are abstract classes so each construction site implements the members anonymously and keeps its own types, which lets a node
+  * hold a primitive input without boxing it.
   */
 sealed trait Pending[+A, -S] extends Kyo[A, S]:
     def frame: Frame
@@ -60,25 +60,20 @@ object Pending:
         def tag: Tag[E]
         def cont: Arrow[A, B, S]
 
-        /** This request on its own, as the computation that raises it again: what a masking region's clause is
-          * handed in place of an input it cannot interpret. Each kind of suspension rebuilds itself, so the
-          * evaluator does not have to.
+        /** This request on its own, as the computation that raises it again: what a masking region's clause is handed in place of an input it
+          * cannot interpret. Each kind of suspension rebuilds itself, so the evaluator does not have to.
           */
         private[kyo] def reraise: A < E
 
         /** The continuation for an answer that has to re-enter regions the evaluator has already left.
           *
-          * Applied to a computation, it runs that computation where the clause is and only the settled answer crosses: the answer is the
-          * clause's currency, so an effect it performs is the clause's handler's to answer, not one of the regions being crossed into. Applied
-          * to a settled answer, it parks a slice carrying the answer, this suspension's own continuation and `resume`, together with the
-          * snapshot of regions to reinstall before it runs again.
+          * Applied to a computation, it runs it where the clause is and only the settled answer crosses: an effect the answer performs is the
+          * clause's handler's to answer, not one of the regions being crossed into. Applied to a settled answer, it parks a slice carrying the
+          * answer, this suspension's own continuation and `resume`, plus the snapshot of regions to reinstall before it runs again.
           *
-          * A computation meant to be delivered as data instead, spliced in at the suspension point under those regions, is nested first;
-          * nested, it is settled here and takes the second path. That is the only way a computation reaches the interior regions, and it
-          * has to be asked for.
-          *
-          * Only `cont` is involved, so this carries a context read crossing back to the region that masked it as readily as an arrow
-          * operation crossing to its handler.
+          * A computation meant instead to be delivered as data, spliced in under those regions, is nested first; nested, it settles here and
+          * takes the second path. That is the only way a computation reaches the interior regions, and it must be asked for. Only `cont` is
+          * involved, so a context read crossing back to the region that masked it works as readily as an arrow operation crossing to its handler.
           */
         private[kyo] def crossing[C](entries: Stack.Snapshot, resume: Arrow[B, C, S]): Arrow[A, C, S] =
             val kc = cont
@@ -208,12 +203,11 @@ object Pending:
 
     /** A slice of computation set aside with what it needs to run again elsewhere, or later.
       *
-      * `entries` is the snapshot of regions to reinstall before `value` resumes, so a parked slice carries its own context rather than
-      * depending on where it is picked up; each entry carries its own release in the snapshot. `entryOwed` carries, aligned with `entries`,
-      * the remainders each region owed, so they re-own to the reinstalled region rather than being flattened to the eval root. `releases` and
-      * `owedRemainders` are the evaluation's own lanes, owed below those regions, which the evaluator hands to the stack it resumes on.
-      *
-      * An empty `entries` is the degenerate case: nothing to reinstall, so the evaluator takes the eval lanes and continues in place.
+      * `entries` is the snapshot of regions to reinstall before `value` resumes (each carrying its own release), so a parked slice carries
+      * its own context. `entryOwed`, aligned with `entries`, carries the remainders each region owed, so they re-own to the reinstalled
+      * region rather than flattening to the eval root. `releases` and `owedRemainders` are the evaluation's own lanes, owed below those
+      * regions, handed to the stack it resumes on. Empty `entries` is the degenerate case: nothing to reinstall, so the evaluator takes the
+      * eval lanes and continues in place.
       */
     final class Park[+A, -S](
         val value: Any < Any,

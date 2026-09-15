@@ -19,13 +19,12 @@ import scala.annotation.publicInBinary
 
 /** What a region installs: the clause that answers an effect, plus what the evaluator has to know to run the region around it.
   *
-  * One instance per region entry, pushed onto the [[Stack]] and matched by [[tag]] when a suspension looks for who answers it. The subclasses
-  * below are the answering shapes the public API offers; everything they have in common is here, and it is all information the evaluator
-  * needs about a region rather than about the effect: whether the clause may resume more than once, whether it hands the continuation out,
-  * and what the region contributes to the context.
+  * One instance per region entry, pushed onto the [[Stack]] and matched by [[tag]] when a suspension looks for who answers it. Common to the
+  * answering shapes below, all of it about the region rather than the effect: whether the clause may resume more than once, whether it hands
+  * the continuation out, and what the region contributes to the context.
   *
   * Those three are declared rather than inferred because the evaluator has to decide what to do with a region's obligations before the clause
-  * has run, and by then it is too late to observe what the clause actually does.
+  * runs, and by then it is too late to observe what the clause does.
   */
 sealed abstract private[kernel] class Handler[E <: Effect, A, -S]:
     def tag: Tag[E]
@@ -41,8 +40,8 @@ sealed abstract private[kernel] class Handler[E <: Effect, A, -S]:
 
         /** Runs the clause, attaching the effect trace to anything it throws.
           *
-          * The catch is here rather than around the evaluator's call so the suspension and the stack are still in hand: by the time a
-          * throwable reaches the loop, the region it came from may already be off the stack.
+          * The catch is here, not around the evaluator's call, so the suspension and stack are still in hand: by the time a throwable reaches
+          * the loop, its region may already be off the stack.
           */
         private[kyo] def answering[X](input: I[X], cont: Arrow[O[X], A, E & S], kyo: Pending[?, ?], stack: Stack): A < (E & S) =
             try run(input, cont)
@@ -63,16 +62,15 @@ sealed abstract private[kernel] class Handler[E <: Effect, A, -S]:
                     throw ex
     end MaskingHandler
 
-    /** The peel behind [[kyo.kernel.ArrowEffect.handleFirst]]: the clause answers the first operation and carries its continuation out as
-      * the region's own result, so the remainder leaves the region as a value. It is the only escaping handler.
+    /** The peel behind [[kyo.kernel.ArrowEffect.handleFirst]]: the clause answers the first operation and carries its continuation out as the
+      * region's own result, so the remainder leaves the region as a value. It is the only escaping handler.
       *
-      * A single-shot peel (the default) hands the remainder out to be consumed once: each dumped region keeps its own release in the
-      * remainder's snapshot and closes at its own end where it is consumed, with the scope below draining it if the remainder is dropped.
-      * A [[repeated]] peel hands the remainder out to be resumed more than once (a streamed choice's branches): the dumped regions are held,
-      * their releases moved to the scope below and run once, after every resumption, so a shared resource stays live across all of them.
+      * Single-shot (the default): the remainder is consumed once, each dumped region closing at its own end (the scope below drains it if the
+      * remainder is dropped). [[repeated]]: the remainder is resumed more than once (a streamed choice's branches), so the dumped regions are
+      * held and their releases run once after every resumption, keeping a shared resource live across all of them.
       *
-      * `run` answers at the region result `B`, unlike [[ContHandler]] whose answer re-enters the region: the peel does not continue inside
-      * the region, it leaves it.
+      * `run` answers at the region result `B`, unlike [[ContHandler]] whose answer re-enters the region: the peel leaves the region, it does
+      * not continue inside it.
       */
     abstract class FirstHandler[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends ArrowHandler[Unit, E, A, B, S]:
         def run[X](input: I[X], cont: Arrow[O[X], A, E & S]): B < (E & S)
@@ -99,9 +97,8 @@ sealed abstract private[kernel] class Handler[E <: Effect, A, -S]:
             stack: Stack,
             idx: Int
         ): Outcome[O[X] < (E & S), B < S] < S =
-            // The clause runs outside the regions between this one and the suspension, so a throw from it leaves
-            // them for this region to answer for: dumping takes them off the stack and records the debt here,
-            // discharged when this region itself unwinds.
+            // The clause runs outside the regions between this one and the suspension, so a throw from it leaves them
+            // for this region: dumping takes them off the stack and records the debt here, discharged when it unwinds.
             try run(input)
             catch
                 case ex =>
@@ -111,9 +108,9 @@ sealed abstract private[kernel] class Handler[E <: Effect, A, -S]:
 
         /** The arrow that reads a settled outcome and either re-enters the region with the answer or leaves with the result.
           *
-          * A `Continue` rebuilds the region as a fresh `Handle` value over the answer, which is what makes resumption the same operation as
-          * entry rather than a separate path through the evaluator. Anything else is the loop's result, already at the row outside, so it is
-          * handed straight to the caller's continuation. An outcome that has not settled defers and comes back here.
+          * A `Continue` rebuilds the region as a fresh `Handle` over the answer, making resumption the same operation as entry rather than a
+          * separate evaluator path. Anything else is the loop's result, already at the outside row, so it goes straight to the caller's
+          * continuation. An unsettled outcome defers and comes back here.
           */
         private[kyo] def clauseDispatch: Arrow[Outcome[A < (E & S), B < S], B, S] =
             type OutT = Outcome[A < (E & S), B < S]
@@ -134,13 +131,11 @@ sealed abstract private[kernel] class Handler[E <: Effect, A, -S]:
             end new
         end clauseDispatch
 
-        /** Answers one occurrence for a region that is at the top of the stack, applying the continuation to the answer without leaving.
+        /** Answers one occurrence for a region at the top of the stack, applying the continuation to the answer without leaving.
           *
-          * This is the fused path, which is why it is separate from [[running]]: the region does not have to be exited and re-entered for an
-          * occurrence it can answer in place, so the answer goes straight into `k`.
-          *
-          * A throwable is turned into a deferred re-raise carried by `Loop.continue` rather than thrown from here, so it reaches the
-          * evaluator as an ordinary computation and unwinds through the regions the continuation reinstalls, rather than from wherever this
+          * The fused path, separate from [[running]]: a region need not be exited and re-entered for an occurrence it can answer in place, so
+          * the answer goes straight into `k`. A throwable becomes a deferred re-raise carried by `Loop.continue` rather than thrown here, so it
+          * reaches the evaluator as an ordinary computation and unwinds through the regions the continuation reinstalls, not from wherever this
           * clause happened to run.
           */
         def answers[X](
@@ -247,9 +242,9 @@ sealed abstract private[kernel] class Handler[E <: Effect, A, -S]:
         def join(parent: State, forked: State, child: State): State
         def release(state: State, failure: Maybe[Throwable]): Unit
 
-        /** Called when the region's extent runs to a clean end in place, versus [[release]] which also covers an unwind or a drop. The
-          * default is `release` told the clean ending; a handler overrides it when the clean end is not the same event as the others, as a
-          * bracket does to record that its extent ran (so a later refused re-entry can say which way its cell fired).
+        /** Called when the region's extent runs to a clean end in place, versus [[release]] which also covers an unwind or a drop. Default is
+          * `release` told the clean ending; a handler overrides when the clean end differs from the others, as a bracket does to record that
+          * its extent ran (so a later refused re-entry can say which way its cell fired).
           */
         private[kyo] def complete(state: State): Unit = release(state, Maybe.Absent)
 
@@ -259,13 +254,11 @@ sealed abstract private[kernel] class Handler[E <: Effect, A, -S]:
         private[kyo] def reenter(state: State): Unit = ()
     end ContextHandler
 
-    /** Attaches a cont to an outcome whose clause has not settled yet, turning the clause's answer into the
-      * region's remaining computation.
+    /** Attaches a cont to an outcome whose clause has not settled yet, turning the clause's answer into the region's remaining computation.
       *
-      * The caller must pass the cont of the operation whose answer this outcome carries. That is the whole
-      * obligation, and it is why the attachment happens here rather than where the region is rebuilt: a walk
-      * that fuses across a run of operations answers a different one on each turn, and only the walk knows
-      * which. Applying it to an outcome that already carries a cont would apply two.
+      * The caller must pass the cont of the operation whose answer this outcome carries. That obligation is why the attachment is here rather
+      * than where the region is rebuilt: a walk that fuses across a run of operations answers a different one each turn, and only the walk
+      * knows which. Applying it to an outcome that already carries a cont would apply two.
       */
     private[kyo] def attachReentry[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, X0](
         reentry: Arrow[O[X0], A, E & S]

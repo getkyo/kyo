@@ -130,10 +130,8 @@ object Batch:
 
         // Transforms effect suspensions into an item.
         // Captures the continuation in the `Item` objects for `ToExpand` and `Expanded` cases.
-        // handleFirst, not handleCont: the clause answers one suspension and carries its cont out inside the
-        // item, resumed by the loop below after this region ended. Only such a hand-out region owes what it
-        // dumped to the scope below instead of draining it, so a bracket opened inside a batched computation
-        // survives into the item that carries it.
+        // handleFirst, not handleCont: the clause answers one suspension and hands its cont out inside the item, resumed by the loop
+        // below after this region ends; the region owes what it dumped to the scope below, so a bracket opened inside survives into its item.
         def capture(v: Item < (Batch & S)): Item < S =
             ArrowEffect.handleFirst(Tag[Batch], v)(
                 handle = [C] =>
@@ -215,11 +213,9 @@ object Batch:
             case ToExpand(op: Seq[Any], cont: ContEval[A, S])
             case Expanded(value: Any, source: SourceAny[S], cont: ContCall[A, S])
 
-        // the captured cont is the kernel's Arrow, a complete value applied strictly at the two call sites, so
-        // the kernel's multi-shot replay discipline carries the batching. The input type keeps what the op
-        // answers with: an element for Eval, the source's result computation for Call. Typed over a computation,
-        // the arrow is handed that computation as data and splices it at the call site, under the regions
-        // installed there; typed over Any it would run it where the resume is.
+        // The captured cont is the kernel's Arrow, applied strictly at the two call sites, so multi-shot replay carries the batching. Its
+        // input keeps what the op answers with: an element for Eval, the source's result computation for Call. Typed over a computation the
+        // arrow receives it as data and splices it at the call site under the regions installed there; typed over Any it would run it at the resume.
         type ContEval[A, S] = Arrow[Any, ToExpand[A, S] | Expanded[A, S] | A, Batch & S]
         type ContCall[A, S] = Arrow[Any < (Batch & S), ToExpand[A, S] | Expanded[A, S] | A, Batch & S]
     end internal

@@ -9,8 +9,8 @@ import kyo.kernel.internal.Pending
 
 /** A [[Debugger]] that counts what happened instead of printing it, for a run too large to read step by step.
   *
-  * `guardsLikeProduction` decides whether `enter` answers as the production build would, so a count can be taken either with the guards a
-  * real run has or without them.
+  * `guardsLikeProduction` decides whether `enter` answers as the production build would, so a count can be taken with or without the guards
+  * a real run has.
   */
 final class Counting(guardsLikeProduction: Boolean) extends Debugger:
     private var counts                = Map.empty[String, Int]

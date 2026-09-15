@@ -729,10 +729,9 @@ object Signal:
             def init[A](initial: A)(using AllowUnsafe, CanEqual[A, A]): Unsafe[A] =
                 Unsafe(
                     AtomicRef.Unsafe.init(initial),
-                    // Use initUninterruptible so that interrupting one subscriber cannot propagate through the
-                    // signal's next-promise and accidentally interrupt other subscribers waiting on the
-                    // same signal. All subsequent promises (created in onUpdate) are already uninterruptible for
-                    // the same reason; the initial promise must be consistent.
+                    // Uninterruptible so interrupting one subscriber cannot propagate through the next-promise to
+                    // others on the same signal. The promises created in onUpdate are uninterruptible for the same
+                    // reason; the initial one must be consistent with them.
                     AtomicRef.Unsafe.init(Promise.Unsafe.initUninterruptible())
                 )
         end Unsafe

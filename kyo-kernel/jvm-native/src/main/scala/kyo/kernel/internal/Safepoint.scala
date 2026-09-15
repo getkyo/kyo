@@ -8,48 +8,44 @@ import scala.annotation.tailrec
 /** The budget that decides when a fused run has to stop building JVM stack and defer instead, and the channel a scheduler stops a fiber
   * through.
   *
-  * Fusion is what makes the module fast, but it runs transformations on the caller's stack, so an unbounded fused run would overflow it. Each
-  * fused step takes a unit of budget; when it runs out, the combinator builds a node instead and the evaluator picks it up, which costs heap
-  * rather than a frame. That is where stack safety comes from on the fused path, the tail-recursive loop being where it comes from elsewhere.
-  *
-  * The same word covers preemption because it is the same check. A scheduler arms a thread's slot, and the next poll that sees it parks the
-  * computation and answers the remainder as a value, so a run becomes a slice without the computation knowing.
+  * Fusion runs transformations on the caller's stack, so an unbounded fused run would overflow it. Each fused step takes a unit of budget;
+  * when it runs out the combinator builds a node instead and the evaluator picks it up, costing heap rather than a frame. That is stack
+  * safety on the fused path (the tail-recursive loop supplies it elsewhere). The same check covers preemption: a scheduler arms a thread's
+  * slot, and the next poll that sees it parks the computation and answers the remainder as a value, so a run becomes a slice without the
+  * computation knowing.
   *
   * #### Layout
   *
-  * State is per thread, but not in a `ThreadLocal` read: a thread takes a slot index once and the state lives in a plain array, so a poll is
-  * an array read and a compare rather than a map lookup. A thread's index is spread by `LineStride` so adjacent thread ids do not land on one
-  * cache line, and a thread that finds no free slot after probing falls back to a shared overflow slot, which stays correct but contends.
-  *
-  * One int carries the whole state: the remaining depth in the low bits, a guard bit that keeps the counter from going negative into the
-  * arming bit, and the arming bit itself. That way a poll tests one field, and the common answer is a decrement.
+  * State is per thread but not a `ThreadLocal` read: a thread takes a slot index once and the state lives in a plain array, so a poll is an
+  * array read and a compare rather than a map lookup. A thread's index is spread by `LineStride` so adjacent thread ids do not share a cache
+  * line, and a thread that finds no free slot after probing falls back to a shared overflow slot, which stays correct but contends. One int
+  * carries the whole state: the remaining depth in the low bits, a guard bit that keeps the counter from going negative into the arming bit,
+  * and the arming bit itself, so a poll tests one field and the common answer is a decrement.
   *
   * #### Three arrays, and which threads touch them
   *
-  * The state is split by who writes it, which is what keeps the hot path off atomics:
+  * The state is split by who writes it, which keeps the hot path off atomics:
   *
-  *   - `depths`, the budget and the arming bit. A plain array, because only the slot's owner reads or writes it. Every poll is here, so this
-  *     is the one that has to stay cheap.
-  *   - `slots`, the ownership entry, holding the owning `Thread` or a `Stop` aimed at it. An `AtomicReferenceArray`, because it is the one
-  *     place another thread writes.
+  *   - `depths`, the budget and the arming bit. A plain array, since only the slot's owner reads or writes it; every poll is here, so it has
+  *     to stay cheap.
+  *   - `slots`, the ownership entry, holding the owning `Thread` or a `Stop` aimed at it. An `AtomicReferenceArray`, the one place another
+  *     thread writes.
   *   - `slices`, the token of what the owner is currently running. A plain array, owner-only, read by a stopper only through the entry it
   *     already holds.
   *
-  * A thread claims a slot once, by compare-and-set, starting from the index its id hashes to and probing on. A slot counts as free when it is
-  * empty or its owner is no longer alive, so slots are recycled without anything having to release them. The claimed index is then cached in
-  * a `ThreadLocal`, and the fast path checks the array entry directly and never reads even that.
+  * A thread claims a slot once by compare-and-set, starting from the index its id hashes to and probing on. A slot is free when empty or its
+  * owner is no longer alive, so slots recycle without anything releasing them. The claimed index is cached in a `ThreadLocal`, and the fast
+  * path checks the array entry directly.
   *
   * #### How a stop is signalled
   *
   * There is no separate flag. [[stop]] replaces the slot's `Thread` entry with a `Stop` carrying that same thread, by compare-and-set, and
-  * the owner learns of it on its next poll, since the entry it would look at anyway is now a different shape. The stop is consumed by putting
-  * the plain thread back.
+  * the owner learns of it on its next poll, since the entry it would look at anyway is now a different shape; the stop is consumed by putting
+  * the plain thread back. A `Stop` may name a slice, and `honored` is what makes that safe: a stop with no slice is unconditional, one naming
+  * a slice counts only while that slice is still what the slot is running, so a stop aimed at work that has already finished is ignored
+  * rather than landing on whatever ran next, and `endSlice` clears one aimed at the slice just ended.
   *
-  * A `Stop` may name a slice, and `honored` is what makes that safe: a stop with no slice is unconditional, and one naming a slice counts
-  * only while that slice is still what the slot is running. So a stop aimed at work that has already finished is ignored rather than landing
-  * on whatever ran next, and `endSlice` clears one that was aimed at the slice just ended.
-  *
-  * Nothing here blocks or interrupts. A stop is a request the owner honors when it next polls, which is why a computation that never polls is
+  * Nothing here blocks or interrupts: a stop is a request the owner honors when it next polls, which is why a computation that never polls is
   * never preempted, and why the budget and the stop share one check.
   *
   * @see

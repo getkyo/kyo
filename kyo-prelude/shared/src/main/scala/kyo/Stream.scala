@@ -660,9 +660,8 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
 
     /** Splits the stream after the first n elements and hands the head and the rest to f.
       *
-      * The rest carries whatever the stream had opened by then, a `Sync.ensure` or a `Channel.use` in the stream's own body included, and
-      * those are released when f returns. Its row says so: `Region.NoEscape` cannot be forked, raced, timed out, sent to another fiber, or
-      * stored where the marker is not in the type. Consume the rest inside f, or move its values out through a Channel.
+      * The rest carries whatever the stream had opened by then (a `Sync.ensure` or `Channel.use` in its own body), released when f returns.
+      * Its `Region.NoEscape` row cannot be forked, raced, timed out, sent to another fiber, or stored outside f: consume it inside f or drain it through a Channel.
       *
       * @param n
       *   The number of elements to take
@@ -674,8 +673,7 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
     def splitAtWith[VV >: V, A, S2](n: Int)(
         f: (Chunk[VV], Stream[VV, S & Region.NoEscape]) => A < (S2 & Region.NoEscape)
     )(using tag: Tag[Emit[Chunk[VV]]], frame: Frame): A < (S & S2) =
-        // The bracket is the extent the rest belongs to: what it still carries is released when f returns, not at
-        // whichever region encloses this call.
+        // The bracket is the extent the rest belongs to: what it still carries is released when f returns, not at the enclosing region.
         Bracket(())(_ =>
             splitAt[VV](n).map((head, rest) => Region.discharge[A, S & S2](f(head, rest)))
         )((_, _) => ())
@@ -710,9 +708,8 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
         t3: Tag[Emit[Chunk[(VV, V2)]]],
         f: Frame
     ): Stream[(VV, V2), S & S2] =
-        // Each region pulls one emission into a closed step value (the chunk and the raw remainder, or exhaustion),
-        // and every loop outcome is built at one level from the two steps: a region result naming the loop's own
-        // outcome type leaves its done slot to inference, which resolves it before the done branches are seen.
+        // step1/step2 pull one emission into a closed value (chunk and raw remainder, or exhaustion), so every loop outcome is built at
+        // one level from the two steps; naming the loop's outcome type leaves each region's done slot to inference, resolved before the done branches.
         def step1(source: Unit < (Emit[Chunk[VV]] & S)): Maybe[(Chunk[VV], Unit < (Emit[Chunk[VV]] & S))] < S =
             ArrowEffect.handleFirst(t1, source)(
                 handle = [C] => (vals, cont) => Maybe((vals, cont(()))),

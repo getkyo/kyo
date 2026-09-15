@@ -81,9 +81,8 @@ object Scope:
         frame: Frame
     ): A < (Scope & Sync & S) =
         ContextEffect.suspendWith(Tag[Scope]) { finalizer =>
-            // `ensureMap` registers in the step the acquire completes. With `map` the registration is a suspension
-            // of its own, and an interrupt pending when the acquire completes parks before that suspension is
-            // dispatched, leaving the abandonment nothing to release.
+            // `ensureMap` registers in the step the acquire completes; with `map` the registration is a suspension
+            // of its own, and a pending interrupt parks before it is dispatched, leaving the abandonment nothing to release.
             Sync.defer(acquire).ensureMap { resource =>
                 // Unsafe: registering as an effect would put the registration in a step of its own.
                 import AllowUnsafe.embrace.danger
@@ -137,15 +136,10 @@ object Scope:
     def run[A, S](closeParallelism: Int)(v: A < (Scope & S))(using frame: Frame): A < (Async & S) =
         Sync.Unsafe.defer {
             val finalizer = Finalizer.Unsafe.init(closeParallelism)
-            // A scope closes at the end of the `Scope.run` that opened it and nowhere else. A nested run joins as
-            // a child, and children are closed and waited for before this scope releases its own, ordering inner
-            // releases before outer ones. Closed rather than only waited for: a nested run blocked inside a handler
-            // closes when something ends that handler, often a finalizer of this scope, so a queued wait could sit
-            // ahead of the finalizer that would release it.
-            //
-            // A fork shares registration but not membership: a run opened inside a fork is its own root, and closing
-            // it from here would release a resource its owner is still using. `StreamCoreExtensionsTest:890` pins
-            // the registration half, that a resource's lifetime does not depend on whether a combinator forked.
+            // A scope closes at the end of the `Scope.run` that opened it and nowhere else. `derive` joins a nested run
+            // as a child, `fork` shares registration but not membership; see `Finalizer` for why children are closed
+            // rather than only waited for, and why a fork is a root. `StreamCoreExtensionsTest:890` pins that a
+            // resource's lifetime does not depend on whether a combinator forked.
             ContextEffect.handle(
                 Tag[Scope],
                 derive = (outer: Maybe[Finalizer]) =>
@@ -158,10 +152,10 @@ object Scope:
                 fork = (parent: Finalizer) => parent.forked,
                 join = (parent: Finalizer, _: Finalizer, _: Finalizer) => parent
             )(v)
-                // The first close to reach the queue is the one whose error the finalizers see, and the `Sync.ensure`
-                // backstop carries only what an ending carries: nothing on a normal return, a synthesised "fiber
-                // abandoned" panic for a typed abort. Catching the abort first turns the ending into a value, so the
-                // close below runs with the real error and the backstop answers only for abandonment.
+                // The first close to reach the queue is the one whose error the finalizers see. The `Sync.ensure`
+                // backstop carries only what an ending carries (nothing on a normal return, an abandonment panic for a
+                // typed abort), so catching the abort first lets the close run with the real error and the backstop
+                // answer only for abandonment.
                 .handle(Abort.run[Any])
                 .map { result =>
                     finalizer
@@ -172,45 +166,33 @@ object Scope:
                 .handle(Sync.ensure(finalizer.close))
         }
 
-    /** The finalizers registered against one scope, run in reverse registration order when it closes.
-      *
-      * A nested run joins as a child through [[addChild]]; closing a scope closes its children and waits for them
-      * before releasing its own, so inner resources release before outer ones. A fork shares registration but not
-      * membership; see [[forked]].
+    /** The finalizers registered against one scope, run in reverse registration order when it closes. A nested run
+      * joins as a child through [[addChild]]; closing a scope closes its children and waits for them before releasing
+      * its own, so inner resources release before outer. A fork shares registration but not membership; see [[forked]].
       */
     sealed abstract class Finalizer:
         def ensure(v: Maybe[Error[Any]] => Any < (Async & Abort[Throwable]))(using Frame): Unit < Sync
 
-        /** Registers a finalizer without suspending, for the one caller that cannot afford a suspension.
-          *
-          * `acquireRelease` records the release in the step the acquire's value arrives in: a suspension there could
-          * be parked by an interrupt, leaving the acquired value unreleased. Every other caller wants [[ensure]].
+        /** Registers a finalizer without suspending, for `acquireRelease`: a suspension in the step the acquire's value
+          * arrives could be parked by an interrupt and leave the value unreleased. Every other caller wants [[ensure]].
           */
         private[kyo] def ensureUnsafe(v: Maybe[Error[Any]] => Any < (Async & Abort[Throwable]))(using Frame, AllowUnsafe): Unit
 
-        /** Registers `v` if this scope is still open, and does nothing if it is not.
-          *
-          * [[ensureUnsafe]] raises on a closed scope because an unregistered release is a resource that never gets
-          * freed. This is for the registration where failing is not a leak: a nested run asking to be waited for. If
-          * the enclosing scope has already closed there is nobody left to wait, and the nested run still closes itself.
+        /** Registers `v` if this scope is open, else does nothing. Failing is safe here, unlike [[ensureUnsafe]] which
+          * raises on a leak: the caller is a nested run asking to be waited for, and if this scope has closed there is
+          * nobody to wait and the run still closes itself.
           */
         private[kyo] def ensureIfOpen(v: Maybe[Error[Any]] => Any < (Async & Abort[Throwable]))(using Frame, AllowUnsafe): Unit
 
-        /** Records a run nested in this one, as the scope it opened rather than as a wait for it.
-          *
-          * A wait is satisfied only by the nested run closing itself, which needs the computation carrying it to end,
-          * and that computation is often ended by one of THIS scope's finalizers: reverse order can put the wait ahead
-          * of the finalizer that would end it, and the close waits on itself. Holding the child's finalizer lets this
-          * scope close it directly, settling it whether or not its computation finishes.
+        /** Records a nested run as the scope it opened, not a wait. A wait would deadlock: it completes only when the
+          * nested run's computation ends, but that is often ended by one of THIS scope's finalizers, which reverse
+          * order runs after the wait. Holding the child's finalizer lets this scope close it directly.
           */
         private[kyo] def addChild(child: Finalizer)(using Frame, AllowUnsafe): Unit
 
-        /** This scope as a forked computation sees it: registrations still land here, and a run opened inside the
-          * fork is a root rather than a child of this one.
-          *
-          * A resource acquired in a fork belongs to the scope the fork was made in, so registration is shared.
-          * Membership is not: the fork carries a fiber this scope does not end, so a run opened there can outlive this
-          * one, and closing it from here would release what its owner is still using.
+        /** This scope as a fork sees it: registrations still land here (a resource acquired in a fork belongs to the
+          * scope it was made in), but a run opened inside is a root, not a child, since the fork carries a fiber this
+          * scope does not end, so that run can outlive this one and closing it here would release what its owner uses.
           */
         private[kyo] def forked: Finalizer
 
@@ -275,9 +257,9 @@ object Scope:
                         allow: AllowUnsafe
                     ): Unit =
                         if !queue.offer(v).contains(true) then
-                            // The scope has already closed, so no later drain would run this release: it runs here,
-                            // detached, or the caller's resource leaks. The throw below still tells the caller its
-                            // resource is unscoped, and the log is the only trace of a finalizer running off its scope.
+                            // The scope already closed, so no later drain runs this release: it runs here, detached,
+                            // or the resource leaks. The throw tells the caller its resource is unscoped; the log is
+                            // the only trace of a finalizer off-scope.
                             Log.live.unsafe.warn(
                                 s"Scope: a finalizer was registered on a closed scope at ${frame.position.show}, running it detached"
                             )
@@ -311,17 +293,16 @@ object Scope:
 
                     def close(ex: Maybe[Error[Any]])(using Frame): Unit < Sync =
                         Sync.Unsafe.defer {
-                            // The handover is asynchronous because an `ensure` that began before this close may still
-                            // be committing its task. A continuation rather than a wait keeps this `Sync`, which both
-                            // of `run`'s close paths need.
+                            // The handover is asynchronous because an `ensure` that began before this close may still be
+                            // committing its task. A continuation rather than a wait keeps this `Sync`, which both of
+                            // `run`'s close paths need.
                             queue.close().safe.onComplete { backlog =>
                                 backlog.foldError(
                                     _.map {
                                         case Absent         => Kyo.unit
                                         case Present(tasks) =>
-                                            // Children close and are waited for before this scope's own releases run.
-                                            // Closing, not just waiting, frees a child whose computation is blocked;
-                                            // see `addChild`.
+                                            // Children close and are waited for before this scope's own releases run;
+                                            // closing, not just waiting, frees a child whose computation is blocked (see `addChild`).
                                             val nested =
                                                 Sync.Unsafe.defer(children.close()).map(_.safe.get).map {
                                                     case Present(cs) =>

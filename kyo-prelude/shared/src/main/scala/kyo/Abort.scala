@@ -199,11 +199,10 @@ object Abort:
         reduce: Reducible[Abort[ER]]
     ): B < (S & reduce.SReduced & S2) =
         reduce {
-            // Aborts never resume, so every abort under the erased tag completes the region with its error whether or not this handler
-            // accepts it. Acceptance is decided in the done clause, outside the region, where an unaccepted error re-raises to the
-            // enclosing handler. The body keeps its `Result.succeed` wrap: it boxes a nested error value into the success lane, which no
-            // later stage can do once the clause's error completion shares the region's value type. Type arguments are explicit to factor
-            // the erased row into the handled `Abort[E]` and the remainder, which inference does not do.
+            // Aborts never resume, so every abort under the erased tag completes the region with its error regardless of acceptance,
+            // which the done clause decides outside the region, re-raising an unaccepted error to the enclosing handler. The
+            // `Result.succeed` wrap boxes a nested error into the success lane, impossible once error completion shares the region's
+            // value type; explicit type arguments split the erased row into `Abort[E]` and the remainder, which inference will not.
             ArrowEffect.handleCont[
                 Const[Error[E]],
                 Const[Unit],
@@ -627,8 +626,7 @@ object Abort:
             }
         )
 
-    // The region `catching` installs so an exception thrown while v is built or run reaches its recover
-    // arm. Never suspended.
+    // The region `catching` installs, so a throw while building or running v reaches its recover arm; never suspended.
     sealed private[kyo] trait Catching extends ArrowEffect[Const[Unit], Const[Unit]]
 
     /** Provides methods for working with literal error values in Abort effects.

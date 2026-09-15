@@ -8,46 +8,31 @@ import scala.annotation.tailrec
 
 /** Represents abstract operations whose implementations are provided later by a handler.
   *
-  * An arrow effect captures the shape of an operation without its implementation: a transformation from `Input[A]` to `Output[A]` for any
-  * `A`, with how that transformation happens deferred until a handler interprets it. Code written against one is abstract over how its
-  * operations are actually performed.
+  * An arrow effect is the shape of an operation, a transformation from `Input[A]` to `Output[A]`, with how it happens deferred until a
+  * handler interprets it. Each use suspends, carrying the input and the continuation from that point, and a handler supplies the clause that
+  * answers it. Because a continuation is an ordinary [[Arrow]], a clause may apply it more than once or not at all, which is what
+  * backtracking, non-determinism and early return are built from.
   *
-  * Every use of an arrow effect creates a suspended operation carrying its input and the continuation from that point. A handler supplies
-  * the clause that answers it, receiving the input and, depending on the family below, the continuation itself. Because a continuation is an
-  * ordinary [[Arrow]], a clause may apply it more than once or not at all, which is what backtracking, non-determinism and early return are
-  * built from.
+  * An effect is a type, never instantiated: declare one as a type extending this class. `Input` and `Output` are type constructors, and two
+  * cover most: `Const[X]` ignores its parameter and always answers `X` (an operation carrying a plain value such as an error), while `Id[X]`
+  * answers `X` unchanged.
   *
-  * #### Declaring one
-  *
-  * An effect is a type and is never instantiated, so a declaration is a type extending this class. `Input` and `Output` are type
-  * constructors, and two cover most effects: `Const[X]` ignores its parameter and always answers `X`, for an operation carrying a plain
-  * value such as an error, while `Id[X]` answers `X` unchanged, for an operation answered with the value it was given.
-  *
-  * #### Answering one
-  *
-  * Two families answer an operation, differing in what the clause is handed:
+  * Two families answer an operation:
   *   - [[ArrowEffect.handleCont]] hands the clause the continuation as an [[Arrow]], to apply once, many times, or not at all. What the
-  *     region holds moves to it and is released once, where it ends, so a clause that resumes more than once runs each shot against the
-  *     live resource.
-  *   - [[ArrowEffect.handleLoop]] hands the clause the input alone and takes a [[Loop.Outcome]] back, continuing with an answer or
-  *     terminating with a result. [[ArrowEffect.handleLoopState]] carries state between occurrences.
+  *     region holds moves to it and is released once, where it ends, so a clause that resumes more than once runs each shot against the live
+  *     resource.
+  *   - [[ArrowEffect.handleLoop]] hands the clause the input alone and takes a [[Loop.Outcome]] back; [[ArrowEffect.handleLoopState]] carries
+  *     state between occurrences.
   *
-  * Overloads of each add a `done` arm, transforming the region's final value, and a `recover` arm, answering a throwable raised inside the
-  * region. The `*With` variants fuse the caller's continuation into the region node rather than building a separate map after it.
+  * Overloads add a `done` arm (transforming the region's final value) and a `recover` arm (answering a throwable raised inside it); the
+  * `*With` variants fuse the caller's continuation into the region node.
   *
   * @tparam Input
   *   The type constructor for what an operation carries in
   * @tparam Output
   *   The type constructor for what a handler answers with
-  *
   * @see
-  *   [[ArrowEffect.suspend]] For performing an operation
-  * @see
-  *   [[ArrowEffect.suspendWith]] For performing one and transforming its answer in the same step
-  * @see
-  *   [[ArrowEffect.Mask]] For letting an operation tunnel past the handlers wrapped around it
-  * @see
-  *   [[ContextEffect]] For the other kind of effect, a value bound around a computation
+  *   [[ArrowEffect.suspend]], [[ArrowEffect.suspendWith]], [[ArrowEffect.Mask]], [[ContextEffect]]
   */
 abstract class ArrowEffect[-Input[_], +Output[_]] extends Effect
 
@@ -58,14 +43,8 @@ object ArrowEffect:
 
     /** Performs an operation of an arrow effect, suspending until a handler answers it.
       *
-      * The value this builds carries the operation's input and the continuation from this point, and the effect joins the row, so the
-      * computation cannot be evaluated until a handler removes it. Nothing here decides what the answer is: that belongs entirely to
-      * whichever handler is installed when the computation runs.
-      *
-      * @param effectTag
-      *   Identifies the effect this operation belongs to
-      * @param functionInput
-      *   The operation's input, handed to the handler's clause
+      * The value carries the input and the continuation from this point, and the effect joins the row, so nothing evaluates until a handler
+      * removes it. The answer belongs to whichever handler is installed when the computation runs.
       */
     @nowarn("msg=anonymous")
     inline def suspend[A](
@@ -80,17 +59,8 @@ object ArrowEffect:
             def input          = functionInput
             def cont           = Arrow.id
 
-    /** Performs an operation and transforms its answer in the same node, rather than suspending and mapping afterwards.
-      *
-      * This is what a helper wants where it would otherwise write `suspend(...).map(f)`. Fusing `f` into the suspension means the answer is
-      * transformed where it arrives, instead of through a separate node the evaluator has to reach first.
-      *
-      * @param effectTag
-      *   Identifies the effect this operation belongs to
-      * @param functionInput
-      *   The operation's input, handed to the handler's clause
-      * @param f
-      *   Transforms the handler's answer
+    /** Performs an operation and transforms its answer in the same node, fusing `f` in rather than suspending and mapping afterwards, so the
+      * answer is transformed where it arrives instead of through a separate node the evaluator must reach first.
       */
     @nowarn("msg=anonymous")
     inline def suspendWith[A](
@@ -111,25 +81,13 @@ object ArrowEffect:
                     case kyo: Pending[O[A], S2] @unchecked => Effect.defer(kyo, this, cont2)
                     case _                                 => cont2(f(Nested.unnest[O[A]](v)), Arrow.id)
 
-    /** Answers an arrow effect by handing the clause the continuation from the suspension point.
+    /** Answers an arrow effect by handing the clause the operation's input and the rest of the computation as an [[Arrow]].
       *
-      * Each occurrence is answered independently: the clause receives the operation's input and the rest of the computation as an [[Arrow]],
-      * and answers by applying it. Never applying it abandons that remainder, which is how an early exit is written. Applying it more than
-      * once is supported: the regions this handler dumps into the continuation move their releases to this region, which runs them once,
-      * where it ends, so every resumption runs against the live resource.
-      *
-      * The rows place this clause inside the region it serves: its result is at `E & S & S2`, so an operation of `E` the clause performs is
-      * answered by this same handler and the clause is re-entrant. That is the difference from [[handleLoop]], whose clause sits outside the
-      * region and whose own effects go to a handler further out.
-      *
-      * The continuation carries [[Region.NoEscape]], confining it to the clause.
-      *
-      * @param effectTag
-      *   Identifies which arrow effect to answer
-      * @param v
-      *   The computation performing the effect
-      * @param handle
-      *   The function implementation to provide
+      * Each occurrence is answered independently. Never applying the continuation abandons the remainder (an early exit); applying it more
+      * than once is supported, the regions this handler dumps into it moving their releases to this region, which runs them once where it
+      * ends, so every resumption runs against the live resource. The rows place the clause inside the region it serves (result at
+      * `E & S & S2`), so an `E` operation the clause performs is answered by this same handler: it is re-entrant. That is the difference from
+      * [[handleLoop]], whose clause sits outside the region. The continuation carries [[Region.NoEscape]], confining it to the clause.
       */
     inline def handleCont[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2](
         inline effectTag: Tag[E],
@@ -139,19 +97,7 @@ object ArrowEffect:
     )(using inline _frame: Frame): A < (S & S2) =
         handleCont(effectTag, v)(handle, a => a)
 
-    /** Handles an arrow effect by providing a handler function implementation, transforming the final result.
-      *
-      * Like the variant without done, except done transforms the result when the handled computation completes.
-      *
-      * @param effectTag
-      *   Identifies which arrow effect to answer
-      * @param v
-      *   The computation performing the effect
-      * @param handle
-      *   The function implementation to provide
-      * @param done
-      *   The function to transform the final result
-      */
+    /** [[handleCont]] with a `done` arm transforming the result when the handled computation completes. */
     @nowarn("msg=anonymous")
     inline def handleCont[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](
         inline effectTag: Tag[E],
@@ -181,21 +127,8 @@ object ArrowEffect:
         end match
     end handleCont
 
-    /** Handles an arrow effect by providing a handler function implementation, with a recover arm.
-      *
-      * Like the variant without recover, except a failure of the handled computation is offered to recover, which may answer with a
-      * replacement result or decline, letting the failure propagate.
-      *
-      * @param effectTag
-      *   Identifies which arrow effect to answer
-      * @param v
-      *   The computation performing the effect
-      * @param handle
-      *   The function implementation to provide
-      * @param done
-      *   The function to transform the final result
-      * @param recover
-      *   The function offered a failure of the handled computation
+    /** [[handleCont]] with a `recover` arm: a failure of the handled computation is offered to `recover`, which answers with a replacement
+      * or declines, letting the failure propagate.
       */
     @nowarn("msg=anonymous")
     inline def handleCont[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](
@@ -236,25 +169,13 @@ object ArrowEffect:
         end try
     end handleCont
 
-    /** Answers an arrow effect with a clause that is handed the operation's input alone.
+    /** Answers an arrow effect with a clause handed the operation's input alone, taking a [[Loop.Outcome]] back: `Loop.continue` with an
+      * answer resumes the region, `Loop.done` ends it with a result.
       *
-      * Where [[handleCont]] gives the clause the continuation to apply, this gives it only the input and takes a [[Loop.Outcome]] back:
-      * `Loop.continue` with an answer resumes the region, `Loop.done` ends it with a result. The continuation never becomes a value the
-      * clause holds, so each occurrence is answered exactly once or not at all.
-      *
-      * The rows say where the clause runs. Its outcome sits at `S & S2` while the answer inside it sits at `E & S & S2`, which places the
-      * clause outside the region it serves: only the answer handed back is region currency. A `Loop.done` result therefore bypasses the
-      * region, and an effect the clause performs is answered by a handler outside this one, not by this one.
-      *
-      * Reach for it when answering needs no state between occurrences. [[handleLoopState]] carries state across them, and [[handleCont]]
-      * hands over the continuation itself.
-      *
-      * @param effectTag
-      *   Identifies which arrow effect to answer
-      * @param v
-      *   The computation performing the effect
-      * @param handle
-      *   The clause, answering each occurrence with a [[Loop.Outcome]]
+      * The continuation never becomes a value the clause holds, so each occurrence is answered exactly once or not at all. The rows place the
+      * clause outside the region it serves: the outcome sits at `S & S2`, the answer inside it at `E & S & S2`, so only the answer handed back
+      * is region currency, a `Loop.done` result bypasses the region, and an effect the clause performs is answered by a handler further out.
+      * Contrast [[handleCont]], which hands over the continuation itself; [[handleLoopState]] carries state between occurrences.
       */
     inline def handleLoop[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2](
         inline effectTag: Tag[E],
@@ -264,19 +185,8 @@ object ArrowEffect:
     )(using inline _frame: Frame): A < (S & S2) =
         handleLoop(effectTag, v)(handle, a => a)
 
-    /** [[handleLoop]] with a `done` arm transforming the region's final value.
-      *
-      * `done` runs when the computation finishes on its own, having produced an `A` without the clause ending the region first. A
-      * `Loop.done` from the clause answers with a `B` directly and does not pass through it.
-      *
-      * @param effectTag
-      *   Identifies which arrow effect to answer
-      * @param v
-      *   The computation performing the effect
-      * @param handle
-      *   The clause, answering each occurrence with a [[Loop.Outcome]]
-      * @param done
-      *   Transforms the value the computation finished with
+    /** [[handleLoop]] with a `done` arm transforming the region's final value: it runs when the computation finishes on its own, whereas a
+      * `Loop.done` from the clause answers with a `B` directly and bypasses it.
       */
     @nowarn("msg=anonymous")
     inline def handleLoop[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](
@@ -323,21 +233,8 @@ object ArrowEffect:
         end match
     end handleLoop
 
-    /** Handles an arrow effect with a loop-based approach, custom completion handling and a recover arm.
-      *
-      * Like the variant without recover, except a failure of the handled computation is offered to recover, which may answer with a
-      * replacement result or decline, letting the failure propagate.
-      *
-      * @param effectTag
-      *   Identifies which arrow effect to answer
-      * @param v
-      *   The computation performing the effect
-      * @param handle
-      *   The function implementation that returns a Loop.Outcome for each iteration
-      * @param done
-      *   The function to transform the final result
-      * @param recover
-      *   The function offered a failure of the handled computation
+    /** [[handleLoop]] with a `recover` arm: a failure of the handled computation is offered to `recover`, which answers with a replacement
+      * or declines, letting the failure propagate.
       */
     @nowarn("msg=anonymous")
     inline def handleLoop[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](
@@ -394,22 +291,10 @@ object ArrowEffect:
         end try
     end handleLoop
 
-    /** [[handleLoop]] with a state carried from one occurrence to the next.
-      *
-      * The clause is handed the state alongside the input and answers with a `Loop.continue` carrying both the next state and the answer, so
-      * the state threads through the region without a mutable cell. `Loop.done` ends the region and discards it.
-      *
-      * The state is per region rather than per computation: it threads forward through the occurrences of one evaluation, and evaluating the
-      * same computation again starts from the initial value.
-      *
-      * @param effectTag
-      *   Identifies which arrow effect to answer
-      * @param state
-      *   The value the first occurrence is handed
-      * @param v
-      *   The computation performing the effect
-      * @param handle
-      *   The clause, answering each occurrence with a [[Loop.Outcome]] carrying the next state
+    /** [[handleLoop]] with a state carried from one occurrence to the next: the clause is handed it alongside the input and answers with a
+      * `Loop.continue` carrying the next state and the answer, so it threads through the region without a mutable cell; `Loop.done` discards
+      * it. The state is per region, not per computation: it threads through one evaluation's occurrences, and evaluating the same computation
+      * again starts from the initial value.
       */
     inline def handleLoopState[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2, State](
         inline effectTag: Tag[E],
@@ -420,21 +305,8 @@ object ArrowEffect:
     )(using inline _frame: Frame): A < (S & S2) =
         handleLoopState(effectTag, state, v)(handle, (_, a) => a)
 
-    /** [[handleLoopState]] with a `done` arm receiving the final state alongside the region's value.
-      *
-      * `done` is where the state leaves the region: without it the state is discarded when the computation finishes, so this is the variant
-      * to use when the state is the answer, as it is for a counter, an accumulator, or a log collected across occurrences.
-      *
-      * @param effectTag
-      *   Identifies which arrow effect to answer
-      * @param state
-      *   The value the first occurrence is handed
-      * @param v
-      *   The computation performing the effect
-      * @param handle
-      *   The clause, answering each occurrence with a [[Loop.Outcome]] carrying the next state
-      * @param done
-      *   Transforms the state and the value the computation finished with
+    /** [[handleLoopState]] with a `done` arm receiving the final state alongside the region's value. `done` is where the state leaves the
+      * region (without it the state is discarded on completion), so use it when the state is the answer, as for a counter or accumulator.
       */
     @nowarn("msg=anonymous")
     inline def handleLoopState[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2, State](
@@ -485,23 +357,8 @@ object ArrowEffect:
         end match
     end handleLoopState
 
-    /** Handles an arrow effect with stateful loop-based approach, custom completion handling and a recover arm.
-      *
-      * Like the variant without recover, except the current state and a failure of the handled computation are offered to recover, which
-      * may answer with a replacement result or decline, letting the failure propagate.
-      *
-      * @param effectTag
-      *   Identifies which arrow effect to answer
-      * @param state
-      *   The initial state value
-      * @param v
-      *   The computation performing the effect
-      * @param handle
-      *   The function implementation for each iteration
-      * @param done
-      *   The function to transform the final state and result
-      * @param recover
-      *   The function offered the state and a failure of the handled computation
+    /** [[handleLoopState]] with a `recover` arm: the current state and a failure of the handled computation are offered to `recover`, which
+      * answers with a replacement or declines, letting the failure propagate.
       */
     @nowarn("msg=anonymous")
     inline def handleLoopState[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2, State](
@@ -563,13 +420,9 @@ object ArrowEffect:
         end try
     end handleLoopState
 
-    /** [[handleCont]] with the caller's own continuation fused into the region rather than mapped over its result.
-      *
-      * `handleContWith(tag, v)(handle, done)(f)` answers what `handleCont(tag, v)(handle, done).map(f)` answers, carrying `f` on the region
-      * itself so the evaluator reaches one node instead of two.
-      *
-      * @param f
-      *   The transformation applied to the region's result
+    /** [[handleCont]] with the caller's continuation `f` fused into the region rather than mapped over its result:
+      * `handleContWith(tag, v)(handle, done)(f)` answers what `handleCont(tag, v)(handle, done).map(f)` does, but the evaluator reaches one
+      * node instead of two.
       */
     @nowarn("msg=anonymous")
     inline def handleContWith[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](
@@ -609,13 +462,7 @@ object ArrowEffect:
         end match
     end handleContWith
 
-    /** [[handleLoop]] with the caller's own continuation fused into the region rather than mapped over its result.
-      *
-      * See [[handleContWith]] for what the fusion saves.
-      *
-      * @param f
-      *   The transformation applied to the region's result
-      */
+    /** [[handleLoop]] with the caller's continuation fused into the region rather than mapped over its result; see [[handleContWith]]. */
     @nowarn("msg=anonymous")
     inline def handleLoopWith[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](
         using inline _frame: Frame
@@ -670,13 +517,7 @@ object ArrowEffect:
         end match
     end handleLoopWith
 
-    /** [[handleLoopState]] with the caller's own continuation fused into the region rather than mapped over its result.
-      *
-      * See [[handleContWith]] for what the fusion saves.
-      *
-      * @param f
-      *   The transformation applied to the region's result
-      */
+    /** [[handleLoopState]] with the caller's continuation fused into the region rather than mapped over its result; see [[handleContWith]]. */
     @nowarn("msg=anonymous")
     inline def handleLoopStateWith[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2, State](
         using inline _frame: Frame
@@ -736,22 +577,18 @@ object ArrowEffect:
 
     /** Hides an effect from the handlers wrapped around a computation, so its operations are answered further out.
       *
-      * Inside a mask every operation of the masked effect becomes a `Mask[S]` operation carrying the original as an unevaluated payload,
-      * which the handlers in between cannot see. [[Mask.run]] is the boundary where each payload re-raises the original for the handlers
-      * outside it, and the answer flows back into the masked computation.
-      *
-      * The effect to hide is named rather than inferred, and only that effect tunnels: everything else in the row stays answerable where it
-      * is. Masking the same effect twice behaves as one mask.
-      *
-      * Note: this is not limited to arrow effects. The region shadows its tag in the context as well as on the stack, so a [[ContextEffect]]
-      * read inside a mask tunnels past an inner binding and is answered by the binding outside.
+      * Inside a mask, each operation of the masked effect becomes a `Mask[S]` operation carrying the original as an unevaluated payload the
+      * handlers in between cannot see; [[Mask.run]] is the boundary where each payload re-raises for the handlers outside, and the answer
+      * flows back in. The effect to hide is named, and only it tunnels; masking the same effect twice behaves as one mask. This is not limited
+      * to arrow effects: the region shadows its tag in the context too, so a [[ContextEffect]] read inside a mask is answered by the binding
+      * outside an inner one.
       *
       * IMPORTANT: moving where a value is answered moves where a scope ends with it. A bracket inside a masked computation releases when the
-      * outer handler is done with the tunneled continuation, not at the mask boundary. An outer handler that discards that continuation
-      * releases it there, told the discard signal.
+      * outer handler is done with the tunneled continuation, not at the mask boundary; an outer handler that discards that continuation
+      * releases it there, told `Absent` (a clean ending).
       *
       * @tparam S
-      *   The effect being hidden, which may be an intersection when several have to tunnel together
+      *   The effect being hidden, an intersection when several tunnel together
       */
     sealed abstract class Mask[S] extends ArrowEffect[[A] =>> A < S, Id]
 
@@ -820,9 +657,9 @@ object ArrowEffect:
         end match
     end handleFirst
 
-    /** As [[handleFirst]], but the handed-out remainder may be resumed more than once: its dumped regions are held rather than closed at
-      * each resumption's end, so a resource shared across the resumptions (a streamed choice's branches) stays live across all of them and
-      * is released once after the scope that resumes them ends. Use the single-shot [[handleFirst]] when the remainder is consumed once.
+    /** As [[handleFirst]], but the handed-out remainder may be resumed more than once: its dumped regions are held rather than closed at each
+      * resumption's end, so a resource shared across the resumptions (a streamed choice's branches) stays live and is released once after the
+      * scope that resumes them ends. Use [[handleFirst]] when the remainder is consumed once.
       */
     @nowarn("msg=anonymous")
     private[kyo] inline def handleFirstRepeated[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](inline effectTag: Tag[E], v: A < (E & S))(
@@ -853,16 +690,7 @@ object ArrowEffect:
 
     // Mask must re-suspend an operation it cannot inspect, so the clause is handed the operation, not its input.
 
-    /** Handles an arrow effect by providing a handler that receives the suspended operation itself; the result is the handled
-      * computation's value.
-      *
-      * @param effectTag
-      *   Identifies which arrow effect to answer
-      * @param v
-      *   The computation performing the effect
-      * @param handle
-      *   The function implementation to provide, given the operation and the continuation
-      */
+    /** Handles an arrow effect with a clause that receives the suspended operation itself rather than its input. */
     private[kyo] inline def handleMasking[E <: Effect, A, S, S2](
         inline effectTag: Tag[E],
         v: A < (E & S)
@@ -871,17 +699,8 @@ object ArrowEffect:
     )(using inline _frame: Frame): A < (S & S2) =
         handleMasking(effectTag, v)(handle, a => a)
 
-    /** Handles an arrow effect by providing a handler that receives the suspended operation itself, as a computation in the effect, rather
-      * than its input. The continuation is the one from the suspension point, as in handleCont.
-      *
-      * @param effectTag
-      *   Identifies which arrow effect to answer
-      * @param v
-      *   The computation performing the effect
-      * @param handle
-      *   The function implementation to provide, given the operation and the continuation
-      * @param done
-      *   The function to transform the final result
+    /** [[handleMasking]] with a `done` arm; the clause receives the suspended operation as a computation in the effect, and the continuation
+      * is the one from the suspension point, as in [[handleCont]].
       */
     @nowarn("msg=anonymous")
     private[kyo] inline def handleMasking[E <: Effect, A, B, S, S2](

@@ -3772,11 +3772,11 @@ object Browser:
 
         /** Creates an isolate that gives each fork a cloned tab (same URL + storage).
           *
-          * The `capture` phase just reads the parent tab; the snapshot is taken in `isolate`, as each fork begins, followed by tab creation
-          * and restoration (inside `Scope.run`). The forking scope is parked while its forks start, so the snapshot observes the parent tab
-          * as it stood at the fork. `Env.run` strips the `Env[BrowserTab]` component of the opaque Browser type. The `Isolate.Keep` channel
-          * includes `Abort[BrowserReadException]` so typed Aborts from snapshot capture, child tab creation, snapshot restore, or the user
-          * computation flow through the Isolate ABI directly, without throw-tunneling.
+          * `capture` only reads the parent tab; the snapshot is taken in `isolate` as each fork begins, then the child tab is created and
+          * restored (inside `Scope.run`). The forking scope is parked while its forks start, so the snapshot observes the parent tab as it
+          * stood at the fork. `Env.run` strips the `Env[BrowserTab]` component of the opaque Browser type. `Isolate.Keep` includes
+          * `Abort[BrowserReadException]` so typed Aborts from any phase (snapshot capture, child tab creation, restore, user computation)
+          * flow through the Isolate ABI directly, without throw-tunneling.
           */
         def clone(using Frame): Isolate[Browser, Async & Abort[BrowserReadException], Any] =
             new Isolate[Browser, Async & Abort[BrowserReadException], Any]:

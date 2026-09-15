@@ -7,14 +7,12 @@ import scala.util.NotGiven
 
 /** The constraint the implicit lift carries, rejecting what should not be lifted into a computation.
   *
-  * Two things are refused. A computation, because lifting one into another nests it, and the fix is `.flatten` or splitting the expression.
-  * And a kyo module object, because `Abort` where `Abort(...)` was meant would otherwise become a value of type `Abort.type < S` and the
-  * missing argument list would go unnoticed.
+  * Two things are refused: a computation (lifting one into another nests it; fix with `.flatten` or by splitting the expression) and a kyo
+  * module object (`Abort` where `Abort(...)` was meant would otherwise become `Abort.type < S`, hiding the missing argument list).
   *
-  * It is a soft constraint, and the reason is worth understanding: it works by asking whether the type being lifted is a computation. At a
-  * concrete type it can answer. Inside a generic function it cannot, because the type parameter is abstract and there is nothing to test, so
-  * the lift fires and a nested computation is what comes out. Nesting is therefore not something the conversion offers, it is what happens
-  * exactly where this constraint cannot see what it is looking at.
+  * It is a soft constraint: it tests whether the type being lifted is a computation. At a concrete type it can answer; inside a generic
+  * function the type parameter is abstract and cannot be tested, so the lift fires and a nested computation results. Nesting therefore
+  * happens exactly where this constraint cannot see what it is looking at.
   *
   * @tparam A
   *   The type to check for nested effects
@@ -42,8 +40,8 @@ To fix this, you can:
 """)
 opaque type CanLift[A] = Null
 
-// The macros that police the lift boundary: the singleton check that derives a `CanLift`, and the guidance
-// raised when a Unit computation is lifted to the wrong row.
+// Two macros: the singleton check that derives a `CanLift`, and the error raised when a Unit computation
+// is lifted to the wrong row.
 object CanLiftMacro:
     inline def checkSingleton[A]: CanLift[A] = ${ liftImpl[A] }
 
@@ -76,10 +74,10 @@ end CanLiftMacro
 
 object CanLift:
 
-    // Three givens rather than one macro, because only the third case needs the macro and the first is almost
-    // every lift in a program. Keeping the macro off that path matters twice over: it is the difference between
-    // a type test and a compiler expansion at every lift site, and a file that summons a same-module macro is
-    // suspended to a retry run, a cascade this module already sits close to.
+    // Three givens rather than one macro: only the third case needs the macro, and the first covers almost every
+    // lift in a program. Keeping the macro off that path matters twice: a type test rather than a compiler
+    // expansion at every lift site, and a file that summons a same-module macro is suspended to a retry run, a
+    // cascade this module sits close to.
 
     /** The common case: anything that is neither a computation nor a singleton, settled by two `NotGiven` tests and no expansion. */
     inline given derived[A](using inline ng: NotGiven[A <:< (Any < Nothing)], inline ns: NotGiven[A <:< Singleton]): CanLift[A] = null
