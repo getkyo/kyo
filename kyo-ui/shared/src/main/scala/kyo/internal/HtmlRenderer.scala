@@ -1171,9 +1171,9 @@ private[kyo] object HtmlRenderer:
            |// Read-only test hook on the current socket; it follows each reconnect.
            |Object.defineProperty(window,"__kyoWs",{get:function(){return ws;},configurable:true});
            |var __dragRt=null,__dragCleanup=null;
-           |// One call site on purpose. The runtime wires document-level capture listeners and one pagehide listener it never removes, so
-           |// it must be installed once per session and never over a live one; the guard at the open handler is what keeps that true
-           |// across reconnects, and its own cleanup is idempotent.
+           |// One call site on purpose. The runtime wires document-level capture listeners and a pagehide listener that only its cleanup
+           |// removes, so it must be installed once per session and never over a live one; the guard at the open handler is what keeps
+           |// that true across reconnects, and its own cleanup is idempotent.
            |function kyoInstallDrag(){
            |  __dragRt=installDragRuntime(function(m){post(m);},{onClose:function(c){__dragCleanup=c;}});
            |  __dragCleanup=__dragRt.cleanup;
