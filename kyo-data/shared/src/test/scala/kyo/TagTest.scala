@@ -94,9 +94,7 @@ class TagTest extends kyo.test.Test[Any]:
         }
     }
 
-    "packed literal compatibility" - {
-        def legacy[A](tag: Tag[A]): String = Tag.internal.encode[A](tag.tpe.staticDB)
-
+    "original literal representation" - {
         "typed literal payloads retain NUL and unpaired surrogate code units" in {
             val tag = Tag["\u0000\ud800x\udfff"]
             val _: Tag["\u0000\ud800x\udfff"] = tag
@@ -108,83 +106,35 @@ class TagTest extends kyo.test.Test[Any]:
             assert(shown.charAt(3).toInt == 0xdfff)
         }
 
-        "real derived graphs preserve their legacy bytes and decoded names" in {
-            val encodings = Span(
-                legacy(Tag[Int]),
-                legacy(Tag[String]),
-                legacy(Tag[List[Int]]),
-                legacy(Tag[Int | String]),
-                legacy(Tag["λ\u0000\ud800"])
-            )
-            encodings.foreach { original =>
-                val packed = TagHash.pack(original)
-                val restored = new java.lang.StringBuilder
-                TagHash.appendLegacy(packed, restored)
-                assert(restored.toString == original)
-                assert(TagHash.concrete(packed) == (original.charAt(0) == '*'))
-                assert(TagHash.of(packed) == TagHash.of(original))
-                assert(Tag.internal.decode(packed).toString == Tag.internal.decode(original).toString)
-                Span(original, packed).foreach { left =>
-                    Span(original, packed).foreach { right =>
-                        assert(TagHash.same(left, right))
-                    }
-                }
-                assert(Result(TagHash.validate(packed)).isSuccess)
-            }
+        "derived literals retain the exact original encoding" in {
+            def check[A](tag: Tag[A]): Unit =
+                val encoded = Tag.internal.encode[A](tag.tpe.staticDB)
+                assert(tag.equals(encoded))
+                assert(TagHash.of(tag) == kyo.internal.XXHashPlatform.stringHash(encoded))
+                assert(Tag.internal.decode(encoded).toString == tag.show)
+            check(Tag[Int])
+            check(Tag[String])
+            check(Tag[List[Int]])
+            check(Tag[Int | String])
+            check(Tag["λ\u0000\ud800"])
         }
 
-        "packing preserves the published scalar hash constants" in {
-            val int = TagHash.pack(legacy(Tag[Int]))
-            val string = TagHash.pack(legacy(Tag[String]))
-            assert(kyo.internal.XXHash.hashInt(TagHash.of(int)) == -1492440803)
-            assert(kyo.internal.XXHash.hashInt(TagHash.of(string)) == -59591402)
-        }
-
-        "mixed formats do not equate colliding nominal bodies" in {
-            class Aa
-            class BB
-            val a = legacy(Tag[Aa])
-            val b = legacy(Tag[BB])
-            assert(a != b)
-            assert(TagHash.of(a) == TagHash.of(b))
-            Span(a, TagHash.pack(a)).foreach { left =>
-                Span(b, TagHash.pack(b)).foreach { right =>
-                    assert(!TagHash.same(left, right))
-                    assert(!TagHash.same(right, left))
-                }
-            }
-        }
-
-        "dynamic hashes normalize parent and child formats independently" in {
+        "dynamic hashes retain the original parent and child representation" in {
             def nested[A: Tag, B: Tag]: Tag[Map[A, List[B]]] = Tag.dynamic[Map[A, List[B]]]
-            def representation(tag: Tag[?], packed: Boolean): String | Tag.internal.Dynamic =
-                val tpe = tag.tpe
-                val original = legacy(tag)
-                val encoded = if packed then TagHash.pack(original) else original
-                if tpe.dynamicDB.isEmpty then encoded
-                else Tag.internal.Dynamic(encoded, tpe.dynamicDB.map { (id, child) =>
-                    id -> representation(child, packed)
-                })
-            val typed = nested[String, Int]
-            val tpe = typed.tpe
-            val original = legacy(typed)
-            val oldChildren = tpe.dynamicDB.map { (id, child) => id -> representation(child, false) }
-            val newChildren = tpe.dynamicDB.map { (id, child) => id -> representation(child, true) }
+            val tag = nested[String, Int]
+            val _: Tag[Map[String, List[Int]]] = tag
+            val tpe = tag.tpe
+            val encoded = Tag.internal.encode[Map[String, List[Int]]](tpe.staticDB)
             assert(tpe.dynamicDB.nonEmpty)
-            val baseline = Tag.internal.Dynamic(original, oldChildren)
-            Span(original, TagHash.pack(original)).foreach { parent =>
-                Span(oldChildren, newChildren).foreach { children =>
-                    val actual = Tag.internal.Dynamic(parent, children)
-                    assert(actual.hashCode == baseline.hashCode)
-                    assert(actual.hashCode == typed.hash)
-                    assert(actual.tpe.toString == typed.show)
-                    assert(Tag.internal.Dynamic(parent, children.toSeq.reverse.toMap).hashCode == actual.hashCode)
-                }
-            }
-            assert(nested[String, Int].hash != nested[Int, String].hash)
+            val original = Tag.internal.Dynamic(encoded, tpe.dynamicDB)
+            assert(original.hashCode == tag.hash)
+            assert(original.tpe.toString == tag.show)
+            assert(Tag.internal.Dynamic(encoded, tpe.dynamicDB.toSeq.reverse.toMap).hashCode == tag.hash)
+            assert(nested[String, Int].hash == tag.hash)
+            assert(nested[Int, String].hash != tag.hash)
         }
 
-        "hash units retain zero, negative values and lone surrogates" in {
+        "dispatch hashes retain zero, negative values and UTF-16 code units" in {
             val cases = Span(
                 (Span(1, 19, 3, 29, 11, 19, 2), 0),
                 (Span(4, 1, 4, 8, 11, 0, 4), Int.MinValue),
@@ -192,64 +142,10 @@ class TagTest extends kyo.test.Test[Any]:
                 (Span(1, 19, 4, 0, 7, 4, 25), 0x0000d800)
             )
             cases.foreach { (digits, expected) =>
-                // Fixed code units have the stated JLS hash; these exercise packing, not the graph decoder.
                 val original = "." + digits.map(_.toChar).mkString
                 assert(kyo.internal.XXHashPlatform.stringHash(original) == expected)
-                val packed = TagHash.pack(original)
-                assert(packed.startsWith("!1."))
-                assert(packed.charAt(3).toInt == (expected >>> 16))
-                assert(packed.charAt(4).toInt == (expected & 0xffff))
-                assert(packed.charAt(5) == ':')
-                assert(TagHash.of(packed) == expected)
-                val restored = new java.lang.StringBuilder
-                TagHash.appendLegacy(packed, restored)
-                assert(restored.toString == original)
-                assert(Result(TagHash.validate(packed)).isSuccess)
-            }
-        }
-
-        "the JVM constant bound counts the actual modified UTF-8 header" in {
-            def modifiedBytes(value: String): Int =
-                value.foldLeft(0) { (total, char) =>
-                    total + (if char >= 1 && char <= 0x7f then 1 else if char <= 0x7ff then 2 else 3)
-                }
-            val cases = Span(
-                ("a" * 65525, 65535),
-                ("a" * 65526, 65536),
-                ("\u0000" * 32762, 65534),
-                ("\u0000" * 32763, 65536),
-                ("\u0800" * 21841, 65533),
-                ("\u0800" * 21842, 65536)
-            )
-            cases.foreach { (body, expectedBytes) =>
-                val original = "." + body
-                val hash = kyo.internal.XXHashPlatform.stringHash(original)
-                val candidate = "!1." + (hash >>> 16).toChar + (hash & 0xffff).toChar + ":" + body
-                assert(modifiedBytes(original) <= 65535)
-                assert(modifiedBytes(candidate) == expectedBytes)
-                val actual = TagHash.pack(original)
-                assert(actual == (if expectedBytes <= 65535 then candidate else original))
-                assert(TagHash.of(actual) == hash)
-                assert(TagHash.same(actual, original))
-            }
-        }
-
-        "recognized malformed envelopes fail through the invalid-payload boundary" in {
-            val valid = TagHash.pack(legacy(Tag[Int]))
-            val invalid = Span(
-                "",
-                "!",
-                valid.take(5),
-                "!2" + valid.drop(2),
-                valid.take(2) + "?" + valid.drop(3),
-                valid.take(5) + "?" + valid.drop(6),
-                valid.take(3) + (valid.charAt(3).toInt ^ 1).toChar + valid.drop(4),
-                valid + "x"
-            )
-            assert(Result(TagHash.validate(valid)).isSuccess)
-            invalid.foreach { value =>
-                val result = Result.catching[bug.KyoBugException](TagHash.validate(value))
-                assert(result.isFailure)
+                assert(TagHash.of(original) == expected)
+                assert(TagHash.of(original) == expected)
             }
         }
     }
@@ -771,9 +667,10 @@ class TagTest extends kyo.test.Test[Any]:
             assert(Tag[Thread].show == "java.lang.Thread")
         }
 
-        "type params".pendingUntilFixed("Tag.show does not yet render type parameters (Tag[Test[Int]].show omits the type argument)") in {
-            class Test[A]
-            assert(Tag[Test[Int]].show == s"${classOf[Test[?]].getName}[scala.Int]")
+        "type params" in {
+            val tag = Tag[TagTest.ShowType[Int]]
+            val _: Tag[TagTest.ShowType[Int]] = tag
+            assert(tag.show == "kyo.TagTest.ShowType[scala.Int]")
         }
 
         "primitive" in {
@@ -1790,13 +1687,15 @@ class TagTest extends kyo.test.Test[Any]:
         }
     }
 
-    // Dispatch and public hashing retain the legacy encoding's hash independently of its packed header.
-    "dispatch hashes" - {
+    // `TagHash` is the dispatch hash, not the content-stable `Tag.hash` above: it memoizes on the
+    // platforms whose `String.hashCode` does not. What has to hold is that memoizing changes nothing,
+    // so each case reads a tag twice, once filling the memo and once through it.
+    "dispatch hash memoization" - {
 
-        "agree with the legacy encoding on repeated reads" in {
+        "agrees with hashCode, before and after the memo is filled" in {
             trait MA
-            val tag = Tag[MA]
-            val direct = kyo.internal.XXHashPlatform.stringHash(Tag.internal.encode[MA](tag.tpe.staticDB))
+            val tag    = Tag[MA]
+            val direct = tag.hashCode
             assert(TagHash.of(tag) == direct)
             assert(TagHash.of(tag) == direct)
         }
@@ -1805,7 +1704,7 @@ class TagTest extends kyo.test.Test[Any]:
             assert(TagHash.of(Tag[Int]) != TagHash.of(Tag[String]))
         }
 
-        "repeated comparisons hold their cached verdict" in {
+        "repeated comparisons hold their verdict once the memo is warm" in {
             trait MB
             trait MC extends MB
             val sub    = (1 to 10).map(_ => Tag[MC] <:< Tag[MB])
@@ -1822,4 +1721,8 @@ class TagTest extends kyo.test.Test[Any]:
         if pending then name.ignore in test
         else name in { test; succeed("the real check is the scala.Predef.assert inside test; succeed registers the leaf with AssertScope") }
 
+end TagTest
+
+object TagTest:
+    class ShowType[A]
 end TagTest

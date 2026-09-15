@@ -139,7 +139,7 @@ object Tag:
 
         /** A content-stable XXH32 hash of this Tag's type, stable across JVM processes.
           *
-          * Static tags hash the logical encoding without its precomputed hash header. Dynamic tags hash that encoding and
+          * Static tags hash the encoded `String` form. Dynamic tags hash their encoded string and
           * sorted dynamic sub-tag hashes. This is deliberately NOT the decoded `Type`'s `hashCode`,
           * which is identity-influenced by the `Array`-backed `Span` fields and so is stable only
           * within a single JVM. Cross-JVM stability is required because kyo-aeron derives aeron stream
@@ -151,7 +151,7 @@ object Tag:
           */
         def hash: Int =
             self match
-                case self: String  => XXHash.hashInt(TagHash.of(self))
+                case self: String  => XXHash.hash32(self)
                 case self: Dynamic => self.hashCode
 
         /** Retrieves the decoded Type representation of this Tag. If the Tag is already a Type, it is returned directly. If it's an encoded
@@ -174,8 +174,7 @@ object Tag:
         def show: String =
             self.tpe.toString()
 
-        /** Compare literal payloads after the hash check. Hashes reject unequal tags quickly, but cannot prove equality.
-          * Static literals carry a precomputed hash shared by every platform, including the JVM macro host.
+        /** Compare the encoded strings after checking their memoized hashes. Matching hashes alone cannot prove type equality.
           */
         private def fastPathEqual[B](that: Tag[B]): Boolean =
             (self eq that) || {
@@ -183,7 +182,7 @@ object Tag:
                     case self: String =>
                         that match
                             case that: String =>
-                                TagHash.same(self, that)
+                                TagHash.of(self) == TagHash.of(that) && self.equals(that)
                             case _ =>
                                 false
                     case _ =>
@@ -198,7 +197,7 @@ object Tag:
           */
         private def isConcrete: Boolean =
             self match
-                case self: String => TagHash.concrete(self)
+                case self: String => self.charAt(0) == '*'
                 case _            => false
 
     end extension
@@ -333,12 +332,11 @@ object Tag:
         }
 
         private def dynamicHashCode(tag: String, map: Map[Entry.Id, Any]): Int =
-            val builder = new java.lang.StringBuilder
-            TagHash.appendLegacy(tag, builder)
+            val builder = new java.lang.StringBuilder(tag)
             map.toSeq.sortBy(_._1).foreach { (key, value) =>
                 val valueHash =
                     value match
-                        case value: String  => XXHash.hashInt(TagHash.of(value))
+                        case value: String  => XXHash.hash32(value)
                         case value: Dynamic => value.hashCode
                         case value          => value.hashCode
                 builder.append('\u0000').append(key).append('\u0001').append(valueHash)
@@ -360,7 +358,7 @@ object Tag:
           * combine a verdict with another pair's identity. Hashes choose the slot; they never authorize reuse.
           */
         def checkTypes[A, B](a: Tag[A], b: Tag[B], mode: Mode): Boolean =
-            // Hashing new literals is constant-time on every platform.
+            // Use memoized hashes to select a slot, then verify the actual compared tags before reusing a result.
             var hash = (TagHash.of(a).toLong << 32) | (TagHash.of(b) & 0xffffffffL)
             hash += mode.factor
             hash ^= (hash >>> 30)
@@ -596,9 +594,6 @@ object Tag:
                 }.mkString("\n")
         end encode
 
-        /** Finalize an encoded type after choosing its concrete or structural prefix. */
-        def pack(legacy: String): String = TagHash.pack(legacy)
-
         /** Cache for decoded type structures. This cache ensures that each unique encoded type string is only deserialized once,
           * significantly improving performance for repeated operations on the same types. Unlike the subtype cache, this cache is fully
           * thread-safe using ConcurrentHashMap and never evicts entries.
@@ -611,8 +606,7 @@ object Tag:
 
         private val decodeFunction: java.util.function.Function[String, Type[?]] =
             (encoded: String) =>
-                TagHash.validate(encoded)
-                val lines = encoded.drop(TagHash.bodyOffset(encoded)).linesIterator
+                val lines = encoded.drop(1).linesIterator // discard concreteFlag
                 val staticDb =
                     HashMap.empty[Entry.Id, Entry] ++
                         lines.map { encoded =>

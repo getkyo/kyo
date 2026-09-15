@@ -92,7 +92,7 @@ private[kyo] object TagMacro:
         end if
         refuseCollapsed(TypeRepr.of[A], opaqueScope)
         val (staticDB, dynamicDB) = deriveDB[A](TypeRepr.of[A])
-        val encodedStr            = Tag.internal.pack(Tag.internal.encode(staticDB))
+        val encodedStr            = Tag.internal.encode(staticDB)
         val encoded               = Expr(encodedStr)
         if dynamicDB.isEmpty then
             if opaqueScope.isEmpty then encodedCache = encodedCache.updated(typeKey, encodedStr)
