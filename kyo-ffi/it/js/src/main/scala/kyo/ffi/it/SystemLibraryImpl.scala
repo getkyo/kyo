@@ -1,5 +1,7 @@
 package kyo.ffi.it
 
+import kyo.internal.Platform
+import kyo.internal.PlatformJs
 import scala.scalajs.js
 
 /** Scala.js-side system library init.
@@ -17,23 +19,20 @@ private[it] object SystemLibraryInitImpl:
     // Module-level `val`, evaluated lazily at first access (via
     // `ensureInitialized` below), guaranteed to run at most once.
     private val initialized: Unit =
-        val platform = js.Dynamic.global.process.platform.toString
-        val libcPath: String =
-            if platform == "darwin" then "/usr/lib/libSystem.B.dylib"
-            else if platform == "linux" then "libc.so.6"
-            else throw new UnsupportedOperationException(s"Unsupported JS platform: $platform")
-        val libmPath: String =
-            // macOS folds libm into libSystem, point KYO_FFI_M_PATH at the same libSystem
-            // blob so `library = "m"` resolves. On Linux, libm is a genuinely separate
-            // `libm.so.6`; pointing at libc.so.6 would miss math symbols like `sin`.
-            if platform == "darwin" then libcPath
-            else if platform == "linux" then "libm.so.6"
-            else throw new UnsupportedOperationException(s"Unsupported JS platform: $platform")
-        val env = js.Dynamic.global.process.env
-        if js.isUndefined(env.selectDynamic("KYO_FFI_C_PATH")) then
-            env.updateDynamic("KYO_FFI_C_PATH")(libcPath)
-        if js.isUndefined(env.selectDynamic("KYO_FFI_M_PATH")) then
-            env.updateDynamic("KYO_FFI_M_PATH")(libmPath)
+        // macOS folds libm into libSystem, so KYO_FFI_M_PATH points at the same libSystem blob and `library = "m"` resolves. On Linux, libm
+        // is a genuinely separate `libm.so.6`; pointing at libc.so.6 would miss math symbols like `sin`.
+        val (libcPath, libmPath) = Platform.os match
+            case Platform.Os.MacOS => ("/usr/lib/libSystem.B.dylib", "/usr/lib/libSystem.B.dylib")
+            case Platform.Os.Linux => ("libc.so.6", "libm.so.6")
+            case other             => throw new UnsupportedOperationException(s"Unsupported JS platform: $other")
+        // The overrides live in `process.env`, where the loader reads them; a host without `process` has no such cascade to prime.
+        PlatformJs.jsGlobal("process").foreach { process =>
+            val env = process.env
+            if js.isUndefined(env.selectDynamic("KYO_FFI_C_PATH")) then
+                env.updateDynamic("KYO_FFI_C_PATH")(libcPath)
+            if js.isUndefined(env.selectDynamic("KYO_FFI_M_PATH")) then
+                env.updateDynamic("KYO_FFI_M_PATH")(libmPath)
+        }
     end initialized
 
     def ensureInitialized(): Unit = initialized

@@ -2,6 +2,7 @@ package kyo.ffi.internal
 
 import kyo.Chunk
 import kyo.ffi.FfiLoadError
+import kyo.internal.PlatformJs
 import scala.scalajs.js
 
 /** Thin Scala.js facade over the [koffi](https://koffi.dev) npm package. koffi is the runtime native-call dispatcher for the kyo-ffi JS
@@ -92,16 +93,17 @@ private[ffi] object Koffi:
         else req.asInstanceOf[js.Function1[String, js.Dynamic]]("koffi")
     end cjsRequire
 
+    /** `null` on a host without `process` or without `process.getBuiltinModule`, where this leg does not apply: the resolution failure then
+      * reported is the last real one, not this leg's own error.
+      */
     private def esmRequire(): js.Dynamic =
-        val proc = js.Dynamic.global.selectDynamic("process")
-        if js.isUndefined(proc) || proc == null then null
-        else
-            val nodeModule = proc.applyDynamic("getBuiltinModule")("node:module")
-            val cwd        = proc.applyDynamic("cwd")().asInstanceOf[String]
-            val require =
-                nodeModule.applyDynamic("createRequire")((cwd + "/").asInstanceOf[js.Any]).asInstanceOf[js.Function1[String, js.Dynamic]]
-            require("koffi")
-        end if
+        PlatformJs.jsGlobal("process").fold(null: js.Dynamic) { proc =>
+            PlatformJs.nodeBuiltin("node:module").fold(null: js.Dynamic) { nodeModule =>
+                val cwd     = proc.applyDynamic("cwd")().asInstanceOf[String]
+                val require = nodeModule.applyDynamic("createRequire")((cwd + "/").asInstanceOf[js.Any])
+                require.asInstanceOf[js.Function1[String, js.Dynamic]]("koffi")
+            }
+        }
     end esmRequire
 
     /** koffi 2.x helper that pins a JS value to a specific koffi type. Used for variadic call sites where each vararg must be typed at call

@@ -430,47 +430,32 @@ final private[kyo] class NodeCommandUnsafe(
 
     // --- Internal helpers ---
 
+    /** The `env` spawn option for `mode`: `undefined` to let the child inherit this process's environment, or the complete environment
+      * object. The modes that start from the inherited environment copy `process.env`, which is empty on a host without `process`.
+      */
+    private def childEnv(mode: EnvMode): js.UndefOr[js.Dynamic] =
+        def build(base: js.Dynamic, vars: Map[String, String], names: Set[String]): js.Dynamic =
+            vars.foreach((k, v) => base.updateDynamic(k)(v))
+            names.foreach(name => discard(js.Dynamic.global.Reflect.deleteProperty(base, name)))
+            base
+        end build
+        mode match
+            case EnvMode.Inherit                       => js.undefined
+            case EnvMode.Append(vars)                  => build(NodeProcess.envCopy(), vars, Set.empty)
+            case EnvMode.Remove(names)                 => build(NodeProcess.envCopy(), Map.empty, names)
+            case EnvMode.AppendThenRemove(vars, names) => build(NodeProcess.envCopy(), vars, names)
+            case EnvMode.Replace(vars)                 => build(js.Dynamic.literal(), vars, Set.empty)
+            case EnvMode.Clear                         => js.Dynamic.literal()
+            case EnvMode.ClearThenAppend(vars)         => build(js.Dynamic.literal(), vars, Set.empty)
+        end match
+    end childEnv
+
     /** Builds the options object for NodeChildProcess.spawn. */
     private def buildOptions()(using AllowUnsafe): js.Dynamic =
         val opts = js.Dynamic.literal()
 
         workDir.foreach { path => opts.cwd = path.unsafe.show }
-
-        envMode match
-            case EnvMode.Inherit => ()
-            case EnvMode.Append(vars) =>
-                val env = js.Dynamic.global.Object.assign(
-                    js.Dynamic.literal(),
-                    js.Dynamic.global.process.env
-                )
-                vars.foreach { (k, v) => env.updateDynamic(k)(v) }
-                opts.env = env
-            case EnvMode.Remove(names) =>
-                val env = js.Dynamic.global.Object.assign(
-                    js.Dynamic.literal(),
-                    js.Dynamic.global.process.env
-                )
-                names.foreach(name => discard(js.Dynamic.global.Reflect.deleteProperty(env, name)))
-                opts.env = env
-            case EnvMode.AppendThenRemove(vars, names) =>
-                val env = js.Dynamic.global.Object.assign(
-                    js.Dynamic.literal(),
-                    js.Dynamic.global.process.env
-                )
-                vars.foreach { (k, v) => env.updateDynamic(k)(v) }
-                names.foreach(name => discard(js.Dynamic.global.Reflect.deleteProperty(env, name)))
-                opts.env = env
-            case EnvMode.Replace(vars) =>
-                val env = js.Dynamic.literal()
-                vars.foreach { (k, v) => env.updateDynamic(k)(v) }
-                opts.env = env
-            case EnvMode.Clear =>
-                opts.env = js.Dynamic.literal()
-            case EnvMode.ClearThenAppend(vars) =>
-                val env = js.Dynamic.literal()
-                vars.foreach { (k, v) => env.updateDynamic(k)(v) }
-                opts.env = env
-        end match
+        childEnv(envMode).foreach(env => opts.env = env)
 
         val stdioIn: js.Any =
             if stdinStream.isDefined then "pipe"
@@ -575,17 +560,20 @@ final private[kyo] class NodeCommandUnsafe(
                 then
                     if isExec(cmd) then Absent
                     else Present(ProgramNotFoundException(cmd))
+                else if !Platform.isNodeLike then
+                    // No `process`, so no PATH to scan: not a proof the program is missing, so spawn decides.
+                    Absent
                 else
                     // Bare command name: scan PATH
-                    val pathEnv = js.Dynamic.global.process.env.PATH
-                    val pathStr = if js.typeOf(pathEnv) == "string" then pathEnv.asInstanceOf[String] else ""
+                    val pathEnv = NodeProcess.env("PATH")
+                    val pathStr = if pathEnv == null then "" else pathEnv
                     val pathSep = if isWin then ";" else ":"
                     val dirs    = pathStr.split(pathSep)
                     // On Windows, check with PATHEXT extensions (.exe, .cmd, .bat, etc.)
                     val extensions =
                         if isWin then
-                            val pathExt = js.Dynamic.global.process.env.PATHEXT
-                            if js.typeOf(pathExt) == "string" then pathExt.asInstanceOf[String].toLowerCase.split(";").toSeq
+                            val pathExt = NodeProcess.env("PATHEXT")
+                            if pathExt != null then pathExt.toLowerCase.split(";").toSeq
                             else Seq(".exe", ".cmd", ".bat", ".com")
                         else Seq("")
                     val found = dirs.exists { dir =>
@@ -682,41 +670,7 @@ final private[kyo] class NodeCommandUnsafe(
                                     def pipeOpts(cmd: NodeCommandUnsafe): js.Dynamic =
                                         val opts = js.Dynamic.literal()
                                         cmd.workDir.foreach { path => opts.cwd = path.unsafe.show }
-                                        cmd.envMode match
-                                            case EnvMode.Inherit => ()
-                                            case EnvMode.Append(vars) =>
-                                                val env = js.Dynamic.global.Object.assign(
-                                                    js.Dynamic.literal(),
-                                                    js.Dynamic.global.process.env
-                                                )
-                                                vars.foreach { (k, v) => env.updateDynamic(k)(v) }
-                                                opts.env = env
-                                            case EnvMode.Remove(names) =>
-                                                val env = js.Dynamic.global.Object.assign(
-                                                    js.Dynamic.literal(),
-                                                    js.Dynamic.global.process.env
-                                                )
-                                                names.foreach(name => discard(js.Dynamic.global.Reflect.deleteProperty(env, name)))
-                                                opts.env = env
-                                            case EnvMode.AppendThenRemove(vars, names) =>
-                                                val env = js.Dynamic.global.Object.assign(
-                                                    js.Dynamic.literal(),
-                                                    js.Dynamic.global.process.env
-                                                )
-                                                vars.foreach { (k, v) => env.updateDynamic(k)(v) }
-                                                names.foreach(name => discard(js.Dynamic.global.Reflect.deleteProperty(env, name)))
-                                                opts.env = env
-                                            case EnvMode.Replace(vars) =>
-                                                val env = js.Dynamic.literal()
-                                                vars.foreach { (k, v) => env.updateDynamic(k)(v) }
-                                                opts.env = env
-                                            case EnvMode.Clear =>
-                                                opts.env = js.Dynamic.literal()
-                                            case EnvMode.ClearThenAppend(vars) =>
-                                                val env = js.Dynamic.literal()
-                                                vars.foreach { (k, v) => env.updateDynamic(k)(v) }
-                                                opts.env = env
-                                        end match
+                                        childEnv(cmd.envMode).foreach(env => opts.env = env)
                                         opts.stdio = js.Array[js.Any]("pipe", "pipe", "pipe")
                                         opts
                                     end pipeOpts

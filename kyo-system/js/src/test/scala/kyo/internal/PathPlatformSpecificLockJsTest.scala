@@ -4,6 +4,18 @@ import kyo.*
 
 class PathPlatformSpecificLockJsTest extends kyo.test.Test[Any]:
 
+    /** Runs `f` with `process` deleted from the global object, the state a browser is in. Restored in a `finally` because the test runner
+      * talks over `process.stdout`.
+      */
+    private def withoutProcessGlobal[A](f: => A): A =
+        val global = scala.scalajs.js.Dynamic.global.globalThis
+        val saved  = scala.scalajs.js.Dynamic.global.process
+        scala.scalajs.js.special.delete(global, "process")
+        try f
+        finally global.updateDynamic("process")(saved)
+        end try
+    end withoutProcessGlobal
+
     private def withTarget[A](use: String => A < Sync)(using Frame): A < Sync =
         Sync.Unsafe.defer {
             val dir = NodeFs.mkdtempSync(NodePath.join(NodeOs.tmpdir(), "kyo-lock-stale-"))
@@ -205,6 +217,31 @@ class PathPlatformSpecificLockJsTest extends kyo.test.Test[Any]:
                         assert(!NodeFs.existsSync(target + ".kyo-lock.exclusive"))
                     case other => assert(false, s"expected typed gate cleanup failure, got $other")
                 end match
+            }
+        }
+    }
+
+    "with no process global" - {
+        "acquiring a lock panics naming the operation instead of throwing ReferenceError" in {
+            withTarget { target =>
+                Sync.Unsafe.defer {
+                    withoutProcessGlobal(new NodePathUnsafe(target).lock(Path.LockMode.Exclusive, Path.defaultLockSuffix)) match
+                        case Result.Panic(error: UnsupportedOperationException) =>
+                            assert(error.getMessage.contains("Path.lock"))
+                            assert(!NodeFs.existsSync(target + ".kyo-lock.gate"))
+                        case other => fail(s"expected an unsupported-host panic, got $other")
+                }
+            }
+        }
+
+        "a same-host owner is not proven dead, so its claim is kept" in {
+            withTarget { target =>
+                Sync.Unsafe.defer {
+                    val claim = target + ".kyo-lock.exclusive"
+                    NodeFs.writeFileSync(claim, s"${NodeOs.hostname()}\n2147483647\ndead-owner")
+                    assert(!withoutProcessGlobal(NodePathLock.reclaimIfProvenDead(claim)))
+                    assert(NodeFs.existsSync(claim))
+                }
             }
         }
     }

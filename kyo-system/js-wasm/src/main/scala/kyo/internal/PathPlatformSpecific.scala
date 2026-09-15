@@ -201,7 +201,7 @@ private[kyo] object NodePathLock:
         val token = bytes.applyDynamic("toString")("hex").asInstanceOf[String]
         Owner(
             NodeOs.hostname(),
-            js.Dynamic.global.process.selectDynamic("pid").asInstanceOf[Int],
+            NodeProcess.require("Path.lock").pid.asInstanceOf[Int],
             token
         )
     end currentOwner
@@ -214,6 +214,8 @@ private[kyo] object NodePathLock:
 
     private def processIsDead(owner: Owner): Boolean =
         if owner.host != NodeOs.hostname() then false
+        // Without `process` there is no liveness probe, so no owner is ever proven dead and no claim is reclaimed.
+        else if !Platform.isNodeLike then false
         else
             try
                 discard(js.Dynamic.global.process.applyDynamic("kill")(owner.pid, 0))
@@ -427,6 +429,18 @@ private[kyo] object NodePathLock:
         beforeGateRelease: (String, String) => Unit = (_, _) => (),
         beforePublishCleanup: String => Unit = _ => ()
     )(using AllowUnsafe, Frame): Result[FileLockException, Path.RawLock] =
+        // Every claim records this process's pid, so a host without `process` cannot take one.
+        if !Platform.isNodeLike then Result.panic(NodeProcess.unsupported("Path.lock"))
+        else acquireOnNode(target, pathStr, mode, sentinelSuffix, beforeGateRelease, beforePublishCleanup)
+
+    private def acquireOnNode(
+        target: Path,
+        pathStr: String,
+        mode: Path.LockMode,
+        sentinelSuffix: String,
+        beforeGateRelease: (String, String) => Unit,
+        beforePublishCleanup: String => Unit
+    )(using AllowUnsafe, Frame): Result[FileLockException, Path.RawLock] =
         val base                                 = pathStr + sentinelSuffix
         val gate                                 = base + ".gate"
         val gateOwner                            = currentOwner()
@@ -488,7 +502,7 @@ private[kyo] object NodePathLock:
                         case Absent                  => gateFailure
             end match
         end if
-    end acquire
+    end acquireOnNode
 
     private[kyo] def owns(claim: String, owner: Owner): Boolean = ownerAt(claim).exists(_ == owner)
 
@@ -1351,13 +1365,13 @@ abstract private[kyo] class PathPlatformSpecific extends PathDirectories:
         NodeCrypto.randomBytes(16).applyDynamic("toString")("hex").asInstanceOf[String]
 
     private[kyo] def envOrEmpty(name: String): String =
-        val v = js.Dynamic.global.process.env.selectDynamic(name)
-        if js.isUndefined(v) || v == null then "" else v.asInstanceOf[String]
+        val v = NodeProcess.env(name)
+        if v == null then "" else v
 
     private[kyo] def homePath: Path =
         make(Chunk(NodeOs.homedir()))
 
     private[kyo] def cwdPath: Path =
-        make(Chunk(js.Dynamic.global.process.applyDynamic("cwd")().asInstanceOf[String]))
+        make(Chunk(NodeProcess.require("Path.cwd").cwd().asInstanceOf[String]))
 
 end PathPlatformSpecific

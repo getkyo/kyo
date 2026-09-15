@@ -15,6 +15,7 @@ import kyo.net.NetException
 import kyo.net.NetNotUpgradableException
 import kyo.net.NetSocketOptionUnsupportedException
 import kyo.net.NetStdioAlreadyOpenException
+import kyo.net.NetStdioUnsupportedException
 import kyo.net.NetTlsConfig
 import kyo.net.NetTlsConfigException
 import kyo.net.NetTlsHandshakeException
@@ -746,7 +747,11 @@ final private[kyo] class JsTransport private (
         allow: AllowUnsafe,
         frame: Frame
     ): Fiber.Unsafe[NetConnection, Abort[NetException]] =
-        if !stdioClaimed.compareAndSet(false, true) then
+        if !kyo.internal.Platform.isNodeLike then
+            // stdio is `process.stdin` and `process.stdout`; a host without `process` (a browser) has none. Checked before the claim, so a
+            // refusal never holds the slot.
+            Fiber.Unsafe.fromResult(Result.fail(NetStdioUnsupportedException()))
+        else if !stdioClaimed.compareAndSet(false, true) then
             // Exactly one stdio per process: fds 0/1 are process-global, so double-ownership is rejected.
             Fiber.Unsafe.fromResult(Result.fail(NetStdioAlreadyOpenException()))
         else

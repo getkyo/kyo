@@ -91,6 +91,23 @@ class KoffiFacadeTest extends Test:
             }
             assert(ex.libraryId == "koffi")
         }
+
+        "with no process global, reports why koffi was not found instead of a ReferenceError" in {
+            // The ES-module leg reads `process` to build a require; a host without `process` has no such leg, and the error must carry the
+            // last real resolution failure rather than the leg's own ReferenceError.
+            KoffiAbiProbe.resetForTest()
+            val global = sjs.Dynamic.global.globalThis
+            val saved  = sjs.Dynamic.global.process
+            sjs.special.delete(global, "process")
+            val ex =
+                try intercept[FfiLoadError.LibraryNotFound](KoffiFacade.load(null, Seq.empty[KoffiFn]))
+                finally global.updateDynamic("process")(saved)
+            val referenceError = ex.getCause match
+                case e: sjs.JavaScriptException => sjs.special.instanceof(e.exception, sjs.Dynamic.global.ReferenceError)
+                case _                          => false
+            assert(ex.libraryId == "koffi")
+            assert(!referenceError)
+        }
     }
 
     "KoffiAbiProbe" - {

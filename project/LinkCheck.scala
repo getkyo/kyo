@@ -17,6 +17,8 @@ import scala.util.matching.Regex
   * For each program on JS and Wasm the command:
   *   - runs the linked output with plain `node`, nothing injected, and matches its last line of output (a launch that only the sbt test
   *     harness makes work fails here);
+  *   - runs it again with the `process` global deleted before the program loads, the state of a browser, and matches the same line (a bare
+  *     `process` read anywhere on the program's path throws `ReferenceError` and fails here);
   *   - fails when the output contains data the program cannot reach: the IANA time-zone database or the CLDR locale data;
   *   - fails when the output exceeds its ceiling in `kyo-link-check/ceilings.txt`.
   *
@@ -113,31 +115,42 @@ object LinkCheck {
             val files = Option(outDir.listFiles).toSeq.flatten.filter(f => f.isFile && !f.getName.endsWith(".map"))
             val size  = files.map(_.length).sum
             val found = dataMarkers.filter(marker => files.exists(f => contains(f, marker)))
-            val run   = runNode(outDir, platform)
-            (program, size, found, run)
+            val runs = Seq(
+                "under plain node"       -> runNode(outDir, platform, withoutProcess = false),
+                "with no process global" -> runNode(outDir, platform, withoutProcess = true)
+            )
+            (program, size, found, runs)
         }
         log(s"$platform sizes (bytes, all output files):")
         rows.foreach { case (program, size, _, _) =>
             val ceiling = ceilings.get((platform, program.name)).fold("no ceiling")(c => f"ceiling $c%,d")
             log(f"  ${program.name}%-10s $size%,12d   $ceiling")
         }
-        rows.flatMap { case (program, size, found, run) =>
+        rows.flatMap { case (program, size, found, runs) =>
             val data = found.map(m => s"$platform ${program.name}: the linked output contains data it cannot reach (marker '$m')")
             val ceiling = ceilings.get((platform, program.name)) match {
                 case None                    => Seq(s"$platform ${program.name}: no ceiling in kyo-link-check/ceilings.txt")
                 case Some(c) if size > c     => Seq(f"$platform ${program.name}: $size%,d bytes exceeds the ceiling of $c%,d")
                 case Some(_)                 => Nil
             }
-            val output = run match {
-                case Left(err) => Seq(s"$platform ${program.name}: $err")
-                case Right(lines) =>
+            val output = runs.flatMap {
+                case (how, Left(err)) => Seq(s"$platform ${program.name} $how: $err")
+                case (how, Right(lines)) =>
                     val last = lines.reverse.find(_.trim.nonEmpty).getOrElse("")
                     if (program.lastLine.pattern.matcher(last.trim).matches()) Nil
-                    else Seq(s"$platform ${program.name}: unexpected output under plain node, last line '$last'")
+                    else Seq(s"$platform ${program.name}: unexpected output $how, last line '$last'")
             }
             data ++ ceiling ++ output
         }
     }
+
+    /** Deletes `process` from the global object, then loads the program: the program sees what a browser page shows it, while node itself,
+      * which holds its own reference, keeps printing and exiting normally.
+      */
+    private val withoutProcessLauncher =
+        """delete globalThis.process;
+          |await import("./main.mjs");
+          |""".stripMargin
 
     private def contains(file: File, marker: String): Boolean = {
         val bytes = Files.readAllBytes(file.toPath)
@@ -157,14 +170,24 @@ object LinkCheck {
         at
     }
 
-    /** Runs `main.mjs` with plain node from its own directory and returns the lines it printed. */
-    private def runNode(outDir: File, platform: String): Either[String, Seq[String]] = {
-        val entry = outDir / "main.mjs"
-        if (!entry.exists) Left(s"no main.mjs in $outDir")
+    /** Runs `main.mjs` with plain node from its own directory, directly or through [[withoutProcessLauncher]], and returns the lines it
+      * printed. The launcher is written beside the output, never into it, so it is not counted in the size.
+      */
+    private def runNode(outDir: File, platform: String, withoutProcess: Boolean): Either[String, Seq[String]] = {
+        val main = outDir / "main.mjs"
+        if (!main.exists) Left(s"no main.mjs in $outDir")
         else {
+            val suffix = if (withoutProcess) "-no-process" else ""
+            val entry =
+                if (!withoutProcess) main.getAbsolutePath
+                else {
+                    val launcher = outDir.getParentFile / s"${outDir.getName}-no-process.mjs"
+                    IO.write(launcher, withoutProcessLauncher.replace("./main.mjs", s"./${outDir.getName}/main.mjs"))
+                    launcher.getAbsolutePath
+                }
             val flags   = if (platform == "Wasm") Seq("--experimental-wasm-exnref") else Nil
-            val outFile = outDir.getParentFile / s"${outDir.getName}.out"
-            val process = new ProcessBuilder((Seq("node") ++ flags :+ entry.getName)*)
+            val outFile = outDir.getParentFile / s"${outDir.getName}$suffix.out"
+            val process = new ProcessBuilder((Seq("node") ++ flags :+ entry)*)
                 .directory(outDir)
                 .redirectErrorStream(true)
                 .redirectOutput(outFile)
