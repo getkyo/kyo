@@ -72,6 +72,11 @@ private[kyo] object HostFileSystem:
 
     final class HostFileSystem extends FileSystem.Write[Sync], FileSystem.Watch:
 
+        private[kyo] def tempFileHandle(temporary: Path)(using Frame): Path.TempFileHandle =
+            new Path.TempFileHandle:
+                def path: Path = temporary
+                // Unsafe: this handle removes only the sibling reserved by its creating service.
+                def remove()(using AllowUnsafe): Unit = discard(temporary.unsafe.remove())
         // Memo cell for the one-off volume probe below. A plain atomic rather than Kyo's: the cell
         // has to exist at construction, outside any Sync context, and it carries no effect of its
         // own. A racing pair of first calls both probe and agree, since they are asking the volume
@@ -293,6 +298,23 @@ private[kyo] object HostFileSystem:
             Sync.Unsafe.defer(Abort.get(path.unsafe.openReadChannelRaw())).map(raw =>
                 (readChannelFrom(path, raw), () => Sync.Unsafe.defer(raw.close()))
             )
+        private[kyo] def openWriteChannelUnscoped(
+            path: Path,
+            open: FileSystem.WriteOpen,
+            onAcquire: Path.ChannelCloseHandle => Unit
+        )(using
+            Frame
+        ): (Path.WriteChannel[Sync], () => Unit < Sync, Path.ChannelCloseHandle) <
+            (Sync & Abort[FileWriteException | FileStructureException]) =
+            // Unsafe: register cleanup ownership in the same node that acquires the host descriptor.
+            Sync.Unsafe.defer {
+                Abort.get(path.unsafe.openWriteChannelRaw(open).map { raw =>
+                    val close = new Path.ChannelCloseHandle:
+                        def close()(using AllowUnsafe): Unit = raw.close()
+                    onAcquire(close)
+                    (writeChannelFrom(path, raw), () => Sync.Unsafe.defer(raw.close()), close)
+                })
+            }
         private[kyo] def openReadWriteChannelUnscoped(path: Path, open: FileSystem.WriteOpen)(using
             Frame
         ): (
@@ -302,6 +324,20 @@ private[kyo] object HostFileSystem:
             Sync.Unsafe.defer(Abort.get(path.unsafe.openReadWriteChannelRaw(open))).map(raw =>
                 (readWriteChannelFrom(path, raw), () => Sync.Unsafe.defer(raw.close()))
             )
+
+        def syncDirectory(path: Path)(using Frame): Unit < (Sync & Abort[FileWriteException]) =
+            // Unsafe: bridges Path.Unsafe.syncDirectory into the safe tier
+            Sync.Unsafe.defer(Abort.get(path.unsafe.syncDirectory()))
+
+        private[kyo] def siblingTemporary(target: Path, onAcquire: Path.TempFileHandle => Unit)(using
+            Frame
+        ): Path.TempFileHandle < (Sync & Abort[FileWriteException | FileStructureException]) =
+            FileSystem.siblingTemporary[Any](this, target, onAcquire)
+
+        def durableReplace(target: Path, bytes: Span[Byte])(using
+            Frame
+        ): Unit < (Sync & Abort[FileReadException | FileWriteException | FileStructureException]) =
+            FileSystem.durableReplace[Any](this, target, bytes)
 
         private[kyo] def lockFrom(path: Path, raw: Path.RawLock, grantedMode: Path.LockMode, state: AtomicInt): Path.Lock =
             val owner = Path.LockOwnership.fresh()

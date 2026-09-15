@@ -221,6 +221,49 @@ object FileSystem:
             Frame
         ): Path.ReadWriteChannel[S] < (S & Scope & Abort[FileReadException | FileWriteException | FileStructureException])
 
+        /** Synchronizes the directory entry state for `path`. Volatile backends may implement this
+          * as a successful no-op, but persistent backends must not report success when the platform
+          * cannot provide the requested guarantee.
+          */
+        def syncDirectory(path: Path)(using Frame): Unit < (S & Abort[FileWriteException])
+
+        /** Reserves a create-new sibling file in `target`'s containing directory. The returned
+          * service-owned handle supports scoped cleanup without exposing the file channel.
+          */
+        def siblingTemporary(target: Path)(using
+            Frame
+        ): Path.TempFileHandle < (S & Abort[FileWriteException | FileStructureException]) =
+            siblingTemporary(target, _ => ())
+
+        /** Transfers the released temporary to its owner synchronously before returning it. */
+        private[kyo] def siblingTemporary(target: Path, onAcquire: Path.TempFileHandle => Unit)(using
+            Frame
+        ): Path.TempFileHandle < (S & Abort[FileWriteException | FileStructureException])
+
+        private[kyo] def tempFileHandle(temporary: Path)(using Frame): Path.TempFileHandle
+
+        /** Replaces `target` with `bytes` using a synchronized sibling file and a required atomic
+          * move. The file channel is released before the move and the containing directory is
+          * synchronized only after the move succeeds. Entries for newly created parent directories
+          * are synchronized through the first existing ancestor as well.
+          */
+        def durableReplace(target: Path, bytes: Span[Byte])(using
+            Frame
+        ): Unit < (S & Abort[FileReadException | FileWriteException | FileStructureException])
+
+        /** Acquires an independently released channel. The backend invokes `onAcquire` synchronously
+          * with successful acquisition, before any effect continuation can be interrupted. The caller
+          * installs cleanup before calling this method; the callback transfers ownership to it.
+          */
+        private[kyo] def openWriteChannelUnscoped(
+            path: Path,
+            open: FileSystem.WriteOpen,
+            onAcquire: Path.ChannelCloseHandle => Unit
+        )(using
+            Frame
+        ): (Path.WriteChannel[S], () => Unit < (Sync & S), Path.ChannelCloseHandle) <
+            (S & Abort[FileWriteException | FileStructureException])
+
         private[kyo] def openReadWriteChannelUnscoped(path: Path, open: FileSystem.WriteOpen)(using
             Frame
         )
@@ -230,6 +273,129 @@ object FileSystem:
             ) < (S & Abort[FileReadException | FileWriteException | FileStructureException])
 
     end Write
+
+    private[kyo] def siblingTemporary[S](
+        fileSystem: FileSystem.Write[S & Sync],
+        target: Path,
+        onAcquire: Path.TempFileHandle => Unit
+    )(using Frame): Path.TempFileHandle < (S & Sync & Abort[FileWriteException | FileStructureException]) =
+        Sync.defer {
+            val parent                                                          = target.parent.getOrElse(Path())
+            var acquired: Maybe[(Path.ChannelCloseHandle, Path.TempFileHandle)] = Absent
+            var completed                                                       = false
+            def loop(attempt: Int): Path.TempFileHandle < (S & Sync & Abort[FileWriteException | FileStructureException]) =
+                val temporary = parent / s".kyo-temporary-$attempt"
+                if target.name.exists(_.equalsIgnoreCase(s".kyo-temporary-$attempt")) then loop(attempt + 1)
+                else
+                    val handle = fileSystem.tempFileHandle(temporary)
+                    Abort.run[FileWriteException | FileStructureException](
+                        fileSystem.openWriteChannelUnscoped(
+                            temporary,
+                            FileSystem.WriteOpen.CreateNew,
+                            close =>
+                                acquired = Present((close, handle))
+                        )
+                    ).map {
+                        case Result.Success((_, release, _)) =>
+                            release().map { _ =>
+                                onAcquire(handle)
+                                completed = true
+                                handle
+                            }
+                        case Result.Failure(_: FileAlreadyExistsException) => loop(attempt + 1)
+                        case Result.Failure(error)                         => Abort.fail(error)
+                    }
+                end if
+            end loop
+            Sync.ensure {
+                // Unsafe: cleanup owns acquisition before any effect continuation can be interrupted.
+                Sync.Unsafe.defer {
+                    if !completed then
+                        acquired.foreach { (close, handle) =>
+                            try close.close()
+                            catch case _: Throwable => ()
+                            try handle.remove()
+                            catch case _: Throwable => ()
+                        }
+                }
+            }(Abort.run[FileWriteException | FileStructureException](loop(0))).map(Abort.get(_))
+        }
+    end siblingTemporary
+
+    private[kyo] def durableReplace[S](fileSystem: FileSystem.Write[S & Sync], target: Path, bytes: Span[Byte])(using
+        Frame
+    ): Unit < (S & Sync & Abort[FileReadException | FileWriteException | FileStructureException]) =
+        Sync.defer {
+            val parent                                                          = target.parent.getOrElse(Path())
+            var acquired: Maybe[(Path.ChannelCloseHandle, Path.TempFileHandle)] = Absent
+            var channelClosed                                                   = false
+            var moved                                                           = false
+            def open(attempt: Int): (Path, Path.WriteChannel[S & Sync], () => Unit < (S & Sync)) <
+                (S & Sync & Abort[FileWriteException | FileStructureException]) =
+                val temporary = parent / s".kyo-durable-$attempt"
+                if target.name.exists(_.equalsIgnoreCase(s".kyo-durable-$attempt")) then open(attempt + 1)
+                else
+                    val handle = fileSystem.tempFileHandle(temporary)
+                    Abort.run[FileWriteException | FileStructureException](
+                        fileSystem.openWriteChannelUnscoped(
+                            temporary,
+                            FileSystem.WriteOpen.CreateNew,
+                            close =>
+                                acquired = Present((close, handle))
+                        )
+                    ).map {
+                        case Result.Success((channel, release, _))         => (temporary, channel, release)
+                        case Result.Failure(_: FileAlreadyExistsException) => open(attempt + 1)
+                        case Result.Failure(error)                         => Abort.fail(error)
+                    }
+                end if
+            end open
+            def directoriesToSync(path: Path): Chunk[Path] < (S & Sync & Abort[FileReadException]) =
+                fileSystem.exists(path).map { exists =>
+                    val ancestor = path.parent.getOrElse(Path())
+                    if exists || ancestor == path then Chunk(path)
+                    else directoriesToSync(ancestor).map(path +: _)
+                }
+            Sync.ensure {
+                // Unsafe: acquisition transfers ownership before returning the channel. Cleanup tries
+                // both actions even if closing panics, preserving the original operation failure.
+                Sync.Unsafe.defer {
+                    acquired.foreach { (close, handle) =>
+                        if !channelClosed then
+                            try close.close()
+                            catch case _: Throwable => ()
+                        if !moved then
+                            try handle.remove()
+                            catch case _: Throwable => ()
+                    }
+                }
+            } {
+                Abort.run[FileReadException | FileWriteException | FileStructureException] {
+                    directoriesToSync(parent).map { directories =>
+                        open(0).map { (temporary, channel, release) =>
+                            channel.writeAt(0L, bytes).andThen(channel.sync(metadata = true)).andThen {
+                                release().andThen {
+                                    channelClosed = true
+                                    fileSystem.move(
+                                        temporary,
+                                        target,
+                                        Path.MoveOptions(
+                                            replace = Path.Replace.Existing,
+                                            atomicity = Path.Atomicity.Required,
+                                            createFolders = false
+                                        )
+                                    ).andThen {
+                                        moved = true
+                                        Kyo.foreachDiscard(directories)(fileSystem.syncDirectory(_))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }.map(Abort.get(_))
+        }
+    end durableReplace
 
     private val local = Local.init[FileSystem.Write[Any]](
         FileSystem.host.asInstanceOf[FileSystem.Write[Any]]

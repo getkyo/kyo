@@ -58,6 +58,34 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
 
     override def hashCode(): Int = jpath.hashCode()
 
+    override private[kyo] def syncDirectory()(using Frame, AllowUnsafe): Result[FileWriteException, Unit] =
+        try
+            val directory  = if jpath.toString.isEmpty then java.nio.file.Paths.get(".") else jpath
+            val attributes = Files.readAttributes(directory, classOf[BasicFileAttributes])
+            if !attributes.isDirectory then Result.fail(FileNotADirectoryException(safe))
+            else
+                NioDirectorySyncPlatform.sync(directory)
+                Result.unit
+            end if
+        catch
+            case e: IOException if NioExceptionBoundary.isInterrupted(e)  => Result.panic(e)
+            case e: IOException if NioExceptionBoundary.isFileNotFound(e) =>
+                // NIO can collapse ENOTDIR into NoSuchFileException. Inspect the existing ancestor
+                // on this failure path to preserve the directory operation's precise error.
+                @scala.annotation.tailrec
+                def hasFileAncestor(parent: Maybe[java.nio.file.Path]): Boolean = parent match
+                    case Present(path) =>
+                        if Files.exists(path) then !Files.isDirectory(path)
+                        else hasFileAncestor(Maybe(path.getParent))
+                    case Absent => false
+                if hasFileAncestor(Maybe(jpath.getParent)) then Result.fail(FileNotADirectoryException(safe))
+                else Result.fail(FileNotFoundException(safe))
+            case e: IOException if NioExceptionBoundary.isNotDirectory(e) => Result.fail(FileNotADirectoryException(safe))
+            case e: AccessDeniedException                                 => Result.fail(FileAccessDeniedException(safe))
+            case e: InvalidPathException => Result.fail(FileInvalidPathException(e.getInput, FileSystemOperation.SyncDirectory))
+            case e: IOException          => Result.fail(FileIOException(safe, FileSystemOperation.SyncDirectory, e))
+            case e: Throwable            => Result.panic(e)
+
     // --- Inspection ---
 
     def exists()(using AllowUnsafe, Frame): Result[FileInvalidPathException | FileAccessDeniedException | FileIOException, Boolean] =

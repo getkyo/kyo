@@ -50,7 +50,7 @@ val scalaFiles =
     }
 ```
 
-### Typed channels
+### Typed channels and durable replacement
 
 Positioned channels are acquired directly from a backend and owned by `Scope`. Read, write, and
 read-write channels expose only their corresponding capabilities. `WriteOpen` makes file existence
@@ -65,6 +65,20 @@ val positioned =
             channel.writeAt(0L, Span.from(Array[Byte](1, 2, 3))).andThen(channel.readAt(0L, 3))
         }
     }
+```
+
+Use `durableReplace` when the target must be replaced through a sibling temporary file, a synced
+write channel, a required atomic move, and a parent-directory sync. Unsupported atomic replacement
+fails instead of silently falling back. Newly created parent entries are synced through the first
+existing ancestor. Directory sync failures are reported even when replacement has already occurred;
+platforms that cannot sync directories, including Windows, cannot promise durable replacement:
+
+```scala
+import kyo.*
+
+val durable = Path.run {
+    Path("state.bin").durableReplace(Span.from(Array[Byte](1, 2, 3)))
+}
 ```
 
 ### Locks and watchers
