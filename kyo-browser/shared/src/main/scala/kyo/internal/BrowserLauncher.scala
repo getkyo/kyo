@@ -229,10 +229,13 @@ private[kyo] object BrowserLauncher:
             // Prevent Chrome from prompting for macOS Keychain access (would block on a system dialog).
             "--password-store=basic",
             "--use-mock-keychain",
-            // Silence Chrome's own stderr at the source: with inheritStderr the parent JVM otherwise
+            // Silence Chrome's own stderr at the source: with inheritStderr the parent process otherwise
             // sees per-launch `task_policy_set` warnings (macOS denies the priority-set syscall without
-            // entitlements; Chrome falls back to default priority, no functional impact). `--log-level=3`
-            // = FATAL only; everything below is dropped before being written to stderr.
+            // entitlements; Chrome falls back to default priority, no functional impact) and a line for every
+            // console message a page logs, which callers already receive through CDP. `--log-level=3` keeps
+            // FATAL only, and chrome-headless-shell applies it only when logging is configured explicitly:
+            // without `--enable-logging=stderr` it logs everything at INFO and up.
+            "--enable-logging=stderr",
             "--log-level=3"
         ).filter(_.nonEmpty)
 

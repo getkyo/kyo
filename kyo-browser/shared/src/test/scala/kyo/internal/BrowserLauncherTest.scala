@@ -188,6 +188,28 @@ class BrowserLauncherTest extends BaseChromeTest:
         assert(flags.contains("--disable-features=IntensiveWakeUpThrottling"), s"flags=$flags")
     }
 
+    // Chrome's stderr is the launching process's stderr, so anything Chrome logs lands in the caller's output. A page's console
+    // messages already reach callers through CDP. The page builds both strings at run time, so the dumped DOM (which holds the
+    // script's source) contains neither: the title proves the script ran, and the console text can only come from Chrome's log.
+    // `--dump-dom` refuses remote debugging, so that one flag is left out.
+    "Chrome started with chromiumFlags writes a page's console messages nowhere but CDP" in {
+        SharedChrome.chromeConfig.map { cfg =>
+            Scope.run {
+                BrowserLauncher.createTempDir.map { dir =>
+                    Scope.ensure(Abort.run[FileSystemException](Path.run(dir.removeAll)).unit).andThen {
+                        val flags = BrowserLauncher.chromiumFlags(dir, headless = true).filterNot(_ == "--remote-debugging-port=0")
+                        val page =
+                            """data:text/html,<script>console.log(["console","probe"].join("-")); document.title = ["title","probe"].join("-")</script>"""
+                        Command(((cfg.executable +: flags) ++ Chunk("--dump-dom", page))*).redirectErrorStream(true).text.map { output =>
+                            assert(output.contains("<title>title-probe</title>"), s"the page should have run; Chrome printed: $output")
+                            assert(!output.contains("console-probe"), s"Chrome logged the page's console message: $output")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // Genuine-timeout path. pollDevToolsActivePort against a tmpDir where Chrome never writes the
     // file must time out within the configured budget and surface BrowserSetupFailedException.
     "pollDevToolsActivePort times out when DevToolsActivePort is never written" in {
