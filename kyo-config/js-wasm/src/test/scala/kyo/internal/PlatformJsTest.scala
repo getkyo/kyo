@@ -73,10 +73,10 @@ class PlatformJsTest extends AnyFreeSpec {
         }
 
         "reaches a Node built-in synchronously without a static import" in {
-            val os = PlatformJs.nodeBuiltin("node:os")
-            assert(os.isDefined)
-            assert(js.typeOf(os.get.platform) == "function")
-            assert(PlatformJs.nodeBuiltin("node:kyo-no-such-module").isEmpty)
+            val platformType = PlatformJs.nodeBuiltin("node:os").fold("undefined")(os => js.typeOf(os.platform))
+            assert(platformType == "function")
+            val missing = PlatformJs.nodeBuiltin("node:kyo-no-such-module").isEmpty
+            assert(missing)
         }
     }
 
@@ -100,10 +100,11 @@ class PlatformJsTest extends AnyFreeSpec {
         }
 
         "finds no Node built-ins" in {
-            withoutProcessGlobal {
-                assert(PlatformJs.nodeBuiltin("node:os").isEmpty)
-                assert(PlatformJs.jsGlobal("process").isEmpty)
+            val (noBuiltin, noProcess) = withoutProcessGlobal {
+                (PlatformJs.nodeBuiltin("node:os").isEmpty, PlatformJs.jsGlobal("process").isEmpty)
             }
+            assert(noBuiltin)
+            assert(noProcess)
         }
     }
 }

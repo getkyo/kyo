@@ -101,10 +101,9 @@ class PlatformTest extends AnyFreeSpec {
         }
 
         "is one operating system family and one architecture on every host that exposes them" in {
-            if (!Platform.isBrowser) {
-                assert(List(Platform.isMacOrBsd, Platform.isLinux, Platform.isWindows).count(identity) == 1)
-                assert(!(Platform.arch eq Arch.Unknown), s"architecture not classified on ${Platform.host}")
-            }
+            assume(!Platform.isBrowser, "a browser exposes no operating system or architecture")
+            assert(List(Platform.isMacOrBsd, Platform.isLinux, Platform.isWindows).count(identity) == 1)
+            assert(!(Platform.arch eq Arch.Unknown), s"architecture not classified on ${Platform.host}")
         }
 
         "keeps the stack depth bound" in {
