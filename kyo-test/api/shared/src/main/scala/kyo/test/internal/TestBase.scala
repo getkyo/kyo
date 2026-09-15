@@ -61,14 +61,14 @@ abstract class TestBase[S] extends KyoTestReflect with TypeCheck:
           * (scope).
           */
         inline infix def -(inline body: => Unit < (S & Async & Abort[Any] & Scope)): Unit =
-            regCtx.visitGroup[S](name, body)
+            if !regCtx.registerTerminal(TestBuilder(name).copy(hostFilters = hostFilters)) then regCtx.visitGroup[S](name, body)
         end -
 
         /** Register a LEAF: the body is the test, deferred (never run during registration). Mirrors ScalaTest's `in`. Together with `-`
           * (always a group, body runs), this removes all compile-time inference; the marker says exactly what the node is.
           */
         inline infix def in(inline body: kyo.test.AssertScope ?=> Unit < (S & Async & Abort[Any] & Scope))(using inline f: Frame): Unit =
-            regCtx.visitLeaf[S](name, body)
+            if !regCtx.registerTerminal(TestBuilder(name).copy(hostFilters = hostFilters)) then regCtx.visitLeaf[S](name, body)
         end in
 
         /** Discharge one or more effects beyond the baseline locally, producing an enriched builder whose terminal `-` registers a
@@ -174,14 +174,14 @@ abstract class TestBase[S] extends KyoTestReflect with TypeCheck:
 
         /** Register with the TestBuilder's accumulated metadata. Honor terminal decorators (ignore, host filters, onlyIf) before dispatching. */
         inline infix def -(inline body: => Unit < (S & Async & Abort[Any] & Scope)): Unit =
-            if !regCtx.registerTerminal(b) then regCtx.visitGroupWithBuilder[S](b.name, b, body)
+            if !regCtx.registerTerminal(withSuiteHostFilters(b)) then regCtx.visitGroupWithBuilder[S](b.name, b, body)
         end -
 
         /** Like the String-extension `in`, but carrying this TestBuilder's decorators: register a LEAF unconditionally (deferred body),
           * after honoring the terminal decorators (ignore, host filters, onlyIf). No group inference.
           */
         inline infix def in(inline body: kyo.test.AssertScope ?=> Unit < (S & Async & Abort[Any] & Scope))(using inline f: Frame): Unit =
-            if !regCtx.registerTerminal(b) then regCtx.visitLeafWithBuilder[S](b.name, b, body)
+            if !regCtx.registerTerminal(withSuiteHostFilters(b)) then regCtx.visitLeafWithBuilder[S](b.name, b, body)
         end in
 
         /** Discharge one or more effects beyond the baseline locally, carrying this TestBuilder's accumulated decorators (`.timeout`,
@@ -276,7 +276,7 @@ abstract class TestBase[S] extends KyoTestReflect with TypeCheck:
         inline infix def in(inline body: kyo.test.AssertScope ?=> Unit < (S & Async & Abort[Any] & Scope))(using inline f: Frame): Unit =
             kyo.internal.Platform.linkTimeIf(gateOf[P]) {
                 val b = pb.builder
-                if !regCtx.registerTerminal(b) then regCtx.visitLeafWithBuilder[S](b.name, b, body)
+                if !regCtx.registerTerminal(withSuiteHostFilters(b)) then regCtx.visitLeafWithBuilder[S](b.name, b, body)
             } {
                 discardScoped[S](body)
             }
@@ -286,7 +286,7 @@ abstract class TestBase[S] extends KyoTestReflect with TypeCheck:
         inline infix def -(inline body: => Unit < (S & Async & Abort[Any] & Scope)): Unit =
             kyo.internal.Platform.linkTimeIf(gateOf[P]) {
                 val b = pb.builder
-                if !regCtx.registerTerminal(b) then regCtx.visitGroupWithBuilder[S](b.name, b, body)
+                if !regCtx.registerTerminal(withSuiteHostFilters(b)) then regCtx.visitGroupWithBuilder[S](b.name, b, body)
             } {
                 discardGroup[S](body)
             }
@@ -518,6 +518,19 @@ abstract class TestBase[S] extends KyoTestReflect with TypeCheck:
       */
     def config: RunConfig = RunConfig.default.copy(timeout = timeout)
 
+    /** Host filters every test in this suite carries, ahead of the test's own `.onlyBrowser` / `.notBrowser`. Override it when the subject of
+      * a whole suite belongs to one kind of host, e.g. a suite that drives a browser from the outside:
+      * `override def hostFilters = Chunk(HostFilter.NotBrowser)`. A base class can override it once for every suite that extends it.
+      *
+      * A suite-level filter that does not hold cancels each test with the reason naming the host, exactly as the per-test decorators do, and
+      * a group cancels as one entry without registering its children. Contradicting a test's own filter cancels it everywhere.
+      */
+    protected def hostFilters: Chunk[HostFilter] = Chunk.empty
+
+    /** The builder a terminal registers, carrying this suite's `hostFilters` ahead of the test's own. */
+    protected def withSuiteHostFilters(b: TestBuilder): TestBuilder =
+        if hostFilters.isEmpty then b else b.copy(hostFilters = hostFilters.concat(b.hostFilters))
+
     /** User-overridable per-suite hook applied around EVERY leaf body. The default is identity. Override to establish
       * setup that must surround each leaf in the suite, e.g.
       * `override def aroundLeaf[A](body: A < (Async & Abort[Any] & Scope))(using Frame) =
@@ -571,14 +584,14 @@ abstract class TestBase[S] extends KyoTestReflect with TypeCheck:
         inline infix def -(inline body: => Unit < (S0 & Async & Abort[Any] & Scope)): Unit =
             // `-` is ALWAYS a group: register the RAW `S0`-shaped block so its nested `-`/`in` calls fire during
             // discovery descent. `transform` is applied per descended leaf by the runner. Leaves use `in`.
-            if !regCtx.registerTerminal(builder) then regCtx.visitGroupWithBuilder[S0](builder.name, builder, body)
+            if !regCtx.registerTerminal(withSuiteHostFilters(builder)) then regCtx.visitGroupWithBuilder[S0](builder.name, builder, body)
         end -
 
         /** Always-leaf form of the enriched terminal (deferred body, `transform` peels `S0` to baseline), honoring the builder's terminal
           * decorators first. No group inference.
           */
         inline infix def in(inline body: kyo.test.AssertScope ?=> Unit < (S0 & Async & Abort[Any] & Scope))(using inline f: Frame): Unit =
-            if !regCtx.registerTerminal(builder) then
+            if !regCtx.registerTerminal(withSuiteHostFilters(builder)) then
                 // The runner mints the per-leaf scope; peel S0 to baseline inside the context function so
                 // `transform` is applied per descended leaf with the leaf's scope already supplied to `body`.
                 regCtx.visitLeafWithBuilder[Async & Abort[Any] & Scope](

@@ -310,6 +310,17 @@ end HostTest
 
 Host filters chain with the other decorators and keep a platform filter written before them, as `.onlyJs.notBrowser` above does.
 
+When the subject of a whole suite belongs to one kind of host, override `hostFilters` instead of repeating the decorator on every test. The suite's filters are checked ahead of each test's own, so a base class can state them once for every suite that extends it:
+
+```scala
+abstract class UiTest extends Test[Any]:
+    // Drives a browser from the outside over CDP, so it cannot run inside the page.
+    override protected def hostFilters = Chunk(HostFilter.NotBrowser)
+end UiTest
+```
+
+A suite-level filter that does not hold cancels each test with the same reason a per-test filter gives; a test whose own filter contradicts the suite's is cancelled everywhere.
+
 ## Per-test and per-suite setup
 
 A leaf that uses an effect beyond the baseline (`Env` or `Var`) must discharge it before the runner sees the leaf. Two surfaces cover this: `.handle` discharges per leaf or per group, and `aroundLeaf` wraps every leaf in the suite.

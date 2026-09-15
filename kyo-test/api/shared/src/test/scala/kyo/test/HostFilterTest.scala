@@ -216,6 +216,75 @@ class HostFilterTest extends AsyncFreeSpec with NonImplicitAssertions:
             }
         }
 
+        "a suite-level filter applies to a test that carries none of its own" in {
+            val runs = new AtomicInteger(0)
+            runLeaf {
+                new kyo.test.Test[Any]:
+                    override protected def hostFilters = Chunk(HostFilter.NotBrowser)
+                    "x" in Sync.defer(runs.incrementAndGet()).andThen(succeed)
+            }.map { case (path, result) =>
+                assert(path == Chunk("x"))
+                expectHost(inBrowser = false, result, runs, "does not run in a browser")
+            }
+        }
+
+        "a suite-level filter that does not hold cancels a group as one entry" in {
+            val runs = new AtomicInteger(0)
+            runLeaf {
+                new kyo.test.Test[Any]:
+                    override protected def hostFilters =
+                        Chunk(if Platform.isBrowser then HostFilter.NotBrowser else HostFilter.OnlyBrowser)
+                    "g" - {
+                        "a" in Sync.defer(runs.incrementAndGet()).andThen(succeed)
+                    }
+            }.map { case (path, result) =>
+                assert(path == Chunk("g"))
+                result match
+                    case TestResult.Cancelled(_, _) => assert(runs.get() == 0)
+                    case other                      => fail(s"expected Cancelled, got $other")
+            }
+        }
+
+        "a suite-level filter applies to a platform-filtered test" in {
+            val runs = new AtomicInteger(0)
+            runLeaf {
+                new kyo.test.Test[Any]:
+                    override protected def hostFilters = Chunk(HostFilter.NotBrowser)
+                    // A platform filter that admits the test on the platform running this suite.
+                    if Platform.isNative then "x".notJvm in Sync.defer(runs.incrementAndGet()).andThen(succeed)
+                    else "x".notNative in Sync.defer(runs.incrementAndGet()).andThen(succeed)
+            }.map { case (path, result) =>
+                assert(path == Chunk("x"))
+                expectHost(inBrowser = false, result, runs, "does not run in a browser")
+            }
+        }
+
+        "a suite-level filter applies to a handled test" in {
+            val runs = new AtomicInteger(0)
+            runLeaf {
+                new kyo.test.Test[Any]:
+                    override protected def hostFilters = Chunk(HostFilter.NotBrowser)
+                    "x".handle[Env[Db]](
+                        [A] => (b: A < (Env[Db] & Async & Abort[Any] & Scope)) => Env.run(Db("test"))(b)
+                    ) in Env.get[Db].map(_ => Sync.defer(runs.incrementAndGet())).andThen(succeed)
+            }.map { case (path, result) =>
+                assert(path == Chunk("x"))
+                expectHost(inBrowser = false, result, runs, "does not run in a browser")
+            }
+        }
+
+        "a suite-level filter contradicting a test's own filter cancels on every host" in {
+            val runs = new AtomicInteger(0)
+            runLeaf {
+                new kyo.test.Test[Any]:
+                    override protected def hostFilters = Chunk(HostFilter.NotBrowser)
+                    "x".onlyBrowser in Sync.defer(runs.incrementAndGet()).andThen(succeed)
+            }.map { case (_, result) =>
+                assert(result.isInstanceOf[TestResult.Cancelled], s"expected Cancelled, got $result")
+                assert(runs.get() == 0)
+            }
+        }
+
         "a host filter that does not hold takes precedence over only(false)" in {
             runLeaf {
                 new kyo.test.Test[Any]:
