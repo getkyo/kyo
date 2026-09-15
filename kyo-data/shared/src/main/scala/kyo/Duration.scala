@@ -109,32 +109,62 @@ object Duration:
     /** Marker trait for units that can be used with Instant.truncatedTo */
     sealed trait Truncatable
 
-    /** Enumeration of time units with their conversion factors and names. */
-    enum Units(val names: List[String], val chronoUnit: ChronoUnit):
-        case Nanos   extends Units(List("ns", "nanos", "nanosecond", "nanoseconds"), ChronoUnit.NANOS) with Truncatable
-        case Micros  extends Units(List("µs", "micros", "microsecond", "microseconds"), ChronoUnit.MICROS) with Truncatable
-        case Millis  extends Units(List("ms", "millis", "millisecond", "milliseconds"), ChronoUnit.MILLIS) with Truncatable
-        case Seconds extends Units(List("s", "seconds", "second"), ChronoUnit.SECONDS) with Truncatable
-        case Minutes extends Units(List("m", "minutes", "minute"), ChronoUnit.MINUTES) with Truncatable
-        case Hours   extends Units(List("h", "hours", "hour"), ChronoUnit.HOURS) with Truncatable
-        case Days    extends Units(List("d", "days", "day"), ChronoUnit.DAYS) with Truncatable
-        case Weeks   extends Units(List("w", "weeks", "week"), ChronoUnit.WEEKS)
-        case Months  extends Units(List("m", "months", "month"), ChronoUnit.MONTHS)
-        case Years   extends Units(List("y", "years", "year"), ChronoUnit.YEARS)
+    /** Enumeration of time units with their conversion factors and names.
+      *
+      * Each unit's length in nanoseconds is the length of the `java.time.temporal.ChronoUnit` of the same name, a month being a twelfth of
+      * the average Gregorian year of 365.2425 days. It is held here so that using a unit never reaches java.time; [[chronoUnit]] converts at
+      * the boundary.
+      */
+    enum Units(val names: List[String], private[kyo] val nanosPerUnit: Long):
+        case Nanos   extends Units(List("ns", "nanos", "nanosecond", "nanoseconds"), 1L) with Truncatable
+        case Micros  extends Units(List("µs", "micros", "microsecond", "microseconds"), 1000L) with Truncatable
+        case Millis  extends Units(List("ms", "millis", "millisecond", "milliseconds"), 1000000L) with Truncatable
+        case Seconds extends Units(List("s", "seconds", "second"), 1000000000L) with Truncatable
+        case Minutes extends Units(List("m", "minutes", "minute"), 60L * 1000000000L) with Truncatable
+        case Hours   extends Units(List("h", "hours", "hour"), 3600L * 1000000000L) with Truncatable
+        case Days    extends Units(List("d", "days", "day"), 86400L * 1000000000L) with Truncatable
+        case Weeks   extends Units(List("w", "weeks", "week"), 7L * 86400L * 1000000000L)
+        case Months  extends Units(List("m", "months", "month"), 31556952L / 12L * 1000000000L)
+        case Years   extends Units(List("y", "years", "year"), 31556952L * 1000000000L)
 
         /** Returns the factor for converting this unit to nanoseconds. */
-        val factor: Double = chronoUnit.getDuration.toNanos.toDouble
+        val factor: Double = nanosPerUnit.toDouble
+
+        /** The java.time unit of the same length. */
+        def chronoUnit: ChronoUnit =
+            this match
+                case Nanos   => ChronoUnit.NANOS
+                case Micros  => ChronoUnit.MICROS
+                case Millis  => ChronoUnit.MILLIS
+                case Seconds => ChronoUnit.SECONDS
+                case Minutes => ChronoUnit.MINUTES
+                case Hours   => ChronoUnit.HOURS
+                case Days    => ChronoUnit.DAYS
+                case Weeks   => ChronoUnit.WEEKS
+                case Months  => ChronoUnit.MONTHS
+                case Years   => ChronoUnit.YEARS
     end Units
 
     object Units:
 
         val all = Units.values
 
-        private val byChronoUnit: Map[ChronoUnit, Units] = Units.all.map(u => (u.chronoUnit, u)).toMap
-
         def fromJava(chronoUnit: ChronoUnit): Units =
-            byChronoUnit.get(chronoUnit)
-                .getOrElse(throw new UnsupportedOperationException("Chrono unit not suppported: " + chronoUnit))
+            given CanEqual[ChronoUnit, ChronoUnit] = CanEqual.derived
+            chronoUnit match
+                case ChronoUnit.NANOS   => Nanos
+                case ChronoUnit.MICROS  => Micros
+                case ChronoUnit.MILLIS  => Millis
+                case ChronoUnit.SECONDS => Seconds
+                case ChronoUnit.MINUTES => Minutes
+                case ChronoUnit.HOURS   => Hours
+                case ChronoUnit.DAYS    => Days
+                case ChronoUnit.WEEKS   => Weeks
+                case ChronoUnit.MONTHS  => Months
+                case ChronoUnit.YEARS   => Years
+                case other              => throw new UnsupportedOperationException("Chrono unit not suppported: " + other)
+            end match
+        end fromJava
 
         def fromJava(timeUnit: TimeUnit): Units =
             given CanEqual[TimeUnit, TimeUnit] = CanEqual.derived

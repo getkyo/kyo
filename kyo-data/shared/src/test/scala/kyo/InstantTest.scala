@@ -28,6 +28,63 @@ class InstantTest extends kyo.test.Test[Any]:
         }
     }
 
+    // The expected values below are what java.time.Instant prints and parses on JDK 25. They run on every platform, where no java.time
+    // implementation is involved; InstantJdkTest compares the two directly on the JVM.
+    "ISO-8601 text" - {
+        def at(seconds: Long, nanos: Long): Instant = Instant.fromEpoch(seconds, nanos)
+
+        "prints the range ends, eras, and fraction widths as java.time does" in {
+            assert(Instant.Min.show == "-1000000000-01-01T00:00:00Z")
+            assert(Instant.Max.show == "+1000000000-12-31T23:59:59.999999999Z")
+            assert(Instant.Epoch.show == "1970-01-01T00:00:00Z")
+            assert(at(-1, 0).show == "1969-12-31T23:59:59Z")
+            assert(at(0, 1000000).show == "1970-01-01T00:00:00.001Z")
+            assert(at(0, 1000).show == "1970-01-01T00:00:00.000001Z")
+            assert(at(0, 1).show == "1970-01-01T00:00:00.000000001Z")
+            assert(at(0, 120000000).show == "1970-01-01T00:00:00.120Z")
+            assert(at(253402300800L, 0).show == "+10000-01-01T00:00:00Z")
+            assert(at(253402300799L, 999999999).show == "9999-12-31T23:59:59.999999999Z")
+            assert(at(-62167219200L, 0).show == "0000-01-01T00:00:00Z")
+            assert(at(-62167219201L, 0).show == "-0001-12-31T23:59:59Z")
+            assert(at(-62198755200L, 0).show == "-0001-01-01T00:00:00Z")
+            assert(at(-377705116800L, 0).show == "-9999-01-01T00:00:00Z")
+            assert(at(-377705116801L, 0).show == "-10000-12-31T23:59:59Z")
+            assert(at(-377736739200L, 0).show == "-10000-01-01T00:00:00Z")
+        }
+
+        "reads as its text when interpolated" in {
+            assert(s"${at(0, 120000000)}" == "1970-01-01T00:00:00.120Z")
+        }
+
+        "parses offsets, either case, 24:00, the leap second, and an empty fraction as java.time does" in {
+            assert(Instant.parse("2024-01-01T10:15:30+01:00").getOrThrow == at(1704100530L, 0))
+            assert(Instant.parse("2024-01-01t10:15:30.5z").getOrThrow == at(1704104130L, 500000000))
+            assert(Instant.parse("2024-12-31T24:00:00Z").getOrThrow == at(1735689600L, 0))
+            assert(Instant.parse("2024-06-30T23:59:60.25Z").getOrThrow == at(1719791999L, 250000000))
+            assert(Instant.parse("+10000-01-01T00:00:00Z").getOrThrow == at(253402300800L, 0))
+            assert(Instant.parse("-0001-01-01T00:00:00Z").getOrThrow == at(-62198755200L, 0))
+            assert(Instant.parse("2024-01-01T10:15:30.Z").getOrThrow == at(1704104130L, 0))
+        }
+
+        "rejects with java.time's error index and message" in {
+            def rejected(text: String): (Int, String) =
+                Instant.parse(text) match
+                    case Result.Failure(e) => (e.getErrorIndex, e.getMessage)
+                    case other             => (-1, s"expected a DateTimeParseException, got $other")
+            assert(rejected("2024-01-01T10:15Z") == (16, "Text '2024-01-01T10:15Z' could not be parsed at index 16"))
+            assert(rejected("2023-02-29T00:00:00Z") == (0, "Text '2023-02-29T00:00:00Z' could not be parsed at index 0"))
+            assert(rejected("2024-01-01T10:15:30") == (19, "Text '2024-01-01T10:15:30' could not be parsed at index 19"))
+            assert(rejected("+2024-01-01T00:00:00Z") == (0, "Text '+2024-01-01T00:00:00Z' could not be parsed at index 0"))
+            assert(rejected("10000-01-01T00:00:00Z") == (0, "Text '10000-01-01T00:00:00Z' could not be parsed at index 0"))
+            assert(rejected("2024-01-01T10:15:30ZZ") ==
+                (20, "Text '2024-01-01T10:15:30ZZ' could not be parsed, unparsed text found at index 20"))
+            assert(rejected("2024-01-01T10:15:30+24:00") ==
+                (0, "Text '2024-01-01T10:15:30+24:00' could not be parsed: Value out of range: Hour[0-23], Minute[0-59], Second[0-59]"))
+            assert(rejected("+1000000001-01-01T00:00:00Z") ==
+                (0, "Text '+1000000001-01-01T00:00:00Z' could not be parsed: Instant exceeds minimum or maximum instant"))
+        }
+    }
+
     "+" - {
         "add zero duration" in {
             val instant = Instant.Epoch

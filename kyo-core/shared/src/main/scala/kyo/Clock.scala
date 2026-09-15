@@ -759,7 +759,7 @@ object Clock:
     object Unsafe:
         def apply(executor: ScheduledExecutorService)(using AllowUnsafe): Unsafe =
             new Unsafe:
-                def now()(using AllowUnsafe)          = Instant.fromJava(java.time.Instant.now())
+                def now()(using AllowUnsafe)          = Instant.systemNow()
                 def nowMonotonic()(using AllowUnsafe) = java.lang.System.nanoTime().nanos
                 def sleep(duration: Duration) =
                     Promise.Unsafe.fromIOPromise {
