@@ -78,10 +78,9 @@ private[kyo] object SharedChrome:
     private def ensureStarted(using Frame): Unit < Async =
         Sync.Unsafe.defer {
             if initStarted.compareAndSet(false, true) then
-                // Sweep prior-run orphans BEFORE our own Chrome exists. The pgrep pattern matches any process
-                // whose argv contains `user-data-dir=...kyo-browser-...`, including the Chrome we are about to
-                // launch. Running the sweep AFTER our launch would kill our own Chrome on subsequent init calls.
-                BrowserLauncher.killOrphans(pattern = "kyo-browser-", command = "pgrep").andThen {
+                // Sweep Chromes left behind by runs that are gone. The sweep spares every Chrome whose owning
+                // process is alive (this one's included), so a concurrent run on the same machine keeps its Chrome.
+                BrowserLauncher.killOrphans(pattern = BrowserLauncher.userDataDirPrefix, command = "pgrep").andThen {
                     // Fork a detached fiber that holds Chrome's scope open for the whole run. When the kyo
                     // scheduler shuts down, the fiber is interrupted and the scope's finalizers tear down
                     // Chrome and its temp user-data directory.

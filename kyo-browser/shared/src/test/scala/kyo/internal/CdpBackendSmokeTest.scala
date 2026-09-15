@@ -312,6 +312,75 @@ class CdpBackendSmokeTest extends BrowserTest:
         }
     }
 
+    // Runtime.bindingCalled is how a page calls out to the host (a function installed by Runtime.addBinding); the
+    // notification carries the binding name and the string payload the page passed.
+    "Runtime.bindingCalled routes via ctx.extras to the binding-event dispatcher" in {
+        Scope.run {
+            mkBackendWithServer().map { (backend, serverEndpoint) =>
+                AtomicRef.init(Chunk.empty[CdpEvent.Generic]).map { capture =>
+                    val handler: CdpEvent.Generic => Unit < Sync = ev =>
+                        capture.updateAndGet(_ :+ ev).unit
+                    backend.bindingEventDispatchers.updateAndGet(_.update("b1", handler)).andThen {
+                        val extras = JsonRpcExtrasEncoder.const(Structure.Value.Record(Chunk("sessionId" -> Structure.Value.Str("b1"))))
+                        Abort.run[Closed](
+                            serverEndpoint.notify[BindingCalledWire](
+                                "Runtime.bindingCalled",
+                                BindingCalledWire(name = "__kyoSend", payload = "hello", executionContextId = Present(3)),
+                                extras
+                            )
+                        ).andThen {
+                            assertEventually(capture.get.map(_.nonEmpty)).andThen {
+                                capture.get.map { events =>
+                                    assert(events.size == 1)
+                                    assert(events.head.method == "Runtime.bindingCalled")
+                                    assert(events.head.sessionId == Present(SessionId("b1")))
+                                    events.head.params match
+                                        case w: BindingCalledWire =>
+                                            assert(w.name == "__kyoSend")
+                                            assert(w.payload == "hello")
+                                            assert(w.executionContextId == Present(3))
+                                        case other => fail(s"expected BindingCalledWire payload but got $other")
+                                    end match
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // A page-to-host channel built on a binding relies on payloads arriving in the order the page sent them.
+    "Runtime.bindingCalled payloads reach the handler in the order they were sent" in {
+        Scope.run {
+            mkBackendWithServer().map { (backend, serverEndpoint) =>
+                AtomicRef.init(Chunk.empty[String]).map { capture =>
+                    val handler: CdpEvent.Generic => Unit < Sync = ev =>
+                        ev.params match
+                            case w: BindingCalledWire => capture.updateAndGet(_ :+ w.payload).unit
+                            case _                    => Kyo.unit
+                    backend.bindingEventDispatchers.updateAndGet(_.update("b2", handler)).andThen {
+                        val extras   = JsonRpcExtrasEncoder.const(Structure.Value.Record(Chunk("sessionId" -> Structure.Value.Str("b2"))))
+                        val payloads = Chunk.from((1 to 50).map(i => s"message-$i"))
+                        Kyo.foreachDiscard(payloads) { payload =>
+                            Abort.run[Closed](
+                                serverEndpoint.notify[BindingCalledWire](
+                                    "Runtime.bindingCalled",
+                                    BindingCalledWire("__kyoSend", payload),
+                                    extras
+                                )
+                            ).unit
+                        }.andThen {
+                            assertEventually(capture.get.map(_.size == payloads.size)).andThen {
+                                capture.get.map(received => assert(received == payloads))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // A Page.screencastFrame notification with NO registered screencast handler is dropped: dispatchEvent's
     // `case Absent => Kyo.unit` arm. This is safe by construction because Browser.startScreencast registers the
     // handler first (Browser.scala) and there is no shared event stream into which an un-dispatched frame could be

@@ -72,7 +72,7 @@ private[kyo] object CdpBackendFixtureServer:
         }
 
     /** Slow-response loop: always responds to Browser.getVersion immediately; applies the delay for all other requests. This ensures the
-      * Q-002 probe in [[CdpBackend.initUnscoped]] succeeds so the fixture can test subsequent slow sends.
+      * `Browser.getVersion` connect probe in [[CdpBackend.initUnscoped]] succeeds so the fixture can test subsequent slow sends.
       */
     private def loopSlow(ws: HttpWebSocket, delay: Duration)(using
         Frame
@@ -120,7 +120,7 @@ private[kyo] object CdpBackendFixtureServer:
 
     /** Decode the request, extract `id` via [[FixtureIdEnvelope]] (permissive Maybe[Int]), send a proper reply.
       *
-      * For `Browser.getVersion` requests, returns a valid [[BrowserVersionResult]] JSON so the Q-002 probe in [[CdpBackend.initUnscoped]]
+      * For `Browser.getVersion` requests, returns a valid [[BrowserVersionResult]] JSON so the connect probe in [[CdpBackend.initUnscoped]]
       * succeeds. For `Target.getTargets` requests, returns `{"targetInfos":[]}` (an empty but schema-valid response). For all other
       * requests, returns `{"id":id,"result":{}}`.
       */

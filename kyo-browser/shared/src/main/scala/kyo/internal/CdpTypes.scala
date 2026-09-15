@@ -317,6 +317,12 @@ final private[kyo] case class ExceptionDetailsWire(
 ) derives Schema
 final private[kyo] case class ExceptionThrownWire(timestamp: Maybe[Double] = Absent, exceptionDetails: ExceptionDetailsWire) derives Schema
 
+/** `Runtime.addBinding`: installs a global function `name` in the page. Each call of it with a string emits `Runtime.bindingCalled`. */
+final private[kyo] case class AddBindingParams(name: String) derives Schema
+
+/** `Runtime.bindingCalled`: the page called the binding `name` with `payload`. */
+final private[kyo] case class BindingCalledWire(name: String, payload: String, executionContextId: Maybe[Int] = Absent) derives Schema
+
 /** `Emulation.setFocusEmulationEnabled`: makes Chrome treat the page as if the tab were the system-focused window. Without this,
   * programmatic `el.focus()` calls update `document.activeElement` but do NOT dispatch focus/blur DOM events; framework listeners (kyo-ui,
   * React onFocus, etc.) silently miss user-flow events that originate from `Browser.fill` or `Browser.press`-on-unfocused. Issued once per

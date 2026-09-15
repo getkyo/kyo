@@ -10,7 +10,7 @@ import kyo.internal.cdp.PageDownload
 /** Runtime CDP backend built atop a [[JsonRpcHandler]]. Owns the per-connection
   * dispatcher tables (frame-event / download-event / dialog handlers / dialog
   * recorders), the dialog drainer fiber, the lastEvaluateParams diagnostic, the
-  * per-session JsonRpcExtrasEncoder, and the 5 CDP notification handlers. Wire framing,
+  * per-session JsonRpcExtrasEncoder, and the CDP notification handlers. Wire framing,
   * codec dispatch, request correlation, per-call timeout, in-flight metering,
   * drain signal, graceful close, and malformed-envelope routing are owned by the
   * embedded [[JsonRpcHandler]].
@@ -24,6 +24,7 @@ final private[kyo] class CdpBackend private[kyo] (
     private[kyo] val downloadEventDispatchers: AtomicRef[Dict[String, CdpEvent.Generic => Unit < Sync]],
     private[kyo] val screencastEventDispatchers: AtomicRef[Dict[String, CdpEvent.Generic => Unit < Sync]],
     private[kyo] val consoleEventDispatchers: AtomicRef[Dict[String, CdpEvent.Generic => Unit < Sync]],
+    private[kyo] val bindingEventDispatchers: AtomicRef[Dict[String, CdpEvent.Generic => Unit < Sync]],
     private[kyo] val dialogRecorders: AtomicRef[Dict[String, AtomicRef[Chunk[Browser.DialogEvent]]]],
     private[kyo] val lastEvaluateParams: AtomicRef[Maybe[String]],
     private[kyo] val sessionId: Maybe[SessionId] = Absent
@@ -31,7 +32,7 @@ final private[kyo] class CdpBackend private[kyo] (
 
     /** Typed CDP call. Records lastEvaluateParams on Runtime.evaluate, stamps
       * sessionId via JsonRpcExtrasEncoder, recovers engine errors to kyo-browser's
-      * typed BrowserReadException tree (INV-017).
+      * typed BrowserReadException tree.
       */
     private[kyo] def send[P: Schema, R: Schema](method: String, params: P)(using
         Frame
@@ -98,6 +99,7 @@ final private[kyo] class CdpBackend private[kyo] (
             downloadEventDispatchers,
             screencastEventDispatchers,
             consoleEventDispatchers,
+            bindingEventDispatchers,
             dialogRecorders,
             lastEvaluateParams,
             sessionId = Present(sid)
@@ -149,8 +151,8 @@ end CdpBackend
 /** Static helpers + named constants + `init` / `initUnscoped` for [[CdpBackend]].
   *
   * Hosts the 28 typed CDP method wrappers (each a two-line body delegating to
-  * `backend.send[P, R]` or `backend.sendUnit[P]`), plus the 5 notification handler
-  * builders, dialog drainer, and the Q-002 `Browser.getVersion` connect-probe.
+  * `backend.send[P, R]` or `backend.sendUnit[P]`), plus the notification handler
+  * builders, dialog drainer, and the `Browser.getVersion` connect-probe.
   */
 private[kyo] object CdpBackend:
 
@@ -185,6 +187,7 @@ private[kyo] object CdpBackend:
             downloadEventDispatchers   <- AtomicRef.init[Dict[String, CdpEvent.Generic => Unit < Sync]](Dict.empty)
             screencastEventDispatchers <- AtomicRef.init[Dict[String, CdpEvent.Generic => Unit < Sync]](Dict.empty)
             consoleEventDispatchers    <- AtomicRef.init[Dict[String, CdpEvent.Generic => Unit < Sync]](Dict.empty)
+            bindingEventDispatchers    <- AtomicRef.init[Dict[String, CdpEvent.Generic => Unit < Sync]](Dict.empty)
             dialogRecorders            <- AtomicRef.init[Dict[String, AtomicRef[Chunk[Browser.DialogEvent]]]](Dict.empty)
             lastEvaluateParams         <- AtomicRef.init[Maybe[String]](Absent)
             dialogIdCounter            <- AtomicInt.init(Int.MinValue)
@@ -202,6 +205,7 @@ private[kyo] object CdpBackend:
             screencastMethod     <- buildScreencastFrameMethod(screencastEventDispatchers)
             consoleApiMethod     <- buildConsoleApiCalledMethod(consoleEventDispatchers)
             exceptionMethod      <- buildExceptionThrownMethod(consoleEventDispatchers)
+            bindingMethod        <- buildBindingCalledMethod(bindingEventDispatchers)
             config = JsonRpcHandler.Config(
                 codec = JsonRpcEnvelope.lenientSchema,
                 cancellation = Absent,
@@ -223,7 +227,8 @@ private[kyo] object CdpBackend:
                     downloadProgMethod,
                     screencastMethod,
                     consoleApiMethod,
-                    exceptionMethod
+                    exceptionMethod,
+                    bindingMethod
                 ),
                 config
             )
@@ -237,11 +242,12 @@ private[kyo] object CdpBackend:
                 downloadEventDispatchers,
                 screencastEventDispatchers,
                 consoleEventDispatchers,
+                bindingEventDispatchers,
                 dialogRecorders,
                 lastEvaluateParams,
                 sessionId = Absent
             )
-            // Q-002 ratified probe: Browser.getVersion proves the WS handshake
+            // Connect probe: Browser.getVersion proves the WS handshake
             // + one CDP round-trip is live. Closed -> BrowserSetupFailedException
             // surfaces an upfront typed error rather than a delayed hang.
             _ <- Abort.recover[BrowserReadException] {
@@ -471,6 +477,7 @@ private[kyo] object CdpBackend:
             downloadEventDispatchers   <- AtomicRef.init[Dict[String, CdpEvent.Generic => Unit < Sync]](Dict.empty)
             screencastEventDispatchers <- AtomicRef.init[Dict[String, CdpEvent.Generic => Unit < Sync]](Dict.empty)
             consoleEventDispatchers    <- AtomicRef.init[Dict[String, CdpEvent.Generic => Unit < Sync]](Dict.empty)
+            bindingEventDispatchers    <- AtomicRef.init[Dict[String, CdpEvent.Generic => Unit < Sync]](Dict.empty)
             dialogRecorders            <- AtomicRef.init[Dict[String, AtomicRef[Chunk[Browser.DialogEvent]]]](Dict.empty)
             lastEvaluateParams         <- AtomicRef.init[Maybe[String]](Absent)
             dialogIdCounter            <- AtomicInt.init(Int.MinValue)
@@ -482,6 +489,7 @@ private[kyo] object CdpBackend:
             screencastMethod           <- buildScreencastFrameMethod(screencastEventDispatchers)
             consoleApiMethod           <- buildConsoleApiCalledMethod(consoleEventDispatchers)
             exceptionMethod            <- buildExceptionThrownMethod(consoleEventDispatchers)
+            bindingMethod              <- buildBindingCalledMethod(bindingEventDispatchers)
             config = JsonRpcHandler.Config(
                 codec = JsonRpcEnvelope.lenientSchema,
                 cancellation = Absent,
@@ -503,7 +511,8 @@ private[kyo] object CdpBackend:
                     downloadProgMethod,
                     screencastMethod,
                     consoleApiMethod,
-                    exceptionMethod
+                    exceptionMethod,
+                    bindingMethod
                 ),
                 config
             )
@@ -517,6 +526,7 @@ private[kyo] object CdpBackend:
                 downloadEventDispatchers,
                 screencastEventDispatchers,
                 consoleEventDispatchers,
+                bindingEventDispatchers,
                 dialogRecorders,
                 lastEvaluateParams,
                 sessionId = Absent
@@ -635,9 +645,21 @@ private[kyo] object CdpBackend:
             dispatchEvent(dispatchers, "Runtime.exceptionThrown", params, readSessionIdFromExtras(ctx.extras))
         })
 
+    /** Runtime.bindingCalled notification: the page called a function installed by Runtime.addBinding. Dispatches through
+      * dispatchEvent, which routes to the per-session handler and drops when none is registered; a caller registers its handler
+      * before adding the binding, so no call from the page precedes it. Notifications are dispatched one at a time in arrival
+      * order, so a handler sees the page's calls in the order the page made them.
+      */
+    private def buildBindingCalledMethod(
+        dispatchers: AtomicRef[Dict[String, CdpEvent.Generic => Unit < Sync]]
+    )(using Frame): JsonRpcRoute[?, ?, JsonRpcError] < Sync =
+        Sync.defer(JsonRpcRoute.notification[BindingCalledWire]("Runtime.bindingCalled") { (params, ctx) =>
+            dispatchEvent(dispatchers, "Runtime.bindingCalled", params, readSessionIdFromExtras(ctx.extras))
+        })
+
     /** Dialog drainer: consumes dialogQueue, allocates negative ids from
       * dialogIdCounter (disjoint from JsonRpcIdStrategy.SequentialInt's positive
-      * allocator, per INV-018), and writes Page.handleJavaScriptDialog
+      * allocator, so the two never collide), and writes Page.handleJavaScriptDialog
       * fire-and-forget via endpoint.sendUnmatched.
       */
     private def buildDialogDrainer(
@@ -667,8 +689,8 @@ private[kyo] object CdpBackend:
             }.unit
         }
 
-    /** Reads sessionId from JsonRpcRoute.Context.extras (RI-001 path:
-      * JsonRpcEndpointImpl.scala:911-916 constructs JsonRpcRoute.Context with env.extras).
+    /** Reads sessionId from JsonRpcRoute.Context.extras, which the endpoint fills from the
+      * notification envelope's extra fields.
       */
     private def readSessionIdFromExtras(extras: Maybe[Structure.Value]): Maybe[SessionId] =
         extras match
