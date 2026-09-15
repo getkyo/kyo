@@ -24,7 +24,7 @@ final private[kyo] class CdpBackend private[kyo] (
     private[kyo] val downloadEventDispatchers: AtomicRef[Dict[String, CdpEvent.Generic => Unit < Sync]],
     private[kyo] val screencastEventDispatchers: AtomicRef[Dict[String, CdpEvent.Generic => Unit < Sync]],
     private[kyo] val consoleEventDispatchers: AtomicRef[Dict[String, CdpEvent.Generic => Unit < Sync]],
-    private[kyo] val bindingEventDispatchers: AtomicRef[Dict[String, CdpEvent.Generic => Unit < Sync]],
+    private[kyo] val bindingEventDispatchers: AtomicRef[Dict[String, CdpEvent.Generic => Unit < Async]],
     private[kyo] val dialogRecorders: AtomicRef[Dict[String, AtomicRef[Chunk[Browser.DialogEvent]]]],
     private[kyo] val lastEvaluateParams: AtomicRef[Maybe[String]],
     private[kyo] val sessionId: Maybe[SessionId] = Absent
@@ -187,7 +187,7 @@ private[kyo] object CdpBackend:
             downloadEventDispatchers   <- AtomicRef.init[Dict[String, CdpEvent.Generic => Unit < Sync]](Dict.empty)
             screencastEventDispatchers <- AtomicRef.init[Dict[String, CdpEvent.Generic => Unit < Sync]](Dict.empty)
             consoleEventDispatchers    <- AtomicRef.init[Dict[String, CdpEvent.Generic => Unit < Sync]](Dict.empty)
-            bindingEventDispatchers    <- AtomicRef.init[Dict[String, CdpEvent.Generic => Unit < Sync]](Dict.empty)
+            bindingEventDispatchers    <- AtomicRef.init[Dict[String, CdpEvent.Generic => Unit < Async]](Dict.empty)
             dialogRecorders            <- AtomicRef.init[Dict[String, AtomicRef[Chunk[Browser.DialogEvent]]]](Dict.empty)
             lastEvaluateParams         <- AtomicRef.init[Maybe[String]](Absent)
             dialogIdCounter            <- AtomicInt.init(Int.MinValue)
@@ -477,7 +477,7 @@ private[kyo] object CdpBackend:
             downloadEventDispatchers   <- AtomicRef.init[Dict[String, CdpEvent.Generic => Unit < Sync]](Dict.empty)
             screencastEventDispatchers <- AtomicRef.init[Dict[String, CdpEvent.Generic => Unit < Sync]](Dict.empty)
             consoleEventDispatchers    <- AtomicRef.init[Dict[String, CdpEvent.Generic => Unit < Sync]](Dict.empty)
-            bindingEventDispatchers    <- AtomicRef.init[Dict[String, CdpEvent.Generic => Unit < Sync]](Dict.empty)
+            bindingEventDispatchers    <- AtomicRef.init[Dict[String, CdpEvent.Generic => Unit < Async]](Dict.empty)
             dialogRecorders            <- AtomicRef.init[Dict[String, AtomicRef[Chunk[Browser.DialogEvent]]]](Dict.empty)
             lastEvaluateParams         <- AtomicRef.init[Maybe[String]](Absent)
             dialogIdCounter            <- AtomicInt.init(Int.MinValue)
@@ -645,16 +645,22 @@ private[kyo] object CdpBackend:
             dispatchEvent(dispatchers, "Runtime.exceptionThrown", params, readSessionIdFromExtras(ctx.extras))
         })
 
-    /** Runtime.bindingCalled notification: the page called a function installed by Runtime.addBinding. Dispatches through
-      * dispatchEvent, which routes to the per-session handler and drops when none is registered; a caller registers its handler
-      * before adding the binding, so no call from the page precedes it. Notifications are dispatched one at a time in arrival
-      * order, so a handler sees the page's calls in the order the page made them.
+    /** Runtime.bindingCalled notification: the page called a function installed by Runtime.addBinding. Routes to the per-session
+      * handler and drops when none is registered; a caller registers its handler before adding the binding, so no call from the page
+      * precedes it. Notifications are handled one at a time in arrival order, so a handler sees the page's calls in the order the page
+      * made them. Unlike the other tables, a binding handler may wait (a channel put, say): later notifications on the connection wait
+      * with it, so a page-to-host channel built on a binding applies backpressure instead of dropping messages.
       */
     private def buildBindingCalledMethod(
-        dispatchers: AtomicRef[Dict[String, CdpEvent.Generic => Unit < Sync]]
+        dispatchers: AtomicRef[Dict[String, CdpEvent.Generic => Unit < Async]]
     )(using Frame): JsonRpcRoute[?, ?, JsonRpcError] < Sync =
         Sync.defer(JsonRpcRoute.notification[BindingCalledWire]("Runtime.bindingCalled") { (params, ctx) =>
-            dispatchEvent(dispatchers, "Runtime.bindingCalled", params, readSessionIdFromExtras(ctx.extras))
+            val sid = readSessionIdFromExtras(ctx.extras)
+            dispatchers.get.map { table =>
+                table.get(sid.map(_.value).getOrElse("")) match
+                    case Present(handler) => handler(CdpEvent.Generic("Runtime.bindingCalled", params, sid))
+                    case Absent           => Kyo.unit
+            }
         })
 
     /** Dialog drainer: consumes dialogQueue, allocates negative ids from

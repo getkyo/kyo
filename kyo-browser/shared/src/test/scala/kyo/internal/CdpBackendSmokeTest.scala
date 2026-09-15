@@ -381,6 +381,38 @@ class CdpBackendSmokeTest extends BrowserTest:
         }
     }
 
+    // A page-to-host channel hands each payload to a consumer that may be slower than the page. The handler waits on a
+    // channel with room for one message, so every later binding call waits behind it and none is dropped.
+    "Runtime.bindingCalled handlers that wait apply backpressure without losing payloads" in {
+        Scope.run {
+            mkBackendWithServer().map { (backend, serverEndpoint) =>
+                Channel.init[String](1).map { channel =>
+                    val handler: CdpEvent.Generic => Unit < Async = ev =>
+                        ev.params match
+                            case w: BindingCalledWire => Abort.run[Closed](channel.put(w.payload)).unit
+                            case _                    => Kyo.unit
+                    backend.bindingEventDispatchers.updateAndGet(_.update("b3", handler)).andThen {
+                        val extras   = JsonRpcExtrasEncoder.const(Structure.Value.Record(Chunk("sessionId" -> Structure.Value.Str("b3"))))
+                        val payloads = Chunk.from((1 to 20).map(i => s"message-$i"))
+                        Kyo.foreachDiscard(payloads) { payload =>
+                            Abort.run[Closed](
+                                serverEndpoint.notify[BindingCalledWire](
+                                    "Runtime.bindingCalled",
+                                    BindingCalledWire("__kyoSend", payload),
+                                    extras
+                                )
+                            ).unit
+                        }.andThen {
+                            Kyo.fill(payloads.size)(Abort.run[Closed](channel.take).map(_.getOrElse(""))).map { received =>
+                                assert(Chunk.from(received) == payloads)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // A Page.screencastFrame notification with NO registered screencast handler is dropped: dispatchEvent's
     // `case Absent => Kyo.unit` arm. This is safe by construction because Browser.startScreencast registers the
     // handler first (Browser.scala) and there is no shared event stream into which an un-dispatched frame could be
