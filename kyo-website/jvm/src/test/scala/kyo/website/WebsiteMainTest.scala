@@ -272,7 +272,7 @@ class WebsiteMainTest extends WebsiteTest:
 
     /** Build a synthetic target/ tree containing:
       *   - a regular FILE named `scala-3.x` (must be silently skipped, not passed to `.list`)
-      *   - a real directory `scala-3.8.3/kyo-website-bundle-opt/` holding `main.js`
+      *   - a real directory `scala-3.y/kyo-website-bundle-opt/` holding `main.js`
       * `discoverBundleDir` must skip the file and select the `-opt/main.js` directory.
       */
     "discoverBundleDir skips a non-directory scala-* entry and selects the -opt/main.js dir" in {
@@ -282,8 +282,8 @@ class WebsiteMainTest extends WebsiteTest:
             java.nio.file.Files.createDirectories(targetDir)
             // A regular file named scala-3.x: must be skipped, not passed to .list
             java.nio.file.Files.writeString(targetDir.resolve("scala-3.x"), "not a directory")
-            // A real scala-3.8.3/kyo-website-bundle-opt/ directory holding main.js
-            val optDir = targetDir.resolve("scala-3.8.3/kyo-website-bundle-opt")
+            // A real scala-3.y/kyo-website-bundle-opt/ directory holding main.js
+            val optDir = targetDir.resolve("scala-3.y/kyo-website-bundle-opt")
             java.nio.file.Files.createDirectories(optDir)
             java.nio.file.Files.writeString(optDir.resolve("main.js"), "// bundle")
             repoRoot.toString
@@ -292,6 +292,43 @@ class WebsiteMainTest extends WebsiteTest:
         }.map { result =>
             assert(result.endsWith("kyo-website-bundle-opt"), s"must select the -opt dir, got: $result")
             assert(!result.contains("scala-3.x"), s"must not select the non-directory scala-3.x file, got: $result")
+        }
+    }
+
+    /** With no `--bundle-dir` and no linked bundle, discovery fails and names the directory it searched.
+      *
+      * Covers both shapes a missing bundle takes: no `target/` at all (never linked), and a `target/`
+      * whose `scala-*` directories hold only a `-fastopt` link. Returning a guessed path instead would
+      * defer the failure to asset copying, where it no longer says which directory was searched.
+      */
+    "discoverBundleDir fails naming the searched target directory when no bundle is linked" in {
+        def discover(repoRoot: java.nio.file.Path)(using Frame): Result[WebsiteException, String] < Sync =
+            Abort.run[WebsiteException](WebsiteMain.parseBundleDir(Chunk.empty[String], repoRoot.toString))
+
+        def assertNotFound(result: Result[WebsiteException, String], repoRoot: java.nio.file.Path): Unit =
+            val expected = repoRoot.resolve("kyo-website-bundle/js/target").toString
+            result match
+                case Result.Failure(WebsiteBundleNotFoundException(searched)) =>
+                    assert(searched.toString == expected, s"must name the searched target directory, got: $searched")
+                case other =>
+                    assert(false, s"expected WebsiteBundleNotFoundException for $expected, got: $other")
+            end match
+        end assertNotFound
+
+        Sync.defer {
+            val neverLinked = Files.createTempDirectory("kyo-main-no-target")
+            val fastOptOnly = Files.createTempDirectory("kyo-main-fastopt-only")
+            val fastOptDir  = fastOptOnly.resolve("kyo-website-bundle/js/target/scala-3.y/kyo-website-bundle-fastopt")
+            java.nio.file.Files.createDirectories(fastOptDir)
+            java.nio.file.Files.writeString(fastOptDir.resolve("main.js"), "// dev bundle")
+            (neverLinked, fastOptOnly)
+        }.flatMap { (neverLinked, fastOptOnly) =>
+            for
+                missing  <- discover(neverLinked)
+                fastOnly <- discover(fastOptOnly)
+            yield
+                assertNotFound(missing, neverLinked)
+                assertNotFound(fastOnly, fastOptOnly)
         }
     }
 

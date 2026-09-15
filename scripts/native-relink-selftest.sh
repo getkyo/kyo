@@ -42,8 +42,8 @@ if [ "${1:-}" = "--self-test" ]; then
     SELFDIR=$(mktemp -d)
     trap 'rm -rf "$SELFDIR"' EXIT
 
-    WORKDIR_REL="kyo-data/native/target/scala-3.8.4/native-test"
-    CLASSES_REL="kyo-data/native/target/scala-3.8.4/classes"
+    WORKDIR_REL="kyo-data/native/target/scala-3.x/native-test"
+    CLASSES_REL="kyo-data/native/target/scala-3.x/classes"
 
     # Build a fake repo whose layout matches what the real script discovers, plus a stub sbt whose
     # behaviour per invocation is read from a scenario file. The stub emulates the build AND the

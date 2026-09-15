@@ -99,6 +99,24 @@ class DurationTest extends kyo.test.Test[Any]:
             assert(hours == Duration.Infinity)
         }
 
+        "negative values are Duration.Zero in every unit" in {
+            genLong(1, Long.MaxValue).foreach { i =>
+                val n = -i
+                assert(n.nanos == Duration.Zero)
+                assert(n.micros == Duration.Zero)
+                assert(n.millis == Duration.Zero)
+                assert(n.seconds == Duration.Zero)
+                assert(n.minutes == Duration.Zero)
+                assert(n.hours == Duration.Zero)
+                assert(n.days == Duration.Zero)
+                assert(n.weeks == Duration.Zero)
+                assert(n.months == Duration.Zero)
+                assert(n.years == Duration.Zero)
+            }
+            assert(Long.MinValue.seconds == Duration.Zero)
+            assert((-1).seconds == Duration.Zero)
+        }
+
         "Long.to* shouldn't compile" in {
             typeCheckFailure("Long.MaxValue.toNanos")("value toNanos is not a member of Long")
         }

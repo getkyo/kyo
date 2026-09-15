@@ -1382,7 +1382,7 @@ object FlowEngine:
         /** Every setting here the engine could not work under, empty for a tuning it accepts.
           *
           * What [[FlowEngine.init]] refuses on, reported all at once so a caller does not pay a process start per problem. A duration is
-          * asked to be POSITIVE rather than merely non-negative because [[kyo.Duration]] has no negative values: `-1.seconds` is
+          * asked to be POSITIVE rather than merely non-negative because [[kyo.Duration]] has no negative values: `(-1).seconds` is
           * `Duration.Zero`, so zero is where a caller asking for a negative one arrives.
           */
         private[kyo] def problems: Seq[FlowConfigProblem] =
