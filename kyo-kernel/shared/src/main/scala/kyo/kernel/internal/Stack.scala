@@ -4,15 +4,19 @@ import kyo.Chunk
 import kyo.IsFatal
 import kyo.Maybe
 import kyo.Span
+import kyo.bug
 import kyo.kernel.Arrow
+import kyo.kernel.ContextEffect
 import kyo.kernel.Effect
 import scala.annotation.tailrec
 
 /** The regions installed around the computation the evaluator is running, innermost last.
   *
-  * Four parallel arrays indexed by depth rather than one array of region objects: the handler, its state, the continuation for its result,
-  * and the releases the entry owes. Pushing a region then writes four slots and allocates nothing, which matters because a region is pushed
-  * and popped for every handled computation.
+  * Parallel arrays indexed by depth rather than one array of region objects: the handler, its state, the continuation for its result, the
+  * releases the entry owes, and the remainders owed to it. Pushing a region writes the first three and allocates nothing, which matters
+  * because a region is pushed and popped for every handled computation; the release and owed-remainder lanes are filled only when a region
+  * takes one on. A [[Stack.Snapshot]] captures the first four; a park carries the owed lanes beside its snapshot ([[takeEntryOwed]]) so a
+  * dump snapshot, which never owns a lane, pays nothing for one.
   *
   * The stack is mutable and borrowed from a per-thread pool for one evaluation, then cleared and returned. Nothing that leaves the evaluator
   * points at it: what escapes is a [[Stack.Snapshot]], an immutable copy.
@@ -33,6 +37,16 @@ final private[kernel] class Stack:
 
     // The releases owed below depth 0, run by the evaluation itself rather than by a region.
     private var evalReleases: Stack.Releases = Stack.Releases.empty
+
+    // Remainders an escaping peel handed out, owed to an entry (the scope below the peel) until the remainder is
+    // either resumed, when `settle` pulls it out of the lane, or that entry exits with it still owed, when its
+    // regions are drained as discarded. A remainder is settled or drained, never both, so the release each region
+    // carries in its snapshot runs exactly once: at the region's own end when the remainder is consumed, or here
+    // when it is dropped. That single-home property is why no once-guard is needed.
+    private var owedRemainders = new Array[Chunk[Stack.Snapshot]](0)
+
+    // Remainders owed below depth 0, drained by the evaluation itself rather than by a region.
+    private var evalOwedRemainders: Chunk[Stack.Snapshot] = Chunk.empty
 
     // A flag rather than a scan: a run with no releases at all skips the lanes without touching them.
     private var owes = false
@@ -77,10 +91,12 @@ final private[kernel] class Stack:
         // `clear` reaches only `0 until size`, and a released stack goes back to a per-thread pool on a live
         // worker, so a slot left set keeps that region's handler, state and continuation reachable for as long
         // as the worker lives. `releases` is deliberately not cleared: `takePopped` reads this index straight
-        // after the decrement.
+        // after the decrement. `owedRemainders` is cleared, since every exit drains it before the pop and the
+        // slot is reused by the next push.
         handlers(size) = null
         states(size) = null
         continuations(size) = null
+        owedRemainders(size) = Chunk.empty
     end pop
 
     def owesAny: Boolean = owes
@@ -109,6 +125,11 @@ final private[kernel] class Stack:
         owes = true
         releases(i) = releases(i).add(r)
 
+    /** Installs a context region's own release on its entry, as an [[Stack.OwnRelease]] that binds its state late. */
+    def oweOwn(i: Int, handler: Handler.ContextHandler[?, ?, ?, ?]): Unit =
+        owes = true
+        releases(i) = releases(i).add(new Stack.OwnRelease(handler))
+
     /** [[owe]] against the region below `i`, or against the evaluation itself when `i` is the outermost. */
     def oweBelow(i: Int, rs: Stack.Releases): Unit =
         if !rs.isEmpty then
@@ -122,6 +143,70 @@ final private[kernel] class Stack:
         here
     end takeEvalReleases
 
+    /** Owes the remainder `snapshot` to the entry below `i` (an escaping peel hands it to the scope below), or to the
+      * evaluation itself when `i` is the outermost.
+      */
+    def oweRemainderBelow(i: Int, snapshot: Stack.Snapshot): Unit =
+        owes = true
+        if i == 0 then evalOwedRemainders = evalOwedRemainders.append(snapshot)
+        else owedRemainders(i - 1) = owedRemainders(i - 1).append(snapshot)
+    end oweRemainderBelow
+
+    /** Passes remainders owed to a region down to the scope below it, for an escaping region that hands its own
+      * continuation out: what was owed to it goes on being owed downward until a non-escaping region drains it.
+      */
+    def oweRemaindersBelow(i: Int, snapshots: Chunk[Stack.Snapshot]): Unit =
+        if !snapshots.isEmpty then
+            owes = true
+            if i == 0 then evalOwedRemainders = evalOwedRemainders.concat(snapshots)
+            else owedRemainders(i - 1) = owedRemainders(i - 1).concat(snapshots)
+
+    /** Takes the remainders owed to entry `i`, leaving none: their regions are drained as discarded when the entry ends. */
+    def takeOwedRemainders(i: Int): Chunk[Stack.Snapshot] =
+        val here = owedRemainders(i)
+        if !here.isEmpty then owedRemainders(i) = Chunk.empty
+        here
+    end takeOwedRemainders
+
+    def takeEvalOwedRemainders(): Chunk[Stack.Snapshot] =
+        val here = evalOwedRemainders
+        if !here.isEmpty then evalOwedRemainders = Chunk.empty
+        here
+    end takeEvalOwedRemainders
+
+    /** Owes a chunk of remainders to entry `i` itself (restoring a resumed park's owed remainders). */
+    def oweRemainders(i: Int, snapshots: Chunk[Stack.Snapshot]): Unit =
+        if !snapshots.isEmpty then
+            owes = true
+            owedRemainders(i) = owedRemainders(i).concat(snapshots)
+
+    /** Removes `snapshot` from wherever it is owed. Called when the remainder resumes: the entry that owed it no longer
+      * drains it, and the reinstalled regions run their own ends instead. Identity, not equality: it is the same snapshot.
+      */
+    def settle(snapshot: Stack.Snapshot): Unit =
+        if owes then
+            @tailrec def loop(i: Int): Unit =
+                if i < 0 then evalOwedRemainders = settleIn(evalOwedRemainders, snapshot)
+                else
+                    val lane    = owedRemainders(i)
+                    val settled = settleIn(lane, snapshot)
+                    if settled ne lane then owedRemainders(i) = settled
+                    else loop(i - 1)
+            loop(size - 1)
+    end settle
+
+    private def settleIn(lane: Chunk[Stack.Snapshot], snapshot: Stack.Snapshot): Chunk[Stack.Snapshot] =
+        if lane.isEmpty then lane
+        else
+            @tailrec def loop(j: Int): Chunk[Stack.Snapshot] =
+                if j < 0 then lane
+                else if lane(j).asInstanceOf[AnyRef] eq snapshot.asInstanceOf[AnyRef] then
+                    if lane.size == 1 then Chunk.empty
+                    else lane.take(j).concat(lane.drop(j + 1))
+                else loop(j - 1)
+            loop(lane.size - 1)
+    end settleIn
+
     def clear(): Unit =
         @tailrec def loop(i: Int): Unit =
             if i < size then
@@ -129,11 +214,13 @@ final private[kernel] class Stack:
                 states(i) = null
                 continuations(i) = null
                 releases(i) = Stack.Releases.empty
+                owedRemainders(i) = Chunk.empty
                 loop(i + 1)
         loop(0)
         size = 0
         sink = null
         evalReleases = Stack.Releases.empty
+        evalOwedRemainders = Chunk.empty
         owes = false
         epochCount += 1
     end clear
@@ -141,7 +228,8 @@ final private[kernel] class Stack:
     /** Takes every region off the stack as a snapshot, leaving it empty. What a computation carries across an execution boundary.
       *
       * Unlike [[dump]], the releases travel with the snapshot: a parked computation is the same computation resuming elsewhere, so its
-      * regions run their extents to an end where they resume, and their releases must be there to run.
+      * regions run their extents to an end where they resume, and their releases must be there to run. The owed-remainder lanes travel with
+      * the park too, but alongside it ([[takeEntryOwed]]), not in the snapshot, so a dump snapshot pays nothing for a lane it never carries.
       */
     def takeAll(): Stack.Snapshot =
         val out = new Array[AnyRef](size * 4)
@@ -160,6 +248,20 @@ final private[kernel] class Stack:
         size = 0
         Stack.wrap(out)
     end takeAll
+
+    /** Takes the per-entry owed-remainder lanes, aligned with what [[takeAll]] captures, leaving none. A park carries these beside its
+      * snapshot so each region re-owes the remainders it owed on resume, or drains them if the park is abandoned. Call before [[takeAll]].
+      */
+    def takeEntryOwed(): Chunk[Chunk[Stack.Snapshot]] =
+        val out = new Array[Chunk[Stack.Snapshot]](size)
+        var i   = 0
+        while i < size do
+            out(i) = owedRemainders(i)
+            owedRemainders(i) = Chunk.empty
+            i += 1
+        end while
+        Chunk.fromNoCopy(out)
+    end takeEntryOwed
 
     /** Copies the context regions alone, leaving the stack untouched.
       *
@@ -202,6 +304,7 @@ final private[kernel] class Stack:
                 states(i) = null
                 continuations(i) = null
                 releases(i) = Stack.Releases.empty
+                owedRemainders(i) = Chunk.empty
                 loop(i + 1)
         loop(to)
         size = to
@@ -229,25 +332,43 @@ final private[kernel] class Stack:
       * them, because the continuation may be resumed more than once and each shot runs against the live resource: they move to the region
       * below, which runs them once, when its own extent ends.
       */
-    def dump(from: Int): Stack.Snapshot =
-        val count                 = size - from
-        val out                   = new Array[AnyRef](count * 4)
-        var moved: Stack.Releases = Stack.Releases.empty
+    def dump(from: Int, escaping: Boolean = false): Stack.Snapshot =
+        val count                            = size - from
+        val out                              = new Array[AnyRef](count * 4)
+        var moved: Stack.Releases            = Stack.Releases.empty
+        var movedOwed: Chunk[Stack.Snapshot] = Chunk.empty
         @tailrec def loop(i: Int): Unit =
             if i < count then
                 val j = from + i
                 out(i * 4) = handlers(j)
                 out(i * 4 + 1) = states(j).asInstanceOf[AnyRef]
                 out(i * 4 + 2) = continuations(j)
-                out(i * 4 + 3) = null
-                moved = moved.concat(releases(j))
+                // An escaping peel leaves each region its own release in the snapshot, so a resumed remainder closes
+                // the region at its own end (a bracket is a context region: it drains at its own exit, wherever it is
+                // consumed). The peel owes the whole snapshot to the scope below, which drains it if the remainder is
+                // dropped; settled or drained, never both, so the release runs once with no guard. A non-escaping dump
+                // moves the release to the holder, which is what makes a held (replayed) region release once, at the holder.
+                if escaping then out(i * 4 + 3) = releases(j).asInstanceOf[AnyRef]
+                else
+                    out(i * 4 + 3) = null
+                    moved = moved.concat(releases(j).capture(states(j)))
+                end if
+                // A dumped snapshot carries no owed lane: what each dumped entry owed moves to the holder (below), the
+                // way its release does, rather than riding in the snapshot as a park's lanes ride beside it.
+                // Remainders that were owed to a dumped entry move to the holder as its releases do: the entry is
+                // leaving the live stack, so what it owed goes on being owed below, settled by a resume or drained on exit.
+                movedOwed = movedOwed.concat(owedRemainders(j))
                 handlers(j) = null
                 states(j) = null
                 continuations(j) = null
                 releases(j) = Stack.Releases.empty
+                owedRemainders(j) = Chunk.empty
                 loop(i + 1)
         loop(0)
         size = from
+        if !movedOwed.isEmpty then
+            owes = true
+            owedRemainders(from - 1) = owedRemainders(from - 1).concat(movedOwed)
         if !moved.isEmpty then
             owes = true
             releases(from - 1) = releases(from - 1).concat(moved)
@@ -268,6 +389,13 @@ final private[kernel] class Stack:
         val grownReleases = new Array[Stack.Releases](capacity)
         Array.copy(releases, 0, grownReleases, 0, size)
         releases = grownReleases
+        val grownOwed = new Array[Chunk[Stack.Snapshot]](capacity)
+        Array.copy(owedRemainders, 0, grownOwed, 0, size)
+        var i = size
+        while i < capacity do
+            grownOwed(i) = Chunk.empty
+            i += 1
+        owedRemainders = grownOwed
     end grow
 end Stack
 
@@ -284,6 +412,26 @@ private[kernel] object Stack:
     object Releases:
         val empty: Releases                              = null
         def apply(f: Maybe[Throwable] => Unit): Releases = f
+
+    /** A context region's own release, in a form that binds its state late.
+      *
+      * It does not close over the state at push, because a fork's `join` writes the entry's state before the region ends, and the release
+      * must see that. Instead it is resolved against the live entry when the region ends (see `Eval`), and fixed to a captured state by
+      * [[capture]] only at the one moment the region leaves the live stack (a dump), after which the entry is gone. It is never applied
+      * directly.
+      */
+    final private[kernel] class OwnRelease(val handler: Handler.ContextHandler[?, ?, ?, ?]) extends (Maybe[Throwable] => Unit):
+        private def hc                             = handler.asInstanceOf[Handler.ContextHandler[Any, ContextEffect[Any], Any, Any]]
+        def apply(failure: Maybe[Throwable]): Unit = bug("OwnRelease must be resolved against its region's state")
+        def run(state: Any, failure: Maybe[Throwable]): Unit = hc.release(state, failure)
+        def runComplete(state: Any): Unit                    = hc.complete(state)
+        def captured(state: Any): Maybe[Throwable] => Unit   = failure => hc.release(state, failure)
+    end OwnRelease
+
+    private def captureOne(r: Maybe[Throwable] => Unit, state: Any): Maybe[Throwable] => Unit =
+        r match
+            case o: OwnRelease => o.captured(state)
+            case _             => r
 
     extension (self: Releases)
         // Reference identity rather than `==`: the union has a function arm, which has no multiversal equality.
@@ -313,6 +461,16 @@ private[kernel] object Stack:
                                 Chunk(g.asInstanceOf[Maybe[Throwable] => Unit]).concat(c2)
                             case f2 => Chunk(g.asInstanceOf[Maybe[Throwable] => Unit], f2.asInstanceOf[Maybe[Throwable] => Unit])
 
+        /** Fixes each own release to `state`, for a region leaving the live stack: after this the releases no longer read the entry, which is
+          * about to be reused. A release that is already a plain closure is left as is.
+          */
+        def capture(state: Any): Releases =
+            if self.isEmpty then self
+            else
+                self match
+                    case c: Chunk[Maybe[Throwable] => Unit] @unchecked => c.map(Stack.captureOne(_, state))
+                    case f                                             => Stack.captureOne(f.asInstanceOf[Maybe[Throwable] => Unit], state)
+
         /** Runs each release once, innermost first, with `failure`. A throw is handed to `onError` so the rest still run. */
         inline def run(failure: Maybe[Throwable])(inline onError: Throwable => Unit): Unit =
             if !self.isEmpty then
@@ -327,6 +485,54 @@ private[kernel] object Stack:
                     case f =>
                         try f.asInstanceOf[Maybe[Throwable] => Unit](failure)
                         catch case ex if !IsFatal(ex) => onError(ex)
+
+        /** Runs a region's own list at its end, resolving its [[OwnRelease]] against `state` (the entry's live state) and running any
+          * releases held for it. Innermost first, with `failure`; a throw goes to `onError`.
+          */
+        inline def runOwn(state: Any, failure: Maybe[Throwable])(inline onError: Throwable => Unit): Unit =
+            if !self.isEmpty then
+                self match
+                    case c: Chunk[Maybe[Throwable] => Unit] @unchecked =>
+                        var i = c.size - 1
+                        while i >= 0 do
+                            try
+                                c(i) match
+                                    case o: OwnRelease => o.run(state, failure)
+                                    case f             => f(failure)
+                            catch case ex if !IsFatal(ex) => onError(ex)
+                            end try
+                            i -= 1
+                        end while
+                    case o: OwnRelease =>
+                        try o.run(state, failure)
+                        catch case ex if !IsFatal(ex) => onError(ex)
+                    case f =>
+                        try f.asInstanceOf[Maybe[Throwable] => Unit](failure)
+                        catch case ex if !IsFatal(ex) => onError(ex)
+
+        /** Like [[runOwn]] told `Absent`, but the region's own [[OwnRelease]] runs through `complete` rather than `release`: the extent ran
+          * to a clean end in place. Releases held for it (moved by a dump) are clean drops, told `Absent`.
+          */
+        inline def runOwnComplete(state: Any)(inline onError: Throwable => Unit): Unit =
+            if !self.isEmpty then
+                self match
+                    case c: Chunk[Maybe[Throwable] => Unit] @unchecked =>
+                        var i = c.size - 1
+                        while i >= 0 do
+                            try
+                                c(i) match
+                                    case o: OwnRelease => o.runComplete(state)
+                                    case f             => f(Maybe.Absent)
+                            catch case ex if !IsFatal(ex) => onError(ex)
+                            end try
+                            i -= 1
+                        end while
+                    case o: OwnRelease =>
+                        try o.runComplete(state)
+                        catch case ex if !IsFatal(ex) => onError(ex)
+                    case f =>
+                        try f.asInstanceOf[Maybe[Throwable] => Unit](Maybe.Absent)
+                        catch case ex if !IsFatal(ex) => onError(ex)
     end extension
 
     /** Regions captured out of a stack, in the order it held them.
@@ -339,6 +545,7 @@ private[kernel] object Stack:
     opaque type Snapshot = Span[AnyRef]
 
     private def wrap(entries: Array[AnyRef]): Snapshot = Span.fromUnsafe(entries)
+    end wrap
 
     object Snapshot:
         private[kernel] val empty: Snapshot = Span.fromUnsafe(new Array[AnyRef](0))

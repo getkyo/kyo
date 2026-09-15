@@ -64,14 +64,23 @@ sealed abstract private[kernel] class Handler[E <: Effect, A, -S]:
     end MaskingHandler
 
     /** The peel behind [[kyo.kernel.ArrowEffect.handleFirst]]: the clause answers the first operation and carries its continuation out as
-      * the region's own result, so the remainder leaves the region as a value. It is the only escaping handler; the regions it dumped move
-      * their releases to the scope below when it exits, and back to a holder that resumes the remainder.
+      * the region's own result, so the remainder leaves the region as a value. It is the only escaping handler.
+      *
+      * A single-shot peel (the default) hands the remainder out to be consumed once: each dumped region keeps its own release in the
+      * remainder's snapshot and closes at its own end where it is consumed, with the scope below draining it if the remainder is dropped.
+      * A [[repeated]] peel hands the remainder out to be resumed more than once (a streamed choice's branches): the dumped regions are held,
+      * their releases moved to the scope below and run once, after every resumption, so a shared resource stays live across all of them.
       *
       * `run` answers at the region result `B`, unlike [[ContHandler]] whose answer re-enters the region: the peel does not continue inside
       * the region, it leaves it.
       */
     abstract class FirstHandler[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends ArrowHandler[Unit, E, A, B, S]:
         def run[X](input: I[X], cont: Arrow[O[X], A, E & S]): B < (E & S)
+
+        /** Whether the handed-out remainder may be resumed more than once, which holds its dumped regions rather than letting each close at
+          * its own end. Default single-shot.
+          */
+        private[kyo] def repeated: Boolean = false
 
         private[kyo] def answering[X](input: I[X], cont: Arrow[O[X], A, E & S], kyo: Pending[?, ?], stack: Stack): B < (E & S) =
             try run(input, cont)
@@ -237,6 +246,17 @@ sealed abstract private[kernel] class Handler[E <: Effect, A, -S]:
         def fork(parent: State): State
         def join(parent: State, forked: State, child: State): State
         def release(state: State, failure: Maybe[Throwable]): Unit
+
+        /** Called when the region's extent runs to a clean end in place, versus [[release]] which also covers an unwind or a drop. The
+          * default is `release` told the clean ending; a handler overrides it when the clean end is not the same event as the others, as a
+          * bracket does to record that its extent ran (so a later refused re-entry can say which way its cell fired).
+          */
+        private[kyo] def complete(state: State): Unit = release(state, Maybe.Absent)
+
+        /** Called when a region is reinstalled by a resumed remainder. A region whose release has already run refuses here (a bracket
+          * resumed after its resource was released is a use-after-release), by throwing. Default allows the resumption.
+          */
+        private[kyo] def reenter(state: State): Unit = ()
     end ContextHandler
 
     /** Attaches a cont to an outcome whose clause has not settled yet, turning the clause's answer into the

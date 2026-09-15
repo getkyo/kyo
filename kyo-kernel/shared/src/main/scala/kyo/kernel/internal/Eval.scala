@@ -1,5 +1,6 @@
 package kyo.kernel.internal
 
+import kyo.Chunk
 import kyo.Frame
 import kyo.IsFatal
 import kyo.KyoException
@@ -133,19 +134,28 @@ import scala.annotation.tailrec
                                         Debugger.onResult(result)
                                         if armed && Safepoint.stopped(slot) then park(result, Arrow.id, Arrow.id)
                                         else loop(result, Arrow.id, Arrow.id)
-                                    // a first clause: answers the operation and carries its continuation out as the
-                                    // region's result, so the region exits with the peeled value; it is escaping,
-                                    // so what it holds moves to the scope below
+                                    // a first clause: answers the operation and carries its continuation out as the region's result, so the
+                                    // region exits with the peeled value. Single-shot (the default): each dumped region keeps its release in
+                                    // the remainder's snapshot and the whole remainder is owed to the scope below, so a consumed remainder
+                                    // closes each region at its own end (settle pulls it from the owed lane) and a dropped one is drained there.
+                                    // Repeated: the dumped regions are held, their releases moved to the scope below and run once after every
+                                    // resumption, so a resource shared across a streamed choice's branches stays live across all of them.
                                     case handler: Handler.FirstHandler[IX, OX, EX, C, Y, S2] @unchecked =>
-                                        val entries = if atTop then Stack.Snapshot.empty else dumped(stack, idx, kyo)
+                                        val repeated = handler.repeated
+                                        val entries  = if atTop then Stack.Snapshot.empty else dumped(stack, idx, kyo, escaping = !repeated)
                                         val continuation =
                                             if atTop then kyo.cont.chain(contA.chain(contB))
                                             else kyo.crossing(entries, contA.chain(contB))
                                         val result = handler.answering(kyo.input, continuation, kyo, stack)
                                         Debugger.onRegionExit(handler, result)
                                         val next = stack.continuation(idx).asInstanceOf[Arrow[Y, Any, Any]]
+                                        // remainders owed to this peel (from inner peels it dumped over) pass down with it,
+                                        // read before the pop clears the entry
+                                        val owedThrough = if stack.owesAny then stack.takeOwedRemainders(idx) else Chunk.empty
                                         stack.pop()
                                         stack.oweBelow(stack.depth, stack.takePopped())
+                                        stack.oweRemaindersBelow(stack.depth, owedThrough)
+                                        if !repeated && !entries.isEmpty then stack.oweRemainderBelow(stack.depth, entries)
                                         if armed && Safepoint.stopped(slot) then park(result, next, Arrow.id)
                                         else loop(result, next, Arrow.id)
                                     // a loop clause at the top: answered in place, the region staying installed
@@ -161,8 +171,10 @@ import scala.annotation.tailrec
                                             case pending: Pending[Outcome[C < (EX & S2), Y < S2], S2] @unchecked =>
                                                 val next = stack.continuation(idx).asInstanceOf[Arrow[Y, Any, S2]]
                                                 Debugger.onRegionExit(handler, pending)
+                                                val owed = if stack.owesAny then stack.takeOwedRemainders(idx) else Chunk.empty
                                                 stack.pop()
                                                 if stack.owesAny then stack.oweBelow(idx, stack.takePopped())
+                                                stack.oweRemaindersBelow(idx, owed)
                                                 type OutT = Outcome[C < (EX & S2), Y < S2]
                                                 loop[OutT, Y, Any, S2](pending, handler.clauseDispatch, next)
                                             // done: the region ends with its value
@@ -171,7 +183,9 @@ import scala.annotation.tailrec
                                                     Nested.unnest[Y < S2](Loop.unnest(done.asInstanceOf[Outcome[Any, Y < S2]]))
                                                 Debugger.onRegionExit(handler, result)
                                                 val next = stack.continuation(idx).asInstanceOf[Arrow[Y, Any, Any]]
-                                                if stack.owesAny then drainClean(stack.takeReleases(idx))
+                                                if stack.owesAny then
+                                                    drainClean(stack.takeReleases(idx))
+                                                    drainRemainders(stack.takeOwedRemainders(idx), Absent)
                                                 stack.truncate(idx)
                                                 loop(result, next, Arrow.id)
                                         end match
@@ -185,17 +199,29 @@ import scala.annotation.tailrec
                                         outcome0 match
                                             case outcome: Loop.Continue[OX[VX] < (EX & S2)] @unchecked =>
                                                 val ans = outcome._1
-                                                if !ans.isInstanceOf[Pending[?, ?]] then
-                                                    loop(ans, kyo.cont, contA.chain(contB))
-                                                else
-                                                    val entries = dumped(stack, idx, kyo)
-                                                    loop(ans, kyo.crossing(entries, contA.chain(contB)), Arrow.id)
-                                                end if
+                                                ans match
+                                                    case _ if !ans.isInstanceOf[Pending[?, ?]] =>
+                                                        loop(ans, kyo.cont, contA.chain(contB))
+                                                    // the operation raised again, bare: this region is the one that answers it and
+                                                    // nothing runs outside the regions, so it dispatches from where it stood, regions
+                                                    // live. A clause re-raises with a stop when it cannot answer yet, and the stop parks
+                                                    // the fiber at the operation with every region carried by takeAll, so a bracket
+                                                    // around the operation keeps its release and closes at its own end on resume.
+                                                    case again: Pending.SuspendArrow[IX, OX, EX, VX, ?, ?] @unchecked
+                                                        if again.tag.erased =:= kyo.tag.erased && again.cont.isInstanceOf[Arrow.Id[?]] =>
+                                                        if armed && Safepoint.stopped(slot) then park(again, kyo.cont, contA.chain(contB))
+                                                        else loop(again, kyo.cont, contA.chain(contB))
+                                                    case _ =>
+                                                        val entries = dumped(stack, idx, kyo)
+                                                        loop(ans, kyo.crossing(entries, contA.chain(contB)), Arrow.id)
+                                                end match
                                             case pending: Pending[Outcome[OX[VX] < (EX & S2), Y < S2], S2] @unchecked =>
                                                 val entries = dumped(stack, idx, kyo)
                                                 val next    = stack.continuation(idx).asInstanceOf[Arrow[Y, Any, S2]]
+                                                val owed    = if stack.owesAny then stack.takeOwedRemainders(idx) else Chunk.empty
                                                 stack.pop()
                                                 if stack.owesAny then stack.oweBelow(idx, stack.takePopped())
+                                                stack.oweRemaindersBelow(idx, owed)
                                                 type OutT = Outcome[C < (EX & S2), Y < S2]
                                                 val reentry2 = kyo.crossing(entries, contA.chain(contB))
                                                 val answered = Handler.attachReentry[IX, OX, EX, C, Y, S2, VX](reentry2)(pending)
@@ -210,7 +236,9 @@ import scala.annotation.tailrec
                                                     ]]))
                                                 Debugger.onRegionExit(handler, result)
                                                 val next = stack.continuation(idx).asInstanceOf[Arrow[Y, Any, Any]]
-                                                if stack.owesAny then drainClean(stack.takeReleases(idx))
+                                                if stack.owesAny then
+                                                    drainClean(stack.takeReleases(idx))
+                                                    drainRemainders(stack.takeOwedRemainders(idx), Absent)
                                                 stack.truncate(idx)
                                                 loop(result, next, Arrow.id)
                                         end match
@@ -226,8 +254,10 @@ import scala.annotation.tailrec
                                             case pending: Pending[Outcome2[VX, C < (EX & S2), Y < S2], S2] @unchecked =>
                                                 val next = stack.continuation(idx).asInstanceOf[Arrow[Y, Any, S2]]
                                                 Debugger.onRegionExit(handler, pending)
+                                                val owed = if stack.owesAny then stack.takeOwedRemainders(idx) else Chunk.empty
                                                 stack.pop()
                                                 if stack.owesAny then stack.oweBelow(idx, stack.takePopped())
+                                                stack.oweRemaindersBelow(idx, owed)
                                                 type OutT = Outcome2[VX, C < (EX & S2), Y < S2]
                                                 loop[OutT, Y, Any, S2](pending, handler.clauseDispatch, next)
                                             case done =>
@@ -235,7 +265,9 @@ import scala.annotation.tailrec
                                                     Nested.unnest[Y < S2](Loop.unnest(done.asInstanceOf[Outcome2[VX, Any, Y < S2]]))
                                                 Debugger.onRegionExit(handler, result)
                                                 val next = stack.continuation(idx).asInstanceOf[Arrow[Y, Any, Any]]
-                                                if stack.owesAny then drainClean(stack.takeReleases(idx))
+                                                if stack.owesAny then
+                                                    drainClean(stack.takeReleases(idx))
+                                                    drainRemainders(stack.takeOwedRemainders(idx), Absent)
                                                 stack.truncate(idx)
                                                 loop(result, next, Arrow.id)
                                         end match
@@ -249,17 +281,26 @@ import scala.annotation.tailrec
                                             case outcome: Loop.Continue2[VX, OX[VX] < (EX & S2)] @unchecked =>
                                                 stack.setState(idx, outcome._1)
                                                 val ans = outcome._2
-                                                if !ans.isInstanceOf[Pending[?, ?]] then
-                                                    loop(ans, kyo.cont, contA.chain(contB))
-                                                else
-                                                    val entries = dumped(stack, idx, kyo)
-                                                    loop(ans, kyo.crossing(entries, contA.chain(contB)), Arrow.id)
-                                                end if
+                                                ans match
+                                                    case _ if !ans.isInstanceOf[Pending[?, ?]] =>
+                                                        loop(ans, kyo.cont, contA.chain(contB))
+                                                    // the operation raised again, bare, dispatches in place; a stop the clause
+                                                    // requested parks it here with every region carried (see the stateless arm).
+                                                    case again: Pending.SuspendArrow[IX, OX, EX, VX, ?, ?] @unchecked
+                                                        if again.tag.erased =:= kyo.tag.erased && again.cont.isInstanceOf[Arrow.Id[?]] =>
+                                                        if armed && Safepoint.stopped(slot) then park(again, kyo.cont, contA.chain(contB))
+                                                        else loop(again, kyo.cont, contA.chain(contB))
+                                                    case _ =>
+                                                        val entries = dumped(stack, idx, kyo)
+                                                        loop(ans, kyo.crossing(entries, contA.chain(contB)), Arrow.id)
+                                                end match
                                             case pending: Pending[Outcome2[VX, OX[VX] < (EX & S2), Y < S2], S2] @unchecked =>
                                                 val entries = dumped(stack, idx, kyo)
                                                 val next    = stack.continuation(idx).asInstanceOf[Arrow[Y, Any, S2]]
+                                                val owed    = if stack.owesAny then stack.takeOwedRemainders(idx) else Chunk.empty
                                                 stack.pop()
                                                 if stack.owesAny then stack.oweBelow(idx, stack.takePopped())
+                                                stack.oweRemaindersBelow(idx, owed)
                                                 type OutT = Outcome2[VX, C < (EX & S2), Y < S2]
                                                 val reentry2 = kyo.crossing(entries, contA.chain(contB))
                                                 val answered =
@@ -276,7 +317,9 @@ import scala.annotation.tailrec
                                                     ]]))
                                                 Debugger.onRegionExit(handler, result)
                                                 val next = stack.continuation(idx).asInstanceOf[Arrow[Y, Any, Any]]
-                                                if stack.owesAny then drainClean(stack.takeReleases(idx))
+                                                if stack.owesAny then
+                                                    drainClean(stack.takeReleases(idx))
+                                                    drainRemainders(stack.takeOwedRemainders(idx), Absent)
                                                 stack.truncate(idx)
                                                 loop(result, next, Arrow.id)
                                         end match
@@ -307,12 +350,13 @@ import scala.annotation.tailrec
                     Debugger.onContext(kyo, newState)
                     Debugger.onRegionEnter(handler, newState)
                     stack.push(handler, newState, contA.chain(contB))
-                    stack.oweRelease(stack.depth - 1, (failure: Maybe[Throwable]) => handler.release(newState, failure))
+                    stack.oweOwn(stack.depth - 1, handler)
                     loop(kyo.value, Arrow.id, Arrow.id)
 
-                // a parked slice with nothing to reinstall: take on its releases and continue in place
+                // a parked slice with nothing to reinstall: take on its releases and owed remainders, continue in place
                 case kyo: Pending.Park[?, ?] if kyo.entries.isEmpty =>
                     stack.oweBelow(stack.depth, kyo.releases)
+                    stack.oweRemaindersBelow(stack.depth, kyo.owedRemainders)
                     loop(kyo.value.asInstanceOf[T < S2], contA, contB)
 
                 // a parked slice: reinstall the regions it carries, then continue inside them
@@ -335,10 +379,15 @@ import scala.annotation.tailrec
                             stack.handler(top) match
                                 case hc: Handler.ContextHandler[VX, CX, AX, ?] @unchecked =>
                                     Debugger.onRegionExit(hc, res)
-                                    // the region's own release, in its entry, runs its clean end; anything held for
-                                    // it runs here too, as a discarded remainder the holder never resumed
+                                    // the region's own release runs its clean end, reading the entry's live state (a
+                                    // fork's join may have written it); this is before the pop, while the entry is live.
+                                    // A remainder still owed to it was never resumed, so its regions drain as discarded.
+                                    if stack.owesAny then
+                                        drainCleanOwn(stack.takeReleases(top), stack.state(top))
+                                        val owed = stack.takeOwedRemainders(top)
+                                        if !owed.isEmpty then drainRemainders(owed, Absent)
+                                    end if
                                     stack.pop()
-                                    if stack.owesAny then drainClean(stack.takePopped())
                                     loop(res.asInstanceOf[Y < Any], next, Arrow.id)
                                 case handler0 =>
                                     val handler = handler0.asInstanceOf[Handler.ArrowHandler[VX, EX, AX, Y, Any]]
@@ -368,9 +417,14 @@ import scala.annotation.tailrec
                 if contA.isInstanceOf[Arrow.Id[?]] && contB.isInstanceOf[Arrow.Id[?]] then v.asInstanceOf[Any < Any]
                 else Effect.defer(v, contA, contB).asInstanceOf[Any < Any]
             val evalRs = stack.takeEvalReleases()
+            // The eval's own owed lane travels in the Park, symmetric with `evalRs`; each region's lane travels beside
+            // the snapshot in `entryOwed` (captured before `takeAll` empties the stack), re-owed to the reinstalled
+            // region the way its release is, so a lane owed to a peel scope drains at that scope, not at eval end.
+            val owed      = stack.takeEvalOwedRemainders()
+            val entryOwed = if stack.owesAny then stack.takeEntryOwed() else Chunk.empty
             if stack.isEmpty then
-                if evalRs.isEmpty then parked.asInstanceOf[A < S]
-                else Pending.Park[A, S](parked, Stack.Snapshot.empty, evalRs)
+                if evalRs.isEmpty && owed.isEmpty then parked.asInstanceOf[A < S]
+                else Pending.Park[A, S](parked, Stack.Snapshot.empty, evalRs, owed)
             else
                 Debugger.whenEnabled {
                     var j = stack.depth - 1
@@ -378,7 +432,7 @@ import scala.annotation.tailrec
                         Debugger.onRegionExit(stack.handler(j), parked)
                         j -= 1
                 }
-                Pending.Park[A, S](parked, stack.takeAll(), evalRs)
+                Pending.Park[A, S](parked, stack.takeAll(), evalRs, owed, entryOwed)
             end if
         end park
 
@@ -403,8 +457,22 @@ import scala.annotation.tailrec
           * runs its regions' extents to an end where it resumes.
           */
         def installed(kyo: Pending.Park[?, ?], resume: Arrow[Any, Any, Any]): Unit =
-            val entries = kyo.entries
+            val entries   = kyo.entries
+            val entryOwed = kyo.entryOwed
+            // a region whose release already ran refuses to be reinstalled (a bracket resumed after its resource was
+            // released is a use-after-release); checked before any state changes, so a refusal leaves the stack untouched
+            var ri = 0
+            while ri < entries.regions do
+                entries.handler(ri) match
+                    case hc: Handler.ContextHandler[Any, ?, ?, ?] @unchecked => hc.reenter(entries.state(ri))
+                    case _                                                   => ()
+                ri += 1
+            end while
+            // the remainder is being consumed here, so the scope that owed it no longer drains it: its regions run
+            // their own ends instead, reinstalled just below with their releases restored
+            stack.settle(entries)
             stack.oweBelow(stack.depth, kyo.releases)
+            stack.oweRemaindersBelow(stack.depth, kyo.owedRemainders)
             @tailrec def install(i: Int): Unit =
                 if i < entries.regions then
                     val stored = entries.continuation(i).asInstanceOf[Arrow[Any, Any, Any]]
@@ -416,24 +484,61 @@ import scala.annotation.tailrec
                     Debugger.onRegionEnter(handler, st)
                     stack.push(handler, st, cont)
                     stack.owe(stack.depth - 1, entries.releases(i))
+                    // the lane this entry owed travels beside the snapshot and re-owes to the reinstalled entry
+                    if i < entryOwed.size then stack.oweRemainders(stack.depth - 1, entryOwed(i))
                     install(i + 1)
             install(0)
         end installed
 
-        // The clean end of a region runs what it still owed, told the extent ended without a failure. What it owed
-        // is a mix of its own release and remainders held for it that nobody resumed; a throw from one goes to the
-        // report, since nothing is unwinding to carry it.
+        // A clean end runs what it owed, told the extent ended without a failure. A finalizer that throws on a clean
+        // end fails the computation, so the throw propagates rather than being swallowed. `drainClean` is for a
+        // holder's or the evaluation's own end, whose releases are the captured closures moved onto it; `drainCleanOwn`
+        // is for a context region's own end, resolving its own release against the entry's live `state`.
+        // held/discarded releases: their region did not complete in place, and the holder already has, so a throw is
+        // reported rather than propagated past a computation that is already done.
         def drainClean(releases: Stack.Releases): Unit =
             releases.run(Absent)(t => Report.unhandled(t))
 
+        // a region's own clean completion: the own release runs through `complete` (the extent ran to an end in place),
+        // and a finalizer that throws here fails the computation, so the throw propagates.
+        def drainCleanOwn(releases: Stack.Releases, state: Any): Unit =
+            releases.runOwnComplete(state)(t => throw t)
+
+        // A remainder owed to a region that ended without resuming it was dropped: its regions are drained here, each
+        // release resolved against the state its snapshot carried, since the walk runs with no live entry to read. A
+        // throw is reported on a clean end and suppressed onto the failure on an unwind, as a discarded release is.
+        def drainRemainders(snapshots: Chunk[Stack.Snapshot], failure: Maybe[Throwable]): Unit =
+            var s = 0
+            while s < snapshots.size do
+                val entries = snapshots(s)
+                var i       = 0
+                while i < entries.regions do
+                    entries.releases(i).capture(entries.state(i)).run(failure) { t =>
+                        failure match
+                            case Present(ex) => if t ne ex then ex.addSuppressed(t)
+                            case Absent      => Report.unhandled(t)
+                    }
+                    i += 1
+                end while
+                s += 1
+            end while
+        end drainRemainders
+
         // An escaping region moves what it owes to the scope below rather than running it, because it handed its
-        // continuation out; every other region runs it, as a discarded remainder.
+        // continuation out; every other region runs it, as a discarded remainder. Remainders owed to the region move
+        // the same way: an escaping region passes them down, a non-escaping one drains them as discarded.
         def arrowExit(handler: Handler.ArrowHandler[?, ?, ?, ?, ?], top: Int): Unit =
+            val escaping = handler.isInstanceOf[Handler.FirstHandler[?, ?, ?, ?, ?, ?]]
+            val owed     = if stack.owesAny then stack.takeOwedRemainders(top) else Chunk.empty
             stack.pop()
             if stack.owesAny then
                 val held = stack.takePopped()
-                if handler.isInstanceOf[Handler.FirstHandler[?, ?, ?, ?, ?, ?]] then stack.oweBelow(stack.depth, held)
+                if escaping then stack.oweBelow(stack.depth, held)
                 else drainClean(held)
+            end if
+            if !owed.isEmpty then
+                if escaping then stack.oweRemaindersBelow(stack.depth, owed)
+                else drainRemainders(owed, Absent)
             end if
         end arrowExit
 
@@ -448,6 +553,7 @@ import scala.annotation.tailrec
         @tailrec def recovered(ex: Throwable): A < S =
             if stack.isEmpty then
                 drainFailed(stack.takeEvalReleases(), ex)
+                drainRemainders(stack.takeEvalOwedRemainders(), Maybe(ex))
                 EffectTrace.splice(ex)
                 throw ex
             else
@@ -455,19 +561,24 @@ import scala.annotation.tailrec
                 stack.handler(top) match
                     case hc: Handler.ContextHandler[VX, CX, ?, ?] @unchecked =>
                         Debugger.onRegionExit(hc, ex)
+                        drainFailedOwn(stack.takeReleases(top), stack.state(top), ex)
+                        if stack.owesAny then drainRemainders(stack.takeOwedRemainders(top), Maybe(ex))
                         stack.pop()
-                        drainFailed(stack.takePopped(), ex)
                         recovered(ex)
                     case handler0 =>
                         val handler = handler0.asInstanceOf[Handler.ArrowHandler[VX, EX, AX, Y, Any]]
                         val state   = stack.state(top)
+                        // the regions this handler held are abandoned by the failure whether it recovers or not, so
+                        // their releases, and any remainders owed to it, run with the failure before the recover arm decides
+                        if stack.owesAny then
+                            drainFailed(stack.takeReleases(top), ex)
+                            drainRemainders(stack.takeOwedRemainders(top), Maybe(ex))
                         val outcome =
                             try if IsFatal(ex) then Absent else handler.recover(state.asInstanceOf[VX], ex)
                             catch
                                 case ex2 if !IsFatal(ex2) =>
                                     Debugger.onRegionExit(handler, ex2)
                                     stack.pop()
-                                    drainFailed(stack.takePopped(), ex2)
                                     EffectTrace.attach(ex2, stack)
                                     EffectTrace.splice(ex2)
                                     return recovered(ex2)
@@ -479,7 +590,6 @@ import scala.annotation.tailrec
                             case Absent =>
                                 Debugger.onRegionExit(handler, ex)
                                 stack.pop()
-                                drainFailed(stack.takePopped(), ex)
                                 recovered(ex)
                         end match
                 end match
@@ -511,6 +621,7 @@ import scala.annotation.tailrec
         try
             val out = guarded(v)
             drainClean(stack.takeEvalReleases())
+            drainRemainders(stack.takeEvalOwedRemainders(), Absent)
             out
         finally
             Safepoint.restore(slot, saved)
@@ -527,8 +638,8 @@ import scala.annotation.tailrec
 
     private def unanswerable(handler: Handler[?, ?, ?]): Nothing = bug(s"unhandled: $handler")
 
-    private[kernel] def dumped(stack: Stack, idx: Int, kyo: Pending.Suspend[?, ?, ?, ?]): Stack.Snapshot =
-        val entries = stack.dump(idx + 1)
+    private[kernel] def dumped(stack: Stack, idx: Int, kyo: Pending.Suspend[?, ?, ?, ?], escaping: Boolean = false): Stack.Snapshot =
+        val entries = stack.dump(idx + 1, escaping)
         Debugger.whenEnabled {
             var i = entries.regions - 1
             while i >= 0 do
@@ -539,9 +650,13 @@ import scala.annotation.tailrec
     end dumped
 
     // The unwind of a failed region runs what it owed with the failure, attaching a throw from a release as
-    // suppressed rather than letting it replace the failure being carried.
+    // suppressed rather than letting it replace the failure being carried. `drainFailedOwn` resolves a context
+    // region's own release against the entry's live `state`.
     private def drainFailed(releases: Stack.Releases, ex: Throwable): Unit =
         releases.run(Maybe(ex))(t => if t ne ex then ex.addSuppressed(t))
+
+    private def drainFailedOwn(releases: Stack.Releases, state: Any, ex: Throwable): Unit =
+        releases.runOwn(state, Maybe(ex))(t => if t ne ex then ex.addSuppressed(t))
 
     /** Releases the regions `v` still holds, running nothing else.
       *
@@ -619,12 +734,31 @@ import scala.annotation.tailrec
                         case kyo: Pending.Handle[?, ?, ?, ?] =>
                             collect(kyo.value, cont, fuel)
                         case kyo: Pending.Park[?, ?] =>
+                            // remainders a park owed are abandoned too: each carries its regions' releases, resolved
+                            // against the state each snapshot carried
+                            def collectOwed(owed: Chunk[Stack.Snapshot]): Unit =
+                                var s = 0
+                                while s < owed.size do
+                                    val rem = owed(s)
+                                    var ri  = 0
+                                    while ri < rem.regions do
+                                        collected = collected.concat(rem.releases(ri).capture(rem.state(ri)))
+                                        ri += 1
+                                    s += 1
+                                end while
+                            end collectOwed
                             collected = collected.concat(kyo.releases)
-                            val entries = kyo.entries
-                            var i       = 0
+                            val entries   = kyo.entries
+                            val entryOwed = kyo.entryOwed
+                            var i         = 0
                             while i < entries.regions do
-                                collected = collected.concat(entries.releases(i))
+                                // resolve each region's own release against the state it carried, since the walk runs
+                                // outside the evaluator with no live entry to read, and the lane it owed the same way
+                                collected = collected.concat(entries.releases(i).capture(entries.state(i)))
+                                if i < entryOwed.size then collectOwed(entryOwed(i))
                                 i += 1
+                            end while
+                            collectOwed(kyo.owedRemainders)
                             collect(kyo.value, cont, fuel)
                         case kyo: Pending.SuspendArrow[?, ?, ?, ?, ?, ?] @unchecked =>
                             effectTag.foreach(t => if t <:< kyo.tag.erased then f(kyo.input))

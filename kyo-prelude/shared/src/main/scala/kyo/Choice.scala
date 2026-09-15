@@ -122,7 +122,9 @@ object Choice:
                         if pending.isEmpty then Loop.done
                         else
                             Kyo.foreach(pending) { v =>
-                                ArrowEffect.handleFirst(Tag[Choice], v)(
+                                // the remainder is resumed once per choice, so a resource opened before the choice
+                                // is shared across every branch and released once, after all of them
+                                ArrowEffect.handleFirstRepeated(Tag[Choice], v)(
                                     handle = [C] => (input, cont) => Chunk.from(input).map(cont(_)),
                                     done = r => Chunk(r: A < (Choice & S))
                                 )

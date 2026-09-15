@@ -535,15 +535,14 @@ class KernelTest extends AnyFreeSpec:
             assert(r.eval == 7)
         }
 
-        "the done and release hooks are accepted at the handle site" in {
+        "the release hook is accepted at the handle site and runs at the region's end" in {
             var completed = false
             val r = ContextEffect.handle(
                 Tag[Level],
                 derive = (_: Maybe[Int]) => 7,
                 fork = (l: Int) => l,
                 join = (parent: Int, _: Int, _: Int) => parent,
-                done = (_: Int) => completed = true,
-                release = (_: Int, _: Throwable) => ()
+                release = (_: Int, failure: Maybe[Throwable]) => if failure.isEmpty then completed = true
             )(level)
             assert(r.eval == 7)
             assert(completed)

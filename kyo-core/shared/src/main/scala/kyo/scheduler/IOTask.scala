@@ -4,6 +4,7 @@ import kyo.*
 import kyo.kernel.ArrowEffect
 import kyo.kernel.Effect
 import kyo.kernel.Isolate
+import kyo.kernel.Loop
 import kyo.kernel.internal.Eval
 import kyo.kernel.internal.Pending
 import kyo.kernel.internal.Safepoint
@@ -85,54 +86,58 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
         //
         // `Abort[E] & Async` rides in the region's `S` and is dropped from the row after: a row is
         // contravariant, while `Abort[E]` is an `Abort[Nothing]` and `Async` is opaque outside its package.
-        ArrowEffect.handleCont[[X] =>> Any, [X] =>> Any, ArrowEffect[[X] =>> Any, [X] =>> Any], P, Unit, Abort[E] & Async, Any](
+        // A join is not a continuation the boundary hands out: it either has the value now, answered in place with
+        // the regions live, or it wants the whole computation set aside and asked again later, which is a park. So
+        // the boundary is a loop, not a cont: a `handleCont` would dump the regions above it before the clause could
+        // run, moving a bracket's release onto the boundary and firing it only at the fiber's end.
+        ArrowEffect.handleLoop[[X] =>> Any, [X] =>> Any, ArrowEffect[[X] =>> Any, [X] =>> Any], P, Unit, Abort[E] & Async, Any](
             Tag[Async.Join & Abort[Any]].asInstanceOf[Tag[ArrowEffect[[X] =>> Any, [X] =>> Any]]],
             v
         )(
             [C] =>
-                (input, cont) =>
+                input =>
                     // one clause for two families, discriminated by what the operation carries: an abort's
                     // input is its error, a join's is the thunk that hands over the promise
                     input match
                         case error: Result.Error[E] @unchecked =>
-                            // Answering without applying the continuation discards the rest of the
-                            // computation, so no stop is needed. The answer is never read: the done lane
-                            // below checks whether this task is still pending, and this arm settled it.
+                            // Ending the region without an answer discards the rest of the computation. The result
+                            // is never read: the done lane below checks whether this task is still pending, and this
+                            // arm settled it.
                             completeDiscard(error)
-                            null.asInstanceOf[P]
+                            Loop.done(())
                         case joinInput: Async.JoinInput[C] @unchecked =>
                             // invoking it registers the interrupt cascade on this task before the promise's
                             // state is read, so an interrupt landing in between still reaches what is awaited
                             val promise = joinInput(this)
                             promise.poll() match
                                 case null =>
-                                    cont(null)
+                                    // the same placeholder the cont form answered null with; O[C] is erased to Any here
+                                    Loop.continue(null.asInstanceOf[Any])
                                 case Present(r) =>
                                     // already complete when the thunk ran, so drop the link it pre-registered
                                     // rather than letting it accumulate
                                     removeInterrupt(promise)(using joinInput.frame)
-                                    cont(r)
+                                    Loop.continue(r)
                                 case Absent =>
-                                    // Waiting. The operation is left unanswered and raised again behind a
-                                    // deferral, with a stop requested, so the eval parks in front of it.
-                                    // Answering without applying the continuation would tell the region the
-                                    // computation is over, draining finalizers a resumption still needs:
-                                    // parking is the only exit that carries owed releases with the remainder.
+                                    // Waiting. The operation is raised again, bare, with a stop requested: the
+                                    // evaluator dispatches it back to this boundary from where it stood and, stopped,
+                                    // parks the fiber at it with every region carried, so a bracket around the join
+                                    // keeps its release and closes at its own end where the fiber resumes.
                                     //
-                                    // The wakeup is armed by `run`, not here: the remainder does not exist
-                                    // until the eval finishes unwinding, and arming early would let a second
-                                    // worker restore the same park and re-enter a spent scope.
+                                    // The wakeup is armed by `run`, not here: the remainder does not exist until the
+                                    // eval finishes unwinding, and arming early would let a second worker restore the
+                                    // same park and re-enter a spent scope.
                                     parkOn(promise, joinInput.frame)
                                     discard(Safepoint.stop(Thread.currentThread(), this))
-                                    // Under the join's own frame, carried by the input: a clause is never
-                                    // handed the frame of what it answers, and the scheduler's own would
-                                    // lose where the fiber stopped.
-                                    ArrowEffect.suspendWith[C](using joinInput.frame)(Tag[Async.Join], joinInput)(r => cont(r))
+                                    // Under the join's own frame, carried by the input: a clause is never handed the
+                                    // frame of what it answers, and the scheduler's own would lose where it stopped.
+                                    Loop.continue(ArrowEffect.suspend[C](using joinInput.frame)(Tag[Async.Join], joinInput))
                             end match
                         case other =>
                             bug(s"fiber boundary received an operation it does not answer: $other")
             ,
-            // Guarded because the abort arm above settles the task itself and answers with a placeholder.
+            // Guarded because the abort arm above settles the task itself. `Loop.done` bypasses this, which is fine:
+            // `completeDiscard` already settled the promise.
             p => if isPending() then complete(p) else ()
             // No call site to name: what a parked fiber reports comes from the operation it stopped at.
         )(using Frame.internal).asInstanceOf[Unit < Any]

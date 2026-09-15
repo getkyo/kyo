@@ -1,6 +1,7 @@
 package kyo.kernel
 
 import java.util.concurrent.atomic.AtomicBoolean
+import kyo.Closed
 import kyo.Frame
 import kyo.IsFatal
 import kyo.Maybe
@@ -28,20 +29,35 @@ object Bracket:
     // handed to an isolated child, which a recording instance could not serve without carrying one crossing into
     // the next.
     sealed abstract private[kyo] class Cell extends AtomicBoolean:
+        // Fires the release once, told how the extent ended (an unwind's failure, or a drop's Absent).
         private[kyo] def run(failure: Maybe[Throwable]): Unit
+        // The extent ran to a clean end in place: records that (for a later refused re-entry to say which way this
+        // cell fired) and fires the release once, told the clean ending.
+        private[kyo] def complete(): Unit
+        // Whether the extent ran to an end, versus being released when its owning scope ended without it ever running.
+        private[kyo] def endedItsExtent: Boolean
+    end Cell
 
     private[kyo] object Cell:
 
         // The release runs once, told how the extent ended; the compareAndSet is what makes it once whichever
-        // ending reaches it first, an unwind or the clean end.
+        // ending reaches it first, an unwind, a drop, or the clean end.
         final class Live(fin: Maybe[Throwable] => Unit) extends Cell:
+            @volatile private var ended              = false
+            private[kyo] def endedItsExtent: Boolean = ended
             private[kyo] def run(failure: Maybe[Throwable]): Unit =
                 if compareAndSet(false, true) then fin(failure)
+            private[kyo] def complete(): Unit =
+                ended = true
+                if compareAndSet(false, true) then fin(Maybe.Absent)
+        end Live
 
         // Handed to an isolated child: no release, so one instance serves every crossing.
         val inert: Cell =
             new Cell:
                 private[kyo] def run(failure: Maybe[Throwable]): Unit = ()
+                private[kyo] def complete(): Unit                     = ()
+                private[kyo] def endedItsExtent: Boolean              = false
     end Cell
 
     /** Acquires a resource, runs `use` on it under a region that owns the release, and releases it exactly once.
@@ -102,6 +118,35 @@ object Bracket:
             def fork(parent: Cell)                              = Cell.inert
             def join(parent: Cell, fk: Cell, child: Cell)       = parent
             def release(state: Cell, failure: Maybe[Throwable]) = state.run(failure)
+            // The extent ran to a clean end in place: fire the release told the clean ending, and record that this is
+            // how the cell fired, so a later refused re-entry can say which of the two ways released it.
+            override def complete(state: Cell): Unit = state.complete()
+            // A remainder resumed after its bracket's resource was already released is a use-after-release: the cell
+            // has fired, so refuse rather than run the body against a released resource. The two ways a released
+            // bracket gets re-entered want different advice, and guessing wrong sends the reader after the wrong cause.
+            override def reenter(state: Cell): Unit =
+                if state.get() then
+                    val why =
+                        if state.endedItsExtent then
+                            "Its extent already ran to an end, which is what released it, and this is a later " +
+                                "resumption of a continuation that re-enters it. A handler that resumes the same " +
+                                "continuation more than once, as Choice does, has that effect whenever the bracket " +
+                                "sits between the handler and the suspension it answers: the first resumption ends " +
+                                "the extent and releases. Acquire inside the branch, so each resumption gets a " +
+                                "resource of its own, or put the bracket outside the handler, so its extent is not " +
+                                "what gets replayed."
+                        else
+                            "It was released when the scope that owned it ended, without its extent ever running to " +
+                                "an end. That is what happens to a remainder handed out by a peel, such as " +
+                                "Stream.splitAt, Emit.runFirst or Batch.capture, when it is consumed after the " +
+                                "computation that peeled it has finished, on another fiber included: that scope " +
+                                "cannot tell a remainder nobody will resume from one someone else still intends to " +
+                                "resume, so it releases at its own exit. Consume the remainder inside the scope " +
+                                "that peeled it, or use the confined form, Stream.splitAtWith, whose callback the " +
+                                "remainder cannot escape."
+                    throw new Closed("Bracket resource", _frame, why)(using _frame)
+                end if
+            end reenter
         new Pending.HandleContext[Cell, Finalize, B, S]:
             override def frame = _frame
             def value          = body

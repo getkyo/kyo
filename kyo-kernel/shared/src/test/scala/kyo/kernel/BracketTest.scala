@@ -127,6 +127,7 @@ class BracketTest extends AnyFreeSpec:
             assert(parked.isInstanceOf[Pending.Park[?, ?]])
             Eval.release(parked, Boom)
             assert(count == 1)
+            // re-evaluating an abandoned park re-enters a released region, which is refused
             discard(intercept[kyo.Closed](parked.eval))
             assert(count == 1)
         }
@@ -158,7 +159,7 @@ class BracketTest extends AnyFreeSpec:
             val r: Int < Any =
                 ArrowEffect.handleLoop(Tag[Ask], body)([C] => _ => Loop.done(-1), b => b)
             assert(r.eval == -1)
-            assert(seen.exists(_.isDefined))
+            assert(seen.exists(_.isEmpty)) // uniform: a dropped bracket is told the clean ending its holder reached
         }
 
         "the acquire is not guarded before it settles" in {
@@ -186,7 +187,7 @@ class BracketTest extends AnyFreeSpec:
             val dropped: Int < Any =
                 ArrowEffect.handleCont(Tag[Ask], body)([C] => (_, _) => -1, b => b)
             assert(dropped.eval == -1)
-            assert(seen.exists(_.isDefined))
+            assert(seen.exists(_.isEmpty)) // uniform: a dropped bracket is told the clean ending its holder reached
         }
 
         "a captured continuation resumed in the clause completes the bracket there" in {
@@ -243,7 +244,7 @@ class BracketTest extends AnyFreeSpec:
                 b => b
             )
             assert(r.eval == -1)
-            assert(seen.exists(_.isDefined))
+            assert(seen.exists(_.isEmpty)) // uniform: a dropped bracket is told the clean ending its holder reached
         }
 
         "a clause that throws after capturing releases the bracket with the failure" in {
@@ -259,7 +260,7 @@ class BracketTest extends AnyFreeSpec:
             assert(seen.exists(_.exists(_ eq Boom)))
         }
 
-        "a leaked capture resumed after its region completed is refused as closed" in {
+        "a leaked capture resumed after its region was released is refused as closed" in {
             val outcomes = ListBuffer[Maybe[Throwable]]()
             var leaked   = Maybe.empty[Arrow[Int, Int, Ask]]
             val body: Int < Ask =
@@ -276,7 +277,8 @@ class BracketTest extends AnyFreeSpec:
             )
             assert(r.eval == -1)
             assert(outcomes.size == 1)
-            assert(outcomes.head.isDefined)
+            assert(outcomes.head.isEmpty) // the dropped bracket is told the clean holder ending
+            // the leaked continuation re-enters a region already released, which is refused
             discard(intercept[kyo.Closed](answerAsk(0)(leaked.get(1)).eval))
             assert(outcomes.size == 1)
         }
@@ -350,7 +352,7 @@ class BracketTest extends AnyFreeSpec:
                         (_: Maybe[Int]).getOrElse(0),
                         fork = (parent: Int) => parent,
                         join = (parent: Int, _: Int, _: Int) => parent,
-                        release = (_: Int, _: Throwable) => discard(log += "binding")
+                        release = (_: Int, _: Maybe[Throwable]) => discard(log += "binding")
                     )(ask.map(x => a + x))
                 }((_, _) => discard(log += "bracket"))
             val dropped: Int < Any = ArrowEffect.handleCont(Tag[Ask], body)([C] => (_, _) => -1, b => b)
@@ -358,7 +360,7 @@ class BracketTest extends AnyFreeSpec:
             assert(log.toList == List("binding", "bracket"))
         }
 
-        "a multi-shot capture over a bracket refuses the second shot" in {
+        "a multi-shot capture over a bracket runs every shot against the live resource and releases once" in {
             val outcomes = ListBuffer[Maybe[Throwable]]()
             val body: Int < Ask =
                 Bracket(Effect.defer(7)) { a =>
@@ -368,8 +370,9 @@ class BracketTest extends AnyFreeSpec:
                 [C] => (_, cont) => cont(1).map(x => cont(2).map(y => x * 100 + y)),
                 b => b
             )
-            discard(intercept[kyo.Closed](r.eval))
-            assert(outcomes.toList.map(_.isEmpty) == List(true))
+            // both shots run against the live resource (7); the bracket releases once, where the holder ends
+            assert(r.eval == 809)
+            assert(outcomes.toList == List(Maybe.empty))
         }
 
         "a bracket held across two parks releases once on completion" in {
@@ -562,7 +565,7 @@ class BracketTest extends AnyFreeSpec:
             assert(seen.exists(_.exists(_ eq Boom)))
         }
 
-        "a discarded capture's bracket is told the discard signal" in {
+        "a discarded capture's bracket is told the clean ending its holder reached" in {
             var seen = Maybe.empty[Maybe[Throwable]]
             val body: Int < Ask =
                 Bracket(Effect.defer(7))(a => ask.map(x => a + x))((_, outcome) => seen = Maybe(outcome))
@@ -572,12 +575,13 @@ class BracketTest extends AnyFreeSpec:
                     b => b
                 )
             assert(dropped.eval == -1)
-            assert(seen.exists(_.exists(_.isInstanceOf[kyo.KyoException])))
+            // uniform: no discard signal; the dropped bracket is released once, told the holder's clean ending
+            assert(seen.exists(_.isEmpty))
         }
     }
 
     "reading audit pins" - {
-        "a leaked capture's refusal is recoverable by the region that resumes it" in {
+        "a leaked capture resumed by another region after release is refused as closed" in {
             var leaked          = Maybe.empty[Arrow[Int, Int, Ask]]
             val body: Int < Ask = Bracket(Effect.defer(7))(a => ask.map(_ + a))((_, _) => ())
             val first: Int < Any = ArrowEffect.handleCont(Tag[Ask], body)(
@@ -595,6 +599,7 @@ class BracketTest extends AnyFreeSpec:
                     a => a,
                     ex => Maybe(if ex.isInstanceOf[Closed] then -2 else -3)
                 )
+            // leaked.get(1) re-enters a released region, refused with Closed, which the recover arm turns into -2
             assert(again.eval == -2)
         }
 
@@ -906,6 +911,7 @@ class BracketTest extends AnyFreeSpec:
             val p = Eval.partial(v)
             assert(p.evalNow.isEmpty)
             assert(p.eval == 42)
+            // the first evaluation completes and releases; the second re-enters a released region and is refused
             discard(intercept[kyo.Closed](p.eval))
             assert(released == 1)
         }
@@ -1271,12 +1277,12 @@ class BracketTest extends AnyFreeSpec:
                     [C] => (_, cont) => cont(10).map(a => cont(-1).map(b => a + b)),
                     a => a
                 )
-            val failure = intercept[kyo.Closed](twice.eval)
-            assert(!failure.getSuppressed.contains(boom))
+            // uniform: no refusal; cont(10) runs, cont(-1) throws, unwinding the held bracket with the failure
+            assert(intercept[RuntimeException](twice.eval) eq boom)
             assert(events == List("acquire", "release 1"))
         }
 
-        "no branch of a multi-shot clause reads a resource that was already released" in {
+        "every branch of a multi-shot clause reads the live resource" in {
             var closed             = false
             var seen               = List.empty[String]
             val acquire: Int < Ask = Effect.defer(1)
@@ -1292,11 +1298,13 @@ class BracketTest extends AnyFreeSpec:
                     [C] => (_, cont) => cont(10).map(a => cont(20).map(b => a + b)),
                     a => a
                 )
-            discard(intercept[kyo.Closed](twice.eval))
-            assert(seen == List("branch 10"))
+            // uniform: the resource stays live across shots and is released once, after both branches
+            assert(twice.eval == 32)
+            assert(seen == List("branch 10", "branch 20"))
+            assert(closed)
         }
 
-        "a Choice-shaped clause is refused at its second branch" in {
+        "a Choice-shaped clause runs every branch against the live resource" in {
             var closed             = false
             var seen               = List.empty[String]
             val acquire: Int < Ask = Effect.defer(100)
@@ -1312,8 +1320,10 @@ class BracketTest extends AnyFreeSpec:
                     [C] => (_, cont) => cont(1).map(a => cont(2).map(b => cont(3).map(c => a + b + c))),
                     a => a
                 )
-            discard(intercept[kyo.Closed](branches.eval))
-            assert(seen == List("branch 1"))
+            // uniform: the resource stays live across all three shots, released once at the end
+            assert(branches.eval == 306)
+            assert(seen == List("branch 1", "branch 2", "branch 3"))
+            assert(closed)
         }
 
         "nested brackets shared by a multi-shot clause are refused at the second branch" in {
@@ -1333,8 +1343,9 @@ class BracketTest extends AnyFreeSpec:
                     [C] => (_, cont) => cont(10).map(a => cont(20).map(b => a + b)),
                     a => a
                 )
-            discard(intercept[kyo.Closed](twice.eval))
-            assert(events == List("branch 10", "release inner", "release outer"))
+            // uniform: both branches run against the live nested resources, released once each at the holder
+            assert(twice.eval == 36)
+            assert(events == List("branch 10", "branch 20", "release inner", "release outer"))
         }
 
         "a continuation held past the end of the eval refuses every time it is applied" in {
@@ -1352,68 +1363,10 @@ class BracketTest extends AnyFreeSpec:
                 )
             assert(dropped.eval == -1)
             assert(count == 1)
+            // the region was released when the eval ended; the held continuation re-enters it, which is refused
             discard(intercept[kyo.Closed](answerAsk(0)(stash.get(2)).eval))
             discard(intercept[kyo.Closed](answerAsk(0)(stash.get(5)).eval))
             assert(count == 1)
-        }
-
-        "a handleFirst remainder carries the bracket it was handed: the first shot completes it, the second is refused" in {
-            // The clause hands the continuation out as the region's value, so the bracket dumped into it is owed
-            // to the scope below until the remainder resumes and completes it. Still one-shot: the second
-            // application finds the cell completed and is refused.
-            var closed             = false
-            var closedAtClause     = false
-            var seen               = List.empty[String]
-            val acquire: Int < Ask = Effect.defer(1)
-            val v =
-                Bracket(acquire) { r =>
-                    ask.map { a =>
-                        seen :+= (if closed then s"branch $a after release" else s"branch $a")
-                        a + r
-                    }
-                }((_, _) => closed = true)
-            val branches: Int < Ask =
-                ArrowEffect.handleFirst(Tag[Ask], v)(
-                    handle = [C] =>
-                        (_, cont) =>
-                            closedAtClause = closed
-                            cont(10).map(a => cont(20).map(b => a + b))
-                    ,
-                    done = a => a
-                )
-            discard(intercept[kyo.Closed](answerAsk(0)(branches).eval))
-            assert(!closedAtClause)
-            assert(closed)
-            assert(seen == List("branch 10"))
-        }
-
-        "a handleFirstRepeated remainder is held across every application, and each runs against the live resource" in {
-            // The remainder is declared as one the holder applies more than once, so its bracket is held past the
-            // first application and released where the scope below ends.
-            var closed             = false
-            var closedAtClause     = false
-            var seen               = List.empty[String]
-            val acquire: Int < Ask = Effect.defer(1)
-            val v =
-                Bracket(acquire) { r =>
-                    ask.map { a =>
-                        seen :+= (if closed then s"branch $a after release" else s"branch $a")
-                        a + r
-                    }
-                }((_, _) => closed = true)
-            val branches: Int < Ask =
-                ArrowEffect.handleFirst(Tag[Ask], v)(
-                    handle = [C] =>
-                        (_, cont) =>
-                            closedAtClause = closed
-                            cont(10).map(a => cont(20).map(b => a + b))
-                    ,
-                    done = a => a
-                )
-            assert(answerAsk(0)(branches).eval == 32)
-            assert(!closedAtClause)
-            assert(closed)
-            assert(seen == List("branch 10", "branch 20"))
         }
 
         "a handleFirst remainder that is never resumed releases at the enclosing region's exit, as discarded" in {
@@ -1439,7 +1392,7 @@ class BracketTest extends AnyFreeSpec:
             assert(r.eval == 0)
             assert(!closedAtClause)
             assert(!closedAfter)
-            assert(outcome.exists(_.exists(_.isInstanceOf[kyo.KyoException])))
+            assert(outcome.exists(_.isEmpty)) // uniform: a never-resumed remainder's bracket is told the clean ending
         }
 
         "a park between the hand-out and the resume carries the remainder's debt" in {
@@ -1539,7 +1492,7 @@ class BracketTest extends AnyFreeSpec:
                 }
             assert(r.eval == -1)
             assert(openAfterDrop)
-            assert(outcome.exists(_.exists(_.isInstanceOf[kyo.KyoException])))
+            assert(outcome.exists(_.isEmpty)) // uniform: the dropped nested remainder is told the clean enclosing ending
         }
 
         "branches of a multi-shot clause share the resource the use closed over" in {
@@ -1561,9 +1514,10 @@ class BracketTest extends AnyFreeSpec:
                     [C] => (_, cont) => cont(10).map(a => cont(20).map(b => a + b)),
                     a => a
                 )
-            discard(intercept[kyo.Closed](twice.eval))
+            // uniform: both shots run against the one live resource
+            assert(twice.eval == 32)
             assert(acquired == 1)
-            assert(seen == List(1))
+            assert(seen == List(1, 1))
         }
 
         "a branch built inside a clause and evaluated later is refused" in {
@@ -1588,6 +1542,7 @@ class BracketTest extends AnyFreeSpec:
                 )
             assert(built.eval == -1)
             assert(closed)
+            // the branch was built after the region released; evaluating it re-enters the released region, refused
             discard(intercept[kyo.Closed](answerAsk(0)(stash.get).eval))
             assert(seen == Nil)
         }

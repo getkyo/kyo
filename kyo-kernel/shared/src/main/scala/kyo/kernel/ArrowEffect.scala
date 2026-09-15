@@ -820,6 +820,37 @@ object ArrowEffect:
         end match
     end handleFirst
 
+    /** As [[handleFirst]], but the handed-out remainder may be resumed more than once: its dumped regions are held rather than closed at
+      * each resumption's end, so a resource shared across the resumptions (a streamed choice's branches) stays live across all of them and
+      * is released once after the scope that resumes them ends. Use the single-shot [[handleFirst]] when the remainder is consumed once.
+      */
+    @nowarn("msg=anonymous")
+    private[kyo] inline def handleFirstRepeated[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](inline effectTag: Tag[E], v: A < (E & S))(
+        inline handle: [C] => (I[C], Arrow[O[C], A, E & S]) => B < (S & S2),
+        inline done: A => B < (S & S2)
+    )(using inline _frame: Frame): B < (S & S2) =
+        def onDone(a: A): B < (S & S2) = done(a)
+        v match
+            case _: Pending[?, ?] =>
+                val h =
+                    new Handler.FirstHandler[I, O, E, A, B, S & S2]:
+                        def tag               = effectTag
+                        override def repeated = true
+                        def run[X](input: I[X], cont: Arrow[O[X], A, E & S & S2]) =
+                            handle[X](input, cont.asInstanceOf[Arrow[O[X], A, E & S]])
+                        def done(state: Unit, a: A) = onDone(a)
+
+                new Pending.HandleArrow[Unit, E, A, B, B, S & S2]:
+                    override def frame = _frame
+                    def value          = v
+                    def handler        = h
+                    def state          = ()
+                    def cont           = Arrow.id
+                end new
+            case _ => onDone(Nested.unnest(v))
+        end match
+    end handleFirstRepeated
+
     // Mask must re-suspend an operation it cannot inspect, so the clause is handed the operation, not its input.
 
     /** Handles an arrow effect by providing a handler that receives the suspended operation itself; the result is the handled

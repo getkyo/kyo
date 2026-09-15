@@ -271,9 +271,9 @@ class SyncTest extends kyo.test.Test[Any]:
                 end for
             }
 
-            // Holding is the handler's to ask for: a clause that resumes twice without declaring it is
-            // refused, and the refusal has to say what happened.
-            "a handler that replays without declaring it is still refused, and the refusal says why" in {
+            // handleCont holds the region it dumps: the release moves to the holder and runs once, after every
+            // shot, so a clause that resumes twice runs both against the live resource with no refusal.
+            "a replaying handler holds the region, releasing once after every shot" in {
                 import kyo.kernel.ArrowEffect
                 for
                     released <- AtomicInt.init(0)
@@ -286,10 +286,10 @@ class SyncTest extends kyo.test.Test[Any]:
                             a => a
                         )
                     }
+                    r <- released.get
                 yield
-                    val message = res.failure.map(_.getMessage).getOrElse("")
-                    assert(message.contains("resumption of a continuation that re-enters it"), message)
-                    assert(message.contains("Acquire inside the branch"), message)
+                    assert(res == Result.succeed(3), s"$res")
+                    assert(r == 1, s"released $r")
                 end for
             }
 
@@ -328,6 +328,23 @@ class SyncTest extends kyo.test.Test[Any]:
                     assert(res == Result.succeed(Chunk(1, 2)), s"$res")
                 end for
             }
+        }
+
+        // A bracket whose use suspends on an async join releases where the use ends, not at the fiber's
+        // end. The fiber boundary answers a join in place, or parks at it carrying the region, rather than
+        // handing a continuation out and moving the release onto the boundary (which fired only at fiber end).
+        "whose use suspends on an async join releases at its own end" in {
+            for
+                released <- AtomicInt.init(0)
+                _        <- Sync.ensure(released.incrementAndGet.unit)(Async.sleep(1.millis).andThen(Sync.defer(())))
+                // the bracket's use has completed; its release must already have run, before these later steps
+                afterUse <- released.get
+                _        <- Async.sleep(1.millis)
+                total    <- released.get
+            yield
+                assert(afterUse == 1, s"released $afterUse right after the bracket's use completed")
+                assert(total == 1, s"released $total in all")
+            end for
         }
     }
 

@@ -28,7 +28,7 @@ class ReportTest extends AnyFreeSpec:
         assert(reported.exists(_ eq Bad))
     }
 
-    "a release failing on the discard drain reaches the handler on its signal" in {
+    "a held release that throws on the discard drain is reported" in {
         val log = ListBuffer[String]()
         val body: Int < Ask =
             Bracket(Effect.defer(1)) { _ =>
@@ -44,7 +44,8 @@ class ReportTest extends AnyFreeSpec:
         try
             assert(dropped.eval == -1)
         finally thread.setUncaughtExceptionHandler(previous)
+        // uniform: the outer release still runs; the inner throw, with no computation left to fail, is reported
         assert(log.toList == List("outer"))
-        assert(reported.exists(_.getSuppressed.exists(_ eq Bad)))
+        assert(reported.exists(_ eq Bad))
     }
 end ReportTest

@@ -280,8 +280,7 @@ class ContextEffectTest extends AnyFreeSpec:
                 derive = (_: Maybe[Int]) => value,
                 fork = (s: Int) => s,
                 join = (parent: Int, _: Int, _: Int) => parent,
-                done = (i: Int) => onExit(i),
-                release = (i: Int, _: Throwable) => onExit(i)
+                release = (i: Int, _: Maybe[Throwable]) => onExit(i)
             )(v)
 
         "runs when the extent ends" in {
@@ -329,8 +328,7 @@ class ContextEffectTest extends AnyFreeSpec:
                 derive = (_: Maybe[Int]) => 1,
                 fork = (s: Int) => s,
                 join = (parent: Int, _: Int, _: Int) => parent,
-                done = (_: Int) => discard(log += "done"),
-                release = (_: Int, _: Throwable) => discard(log += "release")
+                release = (_: Int, failure: Maybe[Throwable]) => discard(log += (if failure.isEmpty then "done" else "release"))
             )(v)
 
         "a region crossed to a foreign loop answered with a pending outcome completes without a release" in {
@@ -421,8 +419,8 @@ class ContextEffectTest extends AnyFreeSpec:
                 derive = (_: Maybe[Int]) => value,
                 fork = (s: Int) => s,
                 join = (parent: Int, _: Int, _: Int) => parent,
-                done = (s: Int) => discard(log += s"done $name $s"),
-                release = (s: Int, _: Throwable) => discard(log += s"release $name $s")
+                release = (s: Int, failure: Maybe[Throwable]) =>
+                    discard(log += (if failure.isEmpty then s"done $name $s" else s"release $name $s"))
             )(v)
 
         "each shot of a crossing drains the debts it re-installs" in {
@@ -434,8 +432,9 @@ class ContextEffectTest extends AnyFreeSpec:
                 [C] => (_, cont) => cont(10).map(a => cont(20).map(b => a + b)),
                 a => a
             )
+            // uniform: the crossed regions are held at the holder and released once, after every shot
             assert(twice.eval == 30)
-            assert(log.count(_ == "done outer 1") == 2)
+            assert(log.count(_ == "done outer 1") == 1)
             assert(log.count(_ == "release outer 1") == 0)
         }
 
@@ -447,25 +446,27 @@ class ContextEffectTest extends AnyFreeSpec:
                 derive = (_: Maybe[Int]) => 7,
                 fork = (p: Int) => p,
                 join = (p: Int, _: Int, _: Int) => p,
-                done = (_: Int) => throw boom,
-                release = (s: Int, ex: Throwable) => discard(log += s"release $s ${ex eq boom}")
+                release = (s: Int, failure: Maybe[Throwable]) =>
+                    failure.fold(throw boom)(ex => discard(log += s"release $s ${ex eq boom}"))
             )(count)
+            // uniform: the single hook throws on the clean end; the throw fails the computation, nothing is logged
             assert(intercept[RuntimeException](r.eval) eq boom)
-            assert(log.toList == List("release 7 true"))
+            assert(log.isEmpty)
         }
 
         def answerAsk[A, S](value: Int)(v: A < (Ask & S)): A < S =
             ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue(value), a => a)
 
-        "a crossing resumed in a nested eval inside the clause is out of contract: its region is released again at the owner's exit" in {
+        "a crossing resumed in a nested eval inside the clause is released once, where the owner ends" in {
             val log             = ListBuffer[String]()
             val body: Int < Ask = hooked(log, "cfg", 1)(ask.map(_ + 1))
             val r: Int < Any = ArrowEffect.handleCont(Tag[Ask], body)(
                 [C] => (_, cont) => Region.discharge(answerAsk(0)(cont(41))).eval + 1,
                 a => a
             )
+            // uniform: the crossed region is held at the owner; it is released once, where the owner ends
             assert(r.eval == 43)
-            assert(log.toList == List("done cfg 1", "release cfg 1"))
+            assert(log.toList == List("done cfg 1"))
         }
 
         "a binding below the answering handler is the resume site's, one above it is the captured one" in {
@@ -506,8 +507,9 @@ class ContextEffectTest extends AnyFreeSpec:
                     log += "handler done"
                     a
             )
+            // uniform: the held region runs against every shot and is released once, where the holder ends
             assert(r.eval == 5)
-            assert(log.toList == List("done cfg 1", "shot 2", "done cfg 1", "shot 3", "handler done"))
+            assert(log.toList == List("shot 2", "shot 3", "handler done", "done cfg 1"))
         }
 
         "a handleFirst remainder re-enters the raw region it was handed, which ends once, with done" in {

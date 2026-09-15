@@ -465,9 +465,9 @@ class KernelBench:
         val read: Int < (Cfg3 & Ask) = loop(seed - 1)
         val idle: Int < Cfg3         = ArrowEffect.handleCont(Tag[Ask], read)([C] => (_, cont) => cont(1), a => a)
         run(
-            ContextEffect.handle(Tag[Cfg3])(1, x => x, x => x, (p, _, _) => p)(
-                ContextEffect.handle(Tag[Cfg2])(2, x => x, x => x, (p, _, _) => p)(
-                    ContextEffect.handle(Tag[Cfg])(3, x => x, x => x, (p, _, _) => p)(idle: Int < (Cfg & Cfg2 & Cfg3))
+            ContextEffect.handle(Tag[Cfg3], 1, x => x, x => x, (p, _, _) => p)(
+                ContextEffect.handle(Tag[Cfg2], 2, x => x, x => x, (p, _, _) => p)(
+                    ContextEffect.handle(Tag[Cfg], 3, x => x, x => x, (p, _, _) => p)(idle: Int < (Cfg & Cfg2 & Cfg3))
                 )
             )
         )
@@ -478,7 +478,7 @@ class KernelBench:
         def loop(i: Int): Int < Any =
             if i > NarrowDepth then i
             else
-                ContextEffect.handle(Tag[Cfg])(1, x => x + 1, x => x, (p, _, _) => p)(ContextEffect.suspend(Tag[Cfg]))
+                ContextEffect.handle(Tag[Cfg], 1, x => x + 1, x => x, (p, _, _) => p)(ContextEffect.suspend(Tag[Cfg]))
                     .map(c => loop(i + c))
         run(loop(seed - 1))
     end contextRegionsPayEntryExit

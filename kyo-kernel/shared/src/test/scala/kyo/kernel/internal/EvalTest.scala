@@ -754,7 +754,7 @@ class EvalTest extends AnyFreeSpec:
                     _.getOrElse(1),
                     fork = (parent: Int) => parent,
                     join = (parent: Int, _: Int, _: Int) => parent,
-                    release = (_: Int, _: Throwable) => discard(log += "inner")
+                    release = (_: Int, _: Maybe[Throwable]) => discard(log += "inner")
                 )(body)
             val outer: Int < Any =
                 ContextEffect.handle(
@@ -762,7 +762,7 @@ class EvalTest extends AnyFreeSpec:
                     _.getOrElse(2),
                     fork = (parent: Int) => parent,
                     join = (parent: Int, _: Int, _: Int) => parent,
-                    release = (_: Int, _: Throwable) => discard(log += "outer")
+                    release = (_: Int, _: Maybe[Throwable]) => discard(log += "outer")
                 )(inner)
             val parked = Eval.partial(outer)
             assert(parked.isInstanceOf[Park[?, ?]])
@@ -783,7 +783,7 @@ class EvalTest extends AnyFreeSpec:
                     _.getOrElse(1),
                     fork = (parent: Int) => parent,
                     join = (parent: Int, _: Int, _: Int) => parent,
-                    release = (_: Int, _: Throwable) => discard(log += "inner")
+                    release = (_: Int, _: Maybe[Throwable]) => discard(log += "inner")
                 )(body)
             val outer: Int < Any =
                 ContextEffect.handle(
@@ -791,7 +791,7 @@ class EvalTest extends AnyFreeSpec:
                     _.getOrElse(2),
                     fork = (parent: Int) => parent,
                     join = (parent: Int, _: Int, _: Int) => parent,
-                    release = (_: Int, _: Throwable) => discard(log += "outer")
+                    release = (_: Int, _: Maybe[Throwable]) => discard(log += "outer")
                 )(inner)
             Eval.release(outer, Boom)
             assert(log.toList == List("inner", "outer"))
@@ -825,7 +825,7 @@ class EvalTest extends AnyFreeSpec:
                     ,
                     fork = (s: Int) => s,
                     join = (p: Int, _: Int, _: Int) => p,
-                    release = (s: Int, _: Throwable) => discard(log += s"release $s")
+                    release = (s: Int, _: Maybe[Throwable]) => discard(log += s"release $s")
                 )(ContextEffect.suspend(Tag[Cfg]))
             Eval.release(region, Boom)
             assert(derives == 1)
@@ -844,7 +844,7 @@ class EvalTest extends AnyFreeSpec:
                     derive = (_: Maybe[Int]) => value,
                     fork = (s: Int) => s,
                     join = (p: Int, _: Int, _: Int) => p,
-                    release = (s: Int, _: Throwable) => discard(log += s"release cfg $s")
+                    release = (s: Int, _: Maybe[Throwable]) => discard(log += s"release cfg $s")
                 )(v)
             val v: Int < Any =
                 Bracket(Effect.defer(1)) { a =>
@@ -886,7 +886,7 @@ class EvalTest extends AnyFreeSpec:
                     _.getOrElse(7),
                     fork = (parent: Int) => parent,
                     join = (parent: Int, _: Int, _: Int) => parent,
-                    release = (state: Int, _: Throwable) => discard(log += state)
+                    release = (state: Int, _: Maybe[Throwable]) => discard(log += state)
                 )(body)
             val parked = Eval.partial(handled)
             assert(parked.isInstanceOf[Park[?, ?]])
@@ -904,7 +904,7 @@ class EvalTest extends AnyFreeSpec:
                     _.getOrElse(7),
                     fork = (parent: Int) => parent,
                     join = (parent: Int, _: Int, _: Int) => parent,
-                    release = (state: Int, _: Throwable) => discard(log += state)
+                    release = (state: Int, _: Maybe[Throwable]) => discard(log += state)
                 )(body)
             val ex = intercept[RuntimeException](handled.eval)
             assert(ex eq Boom)
@@ -926,7 +926,8 @@ class EvalTest extends AnyFreeSpec:
                     _.getOrElse(7),
                     fork = (parent: Int) => parent,
                     join = (parent: Int, _: Int, _: Int) => parent,
-                    release = (state: Int, _: Throwable) => discard(log += state)
+                    // uniform: record only a failure; a binding that recovered is told the clean ending, not a failure
+                    release = (state: Int, failure: Maybe[Throwable]) => if failure.nonEmpty then discard(log += state)
                 )(inner)
             assert(handled.eval == 9)
             assert(log.isEmpty)
@@ -950,7 +951,7 @@ class EvalTest extends AnyFreeSpec:
                     _.getOrElse(1),
                     fork = (parent: Int) => parent,
                     join = (parent: Int, _: Int, _: Int) => parent,
-                    release = (_: Int, _: Throwable) => throw Bad
+                    release = (_: Int, _: Maybe[Throwable]) => throw Bad
                 )(body)
             val handled: Int < Any =
                 ContextEffect.handle(
@@ -958,7 +959,7 @@ class EvalTest extends AnyFreeSpec:
                     _.getOrElse(2),
                     fork = (parent: Int) => parent,
                     join = (parent: Int, _: Int, _: Int) => parent,
-                    release = (_: Int, _: Throwable) => discard(log += "outer")
+                    release = (_: Int, _: Maybe[Throwable]) => discard(log += "outer")
                 )(inner)
             val parked = Eval.partial(handled)
             assert(parked.isInstanceOf[Park[?, ?]])
@@ -984,7 +985,7 @@ class EvalTest extends AnyFreeSpec:
                     _.getOrElse(1),
                     fork = (parent: Int) => parent,
                     join = (parent: Int, _: Int, _: Int) => parent,
-                    release = (_: Int, ex: Throwable) => throw ex
+                    release = (_: Int, failure: Maybe[Throwable]) => failure.foreach(ex => throw ex)
                 )(body)
             val handled: Int < Any =
                 ContextEffect.handle(
@@ -992,7 +993,7 @@ class EvalTest extends AnyFreeSpec:
                     _.getOrElse(2),
                     fork = (parent: Int) => parent,
                     join = (parent: Int, _: Int, _: Int) => parent,
-                    release = (_: Int, _: Throwable) => discard(log += "outer")
+                    release = (_: Int, _: Maybe[Throwable]) => discard(log += "outer")
                 )(inner)
             val parked = Eval.partial(handled)
             assert(parked.isInstanceOf[Park[?, ?]])
@@ -1142,7 +1143,7 @@ class EvalTest extends AnyFreeSpec:
                     _.getOrElse(7),
                     fork = (parent: Int) => parent,
                     join = (parent: Int, _: Int, _: Int) => parent,
-                    release = (_: Int, _: Throwable) => discard(log += "released")
+                    release = (_: Int, _: Maybe[Throwable]) => discard(log += "released")
                 )(ask.map(x => x))
             val dropped: Int < Any = ArrowEffect.handleCont(Tag[Ask], body)([C] => (_, _) => -1, b => b)
             val after: Int < Any = dropped.map { r =>
@@ -1163,7 +1164,7 @@ class EvalTest extends AnyFreeSpec:
                     (_: Maybe[Int]).getOrElse(0),
                     fork = (parent: Int) => parent,
                     join = (parent: Int, _: Int, _: Int) => parent,
-                    release = (_: Int, _: Throwable) => discard(log += name)
+                    release = (_: Int, _: Maybe[Throwable]) => discard(log += name)
                 )(v)
             val body: Int < Ask = scoped(Tag[CfgA], "a")(ask.map(x => x))
             var first           = true
@@ -1189,7 +1190,7 @@ class EvalTest extends AnyFreeSpec:
                     _.getOrElse(7),
                     fork = (parent: Int) => parent,
                     join = (parent: Int, _: Int, _: Int) => parent,
-                    release = (state: Int, _: Throwable) => discard(log += state)
+                    release = (state: Int, _: Maybe[Throwable]) => discard(log += state)
                 )(ask.map(_ => (throw Boom): Int))
             val outer: Int < Any = ArrowEffect.handleCont(Tag[Ask], body)([C] => (_, cont) => cont(1), b => b)
             val ex               = intercept[RuntimeException](outer.eval)
@@ -1207,7 +1208,7 @@ class EvalTest extends AnyFreeSpec:
                     _.getOrElse(1),
                     fork = (parent: Int) => parent,
                     join = (parent: Int, _: Int, _: Int) => parent,
-                    release = (_: Int, _: Throwable) => drops += 1
+                    release = (_: Int, _: Maybe[Throwable]) => drops += 1
                 )(ask.map(x => x))
             val dropped: Int < Any = ArrowEffect.handleCont(Tag[Ask], body)([C] => (_, _) => -1, b => b)
             assert(dropped.eval == -1)
@@ -1220,8 +1221,7 @@ class EvalTest extends AnyFreeSpec:
                     _.getOrElse(2),
                     fork = (parent: Int) => parent,
                     join = (parent: Int, _: Int, _: Int) => parent,
-                    done = (_: Int) => completions += 1,
-                    release = (_: Int, _: Throwable) => releases += 1
+                    release = (_: Int, failure: Maybe[Throwable]) => if failure.isEmpty then completions += 1 else releases += 1
                 )(Effect.defer(5))
             assert(clean.eval == 5)
             assert(completions == 1)

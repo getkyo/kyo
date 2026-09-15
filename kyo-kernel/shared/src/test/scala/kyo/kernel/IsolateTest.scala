@@ -782,7 +782,7 @@ class IsolateTest extends Test:
                 (o: Maybe[Int]) => o.getOrElse(10),
                 fork = (p: Int) => p * 2,
                 join = (p: Int, _: Int, c: Int) => p + c,
-                done = (s: Int) => discard(log += s"done $s")
+                release = (s: Int, failure: Maybe[Throwable]) => if failure.isEmpty then discard(log += s"done $s")
             )(Isolate.internal.Contextual.run(ContextEffect.suspend(Tag[TestEffect1])))
             assert(r.eval == 20)
             assert(log.toList == List("done 30"))
@@ -865,7 +865,7 @@ class IsolateTest extends Test:
                 (o: Maybe[Int]) => o.getOrElse(10),
                 fork = (p: Int) => p * 2,
                 join = (p: Int, _: Int, c: Int) => p + c,
-                done = (s: Int) => discard(log += s"done $s")
+                release = (s: Int, failure: Maybe[Throwable]) => if failure.isEmpty then discard(log += s"done $s")
             )(handled.map(v => read.map(after => (v, after))))
             assert(r.eval == ((2122, 50)))
             assert(log.toList == List("done 50"))
@@ -882,7 +882,7 @@ class IsolateTest extends Test:
                 (o: Maybe[Int]) => o.getOrElse(10),
                 fork = (p: Int) => p * 2,
                 join = (p: Int, _: Int, c: Int) => p + c,
-                done = (s: Int) => discard(log += s"done $s")
+                release = (s: Int, failure: Maybe[Throwable]) => if failure.isEmpty then discard(log += s"done $s")
             )(child.map(v => read.map(after => (v, after))))
             val parked = Eval.partial(prog)
             assert(parked.evalNow.isEmpty)
@@ -903,7 +903,7 @@ class IsolateTest extends Test:
                         log += s"join $label"
                         p + c
                     ,
-                    done = (s: Int) => discard(log += s"done $label $s")
+                    release = (s: Int, failure: Maybe[Throwable]) => if failure.isEmpty then discard(log += s"done $label $s")
                 )(v)
             val child: Int < (TestEffect1 & Ask) = Isolate.internal.Contextual.run(read.map(c => ask.map(a => c + a)))
             val first: Int < Any = region("first")(
