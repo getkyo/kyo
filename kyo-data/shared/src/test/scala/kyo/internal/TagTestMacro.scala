@@ -23,8 +23,8 @@ object TagTestMacro:
                 report.errorAndAbort(s"Tag macro-host $name: expected $expected, obtained $actual")
 
         def compare[A: Type, B: Type](left: Tag[A], right: Tag[B]): Unit =
-            val a = TypeRepr.of[A]
-            val b = TypeRepr.of[B]
+            val a     = TypeRepr.of[A]
+            val b     = TypeRepr.of[B]
             val label = s"${a.show}, ${b.show}"
             check(s"equality ($label)", left =:= right, a =:= b)
             check(s"inequality ($label)", left =!= right, !(a =:= b))
@@ -32,7 +32,7 @@ object TagTestMacro:
             check(s"supertype ($label)", left >:> right, b <:< a)
         end compare
 
-        def list[A: Tag]: Tag[List[A]] = Tag.dynamic[List[A]]
+        def list[A: Tag]: Tag[List[A]]                   = Tag.dynamic[List[A]]
         def nested[A: Tag, B: Tag]: Tag[Map[A, List[B]]] = Tag.dynamic[Map[A, List[B]]]
 
         // These are ordinary API calls executed by the macro host, outside the returned quote.

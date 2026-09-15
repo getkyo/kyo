@@ -20,8 +20,8 @@ class TagTest extends kyo.test.Test[Any]:
         class BB
 
         "the independently derived encodings collide" in {
-            val a = Tag[Aa]
-            val b = Tag[BB]
+            val a        = Tag[Aa]
+            val b        = Tag[BB]
             val encodedA = Tag.internal.encode[Aa](a.tpe.staticDB)
             val encodedB = Tag.internal.encode[BB](b.tpe.staticDB)
             assert(encodedA != encodedB)
@@ -41,7 +41,7 @@ class TagTest extends kyo.test.Test[Any]:
         "a cached successful subtype does not admit a colliding type" in {
             val accepted = Tag[List[Aa]]
             val rejected = Tag[List[BB]]
-            val target = Tag[Seq[Aa]]
+            val target   = Tag[Seq[Aa]]
             assert(TagHash.of(accepted) == TagHash.of(rejected))
             assert(TagHash.of(accepted) != TagHash.of(target))
             for _ <- 0 until 3 do
@@ -52,7 +52,7 @@ class TagTest extends kyo.test.Test[Any]:
         "a cached rejected subtype does not reject a colliding type" in {
             val rejected = Tag[Vector[Aa]]
             val accepted = Tag[Vector[BB]]
-            val target = Tag[Seq[BB]]
+            val target   = Tag[Seq[BB]]
             assert(TagHash.of(accepted) == TagHash.of(rejected))
             assert(TagHash.of(accepted) != TagHash.of(target))
             for _ <- 0 until 3 do
@@ -64,23 +64,32 @@ class TagTest extends kyo.test.Test[Any]:
     "dynamic captured lambda bodies" - {
         trait Higher[F[_]]
         def original[A: Tag]: Tag[Higher[[X] =>> Either[A, X]]] = Tag.dynamic[Higher[[X] =>> Either[A, X]]]
-        def renamed[A: Tag]: Tag[Higher[[Y] =>> Either[A, Y]]] = Tag.dynamic[Higher[[Y] =>> Either[A, Y]]]
+        def renamed[A: Tag]: Tag[Higher[[Y] =>> Either[A, Y]]]  = Tag.dynamic[Higher[[Y] =>> Either[A, Y]]]
 
         "alpha-equivalent bodies agree with the compiler" - {
             test[Higher[[X] =>> Either[Int, X]], Higher[[Y] =>> Either[Int, Y]]](using
-                original[Int], renamed[Int], summon[RegisterFunction], summon[Frame]
+                original[Int],
+                renamed[Int],
+                summon[RegisterFunction],
+                summon[Frame]
             )
         }
 
         "different captured bodies agree with the compiler" - {
             test[Higher[[X] =>> Either[Int, X]], Higher[[X] =>> Either[String, X]]](using
-                original[Int], original[String], summon[RegisterFunction], summon[Frame]
+                original[Int],
+                original[String],
+                summon[RegisterFunction],
+                summon[Frame]
             )
         }
 
         "dynamic and static bodies agree with the compiler" - {
             test[Higher[[X] =>> Either[Int, X]], Higher[[X] =>> Either[Int, X]]](using
-                original[Int], Tag[Higher[[X] =>> Either[Int, X]]], summon[RegisterFunction], summon[Frame]
+                original[Int],
+                Tag[Higher[[X] =>> Either[Int, X]]],
+                summon[RegisterFunction],
+                summon[Frame]
             )
         }
     }
