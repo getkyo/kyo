@@ -5,10 +5,11 @@ import scala.compiletime.testing.typeCheckErrors
 /** Compile-time contract for the public filesystem conformance suite declarations. */
 class FileSystemConformanceDeclarationTest extends kyo.test.Test[Any]:
 
-    "the write tier carries the write and channel suites" in {
+    "the write tier carries the write, channel, and durability suites" in {
         val tier = classOf[FileSystemWriteConformanceTest[Sync]]
         assert(classOf[FileSystemWriteTest[Sync]].isAssignableFrom(tier))
         assert(classOf[FileSystemChannelTest[Sync]].isAssignableFrom(tier))
+        assert(classOf[FileSystemDurabilityTest[Sync]].isAssignableFrom(tier))
     }
 
     // Locking is declared on FileSystem.Read, so a backend that only reads is still held to it.
