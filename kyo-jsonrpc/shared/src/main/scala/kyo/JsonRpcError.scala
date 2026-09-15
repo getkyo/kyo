@@ -291,7 +291,7 @@ case class JsonRpcConfigurationError(setting: String, reason: String)(using Fram
 /** Endpoint lifecycle transition error (JSON-RPC 2.0 code -32603).
   *
   * Raised when an operation is attempted on an endpoint that is in an incompatible lifecycle
-  * stage (e.g., calling after the endpoint has been closed). Mirrors [[kyo.HttpBindException]]
+  * stage (e.g., calling after the endpoint has been closed). Mirrors kyo-http's `kyo.HttpBindException`
   * in shape: a typed stage field replaces the string-prefix match in consumer code.
   *
   * @param stage  the lifecycle stage in which the error occurred
@@ -315,7 +315,7 @@ end JsonRpcLifecycleError
   *
   * Raised when the underlying wire transport fails: the connection is closed unexpectedly,
   * a send callback returns an error, or the receive stream terminates with a non-EOF failure.
-  * Mirrors [[kyo.HttpConnectException]] in shape: a detail string + a causal Throwable.
+  * Mirrors kyo-http's `kyo.HttpConnectException` in shape: a detail string + a causal Throwable.
   *
   * @param detail  brief description of what went wrong (e.g. the closed exception's message)
   * @param cause   the underlying throwable that triggered the transport failure
@@ -332,7 +332,7 @@ case class JsonRpcTransportError(detail: String, cause: Throwable)(using Frame)
   *
   * Raised when a handler body throws an uncaught exception (i.e., a `Result.Panic`). The
   * `method` field records which handler panicked; information that the current flat
-  * `internalError` string loses. Mirrors [[kyo.HttpHandlerException]] in shape.
+  * `internalError` string loses. Mirrors kyo-http's `kyo.HttpHandlerException` in shape.
   *
   * @param method  the registered method name whose handler produced the panic
   * @param cause   the throwable that caused the panic

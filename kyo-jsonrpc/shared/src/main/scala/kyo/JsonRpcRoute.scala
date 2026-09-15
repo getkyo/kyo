@@ -14,7 +14,7 @@ import kyo.Structure
   * handler input and output, and an optional set of user-domain error types.
   *
   * Use the companion factories to construct instances:
-  *  - [[JsonRpcRoute.apply]] for request/response routes.
+  *  - [[JsonRpcRoute.request]] for request/response routes.
   *  - [[JsonRpcRoute.notification]] for fire-and-forget notifications.
   *
   * Chain [[error]] to register typed domain errors that the handler may abort with. Domain errors
@@ -63,7 +63,7 @@ end JsonRpcRoute
 object JsonRpcRoute:
     /** Whether a route handles a request (expects a reply) or a notification (fire-and-forget).
       *
-      * [[Request]] routes return a result the engine sends back to the caller; [[Notification]]
+      * [[Kind.Request]] routes return a result the engine sends back to the caller; [[Kind.Notification]]
       * routes run for their effect only and produce no wire response.
       */
     enum Kind derives CanEqual:

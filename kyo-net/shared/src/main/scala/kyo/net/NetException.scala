@@ -82,12 +82,12 @@ final case class NetConnectionClosedException(operation: NetConnectionClosedExce
 object NetConnectionClosedException:
     /** The in-flight transport operation a close interrupted. A consumer branches on this typed value instead of matching message text.
       *
-      *   - [[Read]]: an inbound read.
-      *   - [[Send]]: an outbound send.
-      *   - [[Handshake]]: a TLS handshake.
-      *   - [[Upgrade]]: a STARTTLS upgrade.
-      *   - [[Start]]: the connection reached a terminal or upgrading state before its pumps could start, so it was never handed out as open.
-      *   - [[Close]]: an in-flight STARTTLS upgrade abandoned by a close of the underlying connection.
+      *   - [[Operation.Read]]: an inbound read.
+      *   - [[Operation.Send]]: an outbound send.
+      *   - [[Operation.Handshake]]: a TLS handshake.
+      *   - [[Operation.Upgrade]]: a STARTTLS upgrade.
+      *   - [[Operation.Start]]: the connection reached a terminal or upgrading state before its pumps could start, so it was never handed out as open.
+      *   - [[Operation.Close]]: an in-flight STARTTLS upgrade abandoned by a close of the underlying connection.
       *
       * `label` is the lowercase name embedded in the rendered exception message, preserving the "transport closed during <label>" shape.
       */

@@ -19,7 +19,7 @@ import kyo.internal.UnsafeLayout
   *   - [[Buffer.confinedUse]] is single-thread only; cross-thread access throws on JVM (via `Arena.ofConfined()`).
   *
   * @tparam A
-  *   the element type -- one of the primitives for which an [[UnsafeLayout]] instance is provided.
+  *   the element type -- one of the primitives for which an [[kyo.internal.UnsafeLayout]] instance is provided.
   */
 final class Buffer[A] private[ffi] (
     private[ffi] val underlying: UnsafeBuffer,
@@ -399,7 +399,7 @@ object Buffer:
 
         /** Wrap a platform-specific raw handle in a **checked** borrowed [[Buffer]].
           *
-          * Like [[wrapBorrowed]] but every `get`/`set` first verifies `owner.isValid`; throws [[BorrowRevoked]] if revoked. Enable via
+          * Like [[wrapBorrowed]] but every `get`/`set` first verifies `owner.isValid`; throws [[kyo.internal.BorrowRevoked]] if revoked. Enable via
           * `-Dkyo.ffi.checkedBorrows=true` or `Ffi.Config.checkedBorrows`.
           */
         def wrapBorrowedChecked[A](raw: AnyRef, size: Int, owner: BorrowOwner)(using l: UnsafeLayout[A], allow: AllowUnsafe): Buffer[A] =

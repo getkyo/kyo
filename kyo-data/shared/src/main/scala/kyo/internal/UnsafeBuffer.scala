@@ -5,7 +5,7 @@ import kyo.AllowUnsafe
 /** Off-heap memory container. Truly unsafe -- no bounds checking, no lifecycle validation.
   *
   * Platform subclasses provide actual implementations:
-  *   - JVM: [[JvmUnsafeBuffer]] backed by `MemorySegment`
+  *   - JVM: `JvmUnsafeBuffer` backed by `MemorySegment`
   *   - Native: `NativeUnsafeBuffer` backed by `Ptr[Byte]`
   *   - JS: `JsUnsafeBuffer` backed by `Uint8Array`/`DataView`
   */

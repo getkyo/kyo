@@ -40,7 +40,7 @@ import kyo.internal.HostConfig
   * @see
   *   [[Rollout]] for the expression DSL grammar and bucketing
   * @see
-  *   [[FlagAdmin]] for HTTP endpoints to update dynamic flags at runtime
+  *   kyo-http's `kyo.FlagAdmin` for HTTP endpoints to update dynamic flags at runtime
   */
 abstract class DynamicFlag[A](default: A, validate: A => Either[Throwable, A] = (a: A) => Right(a))(implicit reader: Flag.Reader[A])
     extends Flag[A](default, validate) {
