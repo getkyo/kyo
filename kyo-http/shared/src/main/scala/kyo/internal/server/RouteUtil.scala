@@ -486,7 +486,7 @@ private[kyo] object RouteUtil:
                     case Present(raw) =>
                         c.codec.decode(raw)
                             .map(decoded => discard(builder.add(c.fieldName, decoded)))
-                            .mapFailure(e => HttpFieldDecodeException(wireName, "path", method, url.toString, e))
+                            .mapFailure(e => HttpPathDecodeException(wireName, method, url.toString, e))
                     case Absent =>
                         Result.fail(HttpMissingFieldException(wireName, "path", method, url.toString))
                 end match

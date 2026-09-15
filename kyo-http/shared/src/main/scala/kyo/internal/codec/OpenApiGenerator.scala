@@ -102,12 +102,15 @@ private[kyo] object OpenApiGenerator:
             case HttpPath.Literal(_) => Seq.empty
             case HttpPath.Capture(fieldName, wireName, codec) =>
                 val name = if wireName.nonEmpty then wireName else fieldName
+                val json = inferCodecJson(codec)
                 Seq(HttpOpenApi.Parameter(
                     name = name,
                     in = "path",
                     required = Some(true),
-                    json = inferCodecJson(codec),
-                    description = None
+                    json = json,
+                    // A path capture has no route-level description the way a query
+                    // param does, so the codec's is the only one available.
+                    description = json.description
                 ))
             case HttpPath.Concat(left, right) =>
                 extractPathParams(left) ++ extractPathParams(right)
@@ -121,8 +124,18 @@ private[kyo] object OpenApiGenerator:
                 ))
     end extractPathParams
 
-    /** Infer OpenAPI json type from HttpCodec by probing with sample values. */
+    /** The codec's own schema when it declares one, otherwise inferred.
+      *
+      * Probing can only recover a JSON *type*, which is all there is to learn
+      * from a `HttpCodec[String]`. A codec that accepts a constrained subset —
+      * built with `HttpCodec.pattern`, say — knows its `pattern` and description,
+      * and that is strictly better than a guess.
+      */
     private def inferCodecJson(codec: HttpCodec[?]): HttpOpenApi.SchemaObject =
+        codec.schema.getOrElse(inferredCodecJson(codec))
+
+    /** Infer OpenAPI json type from HttpCodec by probing with sample values. */
+    private def inferredCodecJson(codec: HttpCodec[?]): HttpOpenApi.SchemaObject =
         def tryProbe(input: String)(pf: PartialFunction[Any, HttpOpenApi.SchemaObject]): Maybe[HttpOpenApi.SchemaObject] =
             codec.decode(input).toMaybe.flatMap(result => if pf.isDefinedAt(result) then Present(pf(result)) else kyo.Absent)
 
@@ -149,7 +162,7 @@ private[kyo] object OpenApiGenerator:
                     `$ref` = None
                 )
         }).getOrElse(HttpOpenApi.SchemaObject.string)
-    end inferCodecJson
+    end inferredCodecJson
 
     private def buildRequestBody(route: HttpRoute[?, ?, ?]): Option[HttpOpenApi.RequestBody] =
         route.request.fields.toSeq.collectFirst {
