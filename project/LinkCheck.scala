@@ -93,8 +93,10 @@ object LinkCheck {
       */
     private def dependencyFailures(state: State, platform: String): Seq[String] = {
         val extracted = Project.extract(state)
+        // The Wasm row links the JS projects, so it has their dependencies.
+        val suffix = if (platform == "Wasm") "JS" else platform
         val refs = extracted.structure.allProjectRefs.filter { ref =>
-            ref.project.endsWith(platform) && ref.project.startsWith("kyo-") && !ref.project.startsWith("kyo-link-check")
+            ref.project.endsWith(suffix) && ref.project.startsWith("kyo-") && !ref.project.startsWith("kyo-link-check")
         }
         val declared = refs.flatMap { ref =>
             extracted.get(ref / libraryDependencies).collect {
@@ -117,14 +119,18 @@ object LinkCheck {
         val extracted = Project.extract(state)
         val ceilings  = readCeilings(extracted.get(LocalRootProject / baseDirectory) / "kyo-link-check" / "ceilings.txt")
         val rows = programs.map { program =>
-            val ref    = LocalProject(s"${program.project}$platform")
-            val outDir = extracted.get(ref / target) / "link-check" / program.name
+            // Wasm links the JS project with the WasmGC linker configuration, as an application linking the one _sjs1 artifact does.
+            val ref    = LocalProject(s"${program.project}JS")
+            val outDir = extracted.get(ref / target) / "link-check" / platform.toLowerCase / program.name
             IO.delete(outDir)
+            val wasmLink =
+                if (platform == "Wasm") Seq(ref / Compile / fullLinkJS / scalaJSLinkerConfig ~= KyoJsRows.wasmLinkerConfig)
+                else Nil
             val linkState = extracted.appendWithoutSession(
                 Seq(
                     ref / Compile / mainClass                                   := Some(program.mainClass),
                     ref / Compile / fullLinkJS / scalaJSLinkerOutputDirectory := outDir
-                ),
+                ) ++ wasmLink,
                 state
             )
             Project.extract(linkState).runTask(ref / Compile / fullLinkJS, linkState)

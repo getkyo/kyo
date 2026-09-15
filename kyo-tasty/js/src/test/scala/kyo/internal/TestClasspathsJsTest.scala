@@ -2,7 +2,7 @@ package kyo.internal
 
 import kyo.*
 
-/** Verifies the JS-side cross-platform fixture helper using the embedded TASTy fixtures. */
+/** Verifies the JS-side cross-platform fixture helper using the embedded TASTy fixtures, on the JS and WasmTest rows. */
 class TestClasspathsJsTest extends kyo.test.Test[Any]:
 
     "js-embedded-fixture-loads: allClassLike non-empty from embedded fixtures" in {
@@ -34,6 +34,12 @@ class TestClasspathsJsTest extends kyo.test.Test[Any]:
         // The fact that this test body executes proves compilation succeeded.
         // The isJS assertion verifies the runtime engine is JS (not JVM or Native).
         assert(kyo.internal.Platform.isJS, "Expected isJS to be true in JS test runner")
+        succeed
+    }
+
+    "wasm-fidelity-suite-compiles: the WasmTest row runs on the WebAssembly backend".onlyWasm in {
+        // The same compiled suite runs on the JS and WasmTest rows; on the latter the linker emitted WebAssembly.
+        assert(kyo.internal.Platform.isWasm, "Expected isWasm to be true in the WasmTest row")
         succeed
     }
 

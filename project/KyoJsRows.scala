@@ -24,6 +24,9 @@ import sbt.Keys.*
   *
   * The link is set in `WasmTest` explicitly rather than inherited: many modules link `Test` as CommonJS, and the WebAssembly backend
   * accepts only ESModule output.
+  *
+  * `testKyo`'s Wasm platform runs `WasmTest/test` on every JS project whose [[autoImport.kyoWasmRow]] is true (the default); a project
+  * built only as JavaScript, such as the website bundle, sets it to false.
   */
 object KyoJsRows extends AutoPlugin {
 
@@ -38,6 +41,9 @@ object KyoJsRows extends AutoPlugin {
 
         val kyoNodeEnv: SettingKey[Map[String, String]] =
             settingKey[Map[String, String]]("Environment variables for this module's test processes, on every row")
+
+        val kyoWasmRow: SettingKey[Boolean] =
+            settingKey[Boolean]("Whether testKyo's Wasm row runs this project's WasmTest configuration")
     }
     import autoImport.*
 
@@ -59,6 +65,7 @@ object KyoJsRows extends AutoPlugin {
         inConfig(WasmTest)(Defaults.testSettings ++ ScalaJSPlugin.testConfigSettings) ++ Seq(
             kyoNodeArgs := Seq("--max_old_space_size=5120"),
             kyoNodeEnv  := Map.empty,
+            kyoWasmRow  := true,
             jsEnv       := nodeEnv(kyoNodeArgs.value, kyoNodeEnv.value),
             // Same compiled classes and classpath as Test: the row differs in its link, never in what it compiles.
             WasmTest / compile             := (Test / compile).value,

@@ -26,6 +26,9 @@ import scala.sys.process.*
   *   - `testKyo origin/feature JVM` diff vs a specific ref
   *   - `testKyo --dry-run JVM` show what would run without executing
   *
+  * The Wasm platform has no projects of its own: it selects the JS projects whose `kyoWasmRow` is set (see KyoJsRows) and runs
+  * their `WasmTest` configuration, over the same compiled classes as the JS row.
+  *
   * A run is a sequence of passes: the primary Scala version, then one per Scala 2.x cross-build
   * version. All passes go out as ONE `;`-chained command string (per pass: version switch, module
   * tasks, completion marker). sbt queues a submitted command string rather than running it in
@@ -38,7 +41,7 @@ object TestKyo {
 
     // Root aggregate projects: testing one runs every leaf via aggregation, so the diff
     // and full-run paths both exclude them and treat any change scoped to one as "run all".
-    private val aggregateProjects = Set("kyoJVM", "kyoJS", "kyoNative", "kyoWasm")
+    private val aggregateProjects = Set("kyoJVM", "kyoJS", "kyoNative")
 
     private val phases = Seq("compile-main", "compile-test", "link", "test")
 
@@ -62,11 +65,15 @@ object TestKyo {
       * driver from holding a full compile heap while test forks run, which is what over-commits the
       * memory-constrained CI runners.
       */
-    private def taskFor(phase: String, name: String, quick: Boolean): String = phase match {
-        case "compile-main" => s"$name/Compile/compile"
-        case "compile-test" => s"$name/Test/compile"
-        case "link"         => s"$name/Test/nativeLink"
-        case _              => if (quick) s"$name/testQuick" else s"$name/test"
+    private def taskFor(phase: String, name: String, quick: Boolean, platform: Option[String]): String = {
+        // The Wasm row compiles exactly what the JS row compiles; only its test run links WebAssembly.
+        val testConfig = if (platform.contains("Wasm")) "WasmTest/" else ""
+        phase match {
+            case "compile-main" => s"$name/Compile/compile"
+            case "compile-test" => s"$name/Test/compile"
+            case "link"         => s"$name/Test/nativeLink"
+            case _              => if (quick) s"$name/${testConfig}testQuick" else s"$name/${testConfig}test"
+        }
     }
 
     private def phaseLabel(phase: String): String = phase match {
@@ -234,9 +241,11 @@ object TestKyo {
         def crossVersions(name: String): Seq[String] =
             allRefs.find(_.project == name).flatMap(ref => (ref / crossScalaVersions).get(structure.data)).getOrElse(Nil)
 
+        val wasmRow = wasmRowProjects(extracted)
+
         def platformMatch(name: String): Boolean =
             !aggregateProjects.contains(name) && (a.platform match {
-                case Some(p) => matchesPlatform(name, p)
+                case Some(p) => matchesPlatform(name, p, wasmRow)
                 case None    => true
             })
 
@@ -312,8 +321,9 @@ object TestKyo {
             }
 
         val directlyChanged = (changedFiles.flatMap(fileToProjects(_, allNames)) ++ buildSbtProjects).toSet
+        val wasmRow         = wasmRowProjects(extracted)
         val filtered = a.platform match {
-            case Some(p) => directlyChanged.filter(matchesPlatform(_, p))
+            case Some(p) => directlyChanged.filter(matchesPlatform(_, p, wasmRow))
             case None    => directlyChanged
         }
 
@@ -345,7 +355,7 @@ object TestKyo {
                 log("completed")
             } else {
                 val switch = if (version == current) Nil else Seq(s"++$version")
-                val parts  = (switch ++ modules.map(taskFor(a.phase, _, a.isQuick))) :+ doneCommandName
+                val parts  = (switch ++ modules.map(taskFor(a.phase, _, a.isQuick, a.platform))) :+ doneCommandName
                 current = version
                 log(s"Scala $version, ${phaseLabel(a.phase)} ${modules.size} modules: ${modules.mkString(", ")}")
                 log(s"pass: ${parts.mkString("; ")}")
@@ -370,25 +380,32 @@ object TestKyo {
 
     // --- Helpers ---
 
-    /** Check if a project name matches the given platform. JS, Native, and Wasm projects are matched by their
-      * explicit suffix; JVM is the residual: cross-project JVM variants carry a `JVM` suffix, and the
-      * suffix-less plain projects (kyo-compat-plugin, kyo-doctest-plugin, and similar JVM-only definitions)
-      * carry no platform suffix and are JVM-only.
+    /** Check if a project name matches the given platform. JS and Native projects are matched by their
+      * explicit suffix; the Wasm row is the JS projects in `wasmRow`; JVM is the residual: cross-project JVM
+      * variants carry a `JVM` suffix, and the suffix-less plain projects (kyo-compat-plugin, kyo-doctest-plugin,
+      * and similar JVM-only definitions) carry no platform suffix and are JVM-only.
       */
-    private def matchesPlatform(name: String, platform: String): Boolean =
+    private def matchesPlatform(name: String, platform: String, wasmRow: Set[String]): Boolean =
         platform match {
-            case "JVM"    => !name.endsWith("JS") && !name.endsWith("Native") && !name.endsWith("Wasm")
+            case "JVM"    => !name.endsWith("JS") && !name.endsWith("Native")
             case "JS"     => name.endsWith("JS")
             case "Native" => name.endsWith("Native")
-            case "Wasm"   => name.endsWith("Wasm")
+            case "Wasm"   => wasmRow.contains(name)
             case _        => false
         }
+
+    /** The JS projects the Wasm row runs: those with KyoJsRows' `kyoWasmRow` set. */
+    private def wasmRowProjects(extracted: Extracted): Set[String] =
+        extracted.structure.allProjectRefs.filter { ref =>
+            ref.project.endsWith("JS") &&
+            (ref / KyoJsRows.autoImport.kyoWasmRow).get(extracted.structure.data).contains(true)
+        }.map(_.project).toSet
 
     /** Strip the platform suffix to the cross-project base name, so `--exclude` names a module once
       * (`kyo-schema-tests`) and matches every platform variant. JVM-only projects (kyo-compat-plugin) return unchanged.
       */
     private def baseName(name: String): String =
-        platformNames.find(p => name.endsWith(p)).map(p => name.dropRight(p.length)).getOrElse(name)
+        Seq("JVM", "JS", "Native").find(p => name.endsWith(p)).map(p => name.dropRight(p.length)).getOrElse(name)
 
     /** Map a changed file path to affected sbt project names.
       *
@@ -402,10 +419,11 @@ object TestKyo {
                 Set(s"$module-plugin")
             case module :: sub :: _ =>
                 // Map the platform sub-directory to affected platforms. Handles single
-                // platform dirs (jvm/js/native/wasm), the partially-shared dirs named by
-                // joining identifiers (e.g. js-wasm, jvm-native), shared (all platforms),
-                // and any other layout (all, then filtered by which projects exist).
-                val platformDirs = Map("jvm" -> "JVM", "js" -> "JS", "native" -> "Native", "wasm" -> "Wasm")
+                // platform dirs (jvm/js/native), the partially-shared dirs named by
+                // joining identifiers (e.g. js-native, jvm-native), shared (all platforms),
+                // and any other layout (all, then filtered by which projects exist). A JS
+                // project is also the Wasm row's, so a js change selects it for both.
+                val platformDirs = Map("jvm" -> "JVM", "js" -> "JS", "native" -> "Native")
                 val allPlatforms = platformDirs.values.toSeq
                 val affectedPlatforms = sub match {
                     case "shared"                                        => allPlatforms
@@ -601,7 +619,7 @@ object TestKyo {
         val newNames = projectNames(buildLines) -- projectNames(baseLines)
 
         def resolve(name: String): Set[String] = {
-            val cross = Seq("JVM", "JS", "Native", "Wasm").map(name + _).filter(allNames.contains)
+            val cross = Seq("JVM", "JS", "Native").map(name + _).filter(allNames.contains)
             if (cross.nonEmpty) cross.toSet
             else if (allNames.contains(name)) Set(name)
             else Set.empty
@@ -618,8 +636,8 @@ object TestKyo {
             None
         }
 
-        val regLineRe = """^\s*`?([A-Za-z0-9_.-]+)`?\.(jvm|js|native|wasm)\s*,?\s*$""".r
-        val accSuffix = Map("jvm" -> "JVM", "js" -> "JS", "native" -> "Native", "wasm" -> "Wasm")
+        val regLineRe = """^\s*`?([A-Za-z0-9_.-]+)`?\.(jvm|js|native)\s*,?\s*$""".r
+        val accSuffix = Map("jvm" -> "JVM", "js" -> "JS", "native" -> "Native")
 
         val names = scala.collection.mutable.Set.empty[String]
         val it    = uncovered.iterator

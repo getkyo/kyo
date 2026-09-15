@@ -1,4 +1,3 @@
-import WasmCrossProject.*
 import WithKyoTest._
 import com.github.sbt.git.SbtGit.GitKeys.useConsoleForROGit
 import kyo.build.ScalacOption
@@ -298,7 +297,8 @@ Global / onLoad := {
             case "JVM"    => kyoJVM
             case "JS"     => kyoJS
             case "NATIVE" => kyoNative
-            case "WASM"   => kyoWasm
+            // The Wasm row is the JS projects' WasmTest configuration.
+            case "WASM"   => kyoJS
             case platform => throw new IllegalArgumentException("Invalid platform: " + platform)
         }
 
@@ -449,10 +449,13 @@ lazy val kyoJVM: Project = project
 
 lazy val kyoJS = project
     .in(file("js"))
+    // Registering WasmTest here lets `kyoJS/WasmTest/test` parse and fan out to every member that has the configuration.
+    .configs(WasmTest)
     .settings(
         name := "kyoJS",
         `kyo-settings`,
-        publish / skip := true
+        publish / skip := true,
+        inConfig(WasmTest)(Defaults.testSettings)
     )
     .disablePlugins(MimaPlugin, KyoDoctestPlugin)
     .aggregate(
@@ -587,76 +590,8 @@ lazy val kyoNative = project
         `kyo-test-snapshot`.native
     )
 
-// WebAssembly aggregator (mirrors kyoJS).
-lazy val kyoWasm = project
-    .in(file("wasm"))
-    .settings(
-        name := "kyoWasm",
-        `kyo-settings`,
-        publish / skip := true
-    )
-    .disablePlugins(MimaPlugin, KyoDoctestPlugin)
-    .aggregate(
-        `kyo-config`.wasm,
-        `kyo-stats-registry`.wasm,
-        `kyo-data`.wasm,
-        `kyo-kernel`.wasm,
-        `kyo-prelude`.wasm,
-        `kyo-parse`.wasm,
-        `kyo-schema`.wasm,
-        `kyo-schema-json`.wasm,
-        `kyo-schema-protobuf`.wasm,
-        `kyo-schema-msgpack`.wasm,
-        `kyo-schema-bson`.wasm,
-        `kyo-schema-ion`.wasm,
-        `kyo-schema-yaml`.wasm,
-        `kyo-schema-tests`.wasm,
-        `kyo-sql`.wasm,
-        `kyo-sql-postgres`.wasm,
-        `kyo-sql-mysql`.wasm,
-        `kyo-sql-tests`.wasm,
-        `kyo-system`.wasm,
-        `kyo-scheduler`.wasm,
-        `kyo-core`.wasm,
-        `kyo-ffi`.wasm,
-        `kyo-direct`.wasm,
-        `kyo-stm`.wasm,
-        `kyo-combinators`.wasm,
-        `kyo-actor`.wasm,
-        `kyo-reactive-streams`.wasm,
-        `kyo-zio`.wasm,
-        `kyo-zio-test`.wasm,
-        `kyo-case-app`.wasm,
-        `kyo-compat-future`.wasm,
-        `kyo-compat-kyo`.wasm,
-        `kyo-compat-zio`.wasm,
-        `kyo-http`.wasm,
-        `kyo-net`.wasm,
-        `kyo-stats-otlp`.wasm,
-        `kyo-stats-machine`.wasm,
-        `kyo-aeron`.wasm,
-        `kyo-flow`.wasm,
-        `kyo-ai`.wasm,
-        `kyo-jsonrpc`.wasm,
-        `kyo-jsonrpc-http`.wasm,
-        `kyo-mcp`.wasm,
-        `kyo-lsp`.wasm,
-        `kyo-pod`.wasm,
-        `kyo-browser`.wasm,
-        `kyo-slack`.wasm,
-        `kyo-ui`.wasm,
-        `kyo-markdown`.wasm,
-        `kyo-i18n`.wasm,
-        `kyo-test-api`.wasm,
-        `kyo-test-runner`.wasm,
-        `kyo-test-prop`.wasm,
-        `kyo-test-snapshot`.wasm,
-        `kyo-tasty`.wasm,
-        `kyo-tasty-fixtures-internal`.wasm
-    )
-
 lazy val `kyo-scheduler` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-stats-registry`)
         .in(file("kyo-scheduler"))
@@ -675,12 +610,6 @@ lazy val `kyo-scheduler` =
         )
         .jsSettings(
             `js-settings`,
-            libraryDependencies += "org.scala-js" %%% "scala-js-macrotask-executor" % "1.1.1"
-        )
-        .wasmSettings(
-            `wasm-settings`,
-            // WASM uses the same single-threaded, event-loop scheduler as JS, which drives
-            // execution through the macrotask executor.
             libraryDependencies += "org.scala-js" %%% "scala-js-macrotask-executor" % "1.1.1"
         )
 
@@ -754,7 +683,7 @@ lazy val `kyo-scheduler-finagle` =
         .dependsOn(`kyo-scheduler`)
 
 lazy val `kyo-data` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-stats-registry`)
         .in(file("kyo-data"))
@@ -766,10 +695,9 @@ lazy val `kyo-data` =
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`)
-        .wasmSettings(`wasm-settings`)
 
 lazy val `kyo-kernel` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-data`)
         .withKyoTest
@@ -785,10 +713,9 @@ lazy val `kyo-kernel` =
         ))
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`)
-        .wasmSettings(`wasm-settings`)
 
 lazy val `kyo-prelude` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-kernel`)
         .withKyoTest
@@ -801,10 +728,9 @@ lazy val `kyo-prelude` =
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`)
-        .wasmSettings(`wasm-settings`)
 
 lazy val `kyo-parse` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-prelude`)
         .withKyoTest
@@ -813,10 +739,9 @@ lazy val `kyo-parse` =
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`)
-        .wasmSettings(`wasm-settings`)
 
 lazy val `kyo-schema` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-data` % "test->test;compile->compile")
         .dependsOn(`kyo-core` % "test->compile")
@@ -830,10 +755,9 @@ lazy val `kyo-schema` =
         .jvmConfigure(_.settings(doctestSources := Seq.empty))
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`, Test / scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)))
-        .wasmSettings(`wasm-settings`)
 
 lazy val `kyo-system` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-system"))
         .dependsOn(`kyo-core`)
@@ -842,10 +766,9 @@ lazy val `kyo-system` =
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`, scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)))
-        .wasmSettings(`wasm-settings`)
 
 lazy val `kyo-schema-json` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-schema` % "test->test;compile->compile")
         .dependsOn(`kyo-system`)
@@ -858,13 +781,12 @@ lazy val `kyo-schema-json` =
         )
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`, Test / scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)))
-        .wasmSettings(`wasm-settings`)
 
 // Unpublished home for suites that exercise multiple serialization formats at once
 // (sbt cannot express mutual test-scope dependencies between sibling format modules).
 // Also validates kyo-schema/README.md doctest blocks, which span every format.
 lazy val `kyo-schema-tests` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-schema` % "test->test;compile->compile")
         .dependsOn(`kyo-schema-json`)
@@ -889,10 +811,9 @@ lazy val `kyo-schema-tests` =
         ))
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`, Test / scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)))
-        .wasmSettings(`wasm-settings`)
 
 lazy val `kyo-schema-protobuf` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-schema` % "test->test;compile->compile")
         .dependsOn(`kyo-core` % "test->compile")
@@ -902,10 +823,9 @@ lazy val `kyo-schema-protobuf` =
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`, Test / scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)))
-        .wasmSettings(`wasm-settings`)
 
 lazy val `kyo-schema-msgpack` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-schema` % "test->test;compile->compile")
         .dependsOn(`kyo-core` % "test->compile")
@@ -915,10 +835,9 @@ lazy val `kyo-schema-msgpack` =
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`, Test / scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)))
-        .wasmSettings(`wasm-settings`)
 
 lazy val `kyo-schema-bson` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-schema` % "test->test;compile->compile")
         .dependsOn(`kyo-core` % "test->compile")
@@ -928,10 +847,9 @@ lazy val `kyo-schema-bson` =
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`, Test / scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)))
-        .wasmSettings(`wasm-settings`)
 
 lazy val `kyo-schema-ion` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-schema` % "test->test;compile->compile")
         .dependsOn(`kyo-core` % "test->compile")
@@ -941,10 +859,9 @@ lazy val `kyo-schema-ion` =
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`, Test / scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)))
-        .wasmSettings(`wasm-settings`)
 
 lazy val `kyo-schema-yaml` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-schema` % "test->test;compile->compile")
         .dependsOn(`kyo-core` % "test->compile")
@@ -954,13 +871,12 @@ lazy val `kyo-schema-yaml` =
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`, Test / scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)))
-        .wasmSettings(`wasm-settings`)
 
 lazy val `kyo-sql` =
     // Backend-agnostic core: the Postgres and MySQL wire drivers below depend on this module and are never
     // depended on by it, so nothing here may name a type either declares. Compiling this module with no backend
     // on the classpath is the gate for that (a same-package name is invisible to a grep).
-    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-core`)
         // kyo-schema-json (not kyo-schema): SqlSchema is a self-contained codec typeclass; kyo-schema enters
@@ -982,7 +898,6 @@ lazy val `kyo-sql` =
         // openssl-native-settings: kyo-net's Native C shims reference TLS symbols (TLS_client_method,
         // X509_free, ...), so a Native binary that reaches them must link libssl/libcrypto or nativeLink fails.
         .nativeSettings(`native-settings`, `openssl-native-settings`, `tzdb-test-data`)
-        .wasmSettings(`wasm-settings`, `tzdb-test-data`)
 
 // The two backend modules below are deliberately symmetric (same platforms, edges, settings); a difference is
 // a bug unless it names a wire feature only one engine has. Both take `test->test` on `kyo-sql` (not just
@@ -990,7 +905,7 @@ lazy val `kyo-sql` =
 // mocks) rather than duplicate them. Other edges (`kyo-core`, `kyo-net`, `kyo-schema-json`) arrive transitively;
 // `kyo-pod` is redeclared because `kyo-sql` takes it test-scope only and that does not propagate.
 lazy val `kyo-sql-postgres` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-sql` % "test->test;compile->compile")
         .dependsOn(`kyo-pod` % "test->compile")
@@ -1007,10 +922,9 @@ lazy val `kyo-sql-postgres` =
         // openssl-native-settings: this module's auth/TLS sources reach kyo-net's Native C shims, so a test
         // binary that touches them must link libssl/libcrypto or nativeLink fails.
         .nativeSettings(`native-settings`, `openssl-native-settings`, `tzdb-test-data`)
-        .wasmSettings(`wasm-settings`, `tzdb-test-data`)
 
 lazy val `kyo-sql-mysql` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-sql` % "test->test;compile->compile")
         .dependsOn(`kyo-pod` % "test->compile")
@@ -1024,7 +938,6 @@ lazy val `kyo-sql-mysql` =
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
         )
         .nativeSettings(`native-settings`, `openssl-native-settings`, `tzdb-test-data`)
-        .wasmSettings(`wasm-settings`, `tzdb-test-data`)
 
 // Unpublished; it holds the suites whose SUBJECT spans both engines and so have no single-module home: the
 // cross-backend suites that name both clients/factories to prove they behave the same through one abstract
@@ -1033,7 +946,7 @@ lazy val `kyo-sql-mysql` =
 // module (the other's suites could not see it). `test->test` on all three lets the suites reuse core's `Test`
 // base and mocks plus each engine's fixtures; `publish / skip` keeps the shipped artifact count at three.
 lazy val `kyo-sql-tests` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-sql` % "test->test;compile->compile")
         .dependsOn(`kyo-sql-postgres` % "test->test;compile->compile")
@@ -1059,10 +972,9 @@ lazy val `kyo-sql-tests` =
                 "kyo.internal.mysql.MysqlBackendFactory"
             ))))
         )
-        .wasmSettings(`wasm-settings`)
 
 lazy val `kyo-core` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-scheduler`)
         .dependsOn(`kyo-prelude`)
@@ -1077,11 +989,6 @@ lazy val `kyo-core` =
             `js-settings`,
             libraryDependencies += ("org.scala-js" %%% "scalajs-java-logging" % "1.0.0").cross(CrossVersion.for3Use2_13),
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
-        )
-        .wasmSettings(
-            `wasm-settings`,
-            // Same java.util.logging shim as JS.
-            libraryDependencies += ("org.scala-js" %%% "scalajs-java-logging" % "1.0.0").cross(CrossVersion.for3Use2_13)
         )
 
 lazy val `kyo-offheap` =
@@ -1101,7 +1008,7 @@ lazy val `kyo-offheap` =
         )
 
 lazy val `kyo-ffi` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-ffi"))
         .dependsOn(`kyo-core`)
@@ -1134,7 +1041,6 @@ lazy val `kyo-ffi` =
             // behaves identically to the wasm axis.
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.ESModule) }
         )
-        .wasmSettings(`wasm-settings`)
 
 // Declared at top level so the key resolves in the crossProject's native sub-project scope.
 lazy val buildKyoItBundled =
@@ -1214,7 +1120,9 @@ lazy val `kyo-ffi-it` =
                 "KYO_FFI_KYO_IT_BUNDLED_PATH" -> (target.value / "ffi" / ffiArtifactName("kyo_it_bundled", ffiHostOsArch)).getAbsolutePath
             ),
             // koffi bootstrap (idempotent npm install, hooked on Test / compile) via the kyo-ffi plugin.
-            ffiKoffiJsBootstrap("kyo-ffi-it-js-test")
+            ffiKoffiJsBootstrap("kyo-ffi-it-js-test"),
+            // A JVM-and-JS fixture for kyo-ffi's own tests; it has no Wasm row.
+            kyoWasmRow := false
         )
 
 lazy val `kyo-ffi-codegen` =
@@ -1343,7 +1251,7 @@ lazy val `kyo-ffi-bench` =
         )
 
 lazy val `kyo-direct` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-direct"))
         .dependsOn(`kyo-core`)
@@ -1362,10 +1270,9 @@ lazy val `kyo-direct` =
         ))
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`)
-        .wasmSettings(`wasm-settings`)
 
 lazy val `kyo-stm` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-stm"))
         .dependsOn(`kyo-core`)
@@ -1374,10 +1281,9 @@ lazy val `kyo-stm` =
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`)
-        .wasmSettings(`wasm-settings`)
 
 lazy val `kyo-actor` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-actor"))
         .dependsOn(`kyo-core`)
@@ -1387,10 +1293,9 @@ lazy val `kyo-actor` =
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`)
-        .wasmSettings(`wasm-settings`)
 
 lazy val `kyo-tasty` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-tasty"))
         .dependsOn(`kyo-core`, `kyo-schema`, `kyo-system`)
@@ -1428,11 +1333,10 @@ lazy val `kyo-tasty` =
             `js-settings`,
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
         )
-        .wasmSettings(`wasm-settings`)
         .dependsOn(`kyo-tasty-fixtures-internal` % Test)
 
 lazy val `kyo-tasty-fixtures-internal` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-tasty/fixtures"))
         .withKyoTest
@@ -1443,7 +1347,6 @@ lazy val `kyo-tasty-fixtures-internal` =
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`)
-        .wasmSettings(`wasm-settings`)
 
 lazy val `kyo-logging-jpl` =
     crossProject(JVMPlatform)
@@ -1468,7 +1371,7 @@ lazy val `kyo-logging-slf4j` =
         .jvmSettings(mimaCheck(false))
 
 lazy val `kyo-stats-registry` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-config`)
         .in(file("kyo-stats-registry"))
@@ -1482,10 +1385,9 @@ lazy val `kyo-stats-registry` =
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`)
-        .wasmSettings(`wasm-settings`)
 
 lazy val `kyo-config` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-config"))
         .settings(
@@ -1505,22 +1407,9 @@ lazy val `kyo-config` =
             // start rather than written by a test.
             kyoNodeEnv := Map("KYO_ROLLOUT_PATH" -> "prod/us-east-1")
         )
-        .wasmSettings(
-            `wasm-settings`,
-            // Rollout reads KYO_ROLLOUT_PATH once, when its object initializes (see the .jsSettings note
-            // above); RolloutEnvTest runs on wasm too (the js-wasm shared test root), so the same variable
-            // must be in the wasm test process environment from the start. The wasm backend forces ESModule
-            // and needs --experimental-wasm-exnref to load the WasmGC module, so this Test / jsEnv override
-            // (which fully replaces wasm-settings' jsEnv) re-adds that flag alongside the env var.
-            Test / jsEnv := new NodeJSEnv(
-                NodeJSEnv.Config()
-                    .withArgs(List("--max_old_space_size=5120", "--experimental-wasm-exnref"))
-                    .withEnv(Map("KYO_ROLLOUT_PATH" -> "prod/us-east-1"))
-            )
-        )
 
 lazy val `kyo-stats-machine` =
-    crossProject(JVMPlatform, JSPlatform, NativePlatform, WasmPlatform)
+    crossProject(JVMPlatform, JSPlatform, NativePlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-stats-machine"))
         .enablePlugins(KyoFfiPlugin)
@@ -1585,55 +1474,9 @@ lazy val `kyo-stats-machine` =
             // sbt plugin with no sbt-scalajs dependency, so it cannot carry a scalaJSLinkerConfig setting.
             ffiKoffiJsBootstrap("kyo-stats-machine-js-test")
         )
-        .wasmSettings(
-            `wasm-settings`,
-            // Disable the auto-started sampler for the module's own wasm test runs (see the JVM note); the
-            // opt-out is read via System.Unsafe.env, which resolves process.env on Node, and point the
-            // runtime at the plugin-compiled machine_macos shim (see the .jsSettings note). The wasm backend
-            // forces ESModule, so the CommonJSModule linker line from .jsSettings is intentionally not
-            // repeated here; the Test / jsEnv override fully replaces wasm-settings' jsEnv, so it re-adds
-            // --experimental-wasm-exnref (the flag Node needs to load the WasmGC module).
-            Test / jsEnv := {
-                val ffiOut = target.value / "ffi"
-                val osName = sys.props.getOrElse("os.name", "").toLowerCase
-                val osTag =
-                    if (osName.contains("mac")) "darwin"
-                    else if (osName.contains("win")) "windows"
-                    else if (osName.contains("linux"))
-                        if (
-                            new java.io.File("/lib/ld-musl-x86_64.so.1").exists()
-                            || new java.io.File("/lib/ld-musl-aarch64.so.1").exists()
-                        ) "linux-musl"
-                        else "linux"
-                    else osName
-                val ext    = if (osTag == "darwin") "dylib" else if (osTag == "windows") "dll" else "so"
-                val prefix = if (osTag == "windows") "" else "lib"
-                val arch = sys.props.getOrElse("os.arch", "") match {
-                    case "x86_64" | "amd64"  => "x86_64"
-                    case "aarch64" | "arm64" => "aarch64"
-                    case other               => other
-                }
-                val shim = ffiOut / s"${prefix}machine_macos-$osTag-$arch.$ext"
-                new NodeJSEnv(
-                    NodeJSEnv.Config()
-                        .withArgs(List(
-                            "--max_old_space_size=5120",
-                            "--experimental-wasm-exnref"
-                        ))
-                        .withEnv(Map(
-                            "KYO_MACHINE_DISABLED"       -> "true",
-                            "KYO_FFI_MACHINE_MACOS_PATH" -> shim.getAbsolutePath,
-                            // Wasm (ESModule) has no `require` global; KoffiFacade resolves koffi via
-                            // node:module.createRequire, which searches NODE_PATH for the bootstrapped package.
-                            "NODE_PATH" -> (target.value / "node_modules").getAbsolutePath
-                        ))
-                )
-            },
-            ffiKoffiJsBootstrap("kyo-stats-machine-wasm-test")
-        )
 
 lazy val `kyo-stats-otlp` =
-    crossProject(JVMPlatform, JSPlatform, NativePlatform, WasmPlatform)
+    crossProject(JVMPlatform, JSPlatform, NativePlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-stats-otlp"))
         .dependsOn(`kyo-http`)
@@ -1647,10 +1490,9 @@ lazy val `kyo-stats-otlp` =
             `js-settings`,
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
         )
-        .wasmSettings(`wasm-settings`)
 
 lazy val `kyo-reactive-streams` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-reactive-streams"))
         .dependsOn(`kyo-core`)
@@ -1668,7 +1510,6 @@ lazy val `kyo-reactive-streams` =
         )
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`)
-        .wasmSettings(`wasm-settings`)
 
 // npm is `npm.cmd` on Windows, where CreateProcess resolves only .exe from a bare name;
 // the koffi bootstraps below spawn it directly (not via a shell).
@@ -1843,7 +1684,7 @@ val kyoNetClassifierArtifacts = taskKey[Map[Artifact, File]](
 )
 
 lazy val `kyo-net` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .crossType(CrossType.Full)
         .enablePlugins(KyoFfiPlugin)
         .dependsOn(`kyo-core`, `kyo-config`, `kyo-system`)
@@ -2065,21 +1906,9 @@ lazy val `kyo-net` =
             kyoNodeEnv := kyoNetFfiEnvMap(target.value),
             Test / compile := (Test / compile).dependsOn(kyoNetKoffiInstall).value
         )
-        // Wasm runs the same koffi posix transport on Node as JS (it `import`s koffi at module load), so it needs the identical koffi bootstrap
-        // and native-path env; only the NodeJSEnv args differ (the WASM backend needs `--experimental-wasm-exnref`, Node 24+, matching
-        // `wasm-settings`).
-        .wasmSettings(
-            `wasm-settings`,
-            Test / jsEnv := new NodeJSEnv(
-                NodeJSEnv.Config()
-                    .withArgs(List("--max_old_space_size=5120", "--experimental-wasm-exnref"))
-                    .withEnv(kyoNetFfiEnvMap(target.value))
-            ),
-            Test / compile := (Test / compile).dependsOn(kyoNetKoffiInstall).value
-        )
 
 lazy val `kyo-aeron` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .crossType(CrossType.Full)
         .enablePlugins(KyoFfiPlugin)
         .in(file("kyo-aeron"))
@@ -2210,68 +2039,6 @@ lazy val `kyo-aeron` =
                 }
             }).value
         )
-        .wasmSettings(
-            `wasm-settings`,
-            // Wasm runs the same koffi-on-Node backend as JS, so the wiring mirrors .jsSettings with
-            // two differences: the Wasm backend forces ESModule, so the CommonJSModule linker line is
-            // not repeated; and this jsEnv fully replaces wasm-settings', so it re-adds
-            // --experimental-wasm-exnref, which Node needs to load the WasmGC module.
-            Test / jsEnv := {
-                val targetDir = target.value
-                val ffiOut    = targetDir / "ffi"
-                val os        = sys.props.getOrElse("os.name", "").toLowerCase
-                val ext =
-                    if (os.contains("mac")) "dylib"
-                    else if (os.contains("win")) "dll"
-                    else "so"
-                val arch =
-                    sys.props.getOrElse("os.arch", "") match {
-                        case "x86_64" | "amd64"  => "x86_64"
-                        case "aarch64" | "arm64" => "aarch64"
-                        case other               => other
-                    }
-                val osDetect =
-                    if (os.contains("mac")) "darwin"
-                    else if (os.contains("win")) "windows"
-                    else if (os.contains("linux")) "linux"
-                    else os
-                // Windows has no `lib` prefix on the shared library, matching the plugin's CCompiler output.
-                val prefix = if (os.contains("win")) "" else "lib"
-                val lib    = ffiOut / s"${prefix}kyo_aeron-$osDetect-$arch.$ext"
-                new NodeJSEnv(
-                    NodeJSEnv.Config()
-                        .withArgs(List("--max_old_space_size=5120", "--experimental-wasm-exnref"))
-                        .withEnv(Map(
-                            "KYO_FFI_KYO_AERON_PATH" -> lib.getAbsolutePath,
-                            // Wasm (ESModule) has no `require` global; KoffiFacade resolves koffi via
-                            // node:module.createRequire, which searches NODE_PATH for the bootstrapped package.
-                            "NODE_PATH" -> (target.value / "node_modules").getAbsolutePath
-                        ))
-                )
-            },
-            Test / compile := (Test / compile).dependsOn(Def.task {
-                val log        = streams.value.log
-                val targetBase = target.value
-                val nodeMods   = targetBase / "node_modules"
-                val marker     = nodeMods / "koffi" / "package.json"
-                val koffiRange = "^2.7" // must match kyo.ffi.internal.FfiErrors.KoffiSupportedRange
-                val pjContent =
-                    s"""{"name":"kyo-aeron-wasm-test","private":true,"dependencies":{"koffi":"$koffiRange"}}"""
-                val pj = targetBase / "package.json"
-                if (!pj.exists() || IO.read(pj) != pjContent) {
-                    IO.createDirectory(targetBase)
-                    IO.write(pj, pjContent)
-                }
-                if (!marker.exists()) {
-                    log.info(s"[kyo-aeron Wasm] installing koffi@$koffiRange into $targetBase ...")
-                    val rc = scala.sys.process.Process(
-                        Seq(npmCommand, "install", "--no-audit", "--no-fund", "--silent"),
-                        targetBase
-                    ).!
-                    if (rc != 0) sys.error(s"npm install koffi failed (exit $rc)")
-                }
-            }).value
-        )
 
 lazy val `kyo-compiler` =
     crossProject(JVMPlatform)
@@ -2292,7 +2059,7 @@ lazy val `kyo-compiler` =
         .jvmSettings(mimaCheck(false))
 
 lazy val `kyo-http` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-http"))
         .dependsOn(`kyo-core`, `kyo-config`, `kyo-schema-json`)
@@ -2329,10 +2096,9 @@ lazy val `kyo-http` =
             // Native 0.5.12 codegen crash (see loadFactories); plain string literal so the "$" does not interpolate.)
             Test / nativeConfig ~= (_.withServiceProviders(Map("kyo.HttpFilter$Factory" -> Seq("kyo.HttpFilterTestFactory"))))
         )
-        .wasmSettings(`wasm-settings`)
 
 lazy val `kyo-ai` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-ai"))
         .dependsOn(`kyo-core`, `kyo-schema-json`, `kyo-http`, `kyo-actor`, `kyo-jsonrpc`, `kyo-jsonrpc-http`, `kyo-mcp`, `kyo-system`)
@@ -2347,10 +2113,9 @@ lazy val `kyo-ai` =
             `native-settings`,
             `openssl-native-settings`
         )
-        .wasmSettings(`wasm-settings`)
 
 lazy val `kyo-flow` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-flow"))
         .dependsOn(`kyo-http`)
@@ -2363,10 +2128,9 @@ lazy val `kyo-flow` =
             `js-settings`,
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
         )
-        .wasmSettings(`wasm-settings`)
 
 lazy val `kyo-jsonrpc` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-prelude`)
         .dependsOn(`kyo-core`)
@@ -2380,13 +2144,12 @@ lazy val `kyo-jsonrpc` =
         // kyo-net's Native FFI links the TLS shim unconditionally, so downstream Native modules need the SSL
         // link flags (-lssl -lcrypto); io_uring's -luring propagates through the kyo-ffi plugin on Linux.
         .nativeSettings(`native-settings`, `openssl-native-settings`)
-        .wasmSettings(`wasm-settings`)
         // kyo-net's JS transports @JSImport Node built-ins, so the JS linker needs a module kind (default is
         // NoModule); CommonJS matches kyo-net and kyo-jsonrpc-http.
         .jsSettings(`js-settings`, scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) })
 
 lazy val `kyo-jsonrpc-http` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .crossType(CrossType.Pure)
         .in(file("kyo-jsonrpc-http"))
         .withKyoTest
@@ -2395,14 +2158,13 @@ lazy val `kyo-jsonrpc-http` =
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`, `openssl-native-settings`)
-        .wasmSettings(`wasm-settings`)
         .jsSettings(
             `js-settings`,
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
         )
 
 lazy val `kyo-mcp` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-mcp"))
         .withKyoTest
@@ -2413,11 +2175,10 @@ lazy val `kyo-mcp` =
         // kyo-tasty's runtime reflection (RepoExplorer). kyo-tasty is a sibling, so no cycle.
         .jvmConfigure(_.dependsOn(`kyo-tasty`.jvm % Test))
         .nativeSettings(`native-settings`)
-        .wasmSettings(`wasm-settings`)
         .jsSettings(`js-settings`)
 
 lazy val `kyo-lsp` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-lsp"))
         .withKyoTest
@@ -2426,7 +2187,6 @@ lazy val `kyo-lsp` =
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
-        .wasmSettings(`wasm-settings`)
         .jsSettings(`js-settings`)
 
 lazy val `kyo-caliban` =
@@ -2446,7 +2206,7 @@ lazy val `kyo-caliban` =
         .jvmSettings(mimaCheck(false))
 
 lazy val `kyo-zio-test` =
-    crossProject(JVMPlatform, JSPlatform, NativePlatform, WasmPlatform)
+    crossProject(JVMPlatform, JSPlatform, NativePlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-zio-test"))
         .dependsOn(`kyo-core`)
@@ -2464,10 +2224,9 @@ lazy val `kyo-zio-test` =
             `native-settings`
         )
         .jvmSettings(mimaCheck(false))
-        .wasmSettings(`wasm-settings`)
 
 lazy val `kyo-zio` =
-    crossProject(JVMPlatform, JSPlatform, NativePlatform, WasmPlatform)
+    crossProject(JVMPlatform, JSPlatform, NativePlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-zio"))
         .dependsOn(`kyo-core`)
@@ -2484,10 +2243,9 @@ lazy val `kyo-zio` =
             `native-settings`
         )
         .jvmSettings(mimaCheck(false))
-        .wasmSettings(`wasm-settings`)
 
 lazy val `kyo-compat-future` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-compat/bindings/future"))
         .settings(
@@ -2522,10 +2280,9 @@ lazy val `kyo-compat-future` =
         .jvmConfigure(_.disablePlugins(KyoDoctestPlugin))
         .jsSettings(`js-settings`, mimaCheck(false))
         .nativeSettings(`native-settings`, mimaCheck(false))
-        .wasmSettings(`wasm-settings`)
 
 lazy val `kyo-compat-kyo` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-compat/bindings/kyo"))
         .dependsOn(`kyo-core`, `kyo-data`)
@@ -2554,10 +2311,9 @@ lazy val `kyo-compat-kyo` =
             // kyo-compat README lives at kyo-compat/ (three levels up from jvm/)
             doctestSources := Seq(baseDirectory.value / ".." / ".." / ".." / "README.md")
         ))
-        .wasmSettings(`wasm-settings`)
 
 lazy val `kyo-compat-zio` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-compat/bindings/zio"))
         .settings(
@@ -2589,7 +2345,6 @@ lazy val `kyo-compat-zio` =
             }
         )
         .jvmConfigure(_.disablePlugins(KyoDoctestPlugin))
-        .wasmSettings(`wasm-settings`)
 
 lazy val `kyo-compat-ox` =
     crossProject(JVMPlatform)
@@ -2677,7 +2432,7 @@ lazy val `kyo-compat-tests` =
         )
 
 lazy val `kyo-combinators` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-combinators"))
         .dependsOn(`kyo-core`)
@@ -2686,10 +2441,9 @@ lazy val `kyo-combinators` =
         .jsSettings(`js-settings`)
         .nativeSettings(`native-settings`)
         .jvmSettings(mimaCheck(false))
-        .wasmSettings(`wasm-settings`)
 
 lazy val `kyo-case-app` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-case-app"))
         .dependsOn(`kyo-core`)
@@ -2701,10 +2455,9 @@ lazy val `kyo-case-app` =
         .jsSettings(`js-settings`)
         .nativeSettings(`native-settings`)
         .jvmSettings(mimaCheck(false))
-        .wasmSettings(`wasm-settings`)
 
 lazy val `kyo-pod` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-pod"))
         .dependsOn(`kyo-core`, `kyo-http`)
@@ -2821,10 +2574,9 @@ lazy val `kyo-pod` =
             `js-settings`,
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
         )
-        .wasmSettings(`wasm-settings`)
 
 lazy val `kyo-browser` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-browser"))
         .dependsOn(`kyo-http`, `kyo-jsonrpc`, `kyo-jsonrpc-http`, `kyo-system`)
@@ -2889,10 +2641,9 @@ lazy val `kyo-browser` =
             `js-settings`,
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
         )
-        .wasmSettings(`wasm-settings`)
 
 lazy val `kyo-slack` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-slack"))
         .dependsOn(`kyo-http`, `kyo-schema-json`)
@@ -2911,10 +2662,9 @@ lazy val `kyo-slack` =
             `native-settings`,
             `openssl-native-settings`
         )
-        .wasmSettings(`wasm-settings`)
 
 lazy val `kyo-markdown` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-markdown"))
         .dependsOn(`kyo-ui`)
@@ -2925,14 +2675,13 @@ lazy val `kyo-markdown` =
         .nativeSettings(`native-settings`)
         .jsSettings(
             `js-settings`,
-            // kyo-ui links as a CommonJS module (its js-wasm sources import scalajs-dom); a
+            // kyo-ui links as a CommonJS module (its js sources import scalajs-dom); a
             // downstream test link must match its module kind.
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
         )
-        .wasmSettings(`wasm-settings`)
 
 lazy val `kyo-i18n` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-i18n"))
         .dependsOn(`kyo-core`, `kyo-system`)
@@ -2941,10 +2690,9 @@ lazy val `kyo-i18n` =
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`)
-        .wasmSettings(`wasm-settings`)
 
 lazy val `kyo-ui` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-ui"))
         .dependsOn(`kyo-core`, `kyo-http`)
@@ -2994,10 +2742,6 @@ lazy val `kyo-ui` =
             libraryDependencies += "org.scala-js" %%% "scalajs-dom" % "2.8.1",
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
         )
-        .wasmSettings(
-            `wasm-settings`,
-            libraryDependencies += "org.scala-js" %%% "scalajs-dom" % "2.8.1"
-        )
 
 // Representative programs linked the way an application links kyo, one at a time, by the `linkCheck` command
 // (project/LinkCheck.scala): run with plain node, inspected for data they cannot reach and for static Node imports,
@@ -3018,44 +2762,40 @@ lazy val `link-check-settings` = Seq(
 )
 
 lazy val `kyo-link-check-core` =
-    crossProject(JSPlatform, WasmPlatform)
+    crossProject(JSPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-link-check/core"))
         .dependsOn(`kyo-core`)
         .disablePlugins(MimaPlugin)
         .settings(`kyo-settings`, `link-check-settings`)
         .jsSettings(`js-settings`)
-        .wasmSettings(`wasm-settings`)
 
 lazy val `kyo-link-check-ui` =
-    crossProject(JSPlatform, WasmPlatform)
+    crossProject(JSPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-link-check/ui"))
         .dependsOn(`kyo-ui`)
         .disablePlugins(MimaPlugin)
         .settings(`kyo-settings`, `link-check-settings`)
         .jsSettings(`js-settings`)
-        .wasmSettings(`wasm-settings`)
 
 lazy val `kyo-link-check-system` =
-    crossProject(JSPlatform, WasmPlatform)
+    crossProject(JSPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-link-check/system"))
         .dependsOn(`kyo-link-check-core`, `kyo-system`)
         .disablePlugins(MimaPlugin)
         .settings(`kyo-settings`, `link-check-settings`)
         .jsSettings(`js-settings`)
-        .wasmSettings(`wasm-settings`)
 
 lazy val `kyo-link-check-net` =
-    crossProject(JSPlatform, WasmPlatform)
+    crossProject(JSPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-link-check/net"))
         .dependsOn(`kyo-link-check-core`, `kyo-net`)
         .disablePlugins(MimaPlugin)
         .settings(`kyo-settings`, `link-check-settings`)
         .jsSettings(`js-settings`)
-        .wasmSettings(`wasm-settings`)
 
 // The website: shared apps + page wrapper + content model + cross-platform kyo-parse Markdown
 // transpiler (DocsMarkdown in shared/, no third-party Markdown dependency). JVM side carries the
@@ -3086,7 +2826,9 @@ lazy val `kyo-website` =
             // The content model shares WebsiteContent with the JVM generator, whose path.read pulls in
             // node:path. Enable module support so the JS test link resolves it, matching kyo-ui. The
             // browser bundle (kyo-website-bundle) re-links as ESModule for Chrome.
-            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
+            // The website is built and deployed from the JS output; it has no Wasm row.
+            kyoWasmRow := false
         )
 
 // The single browser-loadable ESModule bundle (chrome only). Its Compile classpath holds
@@ -3105,7 +2847,9 @@ lazy val `kyo-website-bundle` =
             `js-settings`,
             scalaJSUseMainModuleInitializer := true,
             Compile / mainClass             := Some("kyo.website.WebsiteBundleMain"),
-            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.ESModule) }
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.ESModule) },
+            // Deployed as a JS bundle; it has no Wasm row.
+            kyoWasmRow := false
         )
 
 lazy val `kyo-examples` =
@@ -3381,32 +3125,6 @@ lazy val `js-settings` = Seq(
     }
 )
 
-// WASM rows are Scala.js compilations: same scala-java-time stand-in for the JDK time APIs,
-// emitted as an ESModule (set by WasmPlatform). They require Node 24+: it defaults to V8's
-// Turboshaft Wasm pipeline, under which the generated WasmGC code compiles correctly. The legacy
-// TurboFan pipeline on Node 22/23 miscompiled it; Node 23 is EOL, and Node 24 made Turboshaft the
-// default and removed the --turboshaft-wasm opt-in flag (passing it there is a startup error).
-lazy val `wasm-settings` = Seq(
-    Compile / doc / sources  := Seq.empty,
-    fork                     := false,
-    bspEnabled               := false,
-    Test / parallelExecution := false,
-    jsEnv := new NodeJSEnv(
-        NodeJSEnv.Config().withArgs(List(
-            "--max_old_space_size=5120",
-            // exnref: the WASM backend emits exnref exception-handling opcodes Node needs to load it.
-            "--experimental-wasm-exnref"
-        ))
-    ),
-    // The java.time API for the public signatures that name it. No data artifact: see `js-settings`.
-    libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.7.0",
-    // Same CI heap rationale as `js-settings`: the WASM rows are Scala.js links too.
-    scalaJSLinkerConfig := {
-        val c = scalaJSLinkerConfig.value
-        if (insideCI.value) c.withBatchMode(true) else c
-    }
-)
-
 // The IANA zone database for tests that build values in region zones (`ZoneId.of("America/New_York")`), which
 // off the JVM resolve only with it. Test scope, so it never reaches a published artifact. JS, Wasm, and Native
 // only: the JVM carries the database itself.
@@ -3571,7 +3289,7 @@ lazy val `kyo-compat-plugin` = (project in file("kyo-compat/plugin"))
 // ===========================================================================
 
 lazy val `kyo-test-api` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-data`)
         .dependsOn(`kyo-core`)
@@ -3589,12 +3307,9 @@ lazy val `kyo-test-api` =
         .jsSettings(
             `js-settings`
         )
-        .wasmSettings(
-            `wasm-settings`
-        )
 
 lazy val `kyo-test-runner` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-test-api`)
         .dependsOn(`kyo-scheduler`)
@@ -3621,20 +3336,9 @@ lazy val `kyo-test-runner` =
             // from the start rather than written by a test.
             kyoNodeEnv := Map("NO_COLOR" -> "1")
         )
-        .wasmSettings(
-            `wasm-settings`,
-            libraryDependencies += "org.scala-sbt" % "test-interface" % "1.0" % Provided,
-            // NO_COLOR as in .jsSettings above. This Test / jsEnv override fully replaces wasm-settings' jsEnv, so it
-            // re-adds the --experimental-wasm-exnref flag the WasmGC module needs.
-            Test / jsEnv := new NodeJSEnv(
-                NodeJSEnv.Config()
-                    .withArgs(List("--max_old_space_size=5120", "--experimental-wasm-exnref"))
-                    .withEnv(Map("NO_COLOR" -> "1"))
-            )
-        )
 
 lazy val `kyo-test-prop` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-test-api`)
         .dependsOn(`kyo-data`)
@@ -3653,12 +3357,9 @@ lazy val `kyo-test-prop` =
         .jsSettings(
             `js-settings`
         )
-        .wasmSettings(
-            `wasm-settings`
-        )
 
 lazy val `kyo-test-snapshot` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-test-api`)
         .dependsOn(`kyo-data`)
@@ -3695,11 +3396,6 @@ lazy val `kyo-test-snapshot` =
         .jsSettings(
             `js-settings`,
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
-        )
-        // WASM keeps WasmPlatform's ESModule linker kind (no CommonJSModule override): the
-        // @JSImport("node:fs") snapshot facade resolves as an ESM import under Node.
-        .wasmSettings(
-            `wasm-settings`
         )
 
 lazy val `kyo-test-sbt` =
