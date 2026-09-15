@@ -30,6 +30,10 @@ import scala.util.control.NonFatal
 
 /** JS TCP transport delegating to Node.js `net` and `tls` modules.
   *
+  * The modules come from a dynamic `import()` ([[NodeNetModules]]), never a static one, so a browser bundle that links kyo-net still loads.
+  * Each public operation waits for the import on its first use and runs at once after it; the synchronous helpers they reach take the
+  * loaded modules as parameters.
+  *
   * All connections are managed as Node.js socket objects. Plain TCP sockets use `net.connect` / `net.createServer`; TLS sockets use
   * `tls.connect` / `tls.createServer`. The handshake is handled entirely by Node.js; callers receive a connection only after the TLS
   * `secureConnect` / `secureConnection` event fires.
@@ -123,15 +127,19 @@ final private[kyo] class JsTransport private (
         Frame
     ): Fiber.Unsafe[NetConnection, Abort[NetException]] =
         kyo.net.Transport.checkConnectTimeout(connectTimeout)
-        val socket = NodeNet.asInstanceOf[js.Dynamic].connect(port, host)
-        connectSocket(socket, host, port, tcpNoDelay = true, connectEvent = "connect", connectTimeout, config)
+        NodeNetModules.afterLoad { modules =>
+            val socket = modules.net.connect(port, host)
+            connectSocket(modules, socket, host, port, tcpNoDelay = true, connectEvent = "connect", connectTimeout, config)
+        }
     end connect
 
     def listen(host: String, port: Int, backlog: Int, config: kyo.net.NetConfig)(
         handler: NetConnection => Unit
     )(using AllowUnsafe, Frame): Fiber.Unsafe[NetListener, Abort[NetException]] =
-        val server = NodeNet.asInstanceOf[js.Dynamic].createServer()
-        listenServer(server, host, port, backlog, tcpNoDelay = true, connectionEvent = "connection", handler, config)
+        NodeNetModules.afterLoad { modules =>
+            val server = modules.net.createServer()
+            listenServer(server, host, port, backlog, tcpNoDelay = true, connectionEvent = "connection", handler, config)
+        }
     end listen
 
     def connectTls(host: String, port: Int, tls: NetTlsConfig, connectTimeout: Duration, config: kyo.net.NetConfig)(using
@@ -139,6 +147,17 @@ final private[kyo] class JsTransport private (
         Frame
     ): Fiber.Unsafe[NetConnection, Abort[NetException]] =
         kyo.net.Transport.checkConnectTimeout(connectTimeout)
+        NodeNetModules.afterLoad(modules => connectTlsLoaded(modules, host, port, tls, connectTimeout, config))
+    end connectTls
+
+    private def connectTlsLoaded(
+        modules: NodeNetModules.Modules,
+        host: String,
+        port: Int,
+        tls: NetTlsConfig,
+        connectTimeout: Duration,
+        config: kyo.net.NetConfig
+    )(using AllowUnsafe, Frame): Fiber.Unsafe[NetConnection, Abort[NetException]] =
         // Honor a NetTlsConfig.tlsProvider pin: JS terminates TLS with Node's tls module, so it serves only the "node" implementation. A pin to
         // any other provider fails closed rather than silently using Node under a different provider's name (config truthfulness).
         if tls.tlsProvider.exists(_ != "node") then
@@ -157,7 +176,7 @@ final private[kyo] class JsTransport private (
         else
             // Read every configured PEM before building the Node option object, so an unreadable path is reported on this method's declared
             // failure channel like the two rejections above, instead of throwing out of the method as a Panic. See readConfiguredPems.
-            val pems = readConfiguredPems(tls, isServer = false) match
+            val pems = readConfiguredPems(modules.fs, tls, isServer = false) match
                 case Result.Success(p)  => p
                 case Result.Failure(ex) => return Fiber.Unsafe.fromResult(Result.fail(ex))
                 case Result.Panic(ex)   => return Fiber.Unsafe.fromResult(Result.panic(ex))
@@ -185,9 +204,10 @@ final private[kyo] class JsTransport private (
                     opts.key = key
                 case _ => ()
             end match
-            val socket = NodeTls.asInstanceOf[js.Dynamic].connect(opts)
+            val socket = modules.tls.connect(opts)
             // TLS sockets emit "secureConnect" after handshake (not "connect" which fires on raw TCP)
             connectSocket(
+                modules,
                 socket,
                 host,
                 port,
@@ -198,18 +218,28 @@ final private[kyo] class JsTransport private (
                 tls.handshakeTimeout
             )
         end if
-    end connectTls
+    end connectTlsLoaded
 
     def listenTls(host: String, port: Int, backlog: Int, tls: NetTlsConfig, config: kyo.net.NetConfig)(
         handler: NetConnection => Unit
     )(using AllowUnsafe, Frame): Fiber.Unsafe[NetListener, Abort[NetException]] =
+        NodeNetModules.afterLoad(modules => listenTlsLoaded(modules, host, port, backlog, tls, config)(handler))
+
+    private def listenTlsLoaded(
+        modules: NodeNetModules.Modules,
+        host: String,
+        port: Int,
+        backlog: Int,
+        tls: NetTlsConfig,
+        config: kyo.net.NetConfig
+    )(handler: NetConnection => Unit)(using AllowUnsafe, Frame): Fiber.Unsafe[NetListener, Abort[NetException]] =
         // Honor a NetTlsConfig.tlsProvider pin: JS terminates TLS with Node's tls module, so a server pinned to any non-"node" provider fails
         // closed rather than silently serving with Node under another provider's name (config truthfulness).
         if tls.tlsProvider.exists(_ != "node") then
             return Fiber.Unsafe.fromResult(Result.fail(NetTlsHandshakeException(host, port, rejectNonNodeProvider(tls))))
         // As in connectTls: read the configured material first so an unreadable path is reported on the declared failure channel rather than
         // thrown out of the method.
-        val pems = readConfiguredPems(tls, isServer = true) match
+        val pems = readConfiguredPems(modules.fs, tls, isServer = true) match
             case Result.Success(p)  => p
             case Result.Failure(ex) => return Fiber.Unsafe.fromResult(Result.fail(ex))
             case Result.Panic(ex)   => return Fiber.Unsafe.fromResult(Result.panic(ex))
@@ -219,7 +249,7 @@ final private[kyo] class JsTransport private (
         pems.cert.foreach(cert => serverOpts.cert = cert)
         pems.key.foreach(key => serverOpts.key = key)
         applyServerClientAuth(serverOpts, tls, pems)
-        val server = NodeTls.asInstanceOf[js.Dynamic].createServer(serverOpts)
+        val server = modules.tls.createServer(serverOpts)
         // One deadline per accepted connection: a client that completed the TCP accept but stalls the TLS handshake (sends nothing / a partial
         // ClientHello and never finishes) never fires "secureConnection", so the accepted Node socket would linger indefinitely, pinning the fd
         // and its buffers (a slowloris handshake-stall DoS, CWE-400). When the TLS config's handshakeTimeout is finite, arm a Clock-driven timer as each raw
@@ -241,7 +271,7 @@ final private[kyo] class JsTransport private (
             onClose = Present(tracking.discharge),
             acceptHandshakeCount = Present(tracking.inFlightCount)
         )
-    end listenTls
+    end listenTlsLoaded
 
     // -- shared helpers --
 
@@ -254,8 +284,8 @@ final private[kyo] class JsTransport private (
     //
     // `material` and `path` are named because the message is the only place the failure stays attributable to the setting that caused it. Only
     // NonFatal failures convert: a fatal error is not a configuration problem and must keep propagating as itself.
-    private def readConfiguredPem(material: String, path: String)(using Frame): String =
-        try NodeFs.asInstanceOf[js.Dynamic].readFileSync(path, "utf8").asInstanceOf[String]
+    private def readConfiguredPem(fs: js.Dynamic, material: String, path: String)(using Frame): String =
+        try fs.readFileSync(path, "utf8").asInstanceOf[String]
         catch
             case ex: Throwable if NonFatal(ex) =>
                 throw NetTlsConfigException(s"configured $material at $path could not be read: ${ex.getMessage}")
@@ -275,14 +305,16 @@ final private[kyo] class JsTransport private (
       * `trustStorePath` shadows, so Node would reject configurations the other tiers accept. The whole point of the typed failure is that
       * one config behaves the same everywhere, and over-reading here would break that in the opposite direction.
       */
-    private def readConfiguredPems(tls: NetTlsConfig, isServer: Boolean)(using Frame): Result[NetTlsConfigException, TlsPems] =
+    private def readConfiguredPems(fs: js.Dynamic, tls: NetTlsConfig, isServer: Boolean)(using
+        Frame
+    ): Result[NetTlsConfigException, TlsPems] =
         val anchorPath = if isServer then tls.trustStorePath.orElse(tls.caCertPath) else tls.caCertPath
         val anchorName = if isServer then "trust store" else "CA certificate"
         try
             Result.succeed(TlsPems(
-                anchor = anchorPath.map(readConfiguredPem(anchorName, _)),
-                cert = tls.certChainPath.map(readConfiguredPem("certificate chain", _)),
-                key = tls.privateKeyPath.map(readConfiguredPem("private key", _))
+                anchor = anchorPath.map(readConfiguredPem(fs, anchorName, _)),
+                cert = tls.certChainPath.map(readConfiguredPem(fs, "certificate chain", _)),
+                key = tls.privateKeyPath.map(readConfiguredPem(fs, "private key", _))
             ))
         catch case ex: NetTlsConfigException => Result.fail(ex)
         end try
@@ -456,6 +488,7 @@ final private[kyo] class JsTransport private (
     end armConnectDeadline
 
     private def connectSocket(
+        modules: NodeNetModules.Modules,
         socket: js.Dynamic,
         host: String,
         port: Int,
@@ -530,7 +563,7 @@ final private[kyo] class JsTransport private (
                 }
                 // For TLS handshakes (secureConnect), install certHashFn so SCRAM-PLUS channel
                 // binding can compute tls-server-end-point (RFC 5929) from the peer cert.
-                if connectEvent == "secureConnect" then installCertHashFn(connection, socket)
+                if connectEvent == "secureConnect" then installCertHashFn(modules.crypto, connection, socket)
                 // statusFn is deliberately NOT wired here: the connection keeps the default Connection.Status.Active. The posix and NIO
                 // transports report CleanClose vs Truncated (RFC 8446 6.1) by observing the peer's close_notify alert at the TLS record layer,
                 // which they drive directly (BoringSSL/OpenSSL/SSLEngine). JS delegates TLS termination to Node, whose tls.TLSSocket abstracts the
@@ -566,13 +599,12 @@ final private[kyo] class JsTransport private (
       * Node's `tls.TLSSocket.getPeerCertificate(true)` returns an object with a `.raw` Buffer holding the DER bytes; Node's `crypto`
       * `createHash("sha256").update(buf).digest()` returns a 32-byte Buffer.
       */
-    private def installCertHashFn(connection: Connection[JsHandle], tlsSocket: js.Dynamic): Unit =
+    private def installCertHashFn(crypto: js.Dynamic, connection: Connection[JsHandle], tlsSocket: js.Dynamic): Unit =
         connection.certHashFn = Present { () =>
             val cert = tlsSocket.getPeerCertificate(true)
             if js.isUndefined(cert) || cert == null || js.isUndefined(cert.raw) then Absent
             else
-                val cryptoModule = NodeCrypto.asInstanceOf[js.Dynamic]
-                val digestBuffer = cryptoModule.createHash("sha256").update(cert.raw).digest()
+                val digestBuffer = crypto.createHash("sha256").update(cert.raw).digest()
                 // Node's Hash.digest() returns a Buffer, and Buffer extends Uint8Array in the Node runtime; js.Dynamic erases that to an
                 // untyped JS value with no static Scala.js type, so recovering the typed Uint8Array view needs this narrowing cast. Safe per
                 // Node's documented Buffer/Uint8Array relationship; it cannot dissolve without a typed facade for Node's crypto Hash object.
@@ -683,6 +715,13 @@ final private[kyo] class JsTransport private (
         frame: Frame
     ): Fiber.Unsafe[NetConnection, Abort[NetException]] =
         kyo.net.Transport.checkConnectTimeout(connectTimeout)
+        NodeNetModules.afterLoad(modules => connectUnixLoaded(modules, path, connectTimeout, config))
+    end connectUnix
+
+    private def connectUnixLoaded(modules: NodeNetModules.Modules, path: String, connectTimeout: Duration, config: kyo.net.NetConfig)(using
+        allow: AllowUnsafe,
+        frame: Frame
+    ): Fiber.Unsafe[NetConnection, Abort[NetException]] =
         val promise = new IOPromise[NetException, Connection[JsHandle]]
         val driver  = pool.next()
 
@@ -693,7 +732,7 @@ final private[kyo] class JsTransport private (
             case Absent => ()
         end match
 
-        val net    = NodeNet.asInstanceOf[js.Dynamic]
+        val net    = modules.net
         val socket = net.createConnection(js.Dynamic.literal(path = path))
 
         // A Unix connect carries a deadline for the same reason a TCP one does: Node's connect is asynchronous by contract, so the promise
@@ -741,7 +780,7 @@ final private[kyo] class JsTransport private (
         // Transport.connectUnix return needs this erased-boundary cast. Safe: the promise completes only with the NetException/Connection
         // values above.
         promise.asInstanceOf[Fiber.Unsafe[NetConnection, Abort[NetException]]]
-    end connectUnix
+    end connectUnixLoaded
 
     override def stdio(channelCapacity: Int, readChunkSize: Int)(using
         allow: AllowUnsafe,
@@ -825,6 +864,12 @@ final private[kyo] class JsTransport private (
     def listenUnix(path: String, backlog: Int, config: kyo.net.NetConfig)(
         handler: NetConnection => Unit
     )(using allow: AllowUnsafe, frame: Frame): Fiber.Unsafe[NetListener, Abort[NetException]] =
+        NodeNetModules.afterLoad(modules => listenUnixLoaded(modules, path, backlog, config)(handler))
+    end listenUnix
+
+    private def listenUnixLoaded(modules: NodeNetModules.Modules, path: String, backlog: Int, config: kyo.net.NetConfig)(
+        handler: NetConnection => Unit
+    )(using allow: AllowUnsafe, frame: Frame): Fiber.Unsafe[NetListener, Abort[NetException]] =
         val promise = new IOPromise[NetException, NetListener]
         rejectUnsupportedBuffers(config) match
             case Present(e) =>
@@ -833,7 +878,7 @@ final private[kyo] class JsTransport private (
             case Absent => ()
         end match
 
-        val net    = NodeNet.asInstanceOf[js.Dynamic]
+        val net    = modules.net
         val server = net.createServer()
 
         val listener = new JsListener(server, NetAddress.Unix(path), frame)
@@ -894,8 +939,17 @@ final private[kyo] class JsTransport private (
         // is transparent only inside kyo.Fiber's own defining scope, so exposing this promise as the locked Transport.listen (Unix) return
         // needs this erased-boundary cast. Safe: the promise completes only with the NetException/NetListener values above.
         promise.asInstanceOf[Fiber.Unsafe[NetListener, Abort[NetException]]]
-    end listenUnix
+    end listenUnixLoaded
     def upgradeToTls(
+        conn: NetConnection,
+        tls: kyo.net.NetTlsConfig,
+        channelCapacity: Int
+    )(using allow: AllowUnsafe, frame: Frame): Fiber.Unsafe[NetConnection, Abort[NetException]] =
+        NodeNetModules.afterLoad(modules => upgradeToTlsLoaded(modules, conn, tls, channelCapacity))
+    end upgradeToTls
+
+    private def upgradeToTlsLoaded(
+        modules: NodeNetModules.Modules,
         conn: NetConnection,
         tls: kyo.net.NetTlsConfig,
         channelCapacity: Int
@@ -931,7 +985,7 @@ final private[kyo] class JsTransport private (
         // As in connectTls / listenTls, read the configured material so an unreadable path is reported on the declared failure channel. It
         // sits after the upgradability guard because the ROLE is only knowable here, and the role decides which material is even consumed:
         // an upgrade inherits its direction from the connection's TCP origin.
-        val pems = readConfiguredPems(tls, isServer = conn.asInstanceOf[Connection[JsHandle]].isServerOrigin) match
+        val pems = readConfiguredPems(modules.fs, tls, isServer = conn.asInstanceOf[Connection[JsHandle]].isServerOrigin) match
             case Result.Success(p)  => p
             case Result.Failure(ex) => return Fiber.Unsafe.fromResult(Result.fail(ex))
             case Result.Panic(ex)   => return Fiber.Unsafe.fromResult(Result.panic(ex))
@@ -1052,7 +1106,7 @@ final private[kyo] class JsTransport private (
             // internal flow; we will pause the TLSSocket's application-data stream after handshake.
             discard(socket.resume())
 
-            val tlsModule = NodeTls.asInstanceOf[js.Dynamic]
+            val tlsModule = modules.tls
 
             // The TLS role follows the connection's TCP origin: an accepted connection (isServerOrigin) upgrades as the TLS server, a connected one
             // as the client (STARTTLS initiate). The origin is authoritative: a config heuristic ("has a cert+key therefore server") would
@@ -1146,7 +1200,7 @@ final private[kyo] class JsTransport private (
                     }
                     // Install certHashFn so SCRAM-PLUS channel binding (RFC 5929
                     // tls-server-end-point) can read the peer-cert SHA-256.
-                    installCertHashFn(newConn, tlsSocket)
+                    installCertHashFn(modules.crypto, newConn, tlsSocket)
                     if newConn.start() then
                         // Checked complete, mirroring the NIO completeConnect: the abandon path can settle `promise` (and destroy the raw
                         // socket) while this handshake-completion event was already queued on the Node event loop. Discarding the lost
@@ -1186,7 +1240,7 @@ final private[kyo] class JsTransport private (
         // Transport.upgradeToTls return needs this erased-boundary cast. Safe: the promise completes only with the NetException/Connection
         // values above.
         promise.asInstanceOf[Fiber.Unsafe[NetConnection, Abort[NetException]]]
-    end upgradeToTls
+    end upgradeToTlsLoaded
 
 end JsTransport
 

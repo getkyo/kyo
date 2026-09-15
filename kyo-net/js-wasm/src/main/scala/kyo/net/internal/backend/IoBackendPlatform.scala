@@ -25,7 +25,15 @@ private[net] object NodeBackend extends Entry:
     /** Node's net stack is built in; nothing to stage, so nothing can be missing for this host. */
     def libraryIds: Chunk[String] = Chunk.empty
 
-    private[net] def doProbe(using AllowUnsafe): CapabilityOutcome = CapabilityOutcome.Available
+    /** Available on a Node-like host. `JsTransport` imports Node's `net` and `tls` modules, which a browser does not have, so there the backend
+      * is unavailable and selection reports it instead of handing out a transport whose first operation cannot load them.
+      */
+    private[net] def doProbe(using AllowUnsafe): CapabilityOutcome =
+        if kyo.internal.Platform.isNodeLike then CapabilityOutcome.Available
+        else
+            CapabilityOutcome.Unavailable(
+                s"Node's net and tls modules need a Node-like host (Node, Bun or Deno); this host is ${kyo.internal.Platform.host}"
+            )
 
     def createDriver()(using AllowUnsafe, Frame): IoDriver[JsHandle] =
         JsIoDriver.init()
