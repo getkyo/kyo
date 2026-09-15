@@ -671,7 +671,7 @@ class TagTest extends kyo.test.Test[Any]:
         "type params" in {
             val tag                           = Tag[TagTest.ShowType[Int]]
             val _: Tag[TagTest.ShowType[Int]] = tag
-            assert(tag.show == "kyo.TagTest.ShowType[scala.Int]")
+            assert(tag.show == "kyo.TagTest$.ShowType[scala.Int]", tag.show)
         }
 
         "primitive" in {
