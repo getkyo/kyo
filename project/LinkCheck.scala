@@ -14,11 +14,14 @@ import scala.util.matching.Regex
   *   - `linkCheck Wasm` links every program as WasmGC
   *   - `linkCheck Native` checks dependencies only (a Native link per program is what the Native test rows already pay for)
   *
+  * Each program lives in its own project under `kyo-link-check/`, depending only on the modules it uses, as a separate application would.
   * For each program on JS and Wasm the command:
-  *   - runs the linked output with plain `node`, nothing injected, and matches its last line of output (a launch that only the sbt test
-  *     harness makes work fails here);
-  *   - runs it again with the `process` global deleted before the program loads, the state of a browser, and matches the same line (a bare
-  *     `process` read anywhere on the program's path throws `ReferenceError` and fails here);
+  *   - runs the linked output with plain `node`, nothing injected, from an empty standard input, and matches its last line of output (a
+  *     launch that only the sbt test harness makes work fails here);
+  *   - runs it again with the `process` global deleted before the program loads, the state of a browser, and matches the line expected
+  *     there: the same one for a program that needs no Node, a typed or explicit failure for one that does (a bare `process` read or a
+  *     missing guard fails here);
+  *   - fails when the output contains a static `node:*` import, which a browser cannot load (a dynamic `import("node:x")` is fine);
   *   - fails when the output contains data the program cannot reach: the IANA time-zone database or the CLDR locale data;
   *   - fails when the output exceeds its ceiling in `kyo-link-check/ceilings.txt`.
   *
@@ -29,13 +32,27 @@ import scala.util.matching.Regex
   */
 object LinkCheck {
 
-    final case class Program(name: String, mainClass: String, lastLine: Regex)
+    /** A program, the link-check project it lives in (without the platform suffix), and the last line it prints under plain node and with no
+      * `process` global.
+      */
+    final case class Program(name: String, project: String, mainClass: String, lastLine: Regex, withoutProcess: Regex)
+
+    object Program {
+        def apply(name: String, project: String, mainClass: String, lastLine: Regex): Program =
+            Program(name, project, mainClass, lastLine, lastLine)
+    }
 
     val programs: Seq[Program] = Seq(
-        Program("CoreMin", "linkcheck.CoreMin", "42".r),
-        Program("CoreLog", "linkcheck.CoreLog", """-?\+?\d{4,}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3,9})?Z""".r),
-        Program("UiMin", "linkcheck.UiMin", """Div\(Attrs\(.*\),Chunk\.Indexed\(\)\)""".r)
+        Program("CoreMin", "kyo-link-check-core", "linkcheck.CoreMin", "42".r),
+        Program("CoreLog", "kyo-link-check-core", "linkcheck.CoreLog", """-?\+?\d{4,}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3,9})?Z""".r),
+        Program("CoreReadLine", "kyo-link-check-core", "linkcheck.CoreReadLine", "failure EOFException".r, "failure IOException".r),
+        Program("UiMin", "kyo-link-check-ui", "linkcheck.UiMin", """Div\(Attrs\(.*\),Chunk\.Indexed\(\)\)""".r),
+        Program("SystemPath", "kyo-link-check-system", "linkcheck.SystemPath", "kyo".r, "panic UnsupportedOperationException".r),
+        Program("NetEcho", "kyo-link-check-net", "linkcheck.NetEcho", "echo kyo".r, "failure NetBackendUnavailableException".r)
     )
+
+    /** A static import of a Node built-in in linked output: `import * as x from "node:fs"`, `import "node:fs"`. */
+    private val staticNodeImport: Regex = """(?:\bfrom|\bimport)\s*["']node:[\w/]+["']""".r
 
     /** Strings only the data artifacts put into a link: a zone ID and the tzdb module name, and the CLDR data package. */
     val dataMarkers: Seq[String] = Seq("Africa/Abidjan", "zonedb.java.tzdb", "locales.cldr.data")
@@ -97,10 +114,9 @@ object LinkCheck {
 
     private def linkFailures(state: State, platform: String): Seq[String] = {
         val extracted = Project.extract(state)
-        val ref       = LocalProject(s"kyo-link-check$platform")
-        val base      = extracted.get(ref / baseDirectory).getParentFile
-        val ceilings  = readCeilings(base / "ceilings.txt")
+        val ceilings  = readCeilings(extracted.get(LocalRootProject / baseDirectory) / "kyo-link-check" / "ceilings.txt")
         val rows = programs.map { program =>
+            val ref    = LocalProject(s"${program.project}$platform")
             val outDir = extracted.get(ref / target) / "link-check" / program.name
             IO.delete(outDir)
             val linkState = extracted.appendWithoutSession(
@@ -115,32 +131,36 @@ object LinkCheck {
             val files = Option(outDir.listFiles).toSeq.flatten.filter(f => f.isFile && !f.getName.endsWith(".map"))
             val size  = files.map(_.length).sum
             val found = dataMarkers.filter(marker => files.exists(f => contains(f, marker)))
+            val nodeImports = files.flatMap { f =>
+                staticNodeImport.findAllIn(new String(Files.readAllBytes(f.toPath), StandardCharsets.UTF_8)).toSeq
+            }.distinct
             val runs = Seq(
-                "under plain node"       -> runNode(outDir, platform, withoutProcess = false),
-                "with no process global" -> runNode(outDir, platform, withoutProcess = true)
+                ("under plain node", program.lastLine, runNode(outDir, platform, withoutProcess = false)),
+                ("with no process global", program.withoutProcess, runNode(outDir, platform, withoutProcess = true))
             )
-            (program, size, found, runs)
+            (program, size, found, nodeImports, runs)
         }
         log(s"$platform sizes (bytes, all output files):")
-        rows.foreach { case (program, size, _, _) =>
+        rows.foreach { case (program, size, _, _, _) =>
             val ceiling = ceilings.get((platform, program.name)).fold("no ceiling")(c => f"ceiling $c%,d")
-            log(f"  ${program.name}%-10s $size%,12d   $ceiling")
+            log(f"  ${program.name}%-12s $size%,12d   $ceiling")
         }
-        rows.flatMap { case (program, size, found, runs) =>
+        rows.flatMap { case (program, size, found, nodeImports, runs) =>
             val data = found.map(m => s"$platform ${program.name}: the linked output contains data it cannot reach (marker '$m')")
+            val imports = nodeImports.map(i => s"$platform ${program.name}: the linked output has a static Node import a browser cannot load: $i")
             val ceiling = ceilings.get((platform, program.name)) match {
                 case None                    => Seq(s"$platform ${program.name}: no ceiling in kyo-link-check/ceilings.txt")
                 case Some(c) if size > c     => Seq(f"$platform ${program.name}: $size%,d bytes exceeds the ceiling of $c%,d")
                 case Some(_)                 => Nil
             }
             val output = runs.flatMap {
-                case (how, Left(err)) => Seq(s"$platform ${program.name} $how: $err")
-                case (how, Right(lines)) =>
+                case (how, _, Left(err)) => Seq(s"$platform ${program.name} $how: $err")
+                case (how, expected, Right(lines)) =>
                     val last = lines.reverse.find(_.trim.nonEmpty).getOrElse("")
-                    if (program.lastLine.pattern.matcher(last.trim).matches()) Nil
-                    else Seq(s"$platform ${program.name}: unexpected output $how, last line '$last'")
+                    if (expected.pattern.matcher(last.trim).matches()) Nil
+                    else Seq(s"$platform ${program.name}: unexpected output $how, last line '$last', expected '$expected'")
             }
-            data ++ ceiling ++ output
+            data ++ imports ++ ceiling ++ output
         }
     }
 
@@ -187,8 +207,12 @@ object LinkCheck {
                 }
             val flags   = if (platform == "Wasm") Seq("--experimental-wasm-exnref") else Nil
             val outFile = outDir.getParentFile / s"${outDir.getName}$suffix.out"
+            // An empty file, not the build's own stdin, so a program that reads standard input sees its end instead of waiting.
+            val stdin = outDir.getParentFile / "empty-stdin"
+            IO.write(stdin, "")
             val process = new ProcessBuilder((Seq("node") ++ flags :+ entry)*)
                 .directory(outDir)
+                .redirectInput(stdin)
                 .redirectErrorStream(true)
                 .redirectOutput(outFile)
                 .start()

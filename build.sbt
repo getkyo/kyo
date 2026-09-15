@@ -3077,26 +3077,60 @@ lazy val `kyo-ui` =
         )
 
 // Representative programs linked the way an application links kyo, one at a time, by the `linkCheck` command
-// (project/LinkCheck.scala): run with plain node, inspected for data they cannot reach, and held to the size
-// ceilings in kyo-link-check/ceilings.txt. Not published and not a test module.
-lazy val `kyo-link-check` =
+// (project/LinkCheck.scala): run with plain node, inspected for data they cannot reach and for static Node imports,
+// and held to the size ceilings in kyo-link-check/ceilings.txt. Not published and not test modules.
+//
+// One project per dependency set, as separate applications would be: a module on the classpath can add linker roots
+// (reflective registrations, top-level exports) to every program linked there, so each program's project depends
+// only on the modules the program uses.
+lazy val `link-check-settings` = Seq(
+    publish / skip                  := true,
+    scalaJSUseMainModuleInitializer := true,
+    // What an application ships: an optimized, minified ES module, named .mjs so plain node loads it as one.
+    Compile / fullLinkJS / scalaJSLinkerConfig ~= {
+        _.withModuleKind(ModuleKind.ESModule)
+            .withOutputPatterns(org.scalajs.linker.interface.OutputPatterns.fromJSFile("%s.mjs"))
+            .withMinify(true)
+    }
+)
+
+lazy val `kyo-link-check-core` =
     crossProject(JSPlatform, WasmPlatform)
         .crossType(CrossType.Full)
-        .in(file("kyo-link-check"))
-        .dependsOn(`kyo-core`, `kyo-ui`)
+        .in(file("kyo-link-check/core"))
+        .dependsOn(`kyo-core`)
         .disablePlugins(MimaPlugin)
-        .settings(
-            `kyo-settings`,
-            publish / skip                  := true,
-            scalaJSUseMainModuleInitializer := true,
-            Compile / mainClass             := Some(LinkCheck.programs.head.mainClass),
-            // What an application ships: an optimized, minified ES module, named .mjs so plain node loads it as one.
-            Compile / fullLinkJS / scalaJSLinkerConfig ~= {
-                _.withModuleKind(ModuleKind.ESModule)
-                    .withOutputPatterns(org.scalajs.linker.interface.OutputPatterns.fromJSFile("%s.mjs"))
-                    .withMinify(true)
-            }
-        )
+        .settings(`kyo-settings`, `link-check-settings`)
+        .jsSettings(`js-settings`)
+        .wasmSettings(`wasm-settings`)
+
+lazy val `kyo-link-check-ui` =
+    crossProject(JSPlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-link-check/ui"))
+        .dependsOn(`kyo-ui`)
+        .disablePlugins(MimaPlugin)
+        .settings(`kyo-settings`, `link-check-settings`)
+        .jsSettings(`js-settings`)
+        .wasmSettings(`wasm-settings`)
+
+lazy val `kyo-link-check-system` =
+    crossProject(JSPlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-link-check/system"))
+        .dependsOn(`kyo-link-check-core`, `kyo-system`)
+        .disablePlugins(MimaPlugin)
+        .settings(`kyo-settings`, `link-check-settings`)
+        .jsSettings(`js-settings`)
+        .wasmSettings(`wasm-settings`)
+
+lazy val `kyo-link-check-net` =
+    crossProject(JSPlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-link-check/net"))
+        .dependsOn(`kyo-link-check-core`, `kyo-net`)
+        .disablePlugins(MimaPlugin)
+        .settings(`kyo-settings`, `link-check-settings`)
         .jsSettings(`js-settings`)
         .wasmSettings(`wasm-settings`)
 
