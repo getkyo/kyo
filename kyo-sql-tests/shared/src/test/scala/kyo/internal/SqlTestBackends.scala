@@ -26,6 +26,18 @@ object SqlTestBackends:
         TestBackendRegistration.ensure()
         if containerRuntimeReachable then SqlTestBackendRegistry.all else Seq.empty
 
+    /** Every descriptor this build ships, whether or not a container runtime can start one.
+      *
+      * Separate from [[available]] because they answer different questions. This one is a CLASSPATH fact: did the service file and the
+      * register fallback deliver the descriptors. [[available]] is that intersected with an ENVIRONMENT fact, whether containers can run.
+      *
+      * A check about discovery, or one that only reads source files, must use this. Reading [[available]] makes it fail on a host with no
+      * container runtime for a reason it never meant to assert.
+      */
+    lazy val registered: Seq[SqlTestBackend] =
+        TestBackendRegistration.ensure()
+        SqlTestBackendRegistry.all
+
     /** Whether a container runtime is reachable, delegated to [[kyo.internal.ContainerRuntimeProbe]]. A host with no
       * reachable daemon reads as unreachable, which under the fail-on-empty rule above surfaces as a RED failing leaf
       * rather than a silent green, the safe direction.

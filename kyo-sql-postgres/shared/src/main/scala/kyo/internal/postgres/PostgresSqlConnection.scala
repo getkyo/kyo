@@ -59,15 +59,15 @@ final private[kyo] class PostgresSqlConnection private[postgres] (
     // --- Statements ---
 
     def extendedQuery(sql: String, params: Chunk[BoundValue[?]])(using Frame): Chunk[SqlRow] < (Async & Abort[SqlException]) =
-        tracked(underlying.extendedQuery(sql, native(params)))
+        native(params).map(ps => tracked(underlying.extendedQuery(sql, ps)))
 
     def extendedExecute(sql: String, params: Chunk[BoundValue[?]])(using Frame): Long < (Async & Abort[SqlException]) =
-        tracked(underlying.extendedExecute(sql, native(params)))
+        native(params).map(ps => tracked(underlying.extendedExecute(sql, ps)))
 
     def extendedExecuteInsert(sql: String, params: Chunk[BoundValue[?]])(using
         Frame
     ): SqlClient.InsertOutcome < (Async & Abort[SqlException]) =
-        tracked(underlying.extendedExecuteInsert(sql, native(params)))
+        native(params).map(ps => tracked(underlying.extendedExecuteInsert(sql, ps)))
 
     def simpleQuery(sql: String)(using Frame): Chunk[SqlRow] < (Async & Abort[SqlException]) =
         tracked(underlying.simpleQuery(sql))
@@ -79,20 +79,20 @@ final private[kyo] class PostgresSqlConnection private[postgres] (
         Frame
     ): Stream[SqlRow, Async & Abort[SqlException] & Scope] =
         Stream[SqlRow, Async & Abort[SqlException] & Scope](
-            trackedScoped(underlying.streamQuery(sql, native(params), batchSize).emit)
+            native(params).map(ps => trackedScoped(underlying.streamQuery(sql, ps, batchSize).emit))
         )
 
     def pipelined(stmts: Chunk[(String, Chunk[BoundValue[?]])])(using
         Frame
     ): Chunk[Result[SqlException, SqlClient.PipelineBuilder.Outcome]] < (Async & Abort[SqlException]) =
-        val translated = stmts.map { case (sql, params) => (sql, native(params)) }
-        // A pipeline puts one Sync barrier per statement on the wire in a single write, so an interrupted pipeline
-        // leaves as many ReadyForQuery messages queued as it had statements left. Reading forward to the next one
-        // would resynchronise to the wrong place and hand the next borrower the rest of this batch's responses, and
-        // there is no cheaper resynchronisation either: after the cancelled statement the server still runs the ones
-        // behind it, so waiting for the last barrier is waiting for the whole batch. Marked unresyncable, so the
-        // reclaim destroys the connection instead of pretending it can put it back.
-        trackedAs(resyncable = false)(underlying.pipelined(translated))
+        Kyo.foreach(stmts) { case (sql, params) => native(params).map(sql -> _) }.map { translated =>
+            // A pipeline puts one Sync barrier per statement on the wire in a single write, so an interrupted pipeline
+            // leaves as many ReadyForQuery messages queued as it had statements left. Reading forward to the next one
+            // resynchronises to the wrong place and hands the next borrower the rest of this batch's responses, and
+            // waiting for the last barrier is waiting for the whole batch, since the server still runs the statements
+            // behind the cancelled one. Marked unresyncable, so the reclaim destroys the connection.
+            trackedAs(resyncable = false)(underlying.pipelined(translated))
+        }
     end pipelined
 
     // --- Transactions ---
@@ -208,9 +208,17 @@ final private[kyo] class PostgresSqlConnection private[postgres] (
 
     // --- Lifecycle ---
 
-    private def native(params: Chunk[BoundValue[?]])(using Frame): Chunk[BoundParam[?]] =
-        params.flatMap {
-            case b: BoundValue[a] => PostgresParamWriter.write(b.schema, b.value, typeRegistry)
+    /** Encodes the bound values into wire parameters, turning a refusal from the encoder into a typed failure.
+      *
+      * The encoders refuse a value their wire form cannot carry by throwing, because the `SqlCodec.Writer` methods they implement return
+      * `Unit` and have nowhere to put an effect. Unconverted, that throw reaches the caller as a PANIC, past the handler the method's
+      * `Abort[SqlException]` row asked them to write.
+      */
+    private def native(params: Chunk[BoundValue[?]])(using Frame): Chunk[BoundParam[?]] < Abort[SqlException] =
+        Abort.catching[SqlException] {
+            params.flatMap {
+                case b: BoundValue[a] => PostgresParamWriter.write(b.schema, b.value, typeRegistry)
+            }
         }
 
     /** Marks a request in flight for the duration of `body`, resyncable, the default for a single-barrier exchange. */

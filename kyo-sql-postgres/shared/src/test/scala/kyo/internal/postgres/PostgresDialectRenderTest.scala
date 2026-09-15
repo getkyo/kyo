@@ -94,7 +94,7 @@ class PostgresDialectRenderTest extends Test:
             .limit(10)
         val rp = q.render(PostgresDialect)
         assert(
-            rp.onlySql.get == """SELECT "p"."id", "p"."name", "p"."age", "p"."deptId" FROM "person" "p" WHERE ("p"."age" >= $1) ORDER BY "p"."age" DESC LIMIT 10"""
+            rp.onlySql.get == """SELECT "p"."id", "p"."name", "p"."age", "p"."deptId" FROM "person" "p" WHERE ("p"."age" >= $1) ORDER BY "p"."age" DESC NULLS FIRST LIMIT 10"""
         )
         assert(rp.params.size == 1)
         val bv: kyo.Sql.BoundValue[?] = rp.params.head
