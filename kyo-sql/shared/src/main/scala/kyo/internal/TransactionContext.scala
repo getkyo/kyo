@@ -28,11 +28,23 @@ import kyo.db.Connection
   *   the session's statement mutex. Every statement routed onto [[connection]] runs holding its single permit, so
   *   concurrent fibers inside the body queue on the session instead of interleaving protocol frames on one socket.
   *   Nested savepoints share the outer transaction's meter, because they share its connection.
+  * @param failed
+  *   the statement failure this transaction is carrying, if one has happened and nothing has rolled back past it.
+  *
+  * Shared by reference across the nest rather than copied per level, because the condition belongs to the transaction and not to the depth
+  * that happened to see it. A statement that fails inside a transaction leaves it unable to commit meaningfully: one engine refuses every
+  * later statement and turns the commit into a rollback, and the other carries on and commits the survivors, so the SAME program with a
+  * handled error committed different data depending on the backend, and told the caller nothing either way.
+  *
+  * Set when a statement fails, and cleared when a savepoint rollback succeeds, which is exactly the operation that makes the transaction
+  * usable again. That is what keeps a nested `transaction` working as the way to recover: it rolls back to its own savepoint, clears this,
+  * and the outer body carries on.
   */
 final private[kyo] case class TransactionContext(
     client: SqlClient,
     connection: Connection,
     depth: Int,
     savepointStack: Chunk[String],
-    meter: Meter
+    meter: Meter,
+    failed: AtomicRef[Maybe[String]]
 )

@@ -95,16 +95,35 @@ class MysqlEncoderTimeTest extends Test:
         assert(bytes(12) == 0x00.toByte, s"micros[3] mismatch: ${(bytes(12) & 0xff).toHexString}")
     }
 
-    "TIME encode raises SqlRequestDurationOverflowException on day-count overflow" in {
-        // The encoder throws SqlRequestDurationOverflowException when the duration's
-        // total-day count exceeds Int.MaxValue, carrying the overflowing day count.
-        val hugeSeconds = (Int.MaxValue.toLong + 1L) * 86400L
-        val value       = java.time.Duration.ofSeconds(hugeSeconds)
+    "TIME encode raises SqlRequestDurationOverflowException just past the span a TIME column holds" in {
+        // One second past 838:59:59, which is the bound that matters and is nowhere near the four-byte day count
+        // the wire struct carries. The guard used to sit on the wire bound, where nothing reached it: every span
+        // between the two encoded cleanly, went out, and was SILENTLY CLAMPED to the ceiling by the server with
+        // the write reported as successful.
+        val value = java.time.Duration.ofSeconds(MysqlTime.MaxSpanSeconds + 1L)
         val ex = intercept[SqlRequestDurationOverflowException] {
             encode(value)
         }
-        assert(ex.totalDays > Int.MaxValue.toLong, s"expected totalDays > Int.MaxValue, got: ${ex.totalDays}")
-        assert(ex.limit == "the MySQL TIME day-count range", s"unexpected limit: ${ex.limit}")
+        assert(
+            ex.totalSeconds == MysqlTime.MaxSpanSeconds + 1L,
+            s"expected totalSeconds ${MysqlTime.MaxSpanSeconds + 1L}, got: ${ex.totalSeconds}"
+        )
+        assert(ex.limit == MysqlTime.SpanLimitDescription, s"unexpected limit: ${ex.limit}")
+    }
+
+    "TIME encode accepts the largest span a TIME column holds" in {
+        // The other side of the same boundary: the guard must refuse what the column cannot hold and nothing else,
+        // so 838:59:59 exactly still encodes. Asserted because a guard written one second wide in the other
+        // direction would refuse a legal value and no other test would notice.
+        val value = java.time.Duration.ofSeconds(MysqlTime.MaxSpanSeconds)
+        val bytes = encode(value)
+        assert(bytes.length == 9, s"expected 9 bytes (1 length + 8 body), got ${bytes.length}")
+        assert(bytes(1) == 0x00.toByte, s"expected isNegative=0, got ${bytes(1)}")
+        assert(bytes(2) == 34.toByte, s"838:59:59 is 34 days and 22 hours, got days ${bytes(2)}")
+        assert(bytes(6) == 22.toByte, s"expected hours=22, got ${bytes(6)}")
+        assert(bytes(7) == 59.toByte, s"expected minutes=59, got ${bytes(7)}")
+        assert(bytes(8) == 59.toByte, s"expected seconds=59, got ${bytes(8)}")
+        assert(roundTrip(value).equals(value), s"the largest legal span must round-trip, got ${roundTrip(value)}")
     }
 
     // ── Decode tests ─────────────────────────────────────────────────────────

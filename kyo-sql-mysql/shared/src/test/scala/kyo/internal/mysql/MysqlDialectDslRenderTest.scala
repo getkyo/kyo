@@ -47,10 +47,14 @@ class MysqlDialectDslRenderTest extends Test:
     // MySQL's `/` is fractional for every operand type, so the exact quotient is the bare operator and needs no cast. The
     // PostgreSQL dialect renders the same node with a CAST, because its integer `/` would truncate; see
     // PostgresDialectDslRenderTest.
+    //
+    // The divisor carries the baseline's NULLIF guard on both flavors. It is not enough to guard the engine that raises
+    // in a SELECT: this engine raises too in a data-change statement, where its default sql_mode carries
+    // ERROR_FOR_DIVISION_BY_ZERO, and division reaches an UPDATE ... SET through the typed lane.
     "an integral division renders the bare operator on MySQL" in {
         val q = people.select(c => c.p.age / c.p.age)
         val r = q.render(MysqlDialect)
-        assert(r.onlySql.get == """SELECT (`p`.`age` / `p`.`age`) FROM `person` `p`""")
+        assert(r.onlySql.get == """SELECT (`p`.`age` / NULLIF(`p`.`age`, 0)) FROM `person` `p`""")
         assert(r.params.size == 0)
     }
 
@@ -58,20 +62,24 @@ class MysqlDialectDslRenderTest extends Test:
     "divideTruncating renders DIV on MySQL" in {
         val q = people.select(c => c.p.age.divideTruncating(c.p.age))
         val r = q.render(MysqlDialect)
-        assert(r.onlySql.get == """SELECT (`p`.`age` DIV `p`.`age`) FROM `person` `p`""")
+        assert(r.onlySql.get == """SELECT (`p`.`age` DIV NULLIF(`p`.`age`, 0)) FROM `person` `p`""")
     }
 
     "divideTruncating against a raw value binds it and renders DIV on MySQL" in {
         val q = people.select(c => c.p.age.divideTruncating(4))
         val r = q.render(MysqlDialect)
-        assert(r.onlySql.get == """SELECT (`p`.`age` DIV ?) FROM `person` `p`""")
+        assert(r.onlySql.get == """SELECT (`p`.`age` DIV NULLIF(?, 0)) FROM `person` `p`""")
         assert(r.params.size == 1)
     }
 
     "the four shared arithmetic operators render as their symbols on MySQL" in {
         val q = people.select(c => (c.p.age + 1, c.p.age - 1, c.p.age * 2, c.p.age % 2))
         val r = q.render(MysqlDialect)
-        assert(r.onlySql.get == """SELECT (`p`.`age` + ?), (`p`.`age` - ?), (`p`.`age` * ?), (`p`.`age` % ?) FROM `person` `p`""")
+        // `%` takes the divisor guard too: a modulo by zero is the same divergence as a division by zero.
+        assert(
+            r.onlySql.get ==
+                """SELECT (`p`.`age` + ?), (`p`.`age` - ?), (`p`.`age` * ?), (`p`.`age` % NULLIF(?, 0)) FROM `person` `p`"""
+        )
         assert(r.params.size == 4)
     }
 

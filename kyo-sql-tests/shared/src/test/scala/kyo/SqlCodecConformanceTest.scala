@@ -410,6 +410,78 @@ class SqlCodecConformanceTest extends SqlBackendTest:
         }
     }
 
+    // ── a temporal value carrying a fraction of a second ─────────────────────
+
+    /** A sub-second fraction survives a round trip through a neutral temporal column.
+      *
+      * Measured, and the finding was not what it first looked like: the two engines ROUND identically, both half up, so the divergence is not
+      * the rounding mode. It is the DEFAULT PRECISION of an unqualified declaration, six digits on one engine and zero on the other, so the
+      * same neutral kind carried microseconds on one backend and rounded them away on the other. `12:00:00.5` came back as `12:00:01`.
+      *
+      * Both engines hold microseconds when the column asks for them, so this was never a capability difference; the fixture simply declined
+      * to ask. The value is chosen to fail either way it could go wrong: `.5` exposes rounding, and `.000001` exposes a precision that
+      * truncates rather than rounds.
+      */
+    "a temporal value keeps its sub-second fraction" - {
+        case class TickRow(v: java.time.LocalDateTime) derives CanEqual
+
+        val half  = java.time.LocalDateTime.of(2024, 3, 15, 12, 0, 0, 500000000)
+        val micro = java.time.LocalDateTime.of(2024, 3, 15, 12, 0, 0, 1000)
+
+        forEachBackend() { (backend, client, _) =>
+            for
+                _ <- client.executeRaw(
+                    s"CREATE TABLE tickrow (v ${backend.columnType(SqlTestBackend.ColumnType.DateTime)})"
+                )
+                _         <- Sql.insert[TickRow].values(TickRow(half)).run
+                halfRows  <- Sql.from[TickRow]("t").run
+                _         <- client.executeRaw("DELETE FROM tickrow")
+                _         <- Sql.insert[TickRow].values(TickRow(micro)).run
+                microRows <- Sql.from[TickRow]("t").run
+            yield
+                assert(halfRows.head.v.equals(half), s"${backend.label}: half a second, expected $half, got ${halfRows.head.v}")
+                assert(
+                    microRows.head.v.equals(micro),
+                    s"${backend.label}: one microsecond, expected $micro, got ${microRows.head.v}"
+                )
+        }
+    }
+
+    // ── an instant authored through a non-UTC offset ─────────────────────────
+
+    /** The instant round-trips above author at `ZoneOffset.UTC`, where the instant and the local wall clock are the same reading, so a codec
+      * that stored the wall clock and ignored the offset entirely would pass all of them. This one separates the two: `10:30` at `-05:00` is
+      * `15:30Z`, so an offset the codec dropped reads back five hours early.
+      *
+      * A guard rather than a reproduction. The codec converts correctly today, on both engines, including where the backing column is naive
+      * and carries the instant's UTC wall clock by the session's UTC pin. Nothing enforces that it keeps converting, and the leaves that
+      * name UTC cannot notice if it stops.
+      */
+    "an instant authored through a non-UTC offset keeps its instant" - {
+        case class ShiftedRow(v: java.time.OffsetDateTime) derives CanEqual
+
+        val authored = java.time.OffsetDateTime.of(2024, 3, 15, 10, 30, 0, 0, java.time.ZoneOffset.ofHours(-5))
+        val expected = authored.withOffsetSameInstant(java.time.ZoneOffset.UTC)
+
+        forEachBackend() { (backend, client, _) =>
+            for
+                _ <- client.executeRaw(
+                    s"CREATE TABLE shiftedrow (v ${backend.columnType(SqlTestBackend.ColumnType.Timestamp)})"
+                )
+                _    <- Sql.insert[ShiftedRow].values(ShiftedRow(authored)).run
+                rows <- Sql.from[ShiftedRow]("r").run
+            yield
+                assert(rows.size == 1, s"expected 1 row, got ${rows.size}")
+                // `.equals`, not `==`: java.time.OffsetDateTime carries no CanEqual, so strict equality refuses the comparison.
+                // `isEqual` would also pass here and is deliberately not used: it compares instants only, which is the very
+                // property under test, so it could not tell a converted offset from a dropped one.
+                assert(
+                    rows.head.v.equals(expected),
+                    s"${backend.label}: authored $authored, expected $expected, got ${rows.head.v}"
+                )
+        }
+    }
+
     // ── java.net.URI ─────────────────────────────────────────────────────────
 
     "java.net.URI round-trip" - {

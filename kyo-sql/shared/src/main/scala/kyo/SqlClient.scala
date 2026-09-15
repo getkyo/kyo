@@ -97,9 +97,15 @@ abstract class SqlClient(private[kyo] val runtime: Runtime[?]):
       * work is the whole body.
       */
     final def usePinnedConnection[A, S](op: Connection => A < S)(using Frame): A < (S & Async & Abort[SqlException]) =
-        self.pinnedEntry.flatMap {
-            case Present((conn, meter)) => self.serialised(meter)(op(conn))
-            case Absent                 => self.useIndependentConnection(op)
+        self.enclosingTransaction.flatMap {
+            // `simpleQuery` and `pipeline` reach the server through here, so a failure either handles must still reach
+            // the commit decision.
+            case Present(ctx) => self.serialised(ctx.meter)(self.recordingFailure(ctx)(op(ctx.connection)))
+            case Absent =>
+                self.pinnedEntry.flatMap {
+                    case Present((conn, meter)) => self.serialised(meter)(op(conn))
+                    case Absent                 => self.useIndependentConnection(op)
+                }
         }
 
     /** Runs `op` on a connection of its own, leased for the call, never an enclosing transaction's or lock's.
@@ -145,7 +151,7 @@ abstract class SqlClient(private[kyo] val runtime: Runtime[?]):
       * [[close]] for the rationale.
       */
     def query(sql: String)(using Frame): Chunk[SqlRow] < (Async & Abort[SqlException]) =
-        self.query(Sql.Fragment.lit[Any](sql))
+        SqlClient.requireStatement(sql).andThen(self.query(Sql.Fragment.lit[Any](sql)))
 
     def query[A](executable: Sql.Executable[A])(using Frame): Chunk[SqlRow] < (Async & Abort[SqlException]) =
         self.renderForWire(executable).map { rendered =>
@@ -158,7 +164,7 @@ abstract class SqlClient(private[kyo] val runtime: Runtime[?]):
       * connection from the pool.
       */
     def execute(sql: String)(using Frame): Long < (Async & Abort[SqlException]) =
-        self.execute(Sql.Fragment.lit[Any](sql))
+        SqlClient.requireStatement(sql).andThen(self.execute(Sql.Fragment.lit[Any](sql)))
 
     def execute[A](executable: Sql.Executable[A])(using Frame): Long < (Async & Abort[SqlException]) =
         self.renderForWire(executable).map { rendered =>
@@ -171,7 +177,10 @@ abstract class SqlClient(private[kyo] val runtime: Runtime[?]):
       * one. See [[SqlClient.InsertOutcome]] for the per-engine semantics of that key, which differ for multi-row inserts.
       */
     def executeInsert[T, F](insert: Sql.Insert[T, F])(using Frame): SqlClient.InsertOutcome < (Async & Abort[SqlException]) =
-        self.renderForWire(insert).map(rendered => self.internalExecuteInsert(rendered.sql, rendered.params, self.config))
+        self.renderForWire(insert).map(rendered =>
+            self.internalExecuteInsert(rendered.sql, rendered.params, self.config)
+                .map(outcome => Sql.Insert.capAffected(insert, outcome))
+        )
 
     /** Executes `sql` through the engine's simple-query protocol and returns the rows.
       *
@@ -183,7 +192,7 @@ abstract class SqlClient(private[kyo] val runtime: Runtime[?]):
     def simpleQuery(sql: String)(using Frame): Chunk[SqlRow] < (Async & Abort[SqlException]) =
         // Routed. The pin here is a FRAMING requirement, one wire for the statement and the rows it streams back,
         // not a session-state one, and an enclosing transaction's connection satisfies framing just as well.
-        self.usePinnedConnection(_.simpleQuery(sql))
+        SqlClient.requireStatement(sql).andThen(self.usePinnedConnection(_.simpleQuery(sql)))
 
     /** Streams rows from a parameterised query.
       *
@@ -192,7 +201,9 @@ abstract class SqlClient(private[kyo] val runtime: Runtime[?]):
       * connection from the pool for the duration of the stream.
       */
     def streamQuery(sql: String)(using Frame): Stream[SqlRow, Async & Abort[SqlException] & Scope] =
-        self.streamQuery(Sql.Fragment.lit[Any](sql))
+        Stream[SqlRow, Async & Abort[SqlException] & Scope](
+            SqlClient.requireStatement(sql).andThen(self.streamQuery(Sql.Fragment.lit[Any](sql)).emit)
+        )
 
     def streamQuery[A](executable: Sql.Executable[A])(using Frame): Stream[SqlRow, Async & Abort[SqlException] & Scope] =
         Stream[SqlRow, Async & Abort[SqlException] & Scope](
@@ -214,7 +225,11 @@ abstract class SqlClient(private[kyo] val runtime: Runtime[?]):
                         // The session mutex is held for the stream's whole consumption, so a statement forked while
                         // the stream is open queues rather than interleaving with it; the mutex is reentrant, so a
                         // statement issued from the consuming fiber between batches still proceeds.
-                        self.serialised(ctx.meter)(ctx.connection.streamQuery(rendered.sql, rendered.params, batchSize).emit)
+                        //
+                        // For a stream the failure is recorded wherever in the consumption it surfaces.
+                        self.serialised(ctx.meter)(
+                            self.recordingFailure(ctx)(ctx.connection.streamQuery(rendered.sql, rendered.params, batchSize).emit)
+                        )
                     case Absent =>
                         self.useConfig { config =>
                             runtime.leaseScoped(config).flatMap { conn =>
@@ -232,7 +247,7 @@ abstract class SqlClient(private[kyo] val runtime: Runtime[?]):
       * connection directly.
       */
     def executeRaw(sql: String)(using Frame): Long < (Async & Abort[SqlException]) =
-        self.routed(_.simpleExecute(sql))
+        SqlClient.requireStatement(sql).andThen(self.routed(_.simpleExecute(sql)))
 
     /** Renders `ast` as the SQL this client's engine would receive, in its flavor and for the version it reported at handshake.
       *
@@ -287,9 +302,20 @@ abstract class SqlClient(private[kyo] val runtime: Runtime[?]):
     def closeNow(using Frame): Unit < Async =
         self.close(Duration.Zero)
 
-    /** Runs `body` inside a database transaction using the server default isolation level and read-write mode.
+    /** Runs `body` inside a database transaction at `READ COMMITTED` and read-write.
       *
-      * Equivalent to `transaction(Absent, false)(body)`.
+      * Equivalent to `transaction(Absent, false)(body)`. The level is the driver's, not the server's: the engines default to different
+      * levels, so a transaction that named none would mean different things per deployment, and every connection pins `READ COMMITTED` at
+      * connect.
+      *
+      * ==A failure inside the body stops the commit, even one the body handled==
+      *
+      * A failed statement marks the transaction, and the mark survives the caller recovering from it: a body that returns normally is rolled
+      * back and raises [[SqlRequestTransactionFailedStatementException]]. Committing instead is what the engines disagree about, one silently
+      * degrading the commit and the other keeping what survived.
+      *
+      * To handle a failure and keep going, wrap the part that may fail in a NESTED `transaction`, which takes a savepoint and leaves the outer
+      * one committable. One opened AFTER a failure is refused, since its savepoint cannot undo what predates it.
       *
       * A `body` that raises `Abort[E]` for a non-[[SqlException]] `E` keeps that failure: the rollback fires for it exactly as for an
       * [[SqlException]], and the value surfaces on the row the body already put it on, so a caller matches on its own error.
@@ -321,7 +347,7 @@ abstract class SqlClient(private[kyo] val runtime: Runtime[?]):
       * [[SqlException]], and the value surfaces on the row the body already put it on, so a caller matches on its own error.
       *
       * @param isolation
-      *   optional isolation level; `Absent` uses the server default
+      *   optional isolation level; `Absent` uses `READ COMMITTED`, which every connection pins at connect
       * @param readOnly
       *   if `true`, sends `BEGIN ... READ ONLY`
       * @param body
@@ -364,7 +390,17 @@ abstract class SqlClient(private[kyo] val runtime: Runtime[?]):
                     Kyo.foreach(statements)(statement => self.renderForWire(statement).map(r => (r.sql, r.params))).map { stmts =>
                         // Routed by the helper rather than hand-rolling the same decision here: a caller that
                         // reimplements routing can reimplement it wrongly.
-                        self.usePinnedConnection(_.pipelined(stmts))
+                        self.usePinnedConnection(_.pipelined(stmts)).map { outcomes =>
+                            // A per-statement failure is a value rather than a raise, so the routing helper's recording
+                            // never sees it. The one lane where failures are handled by construction.
+                            self.enclosingTransaction.flatMap {
+                                case Present(ctx) =>
+                                    Maybe.fromOption(outcomes.collectFirst { case Result.Failure(e) => e }) match
+                                        case Present(e) => ctx.failed.set(Present(e.getMessage)).andThen(outcomes)
+                                        case Absent     => outcomes
+                                case Absent => outcomes
+                            }
+                        }
                     }
             }
         }
@@ -522,9 +558,35 @@ abstract class SqlClient(private[kyo] val runtime: Runtime[?]):
     private[kyo] def routedWith[A](config: SqlConfig)(op: Connection => A < (Async & Abort[SqlException]))(using
         Frame
     ): A < (Async & Abort[SqlException]) =
-        self.pinnedEntry.flatMap {
-            case Present((conn, meter)) => self.serialised(meter)(op(conn))
-            case Absent                 => runtime.leaseStatement(config)(op)
+        self.enclosingTransaction.flatMap {
+            case Present(ctx) => self.serialised(ctx.meter)(self.recordingFailure(ctx)(op(ctx.connection)))
+            case Absent =>
+                self.pinnedEntry.flatMap {
+                    case Present((conn, meter)) => self.serialised(meter)(op(conn))
+                    case Absent                 => runtime.leaseStatement(config)(op)
+                }
+        }
+
+    /** Runs one statement of a transaction, refusing to run it at all once the transaction is carrying a failure, and recording its own
+      * failure if it has one.
+      *
+      * The failure is re-raised untouched; what is added is the transaction remembering it, so a caller who handles it cannot reach the commit
+      * as though nothing had. Left to the engines, one refuses every later statement and the other commits whatever survived.
+      *
+      * Polymorphic in the trailing effects so EVERY surface that puts a statement on a transaction's connection passes through it. A surface
+      * that does not is a lane where a handled failure reaches the commit unrecorded.
+      */
+    private[kyo] def recordingFailure[A, S](ctx: TransactionContext)(op: => A < (S & Async & Abort[SqlException]))(using
+        Frame
+    ): A < (S & Async & Abort[SqlException]) =
+        ctx.failed.get.flatMap {
+            case Present(detail) => Abort.fail(SqlRequestTransactionFailedStatementException(detail))
+            case Absent =>
+                Abort.run[SqlException](op).flatMap {
+                    case Result.Success(a) => a
+                    case Result.Failure(e) => ctx.failed.set(Present(e.getMessage)).andThen(Abort.fail(e))
+                    case Result.Panic(t)   => Abort.error(Result.Panic(t))
+                }
         }
 
     /** Renders `ast` for this client's engine and version, as the statement text and binds a wire call takes.
@@ -542,7 +604,11 @@ abstract class SqlClient(private[kyo] val runtime: Runtime[?]):
         frame: Frame
     ): Idiom.Rendering < (Async & Abort[SqlException]) =
         self.serverVersion.map { version =>
-            Abort.catching[SqlException](self.dialect.renderRaw(ast, Present(version), frame))
+            Abort.catching[SqlException](self.dialect.renderRaw(ast, Present(version), frame)).map { rendered =>
+                // The raw-String entry points make the same refusal, but a caller's own `sql""` fragment reaches the
+                // wire through here instead.
+                SqlClient.requireStatement(rendered.sql).andThen(rendered)
+            }
         }
 
     /** Returns the rows of a parameterised query, decoded as `A` through the supplied [[SqlSchema]].
@@ -615,8 +681,10 @@ abstract class SqlClient(private[kyo] val runtime: Runtime[?]):
       * Acquires a single connection from the pool and binds it to the fiber-local [[SqlClient.txLocal]] for the duration of `body`. All
       * `query`/`execute`/`streamQuery` calls within `body` automatically use the bound connection.
       *
-      * On success: sends `COMMIT`. On any failure: sends `ROLLBACK` and re-raises the value on the channel it was raised on, whether that is
-      * the declared `Abort[SqlException]`, a typed failure carried by the body's own effect row, or a `Result.Panic`.
+      * On a body that returned normally AND carried no statement failure: sends `COMMIT`. On a body that returned normally while carrying a
+      * statement failure the caller handled: sends `ROLLBACK` and raises [[SqlRequestTransactionFailedStatementException]]. On any failure out
+      * of the body: sends `ROLLBACK` and re-raises the value on the channel it was raised on, whether that is the declared
+      * `Abort[SqlException]`, a typed failure carried by the body's own effect row, or a `Result.Panic`.
       *
       * ==Nested transactions==
       *
@@ -633,7 +701,7 @@ abstract class SqlClient(private[kyo] val runtime: Runtime[?]):
       * isolation levels.
       *
       * @param isolation
-      *   optional isolation level; [[Absent]] uses the server default (PostgreSQL: `READ COMMITTED`)
+      *   optional isolation level; [[Absent]] uses `READ COMMITTED` on every backend, pinned by the driver at connect
       * @param readOnly
       *   if `true`, sends `BEGIN … READ ONLY` (or just reuses the outer connection for nested calls)
       * @param body
@@ -652,14 +720,29 @@ abstract class SqlClient(private[kyo] val runtime: Runtime[?]):
                 self.savepointName(ctx.depth + 1).map { spName =>
                     val conn     = ctx.connection
                     val innerCtx = ctx.copy(depth = ctx.depth + 1, savepointStack = spName +: ctx.savepointStack)
-                    self.serialised(ctx.meter)(conn.savepoint(spName)).andThen {
-                        Abort.run[Any](SqlClient.txLocal.let(Present(innerCtx))(body)).map {
-                            case Result.Success(a) =>
-                                self.serialised(ctx.meter)(conn.releaseSavepoint(spName)).andThen(a)
-                            case Result.Failure(e) =>
-                                self.serialised(ctx.meter)(conn.rollbackToSavepoint(spName)).andThen(SqlClient.reraise[A](e))
-                            case Result.Panic(t) =>
-                                self.serialised(ctx.meter)(conn.rollbackToSavepoint(spName)).andThen(Abort.error(Result.Panic(t)))
+                    // Refused over a carried failure: a savepoint taken now cannot undo one that predates it, so
+                    // rolling back to it would clear a failure it never reversed. The engines disagree here on their
+                    // own, one refusing the SAVEPOINT and the other accepting it.
+                    self.recordingFailure(ctx)(Sync.defer(())).andThen {
+                        // A rollback restores the transaction to its state HERE, and carrying a failure is part of it.
+                        ctx.failed.get.flatMap { failedAtSavepoint =>
+                            self.serialised(ctx.meter)(conn.savepoint(spName)).andThen {
+                                Abort.run[Any](SqlClient.txLocal.let(Present(innerCtx))(body)).map {
+                                    case Result.Success(a) =>
+                                        self.serialised(ctx.meter)(conn.releaseSavepoint(spName)).andThen(a)
+                                    case Result.Failure(e) =>
+                                        // Rolling back to the savepoint makes the transaction usable again, so the
+                                        // failure it undid stops counting against the commit; without the restore, the
+                                        // outer commit would refuse over something already rolled back.
+                                        self.serialised(ctx.meter)(conn.rollbackToSavepoint(spName))
+                                            .andThen(ctx.failed.set(failedAtSavepoint))
+                                            .andThen(SqlClient.reraise[A](e))
+                                    case Result.Panic(t) =>
+                                        self.serialised(ctx.meter)(conn.rollbackToSavepoint(spName))
+                                            .andThen(ctx.failed.set(failedAtSavepoint))
+                                            .andThen(Abort.error(Result.Panic(t)))
+                                }
+                            }
                         }
                     }
                 }
@@ -695,18 +778,37 @@ abstract class SqlClient(private[kyo] val runtime: Runtime[?]):
     private def beginOn[A, S](conn: Connection, meter: Meter, isolation: Maybe[SqlClient.IsolationLevel], readOnly: Boolean)(
         body: A < S
     )(using Frame): A < (S & Async & Abort[SqlException]) =
-        val ctx = TransactionContext(self, conn, 0, Chunk.empty, meter)
-        self.beginLogged(conn, "tx").andThen {
-            // The control statements hold the session mutex too: a fiber the body forked and never awaited can
-            // still be mid-statement when the body returns, and COMMIT must queue behind it, not interleave.
-            self.serialised(meter)(conn.beginTransaction(isolation, readOnly)).andThen {
-                Abort.run[Any](SqlClient.txLocal.let(Present(ctx))(body)).flatMap {
-                    case Result.Success(a) =>
-                        self.serialised(meter)(self.commitLogged(conn, "tx")).andThen(a)
-                    case Result.Failure(e) =>
-                        self.serialised(meter)(self.rollbackLogged(conn, "tx")).andThen(SqlClient.reraise[A](e))
-                    case Result.Panic(t) =>
-                        self.serialised(meter)(self.rollbackLogged(conn, "tx")).andThen(Abort.error(Result.Panic(t)))
+        AtomicRef.init(Maybe.empty[String]).flatMap { failed =>
+            val ctx = TransactionContext(self, conn, 0, Chunk.empty, meter, failed)
+            self.beginLogged(conn, "tx").andThen {
+                // The control statements hold the session mutex too: a fiber the body forked and never awaited can
+                // still be mid-statement when the body returns, and COMMIT must queue behind it, not interleave.
+                self.serialised(meter)(conn.beginTransaction(isolation, readOnly)).andThen {
+                    Abort.run[Any](SqlClient.txLocal.let(Present(ctx))(body)).flatMap {
+                        case Result.Success(a) =>
+                            // A body that returned normally may still be carrying a statement failure it handled.
+                            // Committing there differs by engine and says nothing: one server refuses the commit and
+                            // quietly rolls back, the other commits whatever survived. Roll back on both and tell the
+                            // caller which statement did it.
+                            //
+                            // The flag is read INSIDE the mutex, with the control statement it decides. Read outside,
+                            // a forked statement still in flight can fail after the read and before the COMMIT that
+                            // queues behind it.
+                            self.serialised(meter) {
+                                failed.get.flatMap {
+                                    case Present(detail) =>
+                                        self.rollbackLogged(conn, "tx").andThen(
+                                            Abort.fail(SqlRequestTransactionFailedStatementException(detail))
+                                        )
+                                    case Absent =>
+                                        self.commitLogged(conn, "tx").andThen(a)
+                                }
+                            }
+                        case Result.Failure(e) =>
+                            self.serialised(meter)(self.rollbackLogged(conn, "tx")).andThen(SqlClient.reraise[A](e))
+                        case Result.Panic(t) =>
+                            self.serialised(meter)(self.rollbackLogged(conn, "tx")).andThen(Abort.error(Result.Panic(t)))
+                    }
                 }
             }
         }
@@ -798,7 +900,9 @@ object SqlClient:
           * on the root cause rather than only "present/absent".
           *
           *   - [[GeneratedKey.Value]], backend reported a non-zero generated id. On Postgres the renderer emitted `RETURNING <pk>` for an
-          *     auto-key column and decoded the DataRow's id; on MySQL the OK packet's `lastInsertId` field was non-zero.
+          *     auto-key column and decoded the DataRow's id; on MySQL the OK packet's `lastInsertId` field was non-zero. For an INSERT of
+          *     several rows this is the key of the FIRST row inserted, on every backend: a flavor reporting from an OK packet cannot recover
+          *     the later ones, so the first is the only value every backend can answer with.
           *   - [[GeneratedKey.NoAutoKey]], the target table has no auto-incrementing column, so no id was requested. This is Postgres-only:
           *     the renderer did not emit `RETURNING`. MySQL cannot distinguish "no AUTO_INCREMENT column" from "column present but zero"
           *     from the OK packet alone, so MySQL always uses [[GeneratedKey.Unavailable]] instead, never [[GeneratedKey.NoAutoKey]].
@@ -1338,6 +1442,14 @@ object SqlClient:
             // Erasure boundary: see the scaladoc above. Abort.run accepts by value, not by type, so the
             // narrowed Result is how the value reaches the caller's own handler.
             case other => Abort.get(Result.Failure(other).asInstanceOf[Result[Nothing, Nothing]])
+
+    /** Refuses a statement with no SQL in it, before a connection is reached for it.
+      *
+      * At the raw-String entry points because the statements the typed API renders cannot be empty, and the deeper choke points take a
+      * function of the connection rather than the text.
+      */
+    private[kyo] def requireStatement(sql: String)(using Frame): Unit < Abort[SqlException] =
+        if sql.isBlank then Abort.fail(SqlRequestEmptyStatementException()) else ()
 
     // --- Lifecycle ---
 

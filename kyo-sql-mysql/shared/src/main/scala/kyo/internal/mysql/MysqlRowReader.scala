@@ -73,15 +73,18 @@ final class MysqlRowReader(row: SqlRow, format: Format, matchesFieldAt: Maybe[(I
         new String(bytes.toArray, StandardCharsets.UTF_8)
     end readUtf8String
 
-    /** Refuses a text read of a column whose type is not text, naming the Scala type that asked.
+    /** Refuses a read whose target type conflicts with the kind of column it is over, naming the Scala type that asked.
       *
-      * The guard the text reads owe their caller: every other read resolves the wire representation from the column's type byte, and this
-      * is the one whose target type any byte sequence satisfies, so without the guard an `INT` column read as `String` answers the four
-      * little-endian bytes of the value as UTF-8 rather than failing.
+      * `accepted` is the set of column kinds the target can be decoded from. A column of any other NAMED kind is refused; an unspecified
+      * token and an unnamed type byte pass, since neither is evidence of a mismatch.
+      *
+      * Every read needs this, not only the text ones. A binary `DATE` and a binary `TIME` are structs, so a `LocalDate` field over an `INT`
+      * column otherwise reaches the temporal decoder and fails about the BYTES rather than about the COLUMN, where the other engine answers
+      * a column-type mismatch.
       */
-    private def requireTextColumn(scalaType: String): Unit =
+    private def requireAcceptedColumn(scalaType: String, accepted: Set[SqlRow.ColumnKind]): Unit =
         val token = currentToken()
-        MysqlColumnToken.nonTextColumnType(token).foreach { columnType =>
+        MysqlColumnToken.conflictingColumnType(token, accepted).foreach { columnType =>
             throw SqlDecodeColumnTypeMismatchException(
                 scalaType,
                 MysqlDialect.id,
@@ -92,7 +95,13 @@ final class MysqlRowReader(row: SqlRow, format: Format, matchesFieldAt: Maybe[(I
                 if idx < row.columns.size then Maybe(row.columns(idx).name) else Maybe.empty
             )(using frame)
         }
-    end requireTextColumn
+    end requireAcceptedColumn
+
+    /** The kinds a text read accepts: the two that carry a value's text rendering on the wire under both protocols. */
+    private val textKinds: Set[SqlRow.ColumnKind] = Set(SqlRow.ColumnKind.Text, SqlRow.ColumnKind.Json)
+
+    private def requireTextColumn(scalaType: String): Unit =
+        requireAcceptedColumn(scalaType, textKinds)
 
     // --- Nil check, consumes the column when it answers true ---
 
@@ -140,7 +149,6 @@ final class MysqlRowReader(row: SqlRow, format: Format, matchesFieldAt: Maybe[(I
     override def string(): String =
         requireTextColumn("String")
         readUtf8String(nextBytes())
-    end string
 
     override def bytes(): Span[Byte] =
         nextBytes()
@@ -153,6 +161,7 @@ final class MysqlRowReader(row: SqlRow, format: Format, matchesFieldAt: Maybe[(I
         // struct body without its length prefix (consumed by BinaryResultsetRowUnmarshaller); under the text
         // protocol it is `YYYY-MM-DD HH:MM:SS[.ffffff]`, whose length matches no binary struct size, so it is
         // parsed by the text path rather than the struct decoder.
+        requireAcceptedColumn("Instant", MysqlRowReader.instantKinds)
         val bytes = nextBytes()
         val local = MysqlRowReader.decodeDatetime(bytes, format)(using frame)
         local.toInstant(java.time.ZoneOffset.UTC)
@@ -175,7 +184,9 @@ final class MysqlRowReader(row: SqlRow, format: Format, matchesFieldAt: Maybe[(I
         readNumeric((bytes, token) => MysqlNumericDecoder.bigInt(bytes, format, token)(using frame))
 
     override def duration(): java.time.Duration =
+        requireAcceptedColumn("Duration", MysqlRowReader.timeKinds)
         MysqlRowReader.decodeDuration(nextBytes(), format)(using frame)
+    end duration
 
     // --- SQL type vocabulary ---
     //
@@ -184,22 +195,35 @@ final class MysqlRowReader(row: SqlRow, format: Format, matchesFieldAt: Maybe[(I
     // strings, matching what MysqlParamWriter emits.
 
     override def nextJson(): String =
+        requireTextColumn("JsonText")
         readUtf8String(nextBytes())
 
     override def nextUuid(): java.util.UUID =
+        // Text kinds: this engine has no UUID column, so the value arrives as the text MysqlParamWriter wrote.
+        requireTextColumn("UUID")
         java.util.UUID.fromString(readUtf8String(nextBytes()))
+    end nextUuid
 
     override def nextDate(): java.time.LocalDate =
+        requireAcceptedColumn("LocalDate", MysqlRowReader.dateKinds)
         MysqlRowReader.decodeDate(nextBytes(), format)(using frame)
+    end nextDate
 
     override def nextTime(): java.time.LocalTime =
+        requireAcceptedColumn("LocalTime", MysqlRowReader.timeKinds)
         MysqlRowReader.decodeLocalTime(nextBytes(), format)(using frame)
+    end nextTime
 
     override def nextTimeWithOffset(): java.time.OffsetTime =
+        // Text kinds: this engine has no time-with-offset column, so the value arrives as the text MysqlParamWriter wrote.
+        requireTextColumn("OffsetTime")
         java.time.OffsetTime.parse(readUtf8String(nextBytes()))
+    end nextTimeWithOffset
 
     override def nextDateTime(): java.time.LocalDateTime =
+        requireAcceptedColumn("LocalDateTime", MysqlRowReader.instantKinds)
         MysqlRowReader.decodeDatetime(nextBytes(), format)(using frame)
+    end nextDateTime
 
     override def nextCalendarInterval(): java.time.Period =
         // `normalized` for the same reason `PostgresDecoder.intervalPeriod` applies it: `Period.equals` compares
@@ -266,6 +290,19 @@ final class MysqlRowReader(row: SqlRow, format: Format, matchesFieldAt: Maybe[(I
 end MysqlRowReader
 
 object MysqlRowReader:
+
+    /** The column kinds each temporal read accepts.
+      *
+      * Wider than the one type each read's own writer emits, deliberately: `DATETIME` and `TIMESTAMP` both serve an instant and a wall clock,
+      * since they differ in whether the server converts to the session zone rather than in what the wire carries and the driver pins that
+      * zone; a `TIME` column serves both `LocalTime` and `Duration`.
+      */
+    private[mysql] val dateKinds: Set[SqlRow.ColumnKind] = Set(SqlRow.ColumnKind.Date)
+
+    private[mysql] val timeKinds: Set[SqlRow.ColumnKind] = Set(SqlRow.ColumnKind.Time)
+
+    private[mysql] val instantKinds: Set[SqlRow.ColumnKind] =
+        Set(SqlRow.ColumnKind.Timestamp, SqlRow.ColumnKind.DateTime)
 
     // --- Temporal decodes, one entry point per SQL type, in either wire format ---
     //

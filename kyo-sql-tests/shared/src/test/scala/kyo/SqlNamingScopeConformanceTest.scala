@@ -40,8 +40,10 @@ class SqlNamingScopeConformanceTest extends SqlBackendTest:
 
     "a casing given that does not reach the run site fails naming the row's columns and the casing" - {
         forEachBackend() { (backend, client, _) =>
-            // No `given SqlNaming` in scope at this run, which is what a given declared in a companion object of some
-            // other class looks like from here.
+            // The given below is declared in a companion object and is NOT imported here, which is the shape the README
+            // warns about. It is a real given rather than an absence, so this arm pins the claim the README makes
+            // instead of merely being consistent with it: a companion object is in the implicit scope of ITS OWN type,
+            // and `SqlNaming` is not that type, so the search at this run site never reaches it.
             for
                 _      <- createExecutions(backend, client)
                 result <- Abort.run[SqlException](sql"SELECT execution_id, flow_id FROM flow_execution".as[ExecutionRow].run)
@@ -58,5 +60,13 @@ class SqlNamingScopeConformanceTest extends SqlBackendTest:
                     assert(false, s"expected the decode to fail naming the missing column, got $other")
         }
     }
+
+    /** A casing declared where the README says it will not be found: the companion of an unrelated type.
+      *
+      * Named `Store` after the README's own example. Nothing here imports it, and the leaf above is what shows the
+      * consequence.
+      */
+    object Store:
+        given SqlNaming = SqlNaming.SnakeCase
 
 end SqlNamingScopeConformanceTest

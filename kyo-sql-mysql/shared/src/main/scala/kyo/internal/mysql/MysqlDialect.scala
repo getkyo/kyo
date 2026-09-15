@@ -59,10 +59,14 @@ class MysqlDialect extends Idiom:
         case SqlType.Type.Time      => Present("TIME")
         case SqlType.Type.DateTime  => Present("DATETIME")
         case SqlType.Type.Timestamp => Present("DATETIME")
+        // A bare DECIMAL means DECIMAL(10,0) on this server: the fraction is rounded away and anything past ten
+        // digits is CLAMPED to 9999999999 with a warning, so `CAST(2.5 AS DECIMAL)` answers 3. The other flavor's bare
+        // cast preserves the value, so the unqualified spelling is pinned to the widest this server offers. Both agree
+        // once a precision is named.
         case SqlType.Type.Numeric(precision, scale) => (precision, scale) match
                 case (Present(p), Present(s)) => Present(s"DECIMAL($p, $s)")
                 case (Present(p), Absent)     => Present(s"DECIMAL($p)")
-                case _                        => Present("DECIMAL")
+                case _                        => Present("DECIMAL(65, 30)")
         case SqlType.Type.TimeWithOffset   => Absent
         case SqlType.Type.CalendarInterval => Absent
         case SqlType.Type.Array(_)         => Absent
@@ -84,10 +88,13 @@ class MysqlDialect extends Idiom:
 
     /** MySQL's `/` is fractional for every operand type, `SELECT 7/2` being `3.5000`, so the exact fractional quotient (`DivideIntegral`)
       * is the baseline plain `/`. MySQL has no truncating `/`; it spells the truncated quotient `DIV`, so that arm diverges.
+      *
+      * The divisor still takes the baseline's guard: a SELECT dividing by zero answers absent here, but a data-change statement raises 1365
+      * under the default `sql_mode`, and division reaches a `SET` through the typed lane. See [[Idiom.guardingDivisor]].
       */
     override def arithmetic(ctx: Idiom.Ctx, ar: Sql.Arithmetic[?]): Unit =
         ar.op match
-            case Sql.Arithmetic.Op.DivideTruncating => binary(ctx, ar.left, "DIV", ar.right)
+            case Sql.Arithmetic.Op.DivideTruncating => binary(ctx, ar.left, "DIV", guardingDivisor(ar).right)
             case _                                  => super.arithmetic(ctx, ar)
 
     /** MySQL's table value constructor names every row with the `ROW` keyword, `VALUES ROW(1, 2), ROW(3, 4)`, and rejects the bare
@@ -107,7 +114,7 @@ class MysqlDialect extends Idiom:
       *   - `DESC NULLS FIRST` renders `<x> IS NOT NULL, <x> DESC`, which pulls NULLs to the front.
       */
     override def orderSpec(ctx: Idiom.Ctx, spec: Sql.OrderSpec): Unit =
-        (spec.direction, spec.absent) match
+        (spec.direction, spec.resolvedAbsent) match
             case (Sql.OrderSpec.Direction.Asc, Sql.OrderSpec.AbsentPlacement.Last) =>
                 term(ctx, spec.expr)
                 ctx.append(" IS NULL, ")
@@ -126,6 +133,43 @@ class MysqlDialect extends Idiom:
                 ctx.append(" DESC")
         end match
     end orderSpec
+
+    /** Renders a window's `ORDER BY` element without the null-placement lowering when the frame forbids a second ordering expression.
+      *
+      * The lowering below spends an extra ordering term, which this frame forbids (error 3587), and no single expression both reorders the
+      * absent values and keeps the frame arithmetic intact.
+      *
+      * A placement the caller NAMED is refused rather than dropped: dropping it renders SQL that runs and answers different rows than were
+      * asked for, silently and on one engine only. An UNNAMED placement is the documented carve-out, since refusing there would make an
+      * ordinary window over a nullable column unrenderable on this engine alone.
+      */
+    override def windowOrderSpec(ctx: Idiom.Ctx, spec: Sql.OrderSpec, singleExpressionRequired: Boolean): Unit =
+        if !singleExpressionRequired then orderSpec(ctx, spec)
+        else
+            if spec.absent != Sql.OrderSpec.AbsentPlacement.Default then
+                ctx.unsupported(
+                    "an explicit null placement in a window ORDER BY under a RANGE frame with a numeric offset",
+                    Absent
+                )
+            end if
+            term(ctx, spec.expr)
+            spec.direction match
+                case Sql.OrderSpec.Direction.Asc  => ctx.append(" ASC")
+                case Sql.OrderSpec.Direction.Desc => ctx.append(" DESC")
+        end if
+    end windowOrderSpec
+
+    /** MySQL spells a character count `CHAR_LENGTH`, reserving `LENGTH` for a count of bytes.
+      *
+      * The baseline renders `LENGTH`, which is a character count on flavors that have no separate spelling, so leaving this unlowered makes
+      * the same expression over the same stored string answer 5 on one engine and 6 on another. The operand's length is a property of the
+      * string rather than of its encoding, so the character count is the one meaning this node can have.
+      */
+    override def stringLength(ctx: Idiom.Ctx, sl: Sql.StringLength): Unit =
+        ctx.append("CHAR_LENGTH(")
+        term(ctx, sl.expr)
+        ctx.append(")")
+    end stringLength
 
     /** MySQL concatenates through a variadic function, so nested Concat nodes flatten into one call rather than nesting. */
     override def concat(ctx: Idiom.Ctx, cn: Sql.Concat): Unit =
@@ -146,7 +190,7 @@ class MysqlDialect extends Idiom:
       */
     override def insertKeyword(onConflict: Maybe[Sql.Insert.OnConflict[?]]): String =
         onConflict match
-            case Present(_: Sql.Insert.OnConflict.DoNothing[?]) => "INSERT IGNORE INTO "
+            case Present(_: Sql.Insert.OnConflict.DoNothing[?]) => MysqlDialect.IgnoringInsertKeyword
             case Present(_: Sql.Insert.OnConflict.DoUpdate[?])  => "INSERT INTO "
             case Absent                                         => "INSERT INTO "
 
@@ -196,4 +240,12 @@ class MysqlDialect extends Idiom:
 end MysqlDialect
 
 /** The shared [[MysqlDialect]] instance, used wherever this repository names the MySQL flavor directly. */
-object MysqlDialect extends MysqlDialect
+object MysqlDialect extends MysqlDialect:
+
+    /** The opening keyword a conflict-ignoring INSERT renders with.
+      *
+      * Named rather than written twice: the renderer that emits it and the connection that recognises the statement afterwards must agree,
+      * and the connection has only the rendered text to go on.
+      */
+    val IgnoringInsertKeyword: String = "INSERT IGNORE INTO "
+end MysqlDialect
