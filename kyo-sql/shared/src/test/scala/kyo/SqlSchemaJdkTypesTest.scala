@@ -2,10 +2,10 @@ package kyo
 
 import kyo.SqlDecodeException
 
-/** Unit tests for [[SqlSchema]] JDK string-round-trip types: `java.net.URI`, `java.util.Locale`, `java.util.Currency`.
+/** Unit tests for [[SqlSchema]] JDK string-round-trip types: `java.net.URI` and `java.util.Locale`.
   *
   * Each of these occupies one text column, and each writes through the writer's `string` primitive: the schema's whole job is choosing the
-  * text form (`URI.toString`, `Locale.toLanguageTag`, `Currency.getCurrencyCode`) and parsing it back, which is what this file asserts. Text
+  * text form (`URI.toString`, `Locale.toLanguageTag`) and parsing it back, which is what this file asserts. Text
   * that does not parse must surface as a typed decode failure, so those leaves drive the same catch the row codec uses in production.
   *
   * The wire legs, which column type each backend puts the text in, live in `kyo/internal/postgres/types/PostgresEncoderJdkTypesTest.scala`
@@ -85,32 +85,6 @@ class SqlSchemaJdkTypesTest extends Test:
         val cases = Seq("en-US", "pt-BR", "zh-Hant-TW").map(java.util.Locale.forLanguageTag)
         cases.foreach(original => assert(roundTrip(original).toLanguageTag == original.toLanguageTag))
         succeed
-    }
-
-    // ── java.util.Currency ─────────────────────────────────────────────────────
-
-    "summon SqlSchema[java.util.Currency] compiles" in {
-        val s: SqlSchema.Column[java.util.Currency] = summon[SqlSchema.Column[java.util.Currency]]
-        assert(s.width == 1)
-    }
-
-    "Currency writes one text column holding its ISO 4217 code" in {
-        assert(written(java.util.Currency.getInstance("USD")) == Chunk(SqlSchemaWriterMock.Call.Str("USD")))
-    }
-
-    "Currency round-trips for USD, BRL, and JPY" in {
-        Seq("USD", "BRL", "JPY").foreach { code =>
-            val original = java.util.Currency.getInstance(code)
-            assert(roundTrip(original).getCurrencyCode == code)
-        }
-        succeed
-    }
-
-    "Currency decode from an invalid code raises Abort[SqlDecodeException]" in {
-        // "NOTACURRENCY" is not a valid ISO 4217 code; Currency.getInstance throws IllegalArgumentException.
-        readText[java.util.Currency]("NOTACURRENCY") match
-            case Result.Failure(_: SqlDecodeException) => succeed
-            case other                                 => fail(s"Expected Failure(SqlDecodeException) but got $other")
     }
 
 end SqlSchemaJdkTypesTest

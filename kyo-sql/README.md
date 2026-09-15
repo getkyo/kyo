@@ -708,7 +708,8 @@ tuple of these is row evidence, and `Maybe` / `Option` wrap any of them as a nul
 | `java.time.Period` | `interval` | ISO-8601 text |
 | `java.util.UUID` | `uuid` | 36-character string |
 | `UUID` | `text` | `VARCHAR` |
-| `java.net.URI`, `java.util.Locale`, `java.util.Currency` | `text` | `VARCHAR` |
+| `java.net.URI`, `java.util.Locale` | `text` | `VARCHAR` |
+| `Currency` | `text`, the ISO 4217 code | `VARCHAR`, the ISO 4217 code |
 | `Chunk[Int]`, `Chunk[String]`, `Chunk[JsonText]` | `int4[]`, `text[]`, `jsonb[]` | `JSON` |
 | `JsonText` | `jsonb` | `JSON` |
 

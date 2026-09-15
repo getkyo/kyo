@@ -976,12 +976,13 @@ lazy val `kyo-sql` =
         // kyo-core entropy -> node:crypto); without it fastLinkJS fails to link them.
         .jsSettings(
             `js-settings`,
+            `tzdb-test-data`,
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
         )
         // openssl-native-settings: kyo-net's Native C shims reference TLS symbols (TLS_client_method,
         // X509_free, ...), so a Native binary that reaches them must link libssl/libcrypto or nativeLink fails.
-        .nativeSettings(`native-settings`, `openssl-native-settings`)
-        .wasmSettings(`wasm-settings`)
+        .nativeSettings(`native-settings`, `openssl-native-settings`, `tzdb-test-data`)
+        .wasmSettings(`wasm-settings`, `tzdb-test-data`)
 
 // The two backend modules below are deliberately symmetric (same platforms, edges, settings); a difference is
 // a bug unless it names a wire feature only one engine has. Both take `test->test` on `kyo-sql` (not just
@@ -1000,12 +1001,13 @@ lazy val `kyo-sql-postgres` =
         // CommonJS, same as kyo-sql: the test path reaches Node builtins (kyo-pod's harness, kyo-core entropy).
         .jsSettings(
             `js-settings`,
+            `tzdb-test-data`,
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
         )
         // openssl-native-settings: this module's auth/TLS sources reach kyo-net's Native C shims, so a test
         // binary that touches them must link libssl/libcrypto or nativeLink fails.
-        .nativeSettings(`native-settings`, `openssl-native-settings`)
-        .wasmSettings(`wasm-settings`)
+        .nativeSettings(`native-settings`, `openssl-native-settings`, `tzdb-test-data`)
+        .wasmSettings(`wasm-settings`, `tzdb-test-data`)
 
 lazy val `kyo-sql-mysql` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
@@ -1018,10 +1020,11 @@ lazy val `kyo-sql-mysql` =
         .jvmSettings(mimaCheck(false))
         .jsSettings(
             `js-settings`,
+            `tzdb-test-data`,
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
         )
-        .nativeSettings(`native-settings`, `openssl-native-settings`)
-        .wasmSettings(`wasm-settings`)
+        .nativeSettings(`native-settings`, `openssl-native-settings`, `tzdb-test-data`)
+        .wasmSettings(`wasm-settings`, `tzdb-test-data`)
 
 // Unpublished; it holds the suites whose SUBJECT spans both engines and so have no single-module home: the
 // cross-backend suites that name both clients/factories to prove they behave the same through one abstract
@@ -3356,12 +3359,8 @@ lazy val `native-settings-base` = Seq(
     Test / parallelExecution                          := false,
     Test / testForkedParallel                         := false,
     Test / envVars += "SCALANATIVE_THREAD_STACK_SIZE" -> "33554432",
-    libraryDependencies += "io.github.cquiroz"       %%% "scala-java-time" % "2.7.0",
-    // Off-JVM these java.time/java.util types exist but carry no data (named zones, locales, currencies), so
-    // resolving one throws at run time, invisible to compile and link. These data artifacts supply the data.
-    libraryDependencies += "io.github.cquiroz" %%% "scala-java-time-tzdb"       % "2.7.0",
-    libraryDependencies += "io.github.cquiroz" %%% "scala-java-locales"         % "1.5.4",
-    libraryDependencies += "io.github.cquiroz" %%% "locales-full-currencies-db" % "1.5.4",
+    // The java.time API for the public signatures that name it. No data artifact: see `js-settings`.
+    libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.7.0",
     // A dependency's bundled FFI C (kyo-net's kyo_uring.c and TLS shims) compiles into THIS Native binary, but
     // nativeConfig does not propagate across a project dependency, so fold each dep's FFI compile/link flags in
     // here or the link fails (SSL_CTX_ctrl macro / undefined io_uring_*).
@@ -3409,12 +3408,11 @@ lazy val `js-settings` = Seq(
     bspEnabled                                  := false,
     Test / parallelExecution                    := false,
     jsEnv                                       := new NodeJSEnv(NodeJSEnv.Config().withArgs(List("--max_old_space_size=5120"))),
+    // The java.time API for the public signatures that name it. Its data artifacts (the IANA zone database, the
+    // CLDR locales, the currency table) stay out of every kyo module: they register reflectively, so the linker
+    // keeps them in every program that has them on the classpath, whatever it calls. An application that resolves
+    // region zones adds scala-java-time-tzdb itself; `linkCheck` fails if a kyo module depends on one.
     libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.7.0",
-    // Off-JVM these java.time/java.util types exist but carry no data (named zones, locales, currencies), so
-    // resolving one throws at run time, invisible to compile and link. These data artifacts supply the data.
-    libraryDependencies += "io.github.cquiroz" %%% "scala-java-time-tzdb"       % "2.7.0",
-    libraryDependencies += "io.github.cquiroz" %%% "scala-java-locales"         % "1.5.4",
-    libraryDependencies += "io.github.cquiroz" %%% "locales-full-currencies-db" % "1.5.4",
     // CI links every module's test binary in one sbt process; retaining each module's incremental
     // linker state overflows the 12G sbt heap now that the schema family links per-format
     // binaries. Batch mode drops that state after each link: incremental relink speed is
@@ -3442,17 +3440,20 @@ lazy val `wasm-settings` = Seq(
             "--experimental-wasm-exnref"
         ))
     ),
+    // The java.time API for the public signatures that name it. No data artifact: see `js-settings`.
     libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.7.0",
-    // Off-JVM these java.time/java.util types exist but carry no data (named zones, locales, currencies), so
-    // resolving one throws at run time, invisible to compile and link. These data artifacts supply the data.
-    libraryDependencies += "io.github.cquiroz" %%% "scala-java-time-tzdb"       % "2.7.0",
-    libraryDependencies += "io.github.cquiroz" %%% "scala-java-locales"         % "1.5.4",
-    libraryDependencies += "io.github.cquiroz" %%% "locales-full-currencies-db" % "1.5.4",
     // Same CI heap rationale as `js-settings`: the WASM rows are Scala.js links too.
     scalaJSLinkerConfig := {
         val c = scalaJSLinkerConfig.value
         if (insideCI.value) c.withBatchMode(true) else c
     }
+)
+
+// The IANA zone database for tests that build values in region zones (`ZoneId.of("America/New_York")`), which
+// off the JVM resolve only with it. Test scope, so it never reaches a published artifact. JS, Wasm, and Native
+// only: the JVM carries the database itself.
+lazy val `tzdb-test-data` = Seq(
+    libraryDependencies += "io.github.cquiroz" %%% "scala-java-time-tzdb" % "2.7.0" % Test
 )
 
 def scalacOptionToken(proposedScalacOption: ScalacOption) =

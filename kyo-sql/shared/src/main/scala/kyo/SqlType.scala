@@ -106,10 +106,10 @@ object SqlType:
     given SqlType[java.time.OffsetDateTime] = Type.Timestamp
     given SqlType[java.time.ZonedDateTime]  = Type.Timestamp
 
-    given SqlType[java.net.URI]       = Type.Text
-    given SqlType[java.util.Locale]   = Type.Text
-    given SqlType[java.util.Currency] = Type.Text
-    given SqlType[java.util.UUID]     = Type.Uuid
+    given SqlType[java.net.URI]     = Type.Text
+    given SqlType[java.util.Locale] = Type.Text
+    given SqlType[Currency]         = Type.Text
+    given SqlType[java.util.UUID]   = Type.Uuid
 
     // Named because an anonymous given derives its synthesized name from the type head alone (`Chunk`), so the
     // three Chunk targets would collide; the same reason the parallel Schema givens carry names.

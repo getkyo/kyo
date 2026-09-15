@@ -19,7 +19,7 @@ import kyo.internal.SqlTestBackend
   * ==Column types come from the descriptor==
   * Every table's column type is named through [[SqlTestBackend.columnType]], keyed by [[SqlTestBackend.ColumnType]], so the DDL carries no
   * engine literal and each backend spells the portable kind its own way. The string-backed types (`String`, `java.net.URI`,
-  * `java.util.Locale`, `java.util.Currency`) reuse [[SqlTestBackend.textColumnType]] instead.
+  * `java.util.Locale`, `Currency`) reuse [[SqlTestBackend.textColumnType]] instead.
   */
 class SqlCodecConformanceTest extends SqlBackendTest:
 
@@ -446,12 +446,12 @@ class SqlCodecConformanceTest extends SqlBackendTest:
         }
     }
 
-    // ── java.util.Currency ───────────────────────────────────────────────────
+    // ── Currency ─────────────────────────────────────────────────────────────
 
-    "java.util.Currency round-trip" - {
-        case class CurrencyRow(v: java.util.Currency) derives CanEqual
+    "Currency round-trip" - {
+        case class CurrencyRow(v: Currency) derives CanEqual
 
-        val value = java.util.Currency.getInstance("USD")
+        val value = Currency.parse("USD").getOrThrow
 
         forEachBackend() { (backend, client, _) =>
             for

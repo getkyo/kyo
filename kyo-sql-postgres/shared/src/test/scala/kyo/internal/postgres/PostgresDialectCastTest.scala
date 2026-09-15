@@ -71,7 +71,7 @@ class PostgresDialectCastTest extends Test:
     "the remaining built-in targets reuse their type's spelling" in {
         assert(castSql(idColumn.cast[java.net.URI]).contains("""CAST("r"."id" AS TEXT)"""))
         assert(castSql(idColumn.cast[java.util.Locale]).contains("""CAST("r"."id" AS TEXT)"""))
-        assert(castSql(idColumn.cast[java.util.Currency]).contains("""CAST("r"."id" AS TEXT)"""))
+        assert(castSql(idColumn.cast[Currency]).contains("""CAST("r"."id" AS TEXT)"""))
         assert(castSql(idColumn.cast[java.time.OffsetDateTime]).contains("""CAST("r"."id" AS TIMESTAMPTZ)"""))
         assert(castSql(idColumn.cast[java.time.ZonedDateTime]).contains("""CAST("r"."id" AS TIMESTAMPTZ)"""))
         assert(castSql(idColumn.cast[BigInt]).contains("""CAST("r"."id" AS NUMERIC)"""))

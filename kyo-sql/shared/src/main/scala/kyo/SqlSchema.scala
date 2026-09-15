@@ -161,8 +161,17 @@ object SqlSchema extends kyo.internal.LowPrioritySqlSchema:
     // erasure lub cast in the runtime); as a case-class field it is fine.
     given locale: Column[java.util.Locale] =
         new Column((v, w) => w.string(v.toLanguageTag), r => java.util.Locale.forLanguageTag(r.string()))
-    given currency: Column[java.util.Currency] =
-        new Column((v, w) => w.string(v.getCurrencyCode), r => java.util.Currency.getInstance(r.string()))
+    /** `Currency` stores its ISO 4217 code. It decodes the same on every platform, since the currency table is part of the type. */
+    given currency: Column[Currency] =
+        new Column(
+            (v, w) => w.string(v.code),
+            r =>
+                val text = r.string()
+                Currency.parse(text)(using r.frame).foldOrThrow(
+                    identity,
+                    _ => throw SqlDecodeInvalidTextException("Currency", text)(using r.frame)
+                )
+        )
 
     // --- Sanctioned single-column collections ---
     //

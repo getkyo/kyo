@@ -6,8 +6,7 @@ import kyo.SqlDecodeException
 import kyo.internal.postgres.PostgresParamWriter
 import kyo.internal.postgres.PostgresRowCodec
 
-/** Wire-level tests for the JDK string-round-trip schemas on PostgreSQL: `java.net.URI`, `java.util.Locale`,
-  * `java.util.Currency`.
+/** Wire-level tests for the JDK string-round-trip schemas on PostgreSQL: `java.net.URI` and `java.util.Locale`.
   *
   * Each writes through the writer's `string` primitive, which PostgreSQL maps to `textText`: OID 25, text format. These leaves pin that
   * mapping and the real round-trip through a `text` column. The backend-blind half (which text form each schema chooses, and the typed decode
@@ -43,7 +42,7 @@ class PostgresEncoderJdkTypesTest extends kyo.Test:
       * compute that lub from the named class and insert a cast to it. For `java.util.Locale` the two platforms disagree about what that
       * class is: the Scala compiler types `java.util.Locale` from the JDK, where it implements `java.io.Serializable`, while Scala.js links
       * the `scala-java-locales` class, whose ancestor set is `Locale` alone. The inserted cast to `Serializable` then throws on JS, and
-      * `java.util.Locale` is the only JDK type this module has a schema for that the JS javalib declares that way (`Currency`, `UUID`,
+      * `java.util.Locale` is the only JDK type this module has a schema for that the JS javalib declares that way (`UUID`,
       * `URI`, `BigDecimal`, `BigInteger`, and every `java.time` class do implement it). Decoding inside a generic method computes the lub
       * on the abstract `A` instead, so no cast exists to disagree about, which is why the backend-blind leaves in
       * `kyo/SqlSchemaJdkTypesTest.scala` already pass on JS.
@@ -69,16 +68,8 @@ class PostgresEncoderJdkTypesTest extends kyo.Test:
         end match
     }
 
-    "Currency reaches the wire as an OID 25 text param and round-trips" in {
-        assert(textParam(java.util.Currency.getInstance("JPY")) == "JPY")
-        decodeAs[java.util.Currency, String](textRow("JPY"), _.getCurrencyCode) match
-            case Result.Success(code) => assert(code == "JPY")
-            case other                => fail(s"Expected Success but got $other")
-        end match
-    }
-
     "text that does not parse surfaces as Abort[SqlDecodeException] through the row codec" in {
-        decodeAs[java.util.Currency, String](textRow("NOTACURRENCY"), _.getCurrencyCode) match
+        decodeAs[java.net.URI, String](textRow("not a valid uri with spaces here"), _.toString) match
             case Result.Failure(_: SqlDecodeException) => succeed
             case other                                 => fail(s"Expected Failure(SqlDecodeException) but got $other")
     }
