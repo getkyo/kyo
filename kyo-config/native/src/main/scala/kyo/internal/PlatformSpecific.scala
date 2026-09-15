@@ -8,6 +8,9 @@ import scala.scalanative.unsafe.resolvedAtLinktime
   * The operating system and architecture flags are resolved at link time: a Native binary is linked for one target, so a plain `if` on
   * `Platform.isWindows` removes the untaken branch, and the native symbols it references, from the binary. Each flag is composed directly
   * from `LinktimeInfo`, the form the linker resolves.
+  *
+  * The compiler rejects a link-time flag combined with a runtime condition in one `&&` or `||` ("Mixing link-time and runtime conditions is
+  * not allowed"), so a runtime test goes inside the branch: `if Platform.isWindows then segment.length == 2 else false`.
   */
 abstract class PlatformSpecific extends PlatformStatic {
     final val isJVM          = false

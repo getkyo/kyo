@@ -1077,14 +1077,17 @@ abstract private[kyo] class PathPlatformSpecific extends PathDirectories:
       *
       * Gated to Windows so a POSIX directory literally named `C:` is never mistaken for a drive
       * (e.g. `/C:/foo` must stay absolute on Unix rather than collapsing to a relative path).
-      * Uses `Platform.isWindows` — the idiom already used by the sibling `ProcessPlatformSpecific`,
-      * and a compile-time constant on Scala Native — rather than an ad-hoc separator check.
+      * Uses `Platform.isWindows`, the idiom already used by the sibling `ProcessPlatformSpecific`, rather than an ad-hoc separator check.
+      * It is a link-time condition on Scala Native, which rejects one combined with a runtime condition in the same `&&`, so it gates the
+      * runtime test through an `if`.
       */
     private def isDriveRoot(segment: String): Boolean =
-        Platform.isWindows && segment.length == 2 && segment.charAt(1) == ':' && {
-            val c = segment.charAt(0)
-            (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
-        }
+        if Platform.isWindows then
+            segment.length == 2 && segment.charAt(1) == ':' && {
+                val c = segment.charAt(0)
+                (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
+            }
+        else false
 
     private[kyo] def envOrEmpty(name: String): String =
         val v = java.lang.System.getenv(name)
