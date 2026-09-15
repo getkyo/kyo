@@ -1,4 +1,4 @@
-package kyo.internal.jsenv
+package kyo.test.browser.internal
 
 import kyo.*
 import scala.annotation.tailrec
@@ -7,7 +7,7 @@ import scala.annotation.tailrec
   * units, then those code units, each big-endian. Messages are strings of arbitrary content, including unpaired surrogates, so the frame
   * carries code units rather than an encoding of code points.
   */
-private[jsenv] object ComFrame:
+private[browser] object ComFrame:
 
     /** The bytes of one frame carrying `message`. */
     def encode(message: String): Span[Byte] =

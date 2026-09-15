@@ -1,4 +1,4 @@
-package kyo.internal.jsenv
+package kyo.test.browser.internal
 
 import kyo.*
 import scala.annotation.tailrec
@@ -14,7 +14,7 @@ import scala.annotation.tailrec
   * that `scalajsCom` is installed so messages for the page can be delivered, and [[failBinding]] reports a main module that could not be
   * loaded, which would otherwise leave the run waiting.
   */
-private[jsenv] object PageServer:
+private[browser] object PageServer:
 
     /** How the page loads the main module. */
     enum ModuleKind derives CanEqual:

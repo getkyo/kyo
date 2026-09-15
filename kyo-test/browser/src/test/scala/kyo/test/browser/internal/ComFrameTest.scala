@@ -1,4 +1,4 @@
-package kyo.internal.jsenv
+package kyo.test.browser.internal
 
 import kyo.*
 

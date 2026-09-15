@@ -1,3 +1,5 @@
+package kyo.test.sbt
+
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.Closeable
@@ -19,58 +21,63 @@ import scala.util.Failure
 import scala.util.Success
 import scala.util.control.NonFatal
 
-/** A Scala.js `JSEnv` that runs a linked test in Chrome.
+/** A Scala.js `JSEnv` that runs a linked test suite in Chrome. Build it with `kyoTestBrowserEnv` (see [[KyoTestJsPlugin]]).
   *
-  * Each run forks a JVM running `kyo.internal.jsenv.BrowserRunnerMain` from kyo-jsenv-browser, which serves the linked output, loads it
-  * in a chrome-headless-shell of its own and relays the test adapter's com messages over CDP. This side listens on a loopback port and
+  * Each run starts a JVM running `kyo.test.browser.BrowserRunnerMain` from kyo-test-browser, which serves the linked output, loads it in
+  * a chrome-headless-shell of its own and relays the test adapter's com messages over CDP. This side listens on a loopback port and
   * speaks the same com framing as scalajs-env-nodejs (a big-endian int count of UTF-16 code units, then the units), so the adapter sees
   * the runner exactly as it sees Node. The runner's standard output and error reach the adapter through `ExternalJSRun`.
   *
   * Only runs with a com channel are supported: a page has no end of its own, where a Node program ends once its event loop drains, so a
-  * run without the test adapter's channel would never finish.
+  * run without the test adapter's channel would never finish. The linked output must be a script (`ModuleKind.NoModule`) or an ES module
+  * (`ModuleKind.ESModule`, which a WebAssembly link also produces); a page cannot load CommonJS.
   *
   * @param java
   *   the `java` executable for the runner
   * @param classpath
-  *   kyo-jsenv-browser's runtime classpath
+  *   kyo-test-browser's runtime classpath
   * @param jvmOptions
   *   options for the runner's JVM
   * @param chromeVersion
   *   the chrome-headless-shell version; `None` resolves the latest Stable
   */
-final class BrowserJSEnv(java: String, classpath: Seq[File], jvmOptions: Seq[String], chromeVersion: Option[String]) extends JSEnv {
+final class KyoTestBrowserJSEnv(java: String, classpath: Seq[File], jvmOptions: Seq[String], chromeVersion: Option[String]) extends JSEnv {
 
-    val name: String = "Chrome (kyo-jsenv-browser)"
+    val name: String = "Chrome (kyo-test-browser)"
 
     def start(input: Seq[Input], config: RunConfig): JSRun =
         JSRun.failed(new UnsupportedOperationException(
-            "BrowserJSEnv runs Scala.js tests only: a page never ends on its own, so a run needs the test adapter's com channel"
+            "KyoTestBrowserJSEnv runs Scala.js tests only: a page never ends on its own, so a run needs the test adapter's com channel"
         ))
 
     def startWithCom(input: Seq[Input], config: RunConfig, onMessage: String => Unit): JSComRun =
         try {
-            BrowserJSEnv.validator.validate(config)
+            KyoTestBrowserJSEnv.validator.validate(config)
             val (module, kind) = input match {
                 case Seq(Input.ESModule(path)) => (path, "esmodule")
                 case Seq(Input.Script(path))   => (path, "script")
-                case _                         => throw new UnsupportedInputException(input)
+                case Seq(Input.CommonJSModule(_)) =>
+                    throw new UnsupportedInputException(
+                        "a page cannot load a CommonJS module; link the tests with ModuleKind.NoModule or ModuleKind.ESModule"
+                    )
+                case _ => throw new UnsupportedInputException(input)
             }
             if (module.getFileSystem != FileSystems.getDefault)
-                throw new UnsupportedInputException(s"BrowserJSEnv serves linked files from disk; $module is not on the default file system")
+                throw new UnsupportedInputException(s"KyoTestBrowserJSEnv serves linked files from disk; $module is not on the default file system")
             val server = new ServerSocket(0, 0, InetAddress.getByName("127.0.0.1"))
             try {
                 val command =
                     List(java) ++ jvmOptions ++ List(
                         "-cp",
                         classpath.map(_.getAbsolutePath).mkString(File.pathSeparator),
-                        "kyo.internal.jsenv.BrowserRunnerMain",
+                        "kyo.test.browser.BrowserRunnerMain",
                         s"--dir=${module.toAbsolutePath.getParent}",
                         s"--module=${module.getFileName}",
                         s"--kind=$kind",
                         s"--com-port=${server.getLocalPort}"
                     ) ++ chromeVersion.map(v => s"--chrome-version=$v")
                 val run = ExternalJSRun.start(command, ExternalJSRun.Config().withRunConfig(config))(_.close())
-                new BrowserJSEnv.ComRun(run, onMessage, server)
+                new KyoTestBrowserJSEnv.ComRun(run, onMessage, server)
             } catch {
                 case NonFatal(t) =>
                     server.close()
@@ -81,7 +88,7 @@ final class BrowserJSEnv(java: String, classpath: Seq[File], jvmOptions: Seq[Str
         }
 }
 
-object BrowserJSEnv {
+object KyoTestBrowserJSEnv {
 
     private val validator = ExternalJSRun.supports(RunConfig.Validator())
 
@@ -92,12 +99,12 @@ object BrowserJSEnv {
       * its own; the run completes once the process has ended, so closing never fails a run that was going to succeed. The runner ending
       * first (the page failed, or Chrome died) closes the channel from its side and completes the run with the process's outcome.
       */
-    private final class ComRun(run: JSRun, onMessage: String => Unit, server: ServerSocket) extends JSComRun {
+    private sealed trait State
+    private final case class AwaitingConnection(queued: List[String]) extends State
+    private final case class Connected(socket: Socket, out: DataOutputStream, in: DataInputStream) extends State
+    private case object Closing extends State
 
-        private sealed trait State
-        private final case class AwaitingConnection(queued: List[String]) extends State
-        private final case class Connected(socket: Socket, out: DataOutputStream, in: DataInputStream) extends State
-        private case object Closing extends State
+    private final class ComRun(run: JSRun, onMessage: String => Unit, server: ServerSocket) extends JSComRun {
 
         private[this] val completion = Promise[Unit]()
 
@@ -111,7 +118,7 @@ object BrowserJSEnv {
         }
 
         private[this] val receiver = new Thread {
-            setName("BrowserJSEnv com receiver")
+            setName("KyoTestBrowserJSEnv com receiver")
             setDaemon(true)
 
             override def run(): Unit =

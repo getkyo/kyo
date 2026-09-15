@@ -1,4 +1,4 @@
-package kyo.internal.jsenv
+package kyo.test.browser.internal
 
 import kyo.*
 
@@ -60,7 +60,7 @@ class PageServerTest extends kyo.test.Test[Any]:
     "load keys every regular file by its path relative to the directory" in {
         Scope.run {
             for
-                dir   <- Path.run(Path.tempDir("kyo-jsenv-page-"))
+                dir   <- Path.run(Path.tempDir("kyo-test-browser-page-"))
                 _     <- Path.run((dir / "main.js").write("export {};"))
                 _     <- Path.run((dir / "nested").mkDir)
                 _     <- Path.run((dir / "nested" / "main.wasm").writeBytes(Span.fromUnsafe(Array[Byte](0, 97, 115, 109))))

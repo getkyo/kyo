@@ -1,4 +1,4 @@
-package kyo.internal.jsenv
+package kyo.test.browser.internal
 
 import kyo.*
 import kyo.internal.*
@@ -21,7 +21,7 @@ import kyo.net.NetPlatform
   * throws, when the main module cannot be loaded, when the page's renderer crashes, or when Chrome exits. Closing the run's scope kills
   * Chrome, removes its user-data directory and stops the server.
   */
-private[kyo] object BrowserRunner:
+private[browser] object BrowserRunner:
 
     /** Where the run writes console output and its own diagnostics. */
     final case class Output(out: String => Unit < Sync, err: String => Unit < Sync)
@@ -39,7 +39,7 @@ private[kyo] object BrowserRunner:
 
     object Config:
         val usage: String =
-            "usage: BrowserRunnerMain --dir=<linked output directory> --module=<main module path> --kind=esmodule|script --com-port=<port> [--chrome-version=<version>]"
+            "usage: kyo.test.browser.BrowserRunnerMain --dir=<linked output directory> --module=<main module path> --kind=esmodule|script --com-port=<port> [--chrome-version=<version>]"
 
         /** Reads `--name=value` arguments. Every argument but `--chrome-version` is required. */
         def parse(args: Seq[String]): Result[String, Config] =
@@ -87,7 +87,7 @@ private[kyo] object BrowserRunner:
     /** [[run]], calling `observe` with the page's CDP session and the Chrome process once navigation has started. A test seam: a test
       * crashes the renderer or ends Chrome through it to exercise the failure paths.
       */
-    private[jsenv] def runObserved(config: Config, output: Output)(
+    private[browser] def runObserved(config: Config, output: Output)(
         observe: (CdpBackend, Process) => Unit < (Async & Abort[BrowserReadException])
     )(using Frame): Int < (Async & Abort[SetupError]) =
         Scope.run {

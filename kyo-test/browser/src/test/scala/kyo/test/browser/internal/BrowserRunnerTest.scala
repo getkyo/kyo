@@ -1,4 +1,4 @@
-package kyo.internal.jsenv
+package kyo.test.browser.internal
 
 import kyo.*
 import kyo.internal.CdpNoParams
@@ -103,7 +103,7 @@ class BrowserRunnerTest extends kyo.test.Test[Any]:
             case Present(reason) => Sync.defer(cancel(reason))
             case Absent =>
                 for
-                    dir      <- Path.run(Path.tempDir("kyo-jsenv-run-"))
+                    dir      <- Path.run(Path.tempDir("kyo-test-browser-run-"))
                     _        <- Kyo.foreachDiscard(files.toSeq)((name, content) => Path.run((dir / name).write(content)))
                     accepted <- Promise.init[Connection, Any]
                     listener <- NetPlatform.transport.listen("127.0.0.1", 0, 1)(conn =>
