@@ -52,13 +52,15 @@ class ContainerRuntimeBaseTest extends BasePodTest:
 
         "never reports a runtime whose installed CLI cannot reach its daemon" in {
             // Host-independent form of the rule: whatever this host has, a runtime that is enumerated must
-            // either have a healthy CLI or no CLI at all.
-            ContainerRuntime.available.foreach { rt =>
-                assert(
-                    !ContainerRuntime.cliPresent(rt) || ContainerRuntime.cliExists(rt),
-                    s"$rt is enumerated as available while its own CLI reports it is not"
-                )
-            }
+            // either have a healthy CLI or no CLI at all. Asserted over the whole list rather than from inside
+            // a loop over it, because a host with no runtime at all reaches no assertion that way, and the run
+            // then reports the leaf as having checked nothing. Every Windows runner is such a host: `available`
+            // is empty there by construction, since its Docker daemon runs Windows containers.
+            val enumerated = ContainerRuntime.available
+            assert(
+                enumerated.forall(rt => !ContainerRuntime.cliPresent(rt) || ContainerRuntime.cliExists(rt)),
+                s"enumerated $enumerated while a runtime's own CLI reports it is not available"
+            )
         }
     }
 

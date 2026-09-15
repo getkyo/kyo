@@ -78,18 +78,18 @@ private[kyo] trait ContainerRuntimeBase:
         // A socket named by CONTAINER_HOST is an instruction rather than a leftover, and it answers for a daemon
         // this host's CLI may know nothing about, so it decides before the CLI is asked.
         envSocket("podman").exists(socketExists) ||
-            runtimeAvailable(cliPresent("podman"), cliExists("podman"), socketExists(sock))
+        runtimeAvailable(cliPresent("podman"), cliExists("podman"), socketExists(sock))
     end hasPodman
 
     lazy val hasDocker: Boolean =
         import AllowUnsafe.embrace.danger
         val home = getHome
         envSocket("docker").exists(socketExists) ||
-            runtimeAvailable(
-                cliPresent("docker"),
-                cliExists("docker"),
-                socketExists(s"$home/.docker/run/docker.sock") || socketExists("/var/run/docker.sock")
-            )
+        runtimeAvailable(
+            cliPresent("docker"),
+            cliExists("docker"),
+            socketExists(s"$home/.docker/run/docker.sock") || socketExists("/var/run/docker.sock")
+        )
     end hasDocker
 
     lazy val available: Seq[String] =

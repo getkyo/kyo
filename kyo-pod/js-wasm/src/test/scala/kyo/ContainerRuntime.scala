@@ -15,15 +15,19 @@ object ContainerRuntime extends ContainerRuntimeBase:
             true
         catch case _: Throwable => false
 
-    /** `execSync` runs through a shell, so a missing binary and a failing one both surface as a non-zero exit
-      * and cannot be told apart from the throw. `command -v` asks the shell the presence question directly.
-      * Where it is unavailable (a non-POSIX shell) this answers false, which falls the decision back to the
-      * socket check, the behaviour before this distinction existed.
+    /** `execSync` runs through a shell, so a missing binary and a failing one both surface as a non-zero exit and
+      * cannot be told apart from the throw. `spawnSync` reports them apart: a binary that is not on PATH comes
+      * back carrying an `ENOENT` error and no status, one that ran and failed carries a status and no error.
+      *
+      * It also asks no shell, which is what makes this answer the same on every host. Asking the shell with
+      * `command -v` answered false for every runtime on Windows, where Node spawns `cmd.exe` and `command` is a
+      * POSIX shell builtin it does not have, so docker and podman both read as not installed there.
       */
     private[kyo] def cliPresent(command: String): Boolean =
         try
-            PodNodeChildProcess.execSync(s"command -v $command", js.Dynamic.literal(stdio = "pipe"))
-            true
+            val result = PodNodeChildProcess.spawnSync(command, js.Array("version"), js.Dynamic.literal(stdio = "pipe"))
+            val error  = result.selectDynamic("error")
+            js.isUndefined(error) || error == null
         catch case _: Throwable => false
 
     private[kyo] def queryPodmanMachineSockets: Seq[String] =
