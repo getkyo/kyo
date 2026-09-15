@@ -1,6 +1,7 @@
 package kyo
 
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicReferenceArray
 import kyo.Tag.internal.Type.Entry.*
 import kyo.internal.Platform
 import kyo.internal.TagHash
@@ -138,7 +139,7 @@ object Tag:
 
         /** A content-stable XXH32 hash of this Tag's type, stable across JVM processes.
           *
-          * Static tags hash the encoded `String` form. Dynamic tags hash their encoded string and
+          * Static tags hash the logical encoding without its precomputed hash header. Dynamic tags hash that encoding and
           * sorted dynamic sub-tag hashes. This is deliberately NOT the decoded `Type`'s `hashCode`,
           * which is identity-influenced by the `Array`-backed `Span` fields and so is stable only
           * within a single JVM. Cross-JVM stability is required because kyo-aeron derives aeron stream
@@ -150,7 +151,7 @@ object Tag:
           */
         def hash: Int =
             self match
-                case self: String  => XXHash.hash32(self)
+                case self: String  => XXHash.hashInt(TagHash.of(self))
                 case self: Dynamic => self.hashCode
 
         /** Retrieves the decoded Type representation of this Tag. If the Tag is already a Type, it is returned directly. If it's an encoded
@@ -173,15 +174,8 @@ object Tag:
         def show: String =
             self.tpe.toString()
 
-        /** Fast-path optimization for type equality checking.
-          *
-          * Since the set of statically derived tags is bounded and fixed at compile time, hash code collisions between different types are
-          * extremely unlikely. This method checks for these common cases before falling back to the more expensive full type-based checking
-          * if any of the tags are dynamic.
-          *
-          * This method runs on the kernel's per-operation dispatch path, so it goes through `TagHash` and must not recompute a content hash
-          * per call. `TagHash` is the JVM's memoized `String.hashCode` here and a memo table on JS, which has none. Content-stable
-          * cross-process hashing is `hash`'s job, not this method's.
+        /** Compare literal payloads after the hash check. Hashes reject unequal tags quickly, but cannot prove equality.
+          * Static literals carry a precomputed hash shared by every platform, including the JVM macro host.
           */
         private def fastPathEqual[B](that: Tag[B]): Boolean =
             (self eq that) || {
@@ -189,7 +183,7 @@ object Tag:
                     case self: String =>
                         that match
                             case that: String =>
-                                TagHash.of(self) == TagHash.of(that)
+                                TagHash.same(self, that)
                             case _ =>
                                 false
                     case _ =>
@@ -204,7 +198,7 @@ object Tag:
           */
         private def isConcrete: Boolean =
             self match
-                case self: String => self.charAt(0) == '*'
+                case self: String => TagHash.concrete(self)
                 case _            => false
 
     end extension
@@ -333,14 +327,18 @@ object Tag:
             else Runtime.getRuntime().availableProcessors() * 8
 
         private val cacheEntries = 128
-        private val cacheSlots   = Array.ofDim[Long](threadSlots, cacheEntries)
+        private final case class Comparison(a: Tag[?], b: Tag[?], mode: Mode, result: Boolean)
+        private val cacheSlots = Array.fill(threadSlots) {
+            new AtomicReferenceArray[Maybe[Comparison]](Array.fill[Maybe[Comparison]](cacheEntries)(Absent))
+        }
 
         private def dynamicHashCode(tag: String, map: Map[Entry.Id, Any]): Int =
-            val builder = new java.lang.StringBuilder(tag)
+            val builder = new java.lang.StringBuilder
+            TagHash.appendLegacy(tag, builder)
             map.toSeq.sortBy(_._1).foreach { (key, value) =>
                 val valueHash =
                     value match
-                        case value: String  => XXHash.hash32(value)
+                        case value: String  => XXHash.hashInt(TagHash.of(value))
                         case value: Dynamic => value.hashCode
                         case value          => value.hashCode
                 builder.append('\u0000').append(key).append('\u0001').append(valueHash)
@@ -356,43 +354,13 @@ object Tag:
             case Equality extends Mode(31)
             case Subtype  extends Mode(37)
 
-        /** Determines if one type is a subtype or equal to another, with caching for performance.
+        /** Cache type checks only when the actual compared tags and comparison mode match.
           *
-          * This method uses a thread-local caching strategy to optimize repeated subtype checks. The cache is implemented as an array of
-          * longs for efficiency, where each entry represents a specific type check pair (a <:< b or a =:= b):
-          *
-          *   - Each long value packs both type hash codes together: subtype hash in the upper 32 bits and supertype hash in the lower 32
-          *     bits
-          *   - This combined hash is then scrambled using xor-shift operations to improve distribution and specialize it to either equality
-          *     or sub type checking.
-          *   - The sign of the stored long indicates the result: positive for true, negative for false
-          *   - Zero indicates an unused cache entry
-          *
-          * The implementation has two distinct types of potential collisions:
-          *
-          *   1. Thread slot collisions: Multiple threads may map to the same cache slot based on thread hash code. These collisions only
-          *      affect performance through cache thrashing, not correctness. The cache deliberately avoids synchronization mechanisms, as
-          *      any race conditions would only result in redundant calculations rather than incorrect results.
-          *   2. Type pair hash collisions: Different (tagA, tagB) pairs could theoretically generate the same 64-bit hash. The risk of
-          *      these true hash conflicts is extremely low due to:
-          *      - The large 63-bit effective hash space with over 9 quintillion possible values (1 bit reserved for the result flag)
-          *      - Effective xor-shift mixing that distributes bits throughout the hash
-          *      - The composite nature of the hash (requiring collisions in both subtype and supertype components)
-          *
-          * In the extremely rare case of a true hash collision between different type pairs, an incorrect cached result could be returned.
-          * However, the probability is negligible in practical applications, making this a reasonable tradeoff for the significant
-          * performance benefits of the caching system.
-          *
-          * @param a
-          *   The potential subtype
-          * @param b
-          *   The potential supertype
-          * @return
-          *   true if a is a subtype of b, false otherwise
+          * Each atomic slot holds one immutable comparison. Concurrent replacements may cause a miss, but cannot
+          * combine a verdict with another pair's identity. Hashes choose the slot; they never authorize reuse.
           */
         def checkTypes[A, B](a: Tag[A], b: Tag[B], mode: Mode): Boolean =
-            // Cache key from memoized hashCodes: this is a per-call in-process key, so it goes through
-            // `TagHash` and must not recompute a content hash (the constraint on fastPathEqual applies here too).
+            // Hashing new literals is constant-time on every platform.
             var hash = (TagHash.of(a).toLong << 32) | (TagHash.of(b) & 0xffffffffL)
             hash += mode.factor
             hash ^= (hash >>> 30)
@@ -401,21 +369,18 @@ object Tag:
             hash &= Long.MaxValue
             val idx    = (hash & (cacheEntries - 1)).toInt
             val cache  = cacheSlots(Thread.currentThread().hashCode & (threadSlots - 1))
-            val cached = cache(idx)
-            if hash == cached then
-                true
-            else if hash == -cached then
-                false
-            else
-                val aTpe = a.tpe
-                val bTpe = b.tpe
-                val res =
-                    mode match
-                        case Mode.Equality => isSameType(aTpe, bTpe, aTpe.entryId, bTpe.entryId)
-                        case Mode.Subtype  => isSubType(aTpe, bTpe, aTpe.entryId, bTpe.entryId)
-                cache(idx) = if res then hash else -hash
-                res
-            end if
+            cache.get(idx) match
+                case Present(cached) if (a eq cached.a) && (b eq cached.b) && mode == cached.mode =>
+                    cached.result
+                case _ =>
+                    val aTpe = a.tpe
+                    val bTpe = b.tpe
+                    val result =
+                        mode match
+                            case Mode.Equality => isSameType(aTpe, bTpe, aTpe.entryId, bTpe.entryId)
+                            case Mode.Subtype  => isSubType(aTpe, bTpe, aTpe.entryId, bTpe.entryId)
+                    cache.set(idx, Present(Comparison(a, b, mode, result)))
+                    result
         end checkTypes
 
         private def isSubType(aOwner: Type[?], bOwner: Type[?], aId: Entry.Id, bId: Entry.Id): Boolean =
@@ -631,6 +596,9 @@ object Tag:
                 }.mkString("\n")
         end encode
 
+        /** Finalize an encoded type after choosing its concrete or structural prefix. */
+        def pack(legacy: String): String = TagHash.pack(legacy)
+
         /** Cache for decoded type structures. This cache ensures that each unique encoded type string is only deserialized once,
           * significantly improving performance for repeated operations on the same types. Unlike the subtype cache, this cache is fully
           * thread-safe using ConcurrentHashMap and never evicts entries.
@@ -643,7 +611,8 @@ object Tag:
 
         private val decodeFunction: java.util.function.Function[String, Type[?]] =
             (encoded: String) =>
-                val lines = encoded.drop(1).linesIterator // discard concreteFlag
+                TagHash.validate(encoded)
+                val lines = encoded.drop(TagHash.bodyOffset(encoded)).linesIterator
                 val staticDb =
                     HashMap.empty[Entry.Id, Entry] ++
                         lines.map { encoded =>
