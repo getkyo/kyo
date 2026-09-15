@@ -3,7 +3,7 @@ package kyo.test.browser
 import kyo.*
 import kyo.test.browser.internal.BrowserRunner
 
-/** The process `kyo.test.sbt.KyoTestBrowserJSEnv` (sbt-kyo-test) starts for each Scala.js test run in a browser. See [[BrowserRunner]].
+/** The process `kyo.test.sbt.KyoTestBrowserJSEnv` (sbt-kyo-test) starts for each Scala.js test run in a browser. See `kyo.test.browser.internal.BrowserRunner`.
   *
   * Exits with the run's status, and with 2 when the arguments do not parse. Console output goes to standard output and error, which the
   * sbt side relays to the test log.

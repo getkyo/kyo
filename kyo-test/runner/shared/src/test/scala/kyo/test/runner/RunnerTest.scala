@@ -190,6 +190,20 @@ final class RecordingHeartbeatReporter extends kyo.test.TestReporter:
     def recorded: Vector[(Chunk[String], Duration)] = beats.get()
 end RecordingHeartbeatReporter
 
+/** Host-filtered leaves and a host-filtered group; `ran` counts the bodies that ran. */
+class RTHostFilterSuite extends TestBase[Any]:
+    "browser-only".onlyBrowser in Sync.defer(RTHostFilterSuite.ran.incrementAndGet()).andThen(succeed)
+    "not-browser".notBrowser in Sync.defer(RTHostFilterSuite.ran.incrementAndGet()).andThen(succeed)
+    "browser-group".onlyBrowser - {
+        "a" in Sync.defer(RTHostFilterSuite.ran.incrementAndGet()).andThen(succeed)
+        "b" in Sync.defer(RTHostFilterSuite.ran.incrementAndGet()).andThen(succeed)
+    }
+end RTHostFilterSuite
+
+object RTHostFilterSuite:
+    val ran: AtomicInteger = new AtomicInteger(0)
+end RTHostFilterSuite
+
 class RunnerTest extends AsyncFreeSpec with NonImplicitAssertions:
 
     implicit override val executionContext: ExecutionContext = TestExecutionContext.executionContext
@@ -484,6 +498,27 @@ class RunnerTest extends AsyncFreeSpec with NonImplicitAssertions:
             assert(defaultSr.leafResults.exists(_._1 == Chunk("<constructor>")), "expected a <constructor> failure leaf")
             assert(defaultSr.leakCheckSockets, "default config: socket-leak detection is on and must carry through a constructor failure")
             assert(!socketsOffSr.leakCheckSockets, "leakCheckSockets(false) must be carried into the constructor-failure report")
+    }
+
+    "Host filters: a leaf or group whose host filter does not hold is reported Cancelled and never runs" in {
+        RTHostFilterSuite.ran.set(0)
+        TestRunner.runToFuture(classOf[RTHostFilterSuite], RunConfig.default).map { report =>
+            def cancelled(path: String*) = leafByPath(report, Chunk.from(path)).exists {
+                case _: TestResult.Cancelled => true; case _ => false
+            }
+            def passed(path: String*) = leafByPath(report, Chunk.from(path)).exists {
+                case _: TestResult.Passed => true; case _ => false
+            }
+            if kyo.internal.Platform.isBrowser then
+                assert(passed("browser-only") && passed("browser-group", "a") && passed("browser-group", "b"), s"report: $report")
+                assert(cancelled("not-browser"), s"report: $report")
+                assert(report.passed == 3 && report.cancelled == 1 && RTHostFilterSuite.ran.get() == 3, s"report: $report")
+            else
+                assert(passed("not-browser"), s"report: $report")
+                assert(cancelled("browser-only") && cancelled("browser-group"), s"report: $report")
+                assert(report.passed == 1 && report.cancelled == 2 && RTHostFilterSuite.ran.get() == 1, s"report: $report")
+            end if
+        }
     }
 
 end RunnerTest

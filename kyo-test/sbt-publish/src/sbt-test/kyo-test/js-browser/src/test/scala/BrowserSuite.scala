@@ -1,15 +1,15 @@
 import kyo.*
 import kyo.test.Test
-import scala.scalajs.js
+import scala.scalajs.js as sjs
 
 class BrowserSuite extends Test[Any]:
     "runs in a page" in {
-        assert(js.typeOf(js.Dynamic.global.document) == "object")
-        assert(js.Dynamic.global.navigator.userAgent.asInstanceOf[String].contains("HeadlessChrome"))
+        assert(sjs.typeOf(sjs.Dynamic.global.document) == "object")
+        assert(sjs.Dynamic.global.navigator.userAgent.asInstanceOf[String].contains("HeadlessChrome"))
     }
 
     "suspends on the page's event loop" in {
-        Async.sleep(10.millis).andThen(assert(js.typeOf(js.Dynamic.global.window) == "object"))
+        Async.sleep(10.millis).andThen(assert(sjs.typeOf(sjs.Dynamic.global.window) == "object"))
     }
 end BrowserSuite
 

@@ -2,6 +2,7 @@ package kyo.test.internal
 
 import kyo.Abort
 import kyo.Async
+import kyo.Chunk
 import kyo.Duration
 import kyo.Frame
 import kyo.Maybe
@@ -10,6 +11,7 @@ import kyo.Schedule
 import kyo.Scope
 import kyo.kernel.<
 import kyo.millis
+import kyo.test.HostFilter
 import kyo.test.PlatformSet
 import kyo.test.PlatformTestBuilder
 import kyo.test.RunConfig
@@ -155,33 +157,31 @@ abstract class TestBase[S] extends KyoTestReflect with TypeCheck:
         /** Restrict this leaf to exactly WebAssembly; the body is excluded from the JVM, Native, and JS-linked output (absent, not skipped). */
         def onlyWasm: PlatformTestBuilder[PlatformSet.OnlyWasm] = PlatformTestBuilder(TestBuilder(name))
 
+        // ── Host filters ─────────────────────────────────────────────────
+        // Checked when the suite registers, since one Scala.js link runs on Node and in a browser: see HostFilter.
+
+        /** Run this test only in a browser; elsewhere it is reported `Cancelled` and its body does not run. */
+        def onlyBrowser: TestBuilder = TestBuilder(name).copy(hostFilters = Chunk(HostFilter.OnlyBrowser))
+
+        /** Run this test anywhere but a browser; in a browser it is reported `Cancelled` and its body does not run. */
+        def notBrowser: TestBuilder = TestBuilder(name).copy(hostFilters = Chunk(HostFilter.NotBrowser))
+
     end extension
 
     // ── DSL: extension on TestBuilder ────────────────────────────────
 
     extension (b: TestBuilder)
 
-        /** Register with the TestBuilder's accumulated metadata. Honor terminal decorators (ignore, pending, onlyIf) before dispatching. */
+        /** Register with the TestBuilder's accumulated metadata. Honor terminal decorators (ignore, host filters, onlyIf) before dispatching. */
         inline infix def -(inline body: => Unit < (S & Async & Abort[Any] & Scope)): Unit =
-            b.ignore match
-                case Maybe.Present(reason) => regCtx.registerIgnored(b.name, reason)
-                case _ =>
-                    b.onlyIf match
-                        case Maybe.Present(cond) if !cond() => regCtx.registerSkipped(b.name, "condition false")
-                        case _ =>
-                            regCtx.visitGroupWithBuilder[S](b.name, b, body)
+            if !regCtx.registerTerminal(b) then regCtx.visitGroupWithBuilder[S](b.name, b, body)
         end -
 
         /** Like the String-extension `in`, but carrying this TestBuilder's decorators: register a LEAF unconditionally (deferred body),
-          * after honoring the terminal decorators (ignore, pending, platform filter, onlyIf). No group inference.
+          * after honoring the terminal decorators (ignore, host filters, onlyIf). No group inference.
           */
         inline infix def in(inline body: kyo.test.AssertScope ?=> Unit < (S & Async & Abort[Any] & Scope))(using inline f: Frame): Unit =
-            b.ignore match
-                case Maybe.Present(reason) => regCtx.registerIgnored(b.name, reason)
-                case _ =>
-                    b.onlyIf match
-                        case Maybe.Present(cond) if !cond() => regCtx.registerSkipped(b.name, "condition false")
-                        case _                              => regCtx.visitLeafWithBuilder[S](b.name, b, body)
+            if !regCtx.registerTerminal(b) then regCtx.visitLeafWithBuilder[S](b.name, b, body)
         end in
 
         /** Discharge one or more effects beyond the baseline locally, carrying this TestBuilder's accumulated decorators (`.timeout`,
@@ -249,6 +249,14 @@ abstract class TestBase[S] extends KyoTestReflect with TypeCheck:
         /** Restrict this leaf to exactly WebAssembly; the body is excluded from the JVM, Native, and JS-linked output (absent, not skipped). */
         def onlyWasm: PlatformTestBuilder[PlatformSet.OnlyWasm] = PlatformTestBuilder(b)
 
+        // ── Host filters ─────────────────────────────────────────────────
+
+        /** Run this test only in a browser, on top of existing decorators; elsewhere it is reported `Cancelled`. */
+        def onlyBrowser: TestBuilder = b.copy(hostFilters = b.hostFilters.append(HostFilter.OnlyBrowser))
+
+        /** Run this test anywhere but a browser, on top of existing decorators; in a browser it is reported `Cancelled`. */
+        def notBrowser: TestBuilder = b.copy(hostFilters = b.hostFilters.append(HostFilter.NotBrowser))
+
     end extension
 
     // ── DSL: extension on PlatformTestBuilder[P] ─────────────────────────
@@ -268,13 +276,7 @@ abstract class TestBase[S] extends KyoTestReflect with TypeCheck:
         inline infix def in(inline body: kyo.test.AssertScope ?=> Unit < (S & Async & Abort[Any] & Scope))(using inline f: Frame): Unit =
             kyo.internal.Platform.linkTimeIf(gateOf[P]) {
                 val b = pb.builder
-                b.ignore match
-                    case Maybe.Present(reason) => regCtx.registerIgnored(b.name, reason)
-                    case _ =>
-                        b.onlyIf match
-                            case Maybe.Present(cond) if !cond() => regCtx.registerSkipped(b.name, "condition false")
-                            case _                              => regCtx.visitLeafWithBuilder[S](b.name, b, body)
-                end match
+                if !regCtx.registerTerminal(b) then regCtx.visitLeafWithBuilder[S](b.name, b, body)
             } {
                 discardScoped[S](body)
             }
@@ -284,13 +286,7 @@ abstract class TestBase[S] extends KyoTestReflect with TypeCheck:
         inline infix def -(inline body: => Unit < (S & Async & Abort[Any] & Scope)): Unit =
             kyo.internal.Platform.linkTimeIf(gateOf[P]) {
                 val b = pb.builder
-                b.ignore match
-                    case Maybe.Present(reason) => regCtx.registerIgnored(b.name, reason)
-                    case _ =>
-                        b.onlyIf match
-                            case Maybe.Present(cond) if !cond() => regCtx.registerSkipped(b.name, "condition false")
-                            case _                              => regCtx.visitGroupWithBuilder[S](b.name, b, body)
-                end match
+                if !regCtx.registerTerminal(b) then regCtx.visitGroupWithBuilder[S](b.name, b, body)
             } {
                 discardGroup[S](body)
             }
@@ -323,6 +319,14 @@ abstract class TestBase[S] extends KyoTestReflect with TypeCheck:
         def times(n: Int): PlatformTestBuilder[P] = PlatformTestBuilder(pb.builder.copy(repeat = n))
 
         def only(cond: => Boolean): PlatformTestBuilder[P] = PlatformTestBuilder(pb.builder.copy(onlyIf = Maybe(() => cond)))
+
+        /** Run this test only in a browser, keeping the platform filter; elsewhere it is reported `Cancelled`. */
+        def onlyBrowser: PlatformTestBuilder[P] =
+            PlatformTestBuilder(pb.builder.copy(hostFilters = pb.builder.hostFilters.append(HostFilter.OnlyBrowser)))
+
+        /** Run this test anywhere but a browser, keeping the platform filter; in a browser it is reported `Cancelled`. */
+        def notBrowser: PlatformTestBuilder[P] =
+            PlatformTestBuilder(pb.builder.copy(hostFilters = pb.builder.hostFilters.append(HostFilter.NotBrowser)))
 
         // A second platform filter combines with P via PlatformSet.Both rather than replacing it (gateOf reduces Both to an &&),
         // so `.notNative.notWasm` is enabled only where both hold. Single-platform filters keep the `.jvm` == `.onlyJvm` identity.
@@ -561,38 +565,27 @@ abstract class TestBase[S] extends KyoTestReflect with TypeCheck:
           * an effect beyond `S0`): such a body is not a subtype of `Unit < (S0 & baseline)`. An over-discharged body (needing fewer
           * effects) is safely accepted.
           *
-          * The honored terminal decorators (`ignore`/`pending`/platform/`onlyIf`) carried in `builder` gate dispatch exactly as the
+          * The honored terminal decorators (`ignore`/host filters/`onlyIf`) carried in `builder` gate dispatch exactly as the
           * `TestBuilder` `-` does.
           */
         inline infix def -(inline body: => Unit < (S0 & Async & Abort[Any] & Scope)): Unit =
-            builder.ignore match
-                case Maybe.Present(reason) => regCtx.registerIgnored(builder.name, reason)
-                case _ =>
-                    builder.onlyIf match
-                        case Maybe.Present(cond) if !cond() => regCtx.registerSkipped(builder.name, "condition false")
-                        case _                              =>
-                            // `-` is ALWAYS a group: register the RAW `S0`-shaped block so its nested `-`/`in` calls fire during
-                            // discovery descent. `transform` is applied per descended leaf by the runner. Leaves use `in`.
-                            regCtx.visitGroupWithBuilder[S0](builder.name, builder, body)
+            // `-` is ALWAYS a group: register the RAW `S0`-shaped block so its nested `-`/`in` calls fire during
+            // discovery descent. `transform` is applied per descended leaf by the runner. Leaves use `in`.
+            if !regCtx.registerTerminal(builder) then regCtx.visitGroupWithBuilder[S0](builder.name, builder, body)
         end -
 
         /** Always-leaf form of the enriched terminal (deferred body, `transform` peels `S0` to baseline), honoring the builder's terminal
           * decorators first. No group inference.
           */
         inline infix def in(inline body: kyo.test.AssertScope ?=> Unit < (S0 & Async & Abort[Any] & Scope))(using inline f: Frame): Unit =
-            builder.ignore match
-                case Maybe.Present(reason) => regCtx.registerIgnored(builder.name, reason)
-                case _ =>
-                    builder.onlyIf match
-                        case Maybe.Present(cond) if !cond() => regCtx.registerSkipped(builder.name, "condition false")
-                        case _                              =>
-                            // The runner mints the per-leaf scope; peel S0 to baseline inside the context function so
-                            // `transform` is applied per descended leaf with the leaf's scope already supplied to `body`.
-                            regCtx.visitLeafWithBuilder[Async & Abort[Any] & Scope](
-                                builder.name,
-                                builder,
-                                (as: kyo.test.AssertScope) ?=> transform[Unit](body(using as))
-                            )
+            if !regCtx.registerTerminal(builder) then
+                // The runner mints the per-leaf scope; peel S0 to baseline inside the context function so
+                // `transform` is applied per descended leaf with the leaf's scope already supplied to `body`.
+                regCtx.visitLeafWithBuilder[Async & Abort[Any] & Scope](
+                    builder.name,
+                    builder,
+                    (as: kyo.test.AssertScope) ?=> transform[Unit](body(using as))
+                )
         end in
 
     end EnrichedTestBuilder

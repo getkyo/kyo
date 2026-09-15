@@ -2,6 +2,7 @@ package kyo.test
 
 import kyo.Abort
 import kyo.Async
+import kyo.Chunk
 import kyo.Duration
 import kyo.Maybe
 import kyo.Schedule
@@ -19,7 +20,8 @@ import scala.compiletime.erasedValue
   * Platform restriction is NOT carried here: a platform filter (`.jvm`, `.js`, `.native`, `.onlyJvm`, `.onlyJs`, `.onlyNative`, `.notJvm`,
   * `.notJs`, `.notNative`) produces a [[kyo.test.PlatformTestBuilder]] whose phantom type parameter encodes the enabled-platform set, and the
   * terminal `in`/`-` on that carrier gates the body before run time with `Platform.linkTimeIf`. On a disabled platform the body never reaches
-  * the output, so the excluded leaf has no runtime cost (it is absent, not skipped).
+  * the output, so the excluded leaf has no runtime cost (it is absent, not skipped). A host filter (`.onlyBrowser`, `.notBrowser`) is carried
+  * here instead, in `hostFilters`, because the host is known only when the tests run (see [[HostFilter]]).
   *
   * @param name
   *   the leaf or group name
@@ -41,6 +43,8 @@ import scala.compiletime.erasedValue
   *   repeat count from `.repeat(n)`; 1 means run once
   * @param onlyIf
   *   `Present(condition)` when `.only(cond)` is in the chain
+  * @param hostFilters
+  *   the host filters in the chain, in order; the leaf runs only where all of them hold
   * @see
   *   [[kyo.test.internal.TestBase]] where decorator methods on String and TestBuilder are defined
   * @see
@@ -61,7 +65,8 @@ final case class TestBuilder(
     timeout: Maybe[Duration] = Maybe.empty,
     retrySchedule: Maybe[kyo.Schedule] = Maybe.empty,
     repeat: Int = 1,
-    onlyIf: Maybe[() => Boolean] = Maybe.empty
+    onlyIf: Maybe[() => Boolean] = Maybe.empty,
+    hostFilters: Chunk[HostFilter] = Chunk.empty
 )
 
 object TestBuilder:

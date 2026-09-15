@@ -10,6 +10,7 @@ import kyo.Maybe
 import kyo.Scope
 import kyo.kernel.<
 import kyo.test.AssertScope
+import kyo.test.HostFilter
 import kyo.test.TestBuilder
 import kyo.test.TestResult
 import scala.collection.mutable.ListBuffer
@@ -17,7 +18,7 @@ import scala.collection.mutable.ListBuffer
 /** Cursor-based registration context for the V3 (next) self-contained base.
   *
   * Each instance targets a single DFS cursor (`Chunk[Int]`). The class-body scan walks the tree, descends into groups whose prefix matches
-  * the target, and records terminal leaf results (ignored / pending / skipped) when the cursor lands on the target. The baseline-row body
+  * the target, and records terminal leaf results (ignored / cancelled / skipped) when the cursor lands on the target. The baseline-row body
   * thunk of a normal leaf is buffered for the runner to discharge; this context does NOT execute leaf bodies (the single terminal
   * `Fiber#toFuture` and per-leaf discharge are runner work). Group bodies are walked so children register.
   *
@@ -167,6 +168,37 @@ final class TestContext private[test] (val target: Chunk[Int], private val disco
         if mine == target then
             producedLeaf.set(Maybe.Present((Chunk.from(nameStack) :+ name, TestResult.Skipped(reason))))
     end registerSkipped
+
+    /** Record this cursor as Cancelled without running a body. */
+    def registerCancelled(name: String, reason: String): Unit =
+        if producedLeaf.get().isDefined then return
+        val myIndex = nextChildIndex.getAndIncrement()
+        val mine    = pathStack.get().append(myIndex)
+        if mine == target then
+            producedLeaf.set(Maybe.Present((Chunk.from(nameStack) :+ name, TestResult.Cancelled(reason, Duration.Zero))))
+    end registerCancelled
+
+    /** Record the result `builder`'s decorators settle without a body, if they settle one: `Ignored` for `.ignore`, then `Cancelled` for a
+      * host filter that does not hold on this host, then `Skipped` for `.only(false)`. Returns whether it recorded one; when it did, the
+      * caller registers nothing else for the builder.
+      */
+    def registerTerminal(builder: TestBuilder): Boolean =
+        builder.ignore match
+            case Maybe.Present(reason) =>
+                registerIgnored(builder.name, reason)
+                true
+            case _ =>
+                HostFilter.unmet(builder.hostFilters) match
+                    case Maybe.Present(reason) =>
+                        registerCancelled(builder.name, reason)
+                        true
+                    case _ =>
+                        builder.onlyIf match
+                            case Maybe.Present(cond) if !cond() =>
+                                registerSkipped(builder.name, "condition false")
+                                true
+                            case _ => false
+    end registerTerminal
 
     // ── Accessors ─────────────────────────────────────────────────────────────────────────────
 

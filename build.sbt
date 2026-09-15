@@ -3431,7 +3431,11 @@ lazy val `kyo-test-sbt` =
             addSbtPlugin("org.scala-js"     % "sbt-scalajs"      % "1.22.0"),
             addSbtPlugin("org.scala-native" % "sbt-scala-native" % "0.5.12"),
             // Supplies platformDepsCrossVersion, which SbtKyoTestPlugin re-crosses through.
-            addSbtPlugin("org.portable-scala" % "sbt-platform-deps" % "1.0.2")
+            addSbtPlugin("org.portable-scala" % "sbt-platform-deps" % "1.0.2"),
+            libraryDependencies += "org.scalatest" %% "scalatest" % "3.2.19" % Test,
+            // KyoTestBrowserJSEnvTest starts a stand-in runner from the test classpath, which only a forked test JVM carries as
+            // its own java.class.path.
+            Test / fork := true
         )
 
 lazy val `kyo-test-sbt-publish` =

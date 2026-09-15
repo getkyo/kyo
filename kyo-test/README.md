@@ -293,6 +293,23 @@ end PlatformTest
 
 `.onlyJvm` is semantically `.jvm` alone, but it reads unambiguously as single-platform intent; prefer it when you mean "exactly JVM" rather than "also JVM".
 
+### Host: `onlyBrowser`, `notBrowser`
+
+One Scala.js link runs on Node and in a browser alike (see [Running Scala.js tests in a browser](#running-scalajs-tests-in-a-browser)), so the host cannot exclude a test before it runs the way a platform can. `.onlyBrowser` and `.notBrowser` are checked when the suite registers its tests instead: a test whose host filter does not hold is reported `Cancelled`, with a reason naming the host, and its body never runs. On a group, the group is reported as one cancelled entry. The JVM and Scala Native are never a browser, so `.onlyBrowser` cancels there.
+
+```scala
+class HostTest extends Test[Any]:
+    "reads the DOM".onlyBrowser in {
+        assert(true)
+    }
+    "reads a file through Node".onlyJs.notBrowser in {
+        assert(true)
+    }
+end HostTest
+```
+
+Host filters chain with the other decorators and keep a platform filter written before them, as `.onlyJs.notBrowser` above does.
+
 ## Per-test and per-suite setup
 
 A leaf that uses an effect beyond the baseline (`Env` or `Var`) must discharge it before the runner sees the leaf. Two surfaces cover this: `.handle` discharges per leaf or per group, and `aroundLeaf` wraps every leaf in the suite.
