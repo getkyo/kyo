@@ -308,7 +308,7 @@ jobs:
       # ARM. This is load-bearing rather than cosmetic: hostOsArch reads the RUNNING JVM's os.arch, so an
       # emulated x64 JDK would name every artifact windows-x86_64 and this producer would upload nothing
       # under its own name.
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@v6
         with:
           distribution: microsoft
           java-version: '25'
