@@ -1454,12 +1454,12 @@ class TagTest extends kyo.test.Test[Any]:
 
     // In its own object so `Vector[Any]` below still means `Vector[Any]`; declared at class level
     // the compiler would substitute V for it throughout the suite.
-    object OpaqueVarianceScope:
+    object Bounded:
         opaque type V <: Vector[Any] = Vector[Any]
-    end OpaqueVarianceScope
+    end Bounded
 
     "opaque type bounds with variance (bug #1368)" in {
-        import OpaqueVarianceScope.*
+        import Bounded.*
         abstract class Variant[+A]:
             def method[AA >: A](using Tag[AA]): Unit
 
