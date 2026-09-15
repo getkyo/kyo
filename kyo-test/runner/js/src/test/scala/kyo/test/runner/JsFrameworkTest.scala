@@ -35,6 +35,11 @@ class JsNextParallelSuite extends TestBase[Any]:
     "leaf-c" in succeed
 end JsNextParallelSuite
 
+class JsNextMixedSuite extends TestBase[Any]:
+    "passes" in succeed
+    "fails" in assert(1 == 2)
+end JsNextMixedSuite
+
 // ── Test infrastructure ──────────────────────────────────────────────────────────────────────────
 
 class JsCapturingEventHandler extends EventHandler:
@@ -146,6 +151,30 @@ class JsFrameworkTest extends AsyncFunSuite with NonImplicitAssertions:
         val names = fps.collect { case fp: sbt.testing.SubclassFingerprint => fp.superclassName() }
         assert(names.contains("kyo.test.SuiteFingerprintMarker"), s"Missing SuiteFingerprintMarker in: ${names.mkString(", ")}")
         Future.successful(succeed)
+    }
+
+    // The Scala.js test adapter runs a task on a worker runner, a JS run of its own, whenever sbt executes the task on another thread than
+    // the one that created the controller, and it prints only the controller's done(). Each worker reports its suites to the controller
+    // through the `send` channel the adapter routes to the controller's receiveMessage.
+    test("the controller's summary counts the suites a worker runner ran, failures included") {
+        val controller = makeRunner()
+        val worker = framework
+            .slaveRunner(Array.empty, Array.empty, null, message => controller.receiveMessage(message): Unit)
+            .asInstanceOf[JsRunner]
+        val finished = Promise[Unit]()
+        worker.jsTasksTyped(Array(taskDefFor(classOf[JsNextMixedSuite])))(0).execute(
+            new JsCapturingEventHandler,
+            loggers,
+            _ =>
+                finished.success(())
+                scala.runtime.BoxedUnit.UNIT
+        )
+        finished.future.map { _ =>
+            val _       = worker.done()
+            val summary = controller.done()
+            assert(summary.startsWith("kyo-test: 2 tests, 1 passed, 1 failed"), summary)
+            assert(summary.contains("TOTAL FAILURES (1):\n  fails  [FAIL]  "), summary)
+        }
     }
 
     // An unrecognised flag (a typo such as `--include` for `--filter=`) must fail the run. Answering with no tasks makes sbt report

@@ -19,8 +19,8 @@ import sbt.testing.SubclassFingerprint
   * Native-specific behaviour:
   *   - Parallelism is kept at 1 by default (our test fixture is single-threaded for simplicity, matching the plan).
   *   - [[NativeTask.execute]] blocks via `Await.result` (Native supports real threads, unlike JS).
-  *   - [[slaveRunner]] is required by the Scala Native test bridge; kyo-test does not use distributed execution, so it delegates to
-  *     [[runner]].
+  *   - [[slaveRunner]] creates the worker runner the test adapter uses for a task executed on another thread; it reports its suites to
+  *     the controller through `send`.
   */
 @scala.scalanative.reflect.annotation.EnableReflectiveInstantiation
 class NativeFramework extends Framework:
@@ -37,11 +37,9 @@ class NativeFramework extends Framework:
     ): Runner =
         new internal.NativeRunner(args, remoteArgs, testClassLoader)
 
-    /** Required by the Scala Native test bridge.
-      *
-      * kyo-test does not support distributed (master/slave) execution, so this delegates to [[runner]]. The `send` callback (used by the
-      * slave to communicate results back to the master) is ignored; all events flow through the [[sbt.testing.EventHandler]] passed to
-      * [[sbt.testing.Task.execute]] instead.
+    /** The worker runner the Scala Native test adapter starts, in a test binary of its own, for a task sbt executes on another thread than
+      * the one that created the controller. Events still flow through the [[sbt.testing.EventHandler]] passed to [[sbt.testing.Task.execute]];
+      * `send` carries each suite's result to the controller, whose `done()` is the summary sbt prints.
       */
     def slaveRunner(
         args: Array[String],
@@ -49,7 +47,7 @@ class NativeFramework extends Framework:
         testClassLoader: ClassLoader,
         send: String => Unit
     ): Runner =
-        runner(args, remoteArgs, testClassLoader)
+        new internal.NativeRunner(args, remoteArgs, testClassLoader, kyo.Maybe(send))
 
 end NativeFramework
 

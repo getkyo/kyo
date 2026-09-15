@@ -24,7 +24,7 @@ final private[internal] class JsTask(
     val taskDef: TaskDef,
     baseConfig: RunConfig,
     testClassLoader: ClassLoader,
-    results: scala.collection.mutable.ListBuffer[TestReport]
+    record: TestReport => Unit
 ) extends Task:
 
     def tags(): Array[String] = Array.empty
@@ -93,11 +93,11 @@ final private[internal] class JsTask(
         val future = kyo.test.runner.TestRunner.runToFuture(nextClass, jsConfig)(using kyo.Frame.internal)
 
         future.map { report =>
-            results += report
+            record(report)
             emitEvents(report, eventHandler)
         }.recover { case t =>
             val syntheticReport = syntheticFailReport(t)
-            results += syntheticReport
+            record(syntheticReport)
             emitEvents(syntheticReport, eventHandler)
         }
     end runSuite

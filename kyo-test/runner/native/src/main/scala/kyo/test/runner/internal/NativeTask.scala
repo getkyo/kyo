@@ -28,7 +28,7 @@ final private[internal] class NativeTask(
     val taskDef: TaskDef,
     baseConfig: RunConfig,
     testClassLoader: ClassLoader,
-    results: java.util.concurrent.ConcurrentLinkedQueue[TestReport]
+    record: TestReport => Unit
 ) extends Task:
 
     def tags(): Array[String] = Array.empty
@@ -48,7 +48,7 @@ final private[internal] class NativeTask(
         val nativeConfig = if baseConfig.parallelism > 1 then baseConfig.copy(parallelism = 1) else baseConfig
 
         val report = runSuite(nativeConfig)
-        results.add(report)
+        record(report)
         emitEvents(report, eventHandler)
         Array.empty[Task]
     end execute

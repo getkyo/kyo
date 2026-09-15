@@ -183,7 +183,8 @@ private[internal] object Summary:
         else line.substring(0, MaxReasonChars) + s"... (${line.length} chars total)"
     end boundedFirstLine
 
-    private def oneLineReason(r: TestResult): String =
+    /** The reason a failure line shows for `r`; empty for a result the failure block does not list. */
+    private[internal] def oneLineReason(r: TestResult): String =
         r match
             case TestResult.Failed(diagram, cause, _, _) =>
                 if diagram.nonEmpty then

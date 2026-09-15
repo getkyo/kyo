@@ -1,6 +1,7 @@
 package kyo.test.runner.internal
 
 import kyo.Chunk
+import kyo.discard
 import kyo.test.RunConfig
 import kyo.test.TestReport
 import sbt.testing.Runner
@@ -14,11 +15,16 @@ import sbt.testing.TaskDef
   * execution to the pure-Kyo [[kyo.test.runner.TestRunner]].
   *
   * The `results` queue is thread-safe; sbt may call `execute` on multiple tasks concurrently on Native (which has real threads).
+  *
+  * A worker runner (`workerSend` present) runs its tasks in a test binary of its own, and the adapter prints only the controller's
+  * `done()`, so each suite a worker runs is also sent to the controller as [[WorkerReports]] messages, which the controller's
+  * [[receiveMessage]] adds to its results.
   */
 final private[runner] class NativeRunner(
     val args: Array[String],
     val remoteArgs: Array[String],
-    val testClassLoader: ClassLoader
+    val testClassLoader: ClassLoader,
+    workerSend: kyo.Maybe[String => Unit] = kyo.Maybe.empty
 ) extends Runner:
 
     private val parsedArgs: Args.Result = Args.parse(args)
@@ -41,20 +47,24 @@ final private[runner] class NativeRunner(
     private val results =
         new java.util.concurrent.ConcurrentLinkedQueue[TestReport]()
 
+    private def record(report: TestReport): Unit =
+        discard(results.add(report))
+        workerSend.foreach(send => WorkerReports.encode(report).foreach(send))
+
     /** One task per suite. Throws `IllegalArgumentException` when the arguments do not parse, which fails the sbt test task: answering
       * with no tasks would report "No tests to run" and succeed, so a mistyped flag would pass silently.
       */
     def tasks(taskDefs: Array[TaskDef]): Array[Task] =
         parsedArgs match
-            case Args.Result.Ok(_)      => taskDefs.map(td => new NativeTask(td, baseConfig, testClassLoader, results))
+            case Args.Result.Ok(_)      => taskDefs.map(td => new NativeTask(td, baseConfig, testClassLoader, record))
             case Args.Result.Error(msg) => throw Args.invalid(msg)
             case Args.Result.Help       => Array.empty
 
-    /** Not used: kyo-test does not support the master/worker communication model.
-      *
-      * Required by the Scala Native test bridge.
-      */
-    def receiveMessage(msg: String): Option[String] = None
+    /** Adds the suite a worker runner reports (see [[WorkerReports]]) to this controller's results. */
+    def receiveMessage(msg: String): Option[String] =
+        WorkerReports.decode(msg).foreach(report => discard(results.add(report)))
+        None
+    end receiveMessage
 
     /** Serialise a task for inter-runner transfer.
       *
@@ -69,7 +79,7 @@ final private[runner] class NativeRunner(
       * Required by the Scala Native test bridge.
       */
     def deserializeTask(task: String, deserializer: String => sbt.testing.TaskDef): sbt.testing.Task =
-        new NativeTask(deserializer(task), baseConfig, testClassLoader, results)
+        new NativeTask(deserializer(task), baseConfig, testClassLoader, record)
 
     def done(): String =
         parsedArgs match

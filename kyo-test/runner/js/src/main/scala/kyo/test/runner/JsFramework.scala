@@ -37,11 +37,9 @@ class JsFramework extends Framework:
     ): Runner =
         new internal.JsRunner(args, remoteArgs, testClassLoader)
 
-    /** Required by the Scala.js and Scala Native test bridge.
-      *
-      * kyo-test does not support distributed (master/slave) execution, so this delegates to [[runner]]. The `send` callback (used by the
-      * slave to communicate results back to the master) is ignored; all events flow through the [[sbt.testing.EventHandler]] passed to
-      * [[sbt.testing.Task.execute]] instead.
+    /** The worker runner the Scala.js test adapter starts, in a JS run of its own, for a task sbt executes on another thread than the one
+      * that created the controller. Events still flow through the [[sbt.testing.EventHandler]] passed to [[sbt.testing.Task.execute]];
+      * `send` carries each suite's result to the controller, whose `done()` is the summary sbt prints.
       */
     def slaveRunner(
         args: Array[String],
@@ -49,7 +47,7 @@ class JsFramework extends Framework:
         testClassLoader: ClassLoader,
         send: String => Unit
     ): Runner =
-        runner(args, remoteArgs, testClassLoader)
+        new internal.JsRunner(args, remoteArgs, testClassLoader, kyo.Maybe(send))
 
 end JsFramework
 
