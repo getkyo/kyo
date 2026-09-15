@@ -1,5 +1,6 @@
 package kyo
 
+import kyo.internal.HostConfig
 import kyo.internal.XXHash
 import scala.annotation.tailrec
 
@@ -719,11 +720,11 @@ object Rollout {
 
     /** Reads a system property or environment variable, returning empty string if neither is set. */
     private def readProperty(sysProp: String, envVar: String): String = {
-        val prop = FlagPlatform.property(sysProp)
+        val prop = HostConfig.property(sysProp)
         if (prop != null) prop
         else {
             val env =
-                try FlagPlatform.env(envVar)
+                try HostConfig.env(envVar)
                 catch { case _: SecurityException => null }
             if (env != null) env
             else ""
@@ -771,7 +772,7 @@ object Rollout {
 
     private def env(name: String): String = {
         val v =
-            try FlagPlatform.env(name)
+            try HostConfig.env(name)
             catch { case _: SecurityException => null }
         if (v eq null) "" else v
     }

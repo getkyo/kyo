@@ -1,5 +1,7 @@
 package kyo
 
+import kyo.internal.HostConfig
+
 /** A runtime-mutable, per-entity configuration flag.
   *
   * Flags are declared as Scala objects in a package -- the fully-qualified object name becomes the system property key:
@@ -101,9 +103,9 @@ abstract class DynamicFlag[A](default: A, validate: A => Either[Throwable, A] = 
     def reload()(implicit allow: AllowUnsafe): Flag.ReloadResult = {
         val expr: Option[String] = source match {
             case Flag.Source.SystemProperty =>
-                Option(FlagPlatform.property(name))
+                Option(HostConfig.property(name))
             case Flag.Source.EnvironmentVariable =>
-                Option(FlagPlatform.env(envName))
+                Option(HostConfig.env(envName))
             case Flag.Source.Default =>
                 None
         }
