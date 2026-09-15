@@ -1418,13 +1418,14 @@ lazy val `kyo-tasty` =
             // StackOverflowError under scoverage instrumentation.
             coverageMinimumStmtTotal := 75.3,
             coverageFailOnMinimum    := true,
-            // FROZEN: do not bump as part of routine dependency upgrades. The tasty-query oracle
-            // and the real-world fixture jars below are a deliberate spread of versions chosen to
-            // exercise TASTy decoding across compiler releases; changing them alters test-coverage
-            // intent rather than upgrading a dependency.
-            // Differential testing against tasty-query 1.7.0. JVM-only because
-            // tasty-query's ClasspathLoaders requires java.nio.
-            libraryDependencies += "ch.epfl.scala" %% "tasty-query" % "1.7.0" % Test,
+            // FROZEN: do not bump as part of routine dependency upgrades. The real-world fixture jars
+            // below are a deliberate spread of versions chosen to exercise TASTy decoding across compiler
+            // releases; changing them alters test-coverage intent rather than upgrading a dependency.
+            // Differential testing against tasty-query 1.9.0. JVM-only because
+            // tasty-query's ClasspathLoaders requires java.nio. Unlike the fixture jars, this oracle
+            // follows scalaVersion: it reads the fixtures this build compiles, and tasty-query rejects
+            // TASTy with a newer minor version than its own (1.9.0 reads up to 28.9, Scala 3.9).
+            libraryDependencies += "ch.epfl.scala" %% "tasty-query" % "1.9.0" % Test,
             // Real-world classpath fidelity targets. Each jar is intransitive to avoid
             // downloading large transitive closures (Spark: ~5 GB; Play: ~500 MB). kyo-tasty
             // loads only .tasty files in the jar; missing transitive deps produce

@@ -5,7 +5,7 @@ import tastyquery.Contexts.Context
 import tastyquery.Symbols.ClassSymbol
 import tastyquery.Symbols.PackageSymbol
 
-/** Differential testing: kyo-tasty vs tasty-query 1.7.0.
+/** Differential testing: kyo-tasty vs tasty-query 1.9.0.
   *
   * For each fixture set loaded via TestClasspaths.kyoTastyFixtures, loads the same TASTy files through both implementations and diffs
   * the decoded top-level class fully-qualified names. Any disagreement is a real kyo-tasty bug.
