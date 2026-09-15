@@ -187,8 +187,9 @@ ci_cmd() { "$SCRIPT_DIR/ci-test.sh" "$1" "$ACTION"; }
 
 # Install the JDK + sbt via coursier inside a bare container image, making it
 # a usable build host (GitHub setup actions cannot run in a bare container).
-# Also installs Node 24 for JS/Wasm, the Linux native libraries for Native,
-# and patch (the snapshot applies uncommitted changes via patch). Emitted as
+# Also installs Node 24 for JS/Wasm, Chrome's shared libraries for the targets
+# that launch Chrome, the Linux native libraries for Native, and patch (the
+# snapshot applies uncommitted changes via patch). Emitted as
 # a shell prelude run inside the already-launched container, quiet and idempotent.
 container_provision() {
     local platform="$1"
@@ -203,7 +204,7 @@ container_provision() {
     # file + binutils are not optional either: native_assert_arch reads a member of the staged archive
     # to prove it is really for the target architecture, and fails when either tool is missing.
     local apt_pkgs="curl ca-certificates patch liburing-dev libssl-dev openssl file binutils"
-    local node_pkgs="" native_pkgs="" bssl_pkgs="" aeron_pkgs=""
+    local node_pkgs="" native_pkgs="" bssl_pkgs="" aeron_pkgs="" chrome_pkgs=""
     # Alpine equivalents, used when KYO_BUILD_IMAGE names a musl image. Alpine spells the OpenSSL and
     # libuuid development packages differently (openssl-dev, util-linux-dev) and has no separate
     # ca-certificates-for-curl split, so the lists are mapped rather than shared.
@@ -212,6 +213,14 @@ container_provision() {
     # "all" provisions the union (raw sbt mode may run any platform's command in the container).
     case "$platform" in
         JS|Wasm|all) node_pkgs="nodejs npm"; apk_node_pkgs="nodejs npm" ;;
+    esac
+    # The shared libraries chrome-headless-shell loads, from the deb.deps file Chrome for Testing ships in its linux64 zip, under
+    # their noble package names. GitHub's runner images carry them with their preinstalled Chrome; a bare image does not. The JVM
+    # target launches Chrome for kyo-browser's suites and the browser rows for every test run. Chrome for Testing publishes glibc
+    # linux64 builds only, so the musl path has no equivalent.
+    case "$platform" in
+        JVM|Browser|BrowserWasm|all)
+            chrome_pkgs="fonts-liberation libasound2t64 libatk-bridge2.0-0t64 libatk1.0-0t64 libatspi2.0-0t64 libcairo2 libcups2t64 libdbus-1-3 libexpat1 libgbm1 libglib2.0-0t64 libnspr4 libnss3 libpango-1.0-0 libudev1 libvulkan1 libx11-6 libxcb1 libxcomposite1 libxdamage1 libxext6 libxfixes3 libxkbcommon0 libxrandr2" ;;
     esac
     case "$platform" in
         # clang, cc (build-essential), and libssl-dev are preinstalled on GitHub runners,
@@ -295,7 +304,7 @@ if command -v apt-get >/dev/null 2>&1; then
         done
     fi
     apt-get update -qq >/dev/null
-    apt-get install -y -qq -o Acquire::Retries=3 $apt_pkgs $node_pkgs $native_pkgs $bssl_pkgs $aeron_pkgs >/dev/null
+    apt-get install -y -qq -o Acquire::Retries=3 $apt_pkgs $node_pkgs $native_pkgs $bssl_pkgs $aeron_pkgs $chrome_pkgs >/dev/null
 elif command -v apk >/dev/null 2>&1; then
     # musl path, reached via KYO_BUILD_IMAGE=<a musl jdk image>. Both staging scripts refuse a
     # cross-OS build, so the release builds its linux-musl-* natives on a genuine musl host; this is
