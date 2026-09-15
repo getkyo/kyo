@@ -15,11 +15,17 @@ import sbt.testing.TaskDef
   * execution to the pure-Kyo [[kyo.test.runner.TestRunner]].
   *
   * The `results` queue is thread-safe; sbt may call `execute` on multiple tasks concurrently.
+  *
+  * With `fork := true` two runners take part and neither sees the whole run: sbt's main JVM creates one only to hand its arguments to the
+  * fork, never gives it tasks, and logs its `done()`; the fork's `sbt.ForkMain` runs the suites on a runner of its own and discards that
+  * runner's `done()`. So a runner that was never given tasks reports an empty summary, and the fork's runner prints its summary itself
+  * through `summaryPrinter`.
   */
 final private[runner] class SbtRunner(
     val args: Array[String],
     val remoteArgs: Array[String],
-    val testClassLoader: ClassLoader
+    val testClassLoader: ClassLoader,
+    summaryPrinter: kyo.Maybe[String => Unit] = SbtRunner.forkSummaryPrinter
 ) extends Runner:
 
     private val parsedArgs: Args.Result = Args.parse(args)
@@ -53,6 +59,9 @@ final private[runner] class SbtRunner(
     private val results =
         new java.util.concurrent.ConcurrentLinkedQueue[TestReport]()
 
+    private val tasksRequested = new java.util.concurrent.atomic.AtomicBoolean(false)
+    private val summaryPrinted = new java.util.concurrent.atomic.AtomicBoolean(false)
+
     // End-of-run leak detection runs once per forked test JVM, the one place the probe is both sound (the fork holds only this
     // run's resources) and safe to fail by exit. Enablement and the allowlist are per-suite RunConfig (default on), carried on
     // each SuiteReport and aggregated at done(); the fork check is resolved once here (cheap: `sun.java.command` is set at JVM
@@ -82,6 +91,7 @@ final private[runner] class SbtRunner(
       * with no tasks would report "No tests to run" and succeed, so a mistyped flag would pass silently.
       */
     def tasks(taskDefs: Array[TaskDef]): Array[Task] =
+        tasksRequested.set(true)
         parsedArgs match
             case Args.Result.Ok(_) =>
                 discoveryErrors.set(SuiteDiscovery.discoverDetailed(testClassLoader).errors)
@@ -94,9 +104,13 @@ final private[runner] class SbtRunner(
         parsedArgs match
             case Args.Result.Error(msg) => msg
             case Args.Result.Help       => ""
+            case Args.Result.Ok(_) if !tasksRequested.get() => ""
             case Args.Result.Ok(_) =>
                 import scala.jdk.CollectionConverters.*
-                Summary.render(results.asScala, discoveryErrors.get(), positionalArgs)
+                val summary = Summary.render(results.asScala, discoveryErrors.get(), positionalArgs)
+                // sbt's ForkMain calls done() again from a shutdown hook when the fork ends before it could, so print once.
+                summaryPrinter.foreach(print => if summaryPrinted.compareAndSet(false, true) then print(summary))
+                summary
         end match
     end done
 
@@ -161,4 +175,11 @@ final private[runner] class SbtRunner(
             if violations.nonEmpty then throw new TeardownViolationCheck.Detected(violations)
     end runEndOfRunChecks
 
+end SbtRunner
+
+private[runner] object SbtRunner:
+
+    /** Prints the summary to standard output in a forked test JVM, where sbt's ForkMain discards the string `done()` returns. */
+    def forkSummaryPrinter: kyo.Maybe[String => Unit] =
+        if LeakCheck.isForked then kyo.Maybe((summary: String) => java.lang.System.out.println(summary)) else kyo.Maybe.empty
 end SbtRunner

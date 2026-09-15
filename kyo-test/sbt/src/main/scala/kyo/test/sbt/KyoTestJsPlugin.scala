@@ -33,14 +33,12 @@ object KyoTestJsPlugin extends AutoPlugin {
     }
     import autoImport._
 
-    override def projectSettings: Seq[Setting[?]] = Seq(
-        testFrameworks := testFrameworks.value
-            .filterNot(_.implClassNames.contains("kyo.test.runner.SbtFramework")) :+
-            new TestFramework("kyo.test.runner.JsFramework")
-    ) ++ browserSettings
+    override def globalSettings: Seq[Setting[?]] = browserGlobalSettings
 
-    /** The keys behind `kyoTestBrowserEnv`, for a Scala.js project that does not enable this plugin. */
-    val browserSettings: Seq[Setting[?]] = Seq(
+    /** The defaults of the browser keys. They live in Global so a setting at any narrower scope wins, whichever plugin ordering put it
+      * there: a ThisBuild value, SbtKyoTestBrowserPlugin's resolved classpath, or a hand-wired build's own classpath.
+      */
+    val browserGlobalSettings: Seq[Setting[?]] = Seq(
         kyoTestChromeVersion      := None,
         kyoTestBrowserJavaOptions := Seq("-Xmx1g"),
         kyoTestBrowserClasspath := {
@@ -48,7 +46,19 @@ object KyoTestJsPlugin extends AutoPlugin {
                 "kyoTestBrowserClasspath is not set: enable SbtKyoTestPlugin, which resolves kyo-test-browser, " +
                     "or set it to kyo-test-browser's runtime classpath"
             )
-        },
+        }
+    )
+
+    override def projectSettings: Seq[Setting[?]] = Seq(
+        testFrameworks := testFrameworks.value
+            .filterNot(_.implClassNames.contains("kyo.test.runner.SbtFramework")) :+
+            new TestFramework("kyo.test.runner.JsFramework")
+    ) ++ browserSettings
+
+    /** The environment `kyoTestBrowserEnv` builds, for a Scala.js project that does not enable this plugin; add [[browserGlobalSettings]]
+      * to the build's global settings with it.
+      */
+    val browserSettings: Seq[Setting[?]] = Seq(
         kyoTestBrowserEnv := {
             val executable = if (Properties.isWin) "java.exe" else "java"
             val home       = javaHome.value.getOrElse(file(sys.props("java.home")))

@@ -131,15 +131,27 @@ class HostFilterTest extends AsyncFreeSpec with NonImplicitAssertions:
             }
         }
 
-        "a host filter after a platform filter keeps the platform filter" in {
+        "a host filter after a platform filter applies where the platform filter admits the test" in {
             val runs = new AtomicInteger(0)
             runLeaf {
                 new kyo.test.Test[Any]:
-                    "x".notNative.notBrowser in Sync.defer(runs.incrementAndGet()).andThen(succeed)
+                    // A platform filter that admits the test on the platform running this suite.
+                    if Platform.isNative then "x".notJvm.notBrowser in Sync.defer(runs.incrementAndGet()).andThen(succeed)
+                    else "x".notNative.notBrowser in Sync.defer(runs.incrementAndGet()).andThen(succeed)
             }.map { case (path, result) =>
                 assert(path == Chunk("x"))
                 expectHost(inBrowser = false, result, runs, "does not run in a browser")
             }
+        }
+
+        "a host filter after a platform filter leaves the test out where the platform filter excludes it" in {
+            val ctx = new kyo.test.internal.TestContext(Chunk(0), discovery = true)
+            kyo.test.internal.TestContext.setForInstantiation(ctx)
+            val _ = new kyo.test.Test[Any]:
+                "x".notJvm.notJs.notNative.onlyBrowser in succeed
+            ctx.signalPastEnd()
+            assert(ctx.peekRegisteredLeaf == Maybe.empty)
+            Future.successful(succeed)
         }
 
         "a host filter before .handle carries into the enriched builder" in {

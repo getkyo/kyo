@@ -18,7 +18,8 @@ import sbt.Keys.*
   *
   * The browser rows run the same classes in Chrome through kyo-test's browser environment (`kyoTestBrowserEnv`, from sbt-kyo-test):
   * `BrowserTest` links JS as an ES module, `BrowserWasmTest` links WasmGC. kyo wires kyo-test by hand rather than through its sbt plugin,
-  * so the rows add the plugin's [[KyoTestJsPlugin.browserSettings]] and run kyo-test-browser from this build's own project.
+  * so the rows add the plugin's [[KyoTestJsPlugin.browserSettings]], run kyo-test-browser from this build's own project, and run the
+  * Chrome version pinned in `project/chrome-for-testing.version`.
   *
   * {{{
   * sbt kyo-coreJS/test                   # Node, JS output
@@ -82,9 +83,14 @@ object KyoJsRows extends AutoPlugin {
 
     // testKyo reads the row switches when it selects modules, so no task or setting refers to them and sbt's unused-key lint would flag
     // them on every load.
-    override def globalSettings: Seq[Setting[?]] = Seq(
+    override def globalSettings: Seq[Setting[?]] = KyoTestJsPlugin.browserGlobalSettings ++ Seq(
         excludeLintKeys ++= Set[Def.KeyedInitialize[?]](kyoWasmRow, kyoBrowserRow)
     )
+
+    /** The chrome-headless-shell version the browser rows run, pinned so a Chrome release cannot change a run; CI's Chrome cache is keyed on
+      * the file.
+      */
+    def chromeVersion(base: File): String = IO.read(base / "project" / "chrome-for-testing.version").trim
 
     /** A row over `Test`'s compiled classes and classpath: it differs in its link and where the link runs, never in what it compiles. */
     private def row(config: Configuration, link: StandardConfig => StandardConfig, env: Def.Initialize[Task[JSEnv]]): Seq[Setting[?]] =
@@ -108,7 +114,8 @@ object KyoJsRows extends AutoPlugin {
         ) ++
             row(WasmTest, wasmLinkerConfig, Def.task(nodeEnv(kyoNodeArgs.value :+ wasmExceptionFlag, kyoNodeEnv.value))) ++
             KyoTestJsPlugin.browserSettings ++ Seq(
-                kyoTestBrowserClasspath := (LocalProject("kyo-test-browserJVM") / Runtime / fullClasspath).value.files
+                kyoTestBrowserClasspath := (LocalProject("kyo-test-browserJVM") / Runtime / fullClasspath).value.files,
+                kyoTestChromeVersion    := Some(chromeVersion((LocalRootProject / baseDirectory).value))
             ) ++
             // A page loads an ES module or a classic script, never CommonJS, so the JS browser row links an ES module whatever Test links.
             row(BrowserTest, _.withModuleKind(ModuleKind.ESModule), kyoTestBrowserEnv) ++

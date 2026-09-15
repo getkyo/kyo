@@ -173,24 +173,37 @@ class SbtFrameworkTest extends AnyFunSuite with NonImplicitAssertions:
         assert(summary.contains("1 failed")): Unit
     }
 
-    // ── Test 10: done() summary loses a run executed by a separate (forked) runner ──────────────
-    // Under `fork := true`, sbt runs SbtTask.execute in the forked JVM's runner, but logs the
-    // main-JVM runner's done(), whose results queue never received the reports, so the kyo-test
-    // summary line and TOTAL FAILURES block report zero. This is modelled by executing the suite
-    // on a separate runner from the one that produces the summary. pendingUntilFixed runs the body
-    // and inverts: a still-failing body reports Pending. Remove the marker once the fork-side
-    // summary is surfaced and the body passes (if the fix routes the fork's own done() rather than
-    // sharing results across instances, remove the marker by hand when that lands).
+    // ── Test 10: the summary of a forked run ────────────────────────────────────────────────────
+    // Under `fork := true`, sbt's main JVM creates a runner only to hand its arguments to the fork and never gives it tasks, then
+    // logs that runner's done(). The fork runs the suites on a runner of its own, and sbt's ForkMain discards that runner's done().
+    // So the fork's runner prints its summary itself, and the main JVM's runner, having run nothing, reports nothing.
 
-    test("done() summary reflects a run executed by a separate (forked) runner instance") {
-        pendingUntilFixed {
-            val summaryRunner = makeRunner()
-            val execRunner    = makeRunner()
-            execRunner.tasks(Array(taskDefFor(classOf[NextSuiteA])))(0).execute(new CapturingEventHandler, loggers)
-            val summary = summaryRunner.done()
-            assert(summary.contains("1 tests")): Unit
-            assert(summary.contains("1 passed")): Unit
-        }
+    test("done() of a runner that was never given tasks is empty, so a forked run does not log a zero-test summary") {
+        val summaryRunner = makeRunner()
+        val execRunner    = makeRunner()
+        execRunner.tasks(Array(taskDefFor(classOf[NextSuiteA])))(0).execute(new CapturingEventHandler, loggers)
+        assert(summaryRunner.done() == "")
+    }
+
+    test("in a forked JVM, done() prints the summary of the suites it ran, once") {
+        val printed = new java.util.concurrent.ConcurrentLinkedQueue[String]
+        val runner  = new SbtRunner(Array.empty, Array.empty, getClass.getClassLoader, summaryPrinter = kyo.Maybe(printed.add(_): Unit))
+        runner.tasks(Array(taskDefFor(classOf[NextSuiteA])))(0).execute(new CapturingEventHandler, loggers)
+        runner.tasks(Array(taskDefFor(classOf[NextSuiteB])))(0).execute(new CapturingEventHandler, loggers)
+        val summary = runner.done()
+        // ForkMain also calls done() from a shutdown hook if the fork is ending before it could.
+        runner.done()
+        import scala.jdk.CollectionConverters.*
+        assert(printed.asScala.toList == List(summary)): Unit
+        assert(summary.contains("2 tests, 1 passed, 1 failed")): Unit
+    }
+
+    test("an in-process runner returns its summary for sbt to log and prints nothing") {
+        val printed = new java.util.concurrent.ConcurrentLinkedQueue[String]
+        val runner  = new SbtRunner(Array.empty, Array.empty, getClass.getClassLoader, summaryPrinter = kyo.Maybe.empty)
+        runner.tasks(Array(taskDefFor(classOf[NextSuiteA])))(0).execute(new CapturingEventHandler, loggers)
+        assert(runner.done().contains("1 tests, 1 passed")): Unit
+        assert(printed.isEmpty): Unit
     }
 
     // ── Test 11: SbtRunner.discoveryErrors is overwritten by successive calls ───────────────────
