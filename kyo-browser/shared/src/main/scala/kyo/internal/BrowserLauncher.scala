@@ -26,13 +26,21 @@ private[kyo] object BrowserLauncher:
       * the stderr-buffer-fill deadlock that would happen if the launcher only read up to the URL marker and then stopped.
       */
     def launch(config: Browser.LaunchConfig)(using Frame): String < (Async & Scope & Abort[BrowserSetupException]) =
+        launchProcess(config).map((url, _) => url)
+
+    /** [[launch]], also returning the Chrome process, for a caller that must notice Chrome exiting while it waits on the page (a test run
+      * that would otherwise wait forever for a message from a page that is gone).
+      */
+    private[kyo] def launchProcess(config: Browser.LaunchConfig)(using
+        Frame
+    ): (String, Process) < (Async & Scope & Abort[BrowserSetupException]) =
         for
             tmpDir <- createTempDir
             _      <- Scope.ensure(removeTmpDir(tmpDir, config.tmpDirRemovalSchedule))
             proc   <- spawnChrome(config, tmpDir)
             url    <- pollDevToolsActivePort(tmpDir, config.launchTimeout, config.devToolsActivePortPollInterval)
-        yield url
-    end launch
+        yield (url, proc)
+    end launchProcess
 
     /** Best-effort recursive removal of the Chrome user-data temp directory.
       *

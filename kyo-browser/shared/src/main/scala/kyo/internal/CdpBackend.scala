@@ -205,6 +205,7 @@ private[kyo] object CdpBackend:
             screencastMethod     <- buildScreencastFrameMethod(screencastEventDispatchers)
             consoleApiMethod     <- buildConsoleApiCalledMethod(consoleEventDispatchers)
             exceptionMethod      <- buildExceptionThrownMethod(consoleEventDispatchers)
+            crashedMethod        <- buildTargetCrashedMethod(consoleEventDispatchers)
             bindingMethod        <- buildBindingCalledMethod(bindingEventDispatchers)
             config = JsonRpcHandler.Config(
                 codec = JsonRpcEnvelope.lenientSchema,
@@ -228,6 +229,7 @@ private[kyo] object CdpBackend:
                     screencastMethod,
                     consoleApiMethod,
                     exceptionMethod,
+                    crashedMethod,
                     bindingMethod
                 ),
                 config
@@ -489,6 +491,7 @@ private[kyo] object CdpBackend:
             screencastMethod           <- buildScreencastFrameMethod(screencastEventDispatchers)
             consoleApiMethod           <- buildConsoleApiCalledMethod(consoleEventDispatchers)
             exceptionMethod            <- buildExceptionThrownMethod(consoleEventDispatchers)
+            crashedMethod              <- buildTargetCrashedMethod(consoleEventDispatchers)
             bindingMethod              <- buildBindingCalledMethod(bindingEventDispatchers)
             config = JsonRpcHandler.Config(
                 codec = JsonRpcEnvelope.lenientSchema,
@@ -512,6 +515,7 @@ private[kyo] object CdpBackend:
                     screencastMethod,
                     consoleApiMethod,
                     exceptionMethod,
+                    crashedMethod,
                     bindingMethod
                 ),
                 config
@@ -643,6 +647,17 @@ private[kyo] object CdpBackend:
     )(using Frame): JsonRpcRoute[?, ?, JsonRpcError] < Sync =
         Sync.defer(JsonRpcRoute.notification[ExceptionThrownWire]("Runtime.exceptionThrown") { (params, ctx) =>
             dispatchEvent(dispatchers, "Runtime.exceptionThrown", params, readSessionIdFromExtras(ctx.extras))
+        })
+
+    /** Inspector.targetCrashed notification (sent once Inspector.enable is issued on the session): the page's renderer died. Routed to the
+      * same per-session console handler as Runtime.exceptionThrown, since both report the page failing; a handler that waits on the page
+      * uses it to stop waiting.
+      */
+    private def buildTargetCrashedMethod(
+        dispatchers: AtomicRef[Dict[String, CdpEvent.Generic => Unit < Sync]]
+    )(using Frame): JsonRpcRoute[?, ?, JsonRpcError] < Sync =
+        Sync.defer(JsonRpcRoute.notification[TargetCrashedWire]("Inspector.targetCrashed") { (params, ctx) =>
+            dispatchEvent(dispatchers, "Inspector.targetCrashed", params, readSessionIdFromExtras(ctx.extras))
         })
 
     /** Runtime.bindingCalled notification: the page called a function installed by Runtime.addBinding. Routes to the per-session

@@ -413,6 +413,7 @@ lazy val kyoJVM: Project = project
         `kyo-mcp`.jvm,
         `kyo-lsp`.jvm,
         `kyo-caliban`.jvm,
+        `kyo-jsenv-browser`.jvm,
         `kyo-bench`.jvm,
         `kyo-zio-test`.jvm,
         `kyo-zio`.jvm,
@@ -2640,6 +2641,21 @@ lazy val `kyo-browser` =
         .jsSettings(
             `js-settings`,
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
+        )
+
+// The program the browser test rows run a linked Scala.js test in: it serves the linked output, loads it in a
+// chrome-headless-shell of its own, and relays the Scala.js test adapter's com channel over CDP. project/BrowserJSEnv.scala
+// forks it with this project's classpath. Build tooling, so it is not published.
+lazy val `kyo-jsenv-browser` =
+    crossProject(JVMPlatform)
+        .crossType(CrossType.Pure)
+        .in(file("kyo-jsenv-browser"))
+        .dependsOn(`kyo-browser`)
+        .withKyoTest
+        .disablePlugins(MimaPlugin)
+        .settings(
+            `kyo-settings`,
+            publish / skip := true
         )
 
 lazy val `kyo-slack` =

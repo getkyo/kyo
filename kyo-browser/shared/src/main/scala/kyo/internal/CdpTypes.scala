@@ -317,6 +317,9 @@ final private[kyo] case class ExceptionDetailsWire(
 ) derives Schema
 final private[kyo] case class ExceptionThrownWire(timestamp: Maybe[Double] = Absent, exceptionDetails: ExceptionDetailsWire) derives Schema
 
+/** `Inspector.targetCrashed`: the page's renderer process died. The notification carries no parameters. */
+final private[kyo] case class TargetCrashedWire() derives Schema
+
 /** `Runtime.addBinding`: installs a global function `name` in the page. Each call of it with a string emits `Runtime.bindingCalled`. */
 final private[kyo] case class AddBindingParams(name: String) derives Schema
 

@@ -312,6 +312,32 @@ class CdpBackendSmokeTest extends BrowserTest:
         }
     }
 
+    // A crashed renderer sends no further events; a caller waiting on the page learns of the crash through this notification.
+    "Inspector.targetCrashed routes via ctx.extras to the console-event dispatcher" in {
+        Scope.run {
+            mkBackendWithServer().map { (backend, serverEndpoint) =>
+                AtomicRef.init(Chunk.empty[CdpEvent.Generic]).map { capture =>
+                    val handler: CdpEvent.Generic => Unit < Sync = ev => capture.updateAndGet(_ :+ ev).unit
+                    backend.consoleEventDispatchers.updateAndGet(_.update("t1", handler)).andThen {
+                        val extras = JsonRpcExtrasEncoder.const(Structure.Value.Record(Chunk("sessionId" -> Structure.Value.Str("t1"))))
+                        Abort.run[Closed](serverEndpoint.notify[TargetCrashedWire](
+                            "Inspector.targetCrashed",
+                            TargetCrashedWire(),
+                            extras
+                        )).andThen {
+                            assertEventually(capture.get.map(_.nonEmpty)).andThen {
+                                capture.get.map { events =>
+                                    assert(events.map(_.method) == Chunk("Inspector.targetCrashed"))
+                                    assert(events.head.sessionId == Present(SessionId("t1")))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // Runtime.bindingCalled is how a page calls out to the host (a function installed by Runtime.addBinding); the
     // notification carries the binding name and the string payload the page passed.
     "Runtime.bindingCalled routes via ctx.extras to the binding-event dispatcher" in {

@@ -28,6 +28,24 @@ class BrowserLauncherTest extends BaseChromeTest:
         }
     }
 
+    "launchProcess returns the Chrome process, which exits once the launch scope closes" in {
+        SharedChrome.chromeConfig.map { cfg =>
+            Scope.run {
+                BrowserLauncher.launchProcess(cfg).map { (url, proc) =>
+                    proc.isAlive.map(alive => (url, proc, alive))
+                }
+            }.map { (url, proc, aliveInScope) =>
+                proc.waitFor.map { _ =>
+                    proc.isAlive.map { aliveAfter =>
+                        assert(url.startsWith("ws://"))
+                        assert(aliveInScope, "Chrome should be running while the launch scope is open")
+                        assert(!aliveAfter, "Chrome should have exited once the launch scope closed")
+                    }
+                }
+            }
+        }
+    }
+
     "two concurrent launches use different ports" in {
         Scope.run {
             SharedChrome.chromeConfig.map { cfg =>
