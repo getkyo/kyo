@@ -10,7 +10,7 @@ import scala.scalajs.js
   */
 class HostConfigTest extends AnyFreeSpec {
 
-    /** Runs `f` with `process` deleted from the global object, so it is an UNDECLARED identifier — the state a browser is in, and the one where
+    /** Runs `f` with `process` deleted from the global object, so it is an undeclared identifier: the state a browser is in, and the one where
       * a bare read throws while `typeof process` still answers "undefined". Restored in a `finally` because the test runner talks over
       * `process.stdout`.
       */
