@@ -37,3 +37,6 @@ analysis-*.md
 
 # Local development artifacts: design notes, review packages, benchmark output, agent tooling.
 .dev/
+
+# macOS Spotlight opt-out marker (local only)
+.metadata_never_index
