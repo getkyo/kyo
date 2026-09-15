@@ -95,7 +95,7 @@ private[kyo] object InstantText:
         // LocalTime.toString, with the seconds InstantPrinterParser always prints
         val hour   = secsOfDay / 3600
         val minute = (secsOfDay / 60) % 60
-        val second = secsOfDay % 60
+        val second = secsOfDay        % 60
         discard(buf.append('T').append(if hour < 10 then "0" else "").append(hour).append(if minute < 10 then ":0" else ":").append(minute))
         discard(buf.append(if second < 10 then ":0" else ":").append(second))
         if nano > 0 then
@@ -376,9 +376,9 @@ private[kyo] object InstantText:
 
         private def monthLength(year: Long, month: Int): Int =
             month match
-                case 2           => if isLeap(year) then 29 else 28
+                case 2              => if isLeap(year) then 29 else 28
                 case 4 | 6 | 9 | 11 => 30
-                case _           => 31
+                case _              => 31
 
         /** `LocalDate.toEpochDay`. */
         private def toEpochDay(year: Long, month: Int, day: Int): Long =

@@ -2,6 +2,7 @@ package kyo
 
 import java.time.Instant as JInstant
 import java.time.format.DateTimeParseException
+import kyo.internal.InstantPlatformSpecific
 import kyo.internal.InstantText
 
 /** A point in time with nanosecond precision, in the UTC time-scale: a number of seconds since the epoch of 1970-01-01T00:00:00Z and a
@@ -98,11 +99,9 @@ object Instant:
         val seconds = instant.seconds + nanos / NanosPerSecond
         val result  = fromEpoch(seconds, instant.nanos + nanos % NanosPerSecond)
         if result.seconds < InstantText.MinSecond || result.seconds > InstantText.MaxSecond then Absent else Present(result)
+    end plusNanos
 
     extension (instant: Instant)
-
-        private def seconds: Long = instant.seconds
-        private def nanos: Int    = instant.nanos
 
         private def compareTo(other: Instant): Int =
             val cmp = java.lang.Long.compare(instant.seconds, other.seconds)
@@ -254,7 +253,11 @@ object Instant:
           * @return
           *   The equivalent java.time.Instant.
           */
-        def toJava: JInstant = JInstant.ofEpochSecond(instant.seconds, instant.nanos.toLong)
+        def toJava: JInstant =
+            // The range ends convert to the JDK's own constants, as the epoch does inside ofEpochSecond.
+            if instant == Min then JInstant.MIN
+            else if instant == Max then JInstant.MAX
+            else JInstant.ofEpochSecond(instant.seconds, instant.nanos.toLong)
 
         /** Converts this Instant to a Duration representing the time elapsed since the epoch (1970-01-01T00:00:00Z).
           *

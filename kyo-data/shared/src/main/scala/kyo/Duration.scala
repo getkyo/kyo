@@ -132,6 +132,7 @@ object Duration:
 
         /** The java.time unit of the same length. */
         def chronoUnit: ChronoUnit =
+            given CanEqual[Units, Units] = CanEqual.derived
             this match
                 case Nanos   => ChronoUnit.NANOS
                 case Micros  => ChronoUnit.MICROS
@@ -143,6 +144,8 @@ object Duration:
                 case Weeks   => ChronoUnit.WEEKS
                 case Months  => ChronoUnit.MONTHS
                 case Years   => ChronoUnit.YEARS
+            end match
+        end chronoUnit
     end Units
 
     object Units:

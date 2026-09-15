@@ -14,6 +14,9 @@ import kyo.internal.InstantText
   */
 class InstantJdkTest extends kyo.test.Test[Any]:
 
+    given CanEqual[JInstant, JInstant]             = CanEqual.derived
+    given CanEqual[Duration.Units, Duration.Units] = CanEqual.derived
+
     private val MinSecond            = InstantText.MinSecond
     private val MaxSecond            = InstantText.MaxSecond
     private val SecondsPer10000Years = 146097L * 25L * 86400L
@@ -79,7 +82,10 @@ class InstantJdkTest extends kyo.test.Test[Any]:
             case (Right(expected), Result.Success(actual)) =>
                 assert(actual.toJava == expected, s"'$text' parsed to ${actual.toJava}, expected $expected")
             case (Left(expected), Result.Failure(actual)) =>
-                assert(actual.getErrorIndex == expected.getErrorIndex, s"'$text' error index ${actual.getErrorIndex}, expected ${expected.getErrorIndex}")
+                assert(
+                    actual.getErrorIndex == expected.getErrorIndex,
+                    s"'$text' error index ${actual.getErrorIndex}, expected ${expected.getErrorIndex}"
+                )
                 assert(actual.getParsedString == expected.getParsedString)
                 // The JDK's message for an input outside the range names its internal parse state; only the prefix is stable.
                 if expected.getMessage.contains("Unable to obtain Instant") then
@@ -231,9 +237,12 @@ class InstantJdkTest extends kyo.test.Test[Any]:
     private def generatedInstantText(r: SplittableRandom): String =
         val yearDigits = 1 + r.nextInt(11)
         val year       = (1 to yearDigits).map(_ => ('0' + r.nextInt(10)).toChar).mkString
-        val sign       = r.nextInt(3) match { case 0 => ""; case 1 => "+"; case _ => "-" }
+        val sign = r.nextInt(3) match
+            case 0 => "";
+            case 1 => "+";
+            case _ => "-"
         def two(max: Int) = f"${r.nextInt(max)}%02d"
-        val fraction   = if r.nextBoolean() then "" else "." + (1 to r.nextInt(11)).map(_ => ('0' + r.nextInt(10)).toChar).mkString
+        val fraction      = if r.nextBoolean() then "" else "." + (1 to r.nextInt(11)).map(_ => ('0' + r.nextInt(10)).toChar).mkString
         val offset =
             r.nextInt(4) match
                 case 0 => "Z"
@@ -278,8 +287,15 @@ class InstantJdkTest extends kyo.test.Test[Any]:
         }
 
         "truncation to each unit" in {
-            val units = Seq(Duration.Units.Nanos, Duration.Units.Micros, Duration.Units.Millis, Duration.Units.Seconds, Duration.Units.Minutes,
-                Duration.Units.Hours, Duration.Units.Days)
+            val units = Seq(
+                Duration.Units.Nanos,
+                Duration.Units.Micros,
+                Duration.Units.Millis,
+                Duration.Units.Seconds,
+                Duration.Units.Minutes,
+                Duration.Units.Hours,
+                Duration.Units.Days
+            )
             (cornerInstants ++ generatedInstants(20000)).foreach { j =>
                 units.foreach { unit =>
                     assert(Instant.fromJava(j).truncatedTo(unit).toJava == j.truncatedTo(unit.chronoUnit), s"$j to $unit")
@@ -313,7 +329,8 @@ class InstantJdkTest extends kyo.test.Test[Any]:
             (1 to 5000).foreach { _ =>
                 val seconds = r.nextLong(0L, 9000000000L)
                 val nanos   = r.nextLong(0L, Long.MaxValue)
-                val expected = JInstant.ofEpochSecond(Duration.fromNanos(seconds * 1000000000L).toSeconds, Duration.fromNanos(nanos).toNanos)
+                val expected =
+                    JInstant.ofEpochSecond(Duration.fromNanos(seconds * 1000000000L).toSeconds, Duration.fromNanos(nanos).toNanos)
                 assert(Instant.of(Duration.fromNanos(seconds * 1000000000L), Duration.fromNanos(nanos)).toJava == expected)
             }
             succeed
@@ -361,6 +378,7 @@ class InstantJdkTest extends kyo.test.Test[Any]:
                 case Left(error) =>
                     assert(expected.isEmpty, s"'$text' was rejected, expected $expected")
                     assert(error.getMessage == s"Invalid Instant format: $text")
+            end match
         }
         succeed
     }
