@@ -71,6 +71,7 @@ ThisBuild / useConsoleForROGit := (baseDirectory.value / ".git").isFile
 Global / commands += Repeat.command
 Global / commands += TestKyo.command
 Global / commands += TestKyo.doneCommand
+Global / commands += LinkCheck.command
 
 // Cap concurrent scaladoc runs. Each one is a forked JVM holding a whole module's TASTy graph
 // (see `Compile / doc` in kyo-settings), so a handful in parallel is enough to exhaust a 16GB
@@ -3071,6 +3072,30 @@ lazy val `kyo-ui` =
             `wasm-settings`,
             libraryDependencies += "org.scala-js" %%% "scalajs-dom" % "2.8.1"
         )
+
+// Representative programs linked the way an application links kyo, one at a time, by the `linkCheck` command
+// (project/LinkCheck.scala): run with plain node, inspected for data they cannot reach, and held to the size
+// ceilings in kyo-link-check/ceilings.txt. Not published and not a test module.
+lazy val `kyo-link-check` =
+    crossProject(JSPlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-link-check"))
+        .dependsOn(`kyo-core`, `kyo-ui`)
+        .disablePlugins(MimaPlugin)
+        .settings(
+            `kyo-settings`,
+            publish / skip                  := true,
+            scalaJSUseMainModuleInitializer := true,
+            Compile / mainClass             := Some(LinkCheck.programs.head.mainClass),
+            // What an application ships: an optimized, minified ES module, named .mjs so plain node loads it as one.
+            Compile / fullLinkJS / scalaJSLinkerConfig ~= {
+                _.withModuleKind(ModuleKind.ESModule)
+                    .withOutputPatterns(org.scalajs.linker.interface.OutputPatterns.fromJSFile("%s.mjs"))
+                    .withMinify(true)
+            }
+        )
+        .jsSettings(`js-settings`)
+        .wasmSettings(`wasm-settings`)
 
 // The website: shared apps + page wrapper + content model + cross-platform kyo-parse Markdown
 // transpiler (DocsMarkdown in shared/, no third-party Markdown dependency). JVM side carries the

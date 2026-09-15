@@ -1,0 +1,2 @@
+# Size ceilings for the linkCheck programs, in bytes of linked output (all files).
+# <platform> <program> <bytes>
