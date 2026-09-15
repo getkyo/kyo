@@ -535,13 +535,34 @@ final private[kyo] class NodePathUnsafe(raw: String) extends Path.Unsafe:
     override private[kyo] def syncDirectory()(using Frame, AllowUnsafe): Result[FileWriteException, Unit] =
         try
             val directory = if pathStr.isEmpty then "." else pathStr
-            val fd        = NodeFs.openSync(directory, "r")
             try
-                if !NodeFs.fstatSync(fd).isDirectory() then Result.fail(FileNotADirectoryException(safe))
-                else
-                    NodeFs.fsyncSync(fd)
-                    Result.unit
-            finally NodeFs.closeSync(fd)
+                val fd = NodeFs.openSync(directory, "r")
+                try
+                    if !NodeFs.fstatSync(fd).isDirectory() then Result.fail(FileNotADirectoryException(safe))
+                    else
+                        NodeFs.fsyncSync(fd)
+                        Result.unit
+                finally NodeFs.closeSync(fd)
+                end try
+            catch
+                case e: js.JavaScriptException if NodeError.codeOf(e) == "ENOENT" =>
+                    // Windows also reports ENOENT when an ancestor is a file. Inspect ancestors
+                    // only after failure so missing paths and non-directories stay distinct.
+                    @scala.annotation.tailrec
+                    def hasFileAncestor(path: String): Boolean =
+                        val isDirectory: Maybe[Boolean] =
+                            try Present(NodeFs.statSync(path).isDirectory())
+                            catch
+                                case e: js.JavaScriptException if NodeError.isMissing(e) => Absent
+                        isDirectory match
+                            case Present(value) => !value
+                            case Absent =>
+                                val parent = NodePath.dirname(path)
+                                parent != path && hasFileAncestor(parent)
+                        end match
+                    end hasFileAncestor
+                    if hasFileAncestor(NodePath.dirname(directory)) then Result.fail(FileNotADirectoryException(safe))
+                    else Result.fail(FileNotFoundException(safe))
             end try
         catch
             case e: js.JavaScriptException =>

@@ -42,7 +42,8 @@ class PathDurabilityTest extends kyo.test.Test[Any]:
         base: FileSystem.Write[Sync],
         failOn: Maybe[String] = Absent,
         interruptAfterOpen: Maybe[Throwable] = Absent,
-        interruptAfterTransfer: Maybe[Throwable] = Absent
+        interruptAfterTransfer: Maybe[Throwable] = Absent,
+        cleaned: Maybe[Latch] = Absent
     ) extends FileSystem.Write[Sync]:
         export base.{
             durableReplace as _,
@@ -114,6 +115,9 @@ class PathDurabilityTest extends kyo.test.Test[Any]:
                 def remove()(using AllowUnsafe): Unit =
                     recorded += Event.Remove(temporary)
                     handle.remove()
+                    // Unsafe: signal completion only after the raw cleanup has removed the file.
+                    cleaned.foreach(latch => Sync.Unsafe.evalOrThrow(latch.release))
+                end remove
             end new
         end tempFileHandle
 
@@ -381,12 +385,14 @@ class PathDurabilityTest extends kyo.test.Test[Any]:
             assert(!remains)
     }
 
-    "directory synchronization preserves a missing path failure" in {
-        for
-            (fs, root) <- hostFileSystem("kyo-durable-sync-missing")
-            path = root / "missing"
-            result <- Abort.run(fs.syncDirectory(path))
-        yield assert(result == Result.fail(FileNotFoundException(path)))
+    Chunk("missing", "missing/child").foreach { suffix =>
+        s"directory synchronization preserves a missing path failure for $suffix" in {
+            for
+                (fs, root) <- hostFileSystem("kyo-durable-sync-missing")
+                path = root / suffix
+                result <- Abort.run(fs.syncDirectory(path))
+            yield assert(result == Result.fail(FileNotFoundException(path)), s"Directory synchronization result: $result")
+        }
     }
 
     "sibling temporary accepts a target near the filename length limit" in {
@@ -453,11 +459,11 @@ class PathDurabilityTest extends kyo.test.Test[Any]:
             (base, root) <- hostFileSystem("kyo-durable-acquire-interrupt")
             done         <- Latch.init(1)
             primary = new RuntimeException("acquisition interrupted")
-            fs      = new Recording(base, interruptAfterOpen = Present(primary))
+            fs      = new Recording(base, interruptAfterOpen = Present(primary), cleaned = Present(done))
             target  = root / "target.bin"
-            fiber <- Fiber.initUnscoped {
-                Sync.ensure(done.release)(fs.durableReplace(target, Span(1.toByte)))
-            }
+            fiber <- Fiber.initUnscoped(fs.durableReplace(target, Span(1.toByte)))
+            // An outer Sync.ensure can run before the resource finalizer on interruption.
+            // Wait for removal itself before inspecting the directory and recorded events.
             _       <- done.await
             result  <- fiber.poll
             entries <- base.list(root)
@@ -544,14 +550,16 @@ class PathDurabilityTest extends kyo.test.Test[Any]:
             assert(!observed._2)
     }
 
-    "directory synchronization preserves a non-directory ancestor failure" in {
-        for
-            (fs, root) <- hostFileSystem("kyo-durable-sync-ancestor-file")
-            file = root / "file"
-            path = file / "child"
-            _      <- fs.mkFile(file)
-            result <- Abort.run[FileSystemException](fs.syncDirectory(path))
-        yield assert(result == Result.fail(FileNotADirectoryException(path)))
+    Chunk("child", "child/grandchild").foreach { suffix =>
+        s"directory synchronization preserves a non-directory ancestor failure for $suffix" in {
+            for
+                (fs, root) <- hostFileSystem("kyo-durable-sync-ancestor-file")
+                file = root / "file"
+                path = file / suffix
+                _      <- fs.mkFile(file)
+                result <- Abort.run[FileSystemException](fs.syncDirectory(path))
+            yield assert(result == Result.fail(FileNotADirectoryException(path)), s"Directory synchronization result: $result")
+        }
     }
 
     "interruption closes the channel and removes the temporary exactly once" in {
