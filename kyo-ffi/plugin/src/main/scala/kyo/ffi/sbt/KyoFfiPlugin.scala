@@ -961,13 +961,13 @@ object KyoFfiPlugin extends AutoPlugin {
         // references to the system-lib symbols resolve against the `-l` flags that follow.
         ffiNativeLinkingOptions := {
             val platform = ffiTargetPlatform.value
+            val libs     = ffiLibrariesResolved.value
             if (platform != "Native") Nil
             else {
                 // Same target OS ffiCompile resolves its link libs for (the host unless
                 // ffiTargetOsArch overrides it), so the two never disagree about which per-OS libs
                 // a build needs.
                 val buildOs = CCompiler.resolveTargetOsArch(ffiTargetOsArch.value)._1
-                val libs    = ffiLibrariesResolved.value
                 libs.flatMap { lib =>
                     val libDirs = lib.libDirs.distinct
                     if (libDirs.nonEmpty)
@@ -1292,10 +1292,10 @@ object KyoFfiPlugin extends AutoPlugin {
       */
     private def ffiNativeResourceGenerator: Def.Initialize[Task[Seq[File]]] = Def.task {
         val platform = ffiTargetPlatform.value
+        val log      = streams.value.log
+        val libs     = ffiLibrariesResolved.value
         if (platform != "Native") Seq.empty[File]
         else {
-            val log     = streams.value.log
-            val libs    = ffiLibrariesResolved.value
             val destDir = (Compile / resourceManaged).value / "scala-native"
             // Headers travel with the sources: Scala Native compiles the copies in destDir, so a source
             // that includes a project-local header cannot resolve it unless the header is copied too.

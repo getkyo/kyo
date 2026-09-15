@@ -39,6 +39,14 @@ class HostFileSystemChannelConformanceTest extends FileSystemChannelTest:
         FileSystemConformanceFixtures.host("kyo-host-channel-suite")
 end HostFileSystemChannelConformanceTest
 
+class HostFileSystemDurabilityConformanceTest extends FileSystemDurabilityTest:
+    override private[kyo] def supportsDirectorySync: Boolean = !kyo.internal.Platform.isWindows
+    private[kyo] def createFileSystem(using
+        Frame
+    ): (FileSystem.Write[Sync], Path) < (Sync & Scope & Abort[FileSystemException]) =
+        FileSystemConformanceFixtures.host("kyo-host-durability-suite")
+end HostFileSystemDurabilityConformanceTest
+
 /** Minimal user-defined backend fixture that deliberately exposes only the read tier. */
 final class UserReadOnlyFileSystemFixture(delegate: FileSystem.Read[Sync]) extends FileSystem.Read[Sync]:
     // Delegated by name, not `export delegate.*`. A wildcard emits one forwarder per member in an

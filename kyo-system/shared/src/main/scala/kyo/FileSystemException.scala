@@ -2,7 +2,7 @@ package kyo
 
 /** Operations recorded by generic filesystem failures. */
 enum FileSystemOperation derives CanEqual:
-    case Exists, Inspect, RealPath, Read, Write, List, Walk, Create, Move, Copy, Remove, Channel, Sync, Lock, Watch
+    case Exists, Inspect, RealPath, Read, Write, List, Walk, Create, Move, Copy, Remove, Channel, Sync, SyncDirectory, Lock, Watch
 
 /** Base type for failures reported by filesystem capabilities. */
 sealed abstract class FileSystemException(message: String, cause: Throwable | String = "")(using Frame)
@@ -29,7 +29,7 @@ case class FileIsADirectoryException(path: Path)(using Frame)
 
 case class FileNotADirectoryException(path: Path)(using Frame)
     extends FileSystemException(s"Expected a directory but found a file: $path")
-    with FileStructureException derives CanEqual
+    with FileWriteException with FileStructureException derives CanEqual
 
 case class FileAlreadyExistsException(path: Path)(using Frame)
     extends FileSystemException(s"Path already exists: $path")

@@ -41,8 +41,8 @@ kyo-system/
 ## Filesystem authority and selection
 
 `FileSystem.Read[S]` contains only inspection and read operations. `FileSystem.Write[S]` extends it
-with mutation, typed write channels, and structure changes. A backend mixes in
-`FileSystem.Watch[S]` only when it can satisfy the complete watcher contract.
+with mutation, typed write channels, durable replacement, and structure changes. A backend mixes in
+`FileSystem.Watch` only when it can satisfy the complete watcher contract.
 
 The built-in factories are:
 
@@ -104,7 +104,7 @@ Movement and copying use `Path.MoveOptions` and `Path.CopyOptions`. File writes 
 `Path.WriteOptions`. Add policy fields to these values instead of restoring Boolean argument
 clusters. Required atomicity must either succeed atomically or fail before mutating the target.
 
-## Scoped channels
+## Scoped channels and durable replacement
 
 `Path.ReadChannel[S]`, `Path.WriteChannel[S]`, and `Path.ReadWriteChannel[S]` expose positioned
 operations according to authority. Acquisition occurs through the matching `FileSystem` tier and is
@@ -116,6 +116,18 @@ scope.
 - `Existing` requires an existing regular file.
 - `Create` opens an existing file or creates it.
 - `CreateNew` fails if any target already exists.
+
+`durableReplace` has a fixed workflow: open a create-new sibling temporary, write, sync file content
+and metadata, close it, require an atomic replacement move, then sync the parent directory. When
+acquisition creates missing parent directories, sync their entries through the first existing ancestor
+too. Cleanup before movement leaves the original target unchanged. Failure of the final
+directory sync is still reported, although replacement has already occurred. Never add a non-atomic
+fallback.
+
+The private channel-acquisition callback transfers cleanup ownership synchronously with the host open,
+before any effect continuation can be interrupted. Scoped sibling temporaries register cleanup before
+acquisition and remove late acquisitions when the scope has already closed. Temporary names have a
+bounded length independent of the target name.
 
 ## Locks and watchers
 
@@ -175,6 +187,7 @@ Use the reusable suites for backend laws:
 - `FileSystemReadTest`
 - `FileSystemWriteTest`
 - `FileSystemChannelTest`
+- `FileSystemDurabilityTest`
 - `FileSystemLockTest`
 - `FileSystemWatchTestSuite`
 
