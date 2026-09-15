@@ -74,9 +74,9 @@ abstract class TestBase[S] extends KyoTestReflect with TypeCheck:
           *
           * The handler `h` peels `S1` (the body's extra row) down to baseline: it is a result-PRESERVING poly-function
           * `[A] => (A < (S1 & baseline)) => A < baseline`. Result-changing handlers (those returning `(X, A)`, e.g. `Var.runTuple`,
-          * `Console.withOut`) must be wrapped by the author (`.map(_._2)`); they do not fit this contract (RI-003).
+          * `Console.withOut`) must be wrapped by the author (`.map(_._2)`); they do not fit this contract.
           *
-          * Per-leaf granularity (O7): when applied to a group node, the composed transform is invoked freshly around each descended leaf
+          * Per-leaf granularity: when applied to a group node, the composed transform is invoked freshly around each descended leaf
           * body, so each test gets fresh `Var`/`Env`/`Random` state.
           */
         def handle[S1](
@@ -527,7 +527,7 @@ abstract class TestBase[S] extends KyoTestReflect with TypeCheck:
     /** Carrier produced by `.handle` that tracks the still-undischarged body row `S0` as a type parameter and composes additional handlers.
       *
       * The `transform` field is a BY-VALUE polymorphic function: a polymorphic-function TYPE forbids by-name parameters (a hard Scala 3
-      * restriction, RI-003.md:26-43), so the laziness is preserved only on the terminal `-`'s `inline body: => ...` (a normal method, where
+      * restriction), so the laziness is preserved only on the terminal `-`'s `inline body: => ...` (a normal method, where
       * `=>` is legal); the by-name `body` adapts to the by-value poly param at the `transform[Unit](body)` application.
       *
       * `transform` peels `S0 & baseline` to `baseline` (`Async & Abort[Any] & Scope`). Each `handle[S1]` prepends a handler `h`
@@ -572,7 +572,7 @@ abstract class TestBase[S] extends KyoTestReflect with TypeCheck:
                         case Maybe.Present(cond) if !cond() => regCtx.registerSkipped(builder.name, "condition false")
                         case _                              =>
                             // `-` is ALWAYS a group: register the RAW `S0`-shaped block so its nested `-`/`in` calls fire during
-                            // discovery descent. `transform` is applied per descended leaf by the runner (O7). Leaves use `in`.
+                            // discovery descent. `transform` is applied per descended leaf by the runner. Leaves use `in`.
                             regCtx.visitGroupWithBuilder[S0](builder.name, builder, body)
         end -
 

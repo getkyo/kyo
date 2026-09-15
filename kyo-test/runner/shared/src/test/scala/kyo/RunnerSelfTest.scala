@@ -264,7 +264,7 @@ class RunnerSelfTest extends AsyncFreeSpec with NonImplicitAssertions:
     }
 
     "cross-suite execution is bounded by the process-global pool" in {
-        // The core INV-002 cross-suite guard. Two suites (6 leaves each, 12 total, comfortably above globalK on a
+        // The core cross-suite guard for the process-global pool bound. Two suites (6 leaves each, 12 total, comfortably above globalK on a
         // typical multi-core JVM) run CONCURRENTLY through the SAME global pool over ONE shared in-flight/peak
         // counter. The deterministic assertions are the global bound (combined peak <= globalK) and completeness
         // (both reports hold all 6 leaves, all Passed, in input order). Real concurrency cannot be observed
