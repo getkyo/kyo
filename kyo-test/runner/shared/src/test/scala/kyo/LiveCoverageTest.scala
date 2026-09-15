@@ -79,6 +79,23 @@ private object LiveCoverageFixtures:
         }
     end ChainedDecoratorSuite
 
+    // ── 4d. WebAssembly platform filters ─────────────────────────────────────────────────────
+    // On Scala.js a wasm marker leaves the link-time `isWasm` in the gate, so the same compiled suite
+    // registers different leaves when linked as JS and when linked as WasmGC. Covers a leaf, a group,
+    // and a wasm marker composed with a compile-time one.
+
+    class WasmPlatformSuite extends TestBase[Any]:
+        "only-wasm".onlyWasm in succeed
+        "not-wasm".notWasm in succeed
+        "not-native-not-wasm".notNative.notWasm in succeed
+        "only-wasm-group".onlyWasm - {
+            "in-only-wasm-group" in succeed
+        }
+        "not-wasm-group".notWasm - {
+            "in-not-wasm-group" in succeed
+        }
+    end WasmPlatformSuite
+
     // ── 5. flaky ──────────────────────────────────────────────────────────────────────────────
 
     val flakyCounter: AtomicInteger = new AtomicInteger(0)
@@ -302,6 +319,24 @@ class LiveCoverageTest extends AsyncFreeSpec with NonImplicitAssertions:
         discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.ChainedDecoratorSuite])).map { report =>
             assert(report.passed == 1, s"expected the chained-decorator metadata leaf to pass but got $report")
             assert(report.failed == 0, s"expected no failed leaves but got $report")
+        }
+    }
+
+    // ── 4d. WebAssembly platform filters: the leaves registered follow the link ─────────────────
+    // A WasmGC link registers only the onlyWasm leaves; every other platform registers the notWasm
+    // leaves, and Native additionally drops the one composed with notNative. An excluded leaf is absent,
+    // never skipped.
+
+    "wasm platform filters: the registered leaves follow the JS or WasmGC link" in {
+        discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.WasmPlatformSuite])).map { report =>
+            val registered = report.suiteReports.flatMap(_.leafResults.map(_._1.mkString("/"))).toSet
+            val expected =
+                if Platform.isWasm then Set("only-wasm", "only-wasm-group/in-only-wasm-group")
+                else if Platform.isNative then Set("not-wasm", "not-wasm-group/in-not-wasm-group")
+                else Set("not-wasm", "not-native-not-wasm", "not-wasm-group/in-not-wasm-group")
+            assert(registered == expected, s"expected leaves $expected but got $registered")
+            assert(report.passed == expected.size, s"expected every registered leaf to pass but got $report")
+            assert(report.skipped == 0, s"expected excluded leaves to be absent, not skipped, but got $report")
         }
     }
 
