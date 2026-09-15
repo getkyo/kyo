@@ -328,7 +328,7 @@ object Tag:
         private val cacheEntries = 128
         final private case class Comparison(a: Tag[?], b: Tag[?], mode: Mode, result: Boolean)
         private val cacheSlots = Array.fill(threadSlots) {
-            new AtomicReferenceArray[Maybe[Comparison]](Array.fill[Maybe[Comparison]](cacheEntries)(Absent))
+            new AtomicReferenceArray[Maybe[Comparison]](Array.fill[Maybe[Comparison] & AnyRef](cacheEntries)(Absent))
         }
 
         private def dynamicHashCode(tag: String, map: Map[Entry.Id, Any]): Int =
