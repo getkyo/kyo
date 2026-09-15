@@ -18,9 +18,12 @@ class ItErrnoTest extends ItTestBase:
     // errno capture across the foreign boundary requires both sides to read the same CRT's
     // errno. The MinGW-built test library and the JVM's Panama capture share the UCRT, but
     // koffi's prebuilt binary does not, so the captured codes diverge under Node on Windows.
+    // Nested rather than `isWindows && !isJVM`: on Native `isWindows` is resolved at link time, and the compiler rejects a link-time flag
+    // combined with another condition in one expression.
     private def assumeSharedErrnoDomain(): Unit =
-        if kyo.internal.Platform.isWindows && !kyo.internal.Platform.isJVM then
-            cancel("koffi and the test library read different CRT errno domains on Windows")
+        if kyo.internal.Platform.isWindows then
+            if !kyo.internal.Platform.isJVM then
+                cancel("koffi and the test library read different CRT errno domains on Windows")
 
     "kyoItAlwaysFail (Outcome return)" - {
         "returns -1 with errorCode 22 (EINVAL)" in {
