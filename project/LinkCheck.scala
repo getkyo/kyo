@@ -20,8 +20,8 @@ import scala.util.matching.Regex
   *   - fails when the output contains data the program cannot reach: the IANA time-zone database or the CLDR locale data;
   *   - fails when the output exceeds its ceiling in `kyo-link-check/ceilings.txt`.
   *
-  * On every platform it fails when a kyo module depends, outside tests, on an artifact that only carries that data. Linking a data artifact is
-  * the application's choice, never kyo's.
+  * On every platform it fails when a kyo module declares, outside tests, a dependency on an artifact that only carries that data. Linking a
+  * data artifact is the application's choice, never kyo's.
   *
   * The sizes are printed on every run, so a ceiling moves by editing one line when a program legitimately grows.
   */
@@ -64,18 +64,33 @@ object LinkCheck {
         }
     }
 
+    private def isDataArtifact(name: String): Boolean =
+        dataArtifacts.exists(a => name == a || name.startsWith(s"${a}_"))
+
+    /** A data artifact is kyo's choice when a kyo module declares it outside tests, and that module fails. One that reaches a kyo module
+      * only through a third-party library declaring it, as zio-test declares the tzdb, is that library's choice, already made for any
+      * application using the library, so it is reported and not failed.
+      */
     private def dependencyFailures(state: State, platform: String): Seq[String] = {
         val extracted = Project.extract(state)
         val refs = extracted.structure.allProjectRefs.filter { ref =>
             ref.project.endsWith(platform) && ref.project.startsWith("kyo-") && !ref.project.startsWith("kyo-link-check")
         }
-        refs.flatMap { ref =>
-            val (_, report) = extracted.runTask(ref / Compile / update, state)
-            report.configuration(Compile).toSeq.flatMap(_.allModules).collect {
-                case module if dataArtifacts.exists(a => module.name == a || module.name.startsWith(s"${a}_")) =>
-                    s"${ref.project} depends on ${module.organization}:${module.name}:${module.revision} outside tests"
+        val declared = refs.flatMap { ref =>
+            extracted.get(ref / libraryDependencies).collect {
+                case m if isDataArtifact(m.name) && m.configurations.forall(_.split(";").exists(_.startsWith("compile"))) =>
+                    (ref.project, s"${m.organization}:${m.name}:${m.revision}")
             }
-        }.distinct
+        }
+        val declaredNames = declared.map(_._2.split(":")(1)).toSet
+        refs.foreach { ref =>
+            val (_, report) = extracted.runTask(ref / Compile / update, state)
+            report.configuration(Compile).toSeq.flatMap(_.allModules).foreach { m =>
+                if (isDataArtifact(m.name) && !declaredNames.exists(n => m.name == n || m.name.startsWith(s"${n}_")))
+                    log(s"${ref.project} gets ${m.organization}:${m.name}:${m.revision} from a third-party library that declares it")
+            }
+        }
+        declared.distinct.map { case (project, id) => s"$project declares $id outside tests" }
     }
 
     private def linkFailures(state: State, platform: String): Seq[String] = {
@@ -103,7 +118,7 @@ object LinkCheck {
         }
         log(s"$platform sizes (bytes, all output files):")
         rows.foreach { case (program, size, _, _) =>
-            val ceiling = ceilings.get((platform, program.name)).fold("no ceiling")(c => s"ceiling $c")
+            val ceiling = ceilings.get((platform, program.name)).fold("no ceiling")(c => f"ceiling $c%,d")
             log(f"  ${program.name}%-10s $size%,12d   $ceiling")
         }
         rows.flatMap { case (program, size, found, run) =>

@@ -1,2 +1,17 @@
 # Size ceilings for the linkCheck programs, in bytes of linked output (all files).
 # <platform> <program> <bytes>
+#
+# Each ceiling is about 10% above the size measured when it was set, so ordinary growth passes and a step like
+# the one in issue #1878 (the tz and locale data doubling a minimal program) fails. When a program grows for a
+# reason worth its bytes, raise its line in the same change and say why in the commit.
+#
+# Measured at the change that removed the data artifacts and java.time from Instant:
+#   JS    CoreMin 914,678   CoreLog 1,065,808   UiMin 544,385
+#   Wasm  CoreMin 471,700   CoreLog   536,285   UiMin 271,315
+
+JS   CoreMin 1,010,000
+JS   CoreLog 1,175,000
+JS   UiMin     600,000
+Wasm CoreMin   520,000
+Wasm CoreLog   590,000
+Wasm UiMin     300,000
