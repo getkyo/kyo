@@ -32,7 +32,7 @@ private[kyo] object TagHash:
     def of(tag: Any): Int =
         tag match
             case tag: String if runningOnJS => JavaScript.of(tag)
-            case tag                       => tag.hashCode
+            case tag                        => tag.hashCode
 
     // Kept behind the runtime branch so JVM macro execution never initializes a JS object.
     private object JavaScript:
@@ -46,5 +46,6 @@ private[kyo] object TagHash:
                 memo.set(tag, hash)
                 hash
             end if
+        end of
     end JavaScript
 end TagHash

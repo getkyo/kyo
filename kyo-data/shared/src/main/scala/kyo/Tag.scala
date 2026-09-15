@@ -326,7 +326,7 @@ object Tag:
             else Runtime.getRuntime().availableProcessors() * 8
 
         private val cacheEntries = 128
-        private final case class Comparison(a: Tag[?], b: Tag[?], mode: Mode, result: Boolean)
+        final private case class Comparison(a: Tag[?], b: Tag[?], mode: Mode, result: Boolean)
         private val cacheSlots = Array.fill(threadSlots) {
             new AtomicReferenceArray[Maybe[Comparison]](Array.fill[Maybe[Comparison]](cacheEntries)(Absent))
         }
@@ -365,8 +365,8 @@ object Tag:
             hash *= 0xbf58476d1ce4e5b9L
             hash ^= (hash >>> 27)
             hash &= Long.MaxValue
-            val idx    = (hash & (cacheEntries - 1)).toInt
-            val cache  = cacheSlots(Thread.currentThread().hashCode & (threadSlots - 1))
+            val idx   = (hash & (cacheEntries - 1)).toInt
+            val cache = cacheSlots(Thread.currentThread().hashCode & (threadSlots - 1))
             cache.get(idx) match
                 case Present(cached) if (a eq cached.a) && (b eq cached.b) && mode == cached.mode =>
                     cached.result
@@ -379,6 +379,7 @@ object Tag:
                             case Mode.Subtype  => isSubType(aTpe, bTpe, aTpe.entryId, bTpe.entryId)
                     cache.set(idx, Present(Comparison(a, b, mode, result)))
                     result
+            end match
         end checkTypes
 
         private def isSubType(aOwner: Type[?], bOwner: Type[?], aId: Entry.Id, bId: Entry.Id): Boolean =

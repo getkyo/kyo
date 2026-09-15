@@ -96,9 +96,9 @@ class TagTest extends kyo.test.Test[Any]:
 
     "original literal representation" - {
         "typed literal payloads retain NUL and unpaired surrogate code units" in {
-            val tag = Tag["\u0000\ud800x\udfff"]
+            val tag                           = Tag["\u0000\ud800x\udfff"]
             val _: Tag["\u0000\ud800x\udfff"] = tag
-            val shown = tag.show
+            val shown                         = tag.show
             assert(shown.length == 4)
             assert(shown.charAt(0).toInt == 0)
             assert(shown.charAt(1).toInt == 0xd800)
@@ -112,6 +112,7 @@ class TagTest extends kyo.test.Test[Any]:
                 assert(tag.equals(encoded))
                 assert(TagHash.of(tag) == kyo.internal.XXHashPlatform.stringHash(encoded))
                 assert(Tag.internal.decode(encoded).toString == tag.show)
+            end check
             check(Tag[Int])
             check(Tag[String])
             check(Tag[List[Int]])
@@ -121,10 +122,10 @@ class TagTest extends kyo.test.Test[Any]:
 
         "dynamic hashes retain the original parent and child representation" in {
             def nested[A: Tag, B: Tag]: Tag[Map[A, List[B]]] = Tag.dynamic[Map[A, List[B]]]
-            val tag = nested[String, Int]
-            val _: Tag[Map[String, List[Int]]] = tag
-            val tpe = tag.tpe
-            val encoded = Tag.internal.encode[Map[String, List[Int]]](tpe.staticDB)
+            val tag                                          = nested[String, Int]
+            val _: Tag[Map[String, List[Int]]]               = tag
+            val tpe                                          = tag.tpe
+            val encoded                                      = Tag.internal.encode[Map[String, List[Int]]](tpe.staticDB)
             assert(tpe.dynamicDB.nonEmpty)
             val original = Tag.internal.Dynamic(encoded, tpe.dynamicDB)
             assert(original.hashCode == tag.hash)
@@ -668,7 +669,7 @@ class TagTest extends kyo.test.Test[Any]:
         }
 
         "type params" in {
-            val tag = Tag[TagTest.ShowType[Int]]
+            val tag                           = Tag[TagTest.ShowType[Int]]
             val _: Tag[TagTest.ShowType[Int]] = tag
             assert(tag.show == "kyo.TagTest.ShowType[scala.Int]")
         }
