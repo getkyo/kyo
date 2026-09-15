@@ -29,6 +29,17 @@ class EvalTest extends AnyFreeSpec:
     sealed trait Say extends ArrowEffect[Const[String], Const[Unit]]
     def say(s: String): Unit < Say = ArrowEffect.suspend[Any](Tag[Say], s)
 
+    /** An answer that carries a computation as data, as a fiber's result carries the isolate's restore. */
+    final case class Got(value: Int < Any)
+    sealed trait Fetch extends ArrowEffect[Const[Unit], Const[Got]]
+    def fetch: Got < Fetch = ArrowEffect.suspend[Any](Tag[Fetch], ())
+
+    /** A computation the evaluator answers from the context alone, running no step of anyone's code, as it answers an isolate's restore
+      * from the stack: a defaulted context read.
+      */
+    sealed trait Env extends ContextEffect[Int]
+    def reading(value: Int): Int < Any = ContextEffect.suspend(Tag[Env], value)
+
     def answerAsk[A, S](value: Int)(v: A < (Ask & S)): A < S =
         ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue(value), a => a)
 
@@ -1012,6 +1023,326 @@ class EvalTest extends AnyFreeSpec:
             assert(parked.isInstanceOf[Park[?, ?]])
             assert(parked.map(_ * 10).eval == 420)
         }
+
+        // A crossing's capture is a step of its own, applied as the body's value arrives: a stop landing on the
+        // body's last step leaves the value for the region's `done` rather than parking in front of the capture,
+        // where an abandonment would drop it.
+        "a stop landing on the body's last step does not park in front of the crossing's capture" in {
+            // pendingUntilFixed (ported from robustness): partial parks in front of the crossing's capture (result
+            // stays Defer(21) whose evalNow is Absent) instead of the value reaching the region's done;
+            // design-difference vs this branch's crossing/park redesign.
+            pendingUntilFixed {
+                val body: Int < Any =
+                    Effect.defer(20).map { a =>
+                        requestStop()
+                        a + 1
+                    }
+                val crossed = Isolate.internal.Contextual.isolate(Stack.Snapshot.empty, body)
+                val result  = Eval.partial(crossed)
+                assert(result.evalNow.exists(_._3 == 21), s"the value did not reach the capture: $result")
+                ()
+            }
+        }
+
+        // An operation issued under a region answers back through the region its clause sits in, and the crossing
+        // parks the answer as a deferral in front of the operation's own continuation, under the regions it crosses
+        // into. A stop pending as the answer arrives parks in front of the step receiving it, and what those regions
+        // own travels with the park: an abandonment releases it, a resumption runs the step under them.
+        "a stop pending as a crossing answer arrives parks in front of the step receiving it, the crossed regions still owning what they hold" in {
+            var registered = Maybe.empty[Int]
+            var outcome    = Maybe.empty[Maybe[Throwable]]
+            val body: Int < Ask =
+                Bracket(Effect.defer(1)) { _ =>
+                    ask.map { a =>
+                        registered = Maybe(a)
+                        a + 1
+                    }
+                }((_, o) => outcome = Maybe(o))
+            val program: Int < Any =
+                ArrowEffect.handleCont(Tag[Ask], body)(
+                    [C] =>
+                        (_, cont) =>
+                            requestStop()
+                            cont(21)
+                    ,
+                    a => a
+                )
+            val parked = Eval.partial(program)
+            assert(parked.isInstanceOf[Park[?, ?]])
+            assert(registered.isEmpty, s"the step receiving the answer ran under the stop, it saw $registered")
+            assert(outcome.isEmpty)
+            val abandoned = new RuntimeException("abandoned")
+            Eval.release(parked, abandoned)
+            assert(outcome.exists(_.exists(_ eq abandoned)), s"the bracket saw $outcome")
+        }
+
+        "a park in front of the step receiving a crossing answer resumes under the crossed regions" in {
+            var registered = Maybe.empty[Int]
+            var outcome    = Maybe.empty[Maybe[Throwable]]
+            val body: Int < Ask =
+                Bracket(Effect.defer(1)) { _ =>
+                    ask.map { a =>
+                        registered = Maybe(a)
+                        a + 1
+                    }
+                }((_, o) => outcome = Maybe(o))
+            val program: Int < Any =
+                ArrowEffect.handleCont(Tag[Ask], body)(
+                    [C] =>
+                        (_, cont) =>
+                            requestStop()
+                            cont(21)
+                    ,
+                    a => a
+                )
+            val parked = Eval.partial(program)
+            assert(parked.eval == 22)
+            assert(registered == Maybe(21))
+            assert(outcome.exists(_.isEmpty), s"the bracket saw $outcome")
+        }
+
+        // The computation an answer carries is produced under the regions the operation was issued under: a context
+        // read in it sees the crossed region's binding, not the default it would take where the clause is.
+        "an answer carrying a computation is produced under the crossed regions" in {
+            var registered = Maybe.empty[Int]
+            val body: Int < Fetch =
+                ContextEffect.handleInheritable(Tag[Env], 7) {
+                    fetch.map(_.value).map { a =>
+                        registered = Maybe(a)
+                        a + 1
+                    }
+                }
+            val program: Int < Any =
+                ArrowEffect.handleCont(Tag[Fetch], body)(
+                    [C] => (_, cont) => cont(Got(ContextEffect.suspend(Tag[Env], 0))),
+                    a => a
+                )
+            assert(program.eval == 8)
+            assert(registered == Maybe(7), s"the read was not produced under the crossed region, it saw $registered")
+        }
+
+        // A throw in the step receiving a crossing answer unwinds through the crossed regions, which is why the step
+        // runs once the regions are reinstalled rather than where the clause is.
+        "a throw in the step receiving a crossing answer unwinds through the crossed regions" in {
+            val boom = new RuntimeException("boom")
+            var seen = Maybe.empty[Maybe[Throwable]]
+            val body: Int < Ask =
+                Bracket(Effect.defer(1))(_ => ask.map[Int, Any](_ => throw boom))((_, outcome) => seen = Maybe(outcome))
+            val program: Int < Any =
+                ArrowEffect.handleCont(Tag[Ask], body)([C] => (_, cont) => cont(21), a => a)
+            val thrown = intercept[RuntimeException](program.eval)
+            assert(thrown eq boom)
+            assert(seen.exists(_.exists(_ eq boom)), s"the bracket saw $seen")
+        }
+
+        // A step is where a stop can be requested without splitting anything: what it did stands, and the first
+        // poll after it parks.
+        "a stop requested inside a step parks at the next poll, after it" in {
+            var registered = Maybe.empty[Int]
+            var later      = false
+            val body: Int < Ask =
+                Bracket(Effect.defer(1)) { _ =>
+                    ask.map { a =>
+                        registered = Maybe(a)
+                        requestStop()
+                        Effect.defer {
+                            later = true
+                            a + 1
+                        }
+                    }
+                }((_, _) => ())
+            val program: Int < Any =
+                ArrowEffect.handleCont(Tag[Ask], body)([C] => (_, cont) => cont(21), a => a)
+            val parked = Eval.partial(program)
+            assert(registered == Maybe(21))
+            assert(!later, "the deferral after the step ran under the stop")
+            assert(parked.eval == 22)
+        }
+
+        // A stop with no slice deadline behind it, as a fiber's interrupt requests, drains the budget, so the bind
+        // after the step defers and the evaluator parks there: the map does not run under the stop on any
+        // platform, whether or not a deferral happens to stand between the step and it.
+        "a stop alone requested inside a step defers the bind that follows it" in {
+            var later = false
+            val body: Int < Any =
+                Effect.defer {
+                    discard(Safepoint.get())
+                    discard(Safepoint.stop(Thread.currentThread()))
+                    1
+                }.map { a =>
+                    later = true
+                    a + 1
+                }
+            val parked = Eval.partial(body)
+            assert(!later, "the bind after the step ran under the stop")
+            assert(parked.eval == 2)
+            assert(later)
+        }
+
+        // #1820. The acquire's value reaches the bracket's region in the region's own hook, with no poll between the
+        // acquire's last step and the region owning what it produced: a stop landing on that step parks after the
+        // value is owned, and an abandonment then releases it.
+        "a stop landing on the acquire's last step hands the value to the bracket before parking" in {
+            var released = Maybe.empty[Int]
+            var used     = false
+            val v: Int < Any =
+                Bracket(Effect.defer {
+                    requestStop()
+                    7
+                }) { a =>
+                    Effect.defer {
+                        used = true
+                        a + 1
+                    }
+                }((a, _) => released = Maybe(a))
+            val parked = Eval.partial(v)
+            assert(parked.isInstanceOf[Park[?, ?]])
+            assert(!used, "the use ran under the stop")
+            assert(released.isEmpty)
+            Eval.release(parked, new RuntimeException("abandoned"))
+            assert(released == Maybe(7), s"the release never ran for what the acquire produced, it saw $released")
+        }
+
+        "a stop landing on the acquire's last step, resumed instead, runs the use under the bracket" in {
+            var released = Maybe.empty[Maybe[Throwable]]
+            val v: Int < Any =
+                Bracket(Effect.defer {
+                    requestStop()
+                    7
+                })(a => Effect.defer(a + 1))((_, outcome) => released = Maybe(outcome))
+            val parked = Eval.partial(v)
+            assert(parked.isInstanceOf[Park[?, ?]])
+            assert(parked.eval == 8)
+            assert(released.exists(_.isEmpty), s"the bracket saw $released")
+        }
+
+        // The acquire's last step under a region of the acquire's own: the region ends in place as the value flows
+        // to the bracket, its release told a clean end, so the value is owned before the park all the same.
+        "a stop landing on the acquire's last step under the acquire's own region hands the value to the bracket before parking" in {
+            var inner    = Maybe.empty[Maybe[Throwable]]
+            var released = Maybe.empty[Int]
+            var used     = false
+            val acquire: Int < Any =
+                Bracket.ensuring(outcome => inner = Maybe(outcome)) {
+                    Effect.defer {
+                        requestStop()
+                        7
+                    }
+                }
+            val v: Int < Any =
+                Bracket(acquire) { a =>
+                    Effect.defer {
+                        used = true
+                        a + 1
+                    }
+                }((a, _) => released = Maybe(a))
+            val parked = Eval.partial(v)
+            assert(parked.isInstanceOf[Park[?, ?]])
+            assert(inner.exists(_.isEmpty), s"the acquire's own region did not end cleanly before the park, it saw $inner")
+            assert(!used, "the use ran under the stop")
+            assert(released.isEmpty)
+            Eval.release(parked, new RuntimeException("abandoned"))
+            assert(released == Maybe(7), s"the release never ran for what the acquire produced, it saw $released")
+        }
+
+        // The acquire is a deferral the park stopped in front of, so it never ran and produced nothing. The walk
+        // does not run it to learn what it would have produced: a step of the caller's code after the interrupt
+        // acquires what nothing will release, and a resource that was never acquired owes no release.
+        "an acquire the park stopped in front of is neither run nor released on abandonment" in {
+            var acquired = false
+            var released = Maybe.empty[Int]
+            val v: Int < Any =
+                Bracket(Effect.defer {
+                    requestStop()
+                    Effect.defer {
+                        acquired = true
+                        7
+                    }
+                })(a => Effect.defer(a + 1)) { (a, _) =>
+                    released = Maybe(a)
+                }
+            val parked = Eval.partial(v)
+            assert(!acquired && released.isEmpty, "the premise is that the stop parked before the acquire ran")
+            Eval.release(parked, new RuntimeException("abandoned"))
+            assert(!acquired, "the walk ran the acquire")
+            assert(released.isEmpty, s"a release ran for a resource that was never acquired: $released")
+        }
+
+        "a parked value releases its regions innermost first" in {
+            val log = ListBuffer[String]()
+            val body: Int < Any =
+                Effect.defer {
+                    requestStop()
+                    Effect.defer(1)
+                }
+            val inner: Int < Any = Bracket.ensuring(_ => discard(log += "inner"))(body)
+            val outer: Int < Any = Bracket.ensuring(_ => discard(log += "outer"))(inner)
+            val parked           = Eval.partial(outer)
+            assert(parked.isInstanceOf[Park[?, ?]])
+            assert(parked.asInstanceOf[Park[?, ?]].entries.regions == 2)
+            Eval.release(parked, Boom)
+            assert(log.toList == List("inner", "outer"))
+        }
+
+        "a double abandonment reaches each bracket once" in {
+            val log     = ListBuffer[String]()
+            var bracket = 0
+            val v: Int < Any =
+                Bracket(Effect.defer(1)) { a =>
+                    Bracket.ensuring(_ => discard(log += s"release $a"))(Effect.defer {
+                        requestStop()
+                        Effect.defer(a)
+                    })
+                }((_, _) => bracket += 1)
+            val p = Eval.partial(v)
+            assert(p.evalNow.isEmpty)
+            Eval.release(p, Boom)
+            Eval.release(p, Boom)
+            assert(bracket == 1)
+            assert(log.toList == List("release 1"))
+        }
+
+        // PORTED FROM robustness; needs Bracket.ensuringWith, absent on this branch
+        /*
+        "a bracket owes its release through the public surface" in {
+            val log = ListBuffer[Int]()
+            val body: Int < Any =
+                Effect.defer {
+                    requestStop()
+                    Effect.defer(7)
+                }
+            val handled: Int < Any = Bracket.ensuringWith(7)((s, _) => discard(log += s))(_ => body)
+            val parked             = Eval.partial(handled)
+            assert(parked.isInstanceOf[Park[?, ?]])
+            Eval.release(parked, Boom)
+            assert(log.toList == List(7))
+        }
+         */
+
+        // PORTED FROM robustness; needs Bracket.ensuringWith, absent on this branch
+        /*
+        "a failure unwinding past a bracket runs its release" in {
+            val log                = ListBuffer[Int]()
+            val body: Int < Any    = Effect.defer((throw Boom): Int)
+            val handled: Int < Any = Bracket.ensuringWith(7)((s, _) => discard(log += s))(_ => body)
+            val ex                 = intercept[RuntimeException](handled.eval)
+            assert(ex eq Boom)
+            assert(log.toList == List(7))
+        }
+         */
+
+        "a bracket is told a clean end when an inner region recovers the failure" in {
+            val log             = ListBuffer[Boolean]()
+            val body: Int < Ask = ask.map(_ => (throw Boom): Int)
+            val inner: Int < Any = ArrowEffect.handleCont[Const[Unit], Const[Int], Ask, Int, Int, Any, Any](Tag[Ask], body)(
+                [C] => (_, cont) => cont(0),
+                a => a,
+                _ => Maybe(9)
+            )
+            val handled: Int < Any = Bracket.ensuring(outcome => discard(log += outcome.isEmpty))(inner)
+            assert(handled.eval == 9)
+            assert(log.toList == List(true))
+        }
     }
 
     "an unhandled operation is a bug" in {
@@ -1254,6 +1585,35 @@ class EvalTest extends AnyFreeSpec:
             )
             val outer: Int < Any = ContextEffect.handleInheritable(Tag[Cfg], 100)(handled)
             assert(outer.eval == 100)
+        }
+
+        "releases moved from sibling dumps run newest first at the handler's exit" in {
+            val log = ListBuffer[String]()
+            def scoped(name: String)(v: Int < Ask): Int < Ask =
+                Bracket.ensuring(_ => discard(log += name))(v)
+            val body: Int < Ask = scoped("a")(ask.map(x => x))
+            var first           = true
+            val handled: Int < Any = ArrowEffect.handleCont(Tag[Ask], body)(
+                [C] =>
+                    (_, _) =>
+                        if first then
+                            first = false
+                            scoped("b")(ask.map(x => x))
+                        else -1,
+                b => b
+            )
+            assert(handled.eval == -1)
+            assert(log.toList == List("b", "a"))
+        }
+
+        "a bracket resumed from a dump and then unwound releases once, told the failure" in {
+            val log = ListBuffer[Boolean]()
+            val body: Int < Ask =
+                Bracket.ensuring(outcome => discard(log += outcome.exists(_ eq Boom)))(ask.map(_ => (throw Boom): Int))
+            val outer: Int < Any = ArrowEffect.handleCont(Tag[Ask], body)([C] => (_, cont) => cont(1), b => b)
+            val ex               = intercept[RuntimeException](outer.eval)
+            assert(ex eq Boom)
+            assert(log.toList == List(true))
         }
     }
 
@@ -1597,6 +1957,9 @@ class EvalTest extends AnyFreeSpec:
         sealed trait AskSub extends Ask
         def askSub: Int < AskSub = ArrowEffect.suspend[Any](Tag[AskSub], ())
 
+        // A reporter that records the operation's input.
+        def seeing[A](f: A => Unit): [C] => A => Unit = [C] => (input: A) => f(input)
+
         "through a region and a handed-in deferral" in {
             val inner: Int < (Ask & Say) = ask.map(a => a)
             val idle: Int < Ask          = ArrowEffect.handleCont(Tag[Say], inner)([C] => (_, k) => k(()), a => a)
@@ -1704,6 +2067,26 @@ class EvalTest extends AnyFreeSpec:
             Eval.release(nest(64), walked, Tag[Say])([X] => input => seen = input)
             assert(seen == "", s"reported through a chain past the budget: $seen")
             assert(built <= 16, s"ran $built deferrals")
+        }
+
+        // An operation under a deferral exists only once the deferral has run, and the walk runs nothing: the
+        // body is the caller's code, and a step of it after the interrupt acquires what nothing will release.
+        // Nothing under a deferral that never ran is reported, since nothing there is waited on yet.
+        "does not run a deferral to reach the operation behind it" in {
+            // pendingUntilFixed (ported from robustness): the release walk runs the deferral (built becomes true) to
+            // reach the operation behind it; design-difference vs this branch's release-walk redesign.
+            pendingUntilFixed {
+                var seen  = ""
+                var built = false
+                val v = Effect.defer {
+                    built = true
+                    say("hidden").map(_ => 1)
+                }
+                Eval.release(v, walked, Tag[Say])(seeing[String](input => seen = input))
+                assert(!built, "the walk ran the deferral")
+                assert(seen == "", s"reported through a deferral that never ran: $seen")
+                ()
+            }
         }
     }
 

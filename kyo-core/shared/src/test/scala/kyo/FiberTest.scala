@@ -1254,4 +1254,88 @@ class FiberTest extends kyo.test.Test[Any]:
         }
     }
 
+    "deferred completion" - {
+        "the result of an interrupted fiber arrives after its finalizers ran".pendingUntilFixed(
+            "ported from robustness; fails here: released is still false after fiber.getResult returns (assert(seen) fails), so the interrupted fiber's result arrives before its Sync.ensure finalizer ran; the dropped deferred-completion work (robustness 22ae1fc317): fiber result must settle at Done AFTER the drain (IOPromise.settleInterrupt) plus Fiber.interruptAwait"
+        ) in {
+            for
+                released <- AtomicBoolean.init(false)
+                started  <- Promise.init[Unit, Any]
+                fiber <- Fiber.initUnscoped {
+                    Sync.ensure(released.set(true))(started.complete(Result.succeed(())).andThen(Async.never))
+                }
+                _      <- started.get
+                first  <- fiber.interrupt
+                result <- fiber.getResult
+                seen   <- released.get
+            yield
+                assert(first)
+                assert(result.panic.exists(_.isInstanceOf[Interrupted]))
+                assert(seen)
+        }
+
+        "a second interrupt is refused" in {
+            for
+                started <- Promise.init[Unit, Any]
+                fiber   <- Fiber.initUnscoped(started.complete(Result.succeed(())).andThen(Async.never))
+                _       <- started.get
+                first   <- fiber.interrupt
+                second  <- fiber.interrupt
+                _       <- fiber.getResult
+            yield assert(first && !second)
+        }
+
+        // PORTED FROM robustness; needs Fiber.interruptAwait, absent on this branch
+        /*
+        "interruptAwait returns once the finalizers ran" in {
+            for
+                released <- AtomicBoolean.init(false)
+                started  <- Promise.init[Unit, Any]
+                fiber <- Fiber.initUnscoped {
+                    Sync.ensure(released.set(true))(started.complete(Result.succeed(())).andThen(Async.never))
+                }
+                _    <- started.get
+                _    <- fiber.interruptAwait
+                seen <- released.get
+            yield assert(seen)
+        }
+         */
+
+        // An interrupt taken on a slice wins over a value the body produces on that same slice: `interrupt()`
+        // returned true, so the fiber ends interrupted, never a success. The value is dropped; a resource a body
+        // would hold as its value is the caller's to bracket, not the scheduler's to keep by refusing the
+        // interrupt (ruling 2026-09-13). The fiber still completes, with the interrupt, so nothing is lost.
+        "a body ending with its value in the slice its interrupt landed on completes with the interrupt" in {
+            for
+                handoff <- Promise.init[Fiber[Int, Any], Any]
+                fiber <- Fiber.initUnscoped {
+                    handoff.get.map { self =>
+                        import AllowUnsafe.embrace.danger
+                        discard(self.unsafe.interrupt())
+                        42
+                    }
+                }
+                _       <- handoff.complete(Result.succeed(fiber))
+                outcome <- Abort.run[Nothing](fiber.get)
+            yield assert(outcome.isPanic, s"the interrupt was refused, the fiber completed with $outcome")
+        }
+
+        "a scoped fiber's own scope closes after the fiber released" in {
+            for
+                order   <- AtomicRef.init(List.empty[String])
+                started <- Promise.init[Unit, Any]
+                _ <- Scope.run {
+                    Fiber.init {
+                        Sync.ensure(order.updateAndGet("fiber" :: _).unit)(
+                            Scope.ensure(order.updateAndGet("scope" :: _).unit)
+                                .andThen(started.complete(Result.succeed(())))
+                                .andThen(Async.never)
+                        )
+                    }.andThen(started.get)
+                }
+                seen <- order.get
+            yield assert(seen.reverse == List("fiber", "scope"))
+        }
+    }
+
 end FiberTest
