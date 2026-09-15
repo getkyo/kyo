@@ -39,7 +39,7 @@ end UIMouseEventOps
   * opaque-type boundary lives here, keeping the raw `dom.Element` out of public signatures without
   * any runtime cast.
   *
-  * Built by [[kyo.UI.MouseEvent.targetClosest]]; a top-level js-wasm type paralleling
+  * Built by [[kyo.UI.MouseEvent.targetClosest]]; a top-level JS type paralleling
   * [[kyo.UIWindow]] and [[kyo.UILocation]].
   */
 opaque type ElementRef = dom.Element

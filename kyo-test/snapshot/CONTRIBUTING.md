@@ -6,7 +6,7 @@ This guide complements the root [CONTRIBUTING.md](../../CONTRIBUTING.md), which 
 
 ## Architecture overview
 
-Every public type lives in `shared/src/main/scala/kyo/test/snapshot/`; the file I/O leaf is split by platform under `jvm-native/` and `js-wasm/`.
+Every public type lives in `shared/src/main/scala/kyo/test/snapshot/`; the file I/O leaf is split by platform under `jvm-native/` and `js/`.
 
 | Type | File | Purpose |
 |------|------|---------|
@@ -150,17 +150,17 @@ On the first run with no stored file, all three assertions write the proposed sn
 
 ## Cross-platform
 
-This is a four-platform module (JVM, JS, Native, Wasm; `build.sbt:2556-2558`). Source is placed in three tiers:
+This is a module tested on four rows (JVM, JS, Native, and Wasm, which runs the JS test classes linked as WasmGC; `build.sbt:2556-2558`). Source is placed in three tiers:
 
 - `shared/src/main/scala/` holds all types except the file I/O leaf.
 - `jvm-native/` holds the `java.nio.file`-backed `SnapshotStorePlatform`. "Scala Native ships a compatible implementation of `java.nio.file` so the same source compiles and runs on both platforms without modification" (`jvm-native/.../SnapshotStorePlatform.scala:9-13`); the source set is wired for both JVM and Native in `build.sbt:2578-2581` and `:2593-2596`.
-- `js-wasm/` holds the Node.js `fs` facade `SnapshotStorePlatform`, shared by JS and Wasm (auto-wired by the custom `CrossType.Full`; see `project/WasmPlatform.scala:18`).
+- `js/` holds the Node.js `fs` store `SnapshotStorePlatform`, which the JS row and the WasmTest row both run (one compiled set of classes, linked as JS or as WasmGC; see `project/KyoJsRows.scala`).
 
 `SnapshotStore` (`internal/SnapshotStore.scala`) is the shared facade; each platform provides an `object SnapshotStorePlatform` with the same four-method surface (`read`, `write`, `readBytes`, `writeBytes`).
 
 ### Plain-sync platform I/O (no Sync/AllowUnsafe ceremony)
 
-The store methods are plain synchronous functions returning `Maybe[String]` / `Maybe[Span[Byte]]` / `Unit`, not Kyo effects. Snapshot I/O runs on the synchronous assertion path, so it does not wrap file access in `Sync` or reach for `AllowUnsafe` at the store boundary. The only `// Unsafe:` comments in the module are the two `Path.getParent` null-guards in the JVM/Native writer (`jvm-native/.../SnapshotStorePlatform.scala:25`, `:46`), each annotated with the reason. Preserve this: a new store operation stays a plain function and is added to all three source sets in lockstep, mirroring the existing four-method shape. The JS/Wasm store reaches `node:fs` and `node:path` through `process.getBuiltinModule` at the call, never a static `@JSImport` (a browser cannot load one, and `linkCheck` fails on it). A host without the modules gets an `UnsupportedOperationException` naming the host, and a failed file-system call gets an `IOException` naming the path with Node's error as cause, the exception `java.nio.file` raises on the JVM and Native (`js-wasm/.../SnapshotStorePlatform.scala`, `module` and `io`); route any new JS store method through both.
+The store methods are plain synchronous functions returning `Maybe[String]` / `Maybe[Span[Byte]]` / `Unit`, not Kyo effects. Snapshot I/O runs on the synchronous assertion path, so it does not wrap file access in `Sync` or reach for `AllowUnsafe` at the store boundary. The only `// Unsafe:` comments in the module are the two `Path.getParent` null-guards in the JVM/Native writer (`jvm-native/.../SnapshotStorePlatform.scala:25`, `:46`), each annotated with the reason. Preserve this: a new store operation stays a plain function and is added to all three source sets in lockstep, mirroring the existing four-method shape. The JS/Wasm store reaches `node:fs` and `node:path` through `process.getBuiltinModule` at the call, never a static `@JSImport` (a browser cannot load one, and `linkCheck` fails on it). A host without the modules gets an `UnsupportedOperationException` naming the host, and a failed file-system call gets an `IOException` naming the path with Node's error as cause, the exception `java.nio.file` raises on the JVM and Native (`js/.../SnapshotStorePlatform.scala`, `module` and `io`); route any new JS store method through both.
 
 ### Foreign-package inline access
 
@@ -229,7 +229,7 @@ See the root [CONTRIBUTING.md](../../CONTRIBUTING.md) for full conventions on na
 
 3. **New codec preset.** Is it `Text` or `Binary`? Does its extension collide with no existing preset and differ from plain `snap`? Is it added to the distinctness assertion in `SnapshotCodecTest`?
 
-4. **New store operation.** Is it a plain synchronous function added to all three source sets (`shared` facade, `jvm-native`, `js-wasm`) in lockstep? Does the binary path stay verbatim (no base64, no newline munge)? Is every `AllowUnsafe`/null-guard marked with `// Unsafe:`?
+4. **New store operation.** Is it a plain synchronous function added to all three source sets (`shared` facade, `jvm-native`, `js`) in lockstep? Does the binary path stay verbatim (no base64, no newline munge)? Is every `AllowUnsafe`/null-guard marked with `// Unsafe:`?
 
 5. **Change to the inline body or `private[snapshot]` visibility.** Does `SnapshotForeignPackageTest` still compile from the foreign package?
 

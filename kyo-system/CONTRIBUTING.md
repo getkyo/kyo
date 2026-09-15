@@ -5,7 +5,7 @@ filesystem, process, and environment conventions specific to `kyo-system`.
 
 ## Architecture
 
-`kyo-system` is a four-platform cross-project for JVM, JavaScript, Native, and Wasm. Public
+`kyo-system` is a cross-project for JVM, JavaScript, and Native, whose JavaScript test classes also run linked as WasmGC (the `WasmTest` row). Public
 filesystem behavior belongs in `shared`; platform leaves contain only host integration.
 
 The module owns these capability boundaries:
@@ -35,7 +35,7 @@ kyo-system/
     Process.scala
     System.scala
   jvm-native/src/main/scala/kyo/internal/PathPlatformSpecific.scala
-  js-wasm/src/main/scala/kyo/internal/PathPlatformSpecific.scala
+  js/src/main/scala/kyo/internal/PathPlatformSpecific.scala
 ```
 
 ## Filesystem authority and selection
@@ -161,7 +161,7 @@ throwables into expected filesystem failures.
 5. Implement both platform leaves for host behavior.
 6. Add the safe-to-unsafe bridge with its `// Unsafe:` explanation.
 7. Extend the reusable conformance suite when the contract applies to multiple backends.
-8. Compile and test JVM, JavaScript, Native, and Wasm.
+8. Compile and test JVM, JavaScript, Native, and the Wasm row (`kyo-systemJS/WasmTest/test`).
 
 Do not add an operation to the unsafe tier without completing every layer above it.
 

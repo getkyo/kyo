@@ -24,7 +24,7 @@ runs:
 
     # jsdom for the DOM-backed Scala.js/Wasm unit tests (kyo-ui DomTestEnv); loaded lazily via
     # require, so only suites that install the DOM need it. JS and Wasm only: the helper lives in
-    # the js-wasm shared test tree, which both targets build and run. The repo ignores *.json, so
+    # the js test tree, whose compiled classes both rows run. The repo ignores *.json, so
     # the version is pinned here rather than in a package.json.
     - name: Install Node.js test dependencies
       if: ${{ inputs.target == 'JS' || inputs.target == 'Wasm' }}

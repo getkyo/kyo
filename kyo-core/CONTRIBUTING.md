@@ -22,7 +22,7 @@ File and OS-signal capabilities live in `kyo-system`; see `kyo-system/CONTRIBUTI
 - **Observability**: `Stat`
 
 Every API in this module is cross-platform (JVM, Scala.js / Node, Scala Native)
-unless it is in a `jvm/`, `jvm-native/`, `native/`, or `js-wasm/` source tree and
+unless it is in a `jvm/`, `jvm-native/`, `native/`, or `js/` source tree and
 explicitly documented as platform-specific.
 
 ---
@@ -82,7 +82,7 @@ other blocking primitive. Use Async suspension instead:
 - Join a forked fiber: `Fiber.get`
 - Synchronize a group of fibers: `Gate.enter` / `Barrier.await`
 
-The js-wasm stub for `LockSupport` (`js-wasm/src/main/scala/kyo/AsyncStubs.scala`)
+The JS stub for `LockSupport` (`js/src/main/scala/kyo/AsyncStubs.scala`)
 throws `UnsupportedOperationException` on any `park` or `unpark` call. That throw
 is the enforcement mechanism: any accidental call to a blocking primitive that
 reaches JS will fail loudly at runtime rather than silently no-op.
@@ -182,7 +182,7 @@ Native, or JS library primitive has no cross-platform Kyo wrapper.
   `scala.scalanative.posix.signal`.
 - `hubsStubs.scala`: stub for `CopyOnWriteArraySet`, a Java class absent on Native.
 
-**`js-wasm/`** (JS and WASM):
+**`js/`** (Scala.js, linked as JS or as WasmGC):
 - `AsyncPlatformSpecific`: empty trait; `CompletionStage` does not exist on JS.
 - `AsyncStubs.scala`: `LockSupport` stub that throws `UnsupportedOperationException`
   on any call; parking has no meaning on a single-threaded platform.
@@ -266,7 +266,7 @@ on JVM, Scala.js, and Scala Native.
 
 - [ ] New concurrent primitives follow the four-layer pattern: opaque type, safe-tier extension block, `sealed abstract class Unsafe`, and `init`/`initWith`.
 - [ ] Every `Sync.Unsafe.defer` bridging site carries a `// Unsafe:` comment.
-- [ ] New platform-specific code is in the narrowest tree that fits (`shared/` first, then `jvm-native/`, then `jvm/`, `native/`, or `js-wasm/`).
+- [ ] New platform-specific code is in the narrowest tree that fits (`shared/` first, then `jvm-native/`, then `jvm/`, `native/`, or `js/`).
 - [ ] No `Thread.sleep`, `synchronized`, or blocking primitive in non-stub code.
 - [ ] Tests extend `kyo.test.Test`, not raw ScalaTest.
 - [ ] Concurrency tests use `Latch`, `Channel`, or `Clock` for determinism, not real-time sleeps.

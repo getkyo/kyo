@@ -15,7 +15,7 @@ import scala.util.control.NonFatal
   * and a genuinely hung mount leaks exactly this one thread for the process lifetime (or until `close`).
   *
   * JS/Wasm are single-threaded and have no OS thread to off-load to; the sibling implementation under
-  * `js-wasm/` runs the read inline (the scheduler-worker hazard does not arise on the JS event loop).
+  * `js/` runs the read inline (the scheduler-worker hazard does not arise on the JS event loop).
   */
 final private[machine] class DiskExecutor:
 

@@ -5,8 +5,8 @@ import kyo.stats.internal.ExporterFactory
 import kyo.stats.internal.JSServiceLoaderRegistry
 
 // JS/Wasm-axis: MachineRegistration is a Scala.js @JSExportTopLevel object with no JVM/Native
-// counterpart, so this test lives in js-wasm/src/test and cannot live in shared/src/test (it
-// would fail to cross-compile). It runs on both the JS and the Wasm backends.
+// counterpart, so this test lives in js/src/test and cannot live in shared/src/test (it
+// would fail to cross-compile). It runs on both the JS and the Wasm rows.
 class MachineRegistrationTest extends kyo.test.Test[Any]:
 
     "registration fires via @JSExportTopLevel alone (no META-INF scan on Scala.js)" in {

@@ -4,7 +4,7 @@ import kyo.*
 import kyo.Test
 
 /** Covers the ownership predicate [[SqlTestContainers]] reaps on, for the platform-specific [[TestProcessId]] under each of `jvm/`,
-  * `js-wasm/` and `native/`.
+  * `js/` and `native/`.
   *
   * This suite is the only check that runs the predicate on all four platforms: the container fixtures it serves are JVM-only in practice,
   * so without it the JS, Wasm and Native probes would be compile-verified and never executed. The three cases below are the three the

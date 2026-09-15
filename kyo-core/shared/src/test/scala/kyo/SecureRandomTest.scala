@@ -3,7 +3,7 @@ package kyo
 /** Cross-platform, because `SecureRandom` resolves a different entropy source on every platform: the JDK provider on the JVM, a character
   * device on Native, and a probed host global on JS and WebAssembly. Every leaf here asserts a property of the source rather than of one
   * implementation, so running them on all four platforms is what exercises each platform's `liveUnsafe`. The per-platform probing and
-  * failure behavior lives in `SecureRandomPlatformSpecificTest` under `native` and `js-wasm`.
+  * failure behavior lives in `SecureRandomPlatformSpecificTest` under `native` and `js`.
   */
 class SecureRandomTest extends kyo.test.Test[Any]:
 

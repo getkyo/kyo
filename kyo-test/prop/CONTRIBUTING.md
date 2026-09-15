@@ -83,7 +83,7 @@ Both take a plain `Long` seed; the internal `Seed` type never appears in a publi
 
 ## Cross-platform
 
-This is a four-platform module (JVM, JS, Native, Wasm), a `crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)` with `CrossType.Full` (`build.sbt:2834-2836`). All source is cross-platform under `shared/`; only the test `TestExecutionContext` is platform-split. The module depends on `kyo-test-api` and `kyo-data`, with `kyo-test-runner` and ScalaTest as `Test`-only dependencies (`build.sbt:2837-2844`).
+This is a module tested on four rows (JVM, JS, Native, and Wasm, which runs the JS test classes linked as WasmGC), a `crossProject(JSPlatform, JVMPlatform, NativePlatform)` with `CrossType.Full` (`build.sbt:2834-2836`). All source is cross-platform under `shared/`; only the test `TestExecutionContext` is platform-split. The module depends on `kyo-test-api` and `kyo-data`, with `kyo-test-runner` and ScalaTest as `Test`-only dependencies (`build.sbt:2837-2844`).
 
 ## Test conventions
 

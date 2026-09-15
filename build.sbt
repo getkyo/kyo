@@ -2144,8 +2144,8 @@ lazy val `kyo-jsonrpc` =
         // kyo-net's Native FFI links the TLS shim unconditionally, so downstream Native modules need the SSL
         // link flags (-lssl -lcrypto); io_uring's -luring propagates through the kyo-ffi plugin on Linux.
         .nativeSettings(`native-settings`, `openssl-native-settings`)
-        // kyo-net's JS transports @JSImport Node built-ins, so the JS linker needs a module kind (default is
-        // NoModule); CommonJS matches kyo-net and kyo-jsonrpc-http.
+        // kyo-net's JS transport loads Node's net modules with a dynamic import(), which the linker emits only with a
+        // module kind (default is NoModule); CommonJS matches kyo-net and kyo-jsonrpc-http.
         .jsSettings(`js-settings`, scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) })
 
 lazy val `kyo-jsonrpc-http` =

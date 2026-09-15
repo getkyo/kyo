@@ -9,7 +9,7 @@ import kyo.Result
 /** The JVM and Native half of `Console.live`'s standard-input read.
   *
   * Both platforms have a real `System.in`, so this is `scala.Console.in.readLine()` and the buffering behind it. Node has neither, which is
-  * why the read is platform-specific at all; see the `js-wasm` sibling.
+  * why the read is platform-specific at all; see the `js` sibling.
   */
 private[kyo] object ConsolePlatformSpecific:
 

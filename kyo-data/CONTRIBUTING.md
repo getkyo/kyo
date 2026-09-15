@@ -21,14 +21,14 @@ dependency to kyo-data is a stack-wide decision, not a module-local one.
 
 ### Four platforms, not three
 
-kyo-data cross-builds for JS, JVM, Native, and Wasm [build.sbt:587]. The root guide's
-cross-platform rule mentions JVM, JS, and Native; in this module Wasm is a fourth target that a
-change must also satisfy.
+kyo-data cross-builds for JS, JVM, and Native, and its JS test classes also run linked as WasmGC (the
+`WasmTest` row of project/KyoJsRows.scala). The root guide's cross-platform rule mentions JVM, JS, and
+Native; in this module the Wasm row is a fourth target that a change must also satisfy.
 
 The public data types live in `shared/src/main/scala/kyo/` and are shared across all four
 platforms. Per-platform sources exist, but they are confined to `kyo/internal/`: the queue
 implementations and `UnsafeBuffer` bridges under `jvm/`, `js/`, `native/`, and the shared-by-pairs
-`jvm-native/` and `js-wasm/` directories. Platform, host, and OS detection is not here: it is
+`jvm-native/` directory. Platform, host, and OS detection is not here: it is
 `kyo.internal.Platform` in kyo-config, the lowest module, so every module sees it. Adding a per-platform source
 outside `kyo/internal/` is not an established pattern here.
 
@@ -248,10 +248,10 @@ sbt 'kyo-dataJVM/test'
 # A single test class
 sbt 'kyo-dataJVM/testOnly kyo.OrderedDictTest'
 
-# The other three platforms
+# The other three rows
 sbt 'kyo-dataJS/test'
 sbt 'kyo-dataNative/test'
-sbt 'kyo-dataWasm/test'
+sbt 'kyo-dataJS/WasmTest/test'
 ```
 
 The JVM build runs MiMa against the previous stable artifact, reporting binary-compatibility
