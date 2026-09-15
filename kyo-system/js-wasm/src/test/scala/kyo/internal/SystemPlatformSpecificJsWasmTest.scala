@@ -53,7 +53,7 @@ class SystemPlatformSpecificJsWasmTest extends kyo.test.Test[Any]:
             // machine.cpu.cores reported on a 12-core Mac. It is also the denominator every per-core
             // normalisation divides by, and the input the CPU histogram's buckets are derived from.
             assert(Runtime.getRuntime.availableProcessors() == 1)
-            assert(SystemPlatformSpecific.availableProcessors() == NodeOs.availableParallelism())
+            assert(SystemPlatformSpecific.availableProcessors() == NodeOsProbe.availableParallelism())
         }
 
         "is stable across calls" in {
@@ -70,9 +70,13 @@ end SystemPlatformSpecificJsWasmTest
 /** Node's `os` module, read through the `node:` specifier so the facade links under both the CommonJS (js)
   * and ESModule (wasm) backends. `availableParallelism` is the count Node itself reports as available to this
   * process, the independent oracle this suite checks `availableProcessors` against.
+  *
+  * Named apart from `kyo.internal.NodeOs`, the facade the path code reads `tmpdir` and `hostname` through: a
+  * second `NodeOs` in this package is the definition the test sources compile against, which takes those
+  * members away from every other test in it.
   */
 @sjs.native
 @JSImport("node:os", JSImport.Namespace)
-private object NodeOs extends sjs.Object:
+private object NodeOsProbe extends sjs.Object:
     def availableParallelism(): Int = sjs.native
-end NodeOs
+end NodeOsProbe
