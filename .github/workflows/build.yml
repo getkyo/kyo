@@ -144,6 +144,17 @@ jobs:
           action="${{ inputs.mode == 'diff' && 'testDiff' || 'test' }}"
           ./scripts/ci-test.sh "${{ matrix.target }}" "$action"
 
+      # Issue #1878. A module's tests link only what the tests reach, so they cannot see what an application
+      # gets: a data artifact the library registers reflectively, or a formatter that drags every locale in.
+      # This links small programs the way an application does (project/LinkCheck.scala), runs each under plain
+      # node, and fails on data markers, a data-only dependency, or a size past kyo-link-check/ceilings.txt.
+      # It runs in every mode, since a change anywhere below the programs can grow what they link, and after a red
+      # test step too, since the two report independent things.
+      - name: link check ${{ matrix.target }} (${{ inputs.os }})
+        if: ${{ !cancelled() && matrix.target != 'JVM' }}
+        shell: bash
+        run: ./scripts/ci-test.sh "${{ matrix.target }}" linkCheck
+
       # A JVM that dies in native code writes its diagnosis next to the forked test process and the runner
       # discards it with the workspace, so the only trace left in the log is a task failure carrying no test
       # name. That shape is indistinguishable from an ordinary failure at a glance and has already cost one

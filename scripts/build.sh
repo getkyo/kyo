@@ -13,7 +13,7 @@ set -uo pipefail
 # --arch native|x86|arm  container architecture (podman/podman-ci only); sets
 #        podman --platform. native = host arch, x86 = linux/amd64, arm =
 #        linux/arm64; qemu-emulated when it differs from the host arch.
-# <action>    one of test, testDiff, compile, link (default: test), or
+# <action>    one of test, testDiff, compile, link, linkCheck (default: test), or
 #             `sbt <raw command>` to run one arbitrary sbt command in the env
 #             (e.g. build.sh --env direct sbt 'kyo-netJVM/test'); no platform arg
 # <platform>  one or more of JVM, JS, Native, Wasm, all (default: all)
@@ -54,7 +54,7 @@ apt_mirror="${KYO_APT_MIRROR:-}"
 
 ENV_KIND="direct"
 ARCH="native"
-ACTIONS="test testDiff compile link"
+ACTIONS="test testDiff compile link linkCheck"
 PLATFORMS="JVM JS Native Wasm"
 
 usage() {

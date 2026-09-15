@@ -8,7 +8,9 @@ set -uo pipefail
 #   ci-test.sh --self-test
 #
 # <platform>  one of JVM, JS, Native, Wasm.
-# <action>    one of test, testDiff, compile, link.
+# <action>    one of test, testDiff, compile, link, linkCheck.
+#
+# linkCheck is one sbt process running the `linkCheck <platform>` command, and a no-op on JVM.
 #
 # JVM, JS, and Wasm run as three separate sbt processes (compile-main, then
 # compile-test, then run) so the driver never holds the whole compile heap while
@@ -50,7 +52,9 @@ set -uo pipefail
 # this one runner is correct in every environment.
 
 PLATFORMS="JVM JS Native Wasm"
-ACTIONS="test testDiff compile link"
+# linkCheck links representative programs the way an application does and checks what it gets: runnable under
+# plain node, no data it cannot reach, a size ceiling, and no data-only dependency (project/LinkCheck.scala).
+ACTIONS="test testDiff compile link linkCheck"
 
 usage() {
     echo "Usage: ci-test.sh <platform> <action>" >&2
@@ -602,6 +606,20 @@ echo "Tests: succeeded 100, failed 0"; echo "[testKyo] completed"; exit 0'
     else record no "CONTAINER_SWEEP=0 touches no container runtime at all"; fi
     rm -f "$SELFDIR/podman" "$SELFDIR/podman-ps"
 
+    # 54: linkCheck is one sbt process on JS, Wasm, and Native, and runs nothing on the JVM.
+    lc_ok=yes
+    for p in JS Wasm Native; do
+        run_runner "$p" linkCheck 'exit 0'
+        { calls_count 1 && call_nth_is 1 "linkCheck $p" && exit_is 0; } || lc_ok=no
+    done
+    run_runner JVM linkCheck 'exit 0'
+    { calls_count 0 && exit_is 0; } || lc_ok=no
+    run_runner JS linkCheck 'exit 1'
+    { calls_count 1 && exit_is 1; } || lc_ok=no
+    if [ "$lc_ok" = yes ]
+    then record ok "linkCheck runs one process off the JVM and propagates its failure"
+    else record no "linkCheck runs one process off the JVM and propagates its failure"; fi
+
     # 52-53: argument validation exits 2 before any sbt.
     run_runner Frob test 'exit 0'
     if exit_is 2 && calls_count 0; then record ok "unknown platform exits 2 before any sbt"
@@ -617,7 +635,7 @@ echo "Tests: succeeded 100, failed 0"; echo "[testKyo] completed"; exit 0'
 
     echo ""
     echo "Results: $PASS/$TOTAL passed, $FAIL failed"
-    [ "$FAIL" -eq 0 ] && [ "$TOTAL" -eq 55 ]
+    [ "$FAIL" -eq 0 ] && [ "$TOTAL" -eq 56 ]
     exit $?
 fi
 
@@ -1110,7 +1128,14 @@ export KYO_SCHEDULER_TOPSTATUSFILEMS=5000
 KYO_SCHED_FILE="$sched_file" bash "$monitor" &
 monitor_pid=$!
 
-if [ "$PLATFORM" = "Native" ]; then
+if [ "$ACTION" = "linkCheck" ]; then
+    # An application links nothing extra on the JVM, so there is nothing to check there.
+    if [ "$PLATFORM" = "JVM" ]; then
+        log "linkCheck is a no-op for JVM"; rc=0
+    else
+        sbt_resolve_retry "linkCheck $PLATFORM"; rc=$?
+    fi
+elif [ "$PLATFORM" = "Native" ]; then
     run_native; rc=$?
 else
     run_phase_split; rc=$?
