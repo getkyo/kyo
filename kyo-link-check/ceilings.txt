@@ -8,6 +8,10 @@
 # Measured at the change that removed the data artifacts and java.time from Instant:
 #   JS    CoreMin 914,678   CoreLog 1,065,808   UiMin 544,385
 #   Wasm  CoreMin 471,700   CoreLog   536,285   UiMin 271,315
+#
+# Measured at the change that moved every Node built-in off static imports (#1836 W3):
+#   JS    CoreReadLine 1,799,710   SystemPath 2,191,164   NetEcho 3,304,836
+#   Wasm  CoreReadLine   895,871   SystemPath 1,084,527   NetEcho 1,470,427
 
 JS   CoreMin 1,010,000
 JS   CoreLog 1,175,000
@@ -15,3 +19,9 @@ JS   UiMin     600,000
 Wasm CoreMin   520,000
 Wasm CoreLog   590,000
 Wasm UiMin     300,000
+JS   CoreReadLine 1,980,000
+JS   SystemPath   2,415,000
+JS   NetEcho      3,640,000
+Wasm CoreReadLine   990,000
+Wasm SystemPath   1,195,000
+Wasm NetEcho      1,620,000

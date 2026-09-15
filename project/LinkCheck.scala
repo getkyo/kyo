@@ -48,7 +48,8 @@ object LinkCheck {
         Program("CoreReadLine", "kyo-link-check-core", "linkcheck.CoreReadLine", "failure EOFException".r, "failure IOException".r),
         Program("UiMin", "kyo-link-check-ui", "linkcheck.UiMin", """Div\(Attrs\(.*\),Chunk\.Indexed\(\)\)""".r),
         Program("SystemPath", "kyo-link-check-system", "linkcheck.SystemPath", "kyo".r, "panic UnsupportedOperationException".r),
-        Program("NetEcho", "kyo-link-check-net", "linkcheck.NetEcho", "echo kyo".r, "failure NetBackendUnavailableException".r)
+        // NetPlatform.transport is a plain lazy val, so a host with no usable backend gets its NetBackendUnavailableException as a throw.
+        Program("NetEcho", "kyo-link-check-net", "linkcheck.NetEcho", "echo kyo".r, "panic NetBackendUnavailableException".r)
     )
 
     /** A static import of a Node built-in in linked output: `import * as x from "node:fs"`, `import "node:fs"`. */
