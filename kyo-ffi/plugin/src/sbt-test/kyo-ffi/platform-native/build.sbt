@@ -3,7 +3,7 @@ import scala.scalanative.sbtplugin.ScalaNativePlugin
 lazy val root = (project in file("."))
     .enablePlugins(KyoFfiPlugin, ScalaNativePlugin)
     .settings(
-        scalaVersion := "3.8.3",
+        scalaVersion := sys.props("kyo.scalaVersion"),
         ffiLibraryId := "test_native_lib",
         TaskKey[Unit]("checkPlatform") := {
             val p = ffiTargetPlatform.value
