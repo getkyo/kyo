@@ -1168,6 +1168,8 @@ private[kyo] object HtmlRenderer:
            |$reactiveRangesJs
            |${DragClientJs.script(basePath)}
            |var ws=null,__wsRetries=0,__wsGone=false,__live=false;
+           |// Read-only test hook on the current socket; it follows each reconnect.
+           |Object.defineProperty(window,"__kyoWs",{get:function(){return ws;},configurable:true});
            |var __dragRt=null,__dragCleanup=null;
            |// One call site on purpose. The runtime wires document-level capture listeners and one pagehide listener it never removes, so
            |// it must be installed once per session and never over a live one; the guard at the open handler is what keeps that true
@@ -1219,10 +1221,11 @@ private[kyo] object HtmlRenderer:
            |    if(__dragCleanup){__dragCleanup();__dragCleanup=null;}
            |    if(__wsGone)return;
            |    // Capped exponential backoff: quick enough that a transient refusal recovers within a page's useful
-           |    // lifetime, slow enough not to hammer a server that is genuinely down.
+           |    // lifetime, slow enough not to hammer a server that is genuinely down. Jittered to 50-100% of each step
+           |    // so pages dropped together by a server restart do not all redial at the same instant.
            |    var wait=Math.min(250*Math.pow(2,__wsRetries),5000);
            |    __wsRetries++;
-           |    setTimeout(kyoConnect,wait);
+           |    setTimeout(kyoConnect,wait*(0.5+Math.random()*0.5));
            |  };
            |}
            |// A page being torn down is not a lost connection: stop redialing so an unloading page does not keep calling the server it is
