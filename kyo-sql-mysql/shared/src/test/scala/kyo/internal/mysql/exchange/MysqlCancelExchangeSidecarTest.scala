@@ -109,9 +109,13 @@ class MysqlCancelExchangeSidecarTest extends kyo.Test:
                     val command = payload.headMaybe.map(_ & 0xff).getOrElse(-1)
                     if command == 0x03 then
                         val sql = new String(payload.drop(1).toArray, StandardCharsets.UTF_8)
+                        // `killError` simulates the server refusing the KILL, so it applies to that statement only.
+                        // Every connection also pins its session settings once authenticated, and answering those
+                        // with the kill's error would fail the connection before it ever reaches the KILL.
                         val answer = killError match
-                            case Present((code, sqlState)) => errPacket(seq + 1, code, sqlState, "refused by the fake server")
-                            case Absent                    => okPacket(seq + 1)
+                            case Present((code, sqlState)) if sql.startsWith("KILL") =>
+                                errPacket(seq + 1, code, sqlState, "refused by the fake server")
+                            case _ => okPacket(seq + 1)
                         report(s"query:$id:$sql").andThen {
                             Abort.run[Closed](conn.outbound.safe.put(Span.from(answer))).andThen(loop(id, rest))
                         }
@@ -141,10 +145,28 @@ class MysqlCancelExchangeSidecarTest extends kyo.Test:
     private val config: SqlConfig = SqlConfig(maxConnections = 2, acquireTimeout = 30.seconds, tlsMode = TlsMode.Disable)
 
     /** Reads exactly `n` reported events, in order. */
+    /** Takes the next `n` events the sidecar protocol produces, skipping the session settings every connection pins.
+      *
+      * Each connection sends `SET time_zone` once it is authenticated, so that statement appears on the target and on the sidecar alike.
+      * It is not part of the cancel protocol these leaves pin, and counting it here would make every expectation below carry an event
+      * that says nothing about whether a sidecar was opened, used, and closed. The pin has its own coverage against a live server.
+      */
     private def report(events: Channel[String], n: Int)(using Frame): Chunk[String] < (Async & Abort[SqlException]) =
-        Abort.run[Closed](Kyo.foreach(Chunk.from(0 until n))(_ => events.take)).flatMap {
-            case Result.Success(seen) => seen
-            case other                => Abort.panic(new AssertionError(s"the fake server's event channel closed early: $other"))
+        def takeOne: String < (Async & Abort[SqlException]) =
+            Abort.run[Closed](events.take).flatMap {
+                case Result.Success(event) if event.contains("SET time_zone") => takeOne
+                case Result.Success(event)                                    => event
+                case other => Abort.panic(new AssertionError(s"the fake server's event channel closed early: $other"))
+            }
+        Kyo.foreach(Chunk.from(0 until n))(_ => takeOne)
+    end report
+
+    /** The next event the server has already reported that is not a session pin, without waiting for one to arrive. */
+    private def pollBeyondPins(events: Channel[String])(using Frame): Maybe[String] < (Async & Abort[SqlException]) =
+        Abort.run[Closed](events.poll).flatMap {
+            case Result.Success(Present(event)) if event.contains("SET time_zone") => pollBeyondPins(events)
+            case Result.Success(other)                                             => other
+            case other => Abort.panic(new AssertionError(s"the fake server's event channel closed early: $other"))
         }
 
     /** Opens a connection whose in-flight flag is already raised, so a cancel has a statement to stop.
@@ -238,11 +260,12 @@ class MysqlCancelExchangeSidecarTest extends kyo.Test:
             withTarget(inFlight = false) { (target, events) =>
                 report(events, 2).flatMap { opened =>
                     target.cancelInFlight.andThen {
-                        // Nothing to stop, so no connection is owed. `poll` reads whatever the server has
-                        // already reported without waiting, which would be a third arrival if one had happened.
-                        Abort.run[Closed](events.poll).map { extra =>
+                        // Nothing to stop, so no connection is owed. Polling reads whatever the server has already
+                        // reported without waiting, which would be a third arrival if one had happened; the target's
+                        // own session pin is skipped for the reason `report` gives.
+                        pollBeyondPins(events).map { extra =>
                             assert(opened == Chunk("accepted:1", "authenticated:1"), s"the target is the first connection; saw $opened")
-                            assert(extra == Result.Success(Absent), s"no further connection may be opened; saw $extra")
+                            assert(extra == Absent, s"no further connection may be opened; saw $extra")
                         }
                     }
                 }

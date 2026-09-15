@@ -39,7 +39,11 @@ class MysqlDialectCastTest extends Test:
     "casting to a floating-point or decimal target uses the MySQL names" in {
         assert(castSql(idColumn.cast[Float]).contains("CAST(`r`.`id` AS FLOAT)"))
         assert(castSql(idColumn.cast[Double]).contains("CAST(`r`.`id` AS DOUBLE)"))
-        assert(castSql(idColumn.cast[BigDecimal]).contains("CAST(`r`.`id` AS DECIMAL)"))
+        // The unqualified cast names the widest fixed-point this server offers rather than spelling a bare
+        // DECIMAL, which means DECIMAL(10,0) here: it rounds the fraction away and clamps anything past ten
+        // digits, so `CAST(2.5 AS DECIMAL)` answered 3 and a wide value became 9999999999 with only a warning,
+        // while the other flavor's bare cast preserves the value. A cast that changes the value is not a cast.
+        assert(castSql(idColumn.cast[BigDecimal]).contains("CAST(`r`.`id` AS DECIMAL(65, 30))"))
     }
 
     // MySQL stores a UUID as a string, so it casts through CHAR rather than a type of its own. TEXT is not a cast

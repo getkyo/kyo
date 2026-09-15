@@ -46,13 +46,13 @@ object SqlRunMacro:
         Quotes
     ): Expr[SqlClient.InsertOutcome < (Abort[SqlException] & DB)] =
         SqlStaticMacro.tryImpl(widenStatement(ins)) match
-            case Present(rendered) => emitInsert(rendered)
+            case Present(rendered) => emitInsert(rendered, ins)
             case Absent            => '{ $ins.runDynamic(using $frame) }
 
     def runInsertStaticImpl[T: Type, F: Type](ins: Expr[Insert[T, F]])(using
         Quotes
     ): Expr[SqlClient.InsertOutcome < (Abort[SqlException] & DB)] =
-        emitInsert(SqlStaticMacro.impl(widenStatement(ins)))
+        emitInsert(SqlStaticMacro.impl(widenStatement(ins)), ins)
 
     // --- Update[T, F] ---
 
@@ -187,13 +187,22 @@ object SqlRunMacro:
         }
 
     /** Emits the insert dispatch, the one statement kind whose result carries a generated key. */
-    private def emitInsert(rendered: Expr[Sql.Rendered])(using
+    /** Emits the insert dispatch, capping the reported count at the rows the statement names.
+      *
+      * The statement carries its own row count, and an INSERT affects at most that many rows. Applying it here rather than leaving it to the
+      * backend is what makes one engine's upsert arithmetic, which counts a matched row and a changed row separately, answer the same number
+      * as the other engine for the same single-row write.
+      */
+    private def emitInsert(rendered: Expr[Sql.Rendered], ins: Expr[Sql.Insert[?, ?]])(using
         Quotes
     ): Expr[SqlClient.InsertOutcome < (Abort[SqlException] & DB)] =
         '{
             DB.state.map { state =>
                 val r = $rendered
-                r.sqlForOrFail(state.client.dialect.id).map(sql => state.client.internalExecuteInsert(sql, r.params, state.config))
+                r.sqlForOrFail(state.client.dialect.id).map(sql =>
+                    state.client.internalExecuteInsert(sql, r.params, state.config)
+                        .map(outcome => Sql.Insert.capAffected($ins, outcome))
+                )
             }
         }
 

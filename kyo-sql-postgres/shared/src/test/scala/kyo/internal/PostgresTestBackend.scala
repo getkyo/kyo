@@ -72,11 +72,101 @@ class PostgresTestBackend extends SqlTestBackend:
         end match
     end columnType
 
+    def typeNameFor(kind: SqlTestBackend.ColumnType): String =
+        import SqlTestBackend.ColumnType.*
+        kind match
+            case Int     => "int4"
+            case BigInt  => "int8"
+            case Float64 => "float8"
+            case Date    => "date"
+            case Boolean => "bool"
+            case other   => throw new IllegalArgumentException(s"no reported type name pinned for $other on postgres")
+        end match
+    end typeNameFor
+
+    def bytesLiteral(hexDigits: String): String = s"'\\x$hexDigits'"
+
+    // Each of these changes what the simple protocol writes for a value this engine already stores: the float's digit
+    // count and the byte string's spelling. Both are set to their non-default value, so a rendering that passed the
+    // server's text through instead of parsing it would answer something else here.
+    def outputAffectingSettings: Chunk[String] = Chunk(
+        "SET extra_float_digits = 0",
+        "SET bytea_output = 'escape'"
+    )
+
+    /** PostgreSQL has a real boolean type, so a boolean column reports itself as one. */
+    def booleanColumnKind: SqlRow.ColumnKind = SqlRow.ColumnKind.Bool
+
+    /** `timestamptz` text carries an offset beside the value, so a row written in any session zone can be normalised on read. */
+    def instantWireCarriesOffset: Boolean = true
+
+    def hasNativeArrayColumns: Boolean = true
+
+    /** PostgreSQL's `time` is a time of day: it reaches `24:00:00` and no further, and never below zero. */
+    def timeColumnIsSignedSpan: Boolean = false
+
+    def hasCalendarIntervalColumn: Boolean = true
+
+    def hasNetworkAddressColumn: Boolean = true
+
+    def hasTimeWithOffsetColumn: Boolean = true
+
+    /** `numeric` holds `NaN` and both infinities, and `date` and `timestamptz` hold `infinity` and `-infinity`. */
+    def hasNonFiniteSpecialValues: Boolean = true
+
+    /** This engine spells the placement as a modifier on the ordering expression (`NULLS LAST`), so it satisfies the frame's
+      * single-expression rule and the pinned placement at once.
+      */
+    def windowRangeOffsetHonoursAbsentPlacement: Boolean = true
+
+    /** `money` takes its fraction digits and currency symbol from `lc_monetary`, which the connection is never told, so there is no neutral
+      * value to render it from.
+      */
+    def unrenderableColumns: Chunk[(String, String)] = Chunk(
+        ("money", "12.34"),
+        // The array of it, which reaches a different path: the array decoder dispatches its own elements, so it has to
+        // refuse for itself rather than inheriting the scalar column's refusal.
+        ("money[]", "'{12.34}'")
+    )
+
+    /** Read off a live server. Each is a value whose binary arm and text arm disagreed until the text arm stopped delegating to a `java.time`
+      * parser that refuses what the column holds, or to a signed read of an unsigned type.
+      */
+    def protocolAgreementCases: Chunk[(String, String, String)] = Chunk(
+        // Unsigned 32-bit, so a signed 4-byte read answers negative under binary only.
+        ("oid", "3000000000", "3000000000"),
+        // `LocalDate.parse` refuses both the era and a five-digit year; the binary arm computes from the day count.
+        ("date", "'0044-03-15 BC'", "0044-03-15 BC"),
+        ("date", "'10000-01-01'", "10000-01-01"),
+        // `OffsetTime.parse` refuses hour 24, which this column reaches.
+        ("timetz", "'24:00:00+00'", "24:00:00+00:00"),
+        // The era trails the offset, and has to be stripped before the offset is searched for.
+        ("timestamptz", "'0044-04-15 00:00:00+00 BC'", "0044-04-15 00:00:00+00:00 BC"),
+        // The server writes an IPv4-mapped address with a dotted-quad tail, which a hex parse of the groups refuses.
+        ("inet", "'::ffff:192.168.0.1'", "::ffff:c0a8:1")
+    )
+
+    /** Element types whose server spelling differs from this module's, which is where a passthrough would show.
+      *
+      * `bool` writes `t`/`f`; `float8` past the plain band takes the server's `extra_float_digits`; `timestamptz` arrives in the session zone.
+      * `int4[]` and `text[]` are deliberately absent: their server text and this module's rendering coincide, so they cannot tell a
+      * passthrough from a re-render, which is exactly why the original array leaf saw nothing.
+      */
+    def arrayRenderCases: Chunk[(String, String, String)] = Chunk(
+        ("bool[]", "'{t,f}'", "{true,false}"),
+        ("float8[]", "'{1e23,0.1}'", "{1e+23,0.1}"),
+        // Quoted in the rendering because the element carries a space, which bare would read as structure.
+        ("timestamptz[]", "'{\"2026-08-25 10:00:00+00\"}'", "{\"2026-08-25 10:00:00+00:00\"}")
+    )
+
     def tableNotFoundSqlState: String = "42P01"
 
     def uniqueViolationSqlState: String = "23505"
 
     def sessionIdSql: String = "pg_backend_pid()"
+
+    // Answers lower case with a space, e.g. `read committed`.
+    def isolationIntrospectionSql: String = "SHOW transaction_isolation"
 
     def withFreshSchema[A, S](f: SqlTestBackend.Schema => A < S)(using
         Frame

@@ -55,7 +55,11 @@ final class SqlRow(
         if idx < 0 || idx >= columns.size then Maybe.empty
         else codec.typeName(columns(idx).typeToken)
 
-    /** The backend's own name for the type of the column named `name`. */
+    /** The backend's own name for the type of the column named `name`.
+      *
+      * [[Absent]] does not distinguish "no such column" from "type the backend cannot name". [[hasColumn]] answers the first where a caller
+      * needs them apart.
+      */
     def columnTypeName(name: String): Maybe[String] =
         columnTypeName(columns.indexWhere(_.name == name))
 
@@ -66,14 +70,12 @@ final class SqlRow(
       * column is wrong about the column. This renders the value the column actually holds, decoding it at its own type first, so an `int4`
       * answers `"42"` and a `date` answers `"2026-08-04"` under either wire format.
       *
-      * The rendering is the SERVER's, and the same one under either wire format. That is the whole contract: a text-protocol row already
-      * carries the server's rendering and it is handed back, and a binary-protocol row is decoded and re-rendered to match it, so one
-      * stored value reads as one string whichever protocol carried the row. The two do not agree on their own, and not only at the edges:
-      * PostgreSQL writes a bool `t` where Java writes `true`, a timestamp `2026-08-25 10:00:00` where Java writes `2026-08-25T10:00`, and
-      * a float8 1e10 `10000000000` where Java writes `1.0E10`.
+      * The rendering is this module's and is a function of the decoded value alone: not the engine, not the wire format, not a session
+      * setting. A backend decodes its wire into a neutral [[SqlValue]] and never spells it. A text-protocol row is therefore parsed and
+      * re-rendered rather than handed back, because an engine's own spelling is chosen by settings the connection is never told about.
       *
-      * A backend renders the types it names; one it does not name falls back to reading the column's bytes as UTF-8, which is a rendering
-      * of last resort rather than a decode. [[columnKind]] says which case a column is in.
+      * A column the backend does not render is REFUSED with [[SqlDecodeColumnNotRenderableException]] rather than answered as UTF-8 bytes,
+      * which for a wire struct is a wrong string a caller cannot tell from a right one. [[columnKind]] says which case a column is in.
       *
       * @throws SqlDecodeException
       *   if the column is out of bounds, or the value cannot be decoded at the type its column reports
@@ -291,15 +293,22 @@ object SqlRow:
           */
         def typeName(typeToken: Int): Maybe[String] = Maybe.empty
 
-        /** Renders the non-NULL column at `idx` as text, backing [[SqlRow.text]]. NULL and bounds are settled by the caller.
+        /** Decodes the non-NULL column at `idx` into the neutral value it holds. NULL and bounds are settled by the caller.
           *
-          * Defaults to reading the column's bytes as UTF-8, which is what a value already in its text rendering needs and all a codec with
-          * no type metadata can do. A backend whose result sets carry binary values decodes the value at its column's own type first.
+          * This is the SPI and [[text]] is final, which is the point of the split: a backend supplies data, never a string. Defaults to the
+          * column's bytes as UTF-8, which is all a codec with no type metadata can do.
           */
-        def text(row: SqlRow, idx: Int)(using Frame): String < Abort[SqlDecodeException] =
+        def columnValue(row: SqlRow, idx: Int)(using Frame): SqlValue < Abort[SqlDecodeException] =
             row.column(idx) match
-                case Maybe.Present(bytes) => new String(bytes.toArray, java.nio.charset.StandardCharsets.UTF_8)
-                case Maybe.Absent         => Abort.fail(SqlDecodeColumnAbsentException(idx))
+                case Maybe.Present(bytes) =>
+                    SqlValue.ServerRendering(new String(bytes.toArray, java.nio.charset.StandardCharsets.UTF_8))
+                case Maybe.Absent => Abort.fail(SqlDecodeColumnAbsentException(idx))
+
+        /** Renders the non-NULL column at `idx`, backing [[SqlRow.text]]. Final: one decoded value has one rendering, computed in one place,
+          * and a backend has nowhere to spell it.
+          */
+        final def text(row: SqlRow, idx: Int)(using Frame): String < Abort[SqlDecodeException] =
+            columnValue(row, idx).map(kyo.internal.SqlValueRender.render)
     end Codec
 
     object Codec:

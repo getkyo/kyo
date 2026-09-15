@@ -102,7 +102,7 @@ final class MysqlConnection(
         Frame
     ): SqlClient.InsertOutcome < (Async & Abort[SqlException]) =
         drainPendingCloses.andThen(withCapsAndId { (deprecateEof, cid) =>
-            ExtendedQueryExchange.executeInsert(channel, preparedStmts, sql, params, deprecateEof, cid).map {
+            ExtendedQueryExchange.executeInsert(channel, preparedStmts, sql, params, deprecateEof, cid).flatMap {
                 // MySQL cannot report GeneratedKey.NoAutoKey: lastInsertId == 0 is ambiguous between "no
                 // auto-increment column" and "caller supplied the key", so this reports Unavailable where the
                 // PostgreSQL path distinguishes the two.
@@ -110,7 +110,8 @@ final class MysqlConnection(
                     val key =
                         if lastInsertId == 0L then SqlClient.InsertOutcome.GeneratedKey.Unavailable
                         else SqlClient.InsertOutcome.GeneratedKey.Value(lastInsertId)
-                    SqlClient.InsertOutcome(affected, key)
+                    MysqlConnection.raiseSuppressedFailure(this, sql, cid)
+                        .andThen(SqlClient.InsertOutcome(affected, key))
             }
         })
 
@@ -198,12 +199,14 @@ final class MysqlConnection(
     /** Sends [[ComResetConnection]] and waits for OK.
       *
       * Resets all per-session state (user variables, prepared statements on the server, open transactions, last-insert-id, current schema,
-      * advisory locks) without re-running the auth handshake. Callers use this to guarantee the next borrower sees a clean session.
+      * advisory locks) without re-running the auth handshake, then re-establishes the pins the driver depends on, as one operation.
       *
-      * Delegates to [[ResetConnectionExchange]].
+      * A reset restores handshake-negotiated state but discards everything set by a statement, and the time-zone pin is set by a statement.
+      * Sending the reset alone leaves a connection that looks healthy and reads every later `TIMESTAMP` against whatever zone the server
+      * defaults to, wrong by that offset with nothing raised, so the two are not separable here.
       */
     def resetConnection()(using Frame): Unit < (Async & Abort[SqlException]) =
-        ResetConnectionExchange.run(channel)
+        ResetConnectionExchange.run(channel).andThen(MysqlConnection.pinSessionState(this))
 
     // --- Transaction methods ---
 
@@ -411,11 +414,81 @@ object MysqlConnection:
                     HandshakeExchange.run(rawChannel, user, password, db, host, port, tls, false).flatMap { result =>
                         // result.channel is the TLS-wrapped channel (or the original if no TLS).
                         val ttl = if preparedStmtTtl == Duration.Infinity then Duration.Zero else preparedStmtTtl
-                        mkConnection(result.channel, result, preparedStmtCacheSize, ttl)
+                        mkConnection(result.channel, result, preparedStmtCacheSize, ttl).flatMap { connection =>
+                            MysqlConnection.pinSessionState(connection).andThen(connection)
+                        }
                     }
                 }
         }
     end connect
+
+    /** The error numbers a conflict-ignoring INSERT is allowed to suppress.
+      *
+      * The clause means "skip a row that conflicts with an existing one" and nothing more. Everything else this server downgrades under the
+      * same keyword (a foreign-key violation, a null into a NOT NULL column, a truncated or out-of-range value) is a failure the caller asked
+      * nothing about and would never learn of.
+      */
+    private val ConflictWarningCodes: Set[Int] = Set(
+        1062, // ER_DUP_ENTRY
+        1586  // ER_DUP_ENTRY_WITH_KEY_NAME
+    )
+
+    /** Re-raises anything a conflict-ignoring INSERT suppressed beyond the conflict it was for.
+      *
+      * Only for a statement the renderer opened with the ignoring keyword, and only when the server reported warnings, so an ordinary insert
+      * costs nothing and a clean one costs nothing either.
+      *
+      * The count comes from the OK packet already read: `SELECT @@warning_count` CLEARS the diagnostics area, and `SHOW WARNINGS` runs as the
+      * very next statement because ANY statement in between clears them.
+      *
+      * The warning's error number is the one the hard failure reports, so the raised leaf carries the same property marker and a handler
+      * recovering on [[kyo.SqlIntegrityViolation]] works on either engine.
+      *
+      * What does NOT agree is the state left behind: this server has already applied the statement's surviving rows, so outside a transaction
+      * the caller sees a failure over rows that are present. Inside one the carried-failure flag makes the two agree.
+      */
+    private def raiseSuppressedFailure(connection: MysqlConnection, sql: String, cid: Maybe[Long])(using
+        Frame
+    ): Unit < (Async & Abort[SqlException]) =
+        if !sql.startsWith(MysqlDialect.IgnoringInsertKeyword) || connection.channel.sessionState.lastWarnings == 0 then ()
+        else
+            // SHOW WARNINGS answers Level, Code, Message, read by name so this does not depend on their order. The text
+            // protocol carries each already rendered, so the bytes are the value.
+            connection.simpleQuery("SHOW WARNINGS").flatMap { rows =>
+                def field(row: MysqlRow, name: String): Maybe[String] =
+                    row.column(name).map(bytes => new String(bytes.toArray, java.nio.charset.StandardCharsets.UTF_8))
+                Kyo.foreachDiscard(rows) { row =>
+                    // Only a row the server itself labelled an Error or a Warning. `SHOW WARNINGS` also reports Notes,
+                    // which are informational (a deprecation, a charset remark) and are not a downgraded failure; raising
+                    // on one would fail an insert that lost nothing. The level is the server's own classification, so
+                    // this filters by what it said rather than by a list of codes to keep current.
+                    val level      = field(row, "Level").getOrElse("").trim
+                    val downgraded = level.equalsIgnoreCase("Error") || level.equalsIgnoreCase("Warning")
+                    field(row, "Code").flatMap(c => Maybe.fromOption(c.trim.toIntOption)) match
+                        case Present(code) if downgraded && !ConflictWarningCodes.contains(code) =>
+                            Abort.fail(MysqlConflictClauseSuppressedException(code, field(row, "Message").getOrElse("")))
+                        case _ => ()
+                    end match
+                }
+            }
+        end if
+    end raiseSuppressedFailure
+
+    /** The session settings this driver pins, as one statement so the pin still costs one round trip.
+      *
+      * `time_zone` is what makes a `TIMESTAMP` column mean anything here. MySQL stores it as an instant and converts it to the session's zone
+      * on the way out, and the wire carries the converted date and time with NO offset beside it, so a driver that does not know the session's
+      * zone cannot recover the instant: one stored row arrives as `2026-08-25 10:00:00` on one connection and `07:00:00` on another. Asking
+      * the server for its zone would not settle it either, since a named zone's offset depends on the date being converted.
+      *
+      * A caller who changes the zone and restores the pin is a working pattern, since the pin is what the driver decodes against. What is
+      * dangerous is the driver losing its own pin without noticing, which is why any reset re-applies this.
+      *
+      * `transaction_isolation` because the engines default to different levels, so a transaction naming none would mean different things per
+      * deployment; `READ COMMITTED` must match the PostgreSQL startup pin or neither achieves anything.
+      */
+    private def pinSessionState(connection: MysqlConnection)(using Frame): Unit < (Async & Abort[SqlException]) =
+        connection.simpleQuery("SET time_zone = '+00:00', transaction_isolation = 'READ-COMMITTED'").unit
 
     /** Builds this connection's prepared-statement cache, wiring eviction to enqueue the released server-side statement id into `closesRef`
       * so the next `drainPendingCloses` flushes `COM_STMT_CLOSE` for it. The shared body lives in [[kyo.db.Connection.mkStmtCache]]; the key

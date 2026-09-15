@@ -86,11 +86,14 @@ class SqlCodecTypeMismatchConformanceTest extends SqlBackendTest:
       * tell which of a row type's fields is the wrong one.
       */
     private def columnTypeName(backend: SqlTestBackend, column: String): String =
-        val names =
-            if backend.id == "mysql" then
-                Map("i"  -> "INT", "b"  -> "BIGINT", "f" -> "DOUBLE", "d" -> "DATE", "t" -> "TINYINT")
-            else Map("i" -> "int4", "b" -> "int8", "f"   -> "float8", "d" -> "date", "t" -> "bool")
-        names(column)
+        val kind = column match
+            case "i"   => SqlTestBackend.ColumnType.Int
+            case "b"   => SqlTestBackend.ColumnType.BigInt
+            case "f"   => SqlTestBackend.ColumnType.Float64
+            case "d"   => SqlTestBackend.ColumnType.Date
+            case "t"   => SqlTestBackend.ColumnType.Boolean
+            case other => throw new IllegalArgumentException(s"the probe table has no column $other")
+        backend.typeNameFor(kind)
     end columnTypeName
 
     // ── The dynamic lane: SqlRow.decode[String] by name ───────────────────────
@@ -233,6 +236,61 @@ class SqlCodecTypeMismatchConformanceTest extends SqlBackendTest:
             yield
                 assert(float.head == WidenedFloat(18.0), s"float32 into Double: expected 18.0, got ${float.head}")
                 assert(int.head == WidenedInt(3L), s"smallint into Long: expected 3, got ${int.head}")
+        }
+    }
+
+    /** The same bug with the arrow reversed: a TEMPORAL field over a numeric column.
+      *
+      * Every other group here reads a non-text column as `String`, which is the direction that was reported, and the wrong answer there is
+      * visible mojibake. This direction is the dangerous one and had no leaf at all. A binary `date` is a day count from an epoch and a binary
+      * `time` is a microsecond-of-day, so a `LocalDate` field over an integer column holding 42 decoded to a WELL-FORMED WRONG DATE, and a
+      * `LocalTime` over a bigint to a well-formed wrong time. Nothing raised, and nothing downstream could tell.
+      *
+      * The guard that closed it is the same one the text direction uses: every read names the type it wants and the accepted column set for
+      * it, so the check is the column's own type against that set rather than anything about the bytes. Asserting the reverse direction is what
+      * says the guard was threaded through the temporal readers rather than only the two the original fix touched, which was the finding: it
+      * had reached 2 of 15 reads.
+      *
+      * Both protocols, because the check is on the column's type token and not on the wire format.
+      */
+    "a temporal field over a numeric column aborts rather than answering a well-formed wrong value" - {
+        case class DateOverInt(i: java.time.LocalDate) derives CanEqual
+        case class TimeOverBigInt(b: java.time.LocalTime) derives CanEqual
+        case class InstantOverBigInt(b: java.time.Instant) derives CanEqual
+
+        forEachBackend() { (backend, client, _) =>
+            for
+                _ <- createProbe(backend, client)
+                _ <- assertDecodeRefused("date over int", columnTypeName(backend, "i")) {
+                    Sql.from[DateOverInt]("p", "probe").run
+                }
+                _ <- assertDecodeRefused("time over bigint", columnTypeName(backend, "b")) {
+                    Sql.from[TimeOverBigInt]("p", "probe").run
+                }
+                _ <- assertDecodeRefused("instant over bigint", columnTypeName(backend, "b")) {
+                    Sql.from[InstantOverBigInt]("p", "probe").run
+                }
+                // The dynamic lane over the same columns, which reaches the readers by a different route.
+                rows <- client.query("SELECT i, b FROM probe")
+                row = rows.head
+                _ <- assertDecodeRefused("date over int, dynamic", columnTypeName(backend, "i"))(row.decode[java.time.LocalDate]("i"))
+                _ <- assertDecodeRefused("time over bigint, dynamic", columnTypeName(backend, "b"))(row.decode[java.time.LocalTime]("b"))
+                // And under the simple protocol, since the check is on the column's type rather than on the format.
+                simple <- client.simpleQuery("SELECT i, b FROM probe")
+                _ <- assertDecodeRefused("date over int, simple protocol", columnTypeName(backend, "i")) {
+                    simple.head.decode[java.time.LocalDate]("i")
+                }
+                // The positive control, without which every assertion above is satisfied by a guard that refuses
+                // everything: the same temporal read over the column it IS for still decodes, on both protocols.
+                dateRows   <- client.query("SELECT d FROM probe")
+                dateSimple <- client.simpleQuery("SELECT d FROM probe")
+                binary     <- dateRows.head.decode[java.time.LocalDate]("d")
+                textual    <- dateSimple.head.decode[java.time.LocalDate]("d")
+            yield
+                val expected = java.time.LocalDate.of(2026, 8, 4)
+                assert(binary.equals(expected), s"${backend.label}: a date over its own column must decode, got $binary")
+                assert(textual.equals(expected), s"${backend.label}: simple protocol: expected $expected, got $textual")
+            end for
         }
     }
 

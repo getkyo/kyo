@@ -283,7 +283,7 @@ class IdiomRenderTest extends Test:
         )
         assert(
             r.onlySql == Present(
-                "SELECT [p].[name] FROM [person] [p] WHERE ([p].[age] >= ?1) ORDER BY [p].[age] DESC LIMIT 10"
+                "SELECT [p].[name] FROM [person] [p] WHERE ([p].[age] >= ?1) ORDER BY [p].[age] DESC NULLS FIRST LIMIT 10"
             )
         )
         assert(r.params.toSeq.map(_.value: Any) == Seq(18))
@@ -369,7 +369,7 @@ class IdiomRenderTest extends Test:
         val r = rendered(Sql.from[Person]("p").orderBy(c => c.p.age.asc).count)
         assert(
             r.onlySql == Present(
-                "SELECT COUNT(*) FROM (SELECT [p].[id], [p].[name], [p].[age], [p].[deptId] FROM [person] [p] ORDER BY [p].[age] ASC) [sub]"
+                "SELECT COUNT(*) FROM (SELECT [p].[id], [p].[name], [p].[age], [p].[deptId] FROM [person] [p] ORDER BY [p].[age] ASC NULLS LAST) [sub]"
             )
         )
     }

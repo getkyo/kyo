@@ -136,8 +136,14 @@ private[kyo] object SqlClientProbe:
                                 // like it worked while every statement fell through to the pool, whose factory
                                 // panics.
                                 Meter.initMutexUnscoped.flatMap { meter =>
-                                    SqlClient.txLocal.let(Present(TransactionContext(client, probe, 1, Chunk.empty, meter))) {
-                                        f(client, () => calls.get)
+                                    // The failure marker a real transaction carries so a handled statement error cannot
+                                    // reach its commit. Fabricated empty here: this fixture never runs one.
+                                    AtomicRef.init(Maybe.empty[String]).flatMap { failed =>
+                                        SqlClient.txLocal.let(
+                                            Present(TransactionContext(client, probe, 1, Chunk.empty, meter, failed))
+                                        ) {
+                                            f(client, () => calls.get)
+                                        }
                                     }
                                 }
                             }

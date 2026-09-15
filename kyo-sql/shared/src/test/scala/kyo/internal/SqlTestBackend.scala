@@ -51,6 +51,81 @@ abstract class SqlTestBackend:
       */
     def columnType(key: SqlTestBackend.ColumnType): String
 
+    /** This engine's own name for a column of the given kind, as row metadata reports it (`int4` against `INT`). Only the kinds a body asks
+      * about need answer; the rest may raise.
+      */
+    def typeNameFor(kind: SqlTestBackend.ColumnType): String
+
+    /** This engine's spelling of a byte-string literal, `'\xdeadbeef'` against `X'DEADBEEF'`. Literal syntax, not a capability. */
+    def bytesLiteral(hexDigits: String): String
+
+    /** `SET` statements that change how this engine's simple protocol spells a value it already stores, empty where it has none. These are what
+      * make "the server's own rendering" undefined as a target.
+      */
+    def outputAffectingSettings: Chunk[String]
+
+    /** The kind a `BOOLEAN` declaration reports itself as. Pinned per engine rather than asserted as a disjunction, so an engine that HAS the
+      * type cannot start reporting the integer unnoticed.
+      */
+    def booleanColumnKind: SqlRow.ColumnKind
+
+    /** Whether this engine's instant column carries its offset on the wire.
+      *
+      * The capability behind two mirrored leaves: an engine that carries it can be read from any session zone, and an engine that cannot must
+      * have the session pinned at connect instead.
+      */
+    def instantWireCarriesOffset: Boolean
+
+    /** Whether this engine has a native array column type, as opposed to carrying a collection inside a document type. */
+    def hasNativeArrayColumns: Boolean
+
+    /** Whether this engine's time column is a signed SPAN rather than a time of day. Both ends need a leaf and neither engine can run the
+      * other's.
+      */
+    def timeColumnIsSignedSpan: Boolean
+
+    /** Whether this engine has a calendar-interval column type, carrying months and days and seconds at once. */
+    def hasCalendarIntervalColumn: Boolean
+
+    /** Whether this engine has a network-address column type. */
+    def hasNetworkAddressColumn: Boolean
+
+    /** Whether [[SqlTestBackend.ColumnType.TimeWithOffset]] is a real column here rather than text standing in for one. */
+    def hasTimeWithOffsetColumn: Boolean
+
+    /** Whether this engine's numeric and temporal columns hold `NaN` and the infinities. They have no Scala counterpart, so only an engine that
+      * accepts them can exercise the rendering.
+      */
+    def hasNonFiniteSpecialValues: Boolean
+
+    /** Whether this engine can honour the pinned absent-placement inside a window `ORDER BY` under a `RANGE` frame with a numeric offset.
+      *
+      * A real capability limit: that frame demands exactly one ordering expression, so an engine that lowers the placement into a second term
+      * has nowhere to put it, and no SQL it could render instead.
+      */
+    def windowRangeOffsetHonoursAbsentPlacement: Boolean
+
+    /** Column types this engine has and this module declines to render, each with a literal. Empty where it has none.
+      *
+      * A type whose text form is chosen by a session setting the connection is never told has no neutral value to render from. The ARRAY of
+      * such a type is a separate entry: an array dispatches its own elements, so the scalar refusal says nothing about it.
+      */
+    def unrenderableColumns: Chunk[(String, String)]
+
+    /** Array columns worth probing for cross-protocol agreement, as (column type, literal, expected rendering).
+      *
+      * Choose element types where a passthrough of the server's spelling would DIFFER from the pinned answer; one where they coincide proves
+      * nothing.
+      */
+    def arrayRenderCases: Chunk[(String, String, String)]
+
+    /** Engine-specific columns worth probing for cross-protocol agreement, as (column type, literal, expected rendering).
+      *
+      * Values only one engine holds, so no cross-ENGINE claim exists; the two wire protocols must still answer alike, which is what fails when
+      * a text arm is narrower than its binary twin. Read each off a live server rather than deriving it.
+      */
+    def protocolAgreementCases: Chunk[(String, String, String)]
+
     /** The SQLSTATE this engine reports when a statement references a table that does not exist (class 42). */
     def tableNotFoundSqlState: String
 
@@ -61,6 +136,11 @@ abstract class SqlTestBackend:
       * connection without naming an engine session function.
       */
     def sessionIdSql: String
+
+    /** A statement answering the level the CURRENT transaction is running under, as one text column, so a body can ask the server what it
+      * applied rather than trust what was sent. Read through [[SqlTestBackend.canonicalIsolationName]].
+      */
+    def isolationIntrospectionSql: String
 
     /** Provisions a fresh schema in this backend's shared container and runs `f` against it, dropping the schema on scope exit even when `f`
       * fails.
@@ -73,8 +153,18 @@ end SqlTestBackend
 
 object SqlTestBackend:
 
+    /** Folds an engine's spelling of a level into one comparable name: `read committed` and `READ-COMMITTED` are the same level. */
+    def canonicalIsolationName(serverAnswer: String): String =
+        serverAnswer.trim.toUpperCase.replace('-', ' ')
+
     /** The portable column kinds a conformance body asks a descriptor to spell as DDL, so the codec battery names no engine type. Each maps to
       * the engine column type that carries the matching [[kyo.SqlSchema]] wire codec.
+      */
+    /** `DateTime` is a WALL CLOCK; `Timestamp` is the engine's INSTANT type. One word apart and different things, so a descriptor mapping
+      * `Timestamp` to a wall-clock column would pass the instant leaves anyway (the driver pins every session to UTC, which makes the two
+      * coincide) while being weaker than the property it tests.
+      *
+      * Both name a microsecond-capable column for each, since an unqualified temporal column is precision 0 on one engine and 6 on the other.
       */
     enum ColumnType derives CanEqual:
         case SmallInt, Int, BigInt, Numeric, Boolean, Float32, Float64, Bytes, Uuid, Date, Time, TimeWithOffset, DateTime, Timestamp,

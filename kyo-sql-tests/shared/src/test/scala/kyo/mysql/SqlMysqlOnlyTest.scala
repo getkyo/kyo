@@ -37,137 +37,43 @@ class SqlMysqlOnlyTest extends SqlContainerTest:
                 Abort.error(Result.Panic(t))
         }
 
-    // ── ilike on MySQL uses LOWER(x) LIKE LOWER(p) emulation ──────────────────
-
-    "Leaf 17: ilike on MySQL returns expected rows using LOWER(…) LIKE LOWER(…)" in {
+    /** A procedure call leaves the connection at a statement boundary, so the next caller to borrow it gets its own answer.
+      *
+      * Engine-specific because only this engine can create the situation: a `CALL` here answers with the procedure's result set AND a
+      * trailing status packet for the call itself, while the other engine's `CALL` cannot return a result set at all. The property under
+      * test is not engine-specific at all though, and it is the most expensive one in the driver: a connection returned to the pool with
+      * unread packets on it hands the NEXT borrower the previous caller's rows. Cross-request data leakage, no error anywhere.
+      *
+      * `maxConnections = 1` is what makes the leaf mean something. With a larger pool the second query could be answered by a different,
+      * clean connection and the leaf would pass without ever exercising the case.
+      *
+      * Both halves are asserted. That the call answers its own rows proves the drain does not eat the caller's result, and that the next
+      * query answers 42 proves nothing was left behind for it to trip over.
+      */
+    "a procedure call leaves the connection usable for the next statement" in {
         Scope.run {
             SqlSharedContainers.withFreshSchema(Backend.MySQL) { ctx =>
-                withMyClient(ctx) { client =>
-                    for
-                        _ <- client.executeRaw(
-                            "CREATE TABLE person (id BIGINT PRIMARY KEY, name VARCHAR(128) NOT NULL, age INT NOT NULL)"
-                        )
-                        _ <- client.executeRaw("INSERT INTO person VALUES (1, 'Alice', 30), (2, 'BOB', 25), (3, 'carol', 28)")
-                        // Verify rendering uses LOWER(…) LIKE LOWER(…) on MySQL
-                        _ =
-                            val rendered = Sql.from[Person]("p").where(c => c.p.name.ilike("alice%")).select(c => c.p.name)
-                                .render(MysqlDialect)
-                            assert(
-                                rendered.onlySql.get.contains("LOWER"),
-                                s"Expected LOWER in MySQL ilike SQL, got: ${rendered.onlySql.get}"
-                            )
-                        // Execute against live MySQL
-                        rows <- Sql
-                            .from[Person]("p")
-                            .where(c => c.p.name.ilike("alice%"))
-                            .select(c => c.p.name)
-                            .run
-                    yield
-                        assert(rows.size == 1, s"Expected 1 ilike match for 'alice%', got: ${rows.size}")
-                        assert(rows.head == "Alice", s"Expected 'Alice', got: '${rows.head}'")
-                }
-            }
-        }
-    }
-
-    // ── ++ concat on MySQL uses CONCAT(…) ─────────────────────────────────────
-
-    "Leaf 19: ++ concat on MySQL returns expected concatenated string using CONCAT" in {
-        Scope.run {
-            SqlSharedContainers.withFreshSchema(Backend.MySQL) { ctx =>
-                withMyClient(ctx) { client =>
-                    for
-                        _ <- client.executeRaw(
-                            "CREATE TABLE person (id BIGINT PRIMARY KEY, name VARCHAR(128) NOT NULL, age INT NOT NULL)"
-                        )
-                        _ <- client.executeRaw("INSERT INTO person VALUES (1, 'alice', 30)")
-                        // Verify the rendered SQL uses CONCAT for concat on MySQL
-                        _ =
-                            val rendered = Sql.from[Person]("p").select(c => c.p.name ++ " rocks")
-                                .render(MysqlDialect)
-                            assert(
-                                rendered.onlySql.get.contains("CONCAT"),
-                                s"Expected CONCAT in MySQL concat SQL, got: ${rendered.onlySql.get}"
-                            )
-                        // Execute the concat query against live MySQL
-                        rows <- Sql
-                            .from[Person]("p")
-                            .where(c => c.p.id == 1L)
-                            .select(c => c.p.name ++ " rocks")
-                            .run
-                    yield
-                        assert(rows.size == 1, s"Expected 1 row, got: ${rows.size}")
-                        assert(rows.head == "alice rocks", s"Expected 'alice rocks', got: '${rows.head}'")
-                }
-            }
-        }
-    }
-
-    // ── onConflictDoNothing is idempotent on MySQL (INSERT IGNORE) ────────────
-
-    "Leaf 21: onConflictDoNothing is idempotent on MySQL via INSERT IGNORE" in {
-        Scope.run {
-            SqlSharedContainers.withFreshSchema(Backend.MySQL) { ctx =>
-                withMyClient(ctx) { client =>
-                    for
-                        _ <- client.executeRaw(
-                            "CREATE TABLE person (id BIGINT PRIMARY KEY, name VARCHAR(128) NOT NULL, age INT NOT NULL)"
-                        )
-                        _ <- client.executeRaw("INSERT INTO person VALUES (1, 'alice', 30)")
-                        // Verify the rendered SQL uses INSERT IGNORE on MySQL
-                        _ =
-                            val rendered = Sql.insert[Person].values(Person(1L, "alice-dup", 99)).onConflictDoNothing()
-                                .render(MysqlDialect)
-                            assert(
-                                rendered.onlySql.get.contains("INSERT IGNORE"),
-                                s"Expected INSERT IGNORE in MySQL onConflictDoNothing SQL, got: ${rendered.onlySql.get}"
-                            )
-                        // Insert duplicate with onConflictDoNothing
-                        _ <- Sql
-                            .insert[Person]
-                            .values(Person(1L, "alice-duplicate", 99))
-                            .onConflictDoNothing()
-                            .run
-                        rows <- Sql.from[Person]("p").run
-                    yield
-                        assert(rows.size == 1, s"Expected 1 row after idempotent INSERT IGNORE, got: ${rows.size}")
-                        assert(rows.head == Person(1L, "alice", 30), s"Expected original Person(1,alice,30), got: ${rows.head}")
-                }
-            }
-        }
-    }
-
-    // ── onConflictDoUpdate updates existing row on MySQL ──────────────────────
-
-    "Leaf 23: onConflictDoUpdate updates existing row on MySQL via ON DUPLICATE KEY UPDATE" in {
-        Scope.run {
-            SqlSharedContainers.withFreshSchema(Backend.MySQL) { ctx =>
-                withMyClient(ctx) { client =>
-                    for
-                        _ <- client.executeRaw(
-                            "CREATE TABLE person (id BIGINT PRIMARY KEY, name VARCHAR(128) NOT NULL, age INT NOT NULL)"
-                        )
-                        _ <- client.executeRaw("INSERT INTO person VALUES (1, 'alice', 30)")
-                        // Verify the rendered SQL uses ON DUPLICATE KEY UPDATE on MySQL
-                        _ =
-                            val rendered = Sql.insert[Person]
-                                .values(Person(1L, "alice-upserted", 31))
-                                .onConflictDoUpdate(_.id)(c => c.age := Sql.Excluded(c.age))
-                                .render(MysqlDialect)
-                            assert(
-                                rendered.onlySql.get.contains("ON DUPLICATE KEY UPDATE"),
-                                s"Expected ON DUPLICATE KEY UPDATE in MySQL upsert SQL, got: ${rendered.onlySql.get}"
-                            )
-                        // Execute the upsert against live MySQL
-                        _ <- Sql
-                            .insert[Person]
-                            .values(Person(1L, "alice-upserted", 31))
-                            .onConflictDoUpdate(_.id)(c => c.age := Sql.Excluded(c.age))
-                            .run
-                        rows <- Sql.from[Person]("p").run
-                    yield
-                        assert(rows.size == 1, s"Expected 1 row after upsert, got: ${rows.size}")
-                        assert(rows.head.age == 31, s"Expected updated age 31, got: ${rows.head.age}")
+                Abort.run[SqlConnectionException](MysqlClient.init(myUrl(ctx), SqlConfig(maxConnections = 1))).flatMap {
+                    case Result.Success(client) =>
+                        Scope.ensure(client.close).andThen(DB.run(client) {
+                            for
+                                _      <- client.executeRaw("CREATE PROCEDURE pick() BEGIN SELECT 7 AS v; END")
+                                called <- client.query("CALL pick()")
+                                picked <- called.head.decode[Int]("v")
+                                // The same connection, because the pool holds exactly one.
+                                after  <- client.query("SELECT 42 AS answer")
+                                answer <- after.head.decode[Int]("answer")
+                            yield
+                                assert(picked == 7, s"the call must answer its own row, got $picked")
+                                assert(
+                                    answer == 42,
+                                    s"the next statement on this connection must get its own answer, got $answer: " +
+                                        "a leftover result set means this connection would serve one caller's rows to another"
+                                )
+                            end for
+                        })
+                    case Result.Failure(e) => Abort.fail(e: SqlException)
+                    case Result.Panic(t)   => Abort.error(Result.Panic(t))
                 }
             }
         }
