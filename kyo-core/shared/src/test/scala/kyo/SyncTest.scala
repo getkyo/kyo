@@ -663,6 +663,33 @@ class SyncTest extends kyo.test.Test[Any]:
             yield assert(r == 1, s"the finalizer ran $r times")
             end for
         }
+
+        // Any handler holding the continuation may resume it more than once: nothing has to be declared.
+        "a plain handler that resumes twice runs both shots against the live resource, released once" in {
+            import kyo.kernel.ArrowEffect
+            for
+                released <- AtomicInt.init(0)
+                seen     <- AtomicRef.init(Chunk.empty[Int])
+                body = (Sync.ensure(released.incrementAndGet.unit) {
+                    ArrowEffect.suspend[Any](Tag[Replayed], ()).map(n =>
+                        released.get.map(r => seen.updateAndGet(_.append(r)).andThen(n))
+                    )
+                }: Int < (Replayed & Sync))
+                res <- Abort.run[Closed] {
+                    ArrowEffect.handleCont[Const[Unit], Const[Int], Replayed, Int, Int, Sync, Any](Tag[Replayed], body)(
+                        [C] => (_, cont) => cont(1).map(a => cont(2).map(b => a + b)),
+                        a => a
+                    )
+                }
+                r <- released.get
+                s <- seen.get
+            yield
+                assert(res == Result.succeed(3), s"$res")
+                assert(r == 1, s"released $r")
+                assert(s == Chunk(0, 0), s"a shot did not run against a live resource: $s")
+            end for
+        }
+
     }
 
 end SyncTest

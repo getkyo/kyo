@@ -3525,6 +3525,54 @@ class ArrowEffectTest extends Test:
                 mixedWrap(2).map(b => mixedMint.map(id => (b, id)))
             assert(runMixedState(0)(v).eval == ((Wrapped(102), "mm")))
         }
+
+        /* PORTED FROM robustness; commented out: need ArrowEffect.handleContRepeated, absent on this branch
+        // The continuation captured at the second occurrence must be the rest of the body only. Before the re-entry
+        // it also carried the enclosing clause's pending second resumption, so every inner resumption re-triggered
+        // it and the program never terminated.
+        "a clause resuming twice over two consecutive occurrences" in {
+            // every path through two choices of 7 or 8, summed: (7 + 7) + (7 + 8) + (8 + 7) + (8 + 8)
+            val v = ask.map(a => ask.map(b => a + b))
+            val r: Int < Any = ArrowEffect.handleContRepeated(Tag[Ask], v)(
+                [C] => (_, k) => k(7).map(x => k(8).map(y => x + y)),
+                a => a
+            )
+            assert(r.eval == 60)
+        }
+
+        "done runs once, at the outer region's end, not per resumption" in {
+            // per-resumption done would give (14 + 1000) + (15 + 1000) + (15 + 1000) + (16 + 1000) = 4060
+            val v = ask.map(a => ask.map(b => a + b))
+            val r: Int < Any = ArrowEffect.handleContRepeated(Tag[Ask], v)(
+                [C] => (_, k) => k(7).map(x => k(8).map(y => x + y)),
+                a => a + 1000
+            )
+            assert(r.eval == 1060)
+        }
+
+        "three consecutive occurrences" in {
+            // each position contributes 2^2 * (7 + 8) across the eight paths
+            val v = ask.map(a => ask.map(b => ask.map(c => a + b + c)))
+            val r: Int < Any = ArrowEffect.handleContRepeated(Tag[Ask], v)(
+                [C] => (_, k) => k(7).map(x => k(8).map(y => x + y)),
+                a => a
+            )
+            assert(r.eval == 180)
+        }
+
+        "a throw after a second resumption reaches the outer recover" in {
+            // the region a resumption re-enters answers nothing on its own: a throwable raised inside it unwinds to the
+            // outer region, whose recover is the one in effect, as before the re-entry existed
+            val v = ask.map(a => ask.map(b => if a + b == 15 then throw new IllegalStateException("boom") else a + b))
+            val r: Int < Any = ArrowEffect.handleContRepeated(Tag[Ask], v)(
+                [C] => (_, k) => k(7).map(x => k(8).map(y => x + y)),
+                a => a,
+                ex => Maybe(ex.getMessage.length)
+            )
+            assert(r.eval == 4)
+        }
+         */
+
     }
 
 end ArrowEffectTest

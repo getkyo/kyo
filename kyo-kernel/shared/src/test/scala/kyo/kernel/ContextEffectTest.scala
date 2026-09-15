@@ -528,6 +528,105 @@ class ContextEffectTest extends AnyFreeSpec:
             assert(answerAsk(0)(first).eval == 42)
             assert(log.toList == List("clause", "done cfg 1"))
         }
+
+        /* PORTED FROM robustness; commented out: needs ContextEffect.handle's done hook + the completing helper (this branch has release instead)
+        "done runs when the extent ends" in {
+            var completed = Maybe.empty[Int]
+            val v         = completing(42, i => completed = Maybe(i))(count.map(_ + 1))
+            assert(v.eval == 43)
+            assert(completed == Maybe(42))
+        }
+         */
+
+        /* PORTED FROM robustness; commented out: needs ContextEffect.handle's done hook + the completing helper (this branch has release instead)
+        "done runs before what follows the extent" in {
+            var order = List.empty[String]
+            val v = completing(1, _ => order = order :+ "done")(count.map(_ => order = order :+ "body"))
+                .map(_ => order = order :+ "after")
+            v.eval
+            assert(order == List("body", "done", "after"))
+        }
+         */
+
+        /* PORTED FROM robustness; commented out: needs ContextEffect.handle's done hook + the completing helper (this branch has release instead)
+        // A binding owns nothing to release: what a throw or a discarded continuation leaves behind is a bracket's
+        // to release, and a binding's done runs only at a normal end.
+        "done does not run when the computation throws, and the failure still leaves" in {
+            var completed = false
+            val v         = completing(1, _ => completed = true)(count.map(_ => (throw new RuntimeException("boom")): Int))
+            intercept[RuntimeException] {
+                val _ = v.eval
+            }
+            assert(!completed)
+        }
+         */
+
+        /* PORTED FROM robustness; commented out: needs ContextEffect.handle's done hook + the completing helper (this branch has release instead)
+        "done does not run when a clause discards the continuation" in {
+            var completed    = false
+            val v: Int < Ask = completing(1, _ => completed = true)(ask.map(a => count.map(_ + a)))
+            val r: Int < Any = ArrowEffect.handleCont(Tag[Ask], v)([C] => (_, _) => 99, a => a)
+            assert(r.eval == 99)
+            assert(!completed)
+        }
+         */
+
+        /* PORTED FROM robustness; commented out: needs ContextEffect.handle's done hook + the completing helper (this branch has release instead)
+        "done runs once when the extent ends and the eval then drains" in {
+            var count0 = 0
+            val v      = completing(1, _ => count0 += 1)(count.map(_ + 1))
+            assert(v.eval == 2)
+            assert(count0 == 1)
+        }
+         */
+
+        "each shot of a crossing completes the bindings it re-installs" in {
+            // pendingUntilFixed (ported from robustness): a crossing shot does not complete the bindings it re-installs; design-difference vs this branch's crossing/binding semantics (same family as the discard-signal gaps)
+            pendingUntilFixed {
+                val log = ListBuffer[String]()
+                val body: Int < (Ask & Say) =
+                    hooked(log, "outer", 1)(hooked(log, "inner", 2)(say("s").map(_ => 0)).map(a => ask.map(_ + a)))
+                val handledSay: Int < Ask = ArrowEffect.handleCont(Tag[Say], body)([C] => (_, cont) => cont(()), a => a)
+                val twice: Int < Any = ArrowEffect.handleCont(Tag[Ask], handledSay)(
+                    [C] => (_, cont) => cont(10).map(a => cont(20).map(b => a + b)),
+                    a => a
+                )
+                assert(twice.eval == 30)
+                assert(log.count(_ == "done outer 1") == 2)
+                ()
+            }
+        }
+
+        /* PORTED FROM robustness; commented out: needs ContextEffect.handle's done hook + the completing helper (this branch has release instead)
+        "a throwing done unwinds through the regions around the binding" in {
+            val log  = ListBuffer[String]()
+            val boom = new RuntimeException("boom")
+            val r: Int < Any =
+                Bracket.ensuring(outcome => discard(log += s"release ${outcome.exists(_ eq boom)}")) {
+                    ContextEffect.handle(
+                        Tag[Count],
+                        derive = (_: Maybe[Int]) => 7,
+                        fork = (p: Int) => p,
+                        join = (p: Int, _: Int, _: Int) => p,
+                        done = (_: Int) => throw boom
+                    )(count)
+                }
+            assert(intercept[RuntimeException](r.eval) eq boom)
+            assert(log.toList == List("release true"))
+        }
+         */
+
+        "a crossing resumed in a nested eval inside the clause completes its binding there" in {
+            val log             = ListBuffer[String]()
+            val body: Int < Ask = hooked(log, "cfg", 1)(ask.map(_ + 1))
+            val r: Int < Any = ArrowEffect.handleCont(Tag[Ask], body)(
+                [C] => (_, cont) => Region.discharge(answerAsk(0)(cont(41))).eval + 1,
+                a => a
+            )
+            assert(r.eval == 43)
+            assert(log.toList == List("done cfg 1"))
+        }
+
     }
 
 end ContextEffectTest

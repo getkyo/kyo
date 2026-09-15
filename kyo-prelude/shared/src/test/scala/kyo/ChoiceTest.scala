@@ -428,6 +428,18 @@ class ChoiceTest extends kyo.test.Test[Any]:
             assert(v.eval == Chunk(1, 2, 3))
             assert(log == Chunk("branch1", "branch2", "branch3", "release"))
         }
+
+        "nested choice points stream in the order run collects them".pendingUntilFixed(
+            "ported from robustness; nested choice points stream in a different order than run collects them; behavior gap in this branch's Choice streaming order"
+        ) in {
+            val computation =
+                Choice.eval(1, 2).map { a =>
+                    if a == 1 then Choice.eval(10, 11) else a
+                }
+            assert(Choice.runStream(computation).run.eval == Choice.run(computation).eval)
+            assert(Choice.runStream(computation).run.eval == Chunk(10, 11, 2))
+        }
+
     }
 
 end ChoiceTest

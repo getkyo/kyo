@@ -547,6 +547,22 @@ class KernelTest extends AnyFreeSpec:
             assert(r.eval == 7)
             assert(completed)
         }
+
+        /* PORTED FROM robustness; commented out: needs ContextEffect.handle's done hook (this branch has release)
+        "the done hook is accepted at the handle site" in {
+            var completed = false
+            val r = ContextEffect.handle(
+                Tag[Level],
+                derive = (_: Maybe[Int]) => 7,
+                fork = (l: Int) => l,
+                join = (parent: Int, _: Int, _: Int) => parent,
+                done = (_: Int) => completed = true
+            )(level)
+            assert(r.eval == 7)
+            assert(completed)
+        }
+         */
+
     }
 
 end KernelTest
