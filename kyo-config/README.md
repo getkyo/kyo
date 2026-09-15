@@ -66,6 +66,17 @@ Flags resolve in this order:
 
 The first source found wins.
 
+On JavaScript there is no `-D` at launch and a browser has no environment, so both sources can be seeded through an object assigned before the program loads, for example in a `<script>` ahead of the application's module or in a Node `--import` preload:
+
+```js
+globalThis.KYO_CONFIG = {
+  env: { MYAPP_DB_POOLSIZE: "20" },
+  properties: { "myapp.db.poolSize": "20" }
+}
+```
+
+The host answers first and the seed fills what it leaves unset: a variable comes from `process.env` (Node, Bun, Deno) before the seed's `env`, and a property set with `java.lang.System.setProperty` comes before the seed's `properties`. String values are used as is, numbers and booleans as their string form, and anything else is ignored. A read the host refuses counts as unset, so on Deno a program run without `--allow-env` resolves its flags from the seed and the defaults instead of failing.
+
 Note: When a flag resolves to its default, kyo-config scans system properties and env vars for a case-insensitive near-match and warns on stderr ("did you mean ...?"), catching the classic "I set the property but it is still the default" typo.
 
 ### Validation
@@ -587,5 +598,5 @@ The kyo-http module builds on kyo-config to expose dynamic-flag management over 
 kyo-config compiles and runs on JVM, JavaScript, and Scala Native. The same flag declarations, rollout expressions, and typed parsing work identically across all platforms. Bucketing is deterministic and consistent: the same key produces the same bucket regardless of platform.
 
 - **JVM**: No additional setup required.
-- **JavaScript**: Full support. System properties are not available, so flags resolve from environment variables or defaults.
+- **JavaScript**: Full support on Node, Bun, Deno, and in the browser. Environment variables come from `process.env` where the host has it; launch-time properties, and a browser's whole configuration, come from the `globalThis.KYO_CONFIG` seed (see [Configuration Sources](#configuration-sources)).
 - **Native**: Full support. Same behavior as JVM.

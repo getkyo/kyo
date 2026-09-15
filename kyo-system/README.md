@@ -656,9 +656,22 @@ Built-in `Parser` instances cover: `String`, `Int`, `Long`, `Float`, `Double`, `
 
 `System.lineSeparator` returns the platform line separator (`"\n"` on Linux and macOS, `"\r\n"` on Windows) as `String < Sync`. `System.userName` returns the OS user name as `String < Sync`. Both read from the host environment and carry `Sync`.
 
-`System.live` is the default ambient instance backed by the host environment. All `System.*` calls delegate to it when `System.let` has not been called.
+`System.live` is the default ambient instance backed by the host environment. All `System.*` calls delegate to it when `System.let` has not been called. It reads the same environment variables and system properties kyo-config's flags do:
 
-`System.let(system)(computation)` replaces the ambient `System` for the duration of the computation. Use it in tests to inject controlled values without touching the process environment:
+- On JVM and Scala Native, `java.lang.System`'s.
+- On JavaScript, the host's first: `process.env` on Node, Bun and Deno, and properties set with `java.lang.System.setProperty`. The `globalThis.KYO_CONFIG` seed fills what the host leaves unset, which is how a browser page gets any (see kyo-config's README, "Configuration Sources"). A read the host refuses, as Deno does for `process.env` without `--allow-env`, is `Absent`.
+- `System.userName` on JavaScript is the `user.name` property when one is set or seeded, otherwise the OS user on Node, Bun and Deno, and `""` on a host without one, such as a browser.
+
+`System.let(system)(computation)` replaces the ambient `System` for the duration of the computation. `System.fromMap` builds one whose variables and properties are exactly the given maps, with every other member taken from `System.live`. Use it in tests to fix the configuration without touching the process environment:
+
+```scala
+import kyo.*
+
+val staging: Maybe[String] < Sync =
+    System.let(System.fromMap(env = Map("APP_ENV" -> "staging")))(System.env[String]("APP_ENV"))
+```
+
+The scope covers what `System` answers inside the computation; flags resolve from the process-wide sources and do not see it. For full control over every member, implement `System.Unsafe`:
 
 ```scala
 import kyo.*

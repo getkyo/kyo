@@ -3657,11 +3657,26 @@ lazy val `kyo-test-runner` =
         )
         .jsSettings(
             `js-settings`,
-            libraryDependencies += "org.scala-sbt" % "test-interface" % "1.0" % Provided
+            libraryDependencies += "org.scala-sbt" % "test-interface" % "1.0" % Provided,
+            // ConsoleReporter reads NO_COLOR once, when its object initializes, before any test body runs.
+            // ConsoleReporterJsWasmTest asserts the JS read sees it, so it is in the test process environment
+            // from the start rather than written by a test.
+            Test / jsEnv := new NodeJSEnv(
+                NodeJSEnv.Config()
+                    .withArgs(List("--max_old_space_size=5120"))
+                    .withEnv(Map("NO_COLOR" -> "1"))
+            )
         )
         .wasmSettings(
             `wasm-settings`,
-            libraryDependencies += "org.scala-sbt" % "test-interface" % "1.0" % Provided
+            libraryDependencies += "org.scala-sbt" % "test-interface" % "1.0" % Provided,
+            // NO_COLOR as in .jsSettings above. This Test / jsEnv override fully replaces wasm-settings' jsEnv, so it
+            // re-adds the --experimental-wasm-exnref flag the WasmGC module needs.
+            Test / jsEnv := new NodeJSEnv(
+                NodeJSEnv.Config()
+                    .withArgs(List("--max_old_space_size=5120", "--experimental-wasm-exnref"))
+                    .withEnv(Map("NO_COLOR" -> "1"))
+            )
         )
 
 lazy val `kyo-test-prop` =

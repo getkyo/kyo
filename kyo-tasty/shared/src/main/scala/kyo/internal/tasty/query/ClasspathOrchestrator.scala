@@ -3,6 +3,7 @@ package kyo.internal.tasty.query
 import kyo.*
 import kyo.Maybe.Absent
 import kyo.Tasty.SymbolId
+import kyo.internal.HostConfig
 import kyo.internal.tasty.binary.ByteView
 import kyo.internal.tasty.classfile.ClassfileUnpickler
 import kyo.internal.tasty.classfile.ModuleInfoReader
@@ -44,7 +45,7 @@ import scala.collection.mutable
 object ClasspathOrchestrator:
 
     /** Whether to emit the one-line timing summary to stderr. Set -Dkyo.reflect.timing=true to enable. */
-    private val timingEnabled: Boolean = java.lang.System.getProperty("kyo.reflect.timing") == "true"
+    private val timingEnabled: Boolean = HostConfig.property("kyo.reflect.timing") == "true"
 
     /** Minimum concurrency for Phase A and B. Bounded by available processors. */
     private def defaultConcurrency: Int = Runtime.getRuntime.availableProcessors().max(1)

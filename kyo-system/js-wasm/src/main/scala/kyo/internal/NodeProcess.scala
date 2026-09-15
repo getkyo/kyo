@@ -1,29 +1,34 @@
 package kyo.internal
 
-import kyo.discard
 import scala.scalajs.js
 
 /** The `process` global for the Node backends of Path and Process, read without the `ReferenceError` a bare `process` throws on a host that
   * does not declare it, such as a browser.
   *
-  * A read that has a meaningful answer on such a host gets it: an environment variable is unset and a child inherits nothing. An operation
-  * that has none, such as the working directory or the pid a lock records, fails with [[unsupported]], which names the operation and the
-  * host.
+  * A read that has a meaningful answer on such a host gets it: an environment variable is unset and a child inherits nothing. The same holds
+  * where the host refuses the read, as Deno does for `process.env` without `--allow-env` by throwing. An operation that has no answer, such as
+  * the working directory or the pid a lock records, fails with [[unsupported]], which names the operation and the host.
+  *
+  * These are the OS environment, not the configuration flags and `System` read: a child inherits the real environment, and a seed has no
+  * place in it.
   */
 private[kyo] object NodeProcess:
 
-    /** `process.env[name]` when it is a string, and `null` otherwise, including on a host without `process`. */
+    /** `process.env[name]` when it is a string, and `null` otherwise, including on a host without `process` or one that refuses the read. */
     def env(name: String): String =
         envObject.fold(null: String) { env =>
-            val value = env.selectDynamic(name)
-            if js.typeOf(value) == "string" then value.asInstanceOf[String] else null
+            try
+                val value = env.selectDynamic(name)
+                if js.typeOf(value) == "string" then value.asInstanceOf[String] else null
+            catch case _: js.JavaScriptException => null
         }
 
-    /** A new object holding a copy of `process.env`, and an empty one on a host without `process`. */
+    /** A new object holding a copy of `process.env`, and an empty one on a host without `process` or one that refuses the read. */
     def envCopy(): js.Dynamic =
-        val copy = js.Dynamic.literal()
-        envObject.foreach(env => discard(js.Dynamic.global.Object.assign(copy, env)))
-        copy
+        envObject.fold(js.Dynamic.literal()) { env =>
+            try js.Dynamic.global.Object.assign(js.Dynamic.literal(), env)
+            catch case _: js.JavaScriptException => js.Dynamic.literal()
+        }
     end envCopy
 
     /** `process` on a Node-like host, for `operation`; anywhere else, throws [[unsupported]]. */

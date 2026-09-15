@@ -5,6 +5,7 @@ import kyo.Ansi.*
 import kyo.Chunk
 import kyo.Duration
 import kyo.Maybe
+import kyo.internal.HostConfig
 import kyo.test.LeafInfo
 import kyo.test.RunInfo
 import kyo.test.SuiteInfo
@@ -304,6 +305,6 @@ object ConsoleReporter:
 
     /** True unless the `NO_COLOR` environment variable is set (any value). */
     val autoDetect: Boolean =
-        detectColors(java.lang.System.getenv)
+        detectColors(HostConfig.env)
 
 end ConsoleReporter

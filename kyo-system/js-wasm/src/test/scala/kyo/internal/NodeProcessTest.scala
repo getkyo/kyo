@@ -17,6 +17,29 @@ class NodeProcessTest extends kyo.test.Test[Any]:
         end try
     end withoutProcessGlobal
 
+    /** `process.env` replaced by a proxy that throws from every trap, as Deno's does without `--allow-env`. */
+    private def withEnvThatThrows[A](f: => A): A =
+        val process                    = sjs.Dynamic.global.process
+        val saved                      = process.env
+        val refuse: sjs.Function0[Any] = () => sjs.special.`throw`(sjs.Dynamic.newInstance(sjs.Dynamic.global.Error)("NotCapable"))
+        val traps = sjs.Dynamic.literal(get = refuse, has = refuse, ownKeys = refuse, getOwnPropertyDescriptor = refuse)
+        process.updateDynamic("env")(sjs.Dynamic.newInstance(sjs.Dynamic.global.Proxy)(sjs.Dynamic.literal(), traps))
+        try f
+        finally process.updateDynamic("env")(saved)
+        end try
+    end withEnvThatThrows
+
+    "when every process.env read throws (Deno without --allow-env)" - {
+        "env is null" in {
+            assert(withEnvThatThrows(NodeProcess.env("PATH")) == null)
+        }
+
+        "envCopy is empty" in {
+            val copy = withEnvThatThrows(NodeProcess.envCopy())
+            assert(sjs.Object.keys(copy.asInstanceOf[sjs.Object]).length == 0)
+        }
+    }
+
     "on Node" - {
         "env reads a variable set in process.env and is null for one that is not" in {
             sjs.Dynamic.global.process.env.updateDynamic("KYO_NODEPROCESS_PROBE")("set")

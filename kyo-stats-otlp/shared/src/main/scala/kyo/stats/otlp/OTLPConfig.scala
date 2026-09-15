@@ -1,6 +1,7 @@
 package kyo.stats.otlp
 
 import kyo.*
+import kyo.internal.HostConfig
 
 /** Configuration for the OTLP exporter.
   *
@@ -58,7 +59,7 @@ object OTLPConfig:
 
     /** Returns Absent if OTEL_EXPORTER_OTLP_ENDPOINT is not set, export is disabled. */
     def loadIfEnabled()(using AllowUnsafe) =
-        val endpoint = java.lang.System.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+        val endpoint = HostConfig.env("OTEL_EXPORTER_OTLP_ENDPOINT")
         if endpoint == null then Absent
         else
             Present(OTLPConfig(
@@ -81,7 +82,7 @@ object OTLPConfig:
     end loadIfEnabled
 
     private def envOrDefault(name: String, default: String): String =
-        val v = java.lang.System.getenv(name)
+        val v = HostConfig.env(name)
         if v == null then default else v
 
     private def parseHeaders(s: String): Map[String, String] =

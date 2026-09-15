@@ -713,7 +713,7 @@ The element count for `Borrowed[Buffer[A]]` is inferred from the method's parame
 
 Without `Borrowed`, a top-level `String` / `Buffer[A]` return is rejected at build time. The ownership intent must be explicit. Applying `Borrowed` to a primitive / `Unit` / struct return is similarly rejected.
 
-Checked-borrow mode provides use-after-free diagnostics. Enable process-wide with `-Dkyo.ffi.checkedBorrows=true` or per-binding via `Ffi.Config.checkedBorrows`. When enabled, every borrowed `Buffer` is attached to a `BorrowOwner`; each `get` / `set` verifies the owner is still valid, throwing `BorrowRevoked` if revoked.
+Checked-borrow mode provides use-after-free diagnostics. Enable process-wide with `-Dkyo.ffi.checkedBorrows=true` (on JavaScript, `java.lang.System.setProperty` or the `globalThis.KYO_CONFIG` seed described in kyo-config's README) or per-binding via `Ffi.Config.checkedBorrows`. When enabled, every borrowed `Buffer` is attached to a `BorrowOwner`; each `get` / `set` verifies the owner is still valid, throwing `BorrowRevoked` if revoked.
 
 ## Variadic C functions
 

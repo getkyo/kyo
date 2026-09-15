@@ -77,11 +77,61 @@ class SystemTest extends kyo.test.Test[Any]:
         yield assert(separator == expected)
     }
 
-    "userName" in {
+    // Scala.js sets no user.name property; SystemPlatformSpecificJsWasmTest covers the JS resolution.
+    "userName is the user.name property".notJs in {
         for
             name <- System.userName
             expected = j.System.getProperty("user.name")
         yield assert(name == expected)
+    }
+
+    "fromMap" - {
+        "answers env and property from its maps only" in {
+            val system = System.fromMap(env = Map("APP_ENV" -> "test"), properties = Map("app.port" -> "8080"))
+            for
+                env         <- System.let(system)(System.env[String]("APP_ENV"))
+                missingEnv  <- System.let(system)(System.env[String]("PATH"))
+                port        <- System.let(system)(System.property[Int]("app.port"))
+                missingProp <- System.let(system)(System.property[String]("line.separator"))
+            yield
+                assert(env == Present("test"))
+                assert(missingEnv == Absent)
+                assert(port == Present(8080))
+                assert(missingProp == Absent)
+            end for
+        }
+
+        "defaults to no variables and no properties" in {
+            for
+                env  <- System.let(System.fromMap())(System.env[String]("PATH"))
+                prop <- System.let(System.fromMap())(System.property[String]("line.separator"))
+            yield
+                assert(env == Absent)
+                assert(prop == Absent)
+            end for
+        }
+
+        "keeps the live answers for everything else" in {
+            val system = System.fromMap(env = Map("APP_ENV" -> "test"))
+            for
+                separator  <- System.let(system)(System.lineSeparator)
+                user       <- System.let(system)(System.userName)
+                os         <- System.let(system)(System.operatingSystem)
+                arch       <- System.let(system)(System.architecture)
+                processors <- System.let(system)(System.availableProcessors)
+                liveSep    <- System.lineSeparator
+                liveUser   <- System.userName
+                liveOs     <- System.operatingSystem
+                liveArch   <- System.architecture
+                liveProcs  <- System.availableProcessors
+            yield
+                assert(separator == liveSep)
+                assert(user == liveUser)
+                assert(os == liveOs)
+                assert(arch == liveArch)
+                assert(processors == liveProcs)
+            end for
+        }
     }
 
     "operatingSystem" in {

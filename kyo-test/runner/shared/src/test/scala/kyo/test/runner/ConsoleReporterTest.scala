@@ -308,7 +308,7 @@ class ConsoleReporterTest extends kyo.test.Test[Any]:
 
         // Pin the runtime autoDetect value against the same logic driven by the real env
         val actual   = ConsoleReporter.autoDetect
-        val expected = ConsoleReporter.detectColors(java.lang.System.getenv)
+        val expected = ConsoleReporter.detectColors(kyo.internal.HostConfig.env)
         assert(actual == expected, s"autoDetect=$actual disagrees with detectColors on the real env")
     }
 

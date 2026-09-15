@@ -1,10 +1,10 @@
 package kyo
 
 import System.Parser
-import java.lang.System as JSystem
 import java.net.MalformedURLException
 import java.net.URISyntaxException
 import java.time.format.DateTimeParseException
+import kyo.internal.HostConfig
 import kyo.internal.Reducible
 import kyo.internal.SystemPlatformSpecific
 
@@ -95,16 +95,24 @@ object System:
 
     private val local = Local.init(live)
 
-    /** The default live System implementation. */
+    /** The default live System implementation.
+      *
+      * Environment variables and system properties are the process-wide ones flags also read. On the JVM and Native they come from
+      * `java.lang.System`. On JS the host answers first (`process.env` on Node, Bun and Deno; properties set with `java.lang.System.setProperty`)
+      * and the `globalThis.KYO_CONFIG` seed fills what it leaves unset, which is how a browser page gets any configuration. A read the host
+      * refuses, such as Deno's `process.env` without `--allow-env`, is `Absent`.
+      *
+      * The user name is the `user.name` property where one is set; on JS without it, the OS user on a Node-like host and `""` elsewhere.
+      */
     val live: System =
         System(
             new Unsafe:
                 def env(name: String)(using AllowUnsafe): Maybe[String] =
-                    Maybe(SystemPlatformSpecific.env(name))
+                    Maybe(HostConfig.env(name))
                 def property(name: String)(using AllowUnsafe): Maybe[String] =
-                    Maybe(SystemPlatformSpecific.property(name))
+                    Maybe(HostConfig.property(name))
                 def lineSeparator()(using AllowUnsafe): String = kyo.internal.Platform.lineSeparator
-                def userName()(using AllowUnsafe): String      = JSystem.getProperty("user.name")
+                def userName()(using AllowUnsafe): String      = SystemPlatformSpecific.userName()
                 def operatingSystem()(using AllowUnsafe): OS =
                     import kyo.internal.Platform.Os
                     kyo.internal.Platform.os match
@@ -132,6 +140,38 @@ object System:
 
                 def availableProcessors()(using AllowUnsafe): Int = Runtime.getRuntime.availableProcessors()
         )
+
+    /** A System whose environment variables and system properties are exactly `env` and `properties`, whatever the host holds, and whose
+      * other members (line separator, user name, operating system, architecture, processors) are [[live]]'s.
+      *
+      * With [[let]] it gives a computation a fixed configuration on every platform:
+      * {{{
+      * System.let(System.fromMap(env = Map("APP_ENV" -> "test"))) {
+      *     System.env[String]("APP_ENV") // Present("test")
+      * }
+      * }}}
+      * It scopes what `System` answers inside the computation; flags resolve from the process-wide sources and do not see it.
+      *
+      * @param env
+      *   The environment variables, by name.
+      * @param properties
+      *   The system properties, by name.
+      */
+    def fromMap(env: Map[String, String] = Map.empty, properties: Map[String, String] = Map.empty): System =
+        val envByName      = env
+        val propertyByName = properties
+        val host           = live.unsafe
+        System(
+            new Unsafe:
+                def env(name: String)(using AllowUnsafe): Maybe[String]      = Maybe.fromOption(envByName.get(name))
+                def property(name: String)(using AllowUnsafe): Maybe[String] = Maybe.fromOption(propertyByName.get(name))
+                def lineSeparator()(using AllowUnsafe): String               = host.lineSeparator()
+                def userName()(using AllowUnsafe): String                    = host.userName()
+                def operatingSystem()(using AllowUnsafe): OS                 = host.operatingSystem()
+                def architecture()(using AllowUnsafe): Arch                  = host.architecture()
+                def availableProcessors()(using AllowUnsafe): Int            = host.availableProcessors()
+        )
+    end fromMap
 
     /** Executes a computation with a custom System implementation.
       *

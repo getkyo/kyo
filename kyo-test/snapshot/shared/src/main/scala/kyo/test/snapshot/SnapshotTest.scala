@@ -11,6 +11,7 @@ import kyo.Render
 import kyo.Result
 import kyo.Schema
 import kyo.Scope
+import kyo.internal.HostConfig
 import kyo.test.AssertionFailed
 import kyo.test.SuiteFingerprintMarker
 import kyo.test.internal.TestBase
@@ -62,7 +63,7 @@ abstract class SnapshotTestBase[S] extends TestBase[S]:
       * Override this method in a test suite subclass to force update mode on or off without mutating the process environment.
       */
     protected def snapshotUpdateMode: Boolean =
-        java.lang.System.getenv("KYO_TEST_SNAPSHOT") == "update"
+        HostConfig.env("KYO_TEST_SNAPSHOT") == "update"
 
     /** Assert that the rendered form of `actual` matches the stored snapshot identified by `name`.
       *

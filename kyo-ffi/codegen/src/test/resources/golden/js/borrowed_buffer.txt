@@ -17,7 +17,7 @@ import kyo.ffi.internal.{AbiCheck, JsRawSegment, KoffiFacade, KoffiFn, NativeLoa
         val retValRaw = facade.mallocChunk(js.BigInt(n.toString))
         val __kyoBorrowedResult = Ffi.Borrowed.wrap(if js.isUndefined(retValRaw) || retValRaw == null then null else
             val retVal = KoffiFacade.decodeBorrowedBytes(retValRaw.asInstanceOf[js.Any], n.toInt)
-            (if (java.lang.System.getProperty("kyo.ffi.checkedBorrows") == "true") Buffer.Unsafe.wrapBorrowedChecked[Byte](retVal, n.toInt, kyo.ffi.internal.BufferFactory.currentBorrowOwner()) else Buffer.Unsafe.wrapBorrowed[Byte](retVal, n.toInt)))
+            (if (kyo.internal.HostConfig.property("kyo.ffi.checkedBorrows") == "true") Buffer.Unsafe.wrapBorrowedChecked[Byte](retVal, n.toInt, kyo.ffi.internal.BufferFactory.currentBorrowOwner()) else Buffer.Unsafe.wrapBorrowed[Byte](retVal, n.toInt)))
         __kyoBorrowedResult
 end BorrowedBufferBindingsImpl
 

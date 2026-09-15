@@ -423,7 +423,7 @@ object JsEmitter extends EmitterBase.Ops with PlatformTypes:
                     val nonNullWrap =
                         if checkedBorrows then checkedCall
                         else
-                            s"""(if (java.lang.System.getProperty("kyo.ffi.checkedBorrows") == "true") $checkedCall else $uncheckedCall)"""
+                            s"""(if (kyo.internal.HostConfig.property("kyo.ffi.checkedBorrows") == "true") $checkedCall else $uncheckedCall)"""
                     (
                         List(
                             s"val retValRaw = $rawExpr",
@@ -702,8 +702,8 @@ object JsEmitter extends EmitterBase.Ops with PlatformTypes:
                     // field in this struct. TypeValidator rejects structs with zero or multiple candidate siblings.
                     //
                     // Checked-borrow opt-in via `Ffi.Config.checkedBorrows` or the process-wide
-                    // sys-prop `-Dkyo.ffi.checkedBorrows=true`. On JS the checked path additionally detects detached
-                    // ArrayBuffers via `u8a.buffer.byteLength == 0`.
+                    // property `kyo.ffi.checkedBorrows=true`, read through HostConfig so a JS program can seed it.
+                    // On JS the checked path additionally detects detached ArrayBuffers via `u8a.buffer.byteLength == 0`.
                     val sizeExpr = bufferSizeExpr(f.name)
                     val checkedCall =
                         s"Buffer.Unsafe.wrapBorrowedChecked[${scalaTypeOf(elem)}]($sel.asInstanceOf[Uint8Array], $sizeExpr, kyo.ffi.internal.BufferFactory.currentBorrowOwner())"
@@ -711,7 +711,7 @@ object JsEmitter extends EmitterBase.Ops with PlatformTypes:
                         s"Buffer.Unsafe.wrapBorrowed[${scalaTypeOf(elem)}]($sel.asInstanceOf[Uint8Array], $sizeExpr)"
                     if checkedBorrows then checkedCall
                     else
-                        s"""(if (java.lang.System.getProperty("kyo.ffi.checkedBorrows") == "true") $checkedCall else $uncheckedCall)"""
+                        s"""(if (kyo.internal.HostConfig.property("kyo.ffi.checkedBorrows") == "true") $checkedCall else $uncheckedCall)"""
                     end if
                 case TypeRef.HandleT(_) =>
                     // Handle field: wrap the koffi pointer handle via Ffi.Handle.wrap.

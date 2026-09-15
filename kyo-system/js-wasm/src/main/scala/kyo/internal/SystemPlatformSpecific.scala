@@ -3,27 +3,25 @@ package kyo.internal
 import kyo.AllowUnsafe
 import scala.scalajs.js
 
-/** Scala.js accessors for the default `System.live` implementation.
+/** Scala.js parts of the default `System.live` implementation.
   *
-  * The environment comes from `process.env` where the host defines it and is empty elsewhere, such as in a browser. Operating system,
-  * architecture, and line separator come from [[Platform]].
+  * Scala.js sets no `user.name` property, so the user name is a `user.name` property only when the application sets or seeds one. Otherwise
+  * it is the OS user on a Node-like host, through `node:os`, and `""` on a host that has none, such as a browser, or that refuses the lookup,
+  * such as Deno without `--allow-sys`.
   */
 private[kyo] object SystemPlatformSpecific:
-    def env(name: String)(using AllowUnsafe): String =
-        // Asked as a capability, so any host that defines `process.env` is read; once `process` is known to be defined, reading it cannot
-        // throw a ReferenceError.
-        if PlatformJs.jsGlobal("process").isEmpty then null
-        else
-            val proc = js.Dynamic.global.process
-            if js.typeOf(proc.env) == "undefined" then null
-            else
-                val value = proc.env.selectDynamic(name)
-                if js.isUndefined(value) || value == null then null
-                else value.asInstanceOf[String]
-            end if
-        end if
-    end env
 
-    def property(name: String)(using AllowUnsafe): String =
-        java.lang.System.getProperty(name)
+    def userName()(using AllowUnsafe): String =
+        val property = HostConfig.property("user.name")
+        if property != null then property
+        else
+            PlatformJs.nodeBuiltin("node:os").fold("") { os =>
+                try
+                    val name = os.userInfo().username
+                    if js.typeOf(name) == "string" then name.asInstanceOf[String] else ""
+                catch case _: js.JavaScriptException => ""
+            }
+        end if
+    end userName
+
 end SystemPlatformSpecific
