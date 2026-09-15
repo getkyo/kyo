@@ -204,7 +204,7 @@ object RTHostFilterSuite:
     val ran: AtomicInteger = new AtomicInteger(0)
 end RTHostFilterSuite
 
-class RunnerTest extends AsyncFreeSpec with NonImplicitAssertions:
+class TestRunnerTest extends AsyncFreeSpec with NonImplicitAssertions:
 
     implicit override val executionContext: ExecutionContext = TestExecutionContext.executionContext
 
@@ -521,4 +521,4 @@ class RunnerTest extends AsyncFreeSpec with NonImplicitAssertions:
         }
     }
 
-end RunnerTest
+end TestRunnerTest

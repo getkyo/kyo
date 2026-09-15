@@ -20,7 +20,7 @@ import scala.concurrent.Future
 // ── Fixture suites (defined in companion object so classOf[...] works via reflection). They extend
 //    TestBase[Any] directly so sbt does NOT auto-discover them as real suites. ─────────────────
 
-private object RunnerSelfFixtures:
+private object TestRunnerSelfFixtures:
 
     class SingleSyncSuite extends TestBase[Any]:
         "a" in succeed
@@ -136,11 +136,11 @@ private object RunnerSelfFixtures:
         "b-leaf-5" in track
     end XSuiteB
 
-end RunnerSelfFixtures
+end TestRunnerSelfFixtures
 
 /** Self-tests for kyo-test-runner behaviors, exercised by driving the NEW runner's pure-Kyo `runReport` surface.
   *
-  * Raw ScalaTest (`AsyncFreeSpec with NonImplicitAssertions`), mirroring `RunnerTest`: each test body runs OFF the
+  * Raw ScalaTest (`AsyncFreeSpec with NonImplicitAssertions`), mirroring `TestRunnerTest`: each test body runs OFF the
   * process-global LeafPool and discharges its `runReport` computation to a `Future` via the same single sbt-edge
   * conversion the runner uses (`Scope.run(...).handle(Fiber.initUnscoped).map(_.toFuture)`). Running off-pool is
   * required: a `kyo.test.Test` body would itself occupy a pool worker, so awaiting `runReport` (which submits the
@@ -151,7 +151,7 @@ end RunnerSelfFixtures
   * Each test exercises a runner-level behavior (`TestRunner.runReport`, filters, decorators, the cross-suite global
   * pool bound) and asserts on the returned report as a plain value.
   */
-class RunnerSelfTest extends AsyncFreeSpec with NonImplicitAssertions:
+class TestRunnerSelfTest extends AsyncFreeSpec with NonImplicitAssertions:
 
     implicit override val executionContext: ExecutionContext = TestExecutionContext.executionContext
 
@@ -169,7 +169,7 @@ class RunnerSelfTest extends AsyncFreeSpec with NonImplicitAssertions:
     end discharge
 
     "runs single sync test via TestRunner.runReport" in {
-        discharge(TestRunner.runReport(classOf[RunnerSelfFixtures.SingleSyncSuite])).map { report =>
+        discharge(TestRunner.runReport(classOf[TestRunnerSelfFixtures.SingleSyncSuite])).map { report =>
             assert(report.totalLeaves == 1)
             assert(report.passed == 1)
             assert(report.failed == 0)
@@ -177,7 +177,7 @@ class RunnerSelfTest extends AsyncFreeSpec with NonImplicitAssertions:
     }
 
     "runs multiple async tests via TestRunner.runReport" in {
-        discharge(TestRunner.runReport(classOf[RunnerSelfFixtures.MultiAsyncSuite])).map { report =>
+        discharge(TestRunner.runReport(classOf[TestRunnerSelfFixtures.MultiAsyncSuite])).map { report =>
             assert(report.totalLeaves == 2)
             assert(report.passed == 2)
             assert(report.failed == 0)
@@ -188,23 +188,23 @@ class RunnerSelfTest extends AsyncFreeSpec with NonImplicitAssertions:
         // 8 leaves through the process-global LeafPool. Deterministic assertions: completeness (all 8 passed) and peak <=
         // globalK. peak > 1 is NOT asserted (needs a sleep/barrier that risks deadlock); that proof lives in LeafPoolTest.
         val globalK = if Platform.isNative then 1 else math.max(1, Async.defaultConcurrency)
-        RunnerSelfFixtures.parallelActive.set(0)
-        RunnerSelfFixtures.parallelMaxSeen.set(0)
+        TestRunnerSelfFixtures.parallelActive.set(0)
+        TestRunnerSelfFixtures.parallelMaxSeen.set(0)
         val config = RunConfig.default.copy(parallelism = 4)
-        discharge(TestRunner.runReport(classOf[RunnerSelfFixtures.ParallelSuite], config)).map { report =>
+        discharge(TestRunner.runReport(classOf[TestRunnerSelfFixtures.ParallelSuite], config)).map { report =>
             assert(report.totalLeaves == 8)
             assert(report.passed == 8)
             // Global bound (deterministic): the peak never exceeds globalK.
             assert(
-                RunnerSelfFixtures.parallelMaxSeen.get() <= globalK,
-                s"expected peak <= globalK=$globalK, got ${RunnerSelfFixtures.parallelMaxSeen.get()}"
+                TestRunnerSelfFixtures.parallelMaxSeen.get() <= globalK,
+                s"expected peak <= globalK=$globalK, got ${TestRunnerSelfFixtures.parallelMaxSeen.get()}"
             )
         }
     }
 
     "filter pathInclude limits execution" in {
         val config = RunConfig.default.copy(filter = TestFilter(pathInclude = kyo.Chunk("a")))
-        discharge(TestRunner.runReport(classOf[RunnerSelfFixtures.FilterSuite], config)).map { report =>
+        discharge(TestRunner.runReport(classOf[TestRunnerSelfFixtures.FilterSuite], config)).map { report =>
             assert(report.totalLeaves == 1)
             val path = report.suiteReports.head.leafResults.head._1
             assert(path == Chunk("a"))
@@ -215,7 +215,7 @@ class RunnerSelfTest extends AsyncFreeSpec with NonImplicitAssertions:
         // Timeout tests need real OS-level thread scheduling to race body against timer.
         // On JS (single-threaded event loop) the body runs to completion before the timer fires.
         if Platform.isJVM then
-            discharge(TestRunner.runReport(classOf[RunnerSelfFixtures.TimeoutSuite])).map { report =>
+            discharge(TestRunner.runReport(classOf[TestRunnerSelfFixtures.TimeoutSuite])).map { report =>
                 assert(report.totalLeaves == 1)
                 val result = report.suiteReports.head.leafResults.head._2
                 assert(result.isInstanceOf[TestResult.TimedOut], s"expected TimedOut but got $result")
@@ -231,34 +231,34 @@ class RunnerSelfTest extends AsyncFreeSpec with NonImplicitAssertions:
     // fire while the body is executing; the body completes and the suite reports a non-TimedOut result.
     // This structural difference from JVM is verified here to confirm the suite still runs exactly one leaf.
     "runner self-test JS/Native: timeout suite runs one leaf without racing the timer" in {
-        discharge(TestRunner.runReport(classOf[RunnerSelfFixtures.TimeoutSuite])).map { report =>
+        discharge(TestRunner.runReport(classOf[TestRunnerSelfFixtures.TimeoutSuite])).map { report =>
             assert(report.totalLeaves == 1)
         }
     }
 
     "retry decorator retries a leaf that fails by THROWING and ends passed" in {
         // Reset the retry counter before running so earlier runs don't affect this one
-        RunnerSelfFixtures.retryCounter.set(0)
-        discharge(TestRunner.runReport(classOf[RunnerSelfFixtures.RetrySuite])).map { report =>
+        TestRunnerSelfFixtures.retryCounter.set(0)
+        discharge(TestRunner.runReport(classOf[TestRunnerSelfFixtures.RetrySuite])).map { report =>
             assert(report.totalLeaves == 1)
             assert(report.passed == 1, s"expected 1 passed but got: ${report}")
             // retry(2) = 3 attempts; the first two throw, the third passes. Confirms retry-on-throw fired.
             assert(
-                RunnerSelfFixtures.retryCounter.get() == 3,
-                s"expected 3 attempts (throw, throw, pass) but counter was ${RunnerSelfFixtures.retryCounter.get()}"
+                TestRunnerSelfFixtures.retryCounter.get() == 3,
+                s"expected 3 attempts (throw, throw, pass) but counter was ${TestRunnerSelfFixtures.retryCounter.get()}"
             )
         }
     }
 
     "retry decorator exhausts retries when a leaf THROWS on every attempt and ends failed" in {
-        RunnerSelfFixtures.retryFailCounter.set(0)
-        discharge(TestRunner.runReport(classOf[RunnerSelfFixtures.RetryAlwaysFailsSuite])).map { report =>
+        TestRunnerSelfFixtures.retryFailCounter.set(0)
+        discharge(TestRunner.runReport(classOf[TestRunnerSelfFixtures.RetryAlwaysFailsSuite])).map { report =>
             assert(report.totalLeaves == 1)
             assert(report.failed == 1, s"expected 1 failed but got: ${report}")
             // retry(2) = 3 attempts; all throw, so the leaf fails after exactly 3 attempts.
             assert(
-                RunnerSelfFixtures.retryFailCounter.get() == 3,
-                s"expected 3 attempts before failing but counter was ${RunnerSelfFixtures.retryFailCounter.get()}"
+                TestRunnerSelfFixtures.retryFailCounter.get() == 3,
+                s"expected 3 attempts before failing but counter was ${TestRunnerSelfFixtures.retryFailCounter.get()}"
             )
         }
     }
@@ -272,12 +272,12 @@ class RunnerSelfTest extends AsyncFreeSpec with NonImplicitAssertions:
         // deadlocks under cross-suite competition), so peak > 1 is intentionally NOT asserted here; LeafPoolTest
         // carries the deterministic peak == k proof. globalK is computed in-test from the public formula, no reflection.
         val globalK = if Platform.isNative then 1 else math.max(1, Async.defaultConcurrency)
-        RunnerSelfFixtures.XSuiteCounters.reset()
+        TestRunnerSelfFixtures.XSuiteCounters.reset()
         val cfg = RunConfig.default.copy(parallelism = 4)
         discharge(
             Async.zip(
-                TestRunner.runReport(classOf[RunnerSelfFixtures.XSuiteA], cfg),
-                TestRunner.runReport(classOf[RunnerSelfFixtures.XSuiteB], cfg)
+                TestRunner.runReport(classOf[TestRunnerSelfFixtures.XSuiteA], cfg),
+                TestRunner.runReport(classOf[TestRunnerSelfFixtures.XSuiteB], cfg)
             )
         ).map { case (reportA, reportB) =>
             val pathsA = reportA.suiteReports.flatMap(_.leafResults.map(_._1))
@@ -320,8 +320,8 @@ class RunnerSelfTest extends AsyncFreeSpec with NonImplicitAssertions:
             )
             // Global bound (deterministic): the combined peak never exceeds globalK.
             assert(
-                RunnerSelfFixtures.XSuiteCounters.peak.get() <= globalK,
-                s"expected combined cross-suite peak <= globalK=$globalK, got ${RunnerSelfFixtures.XSuiteCounters.peak.get()}"
+                TestRunnerSelfFixtures.XSuiteCounters.peak.get() <= globalK,
+                s"expected combined cross-suite peak <= globalK=$globalK, got ${TestRunnerSelfFixtures.XSuiteCounters.peak.get()}"
             )
         }
     }
@@ -331,11 +331,11 @@ class RunnerSelfTest extends AsyncFreeSpec with NonImplicitAssertions:
         val ps     = new java.io.PrintStream(bos)
         val rep    = new ConsoleReporter(Verbosity.Normal, useColors = false, out = ps)
         val config = RunConfig.default.copy(reporter = Maybe(rep))
-        discharge(TestRunner.runReport(classOf[RunnerSelfFixtures.ConsoleSuite], config)).map { report =>
+        discharge(TestRunner.runReport(classOf[TestRunnerSelfFixtures.ConsoleSuite], config)).map { report =>
             assert(report.totalLeaves == 1)
             val output = bos.toString("UTF-8")
             assert(output.contains("[PASS]") || output.contains("passed"), s"reporter output was: $output")
         }
     }
 
-end RunnerSelfTest
+end TestRunnerSelfTest

@@ -9,7 +9,7 @@ import scala.concurrent.ExecutionContext
 
 // ── Fixture suites for no-assertion runner tests ──────────────────────────────────────────────
 
-private object NoAssertionRunnerFixtures:
+private object TestRunnerNoAssertionFixtures:
 
     // Suite whose config disables the no-assertion check suite-wide. One leaf asserts nothing.
     class NoAssertConfigOffSuite extends kyo.test.internal.TestBase[Any]:
@@ -28,7 +28,7 @@ private object NoAssertionRunnerFixtures:
         "pending-no-assert".pendingUntilFixed("reason") in { kyo.Sync.defer(1 + 1).map(_ => ()) }
     end PendingUntilFixedNoAssertSuite
 
-end NoAssertionRunnerFixtures
+end TestRunnerNoAssertionFixtures
 
 /** Scalatest orchestrator that exercises the kyo-test framework end-to-end.
   *
@@ -37,7 +37,7 @@ end NoAssertionRunnerFixtures
   * macros, decorators, and runner all function correctly through the full execution pipeline.
   */
 // ScalaTest bootstrap: this file orchestrates kyo-test suite execution via reflection; the runner-under-test cannot be its own harness.
-class SelfTestsRunner extends AsyncFreeSpec with NonImplicitAssertions:
+class TestRunnerNoAssertionTest extends AsyncFreeSpec with NonImplicitAssertions:
 
     implicit override val executionContext: ExecutionContext = kyo.test.runner.TestExecutionContext.executionContext
 
@@ -49,16 +49,16 @@ class SelfTestsRunner extends AsyncFreeSpec with NonImplicitAssertions:
         }
     }
 
-    // RunnerSelfTest is now a raw ScalaTest suite (AsyncFreeSpec): it tests TestRunner.runReport OFF the
+    // TestRunnerSelfTest is a raw ScalaTest suite (AsyncFreeSpec): it tests TestRunner.runReport OFF the
     // process-global pool, so awaiting runReport (which submits the sub-suite's leaves to the same global pool)
-    // never re-enters the pool. sbt's ScalaTest runner discovers and runs it directly, so it is no longer driven
-    // through TestRunner.runToFuture here (that path requires a kyo.test.TestBase, which RunnerSelfTest no longer
-    // is). TestApiSelfTest above remains a kyo.test.Test and is still dogfooded through the runner.
+    // never re-enters the pool. sbt's ScalaTest runner discovers and runs it directly rather than through
+    // TestRunner.runToFuture here, which needs a kyo.test.TestBase. TestApiSelfTest above is a kyo.test.Test and
+    // runs through the runner.
 
     // ── Leaf-7: suite-level config override disables no-assertion check suite-wide ───────────
 
     "leaf-7: suite-level failOnNoAssertion(false) disables the check: a no-assert leaf stays Passed" in {
-        TestRunner.runToFuture(classOf[NoAssertionRunnerFixtures.NoAssertConfigOffSuite]).map { report =>
+        TestRunner.runToFuture(classOf[TestRunnerNoAssertionFixtures.NoAssertConfigOffSuite]).map { report =>
             assert(report.totalLeaves == 1, s"expected 1 leaf, got ${report.totalLeaves}")
             assert(report.passed == 1, s"expected 1 passed (check disabled suite-wide), got failed=${report.failed}, report=$report")
             assert(report.failed == 0, s"expected 0 failures, got ${report.failed}")
@@ -67,7 +67,7 @@ class SelfTestsRunner extends AsyncFreeSpec with NonImplicitAssertions:
     }
 
     "leaf-7b: default config leaves the check ON: a no-assert leaf in a default suite flips to Failed" in {
-        TestRunner.runToFuture(classOf[NoAssertionRunnerFixtures.NoAssertConfigOnSuite]).map { report =>
+        TestRunner.runToFuture(classOf[TestRunnerNoAssertionFixtures.NoAssertConfigOnSuite]).map { report =>
             assert(report.totalLeaves == 1, s"expected 1 leaf, got ${report.totalLeaves}")
             assert(report.failed == 1, s"expected 1 failure (no-assertion check on), got failed=${report.failed}, report=$report")
             succeed
@@ -77,7 +77,7 @@ class SelfTestsRunner extends AsyncFreeSpec with NonImplicitAssertions:
     // ── Leaf-15: pendingUntilFixed + no-assertion flip ordering ───────────────────────────────
 
     "leaf-15: pendingUntilFixed + no-assertion: Passed -> Failed -> Pending (correct ordering)" in {
-        TestRunner.runToFuture(classOf[NoAssertionRunnerFixtures.PendingUntilFixedNoAssertSuite]).map { report =>
+        TestRunner.runToFuture(classOf[TestRunnerNoAssertionFixtures.PendingUntilFixedNoAssertSuite]).map { report =>
             assert(report.totalLeaves == 1, s"expected 1 leaf, got ${report.totalLeaves}")
             val leafResult = report.suiteReports.head.leafResults.head._2
             leafResult match
@@ -90,4 +90,4 @@ class SelfTestsRunner extends AsyncFreeSpec with NonImplicitAssertions:
         }
     }
 
-end SelfTestsRunner
+end TestRunnerNoAssertionTest

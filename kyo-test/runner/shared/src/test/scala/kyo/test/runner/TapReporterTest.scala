@@ -51,6 +51,14 @@ class TapReporterTest extends kyo.test.Test[Any]:
         assert(output.contains("ok 2 - "), s"Missing ok 2 in: $output")
     }
 
+    "a test line names the suite and every segment of the leaf path" in {
+        val output = capture { r =>
+            r.onRunStart(RunInfo(1, 1))
+            fireSuite(r, "S", List(Chunk("group", "leaf") -> TestResult.Passed(1L.millis)))
+        }
+        assert(output.contains("ok 1 - S / group / leaf\n"), s"Unexpected test line in: $output")
+    }
+
     "failures include YAML diagnostic block" in {
         val output = capture { r =>
             r.onRunStart(RunInfo(1, 1))

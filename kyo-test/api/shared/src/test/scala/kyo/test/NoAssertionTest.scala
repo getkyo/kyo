@@ -12,7 +12,7 @@ import scala.concurrent.Future
   * failOnNoAssertion is true). The opt-out is succeed (an alias for assert(true)): it flows through the assert runtime, increments the
   * counter, and always passes.
   * Leaves 1-14 use LeafHarness.runLeaf. Leaves 7 and 15 (suite-level override and pendingUntilFixed ordering) require the full runner and
-  * live in SelfTestsRunnerTest.
+  * live in TestRunnerNoAssertionTest.
   */
 // ScalaTest bootstrap: tests the no-assertion check mechanism; cannot self-host with the framework under test.
 class NoAssertionTest extends AsyncFreeSpec with NonImplicitAssertions:
@@ -114,7 +114,7 @@ class NoAssertionTest extends AsyncFreeSpec with NonImplicitAssertions:
         }
     }
 
-    // ── Leaf 7: suite-level override lives in SelfTestsRunnerTest ─────────────────────────────
+    // ── Leaf 7: suite-level override lives in TestRunnerNoAssertionTest ─────────────────────────────
     // (requires TestRunner; kyo-test-api cannot import kyo-test-runner)
 
     // ── Leaf 8: RunConfig field default and copy-helper ───────────────────────────────────────
@@ -228,7 +228,7 @@ class NoAssertionTest extends AsyncFreeSpec with NonImplicitAssertions:
         }
     }
 
-    // ── Leaf 15: pendingUntilFixed + no-assertion ordering lives in SelfTestsRunnerTest ────────
+    // ── Leaf 15: pendingUntilFixed + no-assertion ordering lives in TestRunnerNoAssertionTest ────────
     // (requires TestRunner; kyo-test-api cannot import kyo-test-runner)
 
     // ── Leaf 16: a leaf whose only body is succeed stays Passed ───────────────────────────────

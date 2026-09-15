@@ -29,7 +29,7 @@ case class Event(id: Int, kind: String) derives CanEqual, Schema
 given Gen[Event] = Gen.derive[Event]
 
 /** Top-level (not nested) so `classOf[...]` resolves for `TestRunner.runToFuture`; extends the marker-free `SnapshotTestBase[Any]` (not
-  * `SnapshotTest[Any]`) so sbt/Native discovery does not ALSO pick this up as a separate real suite, mirroring `RunnerTest.scala`'s
+  * `SnapshotTest[Any]`) so sbt/Native discovery does not ALSO pick this up as a separate real suite, mirroring `TestRunnerTest.scala`'s
   * `RTFailPassSuite` convention.
   */
 private class GoldenOnlyLeafSuite extends SnapshotTestBase[Any]:

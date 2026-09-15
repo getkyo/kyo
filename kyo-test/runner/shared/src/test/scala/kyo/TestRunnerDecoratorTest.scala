@@ -20,7 +20,7 @@ import scala.concurrent.Future
 // ── Fixture suites (private object so classOf[...] resolves via reflection; extend TestBase[Any]
 //    directly so sbt does NOT auto-discover them as real suites). ────────────────────────────────
 
-private object LiveCoverageFixtures:
+private object TestRunnerDecoratorFixtures:
 
     // ── 1. repeat ─────────────────────────────────────────────────────────────────────────────
 
@@ -198,11 +198,11 @@ private object LiveCoverageFixtures:
         }
     end RetryRepeatSuite
 
-end LiveCoverageFixtures
+end TestRunnerDecoratorFixtures
 
 /** Live-path execution tests for kyo-test-runner behaviors.
   *
-  * Raw ScalaTest (`AsyncFreeSpec with NonImplicitAssertions`), mirroring `RunnerSelfTest`/`LeafPoolTest`: each test
+  * Raw ScalaTest (`AsyncFreeSpec with NonImplicitAssertions`), mirroring `TestRunnerSelfTest`/`LeafPoolTest`: each test
   * body runs OFF the process-global LeafPool and discharges its `runReport` computation to a `Future` via the same
   * single sbt-edge conversion the runner uses (`Scope.run(...).handle(Fiber.initUnscoped).map(_.toFuture)`). Running
   * off-pool is required: a `kyo.test.Test` body would itself occupy a pool worker, so awaiting `runReport` (which
@@ -214,7 +214,7 @@ end LiveCoverageFixtures
   * on builder metadata. The two builder-metadata checks (chained-decorator preservation, flaky metadata) run inside
   * `TestBase` fixtures (where the String DSL is in scope) and are surfaced here as their report's pass/fail.
   */
-class LiveCoverageTest extends AsyncFreeSpec with NonImplicitAssertions:
+class TestRunnerDecoratorTest extends AsyncFreeSpec with NonImplicitAssertions:
 
     implicit override val executionContext: ExecutionContext = TestExecutionContext.executionContext
 
@@ -234,12 +234,12 @@ class LiveCoverageTest extends AsyncFreeSpec with NonImplicitAssertions:
     // ── 1a. repeat: body runs N times ────────────────────────────────────────────────────────
 
     "repeat: body runs exactly N times and passes" in {
-        LiveCoverageFixtures.repeatCounter.set(0)
-        discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.RepeatSuite])).map { report =>
+        TestRunnerDecoratorFixtures.repeatCounter.set(0)
+        discharge(TestRunner.runReport(classOf[TestRunnerDecoratorFixtures.RepeatSuite])).map { report =>
             assert(report.passed == 1)
             assert(
-                LiveCoverageFixtures.repeatCounter.get() == 3,
-                s"expected repeatCounter == 3 but got ${LiveCoverageFixtures.repeatCounter.get()}"
+                TestRunnerDecoratorFixtures.repeatCounter.get() == 3,
+                s"expected repeatCounter == 3 but got ${TestRunnerDecoratorFixtures.repeatCounter.get()}"
             )
         }
     }
@@ -247,12 +247,12 @@ class LiveCoverageTest extends AsyncFreeSpec with NonImplicitAssertions:
     // ── 1b. repeat: fail-fast on failing iteration ────────────────────────────────────────────
 
     "repeat: fail-fast stops at the failing iteration" in {
-        LiveCoverageFixtures.rfCounter.set(0)
-        discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.RepeatFailFastSuite])).map { report =>
+        TestRunnerDecoratorFixtures.rfCounter.set(0)
+        discharge(TestRunner.runReport(classOf[TestRunnerDecoratorFixtures.RepeatFailFastSuite])).map { report =>
             assert(report.failed == 1)
             assert(
-                LiveCoverageFixtures.rfCounter.get() == 3,
-                s"expected rfCounter == 3 (fail on iteration 3) but got ${LiveCoverageFixtures.rfCounter.get()}"
+                TestRunnerDecoratorFixtures.rfCounter.get() == 3,
+                s"expected rfCounter == 3 (fail on iteration 3) but got ${TestRunnerDecoratorFixtures.rfCounter.get()}"
             )
         }
     }
@@ -260,7 +260,7 @@ class LiveCoverageTest extends AsyncFreeSpec with NonImplicitAssertions:
     // ── 2. focus ──────────────────────────────────────────────────────────────────────────────
 
     "focus: focused leaf passes; plain leaves are skipped" in {
-        discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.FocusSuite])).map { report =>
+        discharge(TestRunner.runReport(classOf[TestRunnerDecoratorFixtures.FocusSuite])).map { report =>
             assert(report.passed == 1)
             assert(report.skipped == 2)
         }
@@ -272,7 +272,7 @@ class LiveCoverageTest extends AsyncFreeSpec with NonImplicitAssertions:
 
     "tag filter: tagsExclude removes matching leaves from the report" in {
         val config = RunConfig.default.copy(filter = TestFilter(tagsExclude = Set("slow")))
-        discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.TagSuite], config)).map { report =>
+        discharge(TestRunner.runReport(classOf[TestRunnerDecoratorFixtures.TagSuite], config)).map { report =>
             assert(report.totalLeaves == 1)
             assert(report.passed == 1)
         }
@@ -285,7 +285,7 @@ class LiveCoverageTest extends AsyncFreeSpec with NonImplicitAssertions:
     // This is the new compile-time-exclusion behavior that replaced the old runtime registerSkipped.
 
     "platform filter: js-only leaf is compile-excluded off JS" in {
-        discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.PlatformSuite])).map { report =>
+        discharge(TestRunner.runReport(classOf[TestRunnerDecoratorFixtures.PlatformSuite])).map { report =>
             if Platform.isJS then
                 assert(report.totalLeaves == 1, s"JS: expected totalLeaves==1 but got $report")
                 assert(report.passed == 1, s"JS: expected passed==1 but got $report")
@@ -299,7 +299,7 @@ class LiveCoverageTest extends AsyncFreeSpec with NonImplicitAssertions:
     // ── 4b. onlyX platform filter: onlyJs leaf is compile-excluded off JS ─────────────────────
 
     "onlyX platform filter: onlyJs leaf is compile-excluded off JS" in {
-        discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.OnlyPlatformSuite])).map { report =>
+        discharge(TestRunner.runReport(classOf[TestRunnerDecoratorFixtures.OnlyPlatformSuite])).map { report =>
             if Platform.isJS then
                 assert(report.totalLeaves == 1, s"JS: expected totalLeaves==1 but got $report")
                 assert(report.passed == 1, s"JS: expected passed==1 but got $report")
@@ -316,7 +316,7 @@ class LiveCoverageTest extends AsyncFreeSpec with NonImplicitAssertions:
     // body); a regression there makes that leaf fail, which surfaces here as report.failed == 1.
 
     "platform filter: chained decorator preserves builder metadata" in {
-        discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.ChainedDecoratorSuite])).map { report =>
+        discharge(TestRunner.runReport(classOf[TestRunnerDecoratorFixtures.ChainedDecoratorSuite])).map { report =>
             assert(report.passed == 1, s"expected the chained-decorator metadata leaf to pass but got $report")
             assert(report.failed == 0, s"expected no failed leaves but got $report")
         }
@@ -328,7 +328,7 @@ class LiveCoverageTest extends AsyncFreeSpec with NonImplicitAssertions:
     // never skipped.
 
     "wasm platform filters: the registered leaves follow the JS or WasmGC link" in {
-        discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.WasmPlatformSuite])).map { report =>
+        discharge(TestRunner.runReport(classOf[TestRunnerDecoratorFixtures.WasmPlatformSuite])).map { report =>
             val registered = report.suiteReports.flatMap(_.leafResults.map(_._1.mkString("/"))).toSet
             val expected =
                 if Platform.isWasm then Set("only-wasm", "only-wasm-group/in-only-wasm-group")
@@ -343,12 +343,12 @@ class LiveCoverageTest extends AsyncFreeSpec with NonImplicitAssertions:
     // ── 5a. flaky: retries until passing ─────────────────────────────────────────────────────
 
     "flaky: retries up to 4 attempts then passes" in {
-        LiveCoverageFixtures.flakyCounter.set(0)
-        discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.FlakySuite])).map { report =>
+        TestRunnerDecoratorFixtures.flakyCounter.set(0)
+        discharge(TestRunner.runReport(classOf[TestRunnerDecoratorFixtures.FlakySuite])).map { report =>
             assert(report.passed == 1)
             assert(
-                LiveCoverageFixtures.flakyCounter.get() == 4,
-                s"expected flakyCounter == 4 (3 retries + 1 pass) but got ${LiveCoverageFixtures.flakyCounter.get()}"
+                TestRunnerDecoratorFixtures.flakyCounter.get() == 4,
+                s"expected flakyCounter == 4 (3 retries + 1 pass) but got ${TestRunnerDecoratorFixtures.flakyCounter.get()}"
             )
         }
     }
@@ -358,7 +358,7 @@ class LiveCoverageTest extends AsyncFreeSpec with NonImplicitAssertions:
     // in a TestBase body); a regression there makes that leaf fail, surfacing here as report.failed == 1.
 
     "flaky: builder has flaky tag and retrySchedule Present" in {
-        discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.FlakyMetadataSuite])).map { report =>
+        discharge(TestRunner.runReport(classOf[TestRunnerDecoratorFixtures.FlakyMetadataSuite])).map { report =>
             assert(report.passed == 1, s"expected the flaky metadata leaf to pass but got $report")
             assert(report.failed == 0, s"expected no failed leaves but got $report")
         }
@@ -367,7 +367,7 @@ class LiveCoverageTest extends AsyncFreeSpec with NonImplicitAssertions:
     // ── 6. handle ─────────────────────────────────────────────────────────────────────────────
 
     "handle: leaf discharging Env[Int] via .handle runs to Passed" in {
-        discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.HandleSuite])).map { report =>
+        discharge(TestRunner.runReport(classOf[TestRunnerDecoratorFixtures.HandleSuite])).map { report =>
             assert(report.passed == 1)
         }
     }
@@ -375,7 +375,7 @@ class LiveCoverageTest extends AsyncFreeSpec with NonImplicitAssertions:
     // ── 7. typeCheck suite macros ─────────────────────────────────────────────────────────────
 
     "typeCheck/typeCheckFailure suite macros execute and pass" in {
-        discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.TypeCheckSuite])).map { report =>
+        discharge(TestRunner.runReport(classOf[TestRunnerDecoratorFixtures.TypeCheckSuite])).map { report =>
             assert(report.passed == 2)
         }
     }
@@ -383,7 +383,7 @@ class LiveCoverageTest extends AsyncFreeSpec with NonImplicitAssertions:
     // ── 8a. pendingUntilFixed: still-failing body reports Pending ─────────────────────────────
 
     "pendingUntilFixed: still-failing body reports Pending" in {
-        discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.PufStillFailingSuite])).map { report =>
+        discharge(TestRunner.runReport(classOf[TestRunnerDecoratorFixtures.PufStillFailingSuite])).map { report =>
             assert(report.pending == 1)
         }
     }
@@ -391,7 +391,7 @@ class LiveCoverageTest extends AsyncFreeSpec with NonImplicitAssertions:
     // ── 8b. pendingUntilFixed: now-passing body reports Failed with tripwire message ───────────
 
     "pendingUntilFixed: now-passing body reports Failed with remove-marker message" in {
-        discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.PufNowPassingSuite])).map { report =>
+        discharge(TestRunner.runReport(classOf[TestRunnerDecoratorFixtures.PufNowPassingSuite])).map { report =>
             assert(report.failed == 1)
             val (_, result) = report.suiteReports.head.leafResults.head
             result match
@@ -409,8 +409,8 @@ class LiveCoverageTest extends AsyncFreeSpec with NonImplicitAssertions:
     // ── 9a. assertEventually: polls until condition holds ─────────────────────────────────────
 
     "assertEventually: polls until condition holds and passes" in {
-        LiveCoverageFixtures.evCounter.set(0)
-        discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.EventuallySuite])).map { report =>
+        TestRunnerDecoratorFixtures.evCounter.set(0)
+        discharge(TestRunner.runReport(classOf[TestRunnerDecoratorFixtures.EventuallySuite])).map { report =>
             assert(report.passed == 1)
         }
     }
@@ -421,7 +421,7 @@ class LiveCoverageTest extends AsyncFreeSpec with NonImplicitAssertions:
         // On JS/Native the timeout timer may not race the body in the same way as JVM, but the
         // assertEventually loop runs forever with a 10ms poll; even on JS the timeout fires and
         // the test framework surfaces a TimedOut result.
-        discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.EventuallyTimeoutSuite])).map { report =>
+        discharge(TestRunner.runReport(classOf[TestRunnerDecoratorFixtures.EventuallyTimeoutSuite])).map { report =>
             assert(report.timedOut == 1, s"expected timedOut==1 but got $report")
         }
     }
@@ -429,12 +429,12 @@ class LiveCoverageTest extends AsyncFreeSpec with NonImplicitAssertions:
     // ── 10. ignore: body does NOT run; leaf reports Ignored ──────────────────────────────────
 
     "ignore: leaf reports Ignored and body does not run" in {
-        LiveCoverageFixtures.ignoreCounter.set(0)
-        discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.IgnoreSuite])).map { report =>
+        TestRunnerDecoratorFixtures.ignoreCounter.set(0)
+        discharge(TestRunner.runReport(classOf[TestRunnerDecoratorFixtures.IgnoreSuite])).map { report =>
             assert(report.ignored == 1, s"expected ignored==1 but got $report")
             assert(
-                LiveCoverageFixtures.ignoreCounter.get() == 0,
-                s"expected ignoreCounter == 0 (body must NOT run) but got ${LiveCoverageFixtures.ignoreCounter.get()}"
+                TestRunnerDecoratorFixtures.ignoreCounter.get() == 0,
+                s"expected ignoreCounter == 0 (body must NOT run) but got ${TestRunnerDecoratorFixtures.ignoreCounter.get()}"
             )
         }
     }
@@ -442,12 +442,12 @@ class LiveCoverageTest extends AsyncFreeSpec with NonImplicitAssertions:
     // ── 11. ignore with reason: body does NOT run; leaf reports Ignored ─────────────────────
 
     "ignore with reason: leaf reports Ignored and body does not run" in {
-        LiveCoverageFixtures.ignoreWithReasonCounter.set(0)
-        discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.IgnoreWithReasonSuite])).map { report =>
+        TestRunnerDecoratorFixtures.ignoreWithReasonCounter.set(0)
+        discharge(TestRunner.runReport(classOf[TestRunnerDecoratorFixtures.IgnoreWithReasonSuite])).map { report =>
             assert(report.ignored == 1, s"expected ignored==1 but got $report")
             assert(
-                LiveCoverageFixtures.ignoreWithReasonCounter.get() == 0,
-                s"expected ignoreWithReasonCounter == 0 (body must NOT run) but got ${LiveCoverageFixtures.ignoreWithReasonCounter.get()}"
+                TestRunnerDecoratorFixtures.ignoreWithReasonCounter.get() == 0,
+                s"expected ignoreWithReasonCounter == 0 (body must NOT run) but got ${TestRunnerDecoratorFixtures.ignoreWithReasonCounter.get()}"
             )
         }
     }
@@ -455,12 +455,12 @@ class LiveCoverageTest extends AsyncFreeSpec with NonImplicitAssertions:
     // ── 12. only(false): body does NOT run; leaf reports Skipped ─────────────────────────────
 
     "only(false): leaf reports Skipped and body does not run" in {
-        LiveCoverageFixtures.onlyCounter.set(0)
-        discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.OnlyFalseSuite])).map { report =>
+        TestRunnerDecoratorFixtures.onlyCounter.set(0)
+        discharge(TestRunner.runReport(classOf[TestRunnerDecoratorFixtures.OnlyFalseSuite])).map { report =>
             assert(report.skipped == 1, s"expected skipped==1 but got $report")
             assert(
-                LiveCoverageFixtures.onlyCounter.get() == 0,
-                s"expected onlyCounter == 0 (body must NOT run) but got ${LiveCoverageFixtures.onlyCounter.get()}"
+                TestRunnerDecoratorFixtures.onlyCounter.get() == 0,
+                s"expected onlyCounter == 0 (body must NOT run) but got ${TestRunnerDecoratorFixtures.onlyCounter.get()}"
             )
         }
     }
@@ -468,14 +468,14 @@ class LiveCoverageTest extends AsyncFreeSpec with NonImplicitAssertions:
     // ── 13. retry + repeat combined ──────────────────────────────────────────────────────────
 
     "retry+repeat: retry(1).times(2) with first-attempt-fails body runs 4 times total and passes" in {
-        LiveCoverageFixtures.retryRepeatCounter.set(0)
-        discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.RetryRepeatSuite])).map { report =>
+        TestRunnerDecoratorFixtures.retryRepeatCounter.set(0)
+        discharge(TestRunner.runReport(classOf[TestRunnerDecoratorFixtures.RetryRepeatSuite])).map { report =>
             assert(report.passed == 1, s"expected passed==1 but got $report")
             assert(
-                LiveCoverageFixtures.retryRepeatCounter.get() == 4,
-                s"expected retryRepeatCounter == 4 (2 outer * 2 per retry) but got ${LiveCoverageFixtures.retryRepeatCounter.get()}"
+                TestRunnerDecoratorFixtures.retryRepeatCounter.get() == 4,
+                s"expected retryRepeatCounter == 4 (2 outer * 2 per retry) but got ${TestRunnerDecoratorFixtures.retryRepeatCounter.get()}"
             )
         }
     }
 
-end LiveCoverageTest
+end TestRunnerDecoratorTest
