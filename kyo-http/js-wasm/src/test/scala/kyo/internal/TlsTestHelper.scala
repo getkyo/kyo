@@ -5,19 +5,22 @@ import scala.scalajs.js
 
 /** Generates ephemeral TLS certificates for tests using openssl via child_process.execSync.
   *
-  * No external dependencies beyond openssl. Certs are generated once and cached.
+  * No external dependencies beyond openssl. Certs are generated once and cached. The Node modules are reached through
+  * `process.getBuiltinModule` at first use rather than a static import, so linking the test bundle adds no `node:` import.
   */
 object TlsTestHelper:
 
-    private val childProcess = HttpChildProcess.asInstanceOf[js.Dynamic]
+    private def builtin(id: String): js.Dynamic =
+        PlatformJs.nodeBuiltin(id).getOrElse(throw new IllegalStateException(s"TlsTestHelper needs $id, which the host does not provide"))
 
     lazy val (certPath, keyPath) =
-        val tmpDir   = HttpOs.tmpdir()
-        val certFile = HttpNodePath.join(tmpDir, "kyo-tls-cert.pem")
-        val keyFile  = HttpNodePath.join(tmpDir, "kyo-tls-key.pem")
+        val path     = builtin("node:path")
+        val tmpDir   = builtin("node:os").tmpdir()
+        val certFile = path.join(tmpDir, "kyo-tls-cert.pem").asInstanceOf[String]
+        val keyFile  = path.join(tmpDir, "kyo-tls-key.pem").asInstanceOf[String]
         val cmd =
             s"""openssl req -x509 -newkey rsa:2048 -keyout "$keyFile" -out "$certFile" -days 365 -nodes -subj "/CN=localhost" 2>&1"""
-        childProcess.execSync(cmd)
+        discard(builtin("node:child_process").execSync(cmd))
         (certFile, keyFile)
     end val
 
