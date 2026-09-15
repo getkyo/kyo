@@ -1,15 +1,15 @@
 package kyo.internal
 
 import scala.scalajs.LinkingInfo
-import scala.scalajs.js
+import scala.scalajs.js as sjs
 
 // Scratch reproduction for the Platform consolidation; folded into kyo-config's PlatformTest once Platform moves.
 class PlatformReproTest extends kyo.test.Test[Any]:
 
     "exit does not throw on a host without a process global" in {
-        val global = js.Dynamic.global.globalThis
-        val saved  = js.Dynamic.global.process
-        js.special.delete(global, "process")
+        val global = sjs.Dynamic.global.globalThis
+        val saved  = sjs.Dynamic.global.process
+        sjs.special.delete(global, "process")
         val outcome =
             try
                 Platform.exit(0)
