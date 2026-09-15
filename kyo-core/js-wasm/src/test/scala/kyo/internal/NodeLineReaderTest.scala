@@ -1,7 +1,6 @@
 package kyo.internal
 
 import kyo.*
-import scala.scalajs.js.annotation.*
 import scala.scalajs.js as sjs
 
 /** Drives [[NodeLineReader]] over a real Node descriptor.
@@ -15,15 +14,22 @@ import scala.scalajs.js as sjs
   * standard input a file can be given exact bytes, so the line framing is pinned rather than sampled: terminator handling, a last line with
   * no terminator, empty lines, and a multi-byte character straddling the reader's internal read boundary.
   *
+  * The suite stages descriptors through `process.getBuiltinModule`, as production reads them, so linking it adds no static `node:` import.
   * `scala.scalajs.js` is aliased because `kyo.test.Test` has its own `js` member, the platform selector for a JS-only leaf.
   */
 class NodeLineReaderTest extends kyo.test.Test[Any]:
 
+    private def builtin(id: String): sjs.Dynamic =
+        PlatformJs.nodeBuiltin(id).getOrElse(throw new IllegalStateException(s"this suite needs $id, which the host does not provide"))
+
+    private val fs =
+        CoreNodeFs.module.getOrElse(throw new IllegalStateException("this suite needs node:fs, which the host does not provide"))
+
     /** Write `content` to a fresh temporary file and open it for reading, returning the descriptor. */
     private def descriptorOf(content: String): Int =
-        val path = TestNodePath.join(TestNodeOs.tmpdir(), s"kyo-node-line-reader-${counter()}.txt")
-        TestNodeFs.writeFileSync(path, content, "utf8")
-        TestNodeFs.openSync(path, "r")
+        val path = builtin("node:path").join(builtin("node:os").tmpdir(), s"kyo-node-line-reader-${counter()}.txt")
+        discard(builtin("node:fs").writeFileSync(path, content, "utf8"))
+        builtin("node:fs").openSync(path, "r").asInstanceOf[Int]
     end descriptorOf
 
     private var next = 0
@@ -39,14 +45,14 @@ class NodeLineReaderTest extends kyo.test.Test[Any]:
             val builder = Chunk.newBuilder[String]
             @scala.annotation.tailrec
             def loop(): Unit =
-                reader.readLine() match
+                reader.readLine(fs) match
                     case Present(line) =>
                         builder += line
                         loop()
                     case Absent => ()
             loop()
             builder.result()
-        finally TestNodeFs.closeSync(fd)
+        finally discard(builtin("node:fs").closeSync(fd))
         end try
     end linesOf
 
@@ -84,26 +90,3 @@ class NodeLineReaderTest extends kyo.test.Test[Any]:
     }
 
 end NodeLineReaderTest
-
-/** The `node:fs` members this suite needs to stage a descriptor. Imported the same way production does, so the suite links under CommonJS
-  * and ESModule alike; the names are Test-prefixed to stay clear of the production facades in the same package.
-  */
-@sjs.native
-@JSImport("node:fs", JSImport.Namespace)
-private object TestNodeFs extends sjs.Object:
-    def writeFileSync(path: String, data: String, encoding: String): Unit = sjs.native
-    def openSync(path: String, flags: String): Int                        = sjs.native
-    def closeSync(fd: Int): Unit                                          = sjs.native
-end TestNodeFs
-
-@sjs.native
-@JSImport("node:os", JSImport.Namespace)
-private object TestNodeOs extends sjs.Object:
-    def tmpdir(): String = sjs.native
-end TestNodeOs
-
-@sjs.native
-@JSImport("node:path", JSImport.Namespace)
-private object TestNodePath extends sjs.Object:
-    def join(parts: String*): String = sjs.native
-end TestNodePath

@@ -23,15 +23,16 @@ final private[kyo] class NodeLineReader(fd: Int):
     private var pending: js.Dynamic = emptyBuffer
     private var atEof: Boolean      = false
 
-    /** Read the next line, or [[kyo.Absent]] at end of input.
+    /** Read the next line through `fs`, or [[kyo.Absent]] at end of input.
       *
       * A final line with no terminating newline is returned; the call after it reports the end. `Absent` therefore means "nothing left",
-      * never "an empty line", which reads back as `Present("")`.
+      * never "an empty line", which reads back as `Present("")`. The caller resolves `fs` ([[CoreNodeFs.module]]), so a host without it is
+      * answered before a read is attempted.
       *
       * @throws scala.scalajs.js.JavaScriptException
       *   if the underlying `fs.readSync` fails for any reason other than end of input.
       */
-    def readLine(): Maybe[String] =
+    def readLine(fs: CoreNodeFs): Maybe[String] =
         var line = Maybe.empty[String]
         var done = false
         while !done do
@@ -46,16 +47,16 @@ final private[kyo] class NodeLineReader(fd: Int):
                     line = Maybe(decode(pending))
                     pending = emptyBuffer
                 done = true
-            else fill()
+            else fill(fs)
             end if
         end while
         line
     end readLine
 
     /** Read one more block into `pending`, or record end of input. */
-    private def fill(): Unit =
+    private def fill(fs: CoreNodeFs): Unit =
         val chunk = buffer.applyDynamic("allocUnsafe")(ChunkSize)
-        val n     = read(chunk)
+        val n     = read(fs, chunk)
         if n <= 0 then atEof = true
         else pending = buffer.applyDynamic("concat")(js.Array(pending, chunk.applyDynamic("subarray")(0, n)))
     end fill
@@ -66,10 +67,10 @@ final private[kyo] class NodeLineReader(fd: Int):
       * asked for a line and is entitled to wait for one, which is what the JVM's blocking `System.in` read does. `EOF` is how a TTY reports
       * end of input on some hosts, where a pipe reports it as a zero-length read.
       */
-    private def read(chunk: js.Dynamic): Int =
+    private def read(fs: CoreNodeFs, chunk: js.Dynamic): Int =
         var result = -1
         while result < 0 do
-            try result = CoreNodeFs.readSync(fd, chunk, 0, ChunkSize, null)
+            try result = fs.readSync(fd, chunk, 0, ChunkSize, null)
             catch
                 case js.JavaScriptException(error) =>
                     errorCode(error) match
