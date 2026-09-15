@@ -85,12 +85,10 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Serializable with 
         removeInterruptLoop(this)
     end removeInterrupt
 
-    def preInterrupt(): Boolean = true
-
-    /** Called exactly once when an interrupt completes this promise, after the state CAS, so observers it notifies already see the final
-      * state. Never fires on value completion. No-op by default; IOTask overrides it to notify the scheduler.
+    /** Whether an interrupt may be attempted on this promise now. `false` refuses it without touching the state: a promise made
+      * uninterruptible, or a task that already took one and has not completed yet.
       */
-    protected def onInterrupted(): Unit = {}
+    def preInterrupt(): Boolean = true
 
     /** Returns a promise that mirrors this one's completion but refuses interrupts, so an interrupt aimed at the result cannot reach the
       * computation producing it.
@@ -110,7 +108,9 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Serializable with 
             promise.state match
                 case p: Pending[E, A] @unchecked =>
                     val e = _error.getOrElse(error)
-                    promise.interrupt(p, e) || interruptLoop(promise, Present(e))
+                    // Asked again before a retry: a promise that takes an interrupt without completing stays
+                    // pending, and it is `preInterrupt` that refuses the next one.
+                    promise.interrupt(p, e) || (promise.preInterrupt() && interruptLoop(promise, Present(e)))
                 case l: Linked[E, A] @unchecked =>
                     interruptLoop(l.p, _error)
                 case _ =>
@@ -195,13 +195,31 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Serializable with 
             case _: Linked[?, ?]  => false
             case v                => compareAndSet(v, Pending())
 
-    final private def interrupt(p: Pending[E, A], v: Error[E]): Boolean =
+    /** Answers an interrupt that found this promise pending: by default, completes it with the error.
+      *
+      * `IOTask` overrides this to take the interrupt without completing, so a fiber's result is available only
+      * once what it held has been released, and completes through [[settleInterrupt]] when that is done. `false`
+      * means the attempt did not land: the state is read again, after [[preInterrupt]] is asked once more.
+      */
+    protected def interrupt(p: Pending[E, A], v: Error[E]): Boolean =
+        settleInterrupt(p, v)
+
+    /** Completes a pending state with an interrupt: the CAS, then the observers, which already see the final state. */
+    final protected def settleInterrupt(p: Pending[E, A], v: Error[E]): Boolean =
         compareAndSet(p, v) && {
             onComplete()
-            onInterrupted()
             p.flushInterrupt(v)
             true
         }
+
+    /** Completes this promise with an interrupt taken earlier, whatever pending state it holds by now. */
+    final protected def settleInterrupt(v: Error[E]): Boolean =
+        @tailrec def loop(): Boolean =
+            state match
+                case p: Pending[E, A] @unchecked => settleInterrupt(p, v) || loop()
+                case _                           => false
+        loop()
+    end settleInterrupt
 
     final private def complete(p: Pending[E, A], v: Result[E, A]): Boolean =
         compareAndSet(p, v) && {

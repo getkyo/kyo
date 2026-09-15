@@ -170,29 +170,6 @@ class IOPromiseTest extends kyo.test.Test[Any]:
             assert(p.block(deadline()).isPanic)
         }
 
-        "onInterrupted fires once, after the CAS, only on the interrupt path" in {
-            class HookedPromise extends IOPromise[Nothing, Int]:
-                var fired         = 0
-                var pendingAtHook = true
-                override protected def onInterrupted(): Unit =
-                    fired += 1
-                    pendingAtHook = !done()
-            end HookedPromise
-
-            val interrupted = new HookedPromise
-            assert(interrupted.interrupt(Result.Panic(new Exception("Interrupted"))))
-            assert(interrupted.fired == 1)
-            assert(!interrupted.pendingAtHook, "hook must observe the promise already completed (post-CAS)")
-            assert(!interrupted.interrupt(Result.Panic(new Exception("again"))))
-            assert(interrupted.fired == 1)
-
-            val completed = new HookedPromise
-            assert(completed.complete(Result.succeed(1)))
-            assert(completed.fired == 0)
-        }
-
-        // PORTED FROM robustness; needs IOPromise.settleInterrupt, absent on this branch
-        /*
         "the interrupt hook runs once, on the interrupt path only, and settles through settleInterrupt" in {
             class HookedPromise extends IOPromise[Nothing, Int]:
                 var fired      = 0
@@ -216,10 +193,7 @@ class IOPromiseTest extends kyo.test.Test[Any]:
             assert(completed.complete(Result.succeed(1)))
             assert(completed.fired == 0)
         }
-         */
 
-        // PORTED FROM robustness; needs IOPromise.settleInterrupt, absent on this branch
-        /*
         // The shape a task uses: the hook takes the interrupt and leaves the promise pending, `preInterrupt`
         // refuses the next one, and the retry that follows a refused attempt asks it rather than spinning.
         "a hook that takes the interrupt without completing refuses the next through preInterrupt" in {
@@ -242,7 +216,6 @@ class IOPromiseTest extends kyo.test.Test[Any]:
             assert(p.done())
             assert(p.block(deadline()).isPanic)
         }
-         */
     }
 
     "onComplete" - {

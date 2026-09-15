@@ -1255,9 +1255,7 @@ class FiberTest extends kyo.test.Test[Any]:
     }
 
     "deferred completion" - {
-        "the result of an interrupted fiber arrives after its finalizers ran".pendingUntilFixed(
-            "ported from robustness; fails here: released is still false after fiber.getResult returns (assert(seen) fails), so the interrupted fiber's result arrives before its Sync.ensure finalizer ran; the dropped deferred-completion work (robustness 22ae1fc317): fiber result must settle at Done AFTER the drain (IOPromise.settleInterrupt) plus Fiber.interruptAwait"
-        ) in {
+        "the result of an interrupted fiber arrives after its finalizers ran" in {
             for
                 released <- AtomicBoolean.init(false)
                 started  <- Promise.init[Unit, Any]
