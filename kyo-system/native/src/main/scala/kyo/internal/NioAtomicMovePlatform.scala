@@ -10,7 +10,6 @@ import java.nio.file.NotDirectoryException
 import kyo.Path
 import scalanative.libc
 import scalanative.libc.LibcExt.strError
-import scalanative.meta.LinktimeInfo.isWindows
 import scalanative.posix.errno.EACCES
 import scalanative.posix.errno.EEXIST
 import scalanative.posix.errno.ENOENT
@@ -38,7 +37,7 @@ private[kyo] object NioAtomicMovePlatform:
         Zone.acquire { implicit zone =>
             val sourceAbsolute = source.toAbsolutePath.toString
             val targetAbsolute = target.toAbsolutePath.toString
-            if isWindows then
+            if Platform.isWindows then
                 val replaceFlag = if replace == Path.Replace.Existing then MOVEFILE_REPLACE_EXISTING else 0.toUInt
                 val flags       = MOVEFILE_WRITE_THROUGH | replaceFlag
                 val moved = MoveFileExW(

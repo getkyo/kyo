@@ -106,13 +106,11 @@ private[kyo] trait SecureRandomPlatformSpecific:
             case Candidate.CryptoModule    => cryptoModule
 
     private def webCryptoGlobal: Maybe[Int8Array => Unit] =
-        if js.typeOf(js.Dynamic.global.selectDynamic("crypto")) == "undefined" then Absent
-        else
-            val crypto = js.Dynamic.global.selectDynamic("crypto")
+        kyo.internal.PlatformJs.jsGlobal("crypto").fold(Absent: Maybe[Int8Array => Unit]) { crypto =>
             if isCallable(crypto, "getRandomValues") then
                 Present(windowed(buf => discardJs(crypto.applyDynamic("getRandomValues")(buf))))
             else Absent
-        end if
+        }
     end webCryptoGlobal
 
     private def cryptoModule: Maybe[Int8Array => Unit] =

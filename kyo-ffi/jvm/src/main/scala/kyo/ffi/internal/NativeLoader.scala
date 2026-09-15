@@ -97,26 +97,25 @@ object NativeLoader:
             case Aarch64 => "aarch64"
     end Arch
 
-    /** Detect the current operating system. */
+    /** Detect the current operating system, telling musl Linux apart from glibc Linux by its dynamic loader. */
     def detectOs: Os =
-        val name = System.getProperty("os.name").nn.toLowerCase.nn
-        if name.contains("linux") then
-            if Files.exists(Paths.get("/lib/ld-musl-x86_64.so.1"))
-                || Files.exists(Paths.get("/lib/ld-musl-aarch64.so.1"))
-            then Os.LinuxMusl
-            else Os.Linux
-        else if name.contains("mac") then Os.Darwin
-        else if name.contains("windows") then Os.Windows
-        else throw new UnsupportedOperationException(s"Unsupported OS: $name")
-        end if
+        kyo.internal.Platform.os match
+            case kyo.internal.Platform.Os.Linux =>
+                if Files.exists(Paths.get("/lib/ld-musl-x86_64.so.1"))
+                    || Files.exists(Paths.get("/lib/ld-musl-aarch64.so.1"))
+                then Os.LinuxMusl
+                else Os.Linux
+            case kyo.internal.Platform.Os.MacOS   => Os.Darwin
+            case kyo.internal.Platform.Os.Windows => Os.Windows
+            case _ => throw new UnsupportedOperationException(s"Unsupported OS: ${System.getProperty("os.name", "")}")
     end detectOs
 
     /** Detect the current CPU architecture. */
     def detectArch: Arch =
-        System.getProperty("os.arch") match
-            case "amd64" | "x86_64"  => Arch.X86_64
-            case "aarch64" | "arm64" => Arch.Aarch64
-            case other               => throw new UnsupportedOperationException(s"Unsupported arch: $other")
+        kyo.internal.Platform.arch match
+            case kyo.internal.Platform.Arch.X86_64  => Arch.X86_64
+            case kyo.internal.Platform.Arch.Aarch64 => Arch.Aarch64
+            case _ => throw new UnsupportedOperationException(s"Unsupported arch: ${System.getProperty("os.arch", "")}")
 
     private def loadLocked(id: String): SymbolLookup =
         // security: do not set from untrusted input, resolves a filesystem path to load as native code.

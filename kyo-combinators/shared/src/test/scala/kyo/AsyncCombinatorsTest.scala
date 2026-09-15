@@ -3,8 +3,8 @@ package kyo
 class AsyncCombinatorsTest extends kyo.test.Test[Any]:
 
     // The `Kyo.fromFuture` / `Kyo.fromPromiseScala` construction tests build scala.concurrent.Futures, which need an
-    // ExecutionContext. The ScalaTest base provided one; kyo-test does not, so supply the same cross-platform EC.
-    given scala.concurrent.ExecutionContext = kyo.internal.Platform.executionContext
+    // ExecutionContext. The ScalaTest base provided one; kyo-test does not, so supply the global EC, which every platform provides.
+    given scala.concurrent.ExecutionContext = scala.concurrent.ExecutionContext.global
 
     "async" - {
         "construct" - {

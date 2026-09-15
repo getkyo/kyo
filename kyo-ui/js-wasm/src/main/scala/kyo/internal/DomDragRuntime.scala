@@ -1442,9 +1442,9 @@ private[kyo] object DomDragRuntime:
 
         private def token(prefix: String): String =
             sequence += 1
-            val crypto = js.Dynamic.global.selectDynamic("crypto")
-            if !js.isUndefined(crypto) && crypto != null && js.typeOf(crypto.randomUUID) == "function" then
-                s"$prefix-${crypto.randomUUID().asInstanceOf[String]}"
+            val crypto = PlatformJs.jsGlobal("crypto")
+            if crypto.isDefined && js.typeOf(crypto.get.randomUUID) == "function" then
+                s"$prefix-${crypto.get.randomUUID().asInstanceOf[String]}"
             else
                 s"$prefix-${js.Date.now().toLong.toHexString}-${sequence.toHexString}-${(math.random() * Int.MaxValue).toInt.toHexString}"
             end if

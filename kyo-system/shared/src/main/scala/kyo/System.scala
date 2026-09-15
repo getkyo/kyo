@@ -103,34 +103,31 @@ object System:
                     Maybe(SystemPlatformSpecific.env(name))
                 def property(name: String)(using AllowUnsafe): Maybe[String] =
                     Maybe(SystemPlatformSpecific.property(name))
-                def lineSeparator()(using AllowUnsafe): String = JSystem.lineSeparator()
+                def lineSeparator()(using AllowUnsafe): String = kyo.internal.Platform.lineSeparator
                 def userName()(using AllowUnsafe): String      = JSystem.getProperty("user.name")
                 def operatingSystem()(using AllowUnsafe): OS =
-                    // Delegate raw `os.name` lookup to the platform-specific shim: on JVM/Native this goes through
-                    // `java.lang.System`; on Scala.js (which returns null for that property) it falls back to Node's
-                    // `process.platform`. The classification below stays shared.
-                    val osName = SystemPlatformSpecific.osName().toLowerCase
-                    if osName.isEmpty then OS.Unknown
-                    else if osName.contains("linux") then OS.Linux
-                    else if osName.contains("mac") then OS.MacOS
-                    else if osName.contains("windows") then OS.Windows
-                    else if osName.contains("bsd") then OS.BSD
-                    else if osName.contains("sunos") then OS.Solaris
-                    else if osName.contains("os/400") || osName.contains("os400") then OS.IBMI
-                    else if osName.contains("aix") then OS.AIX
-                    else OS.Unknown
-                    end if
+                    import kyo.internal.Platform.Os
+                    kyo.internal.Platform.os match
+                        case Os.Linux   => OS.Linux
+                        case Os.MacOS   => OS.MacOS
+                        case Os.Windows => OS.Windows
+                        case Os.BSD     => OS.BSD
+                        case Os.Solaris => OS.Solaris
+                        case Os.IBMI    => OS.IBMI
+                        case Os.AIX     => OS.AIX
+                        case Os.Unknown => OS.Unknown
+                    end match
                 end operatingSystem
 
                 def architecture()(using AllowUnsafe): Arch =
-                    val arch = SystemPlatformSpecific.osArch().toLowerCase
-                    if arch.isEmpty then Arch.Unknown
-                    else if arch == "aarch64" || arch == "arm64" then Arch.Aarch64
-                    else if arch == "x86_64" || arch == "amd64" || arch == "x64" then Arch.X86_64
-                    else if arch == "x86" || arch == "i386" || arch == "i686" then Arch.X86
-                    else if arch.startsWith("arm") then Arch.Arm
-                    else Arch.Unknown
-                    end if
+                    import kyo.internal.Platform.Arch as PlatformArch
+                    kyo.internal.Platform.arch match
+                        case PlatformArch.X86     => Arch.X86
+                        case PlatformArch.X86_64  => Arch.X86_64
+                        case PlatformArch.Arm     => Arch.Arm
+                        case PlatformArch.Aarch64 => Arch.Aarch64
+                        case PlatformArch.Unknown => Arch.Unknown
+                    end match
                 end architecture
 
                 def availableProcessors()(using AllowUnsafe): Int = Runtime.getRuntime.availableProcessors()

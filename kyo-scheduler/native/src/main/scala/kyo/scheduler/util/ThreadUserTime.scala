@@ -1,7 +1,7 @@
 package kyo.scheduler.util
 
+import kyo.internal.Platform
 import scala.annotation.tailrec
-import scala.scalanative.meta.LinktimeInfo
 import scala.scalanative.posix.pthread.pthread_self
 import scala.scalanative.posix.time.*
 import scala.scalanative.posix.timeOps.*
@@ -23,7 +23,8 @@ import scala.scalanative.unsigned.*
   *     time. This is the same technique used by OpenJDK's ThreadMXBean.getThreadUserTime (JDK-8372584). Correctly detects kernel-level
   *     spinning as blocked, matching JVM and macOS behavior.
   *
-  * Platform selection is resolved at link time via LinktimeInfo, enabling dead code elimination of the unused platform path.
+  * Platform selection is resolved at link time through `Platform.isMac` and `Platform.isLinux`, enabling dead code elimination of the unused
+  * platform path.
   *
   * @see
   *   BlockingMonitor for how these measurements drive blocking detection
@@ -87,8 +88,8 @@ private[scheduler] object ThreadUserTime {
         }
 
     private def cpuTime(pthreadHandle: Long): Long =
-        if (LinktimeInfo.isMac) macUserTime(pthreadHandle)
-        else if (LinktimeInfo.isLinux) linuxCpuTime(pthreadHandle)
+        if (Platform.isMac) macUserTime(pthreadHandle)
+        else if (Platform.isLinux) linuxCpuTime(pthreadHandle)
         else -1L
 
     /** macOS: Convert pthread to mach port, then query thread_info for user CPU time only. */

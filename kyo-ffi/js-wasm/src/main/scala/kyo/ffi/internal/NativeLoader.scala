@@ -2,6 +2,8 @@ package kyo.ffi.internal
 
 import kyo.Chunk
 import kyo.ffi.FfiLoadError
+import kyo.internal.Platform
+import kyo.internal.PlatformJs
 import scala.scalajs.js
 import scala.util.Try
 
@@ -16,12 +18,11 @@ object NativeLoader:
         jsResolve(libraryId)
     end load
 
-    /** Returns `true` if neither `process` nor `require` is defined (browser heuristic). */
-    def detectBrowser(): Boolean =
-        val hasProcess = js.typeOf(js.Dynamic.global.selectDynamic("process")) != "undefined"
-        val hasRequire = js.typeOf(js.Dynamic.global.selectDynamic("require")) != "undefined"
-        !hasProcess && !hasRequire
-    end detectBrowser
+    /** Returns `true` when the host is not Node-like (Node, Bun, or Deno with a `process` global): a browser, or any other JS host koffi
+      * cannot run on. The loader reads `process` on every path, so a host without it is rejected here with a typed error instead of failing
+      * later with a `ReferenceError`.
+      */
+    def detectBrowser(): Boolean = !Platform.isNodeLike
 
     def jsResolve(libraryId: String): String =
         // 32-bit host rejection runs on every jsResolve call; the `platformChecked` flag keeps the work to a
@@ -37,7 +38,7 @@ object NativeLoader:
         // 1. Env-var override (operator-controlled) -- honored only when it points at a file that exists.
         // security: do not set from untrusted input, resolves a filesystem path to load as native code.
         val envKey = s"KYO_FFI_${libraryId.toUpperCase.replace('-', '_')}_PATH"
-        val env    = js.Dynamic.global.process.env.selectDynamic(envKey)
+        val env    = PlatformJs.jsGlobal("process").fold(js.undefined.asInstanceOf[js.Dynamic])(_.env.selectDynamic(envKey))
         if !js.isUndefined(env) && env != null then
             val p = env.asInstanceOf[String]
             candidates += s"env $envKey=$p"
@@ -162,29 +163,23 @@ object NativeLoader:
 
     // --- Platform detection ---
 
+    /** The resource tag of the host operating system, the same tags the JVM loader and kyo-net's capability probe use. */
     private def detectOs(): String =
-        val p = js.Dynamic.global.process.platform
-        if js.isUndefined(p) || p == null then "unknown"
-        else
-            p.asInstanceOf[String] match
-                case "darwin"  => "darwin"
-                case "linux"   => "linux"
-                case "win32"   => "windows"
-                case "freebsd" => "freebsd"
-                case other     => other
-        end if
-    end detectOs
+        Platform.os match
+            case Platform.Os.Linux   => "linux"
+            case Platform.Os.MacOS   => "darwin"
+            case Platform.Os.Windows => "windows"
+            case Platform.Os.BSD     => "bsd"
+            case _                   => "unknown"
 
+    /** The resource tag of the host architecture; an architecture with no tag keeps Node's own name for the diagnostic. */
     private def detectArch(): String =
-        val a = js.Dynamic.global.process.arch
-        if js.isUndefined(a) || a == null then "unknown"
-        else
-            a.asInstanceOf[String] match
-                case "x64"   => "x86_64"
-                case "arm64" => "aarch64"
-                case other   => other
-        end if
-    end detectArch
+        Platform.arch match
+            case Platform.Arch.X86_64  => "x86_64"
+            case Platform.Arch.Aarch64 => "aarch64"
+            case _ =>
+                val raw = detectArchString()
+                if raw.isEmpty then "unknown" else raw
 
     private def osExt(os: String): String = os match
         case "darwin"  => "dylib"
@@ -203,11 +198,8 @@ object NativeLoader:
         end if
     end ensurePlatformChecked
 
-    /** Read `process.arch` if available, else return an empty string (no detection possible → treat as unsupported fallback below). */
-    private def detectArchString(): String =
-        val a = js.Dynamic.global.process.arch
-        if js.isUndefined(a) || a == null then "" else a.asInstanceOf[String]
-    end detectArchString
+    /** Node's raw `process.arch`, or an empty string on a host without it (no detection possible, so the check below lets it through). */
+    private def detectArchString(): String = PlatformJs.processString("arch")
 
     /** Throw [[kyo.ffi.FfiLoadError.Unsupported]] if `arch` identifies a 32-bit Node target. Exposed for unit tests. */
     def checkPlatform(arch: String): Unit =

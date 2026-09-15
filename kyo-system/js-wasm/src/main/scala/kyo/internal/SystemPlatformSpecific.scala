@@ -3,17 +3,16 @@ package kyo.internal
 import kyo.AllowUnsafe
 import scala.scalajs.js
 
-/** JS-specific `os.name` detection.
+/** Scala.js accessors for the default `System.live` implementation.
   *
-  * Scala.js's `java.lang.System.getProperty("os.name")` returns `null`. Fall back to Node's `process.platform`, which gives one of
-  * `"darwin" | "linux" | "win32" | "freebsd" | ...`. We translate these into the same tokens that Java's `os.name` would produce (e.g.
-  * `"Mac OS X"`, `"Linux"`) so downstream `String.contains("mac")` checks just work.
+  * The environment comes from `process.env` where the host defines it and is empty elsewhere, such as in a browser. Operating system,
+  * architecture, and line separator come from [[Platform]].
   */
 private[kyo] object SystemPlatformSpecific:
     def env(name: String)(using AllowUnsafe): String =
-        // The `typeof` guard must stay INLINE on the global selection: binding `js.Dynamic.global.process`
-        // to a val first emits a bare `process` read, which throws ReferenceError in browsers.
-        if js.typeOf(js.Dynamic.global.process) == "undefined" then null
+        // Asked as a capability, so any host that defines `process.env` is read; once `process` is known to be defined, reading it cannot
+        // throw a ReferenceError.
+        if PlatformJs.jsGlobal("process").isEmpty then null
         else
             val proc = js.Dynamic.global.process
             if js.typeOf(proc.env) == "undefined" then null
@@ -27,42 +26,4 @@ private[kyo] object SystemPlatformSpecific:
 
     def property(name: String)(using AllowUnsafe): String =
         java.lang.System.getProperty(name)
-
-    def osName()(using AllowUnsafe): String =
-        val javaProp = java.lang.System.getProperty("os.name", "")
-        if javaProp.nonEmpty then javaProp
-        else if js.typeOf(js.Dynamic.global.process) != "undefined"
-            && js.typeOf(js.Dynamic.global.process.platform) != "undefined"
-        then
-            js.Dynamic.global.process.platform.asInstanceOf[String] match
-                case "darwin"  => "Mac OS X"
-                case "linux"   => "Linux"
-                case "win32"   => "Windows"
-                case "freebsd" => "FreeBSD"
-                case "openbsd" => "OpenBSD"
-                case "sunos"   => "SunOS"
-                case "aix"     => "AIX"
-                case other     => other
-        else ""
-        end if
-    end osName
-
-    /** Returns the CPU architecture. Falls back to Node's `process.arch` when Java's `os.arch` is unavailable (Scala.js returns null),
-      * normalised to Java-style tokens so callers can match on `"aarch64"`, `"x86_64"`, etc.
-      */
-    def osArch()(using AllowUnsafe): String =
-        val javaProp = java.lang.System.getProperty("os.arch", "")
-        if javaProp.nonEmpty then javaProp
-        else if js.typeOf(js.Dynamic.global.process) != "undefined"
-            && js.typeOf(js.Dynamic.global.process.arch) != "undefined"
-        then
-            js.Dynamic.global.process.arch.asInstanceOf[String] match
-                case "x64"   => "x86_64"
-                case "arm64" => "aarch64"
-                case "ia32"  => "x86"
-                case "arm"   => "arm"
-                case other   => other
-        else ""
-        end if
-    end osArch
 end SystemPlatformSpecific

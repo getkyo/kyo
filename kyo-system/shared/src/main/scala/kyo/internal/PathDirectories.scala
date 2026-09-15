@@ -26,8 +26,11 @@ private[kyo] trait PathDirectories:
       */
     private[kyo] def cwdPath: Path
 
-    /** Normalised OS tag: `"mac"`, `"linux"`, or `"win"`. */
-    private[kyo] def osPlatform: String
+    /** Normalised OS tag for the base-directory conventions: `"mac"`, `"win"`, or `"linux"` (every other OS follows the Linux XDG layout). */
+    private[kyo] def osPlatform: String =
+        if Platform.isMac then "mac"
+        else if Platform.isWindows then "win"
+        else "linux"
 
     /** Creates a temporary file. Platform-specific. */
     private[kyo] def tempUnscoped(prefix: String, suffix: String)(using Frame): Path < (Sync & Abort[FileStructureException])

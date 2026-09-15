@@ -1,6 +1,6 @@
 package kyo.scheduler.util
 
-import scala.scalanative.meta.LinktimeInfo
+import kyo.internal.Platform
 
 /** Platform-specific sleep used by the concurrency regulator's jitter probe.
   *
@@ -14,7 +14,7 @@ import scala.scalanative.meta.LinktimeInfo
   */
 private[scheduler] object Sleep {
     def apply(ms: Int): Unit =
-        if (LinktimeInfo.isWindows)
+        if (Platform.isWindows)
             Thread.sleep(ms.toLong)
         else
             PosixSleep(ms)

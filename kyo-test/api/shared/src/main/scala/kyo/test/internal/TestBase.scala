@@ -130,10 +130,9 @@ abstract class TestBase[S] extends KyoTestReflect with TypeCheck:
 
         // ── Platform filters ─────────────────────────────────────────────
         // Each produces a PlatformTestBuilder carrying a phantom PlatformSet marker in P.
-        // The terminal `in`/`-` on that carrier gates the body with a compile-time
-        // `inline if gateOf[P]`, so an excluded leaf body is NOT emitted on a disabled
-        // platform (absent, not skipped). `.jvm`/`.js`/`.native` are single-platform
-        // restrictions identical to `.onlyJvm`/`.onlyJs`/`.onlyNative`.
+        // The terminal `in`/`-` on that carrier gates the body with `Platform.linkTimeIf(gateOf[P])`,
+        // so an excluded leaf body is NOT in a disabled platform's output (absent, not skipped).
+        // `.jvm`/`.js`/`.native` are single-platform restrictions identical to `.onlyJvm`/`.onlyJs`/`.onlyNative`.
 
         def jvm: PlatformTestBuilder[PlatformSet.OnlyJvm]         = PlatformTestBuilder(TestBuilder(name))
         def js: PlatformTestBuilder[PlatformSet.OnlyJs]           = PlatformTestBuilder(TestBuilder(name))
@@ -144,16 +143,16 @@ abstract class TestBase[S] extends KyoTestReflect with TypeCheck:
         def notNative: PlatformTestBuilder[PlatformSet.NotNative] = PlatformTestBuilder(TestBuilder(name))
         def notWasm: PlatformTestBuilder[PlatformSet.NotWasm]     = PlatformTestBuilder(TestBuilder(name))
 
-        /** Restrict this leaf to exactly JVM; the body is compile-excluded on JS and Native (absent, not skipped). */
+        /** Restrict this leaf to exactly JVM; the body is excluded from the JS and Native output (absent, not skipped). */
         def onlyJvm: PlatformTestBuilder[PlatformSet.OnlyJvm] = PlatformTestBuilder(TestBuilder(name))
 
-        /** Restrict this leaf to exactly JS; the body is compile-excluded on JVM and Native (absent, not skipped). */
+        /** Restrict this leaf to exactly JS; the body is excluded from the JVM and Native output (absent, not skipped). */
         def onlyJs: PlatformTestBuilder[PlatformSet.OnlyJs] = PlatformTestBuilder(TestBuilder(name))
 
-        /** Restrict this leaf to exactly Native; the body is compile-excluded on JVM and JS (absent, not skipped). */
+        /** Restrict this leaf to exactly Native; the body is excluded from the JVM and JS output (absent, not skipped). */
         def onlyNative: PlatformTestBuilder[PlatformSet.OnlyNative] = PlatformTestBuilder(TestBuilder(name))
 
-        /** Restrict this leaf to exactly WebAssembly; the body is compile-excluded on JVM, JS, and Native (absent, not skipped). */
+        /** Restrict this leaf to exactly WebAssembly; the body is excluded from the JVM, Native, and JS-linked output (absent, not skipped). */
         def onlyWasm: PlatformTestBuilder[PlatformSet.OnlyWasm] = PlatformTestBuilder(TestBuilder(name))
 
     end extension
@@ -227,7 +226,7 @@ abstract class TestBase[S] extends KyoTestReflect with TypeCheck:
 
         // ── Platform filters ─────────────────────────────────────────────
         // Convert the accumulated builder into a PlatformTestBuilder carrying a phantom
-        // PlatformSet marker; the terminal `in`/`-` gates the body at compile time.
+        // PlatformSet marker; the terminal `in`/`-` gates the body before run time.
 
         def jvm: PlatformTestBuilder[PlatformSet.OnlyJvm]         = PlatformTestBuilder(b)
         def js: PlatformTestBuilder[PlatformSet.OnlyJs]           = PlatformTestBuilder(b)
@@ -238,32 +237,36 @@ abstract class TestBase[S] extends KyoTestReflect with TypeCheck:
         def notNative: PlatformTestBuilder[PlatformSet.NotNative] = PlatformTestBuilder(b)
         def notWasm: PlatformTestBuilder[PlatformSet.NotWasm]     = PlatformTestBuilder(b)
 
-        /** Restrict this leaf to exactly JVM; the body is compile-excluded on JS and Native (absent, not skipped). */
+        /** Restrict this leaf to exactly JVM; the body is excluded from the JS and Native output (absent, not skipped). */
         def onlyJvm: PlatformTestBuilder[PlatformSet.OnlyJvm] = PlatformTestBuilder(b)
 
-        /** Restrict this leaf to exactly JS; the body is compile-excluded on JVM and Native (absent, not skipped). */
+        /** Restrict this leaf to exactly JS; the body is excluded from the JVM and Native output (absent, not skipped). */
         def onlyJs: PlatformTestBuilder[PlatformSet.OnlyJs] = PlatformTestBuilder(b)
 
-        /** Restrict this leaf to exactly Native; the body is compile-excluded on JVM and JS (absent, not skipped). */
+        /** Restrict this leaf to exactly Native; the body is excluded from the JVM and JS output (absent, not skipped). */
         def onlyNative: PlatformTestBuilder[PlatformSet.OnlyNative] = PlatformTestBuilder(b)
 
-        /** Restrict this leaf to exactly WebAssembly; the body is compile-excluded on JVM, JS, and Native (absent, not skipped). */
+        /** Restrict this leaf to exactly WebAssembly; the body is excluded from the JVM, Native, and JS-linked output (absent, not skipped). */
         def onlyWasm: PlatformTestBuilder[PlatformSet.OnlyWasm] = PlatformTestBuilder(b)
 
     end extension
 
     // ── DSL: extension on PlatformTestBuilder[P] ─────────────────────────
     // Produced by a platform filter. Chainable decorators preserve P; the terminal
-    // `in`/`-` branches on `inline if gateOf[P]`: enabled -> register exactly as the
-    // unfiltered DSL; disabled -> discard the body UNAPPLIED so its code is never emitted.
+    // `in`/`-` branches on `Platform.linkTimeIf(gateOf[P])`: enabled -> register exactly as the
+    // unfiltered DSL; disabled -> discard the body UNAPPLIED so its code never reaches the output.
+    // On the JVM and Native every marker reduces to a constant and this is an `inline if`. On Scala.js
+    // the JVM/JS/Native markers still reduce to constants, while a wasm marker leaves
+    // `LinkingInfo.isWebAssembly` in the condition, which the linker resolves per link: the same
+    // compiled test classes serve a JS link and a WasmGC link.
 
     extension [P](pb: PlatformTestBuilder[P])
 
-        /** Register a platform-gated LEAF. On a disabled platform `gateOf[P]` is the literal `false`, so the registration arm is dropped and
-          * `discardScoped` consumes the body unapplied: no code for it reaches the platform's output.
+        /** Register a platform-gated LEAF. On a disabled platform `gateOf[P]` resolves to `false` before run time, so the registration arm is
+          * dropped and `discardScoped` consumes the body unapplied: no code for it reaches the platform's output.
           */
         inline infix def in(inline body: kyo.test.AssertScope ?=> Unit < (S & Async & Abort[Any] & Scope))(using inline f: Frame): Unit =
-            inline if gateOf[P] then
+            kyo.internal.Platform.linkTimeIf(gateOf[P]) {
                 val b = pb.builder
                 b.ignore match
                     case Maybe.Present(reason) => regCtx.registerIgnored(b.name, reason)
@@ -272,13 +275,14 @@ abstract class TestBase[S] extends KyoTestReflect with TypeCheck:
                             case Maybe.Present(cond) if !cond() => regCtx.registerSkipped(b.name, "condition false")
                             case _                              => regCtx.visitLeafWithBuilder[S](b.name, b, body)
                 end match
-            else
+            } {
                 discardScoped[S](body)
+            }
         end in
 
-        /** Register a platform-gated GROUP. Same compile-time gate as `in`: on a disabled platform the group body is discarded unapplied. */
+        /** Register a platform-gated GROUP. Same gate as `in`: on a disabled platform the group body is discarded unapplied. */
         inline infix def -(inline body: => Unit < (S & Async & Abort[Any] & Scope)): Unit =
-            inline if gateOf[P] then
+            kyo.internal.Platform.linkTimeIf(gateOf[P]) {
                 val b = pb.builder
                 b.ignore match
                     case Maybe.Present(reason) => regCtx.registerIgnored(b.name, reason)
@@ -287,8 +291,9 @@ abstract class TestBase[S] extends KyoTestReflect with TypeCheck:
                             case Maybe.Present(cond) if !cond() => regCtx.registerSkipped(b.name, "condition false")
                             case _                              => regCtx.visitGroupWithBuilder[S](b.name, b, body)
                 end match
-            else
+            } {
                 discardGroup[S](body)
+            }
         end -
 
         // Decorators chained after a platform filter preserve P so the gate still applies at the terminal.

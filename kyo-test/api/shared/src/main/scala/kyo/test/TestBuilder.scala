@@ -18,8 +18,8 @@ import scala.compiletime.erasedValue
   *
   * Platform restriction is NOT carried here: a platform filter (`.jvm`, `.js`, `.native`, `.onlyJvm`, `.onlyJs`, `.onlyNative`, `.notJvm`,
   * `.notJs`, `.notNative`) produces a [[kyo.test.PlatformTestBuilder]] whose phantom type parameter encodes the enabled-platform set, and the
-  * terminal `in`/`-` on that carrier gates the body with a compile-time `inline if`. On a disabled platform the body is never emitted, so the
-  * excluded leaf has no link or runtime cost (it is absent, not skipped).
+  * terminal `in`/`-` on that carrier gates the body before run time with `Platform.linkTimeIf`. On a disabled platform the body never reaches
+  * the output, so the excluded leaf has no runtime cost (it is absent, not skipped).
   *
   * @param name
   *   the leaf or group name
@@ -113,15 +113,17 @@ object PlatformSet:
     sealed trait Both[A, B]
 end PlatformSet
 
-/** Reduce a [[PlatformSet]] marker `P` to the compile-time-constant Boolean saying whether the current platform is in `P`'s enabled set.
+/** Reduce a [[PlatformSet]] marker `P` to the Boolean saying whether the current platform is in `P`'s enabled set, resolved before run time.
   *
-  * `transparent inline` plus the `inline erasedValue[P] match` makes the result a literal `true`/`false` at each platform compile, because
-  * `kyo.internal.Platform.isJVM`/`isJS`/`isNative`/`isWasm` are themselves inline constants per platform. That constant is what makes
-  * `inline if gateOf[P]` a legal compile-time branch whose dead arm is never emitted.
+  * `transparent inline` plus the `inline erasedValue[P] match` leaves only `kyo.internal.Platform` identity members in the result.
+  * `isJVM`, `isJS`, and `isNative` are compile-time constants on every platform, and so is `isWasm` on the JVM and Native. On Scala.js
+  * `isWasm` is a link-time property instead: one compiled artifact is linked as JS or as WasmGC. The terminal `in`/`-` therefore branches
+  * with `Platform.linkTimeIf(gateOf[P])`, an `inline if` wherever the result is a constant and a `LinkingInfo.linkTimeIf` on Scala.js, so
+  * the dead arm never reaches the output either way.
   *
   * Platform filters compose: chaining (`.notNative.notWasm`) wraps the markers in [[PlatformSet.Both]], so `P` becomes
-  * `Both[NotNative, NotWasm]`. The `Both` case reduces `gateOf[Both[a, b]]` to `gateOf[a] && gateOf[b]`, both inline constants, so the leaf
-  * is enabled only where every marker in the chain is.
+  * `Both[NotNative, NotWasm]`. The `Both` case reduces `gateOf[Both[a, b]]` to `gateOf[a] && gateOf[b]`, so the leaf is enabled only where
+  * every marker in the chain is.
   */
 transparent inline def gateOf[P]: Boolean =
     inline erasedValue[P] match
@@ -140,13 +142,13 @@ transparent inline def gateOf[P]: Boolean =
   * `.notJvm`, `.notJs`, `.notNative`, `.notWasm`).
   *
   * It wraps the runtime [[TestBuilder]] metadata and adds a phantom type parameter `P` naming the enabled-platform set (a [[PlatformSet]]
-  * marker). The terminal `in`/`-` (defined as extensions on this type inside [[kyo.test.internal.TestBase]]) branch on `inline if
-  * gateOf[P]`: on an enabled platform they register exactly as the unfiltered DSL does, and on a disabled platform they discard the body
-  * UNAPPLIED via `discardScoped`/`discardGroup`, so its code is never emitted.
+  * marker). The terminal `in`/`-` (defined as extensions on this type inside [[kyo.test.internal.TestBase]]) branch on
+  * `Platform.linkTimeIf(gateOf[P])`: on an enabled platform they register exactly as the unfiltered DSL does, and on a disabled platform
+  * they discard the body UNAPPLIED via `discardScoped`/`discardGroup`, so its code never reaches the output.
   *
   * Decorators chained after a platform filter (`.pending`, `.pendingUntilFixed`, `.focus`, `.retry`, `.timeout`, ...) preserve `P`, so a
-  * chain like `"x".notNative.pending("...") in { ... }` stays compile-excluded on Native. A second platform filter combines with `P` via
-  * [[PlatformSet.Both]] instead of replacing it, so `"x".notNative.notWasm in { ... }` is compile-excluded on both Native and WebAssembly.
+  * chain like `"x".notNative.pending("...") in { ... }` stays excluded on Native. A second platform filter combines with `P` via
+  * [[PlatformSet.Both]] instead of replacing it, so `"x".notNative.notWasm in { ... }` is excluded on both Native and WebAssembly.
   *
   * @tparam P
   *   the [[PlatformSet]] marker naming the enabled-platform set

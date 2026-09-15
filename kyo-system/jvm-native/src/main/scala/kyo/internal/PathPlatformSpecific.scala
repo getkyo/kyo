@@ -973,8 +973,8 @@ end NioWalkHandle
 /** Platform-specific `Path` factory and system-directory accessors for JVM and Scala Native. */
 abstract private[kyo] class PathPlatformSpecific extends PathDirectories:
 
-    private[kyo] val platformPathSeparator: String = java.io.File.pathSeparator
-    private[kyo] val platformFileSeparator: String = java.io.File.separator
+    private[kyo] val platformPathSeparator: String = Platform.pathSeparator
+    private[kyo] val platformFileSeparator: String = Platform.fileSeparator
 
     /** Wraps an existing `java.nio.file.Path` as a kyo `Path`.
       *
@@ -1101,12 +1101,5 @@ abstract private[kyo] class PathPlatformSpecific extends PathDirectories:
         if d == null || d.isEmpty then make(Chunk(""))
         else make(Chunk(d))
     end cwdPath
-
-    private[kyo] def osPlatform: String =
-        val os = java.lang.System.getProperty("os.name", "").toLowerCase
-        if os.contains("mac") then "mac"
-        else if os.contains("win") then "win"
-        else "linux"
-    end osPlatform
 
 end PathPlatformSpecific

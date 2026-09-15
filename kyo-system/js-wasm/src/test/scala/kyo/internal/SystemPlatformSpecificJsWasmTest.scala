@@ -24,14 +24,6 @@ class SystemPlatformSpecificJsWasmTest extends kyo.test.Test[Any]:
         "env returns null instead of throwing ReferenceError" in {
             assert(withoutProcessGlobal(SystemPlatformSpecific.env("PATH")) == null)
         }
-
-        "osName falls back to the empty string instead of throwing ReferenceError" in {
-            assert(withoutProcessGlobal(SystemPlatformSpecific.osName()) == "")
-        }
-
-        "osArch falls back to the empty string instead of throwing ReferenceError" in {
-            assert(withoutProcessGlobal(SystemPlatformSpecific.osArch()) == "")
-        }
     }
 
     "on Node" - {

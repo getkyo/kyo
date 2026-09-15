@@ -9,7 +9,8 @@ import scala.scalajs.js as sjs
 
 /** Validates the browser gate.
   *
-  * [[NativeLoader.detectBrowser]] returns true when neither `process` nor `require` is defined on the JS global. On that outcome:
+  * [[NativeLoader.detectBrowser]] returns true when the host is not Node-like, which includes any host without a `process` global. On that
+  * outcome:
   *
   *   - [[NativeLoader.load]] throws [[FfiLoadError.Unsupported]] directly.
   *   - [[FfiReflect.instantiate]] throws [[FfiLoadError.Unsupported]] before attempting any `scalajs-reflect` lookup, so `Ffi.load[T]` surfaces the
@@ -65,7 +66,7 @@ class BrowserDetectionTest extends Test:
 
     "detectBrowser" - {
         "returns false under Node (process + require are defined)" in {
-            // Node test runner always has `process` defined; `require` may or may not be. The heuristic requires *both* to be absent.
+            // The Node test runner always has `process` defined, so the host is Node-like whether or not `require` is.
             assert(NativeLoader.detectBrowser() == false)
         }
 
@@ -80,9 +81,11 @@ class BrowserDetectionTest extends Test:
             assert(NativeLoader.detectBrowser() == false)
         }
 
-        "returns false when require is defined but process is not" in {
+        "returns true when require is defined but process is not" in {
+            // The loader reads `process` (its environment, platform, and architecture) on every path, so a host without it cannot load a
+            // native library. Answering false here sent the load on to a ReferenceError instead of the typed rejection.
             deleteGlobal("process")
-            assert(NativeLoader.detectBrowser() == false)
+            assert(NativeLoader.detectBrowser() == true)
         }
     }
 

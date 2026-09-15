@@ -1281,8 +1281,8 @@ end bytesToUint8Array
 
 abstract private[kyo] class PathPlatformSpecific extends PathDirectories:
 
-    private[kyo] val platformPathSeparator: String = NodePath.delimiter
-    private[kyo] val platformFileSeparator: String = NodePath.sep
+    private[kyo] val platformPathSeparator: String = Platform.pathSeparator
+    private[kyo] val platformFileSeparator: String = Platform.fileSeparator
 
     private[kyo] def make(parts: Chunk[String]): Path =
         if parts.isEmpty then new NodePathUnsafe("").safe
@@ -1359,11 +1359,5 @@ abstract private[kyo] class PathPlatformSpecific extends PathDirectories:
 
     private[kyo] def cwdPath: Path =
         make(Chunk(js.Dynamic.global.process.applyDynamic("cwd")().asInstanceOf[String]))
-
-    private[kyo] def osPlatform: String =
-        NodeOs.platform() match
-            case "darwin" => "mac"
-            case "win32"  => "win"
-            case _        => "linux"
 
 end PathPlatformSpecific

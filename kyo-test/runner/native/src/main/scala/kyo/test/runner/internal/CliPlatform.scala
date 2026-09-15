@@ -58,9 +58,9 @@ private[runner] object CliPlatform:
 
     /** Terminates the process with the given exit code. */
     def exit(code: Int): Nothing =
-        java.lang.System.exit(code)
-        // Unsafe: System.exit never returns; throw satisfies the Nothing return type at compile time
-        throw new AssertionError("unreachable after System.exit")
+        kyo.internal.Platform.exit(code)
+        // Unsafe: Platform.exit terminates the process here and never returns; throw satisfies the Nothing return type at compile time
+        throw new AssertionError("unreachable after Platform.exit")
     end exit
 
 end CliPlatform

@@ -25,21 +25,22 @@ import scala.annotation.tailrec
 private[net] object CapabilityProbe:
 
     /** The `<os>-<arch>` tag a [[CapabilityOutcome.NotBundled]] names, matching the tag the kyo-ffi loader searches its bundled resources
-      * under ("darwin-aarch64", "linux-x86_64", ...) so a reader can map the outcome onto the path that was missed. `os.arch` is read through
-      * `sys.props`, which resolves on the JVM and on Scala Native's property table; a runtime that publishes neither reports "unknown" rather
-      * than failing the probe, since this is diagnostic text and never a selection input.
+      * under ("darwin-aarch64", "linux-x86_64", ...) so a reader can map the outcome onto the path that was missed. Both halves come from
+      * `Platform`, which reads the host on every platform (including `process.arch` on Scala.js, which publishes no `os.arch` property); a host
+      * it cannot classify reports "unknown" rather than failing the probe, since this is diagnostic text and never a selection input.
       */
     val platform: String =
+        import kyo.internal.Platform
         val os =
-            if kyo.internal.Platform.isLinux then "linux"
-            else if kyo.internal.Platform.isMac then "darwin"
-            else if kyo.internal.Platform.isBsd then "bsd"
-            else if kyo.internal.Platform.isWindows then "windows"
+            if Platform.isLinux then "linux"
+            else if Platform.isMac then "darwin"
+            else if Platform.isBsd then "bsd"
+            else if Platform.isWindows then "windows"
             else "unknown"
-        val arch = sys.props.getOrElse("os.arch", "unknown") match
-            case "amd64" | "x86_64"  => "x86_64"
-            case "aarch64" | "arm64" => "aarch64"
-            case other               => other
+        val arch =
+            if Platform.isX86_64 then "x86_64"
+            else if Platform.isAarch64 then "aarch64"
+            else "unknown"
         s"$os-$arch"
     end platform
 

@@ -34,12 +34,9 @@ class EpollTest extends ItTestBase:
     private val isX86_64: Boolean =
         // `os.arch` is empty under Scala.js, so `System.getProperty("os.arch")` made JS+x86_64 misdetect as
         // non-x86_64 and read/write the epoll_event at the aarch64 offsets (data@8, size 16) instead of the
-        // packed x86_64 layout (data@4, size 12). SystemPlatformSpecific.osArch reads `process.arch` on JS (and
-        // `os.arch` on JVM/Native), the same accessor the real driver's EpollEvent layout uses (PosixStructs).
-        import AllowUnsafe.embrace.danger
-        kyo.internal.SystemPlatformSpecific.osArch().toLowerCase match
-            case "x86_64" | "amd64" | "x64" => true
-            case _                          => false
+        // packed x86_64 layout (data@4, size 12). Platform.isX86_64 reads `process.arch` on JS (and `os.arch`
+        // on JVM, the link target on Native).
+        kyo.internal.Platform.isX86_64
     end isX86_64
     private val EPOLL_DATA_OFFSET = if isX86_64 then 4 else 8
     private val EPOLL_EVENT_SIZE  = if isX86_64 then 12 else 16

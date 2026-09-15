@@ -17,12 +17,12 @@ private[ffi] object FfiPlatformErrors:
 
     /** Message for browser-runtime rejection in JS `NativeLoader.load`. */
     val BrowserUnsupportedLoader: String =
-        "kyo-ffi does not support browser runtimes, neither `process` nor `require` is defined. " +
+        "kyo-ffi does not support browser runtimes or other JS hosts without a Node-like `process` global. " +
             "Supported Scala.js targets: Node.js, Bun, and Deno. Use the JVM or Scala Native targets for FFI outside Node-like environments."
 
     /** Message for browser-runtime rejection in JS `FfiReflect.instantiate`. */
     val BrowserUnsupportedReflect: String =
-        "kyo-ffi does not support browser runtimes, neither `process` nor `require` is defined. " +
+        "kyo-ffi does not support browser runtimes or other JS hosts without a Node-like `process` global. " +
             "Supported Scala.js targets: Node.js, Bun, and Deno."
 
     // --- koffi ABI probe (JS only) ---

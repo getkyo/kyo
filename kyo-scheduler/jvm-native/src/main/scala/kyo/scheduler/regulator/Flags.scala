@@ -21,10 +21,7 @@ private[kyo] object concurrencyRegulateIntervalMs extends StaticFlag[Int](1500)
 // threshold. Windows quantizes sleep wake-ups between 1ms and 2ms, an idle floor of roughly
 // 0.7ms stddev that sits inside the POSIX band and would freeze regulation (never below the
 // grow threshold, never above the shrink one), so its band is sized above that floor.
-private[kyo] object isWindowsHost {
-    val value: Boolean = java.lang.System.getProperty("os.name", "").toLowerCase.contains("win")
-}
-private[kyo] object concurrencyJitterUpperThreshold extends StaticFlag[Int](if (isWindowsHost.value) 2500000 else 800000)
-private[kyo] object concurrencyJitterLowerThreshold extends StaticFlag[Int](if (isWindowsHost.value) 1500000 else 500000)
+private[kyo] object concurrencyJitterUpperThreshold extends StaticFlag[Int](if (kyo.internal.Platform.isWindows) 2500000 else 800000)
+private[kyo] object concurrencyJitterLowerThreshold extends StaticFlag[Int](if (kyo.internal.Platform.isWindows) 1500000 else 500000)
 private[kyo] object concurrencyLoadAvgTarget        extends StaticFlag[Double](0.8)
 private[kyo] object concurrencyStepExp              extends StaticFlag[Double](1.2)
