@@ -92,9 +92,15 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
                     }
                 }
 
-                "shell" in {
-                    Container.withBackendConfig(_.Shell(runtime))(checkingContainerLeak(v))
-                }
+                // The shell arm shells out to the runtime's CLI, so it is gated on the CLI the way the http arm is
+                // gated on the socket. A host that reaches a daemon over a socket alone (a mounted socket inside a
+                // container) has no CLI to run, and registering the arm there produced a leaf per shell test that
+                // could only fail on a missing binary.
+                if ContainerRuntime.cliExists(runtime) then
+                    "shell" in {
+                        Container.withBackendConfig(_.Shell(runtime))(checkingContainerLeak(v))
+                    }
+                end if
             }
         }
 
@@ -115,9 +121,15 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
                     }
                 }
 
-                "shell" in {
-                    Container.withBackendConfig(_.Shell(runtime))(checkingContainerLeak(v))
-                }
+                // The shell arm shells out to the runtime's CLI, so it is gated on the CLI the way the http arm is
+                // gated on the socket. A host that reaches a daemon over a socket alone (a mounted socket inside a
+                // container) has no CLI to run, and registering the arm there produced a leaf per shell test that
+                // could only fail on a missing binary.
+                if ContainerRuntime.cliExists(runtime) then
+                    "shell" in {
+                        Container.withBackendConfig(_.Shell(runtime))(checkingContainerLeak(v))
+                    }
+                end if
             }
         }
 
@@ -189,4 +201,41 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
       */
     private[kyo] def ensureCleanup(c: Container)(using Frame): Unit < (Async & Abort[Any] & Scope) =
         Scope.ensure(Abort.run[ContainerException](c.remove(force = true)).unit)
+
+    /** Ensures `image` is present, retrying a failing registry but never a genuinely absent image.
+      *
+      * A precondition pull reaches the real registry, and Docker Hub intermittently answers 5xx: a manifest
+      * HEAD can return 500 for an image that exists. `Container.init` deliberately fails fast
+      * on a registry error (a permanently absent image never becomes present by retrying), so the
+      * resilience belongs at the test call site rather than in the library.
+      *
+      * Scoping the retry to `ContainerOperationException` is what keeps it from hiding a defect. Both
+      * backends classify a failing registry there: the shell backend reports the pull's own failure, and the
+      * HTTP backend maps a 5xx through its generic-status branch, having deliberately excluded 5xx from the
+      * missing-image conflation. `ContainerImageMissingException` is a `ContainerNotFoundException`, so an
+      * absent image still aborts on the first attempt and the leaves that assert on it are unaffected. A
+      * real failure fails again on every attempt and still reds the leaf; only a fault that clears on its
+      * own is absorbed.
+      *
+      * The backoff is real time, unavoidably: the registry is a real service and a virtual clock would not
+      * advance it. No leaf asserts on the elapsed time, so nothing here is a timing pass condition.
+      */
+    private[kyo] def ensureImage(image: ContainerImage)(using Frame): Unit < (Async & Abort[ContainerException]) =
+        Retry[ContainerOperationException](
+            Schedule.exponentialBackoff(initial = 1.second, factor = 2, maxBackoff = 8.seconds).jitter(0.2).take(3)
+        ) {
+            ContainerImage.ensure(image)
+        }
+
+    /** Cancels the leaf when `runtime`'s CLI is absent, for leaves that construct a Shell backend themselves.
+      *
+      * The shell backend shells out to `podman` or `docker`, so a host that reaches a daemon over a socket alone,
+      * such as one mounted into a container, has no binary for it to run. `runBackends` gates its own shell arm the
+      * same way; a leaf that picks the backend in its body has to say so itself. Cancelling names the reason, which
+      * is what a leaf that cannot apply here should do rather than failing on a missing binary.
+      */
+    private[kyo] def requireRuntimeCli(runtime: String)(using Frame, kyo.test.AssertScope): Unit =
+        if !ContainerRuntime.cliExists(runtime) then
+            cancel(s"the $runtime CLI is not available on this host, so the shell backend cannot run")
+
 end BasePodTest

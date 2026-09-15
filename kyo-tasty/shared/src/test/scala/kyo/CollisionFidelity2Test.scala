@@ -119,11 +119,13 @@ class CollisionFidelity2Test extends Fidelity2TestBase:
     "FailFast collision raises TastyError.FullNameCollisionError" in {
         // Write collision bytes to temp dirs: root1 and root2 each contain the same fixtures.
         Scope.run {
-            Path.tempDir("kyo-col-root1").map { root1 =>
-                Path.tempDir("kyo-col-root2").map { root2 =>
-                    Kyo.foreach(Chunk.from(fixtureBytes)) { (name, bytes) =>
-                        (root1 / s"$name.tasty").writeBytes(Span.from(bytes)).map { _ =>
-                            (root2 / s"$name.tasty").writeBytes(Span.from(bytes))
+            Path.run(Path.tempDir("kyo-col-root1")).map { root1 =>
+                Path.run(Path.tempDir("kyo-col-root2")).map { root2 =>
+                    Path.run {
+                        Kyo.foreach(Chunk.from(fixtureBytes)) { (name, bytes) =>
+                            (root1 / s"$name.tasty").writeBytes(Span.from(bytes)).map { _ =>
+                                (root2 / s"$name.tasty").writeBytes(Span.from(bytes))
+                            }
                         }
                     }
                         .map { _ =>

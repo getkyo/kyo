@@ -69,28 +69,6 @@ private[kyo] trait PathDirectories:
         )
     end platformProjectPaths
 
-    /** Creates a temporary directory in the platform temporary location and registers its recursive
-      * removal with the enclosing `Scope`. Use `tempDirUnscoped` when the directory must outlive the
-      * scope that creates it.
-      */
-    def tempDir(prefix: String = "kyo")(using Frame): Path < (Sync & Scope & Abort[FileStructureException]) =
-        tempDirUnscoped(prefix).map { dir =>
-            Scope.acquireRelease(dir)(created => Abort.run[FileStructureException](created.removeAll).unit)
-        }
-
-    /** Creates a temporary file in the platform temporary location and registers its removal with the
-      * enclosing `Scope`. Use `tempUnscoped` when the file must outlive the scope that creates it.
-      */
-    private[kyo] def temp(
-        prefix: String = "kyo",
-        suffix: String = ".tmp"
-    )(using Frame): Path < (Sync & Scope & Abort[FileStructureException]) =
-        tempUnscoped(prefix, suffix).map { p =>
-            Scope.acquireRelease(p) { q =>
-                Abort.run[FileStructureException](q.removeAll).unit
-            }
-        }
-
     // --- Private env helpers ---
 
     private def envOrElse(name: String, fallback: => String): String =

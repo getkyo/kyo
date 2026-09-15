@@ -53,17 +53,9 @@ object FieldsMacros:
                     if tpe =:= TypeRepr.of[Any] then Vector()
                     else
                         caseClassFields(tpe).getOrElse:
-                            try
-                                tpe.typeSymbol.tree match
-                                    case typeDef: TypeDef =>
-                                        typeDef.rhs match
-                                            case bounds: TypeBoundsTree =>
-                                                val hi = bounds.hi.tpe
-                                                if !(hi =:= TypeRepr.of[Any]) then decompose(hi)
-                                                else Vector(tpe)
-                                            case _ => Vector(tpe)
-                                    case _ => Vector(tpe)
-                            catch case _: Exception => Vector(tpe)
+                            DeclaredBounds.upper(tpe) match
+                                case Some(hi) => decompose(hi)
+                                case None     => Vector(tpe)
 
         def tupled(typs: Vector[TypeRepr]): TypeRepr =
             typs match
@@ -144,17 +136,7 @@ object FieldsMacros:
                         if sym.isClassDef && sym.flags.is(Flags.Case) then
                             sym.caseFields.find(_.name == nameStr).map(f => tpe.memberType(f))
                         else
-                            try
-                                tpe.typeSymbol.tree match
-                                    case typeDef: TypeDef =>
-                                        typeDef.rhs match
-                                            case bounds: TypeBoundsTree =>
-                                                val hi = bounds.hi.tpe
-                                                if !(hi =:= TypeRepr.of[Any]) then findValueType(hi)
-                                                else None
-                                            case _ => None
-                                    case _ => None
-                            catch case _: Exception => None
+                            DeclaredBounds.upper(tpe).flatMap(findValueType)
                         end if
 
         findValueType(TypeRepr.of[F]) match
@@ -185,17 +167,7 @@ object FieldsMacros:
                         if sym.isClassDef && sym.flags.is(Flags.Case) then
                             sym.caseFields.map(f => (f.name, tpe.memberType(f))).toVector
                         else
-                            try
-                                tpe.typeSymbol.tree match
-                                    case typeDef: TypeDef =>
-                                        typeDef.rhs match
-                                            case bounds: TypeBoundsTree =>
-                                                val hi = bounds.hi.tpe
-                                                if !(hi =:= TypeRepr.of[Any]) then decompose(hi)
-                                                else Vector()
-                                            case _ => Vector()
-                                    case _ => Vector()
-                            catch case _: Exception => Vector()
+                            DeclaredBounds.upper(tpe).fold(Vector.empty)(decompose)
                         end if
 
         for (name, valueType) <- decompose(TypeRepr.of[A]) do
@@ -228,17 +200,7 @@ object FieldsMacros:
                         if sym.isClassDef && sym.flags.is(Flags.Case) then
                             sym.caseFields.map(_.name).toSet
                         else
-                            try
-                                tpe.typeSymbol.tree match
-                                    case typeDef: TypeDef =>
-                                        typeDef.rhs match
-                                            case bounds: TypeBoundsTree =>
-                                                val hi = bounds.hi.tpe
-                                                if !(hi =:= TypeRepr.of[Any]) then fieldNames(hi)
-                                                else Set.empty
-                                            case _ => Set.empty
-                                    case _ => Set.empty
-                            catch case _: Exception => Set.empty
+                            DeclaredBounds.upper(tpe).fold(Set.empty)(fieldNames)
                         end if
 
         val namesA = fieldNames(TypeRepr.of[A])

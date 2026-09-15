@@ -1,5 +1,7 @@
 package kyo.interop.flow
 
+import java.util.concurrent.Flow.Subscriber
+import java.util.concurrent.Flow.Subscription
 import kyo.*
 import kyo.Result.Failure
 import kyo.Result.Panic
@@ -209,6 +211,47 @@ abstract private class PublisherToSubscriberTest extends kyo.test.Test[Any]:
                 _ <- fiber3.getResult
                 _ <- fiber4.getResult
             yield succeed("publisher interruption ended all subscribed parties without hanging")
+            end for
+        }
+
+        /** A subscriber the publisher tears down under is entitled to a terminal signal.
+          *
+          * The specification lets a publisher stop signalling once the SUBSCRIBER cancels, and the subscription's `cancel` is written for
+          * exactly that: it closes the request channel and deliberately delivers no terminal event. Publisher-initiated teardown reuses that
+          * same verb, so a subscriber that never cancelled is stopped the silent way and waits for an event that never comes.
+          *
+          * This pins the property directly rather than through the interrupt-propagation leaf, which needs four subscribers racing and only
+          * fails under load. One subscriber, established before the teardown, and the assertion is simply that something terminal arrived.
+          * Nothing here waits on the clock.
+          */
+        "a subscriber the publisher tears down under receives a terminal signal" in {
+            for
+                subscribed <- Promise.init[Unit, Any]
+                terminated <- Promise.init[String, Any]
+                sub = new Subscriber[Int]:
+                    import AllowUnsafe.embrace.danger
+                    def onSubscribe(s: Subscription): Unit =
+                        s.request(Long.MaxValue)
+                        discard(Sync.Unsafe.evalOrThrow(subscribed.unsafe.completeDiscard(Result.succeed(()))))
+                    def onNext(v: Int): Unit = ()
+                    def onComplete(): Unit =
+                        discard(Sync.Unsafe.evalOrThrow(terminated.unsafe.completeDiscard(Result.succeed("onComplete"))))
+                    def onError(e: Throwable): Unit =
+                        discard(Sync.Unsafe.evalOrThrow(terminated.unsafe.completeDiscard(Result.succeed("onError"))))
+                publisherFiber <- Fiber.initUnscoped(Scope.run(
+                    Stream.range(0, 1000000, 1).toPublisher
+                        .map(_.subscribe(sub))
+                        .andThen(Async.never)
+                ))
+                // Established before teardown, so this tests what teardown delivers rather than racing setup.
+                _ <- subscribed.get
+                _ <- publisherFiber.interrupt.unit
+                // The harness budget is the failure detector: a teardown that signals nothing never completes this.
+                signal <- terminated.get
+            yield assert(
+                signal == "onComplete" || signal == "onError",
+                s"publisher teardown must tell its subscriber something terminal, got $signal"
+            )
             end for
         }
 

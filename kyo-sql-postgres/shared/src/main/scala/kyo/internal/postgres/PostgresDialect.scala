@@ -25,7 +25,9 @@ class PostgresDialect extends Idiom:
     override def supportsReturning: Boolean = true
 
     /** PostgreSQL's `/` on two integers truncates, so the exact fractional quotient casts the dividend to NUMERIC (numeric / int4
-      * resolves to numeric / numeric). Only the dividend needs it. Every other arithmetic arm is the baseline.
+      * resolves to numeric / numeric). Only the dividend needs it.
+      *
+      * The divisor takes the baseline's guard; see [[Idiom.guardingDivisor]].
       */
     override def arithmetic(ctx: Idiom.Ctx, ar: Sql.Arithmetic[?]): Unit =
         ar.op match
@@ -33,7 +35,7 @@ class PostgresDialect extends Idiom:
                 ctx.append("(CAST(")
                 term(ctx, ar.left)
                 ctx.append(" AS NUMERIC) / ")
-                term(ctx, ar.right)
+                term(ctx, guardingDivisor(ar).right)
                 ctx.append(")")
             case _ => super.arithmetic(ctx, ar)
 

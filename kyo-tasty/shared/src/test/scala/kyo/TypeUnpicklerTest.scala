@@ -449,7 +449,7 @@ class TypeUnpicklerTest extends kyo.test.Test[Any]:
         )
         var decoded: Option[Tasty.Type]  = None
         var exception: Option[Throwable] = None
-        // StackLimitedRunner is platform-specific: JVM uses a 64KB-stack Thread, JS/Native run directly.
+        // StackLimitedRunner is platform-specific: JVM uses a stack-limited Thread, JS/Native run directly.
         StackLimitedRunner.run {
             try
                 val view        = ByteView(bytes)

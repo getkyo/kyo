@@ -120,7 +120,7 @@ jobs:
       # newest previous generation. That is deliberate: it gives each run its own entry and lets
       # GitHub's LRU and 7-day eviction bound the store.
       - name: Restore doctest cache
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: .doctest-cache
           key: doctest-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}
@@ -135,7 +135,7 @@ jobs:
       # reuse. A PR gets its hits from the default branch's cache.
       - name: Save doctest cache
         if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: .doctest-cache
           key: doctest-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}

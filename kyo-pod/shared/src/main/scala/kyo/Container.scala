@@ -2220,7 +2220,9 @@ object Container:
         short.nonEmpty && cgroup.contains(short)
 
     private def hostPidBelongsTo(id: Id, pid: Int)(using Frame): Boolean < Sync =
-        Abort.run[FileReadException](Path("/proc", pid.toString, "cgroup").read).map {
+        // The cgroup entry is the only filesystem authority this needs, and it is discharged here so the
+        // host-process check stays an implementation detail rather than a capability the caller must grant.
+        Abort.run[FileSystemException](Path.runReadOnly(Path("/proc", pid.toString, "cgroup").read)).map {
             case Result.Success(cgroup) => cgroupNamesContainer(cgroup, id)
             case _                      => false
         }

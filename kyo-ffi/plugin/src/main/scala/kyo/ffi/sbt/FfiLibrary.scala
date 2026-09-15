@@ -51,6 +51,26 @@ import sbt._
   *   additional linker flags (appended to global `ffiLinkFlags`).
   * @param staticLink
   *   when true, statically link third-party libs for this library.
+  * @param osTargets
+  *   the OS names whose shared library this library is built and bundled for;
+  *   empty (the default) means every OS. A binding that only exists to be called
+  *   on one OS names it here, so a build on any other host neither compiles a
+  *   shared library for it nor claims it in the native manifest. Without it, C
+  *   that is `#ifdef`-guarded to same-signature stubs off its OS still compiles
+  *   everywhere, and the build ships a working-looking artifact for a platform
+  *   that can never call it while the platform that can may have none at all.
+  *
+  *   Entries are EXACT `CCompiler.supportedOs` names and are validated against
+  *   that list: `"linux"` and `"linux-musl"` are separate targets, and naming
+  *   only `"linux"` excludes musl. They are separate everywhere else in the
+  *   system (the artifact tags, the staging directory names, `NativeLoader.Os`,
+  *   the state and native manifests), and folding them together here would make
+  *   every `Seq("linux")` declaration silently claim a musl support its author
+  *   never attested. `linkLibsByOs` and `compilerByOs` still fold, because a musl
+  *   toolchain genuinely is "linux" for link-flag purposes.
+  *
+  *   Scala Native is unaffected: it compiles every declared C source into the
+  *   binary on every OS, which is what keeps the stub symbols resolvable there.
   * @param dependsOn
   *   ids of other libraries this library depends on. Used to topologically
   *   order C compilation so a library that `#include`s another's header (or
@@ -69,8 +89,27 @@ final case class FfiLibrary(
     linkFlags: Seq[String] = Nil,
     staticLink: Boolean = false,
     dependsOn: Seq[String] = Nil,
-    compilerByOs: Map[String, String] = Map.empty
+    compilerByOs: Map[String, String] = Map.empty,
+    osTargets: Seq[String] = Nil
 ) {
+
+    /** Whether this library's shared library is built and bundled on `os` (the resolved TARGET os).
+      * True for every OS when `osTargets` is empty, which is the default.
+      *
+      * Matching is EXACT: `linux-musl` does NOT resolve the `linux` key. A library that builds on
+      * both names both. See `osTargets` for why the two are kept distinct here while `linkLibsByOs`
+      * and `compilerByOs` still fold musl onto `linux`.
+      */
+    def buildsOn(os: String): Boolean =
+        osTargets.isEmpty || osTargets.contains(os)
+
+    /** The `osTargets` entries that are not `CCompiler.supportedOs` names. A typo makes `buildsOn`
+      * false on every OS, which is silent: the library is skipped everywhere, recorded `absent` in
+      * every manifest, and required of nothing by the release guard. Callers validate at resolution
+      * time so the mistake is an error instead of a disappearance.
+      */
+    def unknownOsTargets: Seq[String] =
+        osTargets.filterNot(CCompiler.supportedOs.contains)
 
     /** Effective link libraries for the OS being built: the always-on `linkLibs`
       * plus the entry in `linkLibsByOs` for `os` (the resolved TARGET os,

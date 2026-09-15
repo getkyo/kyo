@@ -5,11 +5,9 @@ import kyo.internal.SqlTestBackend
 /** Cross-backend battery for what a caller learns about a result set it did not type: the kind of value each column carries, the engine's
   * own name for that type, and the column's value rendered as text.
   *
-  * The tool this exists for runs SQL nobody typed. It has no row type to decode into, so the reachable surface used to be a column name and
-  * bytes it could not interpret, and the only reader that never failed was `decode[String]`, which answered those bytes as UTF-8 whatever
-  * they were. That reader now refuses a column that is not text, which is correct and leaves the generic caller with nothing, so the two
-  * halves are one change: [[SqlRow.columnKind]] and [[SqlRow.columnTypeName]] say what a column is, and [[SqlRow.text]] renders the value
-  * the column actually holds.
+  * The tool this exists for runs SQL nobody typed, so it has no row type to decode into: [[SqlRow.columnKind]] and
+  * [[SqlRow.columnTypeName]] say what a column is, and [[SqlRow.text]] renders the value it holds. `decode[String]` is not the substitute,
+  * since it refuses a column that is not text.
   *
   * Both wire formats are covered. A text-protocol row already carries every value as its rendering; a binary-protocol row carries wire
   * representations that have to be decoded at the column's own type first, which is where a renderer that reinterpreted bytes would answer
@@ -48,12 +46,14 @@ class SqlRowColumnMetadataConformanceTest extends SqlBackendTest:
                 assert(row.columnKind("f") == SqlRow.ColumnKind.Float, s"f: got ${row.columnKind("f")}")
                 assert(row.columnKind("d") == SqlRow.ColumnKind.Date, s"d: got ${row.columnKind("d")}")
                 assert(row.columnKind("n") == SqlRow.ColumnKind.Decimal, s"n: got ${row.columnKind("n")}")
-                // MySQL stores a BOOLEAN as TINYINT and reports it as one, so the neutral kind is the integer it is.
-                // Pinned per engine rather than as a disjunction: this is the accessor a generic caller acts on, and a
-                // regression mapping PostgreSQL's bool to Integer would satisfy an either-answer assertion.
-                val expectedBoolKind =
-                    if backend.id == "mysql" then SqlRow.ColumnKind.Integer else SqlRow.ColumnKind.Bool
-                assert(row.columnKind("t") == expectedBoolKind, s"t: expected $expectedBoolKind, got ${row.columnKind("t")}")
+                // An engine with no boolean type stores a BOOLEAN declaration as its small integer and reports the
+                // integer it is, which the descriptor states as a capability. Pinned per engine through that capability
+                // rather than asserted as a disjunction: this is the accessor a generic caller acts on, and an
+                // either-answer assertion would also pass if an engine that HAS the type started reporting an integer.
+                assert(
+                    row.columnKind("t") == backend.booleanColumnKind,
+                    s"t: expected ${backend.booleanColumnKind}, got ${row.columnKind("t")}"
+                )
                 assert(row.columnKind("nosuch") == SqlRow.ColumnKind.Unknown, "an absent column has no kind")
         }
     }
@@ -65,10 +65,16 @@ class SqlRowColumnMetadataConformanceTest extends SqlBackendTest:
                 rows <- client.query(select)
                 row = rows.head
             yield
-                val expected =
-                    if backend.id == "mysql" then Map("i" -> "INT", "b"  -> "BIGINT", "f" -> "DOUBLE", "d" -> "DATE")
-                    else Map("i"                          -> "int4", "b" -> "int8", "f"   -> "float8", "d" -> "date")
-                expected.foreach { (column, name) =>
+                // Each engine names its own types, and the descriptor holds the names, so this asserts that the accessor
+                // reports the engine's own word for the column without the body knowing which engine answered.
+                val expected = Chunk(
+                    "i" -> SqlTestBackend.ColumnType.Int,
+                    "b" -> SqlTestBackend.ColumnType.BigInt,
+                    "f" -> SqlTestBackend.ColumnType.Float64,
+                    "d" -> SqlTestBackend.ColumnType.Date
+                )
+                expected.foreach { (column, kind) =>
+                    val name = backend.typeNameFor(kind)
                     assert(
                         row.columnTypeName(column) == Present(name),
                         s"$column: expected Present($name), got ${row.columnTypeName(column)}"
@@ -105,16 +111,18 @@ class SqlRowColumnMetadataConformanceTest extends SqlBackendTest:
 
     /** The two column types whose text rendering the backend produces itself, checked against the server that stores them.
       *
-      * Both are PostgreSQL's. Neither has a Scala type that spans it, so neither can be rendered by decoding at a type and printing the
-      * value: an interval carries calendar and time parts that `java.time.Duration` and `java.time.Period` each refuse half of, and an
-      * `inet` is a wire struct with no Scala type here at all. The renderings are written against the wire layout, which makes this leaf
-      * the one that says the layout was read right, over values a real server encoded.
+      * Gated on [[SqlTestBackend.hasCalendarIntervalColumn]] and [[SqlTestBackend.hasNetworkAddressColumn]], which is the capability pair
+      * that decides whether these values exist to render at all. Neither type has a Scala type that spans it, so neither can be rendered by
+      * decoding at a type and printing the value: an interval carries calendar and time parts that `java.time.Duration` and
+      * `java.time.Period` each refuse half of, and a network address is a wire struct with no Scala type here at all. The renderings are
+      * written against the wire layout, which makes this leaf the one that says the layout was read right, over values a real server encoded.
       *
       * The interval is deliberately one carrying every component at once, which is exactly what the two typed readings cannot hold.
       */
     "an interval and an inet render as text, and agree across both wire formats" - {
         forEachBackend() { (backend, client, _) =>
-            if backend.id != "postgres" then succeed(s"${backend.label} has neither an interval nor an inet type")
+            if !backend.hasCalendarIntervalColumn || !backend.hasNetworkAddressColumn then
+                succeed(s"${backend.label} has neither an interval nor a network-address type")
             else
                 // Three rows, chosen for where a hand-written rendering and the server's own are most likely to
                 // disagree: every component at once, which is the value neither typed reading holds; a negative
@@ -165,20 +173,22 @@ class SqlRowColumnMetadataConformanceTest extends SqlBackendTest:
         }
     }
 
-    /** Every column type whose text rendering the two wire protocols used to disagree on, checked against the server that stores them.
+    /** Every column type whose two protocols used to disagree, over the values that separated them.
       *
-      * `SqlRow.text` answers the server's own rendering. Under the text protocol that is what arrived; under the binary protocol the
-      * value is decoded and re-rendered here, so the two agreeing is a property of this backend rather than of the wire. They did not
-      * agree before: a bool read `true` against the server's `t`, a timestamptz read `2026-08-25T10:00:00Z` against
-      * `2026-08-25 10:00:00+00`, a time read `10:00` against `10:00:00`, and a float4 0.1 read `0.10000000149011612`, having been
-      * widened to a Double before it was printed.
+      * `SqlRow.text` answers one string per stored value, and the string is the driver's own rather than the server's, which is what lets
+      * it be the same under both protocols: what the server writes is chosen by session settings the connection is never told about, so
+      * reproducing it is not a target a driver can hit. The pairs that used to differ are all here: a bool spelled `t` one way and `true`
+      * the other, a timestamptz `2026-08-25 10:00:00+00` against `2026-08-25T10:00:00Z`, a time `10:00:00` against `10:00`, and a float4
+      * 0.1 against `0.10000000149011612`, having been widened to a Double before it was printed.
       *
-      * The assertion is against the server's answer for the same row read through the simple protocol, not against a literal written
-      * here, so the leaf cannot drift from what PostgreSQL actually writes.
+      * Both halves are asserted: the two protocols must agree with each other, AND the string is pinned outright, so the leaf fails if
+      * both paths drift together.
       */
-    "every rendered column agrees with the server under both wire formats" - {
+    "every rendered column agrees under both wire formats" - {
         forEachBackend() { (backend, client, _) =>
-            if backend.id != "postgres" then succeed(s"${backend.label} renders its own types")
+            // The one capability this table needs: it stores 0.1, 3.4e38 and 2.50, nothing non-finite.
+            if !backend.hasTimeWithOffsetColumn then
+                succeed(s"${backend.label} has no time-with-offset column")
             else
                 val select = "SELECT b, ts, tsn, t, tz, d, f4, f8, n FROM rendering ORDER BY id"
                 for
@@ -202,14 +212,13 @@ class SqlRowColumnMetadataConformanceTest extends SqlBackendTest:
                     textual <- Kyo.foreach(simple)(row => Kyo.foreach(names)(n => row.text(n)))
                 yield
                     assert(binary == textual, s"the two protocols must render one value one way:\nbinary $binary\ntext   $textual")
-                    // Pinned outright as well, so the leaf fails if BOTH paths drift together.
                     assert(
                         textual.head == Chunk(
-                            Present("t"),
-                            Present("2026-08-25 10:00:00+00"),
+                            Present("true"),
+                            Present("2026-08-25 10:00:00+00:00"),
                             Present("2026-08-25 10:00:00"),
                             Present("10:00:00"),
-                            Present("10:00:00+02"),
+                            Present("10:00:00+02:00"),
                             Present("2026-08-25"),
                             Present("0.1"),
                             Present("10000000000"),
@@ -221,10 +230,14 @@ class SqlRowColumnMetadataConformanceTest extends SqlBackendTest:
         }
     }
 
-    /** The values with no Scala counterpart, which decoding at a type either refuses or answers wrongly. */
+    /** The values with no Scala counterpart, which decoding at a type either refuses or answers wrongly.
+      *
+      * Gated on [[SqlTestBackend.hasNonFiniteSpecialValues]]: an engine whose numeric and temporal columns refuse `NaN` and the infinities has
+      * no such value to store, so there is nothing here for it to render.
+      */
     "a special value renders as the server writes it rather than refusing or guessing" - {
         forEachBackend() { (backend, client, _) =>
-            if backend.id != "postgres" then succeed(s"${backend.label} has no such values")
+            if !backend.hasNonFiniteSpecialValues then succeed(s"${backend.label} holds no non-finite special values")
             else
                 val select = "SELECT n, d, ts FROM specials ORDER BY id"
                 for
@@ -249,6 +262,36 @@ class SqlRowColumnMetadataConformanceTest extends SqlBackendTest:
                         s"got $binary"
                     )
                 end for
+        }
+    }
+
+    /** A raw query's columns are reachable by the names the caller gave them, on every engine.
+      *
+      * The raw lane is its own conformance surface. A caller writing SQL by hand gets a result set the typed API never rendered, and what
+      * comes back diverges: measured, `SELECT 1 AS MyMixedCase` answers a column named `mymixedcase` on one engine and `MyMixedCase` on the
+      * other, because one folds an unquoted alias before the driver ever sees it. A computed column with no alias diverges further, one
+      * engine naming it `?column?` and the other repeating the expression text.
+      *
+      * So this pins the property a caller can actually rely on rather than either engine's spelling: an alias the caller QUOTED comes back
+      * verbatim, and lookup by that name works. The folding of an UNQUOTED alias is deliberately not pinned, because that is the engine
+      * parsing the caller's own text, which this module does not own; pinning it would codify one engine's parse rule as a contract.
+      *
+      * The value is asserted beside the name so the leaf cannot pass on a result set that came back empty or misaligned.
+      */
+    "a raw query's quoted aliases come back verbatim and are reachable by name" - {
+        forEachBackend() { (backend, client, _) =>
+            val alias = backend.quoteIdent("MyMixedCase")
+            for
+                rows   <- client.query(s"SELECT 1 AS $alias")
+                byName <- rows(0).decode[Int]("MyMixedCase")
+                names = rows(0).columnNames
+            yield
+                assert(byName == 1, s"${backend.label}: expected 1 through the quoted alias, got $byName")
+                assert(
+                    names == Chunk("MyMixedCase"),
+                    s"${backend.label}: a quoted alias must survive verbatim, got $names"
+                )
+            end for
         }
     }
 

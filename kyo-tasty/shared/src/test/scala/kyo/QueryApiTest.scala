@@ -313,8 +313,8 @@ class QueryApiTest extends kyo.test.Test[Any]:
     "strict mode fails with TastyError for corrupt TASTy" in {
         // FailFast mode: write a corrupt file to a temp dir and use ClasspathOrchestrator.init.
         Scope.run {
-            Path.tempDir("kyo-qa-failfast").map { dir =>
-                (dir / "Corrupt.tasty").writeBytes(Span.from(Array[Byte](0, 1, 2, 3, 4, 5))).map { _ =>
+            Path.run(Path.tempDir("kyo-qa-failfast")).map { dir =>
+                Path.run((dir / "Corrupt.tasty").writeBytes(Span.from(Array[Byte](0, 1, 2, 3, 4, 5)))).map { _ =>
                     Scope.run {
                         Abort.run[TastyError](ClasspathOrchestrator.init(Seq(dir.toString), Tasty.ErrorMode.FailFast, 1)).map {
                             case Result.Success(_) =>
@@ -354,7 +354,7 @@ class QueryApiTest extends kyo.test.Test[Any]:
     // SoftFail with a real missing root produces FileNotFound in classpath.errors.
     "missing root produces FileNotFound in classpath.errors" in {
         Scope.run {
-            Path.tempDir("kyo-qa-missing").map { tmp =>
+            Path.run(Path.tempDir("kyo-qa-missing")).map { tmp =>
                 val missing = (tmp / "no-such-root").toString
                 Scope.run {
                     ClasspathOrchestrator.init(Seq(missing), Tasty.ErrorMode.SoftFail, 1).map { classpath =>

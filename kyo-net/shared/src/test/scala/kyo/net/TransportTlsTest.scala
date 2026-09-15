@@ -92,4 +92,15 @@ class TransportTlsTest extends Test:
         }
     }
 
+    "pem fixture paths are unique under concurrent writes" in {
+        // pins TlsTestCertShared.uniquePathTag: nanoTime alone can tie across concurrent callers
+        // (its granularity is about 40ns on an aarch64 VM, and a suite start fans the whole cell
+        // matrix out at once), and a tied path means one cell truncate-rewrites the very pem
+        // another cell's TLS setup is reading, observed as a truncated-key handshake failure
+        Async.fill(256, 256)(TlsTestCertShared.writePems).map { pairs =>
+            val paths = pairs.flatMap { case (cert, key) => Chunk(cert, key) }
+            assert(paths.distinct.size == paths.size)
+        }
+    }
+
 end TransportTlsTest

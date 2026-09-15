@@ -14,7 +14,7 @@ class NativeMmapReaderTest extends kyo.test.Test[Any]:
         import AllowUnsafe.embrace.danger
         val path    = tmpPath("kyo-native-mmap-test-read-open.bin")
         val content = Array[Byte](0x42.toByte, 0x43.toByte, 0x44.toByte, 0x45.toByte)
-        Path(path).writeBytes(Span.from(content)).map { _ =>
+        Path.run(Path(path).writeBytes(Span.from(content))).map { _ =>
             Abort.run[TastyError](
                 Scope.run {
                     NativeMmapReader.init(path).map { view =>
@@ -37,7 +37,7 @@ class NativeMmapReaderTest extends kyo.test.Test[Any]:
         val content = Array[Byte](0x01.toByte, 0x02.toByte, 0x03.toByte, 0x04.toByte)
         // Capture the view reference outside the scope so we can read after the scope exits.
         var capturedView: MappedByteView = null
-        Path(path).writeBytes(Span.from(content)).map { _ =>
+        Path.run(Path(path).writeBytes(Span.from(content))).map { _ =>
             Abort.run[TastyError](
                 Scope.run {
                     NativeMmapReader.init(path).map { view =>

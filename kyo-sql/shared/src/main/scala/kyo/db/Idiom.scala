@@ -756,7 +756,22 @@ abstract class Idiom:
       * division truncates, or which spells the truncating form differently, intercepts the arm it diverges on.
       */
     def arithmetic(ctx: Idiom.Ctx, ar: Sql.Arithmetic[?]): Unit =
-        binary(ctx, ar.left, arithmeticOp(ar.op), ar.right)
+        binary(ctx, ar.left, arithmeticOp(ar.op), guardingDivisor(ar).right)
+
+    /** Wraps a dividing node's divisor in `NULLIF(divisor, 0)`, and answers any other node unchanged.
+      *
+      * In the baseline rather than a flavor because no engine's untouched behaviour is the portable one: one raises `division_by_zero`, the
+      * other answers absent in a SELECT but RAISES in a data-change statement under its default `sql_mode`. Absent is the answer every engine
+      * CAN give, and a NULL divisor is not a division by zero in any mode.
+      *
+      * `RawSql` for the zero rather than a bound literal, which would shift every later parameter's position.
+      */
+    final protected def guardingDivisor(ar: Sql.Arithmetic[?]): Sql.Arithmetic[?] =
+        ar.op match
+            case Sql.Arithmetic.Op.Divide | Sql.Arithmetic.Op.DivideIntegral | Sql.Arithmetic.Op.DivideTruncating |
+                Sql.Arithmetic.Op.Mod =>
+                ar.copy(right = Sql.FunctionCall[Any]("NULLIF", Chunk(ar.right, Sql.RawSql[Any]("0"))))
+            case _ => ar
 
     /** Renders a pattern match. The case-sensitive pair renders as an infix match; the case-insensitive pair routes to
       * [[caseInsensitiveLike]], which is where a flavor with a dedicated operator overrides.
@@ -1005,7 +1020,16 @@ abstract class Idiom:
                 term(ctx, nv.n)
                 ctx.append(")")
 
-    /** Renders a window specification's body: the `PARTITION BY` terms, the `ORDER BY` specs through [[orderSpec]], and the frame, each
+    /** Renders one `ORDER BY` element of a WINDOW spec, told whether the frame restricts the clause to a single expression.
+      *
+      * A `RANGE` frame with a numeric offset derives its bounds by arithmetic on the ordering value, so both engines require exactly one
+      * expression there. The baseline pays nothing (a placement is a modifier, not a second expression); the flag is for a flavor that lowers
+      * the placement into an extra ordering term and must not under this frame.
+      */
+    def windowOrderSpec(ctx: Idiom.Ctx, spec: Sql.OrderSpec, singleExpressionRequired: Boolean): Unit =
+        orderSpec(ctx, spec)
+
+    /** Renders a window specification's body: the `PARTITION BY` terms, the `ORDER BY` specs through [[windowOrderSpec]], and the frame, each
       * emitted only when present and separated by a single space.
       *
       * The frame takes its mode keyword and either one bound or `BETWEEN` with both, each through [[frameBound]]. The surrounding
@@ -1021,7 +1045,8 @@ abstract class Idiom:
         if s.orderBy.nonEmpty then
             if needSpace then ctx.append(" ")
             ctx.append("ORDER BY ")
-            ctx.joinWith(", ")(s.orderBy)(spec => orderSpec(ctx, spec))
+            val singleExpression = Idiom.frameRequiresSingleOrderExpression(s.frame)
+            ctx.joinWith(", ")(s.orderBy)(spec => windowOrderSpec(ctx, spec, singleExpression))
             needSpace = true
         end if
         s.frame.foreach { f =>
@@ -1053,20 +1078,25 @@ abstract class Idiom:
             case p: Sql.FrameBound.Preceding               => term(ctx, p.n); ctx.append(" PRECEDING")
             case f: Sql.FrameBound.Following               => term(ctx, f.n); ctx.append(" FOLLOWING")
 
-    /** Renders one `ORDER BY` element: the term, its direction keyword, and the null placement when the spec names one.
+    /** Renders one `ORDER BY` element: the term, its direction keyword, and its null placement.
       *
-      * Defaults to the standard `NULLS FIRST` and `NULLS LAST`. A flavor without them lowers the placement into an equivalent expression
-      * here, which is why the placement is not a capability.
+      * Every spec has a placement, including one that named none: [[Sql.OrderSpec.resolvedAbsent]] settles the default before it reaches a
+      * flavor, so an unnamed placement renders as explicitly as a named one and two engines cannot answer a written query with two
+      * orderings. Renders the standard `NULLS FIRST` and `NULLS LAST`; a flavor without those keywords lowers the placement into an
+      * equivalent expression here, which is why the placement is not a capability.
       */
     def orderSpec(ctx: Idiom.Ctx, spec: Sql.OrderSpec): Unit =
         term(ctx, spec.expr)
         spec.direction match
             case Sql.OrderSpec.Direction.Asc  => ctx.append(" ASC")
             case Sql.OrderSpec.Direction.Desc => ctx.append(" DESC")
-        spec.absent match
-            case Sql.OrderSpec.AbsentPlacement.Default => ()
-            case Sql.OrderSpec.AbsentPlacement.First   => ctx.append(" NULLS FIRST")
-            case Sql.OrderSpec.AbsentPlacement.Last    => ctx.append(" NULLS LAST")
+        spec.resolvedAbsent match
+            // Unreachable: `resolvedAbsent` maps Default onto First or Last. Raised rather than rendered as nothing,
+            // which would leave the placement to the engine and let one query answer two orderings.
+            case Sql.OrderSpec.AbsentPlacement.Default =>
+                kyo.bug("kyo.sql: resolvedAbsent answered Default, which leaves the null placement to the engine")
+            case Sql.OrderSpec.AbsentPlacement.First => ctx.append(" NULLS FIRST")
+            case Sql.OrderSpec.AbsentPlacement.Last  => ctx.append(" NULLS LAST")
         end match
     end orderSpec
 
@@ -1296,6 +1326,25 @@ end Idiom
   * method writes through.
   */
 object Idiom:
+
+    /** True when a frame derives its bounds by arithmetic on the ordering value, which is what restricts the window's `ORDER BY` to a single
+      * expression.
+      *
+      * `RANGE` with a numeric offset asks the server for the rows whose ordering value lies within `n` of this row's, so there has to be
+      * exactly one value to do arithmetic on. `ROWS` counts positions and needs no arithmetic, and an unbounded or current-row `RANGE`
+      * names no offset, so neither restricts the clause. Both engines enforce this; MySQL reports it as error 3587.
+      */
+    private[kyo] def frameRequiresSingleOrderExpression(frame: Maybe[Sql.WindowFrame]): Boolean =
+        def isOffset(bound: Sql.FrameBound): Boolean =
+            bound match
+                case _: Sql.FrameBound.Preceding | _: Sql.FrameBound.Following => true
+                case _                                                         => false
+        frame match
+            case Maybe.Present(f) if f.kind == Sql.WindowFrame.Kind.Range =>
+                isOffset(f.start) || f.end.exists(isOffset)
+            case _ => false
+        end match
+    end frameRequiresSingleOrderExpression
 
     /** One flavor's rendered statement: the SQL text, the binds in placeholder order, and the server version the render resolved.
       *

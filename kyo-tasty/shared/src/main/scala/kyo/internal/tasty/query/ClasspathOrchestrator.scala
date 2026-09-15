@@ -202,7 +202,7 @@ object ClasspathOrchestrator:
         Kyo.foreach(roots) { root =>
             if root.startsWith("jrt:/") then Sync.defer(true)
             else
-                Abort.recover[FileReadException](_ => false)(Path(root).exists).map { ex =>
+                Abort.recover[FileSystemException](_ => false)(Path.runReadOnly(Path(root).exists)).map { ex =>
                     if !ex && mode == Tasty.ErrorMode.FailFast then Abort.fail(TastyError.FileNotFound(root))
                     else Sync.defer(ex) // true = root exists; false = missing (only in SoftFail)
                 }
@@ -260,7 +260,7 @@ object ClasspathOrchestrator:
             Kyo.foreach(roots) { root =>
                 if root.startsWith("jrt:/") then Sync.defer(true)
                 else
-                    Abort.recover[FileReadException](_ => false)(Path(root).exists).map { ex =>
+                    Abort.recover[FileSystemException](_ => false)(Path.runReadOnly(Path(root).exists)).map { ex =>
                         if !ex && mode == Tasty.ErrorMode.FailFast then Abort.fail(TastyError.FileNotFound(root))
                         else Sync.defer(ex)
                     }
@@ -515,9 +515,7 @@ object ClasspathOrchestrator:
                 }
             else
                 // Directory, direct .tasty file, or direct .class file: use Path walk.
-                Abort.recover[FileStructureException](err =>
-                    Abort.fail(TastyError.SnapshotIoError(s"list $root: ${err.getMessage}"))
-                ) {
+                Abort.recover[FileSystemException](err => Abort.fail(TastyError.SnapshotIoError(s"list $root: ${err.getMessage}"))) {
                     if root.endsWith(".tasty") || root.endsWith("module-info.class") then
                         Sync.defer(Chunk(root))
                     else if root.endsWith(".class") && !root.endsWith("module-info.class") then
@@ -525,7 +523,7 @@ object ClasspathOrchestrator:
                     else
                         // Path.walk returns a Stream requiring Scope; Scope.run discharges the Scope.
                         Scope.run {
-                            Path(root).walk.run.map { paths =>
+                            Path.runReadOnly(Path(root).walk.run).map { paths =>
                                 Chunk.from(paths.toSeq.filter { p =>
                                     val name = p.name.getOrElse("")
                                     suffixes.exists(name.endsWith)
@@ -667,10 +665,8 @@ object ClasspathOrchestrator:
         else if entryPath.startsWith("jrt:/") then
             ZipHandle.readJrtEntry(entryPath).map(Span.fromUnsafe)
         else
-            Abort.recover[FileReadException](err =>
-                Abort.fail(TastyError.SnapshotIoError(s"read $entryPath: ${err.getMessage}"))
-            ) {
-                Path(entryPath).readBytes
+            Abort.recover[FileSystemException](err => Abort.fail(TastyError.SnapshotIoError(s"read $entryPath: ${err.getMessage}"))) {
+                Path.runReadOnly(Path(entryPath).readBytes)
             }
         end if
     end readEntryBytes
@@ -2448,7 +2444,7 @@ object ClasspathOrchestrator:
                         // For jar entries, try reading and treat IOException as absent.
                         Sync.defer(true) // attempt the read; soft-fail handles the error
                     else
-                        Abort.recover[FileReadException](_ => false)(Path(companionPath).exists)
+                        Abort.recover[FileSystemException](_ => false)(Path.runReadOnly(Path(companionPath).exists))
                     end if
                 end companionExistsEffect
                 companionExistsEffect.map { exists =>
@@ -2838,36 +2834,18 @@ object ClasspathOrchestrator:
                             case Result.Success(digest) =>
                                 val hexDigest    = SnapshotDigest.toHexString(digest)
                                 val snapshotPath = s"$dir/$hexDigest.krfl"
-                                Abort.recover[FileReadException](_ => false)(Path(snapshotPath).exists).map {
-                                    exists =>
-                                        if exists then
-                                            Abort.run[TastyError](SnapshotReader.readMapped(snapshotPath)).map {
-                                                case Result.Success(coldCp) =>
-                                                    // Snapshot load: body store is empty; bodyTree returns Absent.
-                                                    val merged = if bundledCp.symbols.isEmpty then coldCp
-                                                    else BundledSnapshotProbe.mergePartialInto(bundledCp, coldCp)
-                                                    Binding(merged, Maybe.Present(DecodeContext.fresh()))
-                                                case Result.Failure(_) | Result.Panic(_) =>
-                                                    // Snapshot unreadable; fall through to cold load.
-                                                    initWithBodies(coldRoots, mode, concurrency).map {
-                                                        (coldCp, bodyStore, positionsStore, declarationRangeStore, parentOccurrenceStore) =>
-                                                            val merged = if bundledCp.symbols.isEmpty then coldCp
-                                                            else BundledSnapshotProbe.mergePartialInto(bundledCp, coldCp)
-                                                            Binding(
-                                                                merged,
-                                                                Maybe.Present(DecodeContext.fresh(
-                                                                    bodyStore,
-                                                                    positionsStore,
-                                                                    declarationRangeStore,
-                                                                    parentOccurrenceStore
-                                                                ))
-                                                            )
-                                                    }
-                                            }
-                                        else
-                                            initWithBodies(coldRoots, mode, concurrency).map {
-                                                (coldCp, bodyStore, positionsStore, declarationRangeStore, parentOccurrenceStore) =>
-                                                    Abort.run[TastyError](SnapshotWriter.write(coldCp, dir, digest)).andThen {
+                                Abort.recover[FileSystemException](_ => false)(Path.runReadOnly(Path(snapshotPath).exists)).map { exists =>
+                                    if exists then
+                                        Abort.run[TastyError](SnapshotReader.readMapped(snapshotPath)).map {
+                                            case Result.Success(coldCp) =>
+                                                // Snapshot load: body store is empty; bodyTree returns Absent.
+                                                val merged = if bundledCp.symbols.isEmpty then coldCp
+                                                else BundledSnapshotProbe.mergePartialInto(bundledCp, coldCp)
+                                                Binding(merged, Maybe.Present(DecodeContext.fresh()))
+                                            case Result.Failure(_) | Result.Panic(_) =>
+                                                // Snapshot unreadable; fall through to cold load.
+                                                initWithBodies(coldRoots, mode, concurrency).map {
+                                                    (coldCp, bodyStore, positionsStore, declarationRangeStore, parentOccurrenceStore) =>
                                                         val merged = if bundledCp.symbols.isEmpty then coldCp
                                                         else BundledSnapshotProbe.mergePartialInto(bundledCp, coldCp)
                                                         Binding(
@@ -2879,8 +2857,25 @@ object ClasspathOrchestrator:
                                                                 parentOccurrenceStore
                                                             ))
                                                         )
-                                                    }
-                                            }
+                                                }
+                                        }
+                                    else
+                                        initWithBodies(coldRoots, mode, concurrency).map {
+                                            (coldCp, bodyStore, positionsStore, declarationRangeStore, parentOccurrenceStore) =>
+                                                Abort.run[TastyError](SnapshotWriter.write(coldCp, dir, digest)).andThen {
+                                                    val merged = if bundledCp.symbols.isEmpty then coldCp
+                                                    else BundledSnapshotProbe.mergePartialInto(bundledCp, coldCp)
+                                                    Binding(
+                                                        merged,
+                                                        Maybe.Present(DecodeContext.fresh(
+                                                            bodyStore,
+                                                            positionsStore,
+                                                            declarationRangeStore,
+                                                            parentOccurrenceStore
+                                                        ))
+                                                    )
+                                                }
+                                        }
                                 }
                         }
             // If no cold roots remain (all roots had bundled snapshots), return the merged bundled classpath directly.

@@ -844,12 +844,24 @@ class HtmlRendererTest extends UITest:
             assert(!page.contains("/_kyo/sse"))
         }
 
-        "rendered page buffers events until the socket opens" in {
+        "rendered page buffers events until the session is live" in {
             val page = kyo.internal.HtmlRenderer.renderPage("t", "<div></div>", "", "/app")
             assert(page.contains("__q=[]"))
-            assert(page.contains("__q.forEach"))
             assert(page.contains("__q.push"))
-            assert(page.contains("ws.readyState===1"))
+            // Deliverability is the session having answered, not merely the socket being open. A server can complete the
+            // upgrade and end the session at once, and handing the buffer to that connection loses every event in it.
+            assert(page.contains("__live&&ws.readyState===1"))
+            // The buffer is taken by value and replaced before anything is sent, so an event raised during the drain lands
+            // in the fresh buffer rather than being dropped by the clear that follows.
+            assert(page.contains("var pending=__q;__q=[]"))
+            // The one place the drain is reached: a frame arriving, which every session guarantees by announcing itself.
+            assert(page.contains("if(!__live){__live=true"))
+            // Only one socket may be dialing or open at a time. A back/forward-cache restore races the retry it left pending,
+            // and without this the loser is superseded but never closed, leaving a live connection whose session is stranded.
+            // Asserted structurally because a bfcache restore is not drivable from the browser harness.
+            assert(page.contains("if(ws&&ws.readyState<2)return;"))
+            // A superseded socket closes itself rather than lingering.
+            assert(page.contains("if(sock!==ws){sock.close();return;}"))
         }
 
         "rendered page boots one live range registry and parses replacements in parent context" in {
@@ -901,7 +913,9 @@ class HtmlRendererTest extends UITest:
             val rendered = page
             assert(rendered.contains("op.ResolveDrag"))
             assert(rendered.contains("__dragRt.resolve(op.ResolveDrag.sessionId,op.ResolveDrag.decision)"))
-            assert(rendered.contains("ws.onclose"))
+            // Handlers are bound to the socket they were installed on, so a superseded socket's close cannot tear down the
+            // runtime belonging to the connection that replaced it.
+            assert(rendered.contains("sock.onclose"))
             assert(rendered.contains("__dragCleanup()"))
         }
 

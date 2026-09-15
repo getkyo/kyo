@@ -2,3 +2,7 @@ kyo_ffi_precheck_absent.platforms=darwin-x86_64,darwin-aarch64,linux-x86_64,linu
 kyo_ffi_precheck_absent.version=0.0.0
 kyo_ffi_precheck_absent.minRuntime=0.0.0
 trait.kyo.ffi.internal.NativeManifestPrecheckTest$PrecheckAbsentBinding=kyo_ffi_precheck_absent
+kyo_ffi_precheck_elsewhere.platforms=solaris-sparc
+kyo_ffi_precheck_elsewhere.version=0.0.0
+kyo_ffi_precheck_elsewhere.minRuntime=0.0.0
+trait.kyo.ffi.internal.NativeManifestPrecheckTest$PrecheckElsewhereBinding=kyo_ffi_precheck_elsewhere

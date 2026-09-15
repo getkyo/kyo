@@ -8,7 +8,7 @@ import kyo.internal.NodeFs
   * `isSymbolicLink`. Running the same contract here is what keeps the symlink-escape fix asserted on
   * this platform rather than inferred from the JVM passing.
   */
-class HostFileSystemSymlinkJsTest extends FileSystemReadTestSuite:
+class HostFileSystemSymlinkJsTest extends FileSystemReadTest:
 
     override protected def realPathRequiresExistence: Boolean = true
     override protected def supportsSymbolicLinks: Boolean     = true

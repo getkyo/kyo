@@ -2,11 +2,9 @@ package kyo
 
 private object FileSystemConformanceFixtures:
 
-    private given Frame = Frame.internal
-
     def host(prefix: String)(using
         Frame
-    ): (FileSystem.Write[Sync], Path) < (Sync & Scope & Abort[FileSystemException]) =
+    ): (FileSystem.Write[Sync] & FileSystem.Watch, Path) < (Sync & Scope & Abort[FileSystemException]) =
         Scope.acquireRelease(FileSystem.host.tempDir(prefix))(handle => Sync.Unsafe.defer(handle.remove())).map { handle =>
             (FileSystem.host, handle.path)
         }
@@ -19,7 +17,7 @@ private object FileSystemConformanceFixtures:
 
 end FileSystemConformanceFixtures
 
-class HostFileSystemReadConformanceTest extends FileSystemReadTestSuite:
+class HostFileSystemReadConformanceTest extends FileSystemReadTest:
     override protected def realPathRequiresExistence: Boolean = true
     protected def createFileSystem(using
         Frame
@@ -27,12 +25,19 @@ class HostFileSystemReadConformanceTest extends FileSystemReadTestSuite:
         FileSystemConformanceFixtures.hostRead
 end HostFileSystemReadConformanceTest
 
-class HostFileSystemWriteConformanceTest extends FileSystemWriteTestSuite:
+class HostFileSystemWriteConformanceTest extends FileSystemWriteTest:
     protected def createFileSystem(using
         Frame
     ): (FileSystem.Write[Sync], Path) < (Sync & Scope & Abort[FileSystemException]) =
         FileSystemConformanceFixtures.host("kyo-host-write-suite")
 end HostFileSystemWriteConformanceTest
+
+class HostFileSystemChannelConformanceTest extends FileSystemChannelTest:
+    protected def createFileSystem(using
+        Frame
+    ): (FileSystem.Write[Sync], Path) < (Sync & Scope & Abort[FileSystemException]) =
+        FileSystemConformanceFixtures.host("kyo-host-channel-suite")
+end HostFileSystemChannelConformanceTest
 
 /** Minimal user-defined backend fixture that deliberately exposes only the read tier. */
 final class UserReadOnlyFileSystemFixture(delegate: FileSystem.Read[Sync]) extends FileSystem.Read[Sync]:
@@ -46,7 +51,10 @@ final class UserReadOnlyFileSystemFixture(delegate: FileSystem.Read[Sync]) exten
     export delegate.isRegularFile
     export delegate.isSymbolicLink
     export delegate.list
+    export delegate.lock
     export delegate.openRead
+    export delegate.openReadChannel
+    export delegate.openReadChannelUnscoped
     export delegate.openReadLines
     export delegate.openWalk
     export delegate.read
@@ -55,9 +63,10 @@ final class UserReadOnlyFileSystemFixture(delegate: FileSystem.Read[Sync]) exten
     export delegate.realPath
     export delegate.size
     export delegate.stat
+    export delegate.tryLock
 end UserReadOnlyFileSystemFixture
 
-class UserReadOnlyFileSystemConformanceTest extends FileSystemReadTestSuite:
+class UserReadOnlyFileSystemConformanceTest extends FileSystemReadTest:
     override protected def realPathRequiresExistence: Boolean = true
     protected def createFileSystem(using
         Frame

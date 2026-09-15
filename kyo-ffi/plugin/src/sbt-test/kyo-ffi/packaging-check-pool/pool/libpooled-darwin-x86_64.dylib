@@ -1,0 +1,2 @@
+Not a Mach-O object. The packaging check reads an artifact's own header, so this file fails it
+the moment the check can see the pool, and passes unnoticed whenever the pool never reaches it.

@@ -158,19 +158,28 @@ final class PostgresConnection(
       * When `sql` carries no `RETURNING` (target table has no auto-key column), this falls through to `extendedExecute` and reports
       * `SqlClient.InsertOutcome(affected, SqlClient.InsertOutcome.GeneratedKey.NoAutoKey)`.
       *
-      * Multi-row INSERTs with `RETURNING <pk>` yield multiple DataRows; this method retains the LAST decoded key as the `generatedKey`. See
+      * Multi-row INSERTs with `RETURNING <pk>` yield multiple DataRows; this method retains the FIRST decoded key as the `generatedKey`. See
       * `SqlClient.InsertOutcome` scaladoc.
+      *
+      * First rather than last, and that is forced rather than preferred: a flavor with no RETURNING reports its generated key from the OK
+      * packet, where the value is defined as the key of the first row the statement inserted and the later ones are not recoverable at all.
+      * Keeping the last here would mean one neutral call answering `n` on one backend and `n + 2` on another for the same insert, so the
+      * only conformable answer is the one both can produce.
       */
     def extendedExecuteInsert(sql: String, params: Chunk[BoundParam[?]])(using
         Frame
     ): SqlClient.InsertOutcome < (Async & Abort[SqlException]) =
         if sqlHasReturning(sql) then
             extendedQuery(sql, params).map { rows =>
-                if rows.isEmpty then SqlClient.InsertOutcome(0L, SqlClient.InsertOutcome.GeneratedKey.NoAutoKey)
+                // Unavailable, not NoAutoKey: the statement DID carry RETURNING, so the table has an auto-key column
+                // and no row came back only because a conflict clause skipped every row. Reporting NoAutoKey there
+                // states something false about the schema, and states it differently from the other engine, which
+                // answers Unavailable for the same insert.
+                if rows.isEmpty then SqlClient.InsertOutcome(0L, SqlClient.InsertOutcome.GeneratedKey.Unavailable)
                 else
-                    val last = rows.last
-                    val key = last.column(0) match
-                        case Maybe.Present(_) => SqlClient.InsertOutcome.GeneratedKey.Value(decodeFirstColumnAsLong(last))
+                    val first = rows.head
+                    val key = first.column(0) match
+                        case Maybe.Present(_) => SqlClient.InsertOutcome.GeneratedKey.Value(decodeFirstColumnAsLong(first))
                         case Maybe.Absent     => SqlClient.InsertOutcome.GeneratedKey.Unavailable
                     SqlClient.InsertOutcome(rows.size.toLong, key)
             }

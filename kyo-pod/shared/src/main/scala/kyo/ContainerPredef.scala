@@ -32,6 +32,59 @@ object ContainerPredef:
         s"""end=$$(($$(date +%s)+${budget.toSeconds})); while [ "$$(date +%s)" -lt "$$end" ]; do $quoted >/dev/null 2>&1 && exit 0; sleep 2; done; exit 1"""
     end readinessScript
 
+    /** Whether a readiness exec that the daemon failed is worth one more attempt.
+      *
+      * Retryable means two things at once, and both matter. The container must still be RUNNING, because a container that died mid-boot
+      * will fail every subsequent exec for the same reason and retrying only delays the report; and there must be budget left, because an
+      * unbounded retry reintroduces the cost the single in-container poll loop exists to avoid, every host exec leaving a conmon lingering
+      * for minutes on rootless podman.
+      *
+      * A probe that RAN and reported the service down never reaches here. That is the service's own verdict and is terminal, and retrying
+      * it would mask exactly the failure this health check exists to report.
+      */
+    private[kyo] def retryableExecFailure(state: Result[ContainerException, Container.State], retriesLeft: Int): Boolean =
+        retriesLeft > 0 && (state match
+            case Result.Success(Container.State.Running) => true
+            case _                                       => false)
+
+    /** One readiness attempt and the retry decision after it, over the two effects it actually depends on rather than over a `Container`.
+      *
+      * An exec that FAILED is a different thing from a probe that RAN and reported the service down. The second is the service's own
+      * verdict and is terminal. This one is the daemon's, and under load it can be transient against a container that is perfectly
+      * healthy: a fork that hit EAGAIN, an API blip. So ask the container which happened. No longer running means it died mid-boot and no
+      * retry can help; still running means the exec itself faltered and is worth one more attempt.
+      *
+      * The retry is deliberately narrow, and both bounds carry weight. Retrying the ran-and-failed case would mask a service that never
+      * comes up, which is the failure this check exists to report. An unbounded retry would reintroduce the cost the single in-container
+      * poll loop exists to avoid, since every host exec leaves a conmon lingering for minutes on rootless podman. One extra attempt covers
+      * a transient without turning a health check into a poll.
+      *
+      * Taking `runProbe` and `readState` as parameters is what makes that policy assertable end to end: a caller can drive the loop with
+      * scripted outcomes and observe how many attempts it makes, which a `Container` cannot supply (its backend is a 51-member contract).
+      */
+    private[kyo] def readinessAttempt(
+        runProbe: () => Result[ContainerException, Container.ExecResult] < Async,
+        readState: () => Result[ContainerException, Container.State] < Async,
+        onProbeReportedDown: String => Unit < (Async & Abort[ContainerException]),
+        onExecFailed: ContainerException => Unit < (Async & Abort[ContainerException]),
+        retriesLeft: Int
+    )(using Frame): Unit < (Async & Abort[ContainerException]) =
+        runProbe().map {
+            case Result.Success(r) if r.isSuccess => Kyo.unit
+            case Result.Success(r)                => onProbeReportedDown(r.stderr.trim)
+            case Result.Failure(cause) =>
+                readState().map {
+                    case st if retryableExecFailure(st, retriesLeft) =>
+                        readinessAttempt(runProbe, readState, onProbeReportedDown, onExecFailed, retriesLeft - 1)
+                    // A defect while ASKING the daemon what happened is not the exec's failure, and reporting it as one would
+                    // attribute a bug in the state query to the service under test. Propagated like the probe's own panic below.
+                    case Result.Panic(t) => Abort.panic(t)
+                    case _               => onExecFailed(cause)
+                }
+            case Result.Panic(t) => Abort.panic(t)
+        }
+    end readinessAttempt
+
     /** A readiness [[Container.HealthCheck]] that runs `probe` in one bounded poll loop *inside* the container, not a
       * fresh host `exec` per retry. Each host `exec` leaves a `conmon` lingering ~300s on rootless podman, so a
       * sub-second host-side poll across a fixture suite accumulates orphaned `conmon`; the in-container loop collapses
@@ -46,16 +99,13 @@ object ContainerPredef:
                 // caller's ambient HttpClient timeout (often the 5s default; predef fixtures are reused beyond kyo-pod).
                 // Give it its own budget-covering timeout; the shell backend ignores the HttpClient config.
                 HttpClient.withConfig(_.timeout(budget + 15.seconds)) {
-                    Abort.run[ContainerException](container.exec(cmd)).map {
-                        case Result.Success(r) if r.isSuccess => Kyo.unit
-                        case Result.Success(r) =>
-                            healthFailure(container, s"readiness probe did not pass within ${budget.toSeconds}s", r.stderr.trim)
-                        case Result.Failure(cause) =>
-                            // The readiness exec failed: usually the service's own container exited mid-boot (OOM or
-                            // failed init), which the daemon reports as a not-running container. Capture why.
-                            healthFailure(container, s"readiness exec failed: ${cause.getMessage}", "")
-                        case Result.Panic(t) => Abort.panic(t)
-                    }
+                    readinessAttempt(
+                        () => Abort.run[ContainerException](container.exec(cmd)),
+                        () => Abort.run[ContainerException](container.state),
+                        stderr => healthFailure(container, s"readiness probe did not pass within ${budget.toSeconds}s", stderr),
+                        cause => healthFailure(container, s"readiness exec failed: ${cause.getMessage}", ""),
+                        1
+                    )
                 }
             end check
             def schedule: Schedule = Schedule.done

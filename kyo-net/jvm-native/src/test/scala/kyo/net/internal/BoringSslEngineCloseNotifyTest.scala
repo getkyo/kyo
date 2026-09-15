@@ -28,7 +28,9 @@ class BoringSslEngineCloseNotifyTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
-    private val bssl = Ffi.load[BoringSslBindings]
+    // lazy: the leaf gates on boringSslAvailable() before touching this, and a strict field would
+    // instead resolve the binding while constructing the suite, outside that gate.
+    private lazy val bssl = Ffi.load[BoringSslBindings]
 
     private val chunk = 16 * 1024 + 512
 

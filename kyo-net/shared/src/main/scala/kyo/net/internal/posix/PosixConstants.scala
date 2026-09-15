@@ -88,6 +88,10 @@ private[net] object PosixConstants:
     val ECONNABORTED: Int = if isMacOrBsd then 53 else 103
     // EBUSY is 16 on both Linux and macOS/BSD; the io_uring reap loop treats it as a transient retry condition.
     val EBUSY: Int = 16
+
+    // ENOENT is 2 on both Linux and macOS/BSD. IORING_OP_ASYNC_CANCEL answers -ENOENT when it cannot find the target, which for a cancel
+    // issued against an in-flight op means the op completed on its own between the submit and the kernel's lookup.
+    val ENOENT: Int = 2
     // ENOSYS is what kyo_epoll.c's off-Linux stubs report: the epoll and eventfd syscalls do not exist on this platform. It names the
     // one outcome that distinguishes "the shim is present and says no" from "the symbol was never linked", which is the difference a
     // published Native artifact has to preserve across build hosts. Unlike every other errno here, this one is read on Windows too,

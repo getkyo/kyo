@@ -22,10 +22,10 @@ class NativeLoaderConcurrencyTest extends Test:
     // alone: under the default parallel leaf execution a sibling leaf observes the mutated global.
     override def config = super.config.sequential
 
-    // Path.tempDir carries Sync & Scope & Abort[FileStructureException].
+    // Path.tempDir carries PathWrite & Sync & Scope; Path.run discharges PathWrite and adds Abort[FileSystemException].
     // A temp-dir failure is test-infra breakage, surfaced as a defect. Scope propagates so it lives until the test ends.
     private def freshDir()(using Frame): Path < (Sync & Scope) =
-        Abort.run[FileStructureException](Path.tempDir("kyo-ffi-f11-")).map {
+        Abort.run[FileSystemException](Path.run(Path.tempDir("kyo-ffi-f11-"))).map {
             case Result.Success(d)   => d
             case Result.Failure(err) => throw err
             case panic: Result.Panic => throw panic.exception

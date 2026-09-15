@@ -3,7 +3,7 @@ package kyo
 class PathStatTest extends kyo.test.Test[Any]:
 
     "stat returns size matching written bytes" in {
-        Scope.run {
+        Scope.run(Path.run {
             Path.tempDir("kyo-path-stat").map { dir =>
                 val file  = dir / "data.bin"
                 val bytes = Span.from(Array[Byte](0x01, 0x02, 0x03, 0x04, 0x05))
@@ -13,11 +13,11 @@ class PathStatTest extends kyo.test.Test[Any]:
                     }
                 }
             }
-        }
+        })
     }
 
     "stat reports a lastModifiedMs bracketed by the write" in {
-        Scope.run {
+        Scope.run(Path.run {
             Path.tempDir("kyo-path-stat").map { dir =>
                 val file  = dir / "data.bin"
                 val bytes = Span.from(Array[Byte](0x42))
@@ -42,23 +42,23 @@ class PathStatTest extends kyo.test.Test[Any]:
                     }
                 }
             }
-        }
+        })
     }
 
     "stat on missing path aborts with FileReadException" in {
-        Scope.run {
+        Scope.run(Path.run {
             Path.tempDir("kyo-path-stat").map { dir =>
                 val missing = dir / "no-such-file.bin"
-                Abort.run[FileSystemException](missing.stat).map {
+                Abort.run[FileSystemException](Path.runReadOnly(missing.stat)).map {
                     case Result.Failure(_: FileReadException) => succeed
                     case other                                => fail(s"expected FileReadException, got $other")
                 }
             }
-        }
+        })
     }
 
     "setLastModified round-trips through stat" in {
-        Scope.run {
+        Scope.run(Path.run {
             Path.tempDir("kyo-path-stat").map { dir =>
                 val file     = dir / "mtime.bin"
                 val targetMs = 1_000_000_000_000L // 2001-09-08 UTC, well in the past
@@ -74,19 +74,19 @@ class PathStatTest extends kyo.test.Test[Any]:
                     }
                 }
             }
-        }
+        })
     }
 
     "setLastModified on missing path aborts with FileWriteException" in {
-        Scope.run {
+        Scope.run(Path.run {
             Path.tempDir("kyo-path-stat").map { dir =>
                 val missing = dir / "no-such-file.bin"
-                Abort.run[FileSystemException](missing.setLastModified(1_000_000_000_000L)).map {
+                Abort.run[FileSystemException](Path.run(missing.setLastModified(1_000_000_000_000L))).map {
                     case Result.Failure(_: FileWriteException) => succeed
                     case other                                 => fail(s"expected FileWriteException, got $other")
                 }
             }
-        }
+        })
     }
 
 end PathStatTest

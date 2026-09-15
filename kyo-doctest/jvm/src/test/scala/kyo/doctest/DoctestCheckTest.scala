@@ -24,12 +24,10 @@ class DoctestCheckTest extends kyo.test.Test[Any]:
         for
             id <- Random.uuid
             dir = Path.basePaths.tmp / s"doctest-check-test-$id"
-            _ <- Abort.run[FileStructureException](dir.mkDir).unit
-            res <- Scope.acquireRelease(Sync.defer(dir))(_ =>
-                Abort.run[FileStructureException](dir.removeAll).unit
-            ).flatMap { dir =>
+            _ <- Abort.run[FileSystemException](Path.run(dir.mkDir)).unit
+            res <- Scope.acquireRelease(Sync.defer(dir))(_ => Abort.run[FileSystemException](Path.run(dir.removeAll)).unit).flatMap { dir =>
                 val file = dir / name
-                Abort.run[FileWriteException](file.write(content)).flatMap { _ => f(file) }
+                Abort.run[FileSystemException](Path.run(file.write(content))).flatMap { _ => f(file) }
             }
         yield res
 
@@ -39,10 +37,8 @@ class DoctestCheckTest extends kyo.test.Test[Any]:
         for
             id <- Random.uuid
             dir = Path.basePaths.tmp / s"doctest-cache-check-$id"
-            _ <- Abort.run[FileStructureException](dir.mkDir).unit
-            res <- Scope.acquireRelease(Sync.defer(dir))(_ =>
-                Abort.run[FileStructureException](dir.removeAll).unit
-            ).flatMap(f)
+            _   <- Abort.run[FileSystemException](Path.run(dir.mkDir)).unit
+            res <- Scope.acquireRelease(Sync.defer(dir))(_ => Abort.run[FileSystemException](Path.run(dir.removeAll)).unit).flatMap(f)
         yield res
 
     // Doctest.check opens and closes the Driver via Scope.acquireRelease.
@@ -59,8 +55,8 @@ class DoctestCheckTest extends kyo.test.Test[Any]:
             withTempFile("README.md", md) { kyoFile =>
                 // Count temp dirs named doctest-out* BEFORE the run using kyo.Path.list.
                 val tempDirBase = Path.basePaths.tmp
-                def countOutDirs()(using Frame): Int < (Sync & Abort[FileStructureException]) =
-                    tempDirBase.list.map { entries =>
+                def countOutDirs()(using Frame): Int < (Sync & Abort[FileSystemException]) =
+                    Path.runReadOnly(tempDirBase.list).map { entries =>
                         entries.count(p => p.name.getOrElse("").startsWith("doctest-out"))
                     }
                 end countOutDirs
@@ -75,10 +71,10 @@ class DoctestCheckTest extends kyo.test.Test[Any]:
                         cache = cacheDir,
                         parallel = nCpus
                     )
-                    beforeCount <- Abort.run[FileStructureException](countOutDirs()).map(_.getOrElse(0))
+                    beforeCount <- Abort.run[FileSystemException](countOutDirs()).map(_.getOrElse(0))
                     // Run with Scope.run, which triggers all finalizers.
                     result     <- Abort.run(Scope.run(Doctest.check(config)))
-                    afterCount <- Abort.run[FileStructureException](countOutDirs()).map(_.getOrElse(0))
+                    afterCount <- Abort.run[FileSystemException](countOutDirs()).map(_.getOrElse(0))
                 yield result match
                     case Result.Success(_) =>
                         // Scope.run must have cleaned up the temp output dir.

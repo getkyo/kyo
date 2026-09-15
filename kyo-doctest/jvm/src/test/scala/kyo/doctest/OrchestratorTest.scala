@@ -24,12 +24,10 @@ class OrchestratorTest extends kyo.test.Test[Any]:
         for
             id <- Random.uuid
             dir = Path.basePaths.tmp / s"kyo-doctest-orch-test-$id"
-            _ <- Abort.run[FileStructureException](dir.mkDir).unit
-            res <- Scope.acquireRelease(Sync.defer(dir))(_ =>
-                Abort.run[FileStructureException](dir.removeAll).unit
-            ).flatMap { dir =>
+            _ <- Abort.run[FileSystemException](Path.run(dir.mkDir)).unit
+            res <- Scope.acquireRelease(Sync.defer(dir))(_ => Abort.run[FileSystemException](Path.run(dir.removeAll)).unit).flatMap { dir =>
                 val file = dir / name
-                Abort.run[FileWriteException](file.write(content)).flatMap { _ => f(file) }
+                Abort.run[FileSystemException](Path.run(file.write(content))).flatMap { _ => f(file) }
             }
         yield res
 
@@ -39,10 +37,8 @@ class OrchestratorTest extends kyo.test.Test[Any]:
         for
             id <- Random.uuid
             dir = Path.basePaths.tmp / s"doctest-cache-test-$id"
-            _ <- Abort.run[FileStructureException](dir.mkDir).unit
-            res <- Scope.acquireRelease(Sync.defer(dir))(_ =>
-                Abort.run[FileStructureException](dir.removeAll).unit
-            ).flatMap(f)
+            _   <- Abort.run[FileSystemException](Path.run(dir.mkDir)).unit
+            res <- Scope.acquireRelease(Sync.defer(dir))(_ => Abort.run[FileSystemException](Path.run(dir.removeAll)).unit).flatMap(f)
         yield res
 
     "empty sources raises NoSourcesConfigured" in {
@@ -235,10 +231,10 @@ class OrchestratorTest extends kyo.test.Test[Any]:
             for
                 id <- Random.uuid
                 editDir = Path.basePaths.tmp / s"kyo-doctest-edit-test-$id"
-                _ <- Abort.run[FileStructureException](editDir.mkDir).unit
+                _ <- Abort.run[FileSystemException](Path.run(editDir.mkDir)).unit
                 res <-
                     Scope.acquireRelease(Sync.defer(editDir))(_ =>
-                        Abort.run[FileStructureException](editDir.removeAll).unit
+                        Abort.run[FileSystemException](Path.run(editDir.removeAll)).unit
                     ).flatMap {
                         dir =>
                             val file    = dir / "README.md"
@@ -273,13 +269,13 @@ class OrchestratorTest extends kyo.test.Test[Any]:
                                     cache = cacheDir,
                                     parallel = nCpus
                                 )
-                                _        <- Abort.run[FileWriteException](file.write(md1))
+                                _        <- Abort.run[FileSystemException](Path.run(file.write(md1)))
                                 r1Result <- Abort.run(Scope.run(Doctest.check(config)))
                                 result <- r1Result match
                                     case Result.Success(r1) =>
                                         assert(r1.compiled == 2, s"first run: expected 2 compiled, got ${r1.compiled}")
                                         // Edit one block
-                                        Abort.run[FileWriteException](file.write(md2)).flatMap { _ =>
+                                        Abort.run[FileSystemException](Path.run(file.write(md2))).flatMap { _ =>
                                             Abort.run(Scope.run(Doctest.check(config))).map {
                                                 case Result.Success(r2) =>
                                                     assert(r2.totalBlocks == 2, s"second run: expected 2 total, got ${r2.totalBlocks}")
@@ -308,10 +304,10 @@ class OrchestratorTest extends kyo.test.Test[Any]:
             for
                 id <- Random.uuid
                 editDir = Path.basePaths.tmp / s"kyo-doctest-env-cache-test-$id"
-                _ <- Abort.run[FileStructureException](editDir.mkDir).unit
+                _ <- Abort.run[FileSystemException](Path.run(editDir.mkDir)).unit
                 res <-
                     Scope.acquireRelease(Sync.defer(editDir))(_ =>
-                        Abort.run[FileStructureException](editDir.removeAll).unit
+                        Abort.run[FileSystemException](Path.run(editDir.removeAll)).unit
                     ).flatMap {
                         dir =>
                             val file = dir / "README.md"
@@ -347,13 +343,13 @@ class OrchestratorTest extends kyo.test.Test[Any]:
                                     cache = cacheDir,
                                     parallel = nCpus
                                 )
-                                _        <- Abort.run[FileWriteException](file.write(md1))
+                                _        <- Abort.run[FileSystemException](Path.run(file.write(md1)))
                                 r1Result <- Abort.run(Scope.run(Doctest.check(config)))
                                 result <- r1Result match
                                     case Result.Success(r1) =>
                                         assert(r1.compiled == 2, s"first run: expected 2 compiled, got ${r1.compiled}")
                                         assert(r1.cacheHits == 0, s"first run: expected 0 cache hits, got ${r1.cacheHits}")
-                                        Abort.run[FileWriteException](file.write(md2)).flatMap { _ =>
+                                        Abort.run[FileSystemException](Path.run(file.write(md2))).flatMap { _ =>
                                             Abort.run(Scope.run(Doctest.check(config))).map {
                                                 case Result.Success(r2) =>
                                                     assert(r2.totalBlocks == 2, s"second run: expected 2 total, got ${r2.totalBlocks}")

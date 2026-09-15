@@ -374,11 +374,11 @@ about which engine, and a mismatched URL contradicts it rather than silently ret
 ### The upload and what it promises
 
 `loadLocalInfile` takes the statement and a `Stream[Byte, S]`, and answers with the affected-row count the server
-reports. The stream's own effects stay in the result's effect row, so a file-backed load carries what reading a file
-carries:
+reports. The stream's own effects stay in the result's effect row, so a file-backed load carries the read capability
+the file needs, which a `Path.runReadOnly` runner discharges into `Abort[FileSystemException]`:
 
 ```scala
-val fromFile: Long < (Async & Abort[SqlException | FileReadException] & Scope & DB) =
+val fromFile: Long < (Async & Abort[SqlException] & PathRead & Scope & DB) =
     MysqlClient.use { client =>
         client.loadLocalInfile(
             "LOAD DATA LOCAL INFILE 'readings.csv' INTO TABLE reading FIELDS TERMINATED BY ','",

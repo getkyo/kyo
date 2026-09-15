@@ -102,9 +102,20 @@ class SchedulerTest extends AnyFreeSpec with NonImplicitAssertions {
     }
 
     "busyFiberTraces" - {
-        "returns empty when the scheduler is idle" in withScheduler { scheduler =>
-            eventually(assert(scheduler.loadAvg() == 0))
-            assert(scheduler.busyFiberTraces().isEmpty)
+        // loadAvg scans currentWorkers, busyFiberTraces scans allocatedWorkers, and the latter is the wider
+        // range. A task queued on an allocated worker past currentWorkers, whose thread has not mounted yet,
+        // is invisible to loadAvg and visible here as BusyWorker("", ""): no mount name and no current task.
+        // Gating on loadAvg therefore does not establish what this asserts, so wait for the snapshot itself.
+        //
+        // The window is narrow enough that a single pass cannot tell a settled scheduler from a lucky one, so
+        // the leaf runs against a fresh scheduler many times over. A regression that reopens the window fails
+        // here instead of intermittently on one CI pole.
+        "returns empty when the scheduler is idle" in {
+            (1 to idleSnapshotRepeats).foreach { _ =>
+                withScheduler { scheduler =>
+                    eventually(assert(scheduler.busyFiberTraces().isEmpty))
+                }
+            }
         }
 
         "covers all busy workers, not first-only" in withScheduler { scheduler =>
@@ -245,6 +256,12 @@ class SchedulerTest extends AnyFreeSpec with NonImplicitAssertions {
             assert(probes > 10, s"regulator never fired in the harness (probesSent=$probes) despite an 8-thread dedicated timer pool")
         }
     }
+
+    /** How many times the idle-snapshot leaf reruns against a fresh scheduler. The race it guards surfaced once
+      * on windows-x64 and never on this host, so a single pass says nothing; repeating it makes a reopened
+      * window fail wherever the suite runs rather than on one pole every few weeks.
+      */
+    private val idleSnapshotRepeats = 100
 
     private def withScheduler[A](testCode: Scheduler => A): A =
         withScheduler(Scheduler.Config.default)(testCode)

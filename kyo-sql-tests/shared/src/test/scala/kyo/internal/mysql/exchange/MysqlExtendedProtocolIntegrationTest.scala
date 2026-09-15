@@ -148,9 +148,14 @@ class MysqlExtendedProtocolIntegrationTest extends SqlContainerTest:
                             typeByte != MysqlEncoder.TYPE_VAR_STRING,
                             s"the column announced VAR_STRING over a $byteCount-byte binary payload, which is the prepare-time definition"
                         )
+                        // An INTEGER-family byte rather than LONGLONG exactly. Which width the server promotes a bound
+                        // integer parameter to is its own business and differs across servers and forks; what the defect
+                        // was about is that the execute-time definition arrives at all, and the assertion above pins
+                        // that. Pinning the exact promotion would make this leaf fail on a server that promotes
+                        // differently while the property it exists for still held.
                         assert(
-                            typeByte == MysqlEncoder.TYPE_LONGLONG,
-                            s"expected the execute-time LONGLONG definition, got type byte 0x${typeByte.toHexString}"
+                            Set(MysqlEncoder.TYPE_LONGLONG, MysqlEncoder.TYPE_LONG, MysqlEncoder.TYPE_INT24).contains(typeByte),
+                            s"expected an execute-time integer definition, got type byte 0x${typeByte.toHexString}"
                         )
                         // The consequence a caller sees: an integer column read as text is refused rather than answering its bytes.
                         Abort.run[SqlException](neutral.decode[String](0)).map {

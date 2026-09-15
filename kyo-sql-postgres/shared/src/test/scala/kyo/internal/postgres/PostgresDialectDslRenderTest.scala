@@ -203,21 +203,21 @@ class PostgresDialectDslRenderTest extends Test:
     "a bare column orders ascending" in {
         val bare     = customers.orderBy(c => c.c.id)
         val explicit = customers.orderBy(c => c.c.id.asc)
-        assert(sqlOf(bare).endsWith("""ORDER BY "c"."id" ASC"""), sqlOf(bare))
+        assert(sqlOf(bare).endsWith("""ORDER BY "c"."id" ASC NULLS LAST"""), sqlOf(bare))
         assert(sqlOf(bare) == sqlOf(explicit), s"a bare column must order as `.asc` does: ${sqlOf(bare)}")
     }
 
     "a tuple mixes bare columns and explicit specs" in {
         val q = customers.orderBy(c => (c.c.name, c.c.id.desc))
-        assert(sqlOf(q).endsWith("""ORDER BY "c"."name" ASC, "c"."id" DESC"""), sqlOf(q))
+        assert(sqlOf(q).endsWith("""ORDER BY "c"."name" ASC NULLS LAST, "c"."id" DESC NULLS FIRST"""), sqlOf(q))
     }
 
     // `.to[B]` survives the combinators that follow a projection, so the order they are written in is not load-bearing.
     "to[B] applies after orderBy and after limit" in {
         val afterOrderBy = people.select(p => (p.p.name, p.p.age)).orderBy(p => p.p.age.desc).to[NameAge]
         val afterLimit   = people.select(p => (p.p.name, p.p.age)).orderBy(p => p.p.age.desc).limit(3).to[NameAge]
-        assert(sqlOf(afterOrderBy).endsWith("""ORDER BY "p"."age" DESC"""), sqlOf(afterOrderBy))
-        assert(sqlOf(afterLimit).endsWith("""ORDER BY "p"."age" DESC LIMIT 3"""), sqlOf(afterLimit))
+        assert(sqlOf(afterOrderBy).endsWith("""ORDER BY "p"."age" DESC NULLS FIRST"""), sqlOf(afterOrderBy))
+        assert(sqlOf(afterLimit).endsWith("""ORDER BY "p"."age" DESC NULLS FIRST LIMIT 3"""), sqlOf(afterLimit))
     }
 
     "cross join + where" in {
@@ -255,7 +255,7 @@ class PostgresDialectDslRenderTest extends Test:
     "groupBy select orderBy renders byte-identical ORDER BY" in {
         val q = people.groupBy(_.p.deptId).select(view => view.deptId).orderBy(view => view.deptId.desc)
         assert(
-            sqlOf(q) == """SELECT "p"."deptId" FROM "person" "p" GROUP BY "p"."deptId" ORDER BY "p"."deptId" DESC"""
+            sqlOf(q) == """SELECT "p"."deptId" FROM "person" "p" GROUP BY "p"."deptId" ORDER BY "p"."deptId" DESC NULLS FIRST"""
         )
     }
 
@@ -317,14 +317,14 @@ class PostgresDialectDslRenderTest extends Test:
 
     "order by single desc" in {
         val q = people.orderBy(c => c.p.age.desc)
-        assert(sqlOf(q) == """SELECT "p"."id", "p"."name", "p"."age", "p"."deptId" FROM "person" "p" ORDER BY "p"."age" DESC""")
+        assert(sqlOf(q) == """SELECT "p"."id", "p"."name", "p"."age", "p"."deptId" FROM "person" "p" ORDER BY "p"."age" DESC NULLS FIRST""")
     }
 
     "order by tuple-lambda (asc, desc)" in {
         val q = people.orderBy(c => (c.p.deptId.asc, c.p.age.desc))
         assert(sqlOf(
             q
-        ) == """SELECT "p"."id", "p"."name", "p"."age", "p"."deptId" FROM "person" "p" ORDER BY "p"."deptId" ASC, "p"."age" DESC""")
+        ) == """SELECT "p"."id", "p"."name", "p"."age", "p"."deptId" FROM "person" "p" ORDER BY "p"."deptId" ASC NULLS LAST, "p"."age" DESC NULLS FIRST""")
     }
 
     "order by with nulls last / first" in {
@@ -431,23 +431,23 @@ class PostgresDialectDslRenderTest extends Test:
             (c.p.name, c.p.age.sum.over(Sql.windowSpec.partitionBy(c.p.deptId).orderBy(c.p.age.asc)))
         )
         assert(
-            sqlOf(q) == """SELECT "p"."name", SUM("p"."age") OVER (PARTITION BY "p"."deptId" ORDER BY "p"."age" ASC) FROM "person" "p""""
+            sqlOf(q) == """SELECT "p"."name", SUM("p"."age") OVER (PARTITION BY "p"."deptId" ORDER BY "p"."age" ASC NULLS LAST) FROM "person" "p""""
         )
     }
 
     "standalone rowNumber + rank window functions" in {
         val rn = people.select(c => (c.p.name, Sql.windowSpec.partitionBy(c.p.deptId).orderBy(c.p.age.desc).rowNumber))
         assert(
-            sqlOf(rn) == """SELECT "p"."name", ROW_NUMBER() OVER (PARTITION BY "p"."deptId" ORDER BY "p"."age" DESC) FROM "person" "p""""
+            sqlOf(rn) == """SELECT "p"."name", ROW_NUMBER() OVER (PARTITION BY "p"."deptId" ORDER BY "p"."age" DESC NULLS FIRST) FROM "person" "p""""
         )
         val rk = people.select(c => (c.p.name, Sql.windowSpec.orderBy(c.p.age.desc).rank))
-        assert(sqlOf(rk) == """SELECT "p"."name", RANK() OVER (ORDER BY "p"."age" DESC) FROM "person" "p"""")
+        assert(sqlOf(rk) == """SELECT "p"."name", RANK() OVER (ORDER BY "p"."age" DESC NULLS FIRST) FROM "person" "p"""")
     }
 
     "window LAG with default" in {
         val q = people.select(c => (c.p.name, c.p.age.lag(1, default = 0).over(Sql.windowSpec.orderBy(c.p.id.asc))))
         assert(
-            sqlOf(q) == """SELECT "p"."name", LAG("p"."age", $1, $2) OVER (ORDER BY "p"."id" ASC) FROM "person" "p""""
+            sqlOf(q) == """SELECT "p"."name", LAG("p"."age", $1, $2) OVER (ORDER BY "p"."id" ASC NULLS LAST) FROM "person" "p""""
         )
         assert(paramsOf(q) == 2)
     }
@@ -459,7 +459,7 @@ class PostgresDialectDslRenderTest extends Test:
             )
         )
         assert(
-            sqlOf(q) == """SELECT SUM("p"."age") OVER (PARTITION BY "p"."deptId" ORDER BY "p"."id" ASC ROWS BETWEEN $1 PRECEDING AND CURRENT ROW) FROM "person" "p""""
+            sqlOf(q) == """SELECT SUM("p"."age") OVER (PARTITION BY "p"."deptId" ORDER BY "p"."id" ASC NULLS LAST ROWS BETWEEN $1 PRECEDING AND CURRENT ROW) FROM "person" "p""""
         )
     }
 
@@ -471,7 +471,7 @@ class PostgresDialectDslRenderTest extends Test:
             (c.p.name, Sql.windowSpec.partitionBy(c.p.deptId).orderBy(c.p.age.asc).rank)
         )
         assert(
-            sqlOf(q) == """SELECT "p"."name", RANK() OVER (PARTITION BY "p"."deptId" ORDER BY "p"."age" ASC) FROM "person" "p""""
+            sqlOf(q) == """SELECT "p"."name", RANK() OVER (PARTITION BY "p"."deptId" ORDER BY "p"."age" ASC NULLS LAST) FROM "person" "p""""
         )
     }
 
@@ -494,32 +494,44 @@ class PostgresDialectDslRenderTest extends Test:
     // `/` is the one arithmetic operator PostgreSQL cannot render as the bare symbol: `int4 / int4` truncates and returns an
     // int4, while the DSL types the quotient BigDecimal so it means the same thing on MySQL. Casting the dividend to NUMERIC
     // is what makes PostgreSQL resolve the expression to exact division. The other three operators are unchanged.
+    // Every divisor below is wrapped in NULLIF(..., 0), which is how dividing by zero comes to mean one thing on both
+    // flavors: this server raises division_by_zero and the other answers an absent value, and no SQL a dialect can
+    // render makes that one raise, so the answer both CAN give is the absent one. The addition and multiplication in
+    // the first case are unwrapped, which is the other half of the claim: only the dividing arms are touched.
     "arithmetic select with mixed raw values, and an integral division cast to NUMERIC" in {
         val q = people.select(c => (c.p.name, c.p.age + 10, c.p.age * 2, c.p.age / 4))
         assert(
             sqlOf(
                 q
-            ) == """SELECT "p"."name", ("p"."age" + $1), ("p"."age" * $2), (CAST("p"."age" AS NUMERIC) / $3) FROM "person" "p""""
+            ) == """SELECT "p"."name", ("p"."age" + $1), ("p"."age" * $2), (CAST("p"."age" AS NUMERIC) / NULLIF($3, 0)) FROM "person" "p""""
         )
     }
 
     "an integral division between two columns casts the dividend on PG" in {
         val q = people.select(c => c.p.age / c.p.age)
-        assert(sqlOf(q) == """SELECT (CAST("p"."age" AS NUMERIC) / "p"."age") FROM "person" "p"""")
+        assert(sqlOf(q) == """SELECT (CAST("p"."age" AS NUMERIC) / NULLIF("p"."age", 0)) FROM "person" "p"""")
+    }
+
+    "a modulo guards its divisor on PG" in {
+        // `%` by zero raises here and answers absent on the other flavor, the same divergence the dividing arms have,
+        // so it takes the same guard. Asserted separately because the node is not a division and an implementation
+        // that keyed on the word rather than on the divergence would miss it.
+        val q = people.select(c => c.p.age % c.p.age)
+        assert(sqlOf(q) == """SELECT ("p"."age" % NULLIF("p"."age", 0)) FROM "person" "p"""")
     }
 
     // The truncating spelling is the plain operator here, because PostgreSQL's integer `/` already truncates toward zero.
     // MySQL renders the same node as `DIV`; see MysqlDialectDslRenderTest.
     "divideTruncating renders the plain operator on PG" in {
         val q = people.select(c => c.p.age.divideTruncating(c.p.age))
-        assert(sqlOf(q) == """SELECT ("p"."age" / "p"."age") FROM "person" "p"""")
+        assert(sqlOf(q) == """SELECT ("p"."age" / NULLIF("p"."age", 0)) FROM "person" "p"""")
     }
 
     // The cast is keyed on the operand being INTEGRAL, not merely exact: PostgreSQL's `numeric / numeric` is already the
     // fractional quotient, so a BigDecimal division renders the bare operator.
     "a division on non-integral operands needs no cast on PG" in {
         val q = orders.select(c => c.o.total / c.o.total)
-        assert(sqlOf(q) == """SELECT ("o"."total" / "o"."total") FROM "order" "o"""")
+        assert(sqlOf(q) == """SELECT ("o"."total" / NULLIF("o"."total", 0)) FROM "order" "o"""")
     }
 
     "string functions and concat" in {

@@ -1308,6 +1308,8 @@ Server-push deployment. Returns `Seq[HttpHandler[?, ?, ?]] < Sync`: two handlers
 
 The session is the WebSocket connection. The WS handler owns the reactive subscription via a `Scope`; closing the socket cascade-tears-down the whole subscription tree (leak-free by construction). Per-connection state resets on a real disconnect: a dropped socket starts a fresh session, so signal state is per-connection. The initial `ui` should be deterministic so the SSR page and the WebSocket's first render agree.
 
+The page reconnects on its own. A dropped or refused socket is retried under capped exponential backoff, events raised while it is down are buffered and flushed once it opens, and the fresh session's first emission carries every reactive region, so the reconnected page is current rather than merely connected. This is why the initial `ui` should be deterministic: a reconnect re-evaluates it, so signal state resets to that starting point unless the signals live outside the by-name block.
+
 ```scala
 import UI.*
 import kyo.*

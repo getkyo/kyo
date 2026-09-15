@@ -983,11 +983,7 @@ final private[net] class PollerIoDriver private[posix] (
             // JS: copy the unsent region into the reused sendMirror, then call sendNow (synchronous, non-blocking).
             val mirror = sendMirrorFor(handle, len)
             val arr    = data.toArrayUnsafe
-            var i      = 0
-            while i < len do
-                mirror.set(i, arr(offset + i))
-                i += 1
-            end while
+            mirror.copyFromArray(arr, offset, 0, len)
             // EINTR (a signal interrupted the send before any byte moved) is retried in place by sendNowWithRetry, bounded, so a signal does not
             // surface as Error and drop a healthy connection (POSIX send(2)); EAGAIN still parks via Partial, a genuine error still bails Error.
             val r = sendNowWithRetry(handle.writeFd, mirror, len.toLong, flags)
@@ -1002,11 +998,7 @@ final private[net] class PollerIoDriver private[posix] (
             // JVM/Native: copy unsent region into the reused per-handle sendMirror, then send from it.
             val mirror = sendMirrorFor(handle, len)
             val arr    = data.toArrayUnsafe
-            var i      = 0
-            while i < len do
-                mirror.set(i, arr(offset + i))
-                i += 1
-            end while
+            mirror.copyFromArray(arr, offset, 0, len)
             // EINTR is retried in place by sendBlockingWithRetry (bounded), so a signal mid-send does not surface as Error (POSIX send(2)).
             val result: Maybe[Ffi.Outcome[Long]] = sendBlockingWithRetry(handle.writeFd, mirror, len.toLong, flags)
             result match

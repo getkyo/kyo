@@ -1,45 +1,53 @@
 package kyo
 
+import kyo.kernel.ArrowEffect
+
 /** Stream sinks that write byte and text streams to the file system.
   *
-  * These live in kyo-system rather than kyo-core because they are typed in terms of [[kyo.Path]] and [[kyo.FileWriteException]]. Keeping
-  * them in kyo-core would make kyo-core depend on kyo-system, which already depends on kyo-core.
+  * These live in kyo-system rather than kyo-core because they are typed in terms of [[kyo.Path]] and the write capability. Keeping them in
+  * kyo-core would make kyo-core depend on kyo-system, which already depends on kyo-core.
+  *
+  * Every sink carries `PathWrite`, so it writes to whichever filesystem the enclosing runner installed and the write failure lands on that
+  * runner's `Abort[FileSystemException]`.
   *
   * @see
   *   [[kyo.Path]] for the path type these sinks target
   */
 object StreamSystemExtensions:
 
-    /** Shared write logic: opens a write handle via Scope, runs the body, and marks the handle finished.
+    /** Shared write logic: opens a write handle through the write capability, runs the body, and marks the handle finished.
       *
       * A body that fails never reaches `finish()`, so the handle's close removes what was half written. An appending sink is the exception
       * and finishes anyway: the entry already held content the sink never wrote, and close would take that content along with the partial
       * append.
+      *
+      * The failure is raised by the enclosing runner rather than by this frame, so there is no local `Abort` for an `Abort.run` to catch.
+      * The append case is decided in the `Scope` finalizer instead, which is the one place that sees whether the computation finished or
+      * failed. Finishing and closing in a single finalizer keeps that decision independent of the finalizer parallelism `Scope.run` was
+      * given.
       */
     private def writeWith[S](path: Path, append: Boolean, options: Path.WriteOptions)(
-        body: Path.WriteHandle => Unit < (Sync & Abort[FileWriteException] & S)
-    )(using Frame): Unit < (Scope & Sync & Abort[FileWriteException] & S) =
-        Scope
-            .acquireRelease(
-                Sync.Unsafe.defer(Abort.get(path.unsafe.openWrite(append, options)))
-            )(handle => Sync.Unsafe.defer(handle.close())) // Unsafe: closes the write handle at Scope exit
-            .map { handle =>
-                Abort.run[FileWriteException](body(handle)).map {
-                    case Result.Failure(e) =>
-                        if append then Sync.Unsafe.defer(handle.finish()).andThen(Abort.fail(e)) // Unsafe: keeps the pre-existing content
-                        else Abort.fail(e)
-                    case ok =>
-                        Sync.Unsafe.defer(handle.finish()).andThen(Abort.get(ok)) // Unsafe: marks the write handle complete
+        body: Path.WriteHandle => Unit < (PathWrite & Sync & S)
+    )(using Frame): Unit < (Scope & PathWrite & Sync & S) =
+        ArrowEffect.suspend(Tag[PathWrite], Path.Op.OpenWrite(path, append, options)).map { handle =>
+            Scope.ensure { outcome =>
+                // Unsafe: finishes and closes the vended write handle at Scope exit.
+                Sync.Unsafe.defer {
+                    if outcome.nonEmpty && append then handle.finish() // keeps the content the entry already held
+                    handle.close()
                 }
             }
+                .andThen(body(handle))
+                .andThen(Sync.Unsafe.defer(handle.finish())) // Unsafe: marks the vended write handle complete
+        }
 
     extension [S](stream: Stream[Byte, S])
         /** Writes each byte of the stream to `path`, truncating an existing file and creating parent directories as needed. */
-        def writeTo(path: Path)(using Frame): Unit < (Scope & Sync & Abort[FileWriteException] & S) =
+        def writeTo(path: Path)(using Frame): Unit < (Scope & PathWrite & Sync & S) =
             writeTo(path, append = false, Path.WriteOptions())
 
         /** Writes each byte of the stream to `path`, creating parent directories as needed. */
-        def writeTo(path: Path, append: Boolean)(using Frame): Unit < (Scope & Sync & Abort[FileWriteException] & S) =
+        def writeTo(path: Path, append: Boolean)(using Frame): Unit < (Scope & PathWrite & Sync & S) =
             writeTo(path, append, Path.WriteOptions())
 
         /** Writes each byte of the stream to `path`.
@@ -59,10 +67,10 @@ object StreamSystemExtensions:
           */
         def writeTo(path: Path, append: Boolean, options: Path.WriteOptions)(using
             Frame
-        ): Unit < (Scope & Sync & Abort[FileWriteException] & S) =
+        ): Unit < (Scope & PathWrite & Sync & S) =
             writeWith(path, append, options) { handle =>
                 stream.foreachChunk { chunk =>
-                    Sync.Unsafe.defer(Abort.get(handle.writeBytes(chunk))) // Unsafe: bridges a write-handle chunk write into the Sync tier
+                    ArrowEffect.suspend(Tag[PathWrite], Path.Op.WriteChunk(handle, chunk))
                 }
             }
     end extension
@@ -87,10 +95,10 @@ object StreamSystemExtensions:
             charset: java.nio.charset.Charset = java.nio.charset.StandardCharsets.UTF_8,
             append: Boolean = false,
             options: Path.WriteOptions = Path.WriteOptions()
-        )(using Frame): Unit < (Scope & Sync & Abort[FileWriteException] & S) =
+        )(using Frame): Unit < (Scope & PathWrite & Sync & S) =
             writeWith(path, append, options) { handle =>
                 stream.foreach { s =>
-                    Sync.Unsafe.defer(Abort.get(handle.writeString(s, charset))) // Unsafe: bridges a write-handle string write into Sync
+                    ArrowEffect.suspend(Tag[PathWrite], Path.Op.WriteString(handle, s, charset))
                 }
             }
 
@@ -114,11 +122,11 @@ object StreamSystemExtensions:
             charset: java.nio.charset.Charset = java.nio.charset.StandardCharsets.UTF_8,
             append: Boolean = false,
             options: Path.WriteOptions = Path.WriteOptions()
-        )(using Frame): Unit < (Scope & Sync & Abort[FileWriteException] & S) =
+        )(using Frame): Unit < (Scope & PathWrite & Sync & S) =
             System.lineSeparator.map { sep =>
                 writeWith(path, append, options) { handle =>
                     stream.foreach { s =>
-                        Sync.Unsafe.defer(Abort.get(handle.writeString(s + sep, charset))) // Unsafe: bridges the write into the Sync tier
+                        ArrowEffect.suspend(Tag[PathWrite], Path.Op.WriteString(handle, s + sep, charset))
                     }
                 }
             }

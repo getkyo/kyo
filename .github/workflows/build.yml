@@ -150,10 +150,11 @@ jobs:
       # investigation that began by looking for a broken test that had in fact passed. Failure-only, so a
       # passing leg is unaffected.
       #
-      # The line budget is sized for the THREAD LIST, not the header. The header names the faulting frame,
-      # which is the cheap half; the question that actually decides a native-teardown crash is which threads
-      # were still alive when it faulted, and that section sits several hundred lines in. A budget that stops
-      # at the header buys a report that reproduces what the console already printed.
+      # The whole report is printed, not a head budget. Two sections decide a native crash and they sit at
+      # different depths: the thread list says which threads were still alive when it faulted, and the loaded
+      # module list says which component pulled the faulting library into the process at all, which is the
+      # question a crash in a library kyo never calls (combase.dll on windows) turns on. A budget that reaches
+      # the first truncates the second, and a crash is rare enough that the log cost is paid once.
       - name: crash reports (${{ inputs.os }})
         if: failure()
         shell: bash
@@ -164,7 +165,7 @@ jobs:
           else
             for report in $reports; do
               echo "::group::$report"
-              head -600 "$report"
+              cat "$report"
               echo "::endgroup::"
             done
           fi

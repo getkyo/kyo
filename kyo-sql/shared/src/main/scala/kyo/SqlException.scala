@@ -62,6 +62,14 @@ trait SqlIntegrityViolation
   */
 trait SqlAuthenticationFailure
 
+/** Property marker: a value did not fit the type that had to hold it, so nothing was stored or read rather than something wrong being
+  * stored or read. Unsealed, as [[SqlRetryable]].
+  *
+  * Match on this rather than a leaf: which layer notices is the engine's business, since overflowing arithmetic raises server-side where the
+  * engine computes in the operand's width and fails the codec where it widens instead.
+  */
+trait SqlValueOutOfRange
+
 // =============================================================================
 // SqlConnectionException family
 // =============================================================================
@@ -446,6 +454,25 @@ final case class SqlRequestMysqlLocalInfileRequiresLoadApiException()(using Fram
         "MySQL server responded with LOAD DATA LOCAL INFILE for a regular query. Use the MySQL client's loadLocalInfile instead."
     )
 
+/** A transaction reached its commit while carrying a statement that failed, so it was rolled back instead.
+  *
+  * Handling the error is why the body returned normally; it does not undo the statement that raised it. Committing would write a partial
+  * result the engines disagree about: one silently turns the commit into a rollback, the other commits whatever survived, and neither tells
+  * the caller.
+  *
+  * To handle a failure and keep going, put the part that may fail in a nested `transaction`. That takes a savepoint, rolls back to it when
+  * the inner body fails, and leaves the outer transaction committable, which is the behaviour both engines already implement identically.
+  *
+  * @param detail
+  *   the message of the statement failure the transaction was carrying
+  */
+final case class SqlRequestTransactionFailedStatementException(detail: String)(using Frame)
+    extends SqlRequestException(
+        s"A statement inside this transaction failed and the failure was handled, so the transaction was rolled back rather than " +
+            s"committed: a handled error does not undo the statement that raised it. Wrap the part that may fail in a nested " +
+            s"transaction to roll back only that part and keep the rest committable. Statement failure: $detail"
+    )
+
 /** RSA-OAEP encryption of the MySQL sha256_password payload failed. */
 final case class SqlRequestRsaOaepException(position: String, tag: String, cause: String | Throwable)(using Frame)
     extends SqlRequestException(
@@ -490,14 +517,13 @@ final case class SqlRequestAdvisoryLockException(key: Long, timeout: Maybe[Durat
 
 /** A Duration exceeded the range the target backend can represent.
   *
-  * `limit` names the bound that was actually crossed, supplied by the backend that raised this. It is a
-  * parameter rather than a fixed string because the two backends enforce DIFFERENT bounds for different
-  * reasons: PostgreSQL overflows the microsecond count an interval is stored in, and MySQL overflows the day
-  * count its TIME encoding carries, so no single hardcoded bound is right for both.
+  * `limit` is a parameter because the backends enforce different bounds, and seconds because those bounds are not
+  * day-shaped (`838:59:59` is a little under 35 days). Raised BEFORE the value is sent: one engine does not refuse an
+  * out-of-range span, it substitutes its own ceiling and reports success.
   */
-final case class SqlRequestDurationOverflowException(totalDays: Long, limit: String)(using Frame)
+final case class SqlRequestDurationOverflowException(totalSeconds: Long, limit: String)(using Frame)
     extends SqlRequestException(
-        s"Duration overflow: $totalDays total days exceeds $limit"
+        s"Duration out of range: $totalSeconds seconds exceeds $limit"
     )
 
 /** A `Period`'s year-and-month total exceeded the range `Period.normalized()` can carry.
@@ -529,6 +555,17 @@ final case class SqlRequestPeriodOverflowException(totalMonths: Long, limit: Str
 final case class SqlRequestNotificationChannelNulException(index: Int)(using Frame)
     extends SqlRequestException(
         s"A notification channel name cannot contain a NUL character; found one at index $index"
+    )
+
+/** A statement was submitted with no SQL in it, whitespace included.
+  *
+  * Refused client-side because the engines disagree and neither answer helps: one treats it as a no-op and reports success, the other rejects
+  * it as a syntax error, for what is a caller mistake on both. A statement carrying only a comment is NOT caught, since deciding that means
+  * parsing the dialect's comment forms.
+  */
+final case class SqlRequestEmptyStatementException()(using Frame)
+    extends SqlRequestException(
+        "A statement must contain SQL: got an empty or whitespace-only string, which one engine treats as a no-op and the other rejects"
     )
 
 // =============================================================================
@@ -592,6 +629,8 @@ object SqlServerException:
             SqlServerSyntaxException(sqlState, severity, message, detail, hint, position, extra, sqlText, paramCount, connectionId)
         else if sqlState.startsWith("08") then
             SqlServerConnectionException(sqlState, severity, message, detail, hint, position, extra, sqlText, paramCount, connectionId)
+        else if sqlState == "22003" then
+            SqlServerValueRangeException(sqlState, severity, message, detail, hint, position, extra, sqlText, paramCount, connectionId)
         else
             SqlServerErrorException(sqlState, severity, message, detail, hint, position, extra, sqlText, paramCount, connectionId)
     end apply
@@ -686,6 +725,30 @@ final case class SqlServerConnectionException(
         SqlServerException.format(sqlState, severity, serverMessage, detail, hint, sqlText, paramCount, connectionId)
     )
 
+/** A numeric value did not fit the type the server had to hold it in: SQLSTATE `22003`, `numeric_value_out_of_range`.
+  *
+  * Its own leaf so it can carry [[SqlValueOutOfRange]], which is what lets one handler catch this and the codec-side
+  * [[SqlDecodeValueRangeException]] that the other engine raises for the same condition.
+  *
+  * Narrower than the SQLSTATE class on purpose: class 22 also covers a string too long for its column (`22001`) and an invalid datetime
+  * format (`22007`), which are not numeric range failures and stay on the fallback.
+  */
+final case class SqlServerValueRangeException(
+    sqlState: String,
+    severity: String,
+    serverMessage: String,
+    detail: Maybe[String],
+    hint: Maybe[String],
+    position: Maybe[Int],
+    extra: Map[String, String],
+    sqlText: Maybe[String],
+    paramCount: Int,
+    connectionId: Maybe[Long]
+)(using Frame)
+    extends SqlServerException(
+        SqlServerException.format(sqlState, severity, serverMessage, detail, hint, sqlText, paramCount, connectionId)
+    ) with SqlValueOutOfRange
+
 /** Fallback for any server error not covered by the categorised leaves. */
 final case class SqlServerErrorException(
     sqlState: String,
@@ -760,13 +823,30 @@ final case class SqlDecodeColumnOutOfBoundsException(columnIndex: Int, columnCou
 final case class SqlDecodeInvalidTextException(typeName: String, text: String)(using Frame)
     extends SqlDecodeException(s"invalid $typeName text '$text'")
 
+/** [[kyo.SqlRow.text]] has no rendering for a column, and the bytes it holds are a wire representation rather than a value's text.
+  *
+  * Returning the bytes as UTF-8 instead would answer mojibake for a wire struct: a wrong string a caller cannot tell from a right one.
+  *
+  * Reach it by asking for a column the backend can decode, by casting the column to text in SQL, or by running the same query through the
+  * simple protocol, where the server renders the value itself.
+  *
+  * @param columnName
+  *   the column that could not be rendered
+  * @param columnType
+  *   the backend's own name for its type, absent where the backend does not name it
+  */
+final case class SqlDecodeColumnNotRenderableException(columnName: String, columnType: Maybe[String])(using Frame)
+    extends SqlDecodeException(
+        s"Column '$columnName'${columnType.map(t => s" of type $t").getOrElse("")} has no text rendering under the binary wire " +
+            "format: its bytes are the value's wire representation, not its text. Read the column at its own type, render it as " +
+            "text in SQL with a CAST, or run the statement through the simple protocol, where the server renders it."
+    )
+
 /** A column looked up by name is not present in the row.
   *
   * `availableColumns` is what the row actually carries, because the reason this is raised is almost never that the column is missing from
-  * the database: it is that the name being looked for is not the name the server reported. A [[kyo.SqlNaming]] casing is resolved at the
-  * call site of the run, so one declared where the run is not (another object, another method) leaves the lookup asking for the verbatim
-  * Scala field name against snake_case columns. Listing the row's own columns is what makes that visible at the point of failure, and the
-  * message says so outright when a row column matches the requested name up to casing and underscores.
+  * the database: it is that the name being looked for is not the name the server reported. A [[kyo.SqlNaming]] casing is resolved where the
+  * statement is built, so a naming declared elsewhere leaves the lookup asking for the verbatim Scala field name against snake_case columns.
   *
   * @param columnName
   *   the name that was looked up
@@ -1046,7 +1126,7 @@ end SqlDecodeByteaException
 final case class SqlDecodeValueRangeException(scalaType: String, wireValue: String, wireDescription: String)(using Frame)
     extends SqlDecodeException(
         s"Wire value $wireValue ($wireDescription) does not fit $scalaType"
-    )
+    ) with SqlValueOutOfRange
 
 /** A calendar-interval field could not be decoded, on either backend: a PostgreSQL `INTERVAL` column or MySQL's ISO-8601 text encoding of
   * one.

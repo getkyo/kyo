@@ -6,14 +6,13 @@ import kyo.*
   *
   * Every method is unsafe-tier (trailing `using AllowUnsafe`, plain values, no effect row);
   * `Topic` bridges them to its `< (... & Async)` rows via `Sync.Unsafe.defer` and `Sync.ensure`.
-  * The JVM impl wraps `io.aeron.*`; Native and JS wrap the Aeron C client through `AeronBindings`.
-  * The handle types are abstract members each impl fixes, so neither `io.aeron.Publication` nor
-  * `Ffi.Handle` leaks here.
+  * The single implementation wraps the Aeron C client through `AeronBindings` on every platform.
+  * The handle types are abstract members it fixes, so `Ffi.Handle` does not leak here.
   *
   * `offer` returns the raw Aeron position (>0) or a negative sentinel; the sentinel-to-error
   * mapping lives once in shared `Topic` (`AeronSentinels`), never here, so the error policy is
   * identical across platforms. `pollOne` returns the reassembled message bytes (`Absent` = zero
-  * fragments); fragment reassembly stays inside the impl (JVM `FragmentAssembler`, FFI C shim).
+  * fragments); fragment reassembly stays inside the C shim, which owns the reassembly slot.
   *
   * The add path is split into a non-blocking start plus a poll loop, keeping fibers interruptible
   * and carriers free. `asyncAdd*` starts the registration and returns an opaque token; `pollAdd*`

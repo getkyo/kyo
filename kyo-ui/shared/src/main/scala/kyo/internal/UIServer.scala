@@ -41,6 +41,10 @@ private[kyo] object UIServer:
                 // redundantly re-inject a rule the page's initial <style> block already has.
                 (_, initialRules) <- HtmlRenderer.renderWithCss(uiTree, Seq.empty)
                 exchange = wsExchange(ws, initialRules.map(_._1).toSet)
+                // Announce the session before subscribing, so this is the first frame on every connection including one whose tree is
+                // entirely const and will never render. The client gates its outbound events on having seen a frame, because completing
+                // the upgrade proves only that the transport is up, not that anything is reading this socket.
+                _   <- ws.put(HttpWebSocket.Payload.Text(Json.encode[HtmlOp](HtmlOp.SessionReady())))
                 sub <- ReactiveUI.subscribe(root, exchange)
                 // Session command sink: an event handler calling UI.scrollIntoView sends the op over this
                 // connection's socket, riding the same channel as the reactive updates. runPartial drops

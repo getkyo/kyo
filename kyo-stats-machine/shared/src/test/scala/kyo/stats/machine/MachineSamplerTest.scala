@@ -19,7 +19,7 @@ class MachineSamplerTest extends kyo.test.Test[Any]:
             val decode = new MachineSampler.Decode:
                 def apply(bytes: Span[Byte], len: Int)(using AllowUnsafe): Unit =
                     discard(identities += java.lang.System.identityHashCode(this))
-            Scope.run {
+            Scope.run(Path.run {
                 for
                     handles <- MachineHandles.init
                     dir     <- Path.tempDir("kyo-stats-machine-sampler-identity")
@@ -36,7 +36,7 @@ class MachineSamplerTest extends kyo.test.Test[Any]:
                     assert(identities.size == 2)
                     assert(identities(0) == identities(1))
                 end for
-            }
+            })
         }
 
         "binds fill length before taking the span so a file larger than the initial 8192 buffer decodes in full" in {
@@ -47,7 +47,7 @@ class MachineSamplerTest extends kyo.test.Test[Any]:
                     decodedLen = len
                     decodedText = new String(bytes.toArrayUnsafe, 0, len, java.nio.charset.StandardCharsets.US_ASCII)
             val content = "0123456789" * 2000 // 20000 bytes, larger than the sampler's 8192-byte initial slot
-            Scope.run {
+            Scope.run(Path.run {
                 for
                     handles <- MachineHandles.init
                     dir     <- Path.tempDir("kyo-stats-machine-sampler-large")
@@ -62,7 +62,7 @@ class MachineSamplerTest extends kyo.test.Test[Any]:
                     assert(decodedLen == 20000)
                     assert(decodedText == content)
                 end for
-            }
+            })
         }
     }
 

@@ -45,25 +45,16 @@ private[posix] trait TlsEngineIo:
         val arr     = data.toArrayUnsafe
         val staging = plaintextStagingFor(handle, arr.length)
         // Copy the whole plaintext once into staging (one alloc for the whole write, not per-record).
-        var si = 0
-        while si < arr.length do
-            staging.set(si, arr(si))
-            si += 1
-        end while
+        staging.copyFromArray(arr, 0, 0, arr.length)
         val drain  = encryptDrainFor(handle) // reused drain buffer (one alloc for driver lifetime, not per-record)
         var offset = 0
         var ok     = true
         while offset < arr.length && ok do
             val remainingLen = arr.length - offset
-            // Advance staging content to the current offset by re-copying the suffix element-wise.
+            // Advance staging content to the current offset by re-copying the suffix in one bulk copy.
             // Bounded by <= record_size per call; a fresh per-record array would instead need two copies (copyOfRange + fromArray).
             if offset > 0 then
-                var ri = 0
-                while ri < remainingLen do
-                    staging.set(ri, arr(offset + ri))
-                    ri += 1
-                end while
-            end if
+                staging.copyFromArray(arr, offset, 0, remainingLen)
             val consumed = engine.writePlain(staging, remainingLen)
             if consumed <= 0 then
                 // < 0 is a fatal engine error; 0 means no plaintext accepted (want-read/want-write), which post-handshake should

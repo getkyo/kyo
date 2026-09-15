@@ -2,11 +2,14 @@
 // struct layer can read. Compiled by the kyo-ffi plugin (library id machine_macos). Host metrics only:
 // no file is opened here; proc-style files are read in Scala via kyo.Path.
 //
-// The whole shim is guarded on __APPLE__: the kyo-ffi plugin compiles every declared C source on the
-// BUILD HOST for JVM/JS/Wasm, and Scala Native compiles it into the binary on every OS, so on a non-macOS
-// host (a Linux build host) the mach/sysctl headers do not exist. The #else branch provides same-signature
-// stubs returning failure codes, so the file compiles on every host and every symbol resolves; the
-// binding methods then return non-zero / 0 count / "" off macOS, which MachineMacos already maps to Absent.
+// The whole shim is guarded on __APPLE__: Scala Native compiles this file into the binary on every OS, so
+// on a non-macOS target the mach/sysctl headers do not exist. The #else branch provides same-signature
+// stubs returning failure codes, so the file compiles there and every symbol resolves; the binding methods
+// then return non-zero / 0 count / "" off macOS, which MachineMacos already maps to Absent.
+//
+// The JVM/JS shared library is a different question, and the answer is not "everywhere": build.sbt declares
+// machine_macos with osTargets = Seq("darwin"), so no library is built or bundled off darwin and Ffi.load
+// raises a catchable LibraryNotFound there, which MachineMacos degrades to Absent the same way.
 #include <stdint.h>
 
 #if defined(__APPLE__)

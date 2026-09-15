@@ -790,6 +790,12 @@ val withTimeout: Result[Timeout, Int] < (Async & Sync) =
 
 `Async.timeoutWithError(d, error)(v)` lets you raise a domain-specific error on expiry instead.
 
+## Files, processes, and the OS
+
+> **File system, processes, and environment:** `Path`, `Command`, `Process`, `System`, and the
+> `FileSystemException` hierarchy live in [`kyo-system`](../kyo-system/README.md); add it to your
+> dependencies to use them.
+
 ## Ambient services
 
 `Console`, `Random`, `UUIDGenerator`, and `Log` are dynamically scoped context services. Their defaults target the platform console, a non-cryptographic `java.util.Random`, secure UUID entropy, and the console logger respectively. Tests can swap them out per scope without threading them as arguments.

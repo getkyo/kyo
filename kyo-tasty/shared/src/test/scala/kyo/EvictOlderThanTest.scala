@@ -19,20 +19,20 @@ class EvictOlderThanTest extends kyo.test.Test[Any]:
 
     "evictOlderThan deletes old .krfl files and keeps recent ones" in {
         Scope.run {
-            Path.tempDir("kyo-evict-old").map { dir =>
+            Path.run(Path.tempDir("kyo-evict-old")).map { dir =>
                 val old1   = dir / "aaa.krfl"
                 val old2   = dir / "bbb.krfl"
                 val recent = dir / "ccc.krfl"
-                old1.writeBytes(Span.from(Array[Byte](1, 2, 3))).map { _ =>
-                    old1.setLastModified(staleMs).map { _ =>
-                        old2.writeBytes(Span.from(Array[Byte](4, 5, 6))).map { _ =>
-                            old2.setLastModified(staleMs).map { _ =>
-                                recent.writeBytes(Span.from(Array[Byte](7, 8, 9))).map { _ =>
+                Path.run(old1.writeBytes(Span.from(Array[Byte](1, 2, 3)))).map { _ =>
+                    Path.run(old1.setLastModified(staleMs)).map { _ =>
+                        Path.run(old2.writeBytes(Span.from(Array[Byte](4, 5, 6)))).map { _ =>
+                            Path.run(old2.setLastModified(staleMs)).map { _ =>
+                                Path.run(recent.writeBytes(Span.from(Array[Byte](7, 8, 9)))).map { _ =>
                                     Abort.run[TastyError](Tasty.evictOlderThan(dir.toString, maxAge)).map {
                                         case Result.Success(_) =>
-                                            old1.exists.map { e1 =>
-                                                old2.exists.map { e2 =>
-                                                    recent.exists.map { er =>
+                                            Path.runReadOnly(old1.exists).map { e1 =>
+                                                Path.runReadOnly(old2.exists).map { e2 =>
+                                                    Path.runReadOnly(recent.exists).map { er =>
                                                         assert(!e1, s"old aaa.krfl must be deleted; exists=$e1")
                                                         assert(!e2, s"old bbb.krfl must be deleted; exists=$e2")
                                                         assert(er, s"recent ccc.krfl must remain; exists=$er")
@@ -56,16 +56,14 @@ class EvictOlderThanTest extends kyo.test.Test[Any]:
 
     "evictOlderThan removes old files completely (no residual paths)" in {
         Scope.run {
-            Path.tempDir("kyo-evict-res").map { dir =>
+            Path.run(Path.tempDir("kyo-evict-res")).map { dir =>
                 val old1 = dir / "aaaa.krfl"
-                old1.writeBytes(Span.from(Array[Byte](1, 2, 3))).map { _ =>
-                    old1.setLastModified(staleMs).map { _ =>
+                Path.run(old1.writeBytes(Span.from(Array[Byte](1, 2, 3)))).map { _ =>
+                    Path.run(old1.setLastModified(staleMs)).map { _ =>
                         Abort.run[TastyError](
                             Tasty.evictOlderThan(dir.toString, maxAge).map { _ =>
-                                Abort.recover[FileStructureException](e =>
-                                    Abort.fail(TastyError.SnapshotIoError(s"list: ${e.getMessage}"))
-                                )(
-                                    Path(dir.toString).list(glob"*.krfl")
+                                Abort.recover[FileSystemException](e => Abort.fail(TastyError.SnapshotIoError(s"list: ${e.getMessage}")))(
+                                    Path.runReadOnly(Path(dir.toString).list(glob"*.krfl"))
                                 )
                             }
                         ).map {
@@ -88,22 +86,22 @@ class EvictOlderThanTest extends kyo.test.Test[Any]:
 
     "evictOlderThan removes stale files; no .deleting residue paths appear" in {
         Scope.run {
-            Path.tempDir("kyo-evict-nodot").map { dir =>
+            Path.run(Path.tempDir("kyo-evict-nodot")).map { dir =>
                 val old1   = dir / "old1.krfl"
                 val old2   = dir / "old2.krfl"
                 val recent = dir / "recent.krfl"
-                old1.writeBytes(Span.from(Array[Byte](1, 2, 3))).map { _ =>
-                    old1.setLastModified(staleMs).map { _ =>
-                        old2.writeBytes(Span.from(Array[Byte](4, 5, 6))).map { _ =>
-                            old2.setLastModified(staleMs).map { _ =>
-                                recent.writeBytes(Span.from(Array[Byte](7, 8, 9))).map { _ =>
+                Path.run(old1.writeBytes(Span.from(Array[Byte](1, 2, 3)))).map { _ =>
+                    Path.run(old1.setLastModified(staleMs)).map { _ =>
+                        Path.run(old2.writeBytes(Span.from(Array[Byte](4, 5, 6)))).map { _ =>
+                            Path.run(old2.setLastModified(staleMs)).map { _ =>
+                                Path.run(recent.writeBytes(Span.from(Array[Byte](7, 8, 9)))).map { _ =>
                                     Abort.run[TastyError](Tasty.evictOlderThan(dir.toString, maxAge)).map {
                                         case Result.Success(_) =>
-                                            old1.exists.map { e1 =>
-                                                old2.exists.map { e2 =>
-                                                    recent.exists.map { er =>
-                                                        Abort.recover[FileStructureException](_ => Chunk.empty[Path])(
-                                                            Path(dir.toString).list
+                                            Path.runReadOnly(old1.exists).map { e1 =>
+                                                Path.runReadOnly(old2.exists).map { e2 =>
+                                                    Path.runReadOnly(recent.exists).map { er =>
+                                                        Abort.recover[FileSystemException](_ => Chunk.empty[Path])(
+                                                            Path.runReadOnly(Path(dir.toString).list)
                                                         ).map { remaining =>
                                                             val names = remaining.map(_.toString)
                                                             assert(!e1, s"old1 must be absent; exists=$e1")
@@ -134,7 +132,7 @@ class EvictOlderThanTest extends kyo.test.Test[Any]:
 
     "evictOlderThan on an empty directory is a no-op (Success)" in {
         Scope.run {
-            Path.tempDir("kyo-evict-empty").map { dir =>
+            Path.run(Path.tempDir("kyo-evict-empty")).map { dir =>
                 Abort.run[TastyError](Tasty.evictOlderThan(dir.toString, maxAge)).map {
                     case Result.Success(_) =>
                         succeed

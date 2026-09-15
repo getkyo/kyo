@@ -86,11 +86,11 @@ class MarkdownTest extends kyo.test.Test[Any]:
     // ---- Lists ----
 
     "two-space nested list stays nested rather than flattening" in {
-        val source = "- Exception\n  - FileException\n  - TimeoutException\n"
+        val source = "- Exception\n  - FileSystemException\n  - TimeoutException\n"
         for html <- renderMd(source)
         yield
             assert(html.contains("<ul"), s"Expected ul: $html")
-            assert(html.contains("FileException"), s"Expected sub-item: $html")
+            assert(html.contains("FileSystemException"), s"Expected sub-item: $html")
             // Two <ul> tags means the list is nested.
             assert(html.indexOf("<ul") != html.lastIndexOf("<ul"), s"Expected nested ul: $html")
         end for

@@ -41,8 +41,11 @@ final private[kyo] class JvmUnsafeBuffer(
                     i += 1
     end copyTo
 
-    def copyToArray(arr: Array[Byte], srcOffset: Long, len: Int)(using AllowUnsafe): Unit =
-        MemorySegment.copy(seg, ValueLayout.JAVA_BYTE, srcOffset, arr, 0, len)
+    def copyToArray(arr: Array[Byte], srcOffset: Long, destPos: Int, len: Int)(using AllowUnsafe): Unit =
+        MemorySegment.copy(seg, ValueLayout.JAVA_BYTE, srcOffset, arr, destPos, len)
+
+    def copyFromArray(arr: Array[Byte], srcPos: Int, destOffset: Long, len: Int)(using AllowUnsafe): Unit =
+        MemorySegment.copy(arr, srcPos, seg, ValueLayout.JAVA_BYTE, destOffset, len)
 
     def view(offset: Long, byteSize: Long)(using AllowUnsafe): UnsafeBuffer =
         new JvmUnsafeBuffer(seg.asSlice(offset, byteSize), byteSize, () => ())

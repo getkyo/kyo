@@ -13,12 +13,16 @@ import kyo.SqlDecodeByteaException
 import kyo.SqlDecodeColumnTypeMismatchException
 import kyo.SqlDecodeException
 import kyo.SqlDecodeInstantException
+import kyo.SqlDecodeInsufficientBytesException
 import kyo.SqlDecodeIntervalException
+import kyo.SqlDecodeInvalidTextException
 import kyo.SqlDecodeNumericException
 import kyo.SqlDecodeUuidException
 import kyo.SqlDecodeValueRangeException
+import kyo.SqlValue
 import kyo.internal.SqlNumericDecode.parseDecimalText
 import kyo.internal.SqlNumericDecode.wholeOf
+import kyo.internal.SqlValueRender
 import kyo.internal.postgres.PostgresArrayReader
 import kyo.internal.postgres.PostgresDialect
 import kyo.internal.postgres.PostgresRowCodec
@@ -131,11 +135,21 @@ object PostgresDecoder:
             case OID_TEXT | 1043 | 1042 => NumericWire.Rendering
             case _                      => whenUnknown
 
+    /** The OID-alias types, UNSIGNED 32-bit. They share `int4`'s wire width, so a signed read answers negative past 2^31 while the text
+      * protocol parses the server's unsigned digits.
+      */
+    private def isUnsignedInt4(columnOid: Int): Boolean =
+        columnOid match
+            case 26 | 28 | 29 | 2202 | 2203 | 2204 | 2205 | 2206 | 3734 | 4096 => true
+            case _                                                             => false
+
     /** Reads a PostgreSQL integer column at any of its three wire widths as the `Long` that carries all three. */
-    private def readIntegerBinary(bytes: Span[Byte], scalaType: String)(using Frame): Long =
+    private def readIntegerBinary(bytes: Span[Byte], columnOid: Int, scalaType: String)(using Frame): Long =
         bytes.size match
             case 2 => readBigEndianShort(bytes, 0).toLong
-            case 4 => readBigEndianInt(bytes, 0).toLong
+            case 4 =>
+                val raw = readBigEndianInt(bytes, 0).toLong
+                if isUnsignedInt4(columnOid) then raw & 0xffffffffL else raw
             case 8 => readBigEndianLong(bytes, 0)
             case n => throw SqlDecodeValueRangeException(scalaType, s"$n bytes", "integer column of unrecognised wire width")
 
@@ -154,7 +168,7 @@ object PostgresDecoder:
       */
     private def integralValueOf(bytes: Span[Byte], columnOid: Int, scalaType: String)(using Frame): Long =
         numericWireOf(columnOid, NumericWire.Integer) match
-            case NumericWire.Integer   => readIntegerBinary(bytes, scalaType)
+            case NumericWire.Integer   => readIntegerBinary(bytes, columnOid, scalaType)
             case NumericWire.Float4    => wholeOf(BigDecimal(readFloat4Binary(bytes, scalaType).toDouble), scalaType, "float4 column")
             case NumericWire.Float8    => wholeOf(BigDecimal(readFloat8Binary(bytes, scalaType)), scalaType, "float8 column")
             case NumericWire.Numeric   => wholeOf(readNumericBinary(bytes, scalaType), scalaType, "numeric column")
@@ -163,7 +177,7 @@ object PostgresDecoder:
     /** The approximate value a numeric-family column carries, for the `Float` and `Double` targets. */
     private def approximateValueOf(bytes: Span[Byte], columnOid: Int, whenUnknown: NumericWire, scalaType: String)(using Frame): Double =
         numericWireOf(columnOid, whenUnknown) match
-            case NumericWire.Integer   => readIntegerBinary(bytes, scalaType).toDouble
+            case NumericWire.Integer   => readIntegerBinary(bytes, columnOid, scalaType).toDouble
             case NumericWire.Float4    => readFloat4Binary(bytes, scalaType).toDouble
             case NumericWire.Float8    => readFloat8Binary(bytes, scalaType)
             case NumericWire.Numeric   => readNumericBinary(bytes, scalaType).toDouble
@@ -172,7 +186,7 @@ object PostgresDecoder:
     /** The exact decimal value a numeric-family column carries, for the `BigDecimal`, `BigInt` and `Boolean` targets. */
     private def decimalValueOf(bytes: Span[Byte], columnOid: Int, whenUnknown: NumericWire, scalaType: String)(using Frame): BigDecimal =
         numericWireOf(columnOid, whenUnknown) match
-            case NumericWire.Integer   => BigDecimal(readIntegerBinary(bytes, scalaType))
+            case NumericWire.Integer   => BigDecimal(readIntegerBinary(bytes, columnOid, scalaType))
             case NumericWire.Float4    => BigDecimal(readFloat4Binary(bytes, scalaType).toDouble)
             case NumericWire.Float8    => BigDecimal(readFloat8Binary(bytes, scalaType))
             case NumericWire.Numeric   => readNumericBinary(bytes, scalaType)
@@ -676,7 +690,20 @@ object PostgresDecoder:
                 val offset        = java.time.ZoneOffset.ofTotalSeconds(-offsetNegated)
                 java.time.OffsetTime.of(localTime, offset)
             case Format.Text =>
-                java.time.OffsetTime.parse(text(bytes))
+                java.time.OffsetTime.parse(normalizeOffsetSuffix(text(bytes)))
+
+    /** Widens a trailing `+HH` zone to the `+HH:MM` `java.time` parses. PostgreSQL writes a whole-hour zone bare, and every `java.time`
+      * offset grammar starts at `+HH:MM`.
+      */
+    private def normalizeOffsetSuffix(rendering: String): String =
+        val zoneStart = rendering.lastIndexWhere(c => c == '+' || c == '-')
+        if zoneStart <= 0 then rendering
+        else
+            val zone = rendering.substring(zoneStart)
+            // `+02` is the short form; `+02:00` and `+02:00:33` already parse.
+            if zone.length == 3 then rendering + ":00" else rendering
+        end if
+    end normalizeOffsetSuffix
 
     // --- INTERVAL, java.time.Duration ---
     // Wire: 16-byte big-endian struct: Int64 microseconds, Int32 days, Int32 months.
@@ -943,350 +970,445 @@ object PostgresDecoder:
       * The rendering is the one PostgreSQL's own `iso_8601` IntervalStyle produces: a sign per component, `PT0S` for the zero interval,
       * and fractional seconds only when there are any.
       */
-    val intervalText: PostgresDecoder[String] = new PostgresDecoder[String]:
+    val intervalValue: PostgresDecoder[SqlValue] = new PostgresDecoder[SqlValue]:
         val oids: Set[Int] = Set(OID_INTERVAL)
-        def read(format: Format, bytes: Span[Byte], columnOid: Int)(using frame: Frame): String = format match
+        def read(format: Format, bytes: Span[Byte], columnOid: Int)(using frame: Frame): SqlValue = format match
             case Format.Binary =>
-                renderIso(readBigEndianInt(bytes, 12).toLong, readBigEndianInt(bytes, 8).toLong, readBigEndianLong(bytes, 0))
+                SqlValue.Interval(
+                    readBigEndianInt(bytes, 12).toLong,
+                    readBigEndianInt(bytes, 8).toLong,
+                    readBigEndianLong(bytes, 0)
+                )
             case Format.Text =>
-                // The one column whose text rendering is NOT simply handed back. Which of the four renderings the
-                // server sends is a session setting, so passing the bytes through would make the same stored value
-                // read differently under the two protocols, and differently again after someone changes
-                // `IntervalStyle`. Parsing and re-rendering is what keeps one value reading as one string.
+                // Which of the four renderings the server sends is a session setting, so passing the bytes through
+                // would make one stored value read differently after someone changes `IntervalStyle`.
                 val fields = readIntervalText(text(bytes))
-                renderIso(fields.months, fields.days, fields.micros)
+                SqlValue.Interval(fields.months, fields.days, fields.micros)
 
-    /** The ISO-8601 rendering of an INTERVAL's three fields, as PostgreSQL's `iso_8601` IntervalStyle writes them. */
-    private def renderIso(months: Long, days: Long, micros: Long): String =
-        val years     = months / 12
-        val monthPart = months  % 12
-        val hours     = micros / MicrosPerHour
-        val minutes   = (micros % MicrosPerHour) / MicrosPerMinute
-        val subMinute = micros  % MicrosPerMinute
-        val seconds   = subMinute / MicrosPerSecond
-        val fraction  = Math.abs(subMinute % MicrosPerSecond)
-        def unit(value: Long, suffix: Char): String =
-            if value == 0 then "" else s"$value$suffix"
-        val secondsPart =
-            if seconds == 0 && fraction == 0 then ""
-            else
-                // The sign lives on the seconds when they are zero and the fraction is not, since `0.5` and `-0.5`
-                // share a whole part and an interval's fields are negative together.
-                val sign = if seconds == 0 && subMinute < 0 then "-" else ""
-                val frac = if fraction == 0 then "" else "." + f"$fraction%06d".reverse.dropWhile(_ == '0').reverse
-                s"$sign$seconds${frac}S"
-        val date = unit(years, 'Y') + unit(monthPart, 'M') + unit(days, 'D')
-        val time = unit(hours, 'H') + unit(minutes, 'M') + secondsPart
-        if date.isEmpty && time.isEmpty then "PT0S"
-        else if time.isEmpty then s"P$date"
-        else s"P${date}T$time"
-    end renderIso
-
-    // --- INET, rendered as the address it holds ---
+    // --- INET, decoded into the address it holds ---
     // Wire: family (2 = IPv4, 3 = IPv6), netmask bits, is_cidr, address length in bytes, then the address.
-    // Text format: the server already sent its own rendering, so it is the answer.
 
-    private val AF_INET = 2
+    private val inetFamilyIpv4 = 2
+    private val inetFamilyIpv6 = 3
+
+    /** The four bytes of an INET's wire header, before the address itself. */
+    private val inetHeaderSize = 4
 
     /** An INET as the address it holds, in PostgreSQL's own output form.
       *
-      * `inet` has no Scala type in this module, so a caller with no row type reaches it through [[kyo.SqlRow.text]], and a text decode
-      * refuses it because the wire value is a struct rather than characters. Rendering that struct is what makes the column readable at
-      * all: the alternative, handing back its bytes as UTF-8, is mojibake for every address.
-      *
-      * The mask is written only when it is not the full one, and an IPv6 address is compressed at its longest run of zero groups
-      * (leftmost on a tie, and never a run of one), which is RFC 5952 and is what the server's own text rendering of the same value says.
+      * `inet` has no Scala type here, so a caller reaches it through [[kyo.SqlRow.text]]; its binary form is a struct, and handing those
+      * bytes back as UTF-8 is mojibake for every address.
       */
-    val inetText: PostgresDecoder[String] = new PostgresDecoder[String]:
+    val inetValue: PostgresDecoder[SqlValue] = new PostgresDecoder[SqlValue]:
         val oids: Set[Int] = Set(OID_INET)
-        def read(format: Format, bytes: Span[Byte], columnOid: Int)(using frame: Frame): String = format match
-            case Format.Binary => renderInet(bytes)
-            case Format.Text   => text(bytes)
+        def read(format: Format, bytes: Span[Byte], columnOid: Int)(using frame: Frame): SqlValue = format match
+            case Format.Binary =>
+                // Length-checked before any index: a truncated struct would raise a raw IndexOutOfBounds from a
+                // decoder whose row says Abort[SqlDecodeException].
+                if bytes.size < inetHeaderSize then
+                    throw SqlDecodeInsufficientBytesException("inet", inetHeaderSize, bytes.size, 0)
+                val family = bytes(0) & 0xff
+                val bits   = bytes(1) & 0xff
+                // The length the header declares, not one inferred from the family, so a disagreeing struct reads one way.
+                val length = bytes(3) & 0xff
+                if bytes.size < inetHeaderSize + length then
+                    throw SqlDecodeInsufficientBytesException("inet", inetHeaderSize + length, bytes.size, 0)
+                SqlValue.NetworkAddress(family, bits, bytes.slice(inetHeaderSize, inetHeaderSize + length))
+            case Format.Text => parseInet(text(bytes))
 
-    /** The address an INET's wire struct describes, masked as PostgreSQL writes it. */
-    private def renderInet(bytes: Span[Byte]): String =
-        val family = bytes(0) & 0xff
-        val bits   = bytes(1) & 0xff
-        val length = bytes(3) & 0xff
-        if family == AF_INET then
-            val quad = (0 until length).map(i => (bytes(4 + i) & 0xff).toString).mkString(".")
-            if bits == 32 then quad else s"$quad/$bits"
-        else
-            val groups = (0 until 8).map(g => ((bytes(4 + g * 2) & 0xff) << 8) | (bytes(4 + g * 2 + 1) & 0xff))
-            val text   = compressIpv6(groups)
-            if bits == 128 then text else s"$text/$bits"
-        end if
-    end renderInet
-
-    /** The eight groups of an IPv6 address as RFC 5952 writes them: lowercase, no leading zeros, and the longest run of zero groups
-      * replaced by `::`, leftmost on a tie. A run of ONE is left alone, since `::` is no shorter than `0` and the RFC forbids it.
+    /** The address a text-protocol INET carries, in the fields the binary struct supplies, so both protocols render through one function
+      * rather than agreeing by coincidence about IPv6 compression.
       */
-    private def compressIpv6(groups: IndexedSeq[Int]): String =
-        var bestStart = -1
-        var bestLen   = 0
-        var i         = 0
-        while i < 8 do
-            if groups(i) != 0 then i += 1
+    private def parseInet(rendering: String)(using Frame): SqlValue =
+        val slash    = rendering.indexOf('/')
+        val addrText = if slash < 0 then rendering else rendering.substring(0, slash)
+        val maskText = if slash < 0 then Maybe.empty else Maybe(rendering.substring(slash + 1))
+        if addrText.contains(':') then
+            val groups = expandIpv6(addrText, rendering)
+            val bytes  = new Array[Byte](16)
+            var g      = 0
+            while g < 8 do
+                bytes(g * 2) = ((groups(g) >>> 8) & 0xff).toByte
+                bytes(g * 2 + 1) = (groups(g) & 0xff).toByte
+                g += 1
+            end while
+            SqlValue.NetworkAddress(inetFamilyIpv6, maskText.fold(128)(_.toInt), Span.from(bytes))
+        else
+            val parts = addrText.split('.')
+            if parts.length != 4 then throw SqlDecodeInvalidTextException("inet", rendering)
+            SqlValue.NetworkAddress(inetFamilyIpv4, maskText.fold(32)(_.toInt), Span.from(parts.map(p => p.toInt.toByte)))
+        end if
+    end parseInet
+
+    /** The eight groups an IPv6 text form names, expanding the one `::` it may carry into the zeros it stands for. */
+    private def expandIpv6(addrText: String, whole: String)(using Frame): Array[Int] =
+        // The mixed notation an IPv4-mapped address takes, `::ffff:192.168.0.1`, which the server writes for that
+        // family and a hex parse of the tail refuses. The dotted quad is two groups.
+        val lastColon = addrText.lastIndexOf(':')
+        val tailText  = if lastColon < 0 then "" else addrText.substring(lastColon + 1)
+        val (body, mapped) =
+            if tailText.contains('.') then
+                val octets = tailText.split('.')
+                if octets.length != 4 then throw SqlDecodeInvalidTextException("inet", whole)
+                val vs = octets.map { o =>
+                    val v =
+                        try o.toInt
+                        catch case _: NumberFormatException => throw SqlDecodeInvalidTextException("inet", whole)
+                    if v < 0 || v > 255 then throw SqlDecodeInvalidTextException("inet", whole)
+                    v
+                }
+                (addrText.substring(0, lastColon + 1), Array((vs(0) << 8) | vs(1), (vs(2) << 8) | vs(3)))
+            else (addrText, Array.empty[Int])
+        // A trailing `:` is left by the split above and by a `::` ending; neither names a group.
+        val trimmed     = if mapped.nonEmpty && body.endsWith(":") && !body.endsWith("::") then body.dropRight(1) else body
+        val doubleColon = trimmed.indexOf("::")
+        def groupsOf(part: String): Array[Int] =
+            if part.isEmpty then Array.empty
             else
-                var end = i
-                while end < 8 && groups(end) == 0 do end += 1
-                if end - i > bestLen then
-                    bestLen = end - i
-                    bestStart = i
-                end if
-                i = end
-        end while
-        def hex(from: Int, until: Int): String =
-            (from until until).map(g => Integer.toHexString(groups(g))).mkString(":")
-        if bestLen < 2 then hex(0, 8)
-        else s"${hex(0, bestStart)}::${hex(bestStart + bestLen, 8)}"
-    end compressIpv6
+                part.split(':').map { h =>
+                    val v =
+                        try Integer.parseInt(h, 16)
+                        catch case _: NumberFormatException => throw SqlDecodeInvalidTextException("inet", whole)
+                    if v < 0 || v > 0xffff then throw SqlDecodeInvalidTextException("inet", whole)
+                    v
+                }
+        val (head, tail) =
+            if doubleColon < 0 then (groupsOf(trimmed), Array.empty[Int])
+            else (groupsOf(trimmed.substring(0, doubleColon)), groupsOf(trimmed.substring(doubleColon + 2)))
+        val named  = head ++ tail ++ mapped
+        val filled = named.length
+        if filled > 8 || (doubleColon < 0 && filled != 8) then throw SqlDecodeInvalidTextException("inet", whole)
+        head ++ Array.fill(8 - filled)(0) ++ tail ++ mapped
+    end expandIpv6
 
-    // --- Server-shaped text renderings ---
+    // --- Value renderings ---
     //
-    // `SqlRow.text` answers one string for one stored value whichever protocol carried the row. Under the text protocol the server
-    // already sent its own rendering and the bytes are handed back; under the binary protocol the value has to be rendered here, and the
-    // rendering that agrees is the server's own, not the JDK's. They differ for whole column types rather than at the edges: PostgreSQL
-    // writes a bool `t`, a timestamp `2026-08-25 10:00:00`, and a float8 1e10 `10000000000`, where Java writes `true`,
-    // `2026-08-25T10:00`, and `1.0E10`.
-    //
-    // The special values are here for the same reason. `numeric 'NaN'` and `date 'infinity'` have no Scala counterpart, so decoding at a
-    // type either refuses them (numeric) or answers a plausible wrong value (a date near year 5881610, which is what `plusDays` on
-    // Int.MaxValue lands on), while the server renders each as a word.
+    // These read a column under EITHER wire format into the neutral value `SqlValueRender` spells; see its header for why neither format
+    // is passed through. The special values are recognised on the wire before the value is read, because no Scala type holds them and a
+    // typed decode either refuses or answers a plausible wrong date.
 
-    /** `t` or `f`, which is what `boolout` writes. */
-    val boolText: PostgresDecoder[String] = new PostgresDecoder[String]:
+    /** A `bool`. The typed decoder reads both wire forms already, `t`/`f` included, so one arm serves both. */
+    val boolValue: PostgresDecoder[SqlValue] = new PostgresDecoder[SqlValue]:
         val oids: Set[Int] = Set(OID_BOOL)
-        def read(format: Format, bytes: Span[Byte], columnOid: Int)(using frame: Frame): String = format match
-            case Format.Binary => if bool.read(format, bytes, columnOid) then "t" else "f"
-            case Format.Text   => text(bytes)
+        def read(format: Format, bytes: Span[Byte], columnOid: Int)(using frame: Frame): SqlValue =
+            SqlValue.Bool(bool.read(format, bytes, columnOid))
 
-    /** A `date`, with `infinity` and `-infinity` rendered as the server writes them rather than decoded. */
-    val dateText: PostgresDecoder[String] = new PostgresDecoder[String]:
+    /** An integral column at any of its widths, which the column's own OID resolves. */
+    val integerValue: PostgresDecoder[SqlValue] = new PostgresDecoder[SqlValue]:
+        val oids: Set[Int] = Set(OID_INT2, OID_INT4, OID_INT8)
+        def read(format: Format, bytes: Span[Byte], columnOid: Int)(using frame: Frame): SqlValue =
+            SqlValue.Integer(BigInt(int8.read(format, bytes, columnOid)))
+
+    /** A text-family column, whose bytes are its rendering under both formats. */
+    val textValue: PostgresDecoder[SqlValue] = new PostgresDecoder[SqlValue]:
+        val oids: Set[Int] = Set(OID_TEXT, 1043, 1042, 19, 18, 142)
+        def read(format: Format, bytes: Span[Byte], columnOid: Int)(using frame: Frame): SqlValue =
+            SqlValue.Text(text(bytes))
+
+    /** A `json` or `jsonb` document, with the `jsonb` binary version byte stripped. */
+    val jsonValue: PostgresDecoder[SqlValue] = new PostgresDecoder[SqlValue]:
+        val oids: Set[Int] = Set(OID_JSON, OID_JSONB)
+        def read(format: Format, bytes: Span[Byte], columnOid: Int)(using frame: Frame): SqlValue =
+            SqlValue.Json(jsonDecoder.read(format, bytes, columnOid))
+
+    /** A `uuid`, in the canonical lower-case form. */
+    val uuidValue: PostgresDecoder[SqlValue] = new PostgresDecoder[SqlValue]:
+        val oids: Set[Int] = Set(OID_UUID)
+        def read(format: Format, bytes: Span[Byte], columnOid: Int)(using frame: Frame): SqlValue =
+            SqlValue.Uuid(uuid.read(format, bytes, columnOid))
+
+    /** A `bytea`, whose text form the session's `bytea_output` chooses between two spellings of; the decoder reads both. */
+    val byteaValue: PostgresDecoder[SqlValue] = new PostgresDecoder[SqlValue]:
+        val oids: Set[Int] = Set(OID_BYTEA)
+        def read(format: Format, bytes: Span[Byte], columnOid: Int)(using frame: Frame): SqlValue =
+            SqlValue.Bytes(bytea.read(format, bytes, columnOid))
+
+    /** Recognises the special values a temporal column carries, which no Scala type holds and no number parse accepts. */
+    private def temporalSpecial(format: Format, bytes: Span[Byte], isInfinite: Span[Byte] => Maybe[SqlValue])(using
+        Frame
+    ): Maybe[SqlValue] =
+        format match
+            case Format.Binary => isInfinite(bytes)
+            case Format.Text =>
+                val rendering = text(bytes)
+                if rendering == "infinity" then Maybe(SqlValue.TemporalInfinity(negative = false))
+                else if rendering == "-infinity" then Maybe(SqlValue.TemporalInfinity(negative = true))
+                else Maybe.empty
+
+    /** A `date`, with `infinity` and `-infinity` recognised before the value is read. */
+    val dateValue: PostgresDecoder[SqlValue] = new PostgresDecoder[SqlValue]:
         val oids: Set[Int] = Set(OID_DATE)
-        def read(format: Format, bytes: Span[Byte], columnOid: Int)(using frame: Frame): String = format match
-            case Format.Binary =>
-                readBigEndianInt(bytes, 0) match
-                    case Int.MaxValue => "infinity"
-                    case Int.MinValue => "-infinity"
-                    case _            => renderLocalDate(date.read(format, bytes, columnOid))
-            case Format.Text => text(bytes)
+        def read(format: Format, bytes: Span[Byte], columnOid: Int)(using frame: Frame): SqlValue =
+            temporalSpecial(
+                format,
+                bytes,
+                b =>
+                    readBigEndianInt(b, 0) match
+                        case Int.MaxValue => Maybe(SqlValue.TemporalInfinity(negative = false))
+                        case Int.MinValue => Maybe(SqlValue.TemporalInfinity(negative = true))
+                        case _            => Maybe.empty
+            ).getOrElse {
+                format match
+                    case Format.Text => dateFieldsOf(text(bytes))
+                    case Format.Binary =>
+                        val value = date.read(format, bytes, columnOid)
+                        val bc    = value.getYear <= 0
+                        SqlValue.Date(if bc then 1 - value.getYear else value.getYear, value.getMonthValue, value.getDayOfMonth, bc)
+            }
+        end read
 
-    /** A `timestamp`, space-separated with the seconds always written and the fraction trimmed, which is `timestamp_out`. */
-    val timestampText: PostgresDecoder[String] = new PostgresDecoder[String]:
+    /** A `timestamp`, a wall-clock value with no zone. */
+    val timestampValue: PostgresDecoder[SqlValue] = new PostgresDecoder[SqlValue]:
         val oids: Set[Int] = Set(OID_TIMESTAMP)
-        def read(format: Format, bytes: Span[Byte], columnOid: Int)(using frame: Frame): String = format match
-            case Format.Binary =>
-                readBigEndianLong(bytes, 0) match
-                    case Long.MaxValue => "infinity"
-                    case Long.MinValue => "-infinity"
-                    case _             => renderLocalDateTime(timestamp.read(format, bytes, columnOid))
-            case Format.Text => text(bytes)
+        def read(format: Format, bytes: Span[Byte], columnOid: Int)(using frame: Frame): SqlValue =
+            temporalSpecial(
+                format,
+                bytes,
+                b =>
+                    readBigEndianLong(b, 0) match
+                        case Long.MaxValue => Maybe(SqlValue.TemporalInfinity(negative = false))
+                        case Long.MinValue => Maybe(SqlValue.TemporalInfinity(negative = true))
+                        case _             => Maybe.empty
+            ).getOrElse {
+                format match
+                    case Format.Text => dateTimeFieldsOf(text(bytes))
+                    case Format.Binary =>
+                        val value = timestamp.read(format, bytes, columnOid)
+                        val bc    = value.getYear <= 0
+                        SqlValue.DateTime(
+                            if bc then 1 - value.getYear else value.getYear,
+                            value.getMonthValue,
+                            value.getDayOfMonth,
+                            bc,
+                            value.getHour,
+                            value.getMinute,
+                            value.getSecond,
+                            value.getNano / 1000
+                        )
+            }
+        end read
 
-    /** A `timestamptz`, rendered at UTC with the `+00` offset the server writes when its TimeZone is UTC. */
-    val timestamptzText: PostgresDecoder[String] = new PostgresDecoder[String]:
+    /** A `timestamptz`, always rendered at UTC.
+      *
+      * An instant has no zone of its own, so rendering one needs a zone chosen, and it must not be the session's: the server sends this
+      * column in whatever `TimeZone` the session is set to, so the same stored instant arrives as `2026-08-25 07:00:00-03` on one
+      * connection and `2026-08-25 10:00:00+00` on another. Normalising to UTC is what makes one instant read as one string, and it is why
+      * the text form is parsed rather than handed back.
+      */
+    val timestamptzValue: PostgresDecoder[SqlValue] = new PostgresDecoder[SqlValue]:
         val oids: Set[Int] = Set(OID_TIMESTAMPTZ)
-        def read(format: Format, bytes: Span[Byte], columnOid: Int)(using frame: Frame): String = format match
-            case Format.Binary =>
-                readBigEndianLong(bytes, 0) match
-                    case Long.MaxValue => "infinity"
-                    case Long.MinValue => "-infinity"
-                    case _ =>
+        def read(format: Format, bytes: Span[Byte], columnOid: Int)(using frame: Frame): SqlValue =
+            val special: Maybe[SqlValue] = format match
+                case Format.Binary =>
+                    readBigEndianLong(bytes, 0) match
+                        case Long.MaxValue => Maybe(SqlValue.TemporalInfinity(negative = false))
+                        case Long.MinValue => Maybe(SqlValue.TemporalInfinity(negative = true))
+                        case _             => Maybe.empty
+                case Format.Text =>
+                    val rendering = text(bytes)
+                    if rendering == "infinity" then Maybe(SqlValue.TemporalInfinity(negative = false))
+                    else if rendering == "-infinity" then Maybe(SqlValue.TemporalInfinity(negative = true))
+                    else Maybe.empty
+            special.getOrElse {
+                format match
+                    case Format.Text =>
+                        // By field for the reason `dateFieldsOf` gives, then reduced to the instant this kind carries.
+                        // Order matters: the server writes the era LAST (`0044-04-15 00:00:00+00 BC`), so it comes off
+                        // before the offset is searched for, and the offset before the fields are read.
+                        val rendering         = text(bytes)
+                        val bc                = rendering.endsWith(" BC")
+                        val withoutEra        = if bc then rendering.substring(0, rendering.length - 3) else rendering
+                        val dateEnd           = withoutEra.indexOf(' ')
+                        val (body, offsetSec) = splitOffset(withoutEra, if dateEnd >= 0 then dateEnd else 0)
+                        val f                 = dateTimeFieldsOf(if bc then s"$body BC" else body)
+                        val prolepticYear     = if f.bc then 1 - f.year else f.year
+                        val epochDay          = java.time.LocalDate.of(prolepticYear, f.month, f.day).toEpochDay
+                        val secondOfDay       = f.hours * 3600L + f.minutes * 60L + f.seconds
+                        SqlValue.Timestamp(epochDay * 86400L + secondOfDay - offsetSec, f.micros)
+                    case Format.Binary =>
                         val instant = timestamptz.read(format, bytes, columnOid).toJava
-                        val utc     = java.time.LocalDateTime.ofInstant(instant, java.time.ZoneOffset.UTC)
-                        renderLocalDateTime(utc) + "+00"
-            case Format.Text => text(bytes)
+                        SqlValue.Timestamp(instant.getEpochSecond, instant.getNano / 1000)
+            }
+        end read
 
-    /** A `time`, seconds always written, which is `time_out`. */
-    val timeText: PostgresDecoder[String] = new PostgresDecoder[String]:
+    /** A `time`, rendered from microseconds-of-day rather than through a `java.time.LocalTime`.
+      *
+      * PostgreSQL's `time` reaches 24:00:00 inclusive, which is a legal value the server writes back and `LocalTime.ofNanoOfDay` refuses,
+      * so decoding at that type raised on a value the column can hold. The microseconds are rendered directly instead, which also puts
+      * this column on the same span rendering a MySQL `TIME` uses.
+      */
+    val timeValue: PostgresDecoder[SqlValue] = new PostgresDecoder[SqlValue]:
         val oids: Set[Int] = Set(OID_TIME)
-        def read(format: Format, bytes: Span[Byte], columnOid: Int)(using frame: Frame): String = format match
-            case Format.Binary => renderLocalTime(time.read(format, bytes, columnOid))
-            case Format.Text   => text(bytes)
+        def read(format: Format, bytes: Span[Byte], columnOid: Int)(using frame: Frame): SqlValue =
+            spanOfDay(microsOfDay(format, bytes, columnOid))
 
-    /** A `timetz`, whose offset the server writes in hours, and in hours and minutes only when the minutes are not zero. */
-    val timetzText: PostgresDecoder[String] = new PostgresDecoder[String]:
+    /** A `timetz`: the time of day, then its zone. */
+    val timetzValue: PostgresDecoder[SqlValue] = new PostgresDecoder[SqlValue]:
         val oids: Set[Int] = Set(OID_TIMETZ)
-        def read(format: Format, bytes: Span[Byte], columnOid: Int)(using frame: Frame): String = format match
+        def read(format: Format, bytes: Span[Byte], columnOid: Int)(using frame: Frame): SqlValue = format match
             case Format.Binary =>
-                val value = timetz.read(format, bytes, columnOid)
-                renderLocalTime(value.toLocalTime) + renderOffset(value.getOffset)
-            case Format.Text => text(bytes)
+                // The wire carries microseconds-of-day then the zone's seconds WEST of UTC.
+                val micros        = readBigEndianLong(bytes, 0)
+                val offsetSeconds = -readBigEndianInt(bytes, 8)
+                timeWithOffsetOf(micros, offsetSeconds)
+            case Format.Text =>
+                // By field, like `time`'s own text arm: `OffsetTime.parse` refuses the `24:00:00` this column reaches.
+                val rendering         = text(bytes)
+                val (body, offsetSec) = splitOffset(rendering, 0)
+                timeWithOffsetOf(microsOfDayText(body, "timetz"), offsetSec)
+
+    /** The microseconds-of-day a `time` column carries, under either wire format. */
+    private def microsOfDay(format: Format, bytes: Span[Byte], columnOid: Int)(using Frame): Long =
+        format match
+            case Format.Binary => readBigEndianLong(bytes, 0)
+            case Format.Text   =>
+                // `24:00:00` is legal and `LocalTime.parse` refuses it, so the fields are read rather than parsed to a type.
+                val rendering = text(bytes)
+                val parts     = rendering.split(':')
+                if parts.length < 3 then throw SqlDecodeInvalidTextException("time", rendering)
+                val hours   = parts(0).toLong
+                val minutes = parts(1).toLong
+                val secs    = parts(2)
+                val dot     = secs.indexOf('.')
+                val whole   = (if dot < 0 then secs else secs.substring(0, dot)).toLong
+                val frac    = if dot < 0 then 0L else (secs.substring(dot + 1) + "000000").take(6).toLong
+                ((hours * 60 + minutes) * 60 + whole) * 1_000_000L + frac
+        end match
+    end microsOfDay
+
+    /** The date fields a text rendering carries: `YYYY-MM-DD`, optionally with a trailing ` BC`.
+      *
+      * By field rather than `LocalDate.parse`, which refuses both cases the era field exists for: a `BC` suffix, and a year of five or more
+      * digits without a `+`. The binary arm handles both.
+      */
+    private def dateFieldsOf(rendering: String)(using Frame): SqlValue.Date =
+        val bc   = rendering.endsWith(" BC")
+        val body = if bc then rendering.substring(0, rendering.length - 3) else rendering
+        val p    = body.split('-')
+        if p.length != 3 then throw SqlDecodeInvalidTextException("date", rendering)
+        try SqlValue.Date(p(0).toInt, p(1).toInt, p(2).toInt, bc)
+        catch case _: NumberFormatException => throw SqlDecodeInvalidTextException("date", rendering)
+    end dateFieldsOf
+
+    /** The date-and-time fields a `timestamp` text rendering carries, with the same era and wide-year handling as [[dateFieldsOf]]. */
+    private def dateTimeFieldsOf(rendering: String)(using Frame): SqlValue.DateTime =
+        val bc   = rendering.endsWith(" BC")
+        val body = if bc then rendering.substring(0, rendering.length - 3) else rendering
+        val sep  = body.indexOf(' ')
+        val cut  = if sep >= 0 then sep else body.indexOf('T')
+        if cut < 0 then throw SqlDecodeInvalidTextException("timestamp", rendering)
+        val date   = dateFieldsOf(body.substring(0, cut))
+        val micros = microsOfDayText(body.substring(cut + 1), "timestamp")
+        val secs   = micros / 1_000_000L
+        SqlValue.DateTime(
+            date.year,
+            date.month,
+            date.day,
+            bc,
+            (secs / 3600).toInt,
+            ((secs  % 3600) / 60).toInt,
+            (secs   % 60).toInt,
+            (micros % 1_000_000L).toInt
+        )
+    end dateTimeFieldsOf
+
+    /** Microseconds-of-day from a `HH:MM:SS[.ffffff]` rendering, accepting the `24:00:00` a `time` column reaches. */
+    private def microsOfDayText(rendering: String, typeName: String)(using Frame): Long =
+        val parts = rendering.split(':')
+        if parts.length < 3 then throw SqlDecodeInvalidTextException(typeName, rendering)
+        try
+            val hours   = parts(0).toLong
+            val minutes = parts(1).toLong
+            val secs    = parts(2)
+            val dot     = secs.indexOf('.')
+            val whole   = (if dot < 0 then secs else secs.substring(0, dot)).toLong
+            val frac    = if dot < 0 then 0L else (secs.substring(dot + 1) + "000000").take(6).toLong
+            ((hours * 60 + minutes) * 60 + whole) * 1_000_000L + frac
+        catch case _: NumberFormatException => throw SqlDecodeInvalidTextException(typeName, rendering)
+        end try
+    end microsOfDayText
+
+    /** The zone a temporal text rendering ends with, as seconds east of UTC, and the body before it.
+      *
+      * `+HH`, `+HH:MM` or `+HH:MM:SS`. The search starts after the date, so a date's own `-` is never read as a negative zone.
+      */
+    private def splitOffset(rendering: String, searchFrom: Int): (String, Int) =
+        var i  = rendering.length - 1
+        var at = -1
+        while i >= searchFrom && at < 0 do
+            val c = rendering.charAt(i)
+            if c == '+' || c == '-' then at = i
+            else if c != ':' && !c.isDigit then i = searchFrom - 1
+            else i -= 1
+        end while
+        if at < 0 then (rendering, 0)
+        else
+            val sign  = if rendering.charAt(at) == '-' then -1 else 1
+            val parts = rendering.substring(at + 1).split(':')
+            val h     = parts(0).toInt
+            val m     = if parts.length > 1 then parts(1).toInt else 0
+            val s     = if parts.length > 2 then parts(2).toInt else 0
+            (rendering.substring(0, at), sign * (h * 3600 + m * 60 + s))
+        end if
+    end splitOffset
+
+    /** Microseconds-of-day as the neutral signed span both backends' time columns decode into. */
+    private def spanOfDay(micros: Long): SqlValue.Time =
+        val totalSeconds = micros / 1_000_000L
+        SqlValue.Time(
+            negative = false,
+            hours = totalSeconds / 3600,
+            minutes = ((totalSeconds % 3600) / 60).toInt,
+            seconds = (totalSeconds  % 60).toInt,
+            micros = (micros         % 1_000_000L).toInt
+        )
+    end spanOfDay
+
+    /** Microseconds-of-day plus a zone, as the neutral value. The hours fit an `Int` because a `timetz` is a time of day. */
+    private def timeWithOffsetOf(micros: Long, offsetSeconds: Int): SqlValue.TimeWithOffset =
+        val span = spanOfDay(micros)
+        SqlValue.TimeWithOffset(span.hours.toInt, span.minutes, span.seconds, span.micros, offsetSeconds)
+    end timeWithOffsetOf
 
     /** A `numeric`, with the three special values rendered rather than refused. */
-    val numericText: PostgresDecoder[String] = new PostgresDecoder[String]:
+    val numericValue: PostgresDecoder[SqlValue] = new PostgresDecoder[SqlValue]:
         val oids: Set[Int] = Set(OID_NUMERIC)
-        def read(format: Format, bytes: Span[Byte], columnOid: Int)(using frame: Frame): String = format match
+        def read(format: Format, bytes: Span[Byte], columnOid: Int)(using frame: Frame): SqlValue = format match
             case Format.Binary =>
                 // The sign field of the wire header carries the special values, so they are read before the digits are.
                 val sign = if bytes.size >= 8 then readBigEndianShort(bytes, 4).toInt & 0xffff else 0
                 sign match
-                    case 0xc000 => "NaN"
-                    case 0xd000 => "Infinity"
-                    case 0xf000 => "-Infinity"
-                    // toPlainString, not toString: BigDecimal takes exponent notation once the adjusted exponent is
-                    // below -6, and `numeric_out` never does, so a numeric holding 0.0000001 rendered `1E-7` under
-                    // the binary protocol against the server's own `0.0000001`.
-                    case _ => numeric.read(format, bytes, columnOid).bigDecimal.toPlainString
+                    case 0xc000 => SqlValue.NonFiniteNumber(SqlValue.NonFinite.NaN)
+                    case 0xd000 => SqlValue.NonFiniteNumber(SqlValue.NonFinite.PositiveInfinity)
+                    case 0xf000 => SqlValue.NonFiniteNumber(SqlValue.NonFinite.NegativeInfinity)
+                    case _      => SqlValue.Decimal(numeric.read(format, bytes, columnOid))
                 end match
-            case Format.Text => text(bytes)
+            case Format.Text =>
+                // The specials arrive as words that no number parse accepts, so they are recognised before the digits
+                // are read; everything else is parsed and rendered again rather than handed back, which is what keeps
+                // the scale a value carries from depending on how the session asked for it.
+                val rendering = text(bytes)
+                if rendering == "NaN" then SqlValue.NonFiniteNumber(SqlValue.NonFinite.NaN)
+                else if rendering == "Infinity" then SqlValue.NonFiniteNumber(SqlValue.NonFinite.PositiveInfinity)
+                else if rendering == "-Infinity" then SqlValue.NonFiniteNumber(SqlValue.NonFinite.NegativeInfinity)
+                else SqlValue.Decimal(numeric.read(format, bytes, columnOid))
+                end if
 
-    /** A `float4`, read at its own width so the value is not widened before it is rendered. */
-    val float4Text: PostgresDecoder[String] = new PostgresDecoder[String]:
+    /** A `float4`, read at its own width so the value is not widened before it is rendered.
+      *
+      * The text arm parses rather than passing bytes through, which is what makes the two protocols agree here: `extra_float_digits`
+      * decides how many digits the server writes, and the connection is not told its value.
+      */
+    val float4Value: PostgresDecoder[SqlValue] = new PostgresDecoder[SqlValue]:
         val oids: Set[Int] = Set(OID_FLOAT4)
-        def read(format: Format, bytes: Span[Byte], columnOid: Int)(using frame: Frame): String = format match
-            case Format.Binary =>
-                val value = float4.read(format, bytes, columnOid)
-                if value.isNaN then "NaN"
-                else if value.isInfinite then (if value > 0 then "Infinity" else "-Infinity")
-                else renderFloating(shortestFloat4(value), isNegative(value.toDouble), Float4Digits)
-            case Format.Text => text(bytes)
+        def read(format: Format, bytes: Span[Byte], columnOid: Int)(using frame: Frame): SqlValue =
+            SqlValue.Float4(float4.read(format, bytes, columnOid))
 
-    /** A `float8`. */
-    val float8Text: PostgresDecoder[String] = new PostgresDecoder[String]:
+    /** A `float8`. See [[float4Text]] for why the text form is parsed rather than handed back. */
+    val float8Value: PostgresDecoder[SqlValue] = new PostgresDecoder[SqlValue]:
         val oids: Set[Int] = Set(OID_FLOAT8)
-        def read(format: Format, bytes: Span[Byte], columnOid: Int)(using frame: Frame): String = format match
-            case Format.Binary =>
-                val value = float8.read(format, bytes, columnOid)
-                if value.isNaN then "NaN"
-                else if value.isInfinite then (if value > 0 then "Infinity" else "-Infinity")
-                else renderFloating(shortestFloat8(value), isNegative(value), Float8Digits)
-            case Format.Text => text(bytes)
-
-    /** `YYYY-MM-DD HH:MM:SS[.ffffff]`, the shape `timestamp_out` writes: a space rather than `T`, the seconds always present, and the
-      * fraction only when it is not zero, with its trailing zeros trimmed.
-      */
-    private def renderLocalDateTime(value: java.time.LocalDateTime): String =
-        val date = value.toLocalDate
-        val body = f"${renderYmd(date)}%s ${renderLocalTime(value.toLocalTime)}%s"
-        // The era trails the whole value, after the time, which is where `timestamp_out` puts it.
-        if date.getYear <= 0 then s"$body BC" else body
-    end renderLocalDateTime
-
-    /** `YYYY-MM-DD`, with the year counted within its era rather than proleptically: `date_out` spells 1 BC as `0001`, where
-      * `LocalDate` numbers that year 0 and 44 BC as -43.
-      *
-      * `LocalDate.toString` also prefixes a `+` to any year of five digits or more, which the server does not write, so a year-10000
-      * date rendered `+10000-01-01` against the server's `10000-01-01`. Both are legal values: PostgreSQL's date range runs from
-      * 4713 BC to 5874897 AD.
-      */
-    private def renderYmd(value: java.time.LocalDate): String =
-        val year = value.getYear
-        val era  = if year <= 0 then 1 - year else year
-        f"$era%04d-${value.getMonthValue}%02d-${value.getDayOfMonth}%02d"
-    end renderYmd
-
-    /** `YYYY-MM-DD`, with `BC` appended for a year in that era, which is how `date_out` writes one. */
-    private def renderLocalDate(value: java.time.LocalDate): String =
-        if value.getYear <= 0 then s"${renderYmd(value)} BC" else renderYmd(value)
-
-    /** `HH:MM:SS[.ffffff]`. Java omits the seconds when they are zero and pads the fraction to a multiple of three digits; the server
-      * does neither.
-      */
-    private def renderLocalTime(value: java.time.LocalTime): String =
-        val base  = f"${value.getHour}%02d:${value.getMinute}%02d:${value.getSecond}%02d"
-        val nanos = value.getNano
-        if nanos == 0 then base
-        else
-            // The server keeps microsecond resolution, so the fraction is six digits before its trailing zeros go.
-            val micros = f"${nanos / 1000}%06d".reverse.dropWhile(_ == '0').reverse
-            s"$base.$micros"
-        end if
-    end renderLocalTime
-
-    /** `+HH`, widening to `+HH:MM` and then `+HH:MM:SS` as each field turns out to be needed, which is how the server writes a `timetz`
-      * offset.
-      *
-      * The seconds field is not vestigial: PostgreSQL accepts a second-precision zone and `timetz_out` writes it back, so
-      * `12:00:00+05:30:33` is a value a column can hold and dropping its `:33` would render a different instant's offset.
-      */
-    private def renderOffset(offset: java.time.ZoneOffset): String =
-        val total = offset.getTotalSeconds
-        val sign  = if total < 0 then "-" else "+"
-        val abs   = Math.abs(total)
-        val hours = abs / 3600
-        val mins  = (abs % 3600) / 60
-        val secs  = abs  % 60
-        if secs != 0 then f"$sign%s$hours%02d:$mins%02d:$secs%02d"
-        else if mins != 0 then f"$sign%s$hours%02d:$mins%02d"
-        else f"$sign%s$hours%02d"
-        end if
-    end renderOffset
-
-    /** Where the server leaves plain notation for each float width: the type's significant-digit count, `FLT_DIG` and `DBL_DIG`. */
-    private val Float4Digits = 6
-    private val Float8Digits = 15
-
-    /** The precisions a shortest-decimal search walks, allocated once: a `float` needs at most 9 significant digits to round-trip and a
-      * `double` at most 17.
-      */
-    private val precisions: Array[java.math.MathContext] =
-        Array.tabulate(18)(p => new java.math.MathContext(if p == 0 then 1 else p))
-
-    /** Whether a value carries a minus sign, negative zero included, which is the case a comparison against zero misses. */
-    private def isNegative(value: Double): Boolean =
-        value < 0.0 || (value == 0.0 && 1.0 / value < 0.0)
-
-    /** The shortest decimal that reads back as the same `float`.
-      *
-      * `Float.toString` answers this on the JVM but not on every platform this module builds for: Scala.js widens to a double first and
-      * prints that, so 12345.6f arrives as `12345.599609375` and 1e-4f as `9.999999747378752e-05`. Searching upward from one significant
-      * digit for the first that round-trips is the same answer on every platform, and it is the answer the server's own shortest-decimal
-      * output is computed from.
-      */
-    private def shortestFloat4(value: Float): java.math.BigDecimal =
-        val exact = new java.math.BigDecimal(value.toDouble)
-        var p     = 1
-        var found = null: java.math.BigDecimal
-        while found == null && p <= 9 do
-            val candidate = exact.round(precisions(p))
-            if candidate.floatValue == value then found = candidate
-            p += 1
-        end while
-        (if found == null then exact else found).stripTrailingZeros
-    end shortestFloat4
-
-    /** The shortest decimal that reads back as the same `double`, by the same search [[shortestFloat4]] runs. */
-    private def shortestFloat8(value: Double): java.math.BigDecimal =
-        val exact = new java.math.BigDecimal(value)
-        var p     = 1
-        var found = null: java.math.BigDecimal
-        while found == null && p <= 17 do
-            val candidate = exact.round(precisions(p))
-            if candidate.doubleValue == value then found = candidate
-            p += 1
-        end while
-        (if found == null then exact else found).stripTrailingZeros
-    end shortestFloat8
-
-    /** Renders a floating value the way `float4out` and `float8out` do: plain notation while the decimal exponent is at least -4 and
-      * below `digits`, and `d.ddde[+-]NN` outside that band, with the exponent padded to at least two digits.
-      *
-      * `digits` is the type's significant-digit count, which is where the server switches: [[Float4Digits]] for a `float4` and
-      * [[Float8Digits]] for a `float8`. The two widths do not share it, so a `float4` 1e6 renders `1e+06` where a `float8` 1e6 renders
-      * `1000000`.
-      *
-      * `value` carries the shortest round-tripping digits and `negative` its sign, which are taken from the value rather than from a
-      * `toString`: the two platforms this module builds for do not spell a float the same way, and one of them drops the sign of a
-      * negative zero entirely.
-      *
-      * The digits are the shortest that round-trip, and for a handful of values the server writes different ones for the same stored
-      * double: it renders 1e23 as `9.999999999999999e+22` under the default `extra_float_digits`, and as `1e+23` under
-      * `extra_float_digits = 0`. Which of the two it picks is a session setting, and the server does not report that setting to the
-      * connection, so no rendering computed here agrees with it for every session. The values it separates are those whose shortest
-      * decimal form falls on an exact representable midpoint: six of the 5409 `d x 10^e` doubles across the type's whole exponent range.
-      */
-    private def renderFloating(value: java.math.BigDecimal, negative: Boolean, digits: Int): String =
-        if value.signum == 0 then (if negative then "-0" else "0")
-        else
-            // The power of ten of the leading digit, which is what the server compares against `digits`.
-            val exponent = value.precision - value.scale - 1
-            if exponent >= -4 && exponent < digits then value.toPlainString
-            else
-                val sign = if exponent < 0 then "-" else "+"
-                f"${value.movePointLeft(exponent).toPlainString}%se$sign%s${Math.abs(exponent)}%02d"
-            end if
-    end renderFloating
+        def read(format: Format, bytes: Span[Byte], columnOid: Int)(using frame: Frame): SqlValue =
+            SqlValue.Float8(float8.read(format, bytes, columnOid))
 
     // --- UUID ---
     // Binary: 16 bytes big-endian (mostSignificantBits Int64, leastSignificantBits Int64).
