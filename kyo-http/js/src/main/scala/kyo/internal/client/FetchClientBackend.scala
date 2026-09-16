@@ -262,7 +262,9 @@ final private[kyo] class FetchClientBackend extends PolicyClientBackend:
             // Both are read from `globalThis`: a host that does not declare one throws a ReferenceError at a bare read, before any check.
             socketUrl(url) match
                 case Absent =>
-                    Abort.fail(HttpUnsupportedOnHostException("A WebSocket URL missing its scheme or host, which resolves against a page's location,"))
+                    Abort.fail(HttpUnsupportedOnHostException(
+                        "A WebSocket URL missing its scheme or host, which resolves against a page's location,"
+                    ))
                 case Present(target) =>
                     PlatformJs.jsGlobal("WebSocket").toOption match
                         case None              => Abort.fail(HttpUnsupportedOnHostException("WebSocket"))
@@ -286,22 +288,23 @@ final private[kyo] class FetchClientBackend extends PolicyClientBackend:
                             val closeFn: (Int, String) => Unit < Async = (code, reason) =>
                                 closeReasonRef.set(Present((code, reason))).andThen(outbound.closeDiscard)
                             val ws = new HttpWebSocket(inbound, outbound, closeReasonRef, peerClosedPromise, closeFn)
-                            connect(constructor, target, url, config, inbound, closeReasonRef, peerClosedPromise, openedPromise).map { socket =>
-                                // The socket exists from here on, so its close is ensured from here on: a handshake the server
-                                // refuses leaves the browser one to clean up just as a finished session does.
-                                Sync.ensure(Sync.defer(closeSocket(socket, 1000, ""))) {
-                                    awaitOpen(url, openedPromise, connectTimeout).andThen {
-                                        Fiber.initUnscoped(writeLoop(socket, outbound, closeReasonRef)).map { writeFiber =>
-                                            Sync.ensure(
-                                                writeFiber.interrupt.unit
-                                                    .andThen(inbound.closeDiscard)
-                                                    .andThen(outbound.closeDiscard)
-                                            ) {
-                                                f(ws)
+                            connect(constructor, target, url, config, inbound, closeReasonRef, peerClosedPromise, openedPromise).map {
+                                socket =>
+                                    // The socket exists from here on, so its close is ensured from here on: a handshake the server
+                                    // refuses leaves the browser one to clean up just as a finished session does.
+                                    Sync.ensure(Sync.defer(closeSocket(socket, 1000, ""))) {
+                                        awaitOpen(url, openedPromise, connectTimeout).andThen {
+                                            Fiber.initUnscoped(writeLoop(socket, outbound, closeReasonRef)).map { writeFiber =>
+                                                Sync.ensure(
+                                                    writeFiber.interrupt.unit
+                                                        .andThen(inbound.closeDiscard)
+                                                        .andThen(outbound.closeDiscard)
+                                                ) {
+                                                    f(ws)
+                                                }
                                             }
                                         }
                                     }
-                                }
                             }
                         }
                     }
