@@ -60,11 +60,11 @@ class FileSystemExceptionTest extends kyo.test.Test[Any]:
     "exhaustive match on FileReadException covers all concrete subtypes" in {
         val ex: FileReadException = FileNotFoundException(p)
         val result = ex match
-            case _: FileNotFoundException     => "FileNotFoundException"
-            case _: FileAccessDeniedException => "FileAccessDeniedException"
-            case _: FileIsADirectoryException => "FileIsADirectoryException"
-            case _: FileInvalidPathException  => "FileInvalidPathException"
-            case _: FileIOException           => "FileIOException"
+            case _: FileNotFoundException                => "FileNotFoundException"
+            case _: FileAccessDeniedException            => "FileAccessDeniedException"
+            case _: FileIsADirectoryException            => "FileIsADirectoryException"
+            case _: FileInvalidPathException             => "FileInvalidPathException"
+            case _: FileIOException                      => "FileIOException"
             case _: FileSystemUnsupportedOnHostException => "FileSystemUnsupportedOnHostException"
         assert(result == "FileNotFoundException")
     }
@@ -108,12 +108,12 @@ class FileSystemExceptionTest extends kyo.test.Test[Any]:
     "exhaustive match on FileStructureException" in {
         val ex: FileStructureException = FileNotFoundException(p)
         val result = ex match
-            case _: FileNotFoundException              => "FileNotFoundException"
-            case _: FileAccessDeniedException          => "FileAccessDeniedException"
-            case _: FileNotADirectoryException         => "FileNotADirectoryException"
-            case _: FileAlreadyExistsException         => "FileAlreadyExistsException"
-            case _: FileDirectoryNotEmptyException     => "FileDirectoryNotEmptyException"
-            case _: FileInvalidPathException           => "FileInvalidPathException"
+            case _: FileNotFoundException                => "FileNotFoundException"
+            case _: FileAccessDeniedException            => "FileAccessDeniedException"
+            case _: FileNotADirectoryException           => "FileNotADirectoryException"
+            case _: FileAlreadyExistsException           => "FileAlreadyExistsException"
+            case _: FileDirectoryNotEmptyException       => "FileDirectoryNotEmptyException"
+            case _: FileInvalidPathException             => "FileInvalidPathException"
             case _: FileIOException                      => "FileIOException"
             case _: FileAtomicMoveUnsupportedException   => "FileAtomicMoveUnsupportedException"
             case _: FileSystemUnsupportedOnHostException => "FileSystemUnsupportedOnHostException"
@@ -126,11 +126,11 @@ class FileSystemExceptionTest extends kyo.test.Test[Any]:
     "exhaustive match on FileWriteException" in {
         val ex: FileWriteException = FileNotFoundException(p)
         val result = ex match
-            case _: FileNotFoundException     => "FileNotFoundException"
-            case _: FileAccessDeniedException => "FileAccessDeniedException"
-            case _: FileIsADirectoryException => "FileIsADirectoryException"
-            case _: FileInvalidPathException  => "FileInvalidPathException"
-            case _: FileIOException           => "FileIOException"
+            case _: FileNotFoundException                => "FileNotFoundException"
+            case _: FileAccessDeniedException            => "FileAccessDeniedException"
+            case _: FileIsADirectoryException            => "FileIsADirectoryException"
+            case _: FileInvalidPathException             => "FileInvalidPathException"
+            case _: FileIOException                      => "FileIOException"
             case _: FileSystemUnsupportedOnHostException => "FileSystemUnsupportedOnHostException"
         assert(result == "FileNotFoundException")
     }

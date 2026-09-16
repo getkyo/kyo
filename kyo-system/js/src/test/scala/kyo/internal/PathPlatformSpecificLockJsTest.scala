@@ -226,14 +226,14 @@ class PathPlatformSpecificLockJsTest extends kyo.test.Test[Any]:
     }
 
     "with no process global" - {
-        "acquiring a lock panics naming the operation instead of throwing ReferenceError" in {
+        "acquiring a lock fails naming the host instead of throwing ReferenceError" in {
             withTarget { target =>
                 Sync.Unsafe.defer {
                     withoutProcessGlobal(new NodePathUnsafe(target).lock(Path.LockMode.Exclusive, Path.defaultLockSuffix)) match
-                        case Result.Panic(error: UnsupportedOperationException) =>
-                            assert(error.getMessage.contains("Path.lock"))
+                        case Result.Failure(error: FileSystemUnsupportedOnHostException) =>
+                            assert(error.operation == FileSystemOperation.Lock)
                             assert(!NodeModules.fs.existsSync(target + ".kyo-lock.gate"))
-                        case other => fail(s"expected an unsupported-host panic, got $other")
+                        case other => fail(s"expected a typed unsupported-host failure, got $other")
                 }
             }
         }

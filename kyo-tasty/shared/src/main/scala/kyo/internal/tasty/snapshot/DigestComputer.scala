@@ -249,11 +249,11 @@ object DigestComputer:
     )(using Frame): Seq[String] < (Sync & Abort[TastyError]) =
         Kyo.foreach(roots) { root =>
             Abort.recover[FileSystemException] {
-                    // A host with no file system cannot say whether a root is there. Answering "missing" would name
-                    // the wrong reason, and under SoftFail it would drop the root without naming any.
-                    case e: FileSystemUnsupportedOnHostException => Abort.fail(TastyError.SnapshotIoError(e.getMessage))
-                    case _                                       => false
-                }(Path.runReadOnly(Path(root).exists)).map { ex =>
+                // A host with no file system cannot say whether a root is there. Answering "missing" would name
+                // the wrong reason, and under SoftFail it would drop the root without naming any.
+                case e: FileSystemUnsupportedOnHostException => Abort.fail(TastyError.SnapshotIoError(e.getMessage))
+                case _                                       => false
+            }(Path.runReadOnly(Path(root).exists)).map { ex =>
                 if !ex then Sync.defer(Seq.empty[String])
                 else
                     Sync.Unsafe.defer {

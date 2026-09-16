@@ -252,7 +252,7 @@ end BasePodTest
 final private class RecordingBackend(under: kyo.internal.ContainerBackend, created: AtomicRef[Chunk[Container.Id]])
     extends kyo.internal.ContainerBackend(under.meter):
 
-    export under.{create => _, meter => _, *}
+    export under.{create as _, meter as _, *}
 
     def create(config: Container.Config)(using Frame): Container.Id < (Async & Abort[ContainerException]) =
         under.create(config).map(id => created.updateAndGet(_.append(id)).andThen(id))

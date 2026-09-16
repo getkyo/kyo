@@ -89,8 +89,8 @@ object TraceExporter {
                 propagatable match {
                     case Some(p) =>
                         new UnsafeTraceSpan with UnsafeTraceSpan.Propagatable {
-                            def traceId                                                                  = p.traceId
-                            def spanId                                                                   = p.spanId
+                            def traceId                                             = p.traceId
+                            def spanId                                              = p.spanId
                             def end(nowEpochNanos: Long)(implicit _au: AllowUnsafe) = spans.foreach(_.end(nowEpochNanos))
                             def event(n: String, a: Attributes, nowEpochNanos: Long)(implicit _au: AllowUnsafe) =
                                 spans.foreach(_.event(n, a, nowEpochNanos))

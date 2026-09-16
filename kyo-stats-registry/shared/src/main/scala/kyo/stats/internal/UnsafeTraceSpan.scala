@@ -45,7 +45,7 @@ object UnsafeTraceSpan {
         new UnsafeTraceSpan {
             def end(nowEpochNanos: Long)(implicit _au: AllowUnsafe)                                = ()
             def event(name: String, a: Attributes, nowEpochNanos: Long)(implicit _au: AllowUnsafe) = ()
-            def setStatus(status: UnsafeTraceSpan.Status)(implicit _au: AllowUnsafe)        = ()
+            def setStatus(status: UnsafeTraceSpan.Status)(implicit _au: AllowUnsafe)               = ()
         }
     }
 }

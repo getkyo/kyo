@@ -1004,9 +1004,12 @@ object Structure:
             else if tag =:= Tag[BigDecimal] then BigNum(value.asInstanceOf[BigDecimal])
             else if tag =:= Tag[BigInt] then BigNum(BigDecimal(value.asInstanceOf[BigInt]))
             else if tag =:= Tag[Span[Byte]] then Bytes(value.asInstanceOf[Span[Byte]])
-            // java.time values do not reach here: their schemas transform to kyo's own types first, which is what
-            // keeps a date-time library out of the link of every program that has a schema in it.
             else if tag =:= Tag[kyo.Instant] then Instant(value.asInstanceOf[kyo.Instant])
+            // A field default is materialized here by the focus macro, dispatching on the field's own type, so the
+            // java.time spellings are recognized too: without them a defaulted java.time.Instant would land on its
+            // text, which does not conform to the instant primitive its own structure declares. This costs nothing
+            // in a link, since a program reaches this only by having such a default.
+            else if tag =:= Tag[java.time.Instant] then Instant(kyo.Instant.fromJava(value.asInstanceOf[java.time.Instant]))
             else if tag =:= Tag[java.time.Duration] then Duration(value.asInstanceOf[java.time.Duration])
             else if tag =:= Tag[Char] then Str(value.asInstanceOf[Char].toString)
             else Str(value.toString)

@@ -427,10 +427,12 @@ private[kyo] object NodePathLock:
         beforeGateRelease: (String, String) => Unit = (_, _) => (),
         beforePublishCleanup: String => Unit = _ => ()
     )(using AllowUnsafe, Frame): Result[FileLockException, Path.RawLock] =
-        // Every claim records this process's pid, so a host without `process` cannot take one.
-        if !Platform.isNodeLike then Result.panic(NodeProcess.unsupported("Path.lock"))
+        // Every claim records this process's pid, so a host without `process` cannot take one. A failure rather than
+        // a panic: `lock` declares FileLockException, and a host with no file system belongs on that channel.
+        if !Platform.isNodeLike then Result.fail(FileSystemUnsupportedOnHostException(FileSystemOperation.Lock, Platform.host.toString))
         // Checked here because the owner record is built before the protocol's own failure handling begins.
-        else if !NodeModules.isAvailable("node:fs") then Result.panic(NodeModules.unsupported("node:fs"))
+        else if !NodeModules.isAvailable("node:fs") then
+            Result.fail(FileSystemUnsupportedOnHostException(FileSystemOperation.Lock, Platform.host.toString))
         else acquireOnNode(target, pathStr, mode, sentinelSuffix, beforeGateRelease, beforePublishCleanup)
 
     private def acquireOnNode(

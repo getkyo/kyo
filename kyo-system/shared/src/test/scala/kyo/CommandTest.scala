@@ -137,10 +137,10 @@ class CommandTest extends kyo.test.Test[Any]:
             result match
                 case Result.Failure(err) =>
                     val msg = err match
-                        case ProgramNotFoundException(cmd)                  => s"not found: $cmd"
-                        case PermissionDeniedException(cmd)                 => s"denied: $cmd"
-                        case WorkingDirectoryNotFoundException(p)           => s"missing cwd: $p"
-                        case CommandUnsupportedOnHostException(op, host)    => s"no process table for $op: $host"
+                        case ProgramNotFoundException(cmd)               => s"not found: $cmd"
+                        case PermissionDeniedException(cmd)              => s"denied: $cmd"
+                        case WorkingDirectoryNotFoundException(p)        => s"missing cwd: $p"
+                        case CommandUnsupportedOnHostException(op, host) => s"no process table for $op: $host"
                     assert(msg.startsWith("not found:"))
                 case Result.Success(_) =>
                     fail("Expected failure, got success")

@@ -38,19 +38,23 @@ class PathPlatformSpecificJsTest extends kyo.test.Test[Any]:
         end try
     end withoutGetBuiltinModule
 
-    private def fsMessage(host: Platform.Host): String =
-        s"kyo-system needs Node's node:fs module for this operation (Node 20.16 or 22.3, Bun 1.2.6, Deno 2.1, or later); this host is $host"
-
-    /** The panic's class name and message, or a description of what came back instead. */
-    private def panicOf[E, A](result: Result[E, A]): (String, String) =
+    /** The named refusal and its message, or a description of whatever came back instead.
+      *
+      * A host with no file system is reported on the channel `Path` declares, not as a panic: the promise in the
+      * signature is kept on every host, and a page is one where being told is the only useful outcome.
+      */
+    private def refusalOf[E, A](result: Result[E, A]): (String, String) =
         result match
-            case Result.Panic(error) => (error.getClass.getName, error.getMessage)
-            case other               => ("no panic", other.toString)
+            case Result.Failure(e: FileSystemUnsupportedOnHostException) => (e.getClass.getSimpleName, e.getMessage)
+            case other                                                   => ("no typed refusal", other.toString)
+
+    private def refusal(host: Platform.Host): (String, String) =
+        ("FileSystemUnsupportedOnHostException", s"No file system on this host for Read: $host")
 
     "without process.getBuiltinModule" - {
-        "a file read panics naming the module and the host" in {
+        "a file read fails naming the host" in {
             val result = withoutGetBuiltinModule(Path("kyo-path-platform-no-builtin.txt").unsafe.read())
-            assert(panicOf(result) == ("java.lang.UnsupportedOperationException", fsMessage(Platform.host)))
+            assert(refusalOf(result) == refusal(Platform.host))
         }
 
         "a Path is built and read without any module" in {
@@ -77,9 +81,9 @@ class PathPlatformSpecificJsTest extends kyo.test.Test[Any]:
             assert(withoutProcessGlobal(Path.envOrEmpty("HOME")) == "")
         }
 
-        "a file read panics naming the module and the host instead of throwing ReferenceError" in {
+        "a file read fails naming the host instead of throwing ReferenceError" in {
             val (result, host) = withoutProcessGlobal((Path("kyo-path-platform-no-process.txt").unsafe.read(), Platform.host))
-            assert(panicOf(result) == ("java.lang.UnsupportedOperationException", fsMessage(host)))
+            assert(refusalOf(result) == refusal(host))
         }
 
         "the working directory fails naming the operation instead of throwing ReferenceError" in {

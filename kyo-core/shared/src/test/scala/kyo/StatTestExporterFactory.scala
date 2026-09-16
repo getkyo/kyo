@@ -1,6 +1,5 @@
 package kyo
 
-import java.time.Instant
 import java.util.concurrent.atomic.AtomicInteger
 import kyo.stats.Attributes
 import kyo.stats.internal.ExporterFactory
@@ -37,9 +36,9 @@ final class StatTestExporterFactory extends ExporterFactory:
             def startSpan(
                 scope: List[String],
                 name: String,
-                now: Instant,
-                parent: Option[UnsafeTraceSpan] = None,
-                attributes: Attributes = Attributes.empty
+                nowEpochNanos: Long,
+                parent: Option[UnsafeTraceSpan],
+                attributes: Attributes
             )(implicit _au: AllowUnsafe): UnsafeTraceSpan = UnsafeTraceSpan.noop)
     end traceExporter
 end StatTestExporterFactory
