@@ -92,6 +92,24 @@ object KyoJsRows extends AutoPlugin {
       */
     def chromeVersion(base: File): String = IO.read(base / "project" / "chrome-for-testing.version").trim
 
+    /** The oldest Chrome that runs the WebAssembly backend's output. Scala.js requires a Wasm 3.0 engine and names Chrome 137 as the first
+      * (https://www.scala-js.org/doc/project/webassembly.html, which also names Firefox 134 and Safari 26; no row runs those). The README
+      * states the same floor.
+      */
+    val wasmChromeFloor: Int = 137
+
+    /** Refuses a pinned Chrome below [[wasmChromeFloor]] before the WasmGC browser row runs a suite, so a pin moved under the floor fails
+      * the row by name rather than as a page that cannot compile the module.
+      */
+    private def checkWasmChromeFloor(version: String): Unit = {
+        val major = version.takeWhile(_ != '.')
+        if (!major.forall(_.isDigit) || major.isEmpty || major.toInt < wasmChromeFloor)
+            sys.error(
+                s"project/chrome-for-testing.version pins Chrome $version, below $wasmChromeFloor, the first Chrome that runs the WebAssembly " +
+                    "backend's output (a Wasm 3.0 engine)"
+            )
+    }
+
     /** A row over `Test`'s compiled classes and classpath: it differs in its link and where the link runs, never in what it compiles. */
     private def row(config: Configuration, link: StandardConfig => StandardConfig, env: Def.Initialize[Task[JSEnv]]): Seq[Setting[?]] =
         inConfig(config)(Defaults.testSettings ++ ScalaJSPlugin.testConfigSettings) ++ Seq(
@@ -122,6 +140,10 @@ object KyoJsRows extends AutoPlugin {
             row(BrowserWasmTest, wasmLinkerConfig, kyoTestBrowserEnv) ++ Seq(
                 // Each run the test adapter starts is a JVM and a Chrome of its own, so a module's suites share one run at a time.
                 BrowserTest / parallelExecution     := false,
-                BrowserWasmTest / parallelExecution := false
+                BrowserWasmTest / parallelExecution := false,
+                BrowserWasmTest / testOptions += {
+                    val version = chromeVersion((LocalRootProject / baseDirectory).value)
+                    Tests.Setup(() => checkWasmChromeFloor(version))
+                }
             )
 }

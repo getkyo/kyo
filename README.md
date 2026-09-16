@@ -269,7 +269,7 @@ scalaJSLinkerConfig ~= {
 }
 ```
 
-The output runs on Node.js 24+, where V8's Turboshaft Wasm pipeline is the default (Kyo passes `--experimental-wasm-exnref` for the exception-handling opcodes the backend emits), and in a browser page: every module's suites run in Chrome as the `BrowserWasmTest` row, on the Chrome version pinned in `project/chrome-for-testing.version`. Because the backend shares Scala.js's source and model, WASM coverage matches Scala.js.
+The output runs on Node.js 24+, where V8's Turboshaft Wasm pipeline is the default (Kyo passes `--experimental-wasm-exnref` for the exception-handling opcodes the backend emits), and in a browser page. The backend needs a Wasm 3.0 engine, which Scala.js puts at Chrome 137, Firefox 134 and Safari 26; every module's suites run in Chrome as the `BrowserWasmTest` row, on the version pinned in `project/chrome-for-testing.version`, and that row refuses a pin below Chrome 137. Firefox and Safari are not run. Because the backend shares Scala.js's source and model, WASM coverage matches Scala.js.
 
 ## Tested platforms
 
