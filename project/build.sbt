@@ -32,3 +32,8 @@ Compile / unmanagedSourceDirectories +=
 // publishes the plugin."
 Compile / unmanagedSourceDirectories +=
     baseDirectory.value.getParentFile / "kyo-doctest" / "plugin" / "src" / "main" / "scala"
+
+// `linkCheck` reads each program's IR as the linker frontend leaves it (project/LinkCheck.scala). sbt-scalajs loads its
+// linker in a class loader of its own, so the build needs one on its classpath; keep the version with sbt-scalajs in
+// plugins.sbt.
+libraryDependencies += "org.scala-js" %% "scalajs-linker" % "1.22.0"

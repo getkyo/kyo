@@ -22,6 +22,8 @@ import scala.util.matching.Regex
   *     there: the same one for a program that needs no Node, a typed or explicit failure for one that does (a bare `process` read or a
   *     missing guard fails here);
   *   - fails when the output contains a static `node:*` import, which a browser cannot load (a dynamic `import("node:x")` is fine);
+  *   - on JS, fails when the program as linked reads a host global some JS host does not declare (`process`, `require`, `location`, ...) as
+  *     a bare identifier rather than as a property of `globalThis`, since that read throws before any guard around it runs;
   *   - fails when the output contains data the program cannot reach: the IANA time-zone database or the CLDR locale data;
   *   - fails when the output exceeds its ceiling in `kyo-link-check/ceilings.txt`.
   *
@@ -81,8 +83,6 @@ object LinkCheck {
             "failure NetBackendUnavailableException".r,
             hostChunks = true
         ),
-        // Names one HTTP provider and reads its completion. kyo-ai's two CLI harnesses spawn a process, which reaches
-        // node:child_process; a program that names neither must not carry them, and a page could not run them at all.
         // One request to a closed port, on a host that has sockets and on one that does not. The program also has to exit,
         // which is how a client that leaves something running behind it is caught.
         Program(
@@ -93,6 +93,8 @@ object LinkCheck {
             "failure HttpConnectException".r,
             hostChunks = true
         ),
+        // Names one HTTP provider and reads its completion. kyo-ai's two CLI harnesses spawn a process, which reaches
+        // node:child_process; a program that names neither must not carry them, and a page could not run them at all.
         Program(
             "AiHttp",
             "kyo-link-check-ai",
@@ -134,6 +136,13 @@ object LinkCheck {
 
     /** Classes only a host without sockets runs: the fetch client. */
     val pageBackend: Seq[String] = Seq("kyo.internal.client.FetchClientBackend")
+
+    /** Globals some JS host does not declare: Node's (`require`, `process`, `Buffer`), a page's (`location`, `window`, `document`), and the
+      * two an embedded engine or an older runtime can lack (`fetch`, `WebSocket`). A bare read of one throws a `ReferenceError` on such a
+      * host before any guard around it can run, so every read goes through a property of `globalThis` (`PlatformJs.jsGlobal`), which reads
+      * as `undefined` there instead. `typeof name` is the one bare form that cannot throw.
+      */
+    val hostGlobals: Set[String] = Set("require", "process", "Buffer", "location", "window", "document", "fetch", "WebSocket")
 
     /** Strings only the data artifacts put into a link: a zone ID and the tzdb module name, and the CLDR data package. */
     val dataMarkers: Seq[String] = Seq("Africa/Abidjan", "zonedb.java.tzdb", "locales.cldr.data")
@@ -231,7 +240,9 @@ object LinkCheck {
                 if (program.hostChunks && platform == "JS")
                     (nodeBackend ++ pageBackend).filter(name => initial.exists(f => contains(f, quoted(name))))
                 else Nil
-            Row(program, size, initial.map(_.length).sum, gzipSize(initial), found, linked, nodeImports, eager, runs)
+            // The WasmGC row links the same IR, so the JS row answers for both.
+            val bareGlobals = if (platform == "JS") bareHostGlobalReads(linkState, ref) else Nil
+            Row(program, size, initial.map(_.length).sum, gzipSize(initial), found, linked, nodeImports, eager, bareGlobals, runs)
         }
         log(s"$platform sizes (bytes; total is every output file, initial is what a host fetches before any code runs):")
         rows.foreach { row =>
@@ -253,6 +264,9 @@ object LinkCheck {
             val eager = row.eager.map { name =>
                 s"$platform ${program.name}: the initial load carries $name, which only one kind of host runs; it belongs in a chunk that host loads on demand"
             }
+            val bareGlobals = row.bareGlobals.map { read =>
+                s"$platform ${program.name}: reads the host global $read bare, which throws a ReferenceError on a host that does not declare it; read it through PlatformJs.jsGlobal"
+            }
             val ceiling = ceilingFailure(ceilings, platform, platform, program.name, row.size)
             val initialCeiling =
                 if (platform == "JS") ceilingFailure(ceilings, platform, initialKey(platform), program.name, row.initialSize)
@@ -264,7 +278,7 @@ object LinkCheck {
                     if (expected.pattern.matcher(last.trim).matches()) Nil
                     else Seq(s"$platform ${program.name}: unexpected output $how, last line '$last', expected '$expected'")
             }
-            data ++ reached ++ imports ++ eager ++ ceiling ++ initialCeiling ++ output
+            data ++ reached ++ imports ++ eager ++ bareGlobals ++ ceiling ++ initialCeiling ++ output
         }
     }
 
@@ -277,8 +291,76 @@ object LinkCheck {
         linked: Seq[String],
         nodeImports: Seq[String],
         eager: Seq[String],
+        bareGlobals: Seq[String],
         runs: Seq[(String, Regex, Either[String, Seq[String]])]
     )
+
+    /** Every bare read of a [[hostGlobals]] name in the program as linked, each as `'name' in class.member`.
+      *
+      * Read from the linker's IR after optimization rather than from the emitted text: there a global read is a node of its own and
+      * `typeof name` another, so neither a guard, nor a string, nor a local that happens to share the name is mistaken for a read. A
+      * facade declared with `@JSGlobal` on one of the names is a bare read too, wherever it is loaded.
+      */
+    private def bareHostGlobalReads(state: State, ref: ProjectReference): Seq[String] = {
+        import org.scalajs.ir.Traversers.Traverser
+        import org.scalajs.ir.Trees
+        import org.scalajs.linker.PathIRContainer
+        import org.scalajs.linker.StandardImpl
+        import org.scalajs.linker.standard.StandardLinkerFrontend
+        import org.scalajs.linker.standard.SymbolRequirement
+        import org.scalajs.logging.NullLogger
+        import scala.concurrent.Await
+        import scala.concurrent.ExecutionContext
+        import scala.concurrent.duration.Duration
+
+        implicit val ec: ExecutionContext = ExecutionContext.global
+        val extracted         = Project.extract(state)
+        val config            = extracted.get(ref / Compile / fullLinkJS / scalaJSLinkerConfig)
+        val (_, initializers) = extracted.runTask(ref / Compile / scalaJSModuleInitializers, state)
+        val (_, classpath)    = extracted.runTask(ref / Compile / fullClasspath, state)
+        val linking = for {
+            (containers, _) <- PathIRContainer.fromClasspath(classpath.map(_.data.toPath))
+            irFiles         <- StandardImpl.irFileCache().newCache.cached(containers)
+            moduleSet <-
+                StandardLinkerFrontend(config).link(irFiles, initializers, SymbolRequirement.factory("linkCheck").none(), NullLogger)
+        } yield moduleSet
+        val moduleSet = Await.result(linking, Duration.Inf)
+        val classes   = moduleSet.modules.flatMap(_.classDefs) ++ moduleSet.abstractClasses
+        val byName    = classes.map(c => c.className -> c).toMap
+
+        def hostGlobal(spec: Option[Trees.JSNativeLoadSpec]): Option[String] = spec.collect {
+            case Trees.JSNativeLoadSpec.Global(global, _) if hostGlobals.contains(global) => global
+        }
+
+        val reads = scala.collection.mutable.LinkedHashSet.empty[String]
+        moduleSet.modules.flatMap(_.classDefs).foreach { cls =>
+            var member = ""
+            def record(global: String): Unit = reads += s"'$global' in ${cls.fullName}.$member"
+            val traverser = new Traverser {
+                override def traverse(tree: Trees.Tree): Unit = tree match {
+                    case _: Trees.JSTypeOfGlobalRef                               => ()
+                    case Trees.JSGlobalRef(name) if hostGlobals.contains(name) => record(name)
+                    case Trees.LoadJSModule(className) =>
+                        hostGlobal(byName.get(className).flatMap(_.jsNativeLoadSpec)).foreach(record)
+                    case Trees.LoadJSConstructor(className) =>
+                        hostGlobal(byName.get(className).flatMap(_.jsNativeLoadSpec)).foreach(record)
+                    case Trees.SelectJSNativeMember(className, name) =>
+                        val spec = byName.get(className).flatMap(_.jsNativeMembers.find(_.name.name == name.name)).map(_.jsNativeLoadSpec)
+                        hostGlobal(spec).foreach(record)
+                    case _ => super.traverse(tree)
+                }
+            }
+            cls.methods.foreach { method =>
+                member = method.methodName.simpleName.nameString
+                traverser.traverseMethodDef(method)
+            }
+            member = "<constructor>"
+            cls.jsConstructorDef.foreach(traverser.traverseJSConstructorDef)
+            member = "<exported member>"
+            cls.exportedMembers.foreach(traverser.traverseJSMethodPropDef)
+        }
+        reads.toSeq
+    }
 
     /** The key the initial-load ceiling of a platform is filed under in `ceilings.txt`. */
     private def initialKey(platform: String): String = s"$platform-initial"
