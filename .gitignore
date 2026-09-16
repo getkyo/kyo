@@ -28,6 +28,9 @@ node_modules
 # target/ (resourceManaged) and stay ignored via the target rule.
 !**/src/main/resources/META-INF/native-image/**/*.json
 
+# The bundler versions linkCheck builds with are pinned here, so the check is reproducible.
+!kyo-link-check/bundlers/package.json
+
 # Local analysis notes, never committed
 analysis-*.md
 

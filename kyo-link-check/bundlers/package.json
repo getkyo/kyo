@@ -1,0 +1,13 @@
+{
+  "name": "kyo-link-check-bundlers",
+  "private": true,
+  "description": "Builds a linked kyo program with the bundlers applications use and checks what a page served the build fetches.",
+  "type": "module",
+  "devDependencies": {
+    "@rollup/plugin-node-resolve": "16.0.3",
+    "rollup": "4.63.3",
+    "vite": "8.3.0",
+    "webpack": "5.111.0",
+    "webpack-cli": "7.2.3"
+  }
+}
