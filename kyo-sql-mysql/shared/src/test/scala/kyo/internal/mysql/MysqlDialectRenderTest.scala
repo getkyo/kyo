@@ -344,11 +344,11 @@ class MysqlDialectRenderTest extends Test:
             .where(c => c.s.moment == kyo.Instant.fromJava(java.time.Instant.ofEpochMilli(1705312245123L)))
             .render(MysqlDialect)
         assert(rm.params.size == 1)
-        // `kyo.Instant` is an opaque alias of `java.time.Instant`; the runtime value is the Java instant.
-        val got: Any = rm.params(0).value
-        got match
-            case i: java.time.Instant => assert(i.toEpochMilli == 1705312245123L)
-            case other                => fail(s"expected java.time.Instant-backed kyo.Instant, got $other")
+        // `kyo.Instant` is opaque over kyo's own representation (seconds and nanos, no java.time value inside), so the
+        // runtime value is the instant the query named.
+        val expected: Any = kyo.Instant.fromJava(java.time.Instant.ofEpochMilli(1705312245123L))
+        val got: Any      = rm.params(0).value
+        assert(got == expected, s"the bound value was $got")
     }
 
     "multi-bind query produces params.size == 3 in declaration order" in {

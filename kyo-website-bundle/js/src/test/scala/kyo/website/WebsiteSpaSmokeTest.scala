@@ -43,7 +43,7 @@ class WebsiteSpaSmokeTest extends kyo.test.Test[Any]:
     /** Flips once `DomBackend.mountInto` has finished wiring the mount up, which is the point a dispatched click reaches
       * a listener. Waiting for a rendered node is not enough: the delegation is installed after the first paint.
       */
-    private final class MountReady extends kyo.internal.DomBackend.MountDiagnostics:
+    final private class MountReady extends kyo.internal.DomBackend.MountDiagnostics:
         private var ready                                                                    = false
         def installed: Boolean                                                               = ready
         def channelClosed(): Unit                                                            = ()
@@ -56,7 +56,7 @@ class WebsiteSpaSmokeTest extends kyo.test.Test[Any]:
         for
             body <- LandingApp.body(docsHome)
             view <- siteShell(Signal.initConst(body), (_: String) => Kyo.unit)
-            ssg <- UI.runRender(view).run.map(_.mkString)
+            ssg  <- UI.runRender(view).run.map(_.mkString)
             // Read the SSG's HTML back out of the DOM, so both sides of the comparison went through the browser's own
             // parser and serializer and differ only where the trees do.
             parsed <- Sync.defer {
@@ -79,12 +79,12 @@ class WebsiteSpaSmokeTest extends kyo.test.Test[Any]:
     }
 
     "click-to-navigate swaps content without reload (cross-platform gate)".onlyBrowser in {
-        val landingBody             = UI.div("landing").id("route-body")
-        def docsBody(route: String) = UI.div(s"docs at $route").id("route-body")
+        val landingBody: UI             = UI.div("landing").id("route-body")
+        def docsBody(route: String): UI = UI.div(s"docs at $route").id("route-body")
         for
             start      <- UILocation.current.current
-            contentRef <- Signal.initRef(landingBody)
-            view <- siteShell(contentRef, (_: String) => Kyo.unit)
+            contentRef <- Signal.initRef[UI](landingBody)
+            view       <- siteShell(contentRef, (_: String) => Kyo.unit)
             // Plain anchors are rewritten into a pushState by UILocation's own interceptor, not by the shell's
             // `navigate`, so the route change reaches the content slot the way the bundle wires it: a fiber on the
             // location signal.
@@ -97,11 +97,11 @@ class WebsiteSpaSmokeTest extends kyo.test.Test[Any]:
             fiber <- Fiber.initUnscoped(Scope.run(kyo.internal.DomBackend.mount(view, ready)))
             _     <- assertEventually(Sync.defer(ready.installed && dom.document.querySelector("#route-body") != null))
             // The header's first nav link is Docs, the one client-side route this shell offers.
-            link <- Sync.defer(dom.document.querySelector("header.site-header nav.links a").asInstanceOf[dom.html.Anchor])
-            _    <- Sync.defer(assert(link != null, "the header must carry the Docs link"))
-            href <- Sync.defer(link.getAttribute("href"))
-            _    <- Sync.defer(link.click())
-            _    <- assertEventually(Sync.defer(dom.document.querySelector("#route-body").textContent.startsWith("docs at")))
+            link   <- Sync.defer(dom.document.querySelector("header.site-header nav.links a").asInstanceOf[dom.html.Anchor])
+            _      <- Sync.defer(assert(link != null, "the header must carry the Docs link"))
+            href   <- Sync.defer(link.getAttribute("href"))
+            _      <- Sync.defer(link.click())
+            _      <- assertEventually(Sync.defer(dom.document.querySelector("#route-body").textContent.startsWith("docs at")))
             route  <- UILocation.current.current
             styles <- Sync.defer(dom.document.querySelectorAll("head style").length)
             marker <- Sync.defer(
@@ -116,6 +116,7 @@ class WebsiteSpaSmokeTest extends kyo.test.Test[Any]:
             assert(route == href, s"the route the click pushed was $route, the link points at $href")
             assert(styles > 0, "the mount's stylesheet must survive the content swap")
             assert(marker == "alive", "the page must not have reloaded")
+        end for
     }
 
 end WebsiteSpaSmokeTest

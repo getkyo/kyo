@@ -924,7 +924,10 @@ lazy val `kyo-sql-postgres` =
         .jsSettings(
             `js-settings`,
             `tzdb-test-data`,
-            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
+            // Shares kyo-sql's test fixtures, which import node:os and node:process, and connects over a socket a page
+            // has not. No browser row.
+            kyoBrowserRow := false
         )
         // openssl-native-settings: this module's auth/TLS sources reach kyo-net's Native C shims, so a test
         // binary that touches them must link libssl/libcrypto or nativeLink fails.
@@ -942,7 +945,10 @@ lazy val `kyo-sql-mysql` =
         .jsSettings(
             `js-settings`,
             `tzdb-test-data`,
-            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
+            // Shares kyo-sql's test fixtures, which import node:os and node:process, and connects over a socket a page
+            // has not. No browser row.
+            kyoBrowserRow := false
         )
         .nativeSettings(`native-settings`, `openssl-native-settings`, `tzdb-test-data`)
 
@@ -967,7 +973,10 @@ lazy val `kyo-sql-tests` =
         .jvmConfigure(_.settings(doctestSources := Seq.empty))
         .jsSettings(
             `js-settings`,
-            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
+            // Shares kyo-sql's test fixtures, which import node:os and node:process, and connects over a socket a page
+            // has not. No browser row.
+            kyoBrowserRow := false
         )
         .nativeSettings(
             `native-settings`,

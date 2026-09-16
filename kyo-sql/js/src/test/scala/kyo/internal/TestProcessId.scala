@@ -7,12 +7,15 @@ import scala.scalajs.js.annotation.*
 // Node's process module, reached through a namespace import rather than the `process` global for the reason
 // kyo-core's NodeChildProcess records: @JSImport compiles to require() under CommonJS and to import under
 // ESModule, so one facade serves both the JS and the WebAssembly backend.
+// The name carries the Test prefix, as TestNodeOs does: `kyo.internal.NodeProcess` is kyo-system's own Scala object,
+// and a second class of that name on the same link is one the Scala.js linker resolves to whichever it saw first,
+// which fails a later lookup of the other one's methods.
 @js.native
 @JSImport("node:process", JSImport.Namespace)
-private[kyo] object NodeProcess extends js.Object:
+private object TestNodeProcess extends js.Object:
     def pid: Int                             = js.native
     def kill(pid: Int, signal: Int): Boolean = js.native
-end NodeProcess
+end TestNodeProcess
 
 /** This test process's own pid, plus a liveness probe for a foreign pid, for [[SqlTestContainers]]'s ownership predicate.
   *
@@ -22,7 +25,7 @@ end NodeProcess
 private[kyo] object TestProcessId:
 
     /** This process's pid, stamped into the `kyo-sql-owner-pid` label of every container it creates. */
-    val pid: Long = NodeProcess.pid.toLong
+    val pid: Long = TestNodeProcess.pid.toLong
 
     /** Whether `pid`, read from a container label, names a process that is still running.
       *
@@ -39,7 +42,7 @@ private[kyo] object TestProcessId:
                     // Signal 0 probes existence without delivering anything, and Node reports the outcome by
                     // throwing, so the catch is the probe rather than error handling. Node exposes no
                     // non-throwing existence check, so this is the whole boundary.
-                    val _ = NodeProcess.kill(p.toInt, 0)
+                    val _ = TestNodeProcess.kill(p.toInt, 0)
                     true
                 catch
                     case thrown: Throwable =>
