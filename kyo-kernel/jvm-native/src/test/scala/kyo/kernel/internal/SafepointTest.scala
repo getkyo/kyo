@@ -194,66 +194,51 @@ class SafepointTest extends AnyFreeSpec:
     // as it parks on a join, and one that never lands re-raises the join every round, nesting a continuation
     // per round until the promise completes and the delivery overflows the stack.
     "a stop for the running slice supersedes a stale one left by a departed slice" in {
-        // pendingUntilFixed (ported from robustness): a stop for the running slice does not supersede a stale stop
-        // left by a departed slice, so Safepoint.stopped(slot) stays false after stopping the running slice;
-        // design-difference vs this branch's Safepoint slice-stop semantics.
-        pendingUntilFixed {
-            val slot     = Safepoint.get()
-            val departed = new AnyRef
-            val slice    = new AnyRef
-            val prev     = Safepoint.beginSlice(slot, slice)
-            assert(Safepoint.stop(Thread.currentThread(), departed))
-            assert(!Safepoint.stopped(slot))
-            assert(Safepoint.stop(Thread.currentThread(), slice))
-            assert(Safepoint.stopped(slot))
-            assert(Safepoint.consumeStopped(slot))
-            assert(!Safepoint.consumeStopped(slot))
-            Safepoint.endSlice(slot, prev)
-        }
+        val slot     = Safepoint.get()
+        val departed = new AnyRef
+        val slice    = new AnyRef
+        val prev     = Safepoint.beginSlice(slot, slice)
+        assert(Safepoint.stop(Thread.currentThread(), departed))
+        assert(!Safepoint.stopped(slot))
+        assert(Safepoint.stop(Thread.currentThread(), slice))
+        assert(Safepoint.stopped(slot))
+        assert(Safepoint.consumeStopped(slot))
+        assert(!Safepoint.consumeStopped(slot))
+        Safepoint.endSlice(slot, prev)
     }
 
     // A late delivery to a departed slice is not honored by the running one, and it must not answer for a fresh
     // request from another thread either: an interrupt's stop, or the coordinator's preemption, for the running
     // slice has to land, or the slice runs on until it parks or ends on its own.
     "a stop from another thread lands while a stale one is pending" in {
-        // pendingUntilFixed (ported from robustness): a fresh stop from another thread does not land while a stale
-        // departed-slice stop is pending, so Safepoint.stopped(slot) stays false and the stale stop wins;
-        // design-difference vs this branch's Safepoint slice-stop semantics.
-        pendingUntilFixed {
-            val slot     = Safepoint.get()
-            val owner    = Thread.currentThread()
-            val departed = new AnyRef
-            val slice    = new AnyRef
-            val prev     = Safepoint.beginSlice(slot, slice)
-            val late     = new Thread(() => discard(Safepoint.stop(owner, departed)))
-            late.start()
-            late.join()
-            assert(!Safepoint.stopped(slot))
-            val fresh = new Thread(() => discard(Safepoint.stop(owner, slice)))
-            fresh.start()
-            fresh.join()
-            assert(Safepoint.stopped(slot), "the fresh stop was answered by the stale one and lost")
-            assert(Safepoint.consumeStopped(slot))
-            assert(!Safepoint.consumeStopped(slot))
-            Safepoint.endSlice(slot, prev)
-        }
+        val slot     = Safepoint.get()
+        val owner    = Thread.currentThread()
+        val departed = new AnyRef
+        val slice    = new AnyRef
+        val prev     = Safepoint.beginSlice(slot, slice)
+        val late     = new Thread(() => discard(Safepoint.stop(owner, departed)))
+        late.start()
+        late.join()
+        assert(!Safepoint.stopped(slot))
+        val fresh = new Thread(() => discard(Safepoint.stop(owner, slice)))
+        fresh.start()
+        fresh.join()
+        assert(Safepoint.stopped(slot), "the fresh stop was answered by the stale one and lost")
+        assert(Safepoint.consumeStopped(slot))
+        assert(!Safepoint.consumeStopped(slot))
+        Safepoint.endSlice(slot, prev)
     }
 
     "a wildcard stop supersedes a stale one left by a departed slice" in {
-        // pendingUntilFixed (ported from robustness): a wildcard stop does not supersede a stale stop left by a
-        // departed slice, so Safepoint.stopped(slot) stays false; design-difference vs this branch's Safepoint
-        // slice-stop semantics.
-        pendingUntilFixed {
-            val slot     = Safepoint.get()
-            val departed = new AnyRef
-            val prev     = Safepoint.beginSlice(slot, new AnyRef)
-            assert(Safepoint.stop(Thread.currentThread(), departed))
-            assert(!Safepoint.stopped(slot))
-            assert(Safepoint.stop(Thread.currentThread()))
-            assert(Safepoint.stopped(slot))
-            assert(Safepoint.consumeStopped(slot))
-            Safepoint.endSlice(slot, prev)
-        }
+        val slot     = Safepoint.get()
+        val departed = new AnyRef
+        val prev     = Safepoint.beginSlice(slot, new AnyRef)
+        assert(Safepoint.stop(Thread.currentThread(), departed))
+        assert(!Safepoint.stopped(slot))
+        assert(Safepoint.stop(Thread.currentThread()))
+        assert(Safepoint.stopped(slot))
+        assert(Safepoint.consumeStopped(slot))
+        Safepoint.endSlice(slot, prev)
     }
 
 end SafepointTest
