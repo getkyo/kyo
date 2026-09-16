@@ -53,6 +53,7 @@ object LinkCheck {
     val programs: Seq[Program] = Seq(
         Program("CoreMin", "kyo-link-check-core", "linkcheck.CoreMin", "42".r),
         Program("CoreLog", "kyo-link-check-core", "linkcheck.CoreLog", """-?\+?\d{4,}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3,9})?Z""".r),
+        Program("CoreApp", "kyo-link-check-core", "linkcheck.CoreApp", "app".r),
         Program("CoreReadLine", "kyo-link-check-core", "linkcheck.CoreReadLine", "failure EOFException".r, "failure IOException".r),
         Program("UiMin", "kyo-link-check-ui", "linkcheck.UiMin", """Div\(Attrs\(.*\),Chunk\.Indexed\(\)\)""".r),
         Program("SystemPath", "kyo-link-check-system", "linkcheck.SystemPath", "kyo".r, "panic UnsupportedOperationException".r),

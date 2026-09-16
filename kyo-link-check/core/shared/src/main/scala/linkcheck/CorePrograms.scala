@@ -19,6 +19,17 @@ object CoreLog:
     end main
 end CoreLog
 
+/** The smallest `KyoApp`: the entry point an application starts from, running one print.
+  *
+  * It sits between [[CoreMin]], which runs a computation with no runtime around it, and [[CoreReadLine]], which is a `KyoApp` that also
+  * reads standard input. What the three sizes separate is how much of a link is the application runtime and how much is the program.
+  */
+object CoreApp extends KyoApp:
+    run {
+        Console.printLine("app")
+    }
+end CoreApp
+
 /** Reads a line from standard input (empty when `linkCheck` runs it): the path from `Console.readLine` to Node's stdin. */
 object CoreReadLine extends KyoApp:
     run {
