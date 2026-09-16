@@ -953,9 +953,9 @@ val bytes: Stream[Byte, Sync & Scope] =
 address: `ByteSize.Zero` reads one byte at a time rather than spinning on a buffer that holds nothing, and anything above `Int.MaxValue`
 bytes reads through the largest buffer there is.
 
-### `StreamCompression` (JVM only)
+### `StreamCompression`
 
-`StreamCompression` is a JVM-only object (in `kyo-core/jvm`) that adds gzip and deflate operators directly to `Stream[Byte, Ctx]` via an extension. All four operators are available after importing `kyo.*`.
+`StreamCompression` adds gzip and deflate operators directly to `Stream[Byte, Ctx]` via an extension, on every platform. All four operators are available after importing `kyo.*`.
 
 - `stream.deflate(...)` compresses bytes using raw deflate and returns `Stream[Byte, Scope & Sync & Ctx]`.
 - `stream.inflate(...)` decompresses raw deflate data and returns `Stream[Byte, Sync & Scope & Ctx & Abort[StreamCompressionException]]`.
@@ -963,6 +963,8 @@ bytes reads through the largest buffer there is.
 - `stream.gunzip(...)` decompresses a gzip stream, validates the trailer, and returns `Stream[Byte, Sync & Scope & Ctx & Abort[StreamCompressionException]]`.
 
 Compression behaviour is tuned through three enums nested in `StreamCompression`: `CompressionLevel` (from `NoCompression` through `BestSpeed` and `BestCompression` to `Default`), `CompressionStrategy` (`Default`, `Filtered`, `HuffmanOnly`), and `FlushMode` (`NoFlush`, `SyncFlush`, `FullFlush`, `Default`). Decompression failures surface as `StreamCompressionException`.
+
+The operators have the same signatures and write standard DEFLATE on every platform, so a stream compressed on one reads back on any other. What does the work differs by host: `java.util.zip` on the JVM; on Node, as JavaScript or WebAssembly, Node's zlib compresses and a DEFLATE codec written in Scala decompresses; in a browser page and on Scala Native, that codec does both. A page's `CompressionStream` is not used, because it is asynchronous and these operators are `Sync`.
 
 All operators default to a 32 KB buffer (`1 << 15`) and `Default` settings, so the common case requires no arguments:
 
