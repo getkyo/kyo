@@ -11,35 +11,43 @@ final private class StubTestBackend(
     ref: AtomicRef[Map[String, Promise[Int, Abort[ContainerException]]]],
     create: () => Int < (Async & Abort[ContainerException])
 ) extends SqlTestBackend:
-    def label: String                     = id
-    def urlScheme: String                 = "stub"
-    def containerConfig: Container.Config = Container.Config(ContainerImage("stub:latest"))
-    def quoteIdent(name: String): String  = "\"" + name + "\""
-    def supportsReturning: Boolean        = false
-    def supportsRecursiveCte: Boolean     = false
-    def textColumnType: String            = "TEXT"
-    def autoIncrementPrimaryKey: String   = "id INT PRIMARY KEY"
+    def label: String                            = id
+    def urlScheme: String                        = "stub"
+    def containerConfig: Maybe[Container.Config] = Present(Container.Config(ContainerImage("stub:latest")))
+    def quoteIdent(name: String): String         = "\"" + name + "\""
+    def supportsReturning: Boolean               = false
+    def supportsRecursiveCte: Boolean            = false
+    def textColumnType: String                   = "TEXT"
+    def autoIncrementPrimaryKey: String          = "id INT PRIMARY KEY"
 
     // This stub never provisions an engine, so these DDL and diagnostic strings are never rendered against one.
-    def columnType(key: SqlTestBackend.ColumnType): String   = "TEXT"
-    def typeNameFor(kind: SqlTestBackend.ColumnType): String = "text"
-    def bytesLiteral(hexDigits: String): String              = s"'$hexDigits'"
-    def outputAffectingSettings: Chunk[String]               = Chunk.empty
-    def tableNotFoundSqlState: String                        = "42000"
-    def uniqueViolationSqlState: String                      = "23000"
-    def sessionIdSql: String                                 = "0"
-    def isolationIntrospectionSql: String                    = "SELECT 'READ COMMITTED'"
+    def columnType(key: SqlTestBackend.ColumnType): String       = "TEXT"
+    def typeNameFor(kind: SqlTestBackend.ColumnType): String     = "text"
+    def bytesLiteral(hexDigits: String): String                  = s"'$hexDigits'"
+    def outputAffectingSettings: Chunk[String]                   = Chunk.empty
+    def sessionZoneStatements: Maybe[SqlTestBackend.SessionZone] = Absent
+    def tableNotFoundSqlState: String                            = "42000"
+    def uniqueViolationSqlState: String                          = "23000"
+    def sessionIdSql: Maybe[String]                              = Absent
+    def isolationIntrospectionSql: Maybe[String]                 = Absent
+    def honouredIsolationLevels: Set[SqlClient.IsolationLevel]   = Set.empty
+    def defaultIsolationLevel: SqlClient.IsolationLevel          = SqlClient.IsolationLevel.ReadCommitted
 
     // Likewise never consulted: no conformance body runs against this stub, so every capability answers the value that
     // claims the least rather than one describing a real engine.
-    def booleanColumnKind: SqlRow.ColumnKind = SqlRow.ColumnKind.Unknown
-    def instantWireCarriesOffset: Boolean    = false
-    def hasNativeArrayColumns: Boolean       = false
-    def timeColumnIsSignedSpan: Boolean      = false
-    def hasCalendarIntervalColumn: Boolean   = false
-    def hasNetworkAddressColumn: Boolean     = false
-    def hasTimeWithOffsetColumn: Boolean     = false
-    def hasNonFiniteSpecialValues: Boolean   = false
+    def booleanColumnKind: SqlRow.ColumnKind                   = SqlRow.ColumnKind.Unknown
+    def instantWireCarriesOffset: Boolean                      = false
+    def hasNativeArrayColumns: Boolean                         = false
+    def caseFoldingReachesPastAscii: Boolean                   = false
+    def likeFollowsColumnCollation: Boolean                    = false
+    def boundedTextColumn(name: String, maxChars: Int): String = s"$name VARCHAR($maxChars) NOT NULL"
+    def allowsConcurrentWriteTransactions: Boolean             = false
+    def hasAdvisoryLocks: Boolean                              = false
+    def timeColumnIsSignedSpan: Boolean                        = false
+    def hasCalendarIntervalColumn: Boolean                     = false
+    def hasNetworkAddressColumn: Boolean                       = false
+    def hasTimeWithOffsetColumn: Boolean                       = false
+    def hasNonFiniteSpecialValues: Boolean                     = false
 
     def windowRangeOffsetHonoursAbsentPlacement: Boolean = false
 

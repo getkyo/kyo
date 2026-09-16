@@ -138,10 +138,22 @@ abstract class Idiom:
     /** True when this flavor has SQL:1999's grouping-set constructs, `GROUP BY CUBE (...)` and `GROUP BY GROUPING SETS (...)`. Defaults to
       * true, and is not version-gated: a flavor that lacks them lacks them at every release.
       *
-      * `GROUP BY ... WITH ROLLUP` is not covered here. Rollup is a spelling difference rather than a missing construct, so a flavor that
-      * spells it its own way overrides [[groupBy]].
+      * Rollup is NOT covered here, having its own flag: a flavor can lack the grouping-set constructs and still have rollup, which is
+      * exactly where MySQL sits. See [[supportsRollup]].
       */
     def supportsGroupingSets: Boolean =
+        true
+
+    /** True when this flavor can group by a rollup at all, however it spells one. Defaults to true, and is not version-gated.
+      *
+      * Separate from [[supportsGroupingSets]] because the two are independent: MySQL has rollup and no grouping sets, and a flavor can have
+      * neither. It was once enough to say rollup is "a spelling difference rather than a missing construct", which held while every flavor
+      * had one; a flavor that lacks it needs somewhere to say so that is not an override of the rendering.
+      *
+      * Reading the flag rather than catching the refusal is what lets a caller, or a test, ask the question BEFORE rendering. A flavor that
+      * answers false here has [[groupByClause]] refuse for it, so the flag and the behaviour cannot drift apart.
+      */
+    def supportsRollup: Boolean =
         true
 
     /** The release that introduced `LATERAL` subqueries, or `Absent`, the default, when every version of this flavor has them. */
@@ -523,6 +535,7 @@ abstract class Idiom:
                 ctx.append(" GROUP BY ")
                 groupByKeys(ctx, g.keys)
             case Sql.GroupBy.Kind.Rollup =>
+                if !supportsRollup then ctx.unsupported("GROUP BY ROLLUP", Maybe.Absent)
                 ctx.append(" GROUP BY ROLLUP (")
                 groupByKeys(ctx, g.keys)
                 ctx.append(")")
@@ -1303,7 +1316,13 @@ abstract class Idiom:
         query(ctx, body)
     end cte
 
-    private def overrideFor(overrides: Chunk[Sql.SetSpec[?, ?]], column: String): Maybe[Sql.SetSpec[?, ?]] =
+    /** The override, if any, that names `column`.
+      *
+      * `private[kyo]` rather than private: a flavor that has to RESTRUCTURE an insert around its overrides, rather than substitute a cell,
+      * needs the same lookup and cannot reach a private one. SQLite is the first, having no DEFAULT keyword: a defaulted column leaves the
+      * column list entirely, which means knowing which columns are overridden before any cell is rendered.
+      */
+    def overrideFor(overrides: Chunk[Sql.SetSpec[?, ?]], column: String): Maybe[Sql.SetSpec[?, ?]] =
         overrides.foldLeft(Maybe.empty[Sql.SetSpec[?, ?]]) { (found, spec) =>
             if found.isDefined || spec.column.sqlName != column then found else Maybe(spec)
         }

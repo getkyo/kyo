@@ -118,12 +118,21 @@ class SqlValueDomainConformanceTest extends SqlBackendTest:
       * otherwise. Pinned so a mode change shows up here.
       */
     "a string longer than its column is refused by every backend" in {
-        agreeAcrossBackends(expected = Present("refused with SqlServerErrorException")) { (_, client, _) =>
+        // The DDL comes from the descriptor because the SPELLING differs and the behaviour does not: an engine whose declared width is
+        // advisory carries a CHECK instead, and refuses the same write. Skipping that engine with a capability flag would drop a claim it
+        // can honour.
+        //
+        // The answer is the refusal itself rather than the exception class. The engines classify it differently and legitimately: a
+        // declared-width overflow is a data exception, a CHECK is a constraint violation, and the two land in different SQLSTATE families.
+        // What is portable, and what a caller depends on, is that the row is refused rather than silently shortened.
+        agreeAcrossBackends(expected = Present("the over-long value was refused")) { (backend, client, _) =>
             for
-                _    <- client.executeRaw("CREATE TABLE narrow (v VARCHAR(4) NOT NULL)")
-                _    <- Sql.insert[Narrow].values(Narrow("abcdefgh")).run
-                rows <- Sql.from[Narrow]("n").run
-            yield s"eight characters in a four-character column read back as ${rows.head.v}"
+                _       <- client.executeRaw(s"CREATE TABLE narrow (${backend.boundedTextColumn("v", 4)})")
+                outcome <- Abort.run[SqlException](Sql.insert[Narrow].values(Narrow("abcdefgh")).run)
+                stored  <- Sql.from[Narrow]("n").run
+            yield
+                if outcome.isFailure then "the over-long value was refused"
+                else s"the over-long value was stored as ${stored.head.v}"
             end for
         }
     }

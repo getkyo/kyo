@@ -1,16 +1,20 @@
-package kyo.internal.mysql
+package kyo.internal
 
 import kyo.Chunk
 import kyo.discard
 
-/** The MySQL array wire: a `JSON` column holding a one-dimensional array, formatted and parsed here so the backend owns its own wire.
+/** The array wire for an engine with no array type: a JSON column holding a one-dimensional array.
+  *
+  * Shared rather than per backend because more than one engine lands here for the same reason. MySQL has no array type and maps the three
+  * array kinds onto `JSON`; SQLite has none either and maps them the same way. One wire means a value written by either is read by either,
+  * and means the escaping rules below are decided once.
   *
   * Encoding matches the canonical compact JSON form (`[1,2,3]`, `["a","b"]`): no whitespace, standard string escapes (`\"`, `\\`, control
   * characters as their short escapes or `\u00XX`), non-ASCII text left raw in UTF-8. Parsing accepts standard JSON arrays, including
   * whitespace and `\uXXXX` escapes; a malformed document is reported through `fail`, which the reader binds to its own typed decode
   * exception and frame.
   */
-private[kyo] object MysqlJsonArray:
+object SqlJsonArray:
 
     def encodeInts(values: Chunk[Int]): String =
         values.mkString("[", ",", "]")
@@ -135,4 +139,4 @@ private[kyo] object MysqlJsonArray:
         ()
     end quoteInto
 
-end MysqlJsonArray
+end SqlJsonArray

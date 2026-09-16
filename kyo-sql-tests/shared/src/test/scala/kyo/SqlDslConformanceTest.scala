@@ -227,7 +227,7 @@ class SqlDslConformanceTest extends SqlBackendTest:
     }
 
     "case folding reaches past ASCII" - {
-        forEachBackend() { (backend, client, _) =>
+        forEachBackend(where = _.caseFoldingReachesPastAscii) { (backend, client, _) =>
             for
                 _       <- client.executeRaw(s"CREATE TABLE word (label ${backend.textColumnType} NOT NULL)")
                 _       <- Sql.insert[Word].values(Word("éa")).run
@@ -238,6 +238,25 @@ class SqlDslConformanceTest extends SqlBackendTest:
             yield
                 assert(upper.head == "ÉA", s"${backend.label}: expected ÉA, got ${upper.head}")
                 assert(lowered.head == "éa", s"${backend.label}: expected éa, got ${lowered.head}")
+            end for
+        }
+    }
+
+    "case folding that stops at ASCII leaves the rest of the string untouched" - {
+        forEachBackend(where = !_.caseFoldingReachesPastAscii) { (backend, client, _) =>
+            // The complement, and it asserts something rather than merely excusing the engine: an ASCII-only fold must still fold the
+            // ASCII and must leave everything else EXACTLY as stored. A fold that mangled the accented character, dropped it, or replaced
+            // it with a substitute would be a data-corrupting bug, and the leaf above cannot see it.
+            for
+                _       <- client.executeRaw(s"CREATE TABLE word (label ${backend.textColumnType} NOT NULL)")
+                _       <- Sql.insert[Word].values(Word("éa")).run
+                upper   <- Sql.from[Word]("w").select(view => view.w.label.upper).run
+                _       <- client.executeRaw("DELETE FROM word")
+                _       <- Sql.insert[Word].values(Word("ÉA")).run
+                lowered <- Sql.from[Word]("w").select(view => view.w.label.lower).run
+            yield
+                assert(upper.head == "éA", s"${backend.label}: the ASCII must fold and the rest stay put, got ${upper.head}")
+                assert(lowered.head == "Éa", s"${backend.label}: the ASCII must fold and the rest stay put, got ${lowered.head}")
             end for
         }
     }

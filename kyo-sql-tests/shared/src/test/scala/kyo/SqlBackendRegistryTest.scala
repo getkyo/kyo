@@ -6,9 +6,14 @@ import kyo.internal.postgres.PostgresBackendFactory
 
 /** Tests for [[kyo.db.Backend.Registry]] and the derivation that builds it from the compile classpath.
   *
-  * Both backends ship in this module, so a registry derived here sees both. What the scenarios pin is that the derivation reads the services
-  * file rather than a hard-coded list, that scheme lookup covers aliases, and that each discovered factory carries the dialect its backend
-  * renders in.
+  * Every shipping backend is on this module's classpath, so a registry derived here sees all of them. What the scenarios pin is that the
+  * derivation reads the services file rather than a hard-coded list, that scheme lookup covers aliases, and that each discovered factory
+  * carries the dialect its backend renders in.
+  *
+  * This suite is the registration LEDGER, which is why the first two leaves spell the set out rather than deriving it: an exact list is what
+  * catches a backend that silently dropped off the classpath, or one that shipped claiming a scheme nobody reviewed. Adding a backend module
+  * is therefore expected to edit them. Reading the services resource instead would be self-referential here, and does not link on the
+  * non-JVM platforms this suite also runs on.
   */
 class SqlBackendRegistryTest extends Test:
 
@@ -19,7 +24,8 @@ class SqlBackendRegistryTest extends Test:
         assert(
             classes == Seq(
                 "kyo.internal.mysql.MysqlBackendFactory",
-                "kyo.internal.postgres.PostgresBackendFactory"
+                "kyo.internal.postgres.PostgresBackendFactory",
+                "kyo.internal.sqlite.SqliteBackendFactory"
             ),
             s"derived factories were $classes"
         )
@@ -28,7 +34,7 @@ class SqlBackendRegistryTest extends Test:
     "schemesListsCanonicalNamesAndAliases" in {
         // The register-only stub shares this test program and, once any leaf registers it, joins the runtime-discovery
         // half of `schemes`, so it is filtered out here; this suite is about the shipping backends' schemes.
-        assert(registry.schemes.toSeq.filterNot(_ == "stub").sorted == Seq("mysql", "postgres", "postgresql"))
+        assert(registry.schemes.toSeq.filterNot(_ == "stub").sorted == Seq("mysql", "postgres", "postgresql", "sqlite", "sqlite3"))
     }
 
     "forSchemeResolvesACanonicalScheme" in {
@@ -38,16 +44,24 @@ class SqlBackendRegistryTest extends Test:
         registry.forScheme("mysql") match
             case Present(f) => assert(f.dialect.id == Idiom.Id("mysql"))
             case Absent     => fail("mysql is not resolvable in a registry that lists it")
+        registry.forScheme("sqlite") match
+            case Present(f) => assert(f.dialect.id == Idiom.Id("sqlite"))
+            case Absent     => fail("sqlite is not resolvable in a registry that lists it")
     }
 
     "forSchemeResolvesAnAlias" in {
         registry.forScheme("postgresql") match
             case Present(f) => assert(f.scheme == "postgres")
             case Absent     => fail("postgresql is an alias of postgres and must resolve to it")
+        registry.forScheme("sqlite3") match
+            case Present(f) => assert(f.scheme == "sqlite")
+            case Absent     => fail("sqlite3 is an alias of sqlite and must resolve to it")
     }
 
     "forSchemeIsAbsentForAnUnclaimedScheme" in {
-        assert(registry.forScheme("sqlite") == Absent)
+        // Deliberately not the name of an engine anyone might ship: this leaf asserts the NEGATIVE, so a scheme picked because no backend
+        // claims it today turns into a false green the day one does. That is exactly how it read `sqlite` before this module shipped one.
+        assert(registry.forScheme("not-a-registered-scheme") == Absent)
         assert(registry.forScheme("") == Absent)
     }
 

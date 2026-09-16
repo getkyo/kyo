@@ -43,8 +43,16 @@ object Ffi:
     opaque type Handle[A] = AnyRef
 
     object Handle:
-        private[kyo] inline def wrap[A](v: AnyRef): Handle[A]   = v
-        private[kyo] inline def unwrap[A](h: Handle[A]): AnyRef = h
+        /** The code generator's ABI, not a user-facing API.
+          *
+          * Public because generated code lands in the BINDING'S OWN package, which for a third-party artifact is not under `kyo`. A
+          * qualified-private here compiles for the bindings in this repository and for nothing else, which is a visibility that happens to
+          * match the current set of callers rather than one that describes them.
+          *
+          * Hand-written code has no reason to call either: a `Handle` is opaque precisely so its contents stay the generator's business.
+          */
+        inline def wrap[A](v: AnyRef): Handle[A]   = v
+        inline def unwrap[A](h: Handle[A]): AnyRef = h
     end Handle
 
     /** Method-level annotation. Marks a method whose C implementation may block: I/O, locks, waits, or syscalls that can suspend.
@@ -111,7 +119,8 @@ object Ffi:
     opaque type Borrowed[A] = A
 
     object Borrowed:
-        private[kyo] def wrap[A](value: A): Borrowed[A] = value
+        /** The code generator's ABI, for the same reason as [[Handle.wrap]]: generated code lands outside `kyo`. */
+        def wrap[A](value: A): Borrowed[A] = value
         extension [A](b: Borrowed[A])
             def value: A = b
     end Borrowed

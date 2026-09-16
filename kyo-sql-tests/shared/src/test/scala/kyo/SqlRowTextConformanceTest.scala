@@ -148,48 +148,45 @@ class SqlRowTextConformanceTest extends SqlBackendTest:
       * pinned at connect.
       */
     "a mid-session zone change does not change what an instant reads as" - {
-        forEachBackend() { (backend, client, _) =>
-            if !backend.instantWireCarriesOffset then
-                succeed(s"${backend.label} carries no offset on the wire to normalise from")
-            else
-                val select = "SELECT ts FROM tzshift"
-                for
-                    _        <- client.executeRaw(s"CREATE TABLE tzshift (ts ${backend.columnType(ColumnType.Timestamp)})")
-                    _        <- client.executeRaw("INSERT INTO tzshift VALUES ('2026-08-25 10:00:00+00:00')")
-                    _        <- client.executeRaw("SET TimeZone='America/Sao_Paulo'")
-                    extended <- client.query(select)
-                    simple   <- client.simpleQuery(select)
-                    binary   <- extended.head.text("ts")
-                    textual  <- simple.head.text("ts")
-                yield
-                    // The server writes `2026-08-25 07:00:00-03` for this row under that zone.
-                    assert(binary == Present("2026-08-25 10:00:00+00:00"), s"extended protocol: got $binary")
-                    assert(textual == Present("2026-08-25 10:00:00+00:00"), s"simple protocol under a -03 session: got $textual")
-                end for
+        forEachBackend(where = b => b.instantWireCarriesOffset && b.sessionZoneStatements.nonEmpty) { (backend, client, _) =>
+            val zone   = backend.sessionZoneStatements.getOrElse(throw new AssertionError(s"${backend.label} has no session zone"))
+            val select = "SELECT ts FROM tzshift"
+            for
+                _        <- client.executeRaw(s"CREATE TABLE tzshift (ts ${backend.columnType(ColumnType.Timestamp)})")
+                _        <- client.executeRaw("INSERT INTO tzshift VALUES ('2026-08-25 10:00:00+00:00')")
+                _        <- client.executeRaw(zone.west)
+                extended <- client.query(select)
+                simple   <- client.simpleQuery(select)
+                binary   <- extended.head.text("ts")
+                textual  <- simple.head.text("ts")
+            yield
+                // The server writes `2026-08-25 07:00:00-03` for this row under that zone.
+                assert(binary == Present("2026-08-25 10:00:00+00:00"), s"extended protocol: got $binary")
+                assert(textual == Present("2026-08-25 10:00:00+00:00"), s"simple protocol under a -03 session: got $textual")
+            end for
         }
     }
 
     /** The write half of the leaf above: a zone change before the INSERT must not move the stored instant either. */
     "a stored instant survives a session that wrote it from another zone" - {
-        forEachBackend() { (backend, client, _) =>
-            if backend.instantWireCarriesOffset then succeed(s"${backend.label} carries its own offset")
-            else
-                for
-                    _ <- client.executeRaw(
-                        s"CREATE TABLE tzpin (id ${backend.columnType(ColumnType.Int)}, ts ${backend.columnType(ColumnType.Timestamp)})"
-                    )
-                    // Write the row from a session three hours west, naming the instant in that zone.
-                    _        <- client.executeRaw("SET time_zone='-03:00'")
-                    _        <- client.executeRaw("INSERT INTO tzpin VALUES (1, '2026-08-25 07:00:00')")
-                    _        <- client.executeRaw("SET time_zone='+00:00'")
-                    extended <- client.query("SELECT ts FROM tzpin")
-                    simple   <- client.simpleQuery("SELECT ts FROM tzpin")
-                    binary   <- extended.head.text("ts")
-                    textual  <- simple.head.text("ts")
-                yield
-                    assert(binary == Present("2026-08-25 10:00:00+00:00"), s"extended protocol: got $binary")
-                    assert(textual == Present("2026-08-25 10:00:00+00:00"), s"simple protocol: got $textual")
-                end for
+        forEachBackend(where = b => !b.instantWireCarriesOffset && b.sessionZoneStatements.nonEmpty) { (backend, client, _) =>
+            val zone = backend.sessionZoneStatements.getOrElse(throw new AssertionError(s"${backend.label} has no session zone"))
+            for
+                _ <- client.executeRaw(
+                    s"CREATE TABLE tzpin (id ${backend.columnType(ColumnType.Int)}, ts ${backend.columnType(ColumnType.Timestamp)})"
+                )
+                // Write the row from a session three hours west, naming the instant in that zone.
+                _        <- client.executeRaw(zone.west)
+                _        <- client.executeRaw("INSERT INTO tzpin VALUES (1, '2026-08-25 07:00:00')")
+                _        <- client.executeRaw(zone.utc)
+                extended <- client.query("SELECT ts FROM tzpin")
+                simple   <- client.simpleQuery("SELECT ts FROM tzpin")
+                binary   <- extended.head.text("ts")
+                textual  <- simple.head.text("ts")
+            yield
+                assert(binary == Present("2026-08-25 10:00:00+00:00"), s"extended protocol: got $binary")
+                assert(textual == Present("2026-08-25 10:00:00+00:00"), s"simple protocol: got $textual")
+            end for
         }
     }
 

@@ -48,7 +48,7 @@ class SqlCollationConformanceTest extends SqlBackendTest:
       * collation the two spellings mean the same thing and the distinction the DSL offers is not real.
       */
     "a like pattern distinguishes case" - {
-        forEachBackend() { (backend, client, _) =>
+        forEachBackend(where = _.likeFollowsColumnCollation) { (backend, client, _) =>
             for
                 _    <- seed(backend, client)
                 rows <- Sql.from[Name]("n").where(_.n.v.like("alic%")).run
@@ -56,6 +56,35 @@ class SqlCollationConformanceTest extends SqlBackendTest:
                 rows.map(_.v) == Chunk("alice"),
                 s"${backend.label}: expected only the lower-case row, got ${rows.map(_.v)}"
             )
+        }
+    }
+
+    /** The other side, pinned rather than excused.
+      *
+      * An engine whose `LIKE` ignores collation has a definite behaviour of its own: it folds ASCII case and nothing else. Asserting it is
+      * what catches a change, and it states the limit precisely, which matters because the accented row is the half a caller is most likely
+      * to assume works. A connection-wide case-sensitivity setting would hide all of this behind one leaf going green while `LIKE` still
+      * ignored every column's declared collation.
+      */
+    "a like pattern folds ASCII case only, where it does not follow the column" - {
+        forEachBackend(where = !_.likeFollowsColumnCollation) { (backend, client, _) =>
+            for
+                _        <- seed(backend, client)
+                ascii    <- Sql.from[Name]("n").where(_.n.v.like("alic%")).run
+                accented <- Sql.from[Name]("n").where(_.n.v.like("RÉSUM%")).run
+            yield
+                assert(
+                    ascii.map(_.v).sorted == Chunk("ALICE", "Alice", "alice").sorted,
+                    s"${backend.label}: LIKE folds ASCII case here, so every spelling must match, got ${ascii.map(_.v)}"
+                )
+                // `résumé` is stored lower case and the pattern's E is accented and upper case. An engine folding past ASCII would match
+                // it; this one folds the 26 letters and nothing else. The unaccented `resume` is deliberately not the probe: being pure
+                // ASCII it matches either way and would prove nothing.
+                assert(
+                    accented.isEmpty,
+                    s"${backend.label}: the folding stops at ASCII, so an accented row must not match, got ${accented.map(_.v)}"
+                )
+            end for
         }
     }
 

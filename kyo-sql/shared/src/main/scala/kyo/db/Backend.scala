@@ -6,8 +6,10 @@ import kyo.Async
 import kyo.Chunk
 import kyo.Frame
 import kyo.Maybe
+import kyo.Result
 import kyo.SqlClient
 import kyo.SqlConfig
+import kyo.SqlConnectionException
 import kyo.SqlException
 import kyo.internal.BackendPlatformSpecific
 
@@ -81,6 +83,19 @@ abstract class Backend:
       * returned client was opened under.
       */
     def open(url: SqlConfig.Url, config: SqlConfig)(using Frame): SqlClient < (Async & Abort[SqlException])
+
+    /** Reads `raw` into the URL this backend will be opened with.
+      *
+      * Defaults to the network form, `scheme://[user[:password]@]host:port/db[?options]`, which is what every server engine takes and what
+      * [[kyo.SqlConfig.Url.parse]] implements. A backend whose coordinate is not a network endpoint overrides this: an embedded engine
+      * names a file path, which has no host, no port, and no credentials to carry.
+      *
+      * Overriding here rather than teaching the shared parser a second shape is what keeps core free of any engine's name. The scheme is
+      * resolved first, from the text before `://`, and only then is the rest handed to the backend that claims it, so each backend parses
+      * exactly the URLs it answers to and none of the others.
+      */
+    def parseUrl(raw: String)(using Frame): Result[SqlConnectionException, SqlConfig.Url] =
+        SqlConfig.Url.parse(raw)
 
 end Backend
 

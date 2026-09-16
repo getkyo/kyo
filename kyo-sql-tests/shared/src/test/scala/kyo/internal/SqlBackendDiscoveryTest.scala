@@ -14,8 +14,9 @@ import kyo.internal.postgres.PostgresDialect
   * The assertions are on NAMES, and that is the point of the suite rather than a stylistic choice. Discovery failing is indistinguishable
   * from discovery succeeding over an empty set unless something asserts what was found: a backend that ships its
   * `META-INF/services/kyo.db.Backend` entry and forgets the JS and Wasm registration, or the Native link-time enlistment, produces an
-  * empty result and no error at all, so every "did not fail" assertion would still pass. `sqlite` is used for the unclaimed scheme because no
-  * artifact in this build declares it in either tier.
+  * empty result and no error at all, so every "did not fail" assertion would still pass. The unclaimed scheme is a name no engine will ever
+  * ship, rather than one that merely happens to be unclaimed today: this suite asserts the NEGATIVE for it, so a name chosen because nothing
+  * claims it yet stops testing anything the day something does. It was `sqlite` until this repository shipped a SQLite backend.
   *
   * A `Registry` built here with `Chunk.empty` is how a backend absent from the compile classpath is modelled: it is exactly the registry the
   * derivation produces when no backend artifact was present, so a resolution against it can only have come from run time.
@@ -24,6 +25,7 @@ class SqlBackendDiscoveryTest extends Test:
 
     private val postgresFactory = "kyo.internal.postgres.PostgresBackendFactory"
     private val mysqlFactory    = "kyo.internal.mysql.MysqlBackendFactory"
+    private val sqliteFactory   = "kyo.internal.sqlite.SqliteBackendFactory"
     // The out-of-tree stub is register-only and shares this test program, so it may be in the discovered set. This
     // suite is about the SHIPPING backends, so it filters the stub out rather than pinning it, keeping the shipping
     // checks exact. `StubBackendTest` is what pins the stub.
@@ -54,7 +56,7 @@ class SqlBackendDiscoveryTest extends Test:
         val found    = SqlBackendDiscovery.factories.map(_.getClass.getName).toSeq
         val shipping = found.filterNot(_ == stubBackend).sorted
         assert(
-            shipping == Seq(mysqlFactory, postgresFactory),
+            shipping == Seq(mysqlFactory, postgresFactory, sqliteFactory),
             s"runtime discovery found $found (shipping $shipping). An empty or short shipping list means a backend declared " +
                 "in META-INF/services has no matching registration on this platform, which is silent everywhere else."
         )
@@ -93,18 +95,22 @@ class SqlBackendDiscoveryTest extends Test:
 
     "schemes on a registry with no compile-time factory names what discovery can open" in {
         val schemes = new Backend.Registry(Chunk.empty).schemes.toSeq.filterNot(_ == "stub").sorted
-        assert(schemes == Seq("mysql", "postgres", "postgresql"), s"schemes were $schemes")
+        assert(schemes == Seq("mysql", "postgres", "postgresql", "sqlite", "sqlite3"), s"schemes were $schemes")
     }
 
     "schemes lists the compile-time schemes first and adds only what discovery reaches" in {
         val schemes = new Backend.Registry(Chunk[Backend](new SchemeProbeFactory)).schemes
         assert(schemes.head == "postgres", s"the compile-time scheme must come first, schemes were ${schemes.toSeq}")
-        assert(schemes.toSeq.filterNot(_ == "stub").sorted == Seq("mysql", "postgres", "postgresql"), s"schemes were ${schemes.toSeq}")
+        assert(
+            schemes.toSeq.filterNot(_ == "stub").sorted == Seq("mysql", "postgres", "postgresql", "sqlite", "sqlite3"),
+            s"schemes were ${schemes.toSeq}"
+        )
         assert(schemes.toSeq.count(_ == "postgres") == 1, s"a scheme claimed by both tiers must be listed once, got ${schemes.toSeq}")
     }
 
     "a scheme neither tier claims is Absent" in {
-        assert(new Backend.Registry(Chunk.empty).forScheme("sqlite") == Absent)
+        // Not the name of an engine anyone might ship, for the reason the header gives.
+        assert(new Backend.Registry(Chunk.empty).forScheme("not-a-registered-scheme") == Absent)
         assert(new Backend.Registry(Chunk.empty).forScheme("") == Absent)
     }
 
@@ -162,12 +168,12 @@ class SqlBackendDiscoveryTest extends Test:
     }
 
     "the open path still fails typed for a scheme neither tier claims, naming both tiers' schemes" in {
-        val computed = "sqlite" + "://u:p@localhost:5432/db"
+        val computed = "not-a-registered-scheme" + "://u:p@localhost:5432/db"
         Abort.run[SqlException](SqlClient.factoryFor(computed, new Backend.Registry(Chunk.empty))).map {
             case Result.Failure(e: SqlConnectionUnsupportedSchemeException) =>
-                assert(e.scheme == "sqlite", s"the failure named ${e.scheme}")
+                assert(e.scheme == "not-a-registered-scheme", s"the failure named ${e.scheme}")
                 assert(
-                    e.available.toSeq.filterNot(_ == "stub").sorted == Seq("mysql", "postgres", "postgresql"),
+                    e.available.toSeq.filterNot(_ == "stub").sorted == Seq("mysql", "postgres", "postgresql", "sqlite", "sqlite3"),
                     s"the failure must name what discovery can open, got ${e.available}"
                 )
             case other =>

@@ -1,0 +1,238 @@
+package kyo.internal.sqlite
+
+import kyo.*
+
+/** The backend reached the way a caller reaches it: a `sqlite://` URL through `SqlClient.init`.
+  *
+  * Everything below this has its own suite. What this one proves is that the pieces meet: the scheme resolves to the backend, the backend
+  * parses its own URL shape, the factory opens a connection, and rows come back decoded.
+  *
+  * A temp FILE rather than `:memory:` for anything involving more than one connection. Each connection opening `:memory:` gets its OWN
+  * private database, so a pooled client would appear to lose every table it created.
+  */
+class SqliteClientTest extends Test:
+
+    /** One in-memory database, opened through a pool of exactly one connection.
+      *
+      * `:memory:` gives every CONNECTION its own private database, so a single connection is what makes the name mean one database. Every
+      * leaf here drives one client, and none needs two sessions.
+      *
+      * No filesystem, so this runs on every platform the module targets, and it leaves no WAL sidecars to clean up.
+      */
+    private def withTempDb[A](f: String => A < (Async & Abort[SqlException] & Scope))(using Frame): A < (Async & Abort[SqlException]) =
+        Scope.run(f("sqlite://:memory:"))
+
+    "a client opens on a sqlite URL and runs a statement" in {
+        withTempDb { url =>
+            SqlClient.init(url, SqlConfig(maxConnections = 1)).map { client =>
+                DB.run(client) {
+                    for
+                        _    <- client.executeRaw("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)")
+                        n    <- client.executeRaw("INSERT INTO t (name) VALUES ('alice')")
+                        rows <- client.query("SELECT id, name FROM t")
+                        name <- rows(0).decode[String](1)
+                    yield
+                        assert(n == 1L, s"the insert reported $n rows")
+                        assert(rows.size == 1, s"expected one row, got ${rows.size}")
+                        assert(name == "alice", s"decoded '$name'")
+                }
+            }
+        }
+    }
+
+    "the in-memory name opens too, and is private to its connection" in {
+        SqlClient.init("sqlite://:memory:", SqlConfig(maxConnections = 1)).map { client =>
+            DB.run(client) {
+                for
+                    _    <- client.executeRaw("CREATE TABLE t (v INTEGER)")
+                    _    <- client.executeRaw("INSERT INTO t VALUES (7)")
+                    rows <- client.query("SELECT v FROM t")
+                    v    <- rows(0).decode[Long](0)
+                yield assert(v == 7L, s"read $v")
+            }
+        }
+    }
+
+    "a column's declared type reaches the caller as a neutral kind" in {
+        withTempDb { url =>
+            SqlClient.init(url, SqlConfig(maxConnections = 1)).map { client =>
+                DB.run(client) {
+                    for
+                        _    <- client.executeRaw("CREATE TABLE t (n INTEGER, d 'DATE TEXT', x 'DECIMAL TEXT(38,10)')")
+                        _    <- client.executeRaw("INSERT INTO t VALUES (1, '2026-08-25', '2.5')")
+                        rows <- client.query("SELECT n, d, x, n + 0 FROM t")
+                    yield
+                        val row = rows(0)
+                        assert(row.columnKind(0) == SqlRow.ColumnKind.Integer, s"n was ${row.columnKind(0)}")
+                        // The whole point of the multi-word declared name: it carries the KIND while forcing TEXT
+                        // affinity, so the value is not rewritten on the way in.
+                        assert(row.columnKind(1) == SqlRow.ColumnKind.Date, s"d was ${row.columnKind(1)}")
+                        assert(row.columnKind(2) == SqlRow.ColumnKind.Decimal, s"x was ${row.columnKind(2)}")
+                        // An expression is traceable to no declared column on any engine.
+                        assert(row.columnKind(3) == SqlRow.ColumnKind.Unknown, s"n + 0 was ${row.columnKind(3)}")
+                        assert(row.columnTypeName(2) == Present("DECIMAL TEXT(38,10)"), s"${row.columnTypeName(2)}")
+                }
+            }
+        }
+    }
+
+    "a decimal keeps the scale its column declares, which SQLite does not apply" in {
+        withTempDb { url =>
+            SqlClient.init(url, SqlConfig(maxConnections = 1)).map { client =>
+                DB.run(client) {
+                    for
+                        _        <- client.executeRaw("CREATE TABLE t (x 'DECIMAL TEXT(38,10)')")
+                        _        <- client.executeRaw("INSERT INTO t VALUES ('2.5')")
+                        rows     <- client.query("SELECT x FROM t")
+                        rendered <- rows(0).text(0)
+                    yield
+                        // SQLite stored the three characters it was given. The declared scale is the only place the
+                        // intended one survives, so the codec reads it back from there.
+                        assert(rendered == Present("2.5000000000"), s"rendered $rendered")
+                }
+            }
+        }
+    }
+
+    "a value past a double survives, because the column takes TEXT affinity" in {
+        withTempDb { url =>
+            SqlClient.init(url, SqlConfig(maxConnections = 1)).map { client =>
+                DB.run(client) {
+                    for
+                        _        <- client.executeRaw("CREATE TABLE t (x 'DECIMAL TEXT(38,10)')")
+                        _        <- client.executeRaw("INSERT INTO t VALUES ('98765432109876.543210')")
+                        rows     <- client.query("SELECT x FROM t")
+                        rendered <- rows(0).text(0)
+                        typed    <- rows(0).decode[BigDecimal](0)
+                    yield
+                        // Every digit survives. Under a bare DECIMAL(38,10) this reads back 98765432109876.547:
+                        // NUMERIC affinity rewrites it to a double on the way in, losing six digits with nothing red.
+                        assert(typed == BigDecimal("98765432109876.543210"), s"decoded $typed")
+                        // The rendering pads to the DECLARED scale of 10, where the stored text carries 6. That is the
+                        // codec applying a scale SQLite itself does not have, not a digit appearing from nowhere.
+                        assert(rendered == Present("98765432109876.5432100000"), s"rendered $rendered")
+                }
+            }
+        }
+    }
+
+    "a statement string holding two statements is refused rather than half-run" in {
+        withTempDb { url =>
+            SqlClient.init(url, SqlConfig(maxConnections = 1)).map { client =>
+                DB.run(client) {
+                    for
+                        _       <- client.executeRaw("CREATE TABLE t (v INTEGER)")
+                        outcome <- Abort.run[SqlException](client.executeRaw("INSERT INTO t VALUES (1); DROP TABLE t"))
+                        rows    <- client.query("SELECT count(*) FROM t")
+                        count   <- rows(0).decode[Long](0)
+                    yield
+                        assert(outcome.isFailure, "a two-statement string must be refused")
+                        // Neither statement ran: the refusal is before execution, not after the first one.
+                        assert(count == 0L, s"the table holds $count rows, so part of it ran")
+                }
+            }
+        }
+    }
+
+    "an unknown table is reported as such rather than as a generic error" in {
+        withTempDb { url =>
+            SqlClient.init(url, SqlConfig(maxConnections = 1)).map { client =>
+                DB.run(client) {
+                    Abort.run[SqlException](client.query("SELECT * FROM nope")).map { outcome =>
+                        outcome match
+                            case Result.Failure(e: SqlServerException) =>
+                                // SQLite answers bare SQLITE_ERROR for this, a syntax error and an unknown column
+                                // alike, so the message prefix is what separates them.
+                                assert(e.sqlState == "42P01", s"SQLSTATE was ${e.sqlState}")
+                            case other => fail(s"expected a typed server error, got $other")
+                    }
+                }
+            }
+        }
+    }
+
+    "a unique violation carries the integrity SQLSTATE" in {
+        withTempDb { url =>
+            SqlClient.init(url, SqlConfig(maxConnections = 1)).map { client =>
+                DB.run(client) {
+                    for
+                        _       <- client.executeRaw("CREATE TABLE t (v INTEGER UNIQUE)")
+                        _       <- client.executeRaw("INSERT INTO t VALUES (1)")
+                        outcome <- Abort.run[SqlException](client.executeRaw("INSERT INTO t VALUES (1)"))
+                    yield outcome match
+                        case Result.Failure(e: SqlServerException) =>
+                            assert(e.sqlState == "23505", s"SQLSTATE was ${e.sqlState}")
+                        case other => fail(s"expected a typed server error, got $other")
+                }
+            }
+        }
+    }
+
+    "an isolation level SQLite cannot honour is refused rather than silently ignored" in {
+        withTempDb { url =>
+            SqlClient.init(url, SqlConfig(maxConnections = 1)).map { client =>
+                DB.run(client) {
+                    Abort.run[SqlException] {
+                        client.transaction(Present(SqlClient.IsolationLevel.ReadCommitted), readOnly = false) {
+                            client.executeRaw("SELECT 1")
+                        }
+                    }.map { outcome =>
+                        outcome match
+                            case Result.Failure(_: SqliteIsolationLevelUnsupportedException) => succeed
+                            case other =>
+                                fail(s"READ COMMITTED must be refused rather than run at snapshot, got $other")
+                    }
+                }
+            }
+        }
+    }
+
+    "a transaction commits its write, and a rollback discards it" in {
+        withTempDb { url =>
+            SqlClient.init(url, SqlConfig(maxConnections = 1)).map { client =>
+                DB.run(client) {
+                    for
+                        _ <- client.executeRaw("CREATE TABLE t (v INTEGER)")
+                        _ <- client.transaction(client.executeRaw("INSERT INTO t VALUES (1)"))
+                        _ <- Abort.run[SqlException] {
+                            client.transaction {
+                                client.executeRaw("INSERT INTO t VALUES (2)").andThen(
+                                    Abort.fail(SqliteMultipleStatementsException("forced"))
+                                )
+                            }
+                        }
+                        rows  <- client.query("SELECT count(*) FROM t")
+                        count <- rows(0).decode[Long](0)
+                    yield assert(count == 1L, s"the rolled-back write survived: the table holds $count rows")
+                }
+            }
+        }
+    }
+
+    "an advisory lock is refused, SQLite having none" in {
+        withTempDb { url =>
+            SqlClient.init(url, SqlConfig(maxConnections = 1)).map { client =>
+                DB.run(client) {
+                    Abort.run[SqlException](client.withAdvisoryLock(42L)(client.executeRaw("SELECT 1"))).map { outcome =>
+                        outcome match
+                            case Result.Failure(_: SqliteAdvisoryLockUnsupportedException) => succeed
+                            case other                                                     => fail(s"expected a typed refusal, got $other")
+                    }
+                }
+            }
+        }
+    }
+
+    "the server version is the vendored library's" in {
+        withTempDb { url =>
+            SqlClient.init(url, SqlConfig(maxConnections = 1)).map { client =>
+                DB.run(client) {
+                    client.serverVersion.map { v =>
+                        assert(v.major == 3 && v.minor == 53 && v.patch == 4, s"reported $v")
+                    }
+                }
+            }
+        }
+    }
+
+end SqliteClientTest

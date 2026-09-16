@@ -488,7 +488,7 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
             onLease(netKey, conn, config) {
                 Sync.Unsafe.defer(custody.take())
                     .andThen(Log.debug(
-                        s"kyo.sql: opened connection id=${conn.id} host=${address.host} port=${address.port} tls=${config.tls.isDefined}"
+                        s"kyo.sql: opened connection id=${conn.id} address=${Render.asString(address)} tls=${config.tls.isDefined}"
                     ))
                     .andThen(metrics.recordAcquire)
                     .andThen(leaseClock.elapsed.flatMap(d => metrics.recordLeaseAcquired(d.toMillis)))
@@ -671,7 +671,7 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
             else
                 Async.timeoutWithError(
                     budget,
-                    Result.Failure(SqlConnectionEstablishTimeoutException(budget, address.host, address.port, source))
+                    Result.Failure(SqlConnectionEstablishTimeoutException(budget, address, source))
                 )(factory.open(address, password, config))
             end if
     end connect
@@ -903,7 +903,7 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
                             Scope.ensure(error => decideExit(netKey, conn, config, logger, error))
                                 .andThen(Sync.Unsafe.defer(custody.take()))
                                 .andThen(Log.debug(
-                                    s"kyo.sql: opened connection id=${conn.id} host=${address.host} port=${address.port} tls=${config.tls.isDefined}"
+                                    s"kyo.sql: opened connection id=${conn.id} address=${Render.asString(address)} tls=${config.tls.isDefined}"
                                 ))
                                 .andThen(held).andThen(conn)
                         }
@@ -938,14 +938,17 @@ private[kyo] object SqlConnectionPool:
       * ordinary case, has exactly one bucket and is unaffected.
       */
     private[kyo] case class Endpoint(
-        net: NetAddress,
+        address: SqlConfig.Address,
         tlsMode: TlsMode,
         tls: Maybe[NetTlsConfig]
     ) derives CanEqual
 
     private[kyo] object Endpoint:
+        // Keyed on the ADDRESS rather than on a resolved network endpoint. It was only ever a key, never read as one,
+        // and an address is the one coordinate every engine has: an embedded one has a path and no host or port.
         def apply(address: SqlConfig.Address, config: SqlConfig): Endpoint =
-            Endpoint(NetAddress.Tcp(address.host, address.port), config.tlsMode, config.tls)
+            Endpoint(address, config.tlsMode, config.tls)
+    end Endpoint
 
     /** Builds a pool around a fresh [[ConnectionPool]] for the connection type `factory` opens.
       *
