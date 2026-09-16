@@ -261,10 +261,19 @@ object Process:
         /** Returns the OS-assigned process identifier. */
         def pid()(using AllowUnsafe): Long
 
-        /** Raw standard-output stream. Managed by the `Scope` in the safe API. */
+        /** Raw standard-output stream. Managed by the `Scope` in the safe API.
+          *
+          * On JS this stream does not block, because the host it runs on has one thread and nothing to block on: it
+          * serves what the child's data events have delivered so far. When none have arrived yet and the child has not
+          * ended, `read(array, off, len)` answers 0 and `read()` answers -2, neither of which is end of stream. A
+          * caller seeing either has to let the event loop run before asking again, which is what `stdout` does for
+          * you. Every other platform blocks as `InputStream` says it does.
+          */
         def stdoutJava(using AllowUnsafe): InputStream
 
-        /** Raw standard-error stream. Managed by the `Scope` in the safe API. */
+        /** Raw standard-error stream. Managed by the `Scope` in the safe API. Does not block on JS, as `stdoutJava`
+          * describes.
+          */
         def stderrJava(using AllowUnsafe): InputStream
 
         /** Raw standard-input stream for writing into the process. */

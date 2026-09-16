@@ -91,6 +91,29 @@ class ProcessTest extends kyo.test.Test[Any]:
         }
     }
 
+    "a process asked about after it was signalled still answers" in {
+        unixOnly
+        // The leaf above asks while the exit is still coming. This one asks after it has arrived, which is the
+        // other half and a different code path: both answers have a fast path that reads what the child already
+        // recorded, and on JS a signalled death records a null exit code and a signal name instead. Reading only
+        // the code there made exitCode answer Absent about a process isAlive already called dead, and made the
+        // timed waitFor miss its fast path, attach a listener for an event that had already fired, and spend the
+        // whole timeout before answering Absent, which reads as "still running".
+        Scope.run {
+            for
+                proc   <- Command("sleep", "60").spawn
+                _      <- proc.destroyForcibly
+                _      <- proc.waitFor
+                alive  <- proc.isAlive
+                code   <- proc.exitCode
+                waited <- proc.waitFor(10.seconds)
+            yield
+                assert(!alive)
+                assert(code == Present(ExitCode.Signaled(9)), s"expected SIGKILL from exitCode, got $code")
+                assert(waited == Present(ExitCode.Signaled(9)), s"expected SIGKILL from waitFor, got $waited")
+        }
+    }
+
     "waitFor with an infinite timeout waits for the process" in {
         unixOnly
         // An infinite timeout must not arm a timer. Node clamps any delay past the signed 32-bit

@@ -48,17 +48,18 @@ private[kyo] trait NodeWritableStream extends js.Object:
     def end(): Unit                      = js.native
 end NodeWritableStream
 
-// --- NodeInputStream — InputStream backed by a Node.js Readable stream ---
-//
-// Node.js is fundamentally async so a truly blocking read() is not
-// possible.  Instead we buffer all data that arrives via the 'data'
-// event and serve it on demand.  When the event loop turns between
-// kyo-fiber steps the buffered bytes will be available.  This works
-// correctly for the streamFromJavaInputStream usage pattern which calls
-// read() in a Sync.Unsafe.defer loop — each iteration yields back to
-// the event loop, giving Node.js a chance to push more 'data' events
-// into the buffer.
-
+/** An `InputStream` over a Node readable, which cannot block because nothing here can.
+  *
+  * Data arrives on the readable's 'data' event and is buffered; a read serves what has arrived. When nothing has,
+  * the read says so rather than waiting: 0 from `read(array, off, len)` and -2 from `read()`, neither of which is
+  * end of stream. That is a departure from what `InputStream` promises, and it is the only shape available on a
+  * host with one thread: a read that waited would be waiting on the same turn that has to end before any byte can
+  * arrive.
+  *
+  * A caller that gets one of those answers has to let the event loop run before asking again. kyo's own readers do:
+  * `streamFromJavaInputStream` retries through the kernel's loop, whose preemption hands the turn back, and the
+  * stdin feed in this file returns and resumes on the next turn.
+  */
 final private[kyo] class NodeInputStream(readable: NodeReadableStream) extends InputStream:
 
     // Simple growable byte queue.
@@ -215,9 +216,14 @@ final private[kyo] class NodeProcessUnsafe(
         val p        = Promise.Unsafe.init[Maybe[Process.ExitCode], Any]()
         var resolved = false
         val ec       = child.exitCode
-        if ec != null && !js.isUndefined(ec) then
+        val sc       = child.signalCode
+        // Both, for the reason the untimed overload gives: a child killed by a signal has a null exitCode, so
+        // reading that alone left an already dead process looking alive, and the 'exit' event it would have
+        // been told by had fired before the listener below was attached. Here that turned the whole timeout
+        // into dead time and then answered Absent, meaning "still running", about a process that had not been.
+        if (ec != null && !js.isUndefined(ec)) || (sc != null && !js.isUndefined(sc)) then
             resolved = true
-            p.completeDiscard(Result.succeed(Present(Process.ExitCode(ec.asInstanceOf[Int]))))
+            p.completeDiscard(Result.succeed(Present(exitCodeFrom(ec, sc))))
         end if
         if !resolved then
             // Held so every resolution path can clear it. An uncleared timer keeps the Node event
@@ -292,10 +298,14 @@ final private[kyo] class NodeProcessUnsafe(
         }(n => Process.ExitCode(128 + n))
     end exitCodeFrom
 
+    /** Both fields, so that this and `isAlive` agree: a child killed by a signal has a null exitCode, and reading
+      * that alone reported no exit code for a process `isAlive` already called dead.
+      */
     def exitCode()(using AllowUnsafe): Maybe[Process.ExitCode] =
         val ec = child.exitCode
-        if ec == null || js.isUndefined(ec) then Absent
-        else Present(Process.ExitCode(ec.asInstanceOf[Int]))
+        val sc = child.signalCode
+        if (ec == null || js.isUndefined(ec)) && (sc == null || js.isUndefined(sc)) then Absent
+        else Present(exitCodeFrom(ec, sc))
     end exitCode
 
     def destroy()(using AllowUnsafe): Unit         = discard(child.kill("SIGTERM"))
