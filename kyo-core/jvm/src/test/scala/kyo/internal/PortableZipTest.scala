@@ -209,6 +209,18 @@ class PortableZipTest extends kyo.test.Test[Any]:
             val portable = portableDeflate(longText).length
             assert(portable * 20 < longText.length, s"portable $portable of ${longText.length}")
         }
+
+        "input that repays no match grows by no more than the framing of stored blocks" in {
+            // Under the fixed codes, a byte from 144 up costs nine bits, so random input written as literals comes out about
+            // five percent larger. A block that would grow is stored as it is, which costs five bytes per 32 KB block and the
+            // ZLIB frame's six, as zlib's output does.
+            val random   = new scala.util.Random(99)
+            val noise    = Array.fill(200000)(random.nextInt(256).toByte)
+            val portable = portableDeflate(noise, chunk = 65536).length
+            val framing  = (noise.length + 32767) / 32768 * 5 + 6
+            assert(portable <= noise.length + framing, s"portable $portable of ${noise.length}, allowed ${noise.length + framing}")
+            assert(portableInflate(portableDeflate(noise, chunk = 65536)).sameElements(noise))
+        }
     }
 
     "the checksums agree with the JDK's" - {
