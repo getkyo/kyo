@@ -20,6 +20,8 @@
 #
 # Measured at the change that took java.time out of the schema model, the UUID generator and the trace span (#1878):
 #   JS    HttpGet 5,388,998   AiHttp 7,226,062   MachineStats 2,283,888
+#   Wasm  CoreApp   876,393   HttpGet 2,228,208   AiHttp 3,022,652   MachineStats 1,107,591
+# The Wasm row is the same programs through the WasmGC linker, and lands near 41% of the JS size on every one.
 # Every program also lost weight here: CoreMin 914,678 to 879,915, CoreApp 1,772,186 to 1,759,327, NetEcho
 # 3,304,836 to 3,284,716. The locale database is what left.
 
@@ -39,3 +41,7 @@ Wasm NetEcho      1,620,000
 JS   HttpGet      5,930,000
 JS   AiHttp       7,950,000
 JS   MachineStats 2,515,000
+Wasm CoreApp        965,000
+Wasm HttpGet      2,455,000
+Wasm AiHttp       3,330,000
+Wasm MachineStats 1,220,000

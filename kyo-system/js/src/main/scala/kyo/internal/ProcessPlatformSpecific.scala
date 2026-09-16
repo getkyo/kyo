@@ -4,6 +4,7 @@ import java.io.InputStream
 import java.io.OutputStream
 import kyo.*
 import scala.scalajs.js
+import scala.scalajs.js.timers
 import scala.scalajs.js.typedarray.Uint8Array
 
 // --- Node.js child_process facades, reached through NodeModules ---
@@ -467,20 +468,48 @@ final private[kyo] class NodeCommandUnsafe(
         opts
     end buildOptions
 
-    /** Writes a Java InputStream into a child process's writable stream synchronously. */
+    /** Writes a Java InputStream into a child process's writable stream.
+      *
+      * A source with its bytes already in hand, which every `stdin` overload but `FromStream` builds, is written and
+      * ended in one pass. A source that answers 0, meaning it has none yet, is a stream filled by the event loop, most
+      * often another child's stdout: asking it again on this turn can only produce 0 again, because the turn is what
+      * keeps its data event from running. So the pump stops and resumes on the next turn, which is also what lets a
+      * feed that never ends stay out of the way of everything else this thread has to do.
+      */
+    /** Runs `work` on the host's next turn, without the pending turn keeping the host alive on its own.
+      *
+      * A feed is only worth continuing while its child is running, and a running child holds the host open by itself.
+      * An armed timer that held it too would keep a program alive after everything it was doing had finished.
+      */
+    private def resumeNextTurn(work: () => Unit): Unit =
+        val handle  = js.timers.setTimeout(0.0)(work())
+        val dynamic = handle.asInstanceOf[js.Dynamic]
+        if js.typeOf(dynamic.unref) == "function" then discard(dynamic.unref())
+    end resumeNextTurn
+
     private def feedInputStream(is: InputStream, childStdin: NodeWritableStream)(using AllowUnsafe): Unit =
         val buf = new Array[Byte](8192)
-        var n   = is.read(buf)
-        while n >= 0 do
-            val arr = new Uint8Array(n)
-            var i   = 0
-            while i < n do
-                arr(i) = buf(i).toShort
-                i += 1
-            discard(childStdin.write(arr))
-            n = is.read(buf)
-        end while
-        childStdin.end()
+        def pump(): Unit =
+            var pumping = true
+            while pumping do
+                val n = is.read(buf)
+                if n > 0 then
+                    val arr = new Uint8Array(n)
+                    var i   = 0
+                    while i < n do
+                        arr(i) = buf(i).toShort
+                        i += 1
+                    discard(childStdin.write(arr))
+                else if n == 0 then
+                    pumping = false
+                    resumeNextTurn(() => pump())
+                else
+                    pumping = false
+                    childStdin.end()
+                end if
+            end while
+        end pump
+        pump()
     end feedInputStream
 
     /** Evaluates a Sync stream and writes the resulting bytes into a child process's writable stream. */
