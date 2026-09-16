@@ -2877,6 +2877,15 @@ lazy val `kyo-link-check-machine` =
         .settings(`kyo-settings`, `link-check-settings`)
         .jsSettings(`js-settings`)
 
+// Not a program to link: the JVM tool `linkCheck` asks for the Chrome it serves bundled pages to, taken from kyo-browser
+// so the check runs the Chrome the browser test rows run.
+lazy val `kyo-link-check-browser` =
+    project
+        .in(file("kyo-link-check/browser"))
+        .dependsOn(`kyo-browser`.jvm)
+        .disablePlugins(MimaPlugin)
+        .settings(`kyo-settings`, publish / skip := true)
+
 // The website: shared apps + page wrapper + content model + cross-platform kyo-parse Markdown
 // transpiler (DocsMarkdown in shared/, no third-party Markdown dependency). JVM side carries the
 // SSG generator; JS side is the browser-mounted chrome. Native is not a target: the generator needs

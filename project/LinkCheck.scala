@@ -34,7 +34,10 @@ import scala.util.matching.Regex
   *   - deletes the Node-side chunks from a copy of the output and runs it with no `process` global, as a page, and deletes the page-side
   *     chunks from another copy and runs it under plain node: each must still print its line, which is what proves the deleted chunks
   *     were never fetched;
-  *   - fails when the initial load exceeds its own ceiling.
+  *   - fails when the initial load exceeds its own ceiling;
+  *   - builds the output with vite, webpack and rollup, with and without `external: [/^node:/]`, serves each build to the Chrome the
+  *     browser test rows run, and fails when a page does not print its line, throws, or fetches a file carrying a Node backend
+  *     (`kyo-link-check/bundlers/check.mjs`; the bundler versions are pinned in its `package.json`).
   *
   * A WasmGC link is one module by necessity, so it carries both sides inline and its initial load is its whole output.
   *
@@ -207,6 +210,8 @@ object LinkCheck {
     private def linkFailures(state: State, platform: String): Seq[String] = {
         val extracted = Project.extract(state)
         val ceilings  = readCeilings(extracted.get(LocalRootProject / baseDirectory) / "kyo-link-check" / "ceilings.txt")
+        // Installed and resolved once per run, and only when a program bundles.
+        lazy val tools = bundlerTools(state)
         val rows = programs.map { program =>
             // Wasm links the JS project with the WasmGC linker configuration, as an application linking the one _sjs1 artifact does.
             val ref    = LocalProject(s"${program.project}JS")
@@ -242,7 +247,8 @@ object LinkCheck {
                 else Nil
             // The WasmGC row links the same IR, so the JS row answers for both.
             val bareGlobals = if (platform == "JS") bareHostGlobalReads(linkState, ref) else Nil
-            Row(program, size, initial.map(_.length).sum, gzipSize(initial), found, linked, nodeImports, eager, bareGlobals, runs)
+            val bundlers    = if (program.hostChunks && platform == "JS") bundlerRuns(program, outDir, tools) else Right(Nil)
+            Row(program, size, initial.map(_.length).sum, gzipSize(initial), found, linked, nodeImports, eager, bareGlobals, bundlers, runs)
         }
         log(s"$platform sizes (bytes; total is every output file, initial is what a host fetches before any code runs):")
         rows.foreach { row =>
@@ -254,6 +260,7 @@ object LinkCheck {
                 f"  ${row.program.name}%-12s total ${row.size}%,12d ($ceiling)   initial ${row.initialSize}%,12d ($initialCeiling)   initial gzip ${row.initialGzip}%,10d"
             )
         }
+        rows.foreach(row => row.bundlers.foreach(_.foreach(line => log(s"  ${row.program.name} bundled, $line"))))
         rows.flatMap { row =>
             val program = row.program
             val data    = row.found.map(m => s"$platform ${program.name}: the linked output contains data it cannot reach (marker '$m')")
@@ -278,7 +285,11 @@ object LinkCheck {
                     if (expected.pattern.matcher(last.trim).matches()) Nil
                     else Seq(s"$platform ${program.name}: unexpected output $how, last line '$last', expected '$expected'")
             }
-            data ++ reached ++ imports ++ eager ++ bareGlobals ++ ceiling ++ initialCeiling ++ output
+            val bundled = row.bundlers match {
+                case Left(err)    => Seq(s"$platform ${program.name}: the bundler check did not run: $err")
+                case Right(lines) => lines.filter(_.startsWith("FAIL")).map(line => s"$platform ${program.name} bundled: ${line.stripPrefix("FAIL ")}")
+            }
+            data ++ reached ++ imports ++ eager ++ bareGlobals ++ bundled ++ ceiling ++ initialCeiling ++ output
         }
     }
 
@@ -292,6 +303,7 @@ object LinkCheck {
         nodeImports: Seq[String],
         eager: Seq[String],
         bareGlobals: Seq[String],
+        bundlers: Either[String, Seq[String]],
         runs: Seq[(String, Regex, Either[String, Seq[String]])]
     )
 
@@ -510,6 +522,69 @@ object LinkCheck {
             }
         }
     }
+
+    /** Runs `command` from `dir` with its output in `outFile`, and returns its exit code and lines, or why it did not finish. */
+    private def runProcess(command: Seq[String], dir: File, timeoutSeconds: Int, outFile: File): Either[String, (Int, Seq[String])] = {
+        IO.createDirectory(outFile.getParentFile)
+        val process = new ProcessBuilder(command*)
+            .directory(dir)
+            .redirectErrorStream(true)
+            .redirectOutput(outFile)
+            .start()
+        if (!process.waitFor(timeoutSeconds.toLong, TimeUnit.SECONDS)) {
+            process.destroyForcibly()
+            Left(s"${command.head} did not exit within $timeoutSeconds seconds")
+        } else Right((process.exitValue, IO.readLines(outFile)))
+    }
+
+    /** What the bundler check needs: its directory, with the pinned bundlers installed, and the Chrome the browser test rows run. */
+    private final case class BundlerTools(dir: File, chrome: String, logs: File)
+
+    private def bundlerTools(state: State): Either[String, BundlerTools] = {
+        val extracted = Project.extract(state)
+        val base      = extracted.get(LocalRootProject / baseDirectory)
+        val dir       = base / "kyo-link-check" / "bundlers"
+        val browser   = LocalProject("kyo-link-check-browser")
+        val logs      = extracted.get(browser / target) / "link-check"
+        val install = runProcess(Seq("npm", "install", "--no-audit", "--no-fund", "--no-package-lock"), dir, 600, logs / "npm-install.out")
+        install match {
+            case Left(err)                   => Left(s"installing the bundlers: $err")
+            case Right((code, lines)) if code != 0 => Left(s"installing the bundlers exited with $code: ${lines.takeRight(5).mkString(" | ")}")
+            case Right(_) =>
+                val (_, classpath) = extracted.runTask(browser / Compile / fullClasspath, state)
+                val command = Seq(
+                    "java",
+                    "-cp",
+                    classpath.map(_.data.getAbsolutePath).mkString(File.pathSeparator),
+                    "linkcheck.ChromeExecutable",
+                    KyoJsRows.chromeVersion(base)
+                )
+                runProcess(command, base, 900, logs / "chrome-executable.out") match {
+                    case Left(err) => Left(s"resolving Chrome: $err")
+                    case Right((code, lines)) =>
+                        lines.reverse.find(_.trim.nonEmpty).map(_.trim).filter(p => code == 0 && new File(p).isFile) match {
+                            case Some(chrome) => Right(BundlerTools(dir, chrome, logs))
+                            case None         => Left(s"resolving Chrome exited with $code: ${lines.takeRight(5).mkString(" | ")}")
+                        }
+                }
+        }
+    }
+
+    /** Builds the linked output with vite, webpack and rollup and serves each build to Chrome as a page (`kyo-link-check/bundlers/check.mjs`),
+      * returning the line printed for each build. A line starting with `FAIL` is a failure: the page did not print the line expected of a
+      * page, threw, or fetched an output file carrying a Node backend.
+      */
+    private def bundlerRuns(program: Program, outDir: File, tools: Either[String, BundlerTools]): Either[String, Seq[String]] =
+        tools.flatMap { t =>
+            val command = Seq("node", (t.dir / "check.mjs").getAbsolutePath, outDir.getAbsolutePath, t.chrome, program.withoutProcess.regex) ++
+                nodeBackend
+            runProcess(command, t.dir, 1800, t.logs / s"${program.name}-bundlers.out").flatMap { case (code, lines) =>
+                val results = lines.filter(_.matches("^(ok|note|FAIL) .*"))
+                if (code != 0 && !results.exists(_.startsWith("FAIL")))
+                    Left(s"the bundler check exited with $code: ${lines.takeRight(5).mkString(" | ")}")
+                else Right(results)
+            }
+        }
 
     private def readCeilings(file: File): Map[(String, String), Long] =
         if (!file.exists) Map.empty

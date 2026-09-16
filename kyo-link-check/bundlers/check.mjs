@@ -1,7 +1,11 @@
-// Prototype: bundle a linked Scala.js ESModule program with vite, webpack and rollup, with and without
-// `external: [/^node:/]`, then load each build in headless Chrome and record what the page requests.
+// Builds a linked Scala.js ES module program the way an application bundles it, with vite, webpack and rollup, each with
+// and without `external: [/^node:/]`. Each build is served to headless Chrome as a page, and the page's requests are read
+// over the DevTools protocol: the page must print its expected line and must never fetch an output file carrying the
+// Node backends. That is what the chunk split is for, and a bundler that merged the chunks, or pulled Node code into the
+// page's files, fails here.
 //
 // usage: node check.mjs <linked dir> <chrome executable> <expected console regex> <node marker>...
+// Run by `linkCheck JS` (project/LinkCheck.scala); prints one line per build and exits 1 on any FAIL line.
 import { spawnSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -132,8 +136,11 @@ async function page(dist) {
     .filter((e) => e.method === "Network.requestWillBeSent")
     .map((e) => new URL(e.params.request.url).pathname);
   browser.close();
+  const exited = new Promise((r) => proc.once("exit", r));
   proc.kill();
+  await exited;
   server.close();
+  fs.rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   return { logged: logged(), errors: errors(), requested };
 }
 
@@ -146,6 +153,7 @@ for (const name of Object.keys(builds)) {
     if (!built.ok) {
       row.error = built.out.split("\n").filter((l) => /error|Error/.test(l)).slice(0, 3).join(" | ");
       rows.push(row);
+      fs.rmSync(dir, { recursive: true, force: true });
       continue;
     }
     const dist = path.join(dir, "dist");
@@ -158,8 +166,29 @@ for (const name of Object.keys(builds)) {
     row.pageErrors = result.errors;
     row.requested = result.requested.filter((p) => /\.m?js$/.test(p));
     row.requestedNode = row.requested.filter((p) => row.nodeFiles.includes(p.replace(/^\//, "")));
-    row.initialBytes = row.requested.reduce((s, p) => s + fs.statSync(path.join(dist, p)).size, 0);
+    row.fetchedBytes = row.requested.reduce((s, p) => s + fs.statSync(path.join(dist, p)).size, 0);
     rows.push(row);
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 }
-console.log(JSON.stringify(rows, null, 2));
+
+// One line per build. A line starting with FAIL is a failure; linkCheck fails the program on any.
+const bytes = (n) => n.toLocaleString("en-US");
+let failed = false;
+for (const row of rows) {
+  const name = `${row.bundler}${row.external ? " with external node: modules" : ""}`;
+  if (!row.built) {
+    // webpack resolves every specifier, including those in chunks a page never loads, so without the external line it cannot read node:.
+    if (row.bundler === "webpack" && !row.external) console.log(`note ${name}: does not build (${row.error}), which is why the READMEs give the external line`);
+    else { failed = true; console.log(`FAIL ${name}: does not build: ${row.error}`); }
+    continue;
+  }
+  const problems = [];
+  if (!row.answered) problems.push(`the page never printed a line matching '${expected}'`);
+  if (row.pageErrors.length > 0) problems.push(`the page threw: ${row.pageErrors.join(" | ")}`);
+  if (row.nodeFiles.length === 0) problems.push("no output file carries the Node backends, so the build's split cannot be told apart");
+  if (row.requestedNode.length > 0) problems.push(`the page fetched Node code: ${row.requestedNode.join(", ")}`);
+  if (problems.length > 0) { failed = true; console.log(`FAIL ${name}: ${problems.join("; ")}`); }
+  else console.log(`ok ${name}: the page answered and fetched ${bytes(row.fetchedBytes)} of ${bytes(row.totalBytes)} bytes, no Node chunk among them`);
+}
+process.exit(failed ? 1 : 0);
