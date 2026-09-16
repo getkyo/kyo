@@ -22,7 +22,7 @@ private[internal] class OsSignalPlatformSpecific:
     private object NodeProcessSignals extends OsSignal.Handler:
         def apply(signal: String, handle: () => Unit): Unit =
             val listener: js.Function0[Unit] = () => handle()
-            discard(js.Dynamic.global.process.on(s"SIG$signal", listener))
+            PlatformJs.jsGlobal("process").foreach(process => discard(process.on(s"SIG$signal", listener)))
 
         override def toString = "Signal.Handler.NodeProcess"
     end NodeProcessSignals

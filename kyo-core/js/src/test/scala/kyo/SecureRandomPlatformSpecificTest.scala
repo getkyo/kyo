@@ -11,8 +11,8 @@ import scala.scalajs.js as sjs
   * global object for the duration of one synchronous block.
   *
   * Removing the global is not enough on its own, because the second candidate then rescues the call, which was measured on both the JS and
-  * the WebAssembly host rather than assumed. `js.Dynamic.global.selectDynamic` compiles to a bare global reference, so the `require` probe
-  * resolves through the enclosing module scope and no test can take that binding away. That is what `SecureRandom.fillBytesFrom` exists for:
+  * the WebAssembly host rather than assumed. The module candidate is reached through `process.getBuiltinModule`, which a leaf cannot take
+  * away without taking the test runner's `process` with it. That is what `SecureRandom.fillBytesFrom` exists for:
   * restricting the candidate list is how the Web Crypto edge is reached, and the leaves that do it are matched by a control leaf which
   * restricts the same single candidate with the global still in place, so a pass cannot come from the restriction alone.
   *

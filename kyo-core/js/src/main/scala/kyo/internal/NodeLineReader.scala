@@ -97,7 +97,11 @@ private[kyo] object NodeLineReader:
     private inline val Newline = 0x0a
     private inline val Return  = 0x0d
 
-    private def buffer: js.Dynamic = js.Dynamic.global.Buffer
+    /** Node's `Buffer`, taken from `node:buffer` rather than from the global, whose bare read throws on a host that does not declare it. A
+      * reader exists only once the caller has resolved `node:fs` through the same `process.getBuiltinModule`, so the module is there.
+      */
+    private lazy val buffer: js.Dynamic =
+        PlatformJs.nodeBuiltin("node:buffer").fold(throw new IllegalStateException("node:buffer is not available on this host"))(_.Buffer)
 
     private def emptyBuffer: js.Dynamic = buffer.applyDynamic("alloc")(0)
 

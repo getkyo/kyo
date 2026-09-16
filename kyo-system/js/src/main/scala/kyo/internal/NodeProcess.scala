@@ -33,8 +33,7 @@ private[kyo] object NodeProcess:
 
     /** `process` on a Node-like host, for `operation`; anywhere else, throws [[unsupported]]. */
     def require(operation: String): js.Dynamic =
-        if Platform.isNodeLike then js.Dynamic.global.process
-        else throw unsupported(operation)
+        PlatformJs.jsGlobal("process").toOption.filter(_ => Platform.isNodeLike).getOrElse(throw unsupported(operation))
 
     /** The failure of an operation that needs a Node-like host. */
     def unsupported(operation: String): UnsupportedOperationException =

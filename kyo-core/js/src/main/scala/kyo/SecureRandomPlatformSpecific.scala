@@ -10,9 +10,9 @@ import scala.scalajs.js.typedarray.Int8Array
   * fails with [[SecureRandom.EntropyUnavailable]]. Nothing here falls back to `Math.random`; [[SecureRandom]] carries the reasoning for why
   * a silent downgrade is worse than a failure.
   *
-  * Every probe reads a global through `js.typeOf` before reading its value. `js.Dynamic.global.selectDynamic(name)` compiles to a bare
-  * reference to the global `name`, and reading an undeclared identifier raises a `ReferenceError` rather than yielding `undefined`, so
-  * `typeof` is the only safe way to ask whether one exists. That is also why the value read sits inside the guard rather than beside it.
+  * Every probe reads what it needs as a property of `globalThis`, through `kyo.internal.PlatformJs`, never as a bare identifier:
+  * `js.Dynamic.global.selectDynamic(name)` compiles to a bare reference to the global `name`, and reading an undeclared identifier raises a
+  * `ReferenceError` rather than yielding `undefined`.
   *
   * The `java.security.SecureRandom` shim this platform ships (for `java.util.UUID.randomUUID` linkage) delegates to [[SecureRandom.live]]
   * rather than reaching this logic directly, so these members can stay `private[kyo]`.
@@ -43,9 +43,8 @@ private[kyo] trait SecureRandomPlatformSpecific:
           */
         case WebCryptoGlobal
 
-        /** The `crypto` module, reached through `require`. Because the probe compiles to a bare global reference rather than a property read
-          * on the global object, it resolves through the enclosing scope chain, so a module-level `require` binding satisfies it. That is
-          * what covers a Node host with no Web Crypto global. A browser has no such binding and falls through instead of failing.
+        /** Node's `crypto` module, reached through `process.getBuiltinModule`, which answers the same under every module kind. That is
+          * what covers a Node-like host with no Web Crypto global. A browser has no `process` and falls through instead of failing.
           *
           * A static `@JSImport` would be the portable spelling used elsewhere in kyo-core, and is deliberately avoided here: it makes the
           * linker emit an eager `require`/`import` of a Node builtin into every bundle that can reach `UUID.randomUUID`, which is nearly
@@ -114,26 +113,18 @@ private[kyo] trait SecureRandomPlatformSpecific:
     end webCryptoGlobal
 
     private def cryptoModule: Maybe[Int8Array => Unit] =
-        if js.typeOf(js.Dynamic.global.selectDynamic("require")) != "function" then Absent
-        else
-            // A host can have `require` and still have no `crypto` module, and a thrown Error is the only signal for that, so catching here
-            // is boundary detection rather than control flow. It is the same reason `NodeError` catches to classify Node errno values.
-            val module =
-                try Maybe(js.Dynamic.global.applyDynamic("require")("crypto"))
-                catch case _: js.JavaScriptException => Absent
-            module.flatMap { mod =>
-                // randomFillSync fills in place and has no per-call ceiling. webcrypto is the same interface as the global, so it keeps the
-                // windowing.
-                if isCallable(mod, "randomFillSync") then
-                    Present(buf => discardJs(mod.applyDynamic("randomFillSync")(buf)))
-                else
-                    val webcrypto = mod.selectDynamic("webcrypto")
-                    if isCallable(webcrypto, "getRandomValues") then
-                        Present(windowed(buf => discardJs(webcrypto.applyDynamic("getRandomValues")(buf))))
-                    else Absent
-                end if
-            }
-        end if
+        Maybe.fromOption(kyo.internal.PlatformJs.nodeBuiltin("node:crypto").toOption).flatMap { mod =>
+            // randomFillSync fills in place and has no per-call ceiling. webcrypto is the same interface as the global, so it keeps the
+            // windowing.
+            if isCallable(mod, "randomFillSync") then
+                Present(buf => discardJs(mod.applyDynamic("randomFillSync")(buf)))
+            else
+                val webcrypto = mod.selectDynamic("webcrypto")
+                if isCallable(webcrypto, "getRandomValues") then
+                    Present(windowed(buf => discardJs(webcrypto.applyDynamic("getRandomValues")(buf))))
+                else Absent
+            end if
+        }
     end cryptoModule
 
     /** Names the candidates that were tried, as the detail of [[SecureRandom.EntropyUnavailable]], so a failure says what was looked for
@@ -146,7 +137,7 @@ private[kyo] trait SecureRandomPlatformSpecific:
     private def render(candidate: Candidate): String =
         candidate match
             case Candidate.WebCryptoGlobal => "globalThis.crypto.getRandomValues"
-            case Candidate.CryptoModule    => "the crypto module through require"
+            case Candidate.CryptoModule    => "the crypto module through process.getBuiltinModule"
 
     /** True when `target` is a value carrying a callable `member`. Both halves are checked: a host can publish a `crypto` object that has no
       * `getRandomValues` on it, and a module can lack the function being looked for.

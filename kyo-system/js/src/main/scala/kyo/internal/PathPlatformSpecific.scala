@@ -216,7 +216,7 @@ private[kyo] object NodePathLock:
         if owner.host != NodeModules.os.hostname() then false
         else
             try
-                discard(js.Dynamic.global.process.applyDynamic("kill")(owner.pid, 0))
+                discard(NodeProcess.require("Checking whether a lock's owner is alive").applyDynamic("kill")(owner.pid, 0))
                 false
             catch
                 case e: js.JavaScriptException => NodeError.codeOf(e) == "ESRCH"

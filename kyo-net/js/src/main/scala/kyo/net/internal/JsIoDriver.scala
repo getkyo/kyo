@@ -202,12 +202,14 @@ final private[kyo] class JsIoDriver private (
         end match
     end deliverLeftover
 
-    private def toNodeBuffer(span: Span[Byte], offset: Int): js.Dynamic =
+    /** The bytes from `offset` on, as the `Uint8Array` a Node stream's `write` takes in place of a `Buffer`. No `Buffer` is built: the global
+      * is one some hosts do not declare, and the stream turns the view into one without copying.
+      */
+    private def toNodeBuffer(span: Span[Byte], offset: Int): js.typedarray.Uint8Array =
         val arr = span.toArrayUnsafe
         val i8  = js.typedarray.byteArray2Int8Array(arr)
         // byteArray2Int8Array allocates a fresh ArrayBuffer (i8.byteOffset is always 0); adjust the view start by offset.
-        val u8 = new js.typedarray.Uint8Array(i8.buffer, offset, i8.length - offset)
-        js.Dynamic.global.Buffer.from(u8.buffer, u8.byteOffset, u8.byteLength)
+        new js.typedarray.Uint8Array(i8.buffer, offset, i8.length - offset)
     end toNodeBuffer
 
 end JsIoDriver

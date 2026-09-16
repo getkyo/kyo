@@ -786,38 +786,39 @@ final private[kyo] class JsTransport private (
         allow: AllowUnsafe,
         frame: Frame
     ): Fiber.Unsafe[NetConnection, Abort[NetException]] =
-        if !kyo.internal.Platform.isNodeLike then
-            // stdio is `process.stdin` and `process.stdout`; a host without `process` (a browser) has none. Checked before the claim, so a
-            // refusal never holds the slot.
-            Fiber.Unsafe.fromResult(Result.fail(NetStdioUnsupportedException()))
-        else if !stdioClaimed.compareAndSet(false, true) then
-            // Exactly one stdio per process: fds 0/1 are process-global, so double-ownership is rejected.
-            Fiber.Unsafe.fromResult(Result.fail(NetStdioAlreadyOpenException()))
-        else
-            val driver = pool.next()
-            // A duplex shim over the two Node streams: reads route to process.stdin, writes to process.stdout.
-            // JsHandle/JsIoDriver expect a single socket-like object, so the shim presents one whose read events
-            // come from stdin and whose write goes to stdout. destroy() is a no-op: the process owns fds 0/1.
-            val shim   = stdioShim()
-            val handle = JsHandle.init(shim, driver, frame)
-            // stdio keeps peerCloseGrace = Infinity: no TCP peer to reclaim against.
-            val connection = Connection.init(handle, driver, channelCapacity)
-            if connection.start() then
-                Fiber.Unsafe.fromResult(Result.succeed(connection: NetConnection))
-            else
-                // Unreachable: Connection.init registers nothing a concurrent close could reach before start() runs immediately above.
-                // Surfaced as a typed failure (not a Panic) since the return type already supports it and the shape here is eager/synchronous,
-                // unlike the deferred PosixTransport.stdio() (see PosixTransport.scala:197 above).
-                Fiber.Unsafe.fromResult(Result.fail(NetConnectionClosedException(Operation.Start)))
-            end if
+        // stdio is `process.stdin` and `process.stdout`; a host without `process` (a browser) has none. Checked before the claim, so a
+        // refusal never holds the slot. `process` is read from `globalThis`, where a host that does not declare it reads as undefined.
+        kyo.internal.PlatformJs.jsGlobal("process").toOption.filter(_ => kyo.internal.Platform.isNodeLike) match
+            case None =>
+                Fiber.Unsafe.fromResult(Result.fail(NetStdioUnsupportedException()))
+            case Some(_) if !stdioClaimed.compareAndSet(false, true) =>
+                // Exactly one stdio per process: fds 0/1 are process-global, so double-ownership is rejected.
+                Fiber.Unsafe.fromResult(Result.fail(NetStdioAlreadyOpenException()))
+            case Some(process) =>
+                val driver = pool.next()
+                // A duplex shim over the two Node streams: reads route to process.stdin, writes to process.stdout.
+                // JsHandle/JsIoDriver expect a single socket-like object, so the shim presents one whose read events
+                // come from stdin and whose write goes to stdout. destroy() is a no-op: the process owns fds 0/1.
+                val shim   = stdioShim(process)
+                val handle = JsHandle.init(shim, driver, frame)
+                // stdio keeps peerCloseGrace = Infinity: no TCP peer to reclaim against.
+                val connection = Connection.init(handle, driver, channelCapacity)
+                if connection.start() then
+                    Fiber.Unsafe.fromResult(Result.succeed(connection: NetConnection))
+                else
+                    // Unreachable: Connection.init registers nothing a concurrent close could reach before start() runs immediately above.
+                    // Surfaced as a typed failure (not a Panic) since the return type already supports it and the shape here is eager/synchronous,
+                    // unlike the deferred PosixTransport.stdio() (see PosixTransport.scala:197 above).
+                    Fiber.Unsafe.fromResult(Result.fail(NetConnectionClosedException(Operation.Start)))
+                end if
+        end match
     end stdio
 
     /** Build the stdin/stdout duplex shim. The readable side (`on`, `pause`, `resume`) delegates to `process.stdin`; the writable side
       * (`write`, `once`/`removeListener` for drain/close/error) delegates to `process.stdout`. `destroyed` is always false and `destroy` is a
       * no-op so neither process fd is ever closed.
       */
-    private def stdioShim()(using AllowUnsafe): js.Dynamic =
-        val process = js.Dynamic.global.process
+    private def stdioShim(process: js.Dynamic)(using AllowUnsafe): js.Dynamic =
         val stdin   = process.stdin
         val stdout  = process.stdout
         // The set of read-side events JsHandle/JsIoDriver subscribe to on the readable stream. Node passes the
@@ -1090,10 +1091,9 @@ final private[kyo] class JsTransport private (
                     java.lang.System.arraycopy(arr, 0, buf, off, arr.length)
                     off += arr.length
                 }
-                val nodeBuffer = js.Dynamic.global.Buffer.from(
-                    js.typedarray.byteArray2Int8Array(buf).buffer
-                )
-                discard(socket.unshift(nodeBuffer))
+                // A stream's `unshift` takes a `Uint8Array` as it takes a `Buffer`, so no `Buffer` global is read.
+                val bytes = new js.typedarray.Uint8Array(js.typedarray.byteArray2Int8Array(buf).buffer)
+                discard(socket.unshift(bytes))
             end if
 
             // Remove the JsHandle's permanent listeners from the plaintext socket. They were registered
