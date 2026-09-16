@@ -1,5 +1,12 @@
-# Size ceilings for the linkCheck programs, in bytes of linked output (all files).
+# Size ceilings for the linkCheck programs, in bytes of linked output.
 # <platform> <program> <bytes>
+#
+# `JS` and `Wasm` cap every output file. `JS-initial` caps the initial load, what a host fetches before any code runs:
+# `main.mjs` and what it imports statically. The two differ once a link splits into chunks a host loads on demand; a
+# WasmGC link is one module, so it has no separate initial ceiling.
+#
+# The JS-initial lines start at the JS total ceilings, because every program is one module until the network stack
+# splits by host (#1836, linking rule 2). The split lowers them to about 10% over what it measures.
 #
 # Each ceiling is about 10% above the size measured when it was set, so ordinary growth passes and a step like
 # the one in issue #1878 (the tz and locale data doubling a minimal program) fails. When a program grows for a
@@ -45,3 +52,13 @@ Wasm CoreApp        965,000
 Wasm HttpGet      2,455,000
 Wasm AiHttp       3,330,000
 Wasm MachineStats 1,220,000
+JS-initial CoreMin      1,010,000
+JS-initial CoreLog      1,175,000
+JS-initial UiMin          600,000
+JS-initial CoreApp      1,950,000
+JS-initial CoreReadLine 1,980,000
+JS-initial SystemPath   2,415,000
+JS-initial NetEcho      3,640,000
+JS-initial HttpGet      5,930,000
+JS-initial AiHttp       7,950,000
+JS-initial MachineStats 2,515,000

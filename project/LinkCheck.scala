@@ -25,6 +25,17 @@ import scala.util.matching.Regex
   *   - fails when the output contains data the program cannot reach: the IANA time-zone database or the CLDR locale data;
   *   - fails when the output exceeds its ceiling in `kyo-link-check/ceilings.txt`.
   *
+  * A JS link can split into chunks, and a host fetches only the chunks it reaches. So on JS the command also measures the initial load,
+  * `main.mjs` and everything it imports statically, which is what a host fetches before any code runs. For a program that reaches a
+  * backend only one kind of host can run (the network stack, which has a Node side and a page side):
+  *   - fails when the initial load carries either side's backend, since the side a host does not use belongs in a chunk it never fetches;
+  *   - deletes the Node-side chunks from a copy of the output and runs it with no `process` global, as a page, and deletes the page-side
+  *     chunks from another copy and runs it under plain node: each must still print its line, which is what proves the deleted chunks
+  *     were never fetched;
+  *   - fails when the initial load exceeds its own ceiling.
+  *
+  * A WasmGC link is one module by necessity, so it carries both sides inline and its initial load is its whole output.
+  *
   * On every platform it fails when a kyo module declares, outside tests, a dependency on an artifact that only carries that data. Linking a
   * data artifact is the application's choice, never kyo's.
   *
@@ -42,7 +53,9 @@ object LinkCheck {
         lastLine: Regex,
         withoutProcess: Regex,
         /** Strings the linked output must NOT contain: code this program has no use for and must not drag in. */
-        absent: Seq[String] = Nil
+        absent: Seq[String] = Nil,
+        /** Whether the program reaches the network stack, whose backends split by host into chunks loaded on demand. */
+        hostChunks: Boolean = false
     )
 
     object Program {
@@ -59,19 +72,34 @@ object LinkCheck {
         // A host with no file system answers on the channel `Path` declares, so the page row is a typed failure, not a panic.
         Program("SystemPath", "kyo-link-check-system", "linkcheck.SystemPath", "kyo".r, "failure FileSystemUnsupportedOnHostException".r),
         // NetPlatform.transport is a plain lazy val, so a host with no usable backend gets its NetBackendUnavailableException as a throw.
-        Program("NetEcho", "kyo-link-check-net", "linkcheck.NetEcho", "echo kyo".r, "panic NetBackendUnavailableException".r),
+        Program(
+            "NetEcho",
+            "kyo-link-check-net",
+            "linkcheck.NetEcho",
+            "echo kyo".r,
+            "panic NetBackendUnavailableException".r,
+            hostChunks = true
+        ),
         // Names one HTTP provider and reads its completion. kyo-ai's two CLI harnesses spawn a process, which reaches
         // node:child_process; a program that names neither must not carry them, and a page could not run them at all.
         // One request to a closed port, on a host that has sockets and on one that does not. The program also has to exit,
         // which is how a client that leaves something running behind it is caught.
-        Program("HttpGet", "kyo-link-check-http", "linkcheck.HttpGet", "failure HttpConnectException".r),
+        Program(
+            "HttpGet",
+            "kyo-link-check-http",
+            "linkcheck.HttpGet",
+            "failure HttpConnectException".r,
+            "failure HttpConnectException".r,
+            hostChunks = true
+        ),
         Program(
             "AiHttp",
             "kyo-link-check-ai",
             "linkcheck.AiHttp",
             "failure AITransportException".r,
             "failure AITransportException".r,
-            absent = Seq("node:child_process")
+            absent = Seq("node:child_process"),
+            hostChunks = true
         ),
         // The machine-stats factory registers itself at module load, and registering starts a sampler that reads the
         // machine through Node's own modules. A host with no machine to read registers nothing, which is the difference
@@ -81,6 +109,30 @@ object LinkCheck {
 
     /** A static import of a Node built-in in linked output: `import * as x from "node:fs"`, `import "node:fs"`. */
     private val staticNodeImport: Regex = """(?:\bfrom|\bimport)\s*["']node:[\w/]+["']""".r
+
+    /** A static import of another output file: `import * as x from "./internal-a1.mjs"`. A dynamic `import("./internal-a1.mjs")` does not
+      * match, because a parenthesis stands between the keyword and the quote.
+      */
+    private val staticRelativeImport: Regex = """(?:\bfrom|\bimport)\s*["']\./([^"']+)["']""".r
+
+    /** Classes only a Node-like host runs: the posix transport and its drivers, Node's own transport and the module loader under it, the
+      * socket HTTP client, and the koffi layer the posix backends load natives through. Matched as the quoted class name Scala.js keeps for
+      * each class, so prose that mentions one does not count.
+      */
+    val nodeBackend: Seq[String] = Seq(
+        "kyo.net.internal.posix.PosixTransport",
+        "kyo.net.internal.posix.IoUringDriver",
+        "kyo.net.internal.posix.PollerIoDriver",
+        "kyo.net.internal.JsTransport",
+        "kyo.net.internal.JsIoDriver",
+        "kyo.net.internal.NodeNetModules$",
+        "kyo.internal.client.HttpClientBackend",
+        "kyo.ffi.internal.Koffi$",
+        "kyo.ffi.internal.NativeLoader$"
+    )
+
+    /** Classes only a host without sockets runs: the fetch client. */
+    val pageBackend: Seq[String] = Seq("kyo.internal.client.FetchClientBackend")
 
     /** Strings only the data artifacts put into a link: a zone ID and the tzdb module name, and the CLDR data package. */
     val dataMarkers: Seq[String] = Seq("Africa/Abidjan", "zonedb.java.tzdb", "locales.cldr.data")
@@ -162,43 +214,155 @@ object LinkCheck {
             )
             Project.extract(linkState).runTask(ref / Compile / fullLinkJS, linkState)
             // Source maps are a debugging aid the application does not ship.
-            val files = Option(outDir.listFiles).toSeq.flatten.filter(f => f.isFile && !f.getName.endsWith(".map"))
-            val size  = files.map(_.length).sum
-            val found  = dataMarkers.filter(marker => files.exists(f => contains(f, marker)))
-            val linked = program.absent.filter(marker => files.exists(f => contains(f, marker)))
+            val files   = outputFiles(outDir)
+            val size    = files.map(_.length).sum
+            val initial = initialLoad(files, platform)
+            val found   = dataMarkers.filter(marker => files.exists(f => contains(f, marker)))
+            val linked  = program.absent.filter(marker => files.exists(f => contains(f, marker)))
             val nodeImports = files.flatMap { f =>
-                staticNodeImport.findAllIn(new String(Files.readAllBytes(f.toPath), StandardCharsets.UTF_8)).toSeq
+                staticNodeImport.findAllIn(read(f)).toSeq
             }.distinct
             val runs = Seq(
                 ("under plain node", program.lastLine, runNode(outDir, platform, withoutProcess = false)),
                 ("with no process global", program.withoutProcess, runNode(outDir, platform, withoutProcess = true))
+            ) ++ hostChunkRuns(program, outDir, platform, files, initial)
+            val eager =
+                if (program.hostChunks && platform == "JS")
+                    (nodeBackend ++ pageBackend).filter(name => initial.exists(f => contains(f, quoted(name))))
+                else Nil
+            Row(program, size, initial.map(_.length).sum, gzipSize(initial), found, linked, nodeImports, eager, runs)
+        }
+        log(s"$platform sizes (bytes; total is every output file, initial is what a host fetches before any code runs):")
+        rows.foreach { row =>
+            val ceiling = ceilings.get((platform, row.program.name)).fold("no ceiling")(c => f"ceiling $c%,d")
+            val initialCeiling =
+                if (platform == "JS") ceilings.get((initialKey(platform), row.program.name)).fold("no ceiling")(c => f"ceiling $c%,d")
+                else "the whole output"
+            log(
+                f"  ${row.program.name}%-12s total ${row.size}%,12d ($ceiling)   initial ${row.initialSize}%,12d ($initialCeiling)   initial gzip ${row.initialGzip}%,10d"
             )
-            (program, size, found, linked, nodeImports, runs)
         }
-        log(s"$platform sizes (bytes, all output files):")
-        rows.foreach { case (program, size, _, _, _, _) =>
-            val ceiling = ceilings.get((platform, program.name)).fold("no ceiling")(c => f"ceiling $c%,d")
-            log(f"  ${program.name}%-12s $size%,12d   $ceiling")
-        }
-        rows.flatMap { case (program, size, found, linked, nodeImports, runs) =>
-            val data = found.map(m => s"$platform ${program.name}: the linked output contains data it cannot reach (marker '$m')")
+        rows.flatMap { row =>
+            val program = row.program
+            val data    = row.found.map(m => s"$platform ${program.name}: the linked output contains data it cannot reach (marker '$m')")
             val reached =
-                linked.map(m => s"$platform ${program.name}: the linked output carries code this program does not use (marker '$m')")
-            val imports = nodeImports.map(i => s"$platform ${program.name}: the linked output has a static Node import a browser cannot load: $i")
-            val ceiling = ceilings.get((platform, program.name)) match {
-                case None                    => Seq(s"$platform ${program.name}: no ceiling in kyo-link-check/ceilings.txt")
-                case Some(c) if size > c     => Seq(f"$platform ${program.name}: $size%,d bytes exceeds the ceiling of $c%,d")
-                case Some(_)                 => Nil
+                row.linked.map(m => s"$platform ${program.name}: the linked output carries code this program does not use (marker '$m')")
+            val imports =
+                row.nodeImports.map(i => s"$platform ${program.name}: the linked output has a static Node import a browser cannot load: $i")
+            val eager = row.eager.map { name =>
+                s"$platform ${program.name}: the initial load carries $name, which only one kind of host runs; it belongs in a chunk that host loads on demand"
             }
-            val output = runs.flatMap {
+            val ceiling = ceilingFailure(ceilings, platform, platform, program.name, row.size)
+            val initialCeiling =
+                if (platform == "JS") ceilingFailure(ceilings, platform, initialKey(platform), program.name, row.initialSize)
+                else Nil
+            val output = row.runs.flatMap {
                 case (how, _, Left(err)) => Seq(s"$platform ${program.name} $how: $err")
                 case (how, expected, Right(lines)) =>
                     val last = lines.reverse.find(_.trim.nonEmpty).getOrElse("")
                     if (expected.pattern.matcher(last.trim).matches()) Nil
                     else Seq(s"$platform ${program.name}: unexpected output $how, last line '$last', expected '$expected'")
             }
-            data ++ reached ++ imports ++ ceiling ++ output
+            data ++ reached ++ imports ++ eager ++ ceiling ++ initialCeiling ++ output
         }
+    }
+
+    private final case class Row(
+        program: Program,
+        size: Long,
+        initialSize: Long,
+        initialGzip: Long,
+        found: Seq[String],
+        linked: Seq[String],
+        nodeImports: Seq[String],
+        eager: Seq[String],
+        runs: Seq[(String, Regex, Either[String, Seq[String]])]
+    )
+
+    /** The key the initial-load ceiling of a platform is filed under in `ceilings.txt`. */
+    private def initialKey(platform: String): String = s"$platform-initial"
+
+    private def ceilingFailure(
+        ceilings: Map[(String, String), Long],
+        platform: String,
+        key: String,
+        program: String,
+        size: Long
+    ): Seq[String] =
+        ceilings.get((key, program)) match {
+            case None                => Seq(s"$platform $program: no '$key' ceiling in kyo-link-check/ceilings.txt")
+            case Some(c) if size > c => Seq(f"$platform $program: $size%,d bytes ($key) exceeds the ceiling of $c%,d")
+            case Some(_)             => Nil
+        }
+
+    /** Every file an application ships from `dir`: source maps are a debugging aid it does not. */
+    private def outputFiles(dir: File): Seq[File] =
+        Option(dir.listFiles).toSeq.flatten.filter(f => f.isFile && !f.getName.endsWith(".map"))
+
+    /** What a host fetches before any code runs. On JS, `main.mjs` and every output file it reaches through static imports, transitively;
+      * a file reached only through a dynamic `import()` is left out, since a host fetches it only when the code importing it runs. A WasmGC
+      * link is a single module, so its initial load is the whole output.
+      */
+    private def initialLoad(files: Seq[File], platform: String): Seq[File] =
+        if (platform != "JS") files
+        else {
+            val byName = files.map(f => f.getName -> f).toMap
+            def imports(f: File): Seq[File] =
+                if (!f.getName.endsWith(".mjs")) Nil
+                else staticRelativeImport.findAllMatchIn(read(f)).map(_.group(1)).toSeq.distinct.flatMap(byName.get)
+            @scala.annotation.tailrec
+            def walk(pending: List[File], seen: Set[File]): Set[File] = pending match {
+                case Nil => seen
+                case file :: rest =>
+                    val next = imports(file).filterNot(seen.contains)
+                    walk(next.toList ++ rest, seen ++ next)
+            }
+            byName.get("main.mjs").fold(Seq.empty[File])(main => walk(List(main), Set(main)).toSeq.sortBy(_.getName))
+        }
+
+    /** For a program whose network stack splits by host, the two runs that prove a host never fetches the other side's chunks: a copy of
+      * the output with every Node-side chunk deleted, run as a page (no `process` global), and a copy with every page-side chunk deleted,
+      * run under plain node. A chunk in the initial load is never deleted, since a host fetches that regardless; a backend found there is
+      * reported by the initial-load check instead. When there is no chunk to delete there is nothing to prove, so there is no run.
+      */
+    private def hostChunkRuns(
+        program: Program,
+        outDir: File,
+        platform: String,
+        files: Seq[File],
+        initial: Seq[File]
+    ): Seq[(String, Regex, Either[String, Seq[String]])] =
+        if (!program.hostChunks || platform != "JS") Nil
+        else {
+            def withoutChunks(host: String, markers: Seq[String], expected: Regex, withoutProcess: Boolean) = {
+                val deleted = files.filterNot(initial.contains).filter(f => markers.exists(m => contains(f, quoted(m))))
+                if (deleted.isEmpty) Nil
+                else {
+                    val copy = outDir.getParentFile / s"${outDir.getName}-$host"
+                    IO.delete(copy)
+                    IO.copyDirectory(outDir, copy)
+                    deleted.foreach(f => IO.delete(copy / f.getName))
+                    val names = deleted.map(_.getName).mkString(", ")
+                    Seq((s"as a $host with $names deleted", expected, runNode(copy, platform, withoutProcess)))
+                }
+            }
+            withoutChunks("page", nodeBackend, program.withoutProcess, withoutProcess = true) ++
+                withoutChunks("node-program", pageBackend, program.lastLine, withoutProcess = false)
+        }
+
+    private def quoted(name: String): String = "\"" + name + "\""
+
+    private def read(file: File): String = new String(Files.readAllBytes(file.toPath), StandardCharsets.UTF_8)
+
+    /** The bytes `files` take through `gzip -9`, concatenated, which is what a wire carries for them. */
+    private def gzipSize(files: Seq[File]): Long = {
+        val bytes = new java.io.ByteArrayOutputStream()
+        val gzip = new java.util.zip.GZIPOutputStream(bytes) {
+            `def`.setLevel(java.util.zip.Deflater.BEST_COMPRESSION)
+        }
+        files.foreach(f => gzip.write(Files.readAllBytes(f.toPath)))
+        gzip.close()
+        bytes.size.toLong
     }
 
     /** Deletes `process` from the global object, then loads the program: the program sees what a browser page shows it, while node itself,
