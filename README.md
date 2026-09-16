@@ -291,9 +291,29 @@ These modules work on Windows with a documented limitation, and are marked with 
 | kyo-pod           | Container operations require a container runtime configured for the images you run; a daemon in Windows-containers mode cannot run Linux images.                                 |
 | kyo-browser       | Chrome auto-download covers Windows x86_64 but not Windows ARM, for which Google publishes no build; pass a `Browser.LaunchConfig` naming a system-installed Chromium instead.   |
 
+### Browser support
+
+The JS column covers one Scala.js artifact, and that artifact runs in two places: a Node process and a browser page. They are not the same environment. A page has no sockets, no file system, no process table, no argv, and no native library loader, so a module can be fully supported on JS and still have nothing to offer inside a page.
+
+Every module's test suites run in Chrome on every build, as their own rows (`BrowserTest` for the JS link and `BrowserWasmTest` for the WebAssembly one, see `project/KyoJsRows.scala`), which is what makes the page a supported environment rather than an assumption. The modules below are the exceptions, and the ones that appear in the tables carry a ‡ there. For each, what a page lacks is named, so the distinction between "cannot" and "not yet" stays visible.
+
+| Module                    | In a page                                                                                                                                                              |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| kyo-net                   | No sockets. Every transport candidate (Node, epoll, kqueue, io_uring) needs a host, so the backend probe selects none and reports `NetBackendUnavailableException`.      |
+| kyo-sql                   | A database connection is a socket. The SQL AST and the typed DSL are pure and link in a page; what is missing is a driver a page could run.                              |
+| kyo-sql-postgres          | Speaks the wire protocol over kyo-net, so it needs the socket kyo-net cannot offer.                                                                                     |
+| kyo-sql-mysql             | The same: the wire protocol over kyo-net.                                                                                                                              |
+| kyo-ffi                   | koffi loads a native library through a Node-like `process`. The module's own gate answers every call in a page with `FfiLoadError.Unsupported` rather than failing late.  |
+| kyo-aeron                 | The media driver runs over UDP and shared memory, and its JS bindings load through koffi.                                                                               |
+| kyo-stats-machine         | Reads the machine through `node:os` and `node:fs`. The factory registers no exporter in a page rather than registering one that reports nothing.                         |
+| kyo-pod                   | Talks to a container daemon over its unix socket or its CLI.                                                                                                           |
+| kyo-browser               | Launches Chrome from the host and drives it over CDP, so it runs beside a page, never inside one.                                                                       |
+| kyo-jsonrpc-http          | The HTTP transport for kyo-jsonrpc, and not a row below. Its server half binds a port, which a page cannot; its client half works, through kyo-http, whose page client is fetch. |
+| kyo-case-app              | Parses argv, which a page has not, and case-app itself reads `require("process")` at first use.                                                                          |
+
 ## Modules
 
-Every module ships its own README. Open the linked README for the full surface, features, callouts, and worked examples. The tables below name each module's identity in one sentence so you can pick the right one fast. Each identity cell names types and operations defined inside that module; expect unfamiliar names on first scan and treat the linked README as the source for what each one does. Platform columns mean supported targets: ✅ marks the platforms each module is built and tested for. JVM, Scala.js, and Scala Native artifacts are published to Maven Central; WebAssembly cross-builds and is tested in CI but ships no published artifact. A † marks a module with a documented Windows limitation, detailed under [Windows support](#windows-support); every module builds and tests on Windows for the JVM and Scala.js targets.
+Every module ships its own README. Open the linked README for the full surface, features, callouts, and worked examples. The tables below name each module's identity in one sentence so you can pick the right one fast. Each identity cell names types and operations defined inside that module; expect unfamiliar names on first scan and treat the linked README as the source for what each one does. Platform columns mean supported targets: ✅ marks the platforms each module is built and tested for. JVM, Scala.js, and Scala Native artifacts are published to Maven Central; WebAssembly cross-builds and is tested in CI but ships no published artifact. A † marks a module with a documented Windows limitation, detailed under [Windows support](#windows-support); every module builds and tests on Windows for the JVM and Scala.js targets. A ‡ marks a module whose JS support is Node only, detailed under [Browser support](#browser-support).
 
 ### Core
 
@@ -315,9 +335,9 @@ The vertical an application developer assembles: HTTP services and clients, SQL 
 | Module                                       | JVM | JS  | Native | WASM | Identity                                                                                                   |
 | -------------------------------------------- | --- | --- | ------ | ---- | ---------------------------------------------------------------------------------------------------------- |
 | [kyo-http](kyo-http/README.md)               | ✅  | ✅  | ✅     | ✅   | HTTP/1.1 client and server with shared API across JVM/JS/Native/WASM, bidirectional OpenAPI                |
-| [kyo-sql](kyo-sql/README.md)                 | ✅  | ✅  | ✅     | ✅   | Raw SQL and a typed DSL over one AST; the database is a `DB` dependency in the effect row, no JDBC          |
-| [kyo-sql-postgres](kyo-sql-postgres/README.md) | ✅  | ✅  | ✅     | ✅   | PostgreSQL driver speaking the wire protocol on kyo-net, plus `COPY` and `LISTEN`/`NOTIFY`                 |
-| [kyo-sql-mysql](kyo-sql-mysql/README.md)     | ✅  | ✅  | ✅     | ✅   | MySQL driver speaking the wire protocol on kyo-net, plus `LOAD DATA LOCAL INFILE`                          |
+| [kyo-sql](kyo-sql/README.md)‡                | ✅  | ✅  | ✅     | ✅   | Raw SQL and a typed DSL over one AST; the database is a `DB` dependency in the effect row, no JDBC          |
+| [kyo-sql-postgres](kyo-sql-postgres/README.md)‡ | ✅  | ✅  | ✅     | ✅   | PostgreSQL driver speaking the wire protocol on kyo-net, plus `COPY` and `LISTEN`/`NOTIFY`                 |
+| [kyo-sql-mysql](kyo-sql-mysql/README.md)‡    | ✅  | ✅  | ✅     | ✅   | MySQL driver speaking the wire protocol on kyo-net, plus `LOAD DATA LOCAL INFILE`                          |
 | [kyo-schema](kyo-schema/README.md)           | ✅  | ✅  | ✅     | ✅   | One `derives Schema` powers validation, lenses, diffs, builders, and structural conversion; codecs plug in |
 | [kyo-schema-json](kyo-schema-json/README.md) | ✅  | ✅  | ✅     | ✅   | JSON codec, JSON Schema generation, pure `Json.Lines` framing, and effectful `Jsonl` streams and files    |
 | [kyo-schema-protobuf](kyo-schema-protobuf/README.md) | ✅  | ✅  | ✅     | ✅   | Protocol Buffers codec for kyo-schema: `Protobuf.encode`/`decode` binary plus `.proto` schema export       |
@@ -368,16 +388,16 @@ Domain-shaped modules: parsing, durable workflows, container management, low-lat
 | Module                                  | JVM | JS  | Native | WASM | Identity                                                                                                   |
 | --------------------------------------- | --- | --- | ------ | ---- | ---------------------------------------------------------------------------------------------------------- |
 | [kyo-parse](kyo-parse/README.md)        | ✅  | ✅  | ✅     | ✅   | Parser combinators in the effect row; supports dual-input-type parsers (e.g. `Parse[Char] & Parse[Int]`)   |
-| [kyo-pod](kyo-pod/README.md)†           | ✅  | ✅  | ✅     | ✅   | Docker and Podman client cross-compiled to JVM/JS/Native/WASM, streaming logs/stats, scope-managed cleanup |
+| [kyo-pod](kyo-pod/README.md)†‡          | ✅  | ✅  | ✅     | ✅   | Docker and Podman client cross-compiled to JVM/JS/Native/WASM, streaming logs/stats, scope-managed cleanup |
 | [kyo-slack](kyo-slack/README.md)        | ✅  | ✅  | ✅     | ✅   | Slack Socket Mode bot client: structural acking, Web API, typed Block Kit + `dsl`, lossless reconnect      |
-| [kyo-browser](kyo-browser/README.md)†   | ✅  | ✅  | ✅     | ✅   | Browser automation over Chrome DevTools Protocol; settlement-aware actions, `readableContent` as Markdown  |
+| [kyo-browser](kyo-browser/README.md)†‡  | ✅  | ✅  | ✅     | ✅   | Browser automation over Chrome DevTools Protocol; settlement-aware actions, `readableContent` as Markdown  |
 | [kyo-jsonrpc](kyo-jsonrpc/README.md)    | ✅  | ✅  | ✅     | ✅   | JSON-RPC 2.0 peers over pluggable transports with typed routes, calls, notifications, progress, and cancel |
 | [kyo-mcp](kyo-mcp/README.md)            | ✅  | ✅  | ✅     | ✅   | Model Context Protocol client and server built on kyo-jsonrpc with typed tools, prompts, and resources     |
 | [kyo-lsp](kyo-lsp/README.md)            | ✅  | ✅  | ✅     | ✅   | Language Server Protocol 3.17 servers and clients with typed handlers, documents, progress, and cancel     |
 | [kyo-compiler](kyo-compiler/README.md)  | ✅  |     |        |      | Scala 3 presentation compiler pool for diagnostics, completions, hover, signatures, and symbols            |
-| [kyo-aeron](kyo-aeron/README.md)        | ✅  | ✅  | ✅     | ✅   | Typed pub/sub on Aeron: shared-memory IPC, UDP unicast, UDP multicast through one `Topic` API              |
-| [kyo-net](kyo-net/README.md)†           | ✅  | ✅  | ✅     | ✅   | TCP, Unix sockets, stdio, and TLS on one C transport: io_uring, epoll, kqueue, NIO, Node, BoringSSL        |
-| [kyo-ffi](kyo-ffi/README.md)            | ✅  | ✅  | ✅     | ✅   | Bind a C library once with typed Scala signatures; safe calls from JVM (Panama), JS/WASM (koffi), and Native |
+| [kyo-aeron](kyo-aeron/README.md)‡       | ✅  | ✅  | ✅     | ✅   | Typed pub/sub on Aeron: shared-memory IPC, UDP unicast, UDP multicast through one `Topic` API              |
+| [kyo-net](kyo-net/README.md)†‡          | ✅  | ✅  | ✅     | ✅   | TCP, Unix sockets, stdio, and TLS on one C transport: io_uring, epoll, kqueue, NIO, Node, BoringSSL        |
+| [kyo-ffi](kyo-ffi/README.md)‡           | ✅  | ✅  | ✅     | ✅   | Bind a C library once with typed Scala signatures; safe calls from JVM (Panama), JS/WASM (koffi), and Native |
 | [kyo-tasty](kyo-tasty/README.md)        | ✅  | ✅  | ✅     | ✅   | Cross-platform TASTy reflection over a pure sealed model; Scala 3 reflection without a live JVM             |
 
 ### Observability
@@ -388,7 +408,7 @@ In-process metrics and tracing registry, OTLP exporter that activates from `OTEL
 | -------------------------------------------------------- | --- | --- | ------ | ---- | --------------------------------------------------------------------------------------------------------- |
 | [kyo-stats-registry](kyo-stats-registry/README.md)       | ✅  | ✅  | ✅     | ✅   | Process-global registry; counters / gauges / counter-gauges / histograms; `TraceExporter` SPI             |
 | [kyo-stats-otlp](kyo-stats-otlp/README.md)               | ✅  | ✅  | ✅     | ✅   | Zero-code OTLP/HTTP+JSON exporter; W3C `traceparent` propagation auto-installed on kyo-http               |
-| [kyo-stats-machine](kyo-stats-machine/README.md)†        | ✅  | ✅  | ✅     | ✅   | Zero-code host metrics (CPU, memory, swap, disk, load, cgroup, PSI) into `kyo.Stat`; auto-loads on classpath |
+| [kyo-stats-machine](kyo-stats-machine/README.md)†‡       | ✅  | ✅  | ✅     | ✅   | Zero-code host metrics (CPU, memory, swap, disk, load, cgroup, PSI) into `kyo.Stat`; auto-loads on classpath |
 | [kyo-logging-jpl](kyo-logging-jpl/README.md)             | ✅  |     |        |      | Bridge `kyo.Log` to `java.lang.System.Logger` (JEP 264, JDK 9+); zero third-party deps                    |
 | [kyo-logging-slf4j](kyo-logging-slf4j/README.md)         | ✅  |     |        |      | Bridge `kyo.Log` to any SLF4J binding the host application already configures (Logback, Log4j 2, etc.)    |
 
@@ -410,7 +430,7 @@ CLI-parser bridge, README example validation, runnable end-to-end programs, and 
 
 | Module                                       | JVM | JS  | Native | WASM | Identity                                                                                                  |
 | -------------------------------------------- | --- | --- | ------ | ---- | --------------------------------------------------------------------------------------------------------- |
-| [kyo-case-app](kyo-case-app/README.md)†      | ✅  | ✅  | ✅     | ✅   | Bridge case-app annotation-driven CLI parsing into a Kyo `run { options => ... }` entrypoint              |
+| [kyo-case-app](kyo-case-app/README.md)†‡     | ✅  | ✅  | ✅     | ✅   | Bridge case-app annotation-driven CLI parsing into a Kyo `run { options => ... }` entrypoint              |
 | [kyo-doctest](kyo-doctest/README.md)         | ✅  |     |        |      | Validates Markdown code blocks against the Scala 3 compiler; sbt plugin runs them on `sbt doctest`        |
 | [kyo-examples](kyo-examples)                 | ✅  |     |        |      | Two runnable programs: a ledger HTTP service and an N-queens solver (run with `sbt`)                      |
 | [kyo-bench](kyo-bench)                       | ✅  |     |        |      | JMH suite with side-by-side Kyo / Cats Effect / ZIO implementations for each scenario                     |
