@@ -21,8 +21,10 @@ class CivilJdkTest extends kyo.test.Test[Any]:
         else if civil.hour != jdk.getHour then Maybe(s"hour ${civil.hour} against ${jdk.getHour}")
         else if civil.minute != jdk.getMinute then Maybe(s"minute ${civil.minute} against ${jdk.getMinute}")
         else if civil.second != jdk.getSecond then Maybe(s"second ${civil.second} against ${jdk.getSecond}")
-        else if civil.dayOfWeek != jdk.getDayOfWeek.getValue % 7 then
-            Maybe(s"day of week ${civil.dayOfWeek} against ${jdk.getDayOfWeek.getValue % 7}")
+        // `Civil` counts Monday as 0 through Sunday as 6, which is what indexes the IMF-fixdate day names.
+        // `java.time.DayOfWeek` counts Monday as 1 through Sunday as 7, so the two differ by exactly one.
+        else if civil.dayOfWeek != jdk.getDayOfWeek.getValue - 1 then
+            Maybe(s"day of week ${civil.dayOfWeek} against ${jdk.getDayOfWeek.getValue - 1}")
         else Absent
         end if
     end sameAsJava
