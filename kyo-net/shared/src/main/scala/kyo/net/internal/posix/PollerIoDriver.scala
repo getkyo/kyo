@@ -1588,6 +1588,26 @@ final private[net] class PollerIoDriver private[posix] (
                             Closed(s"connection ${handleLabel(entry.handle)}", entry.handle.createdAt, "stale event: fd recycled")
                         ))
                 }
+                // NOTE: this branch deliberately does NOT deregister the fd, and an EV_DELETE here is NOT the fix for
+                // the spin described below, however much it looks like one.
+                //
+                // A hung Native run shows one driver at 5,496,568 poll cycles against siblings at 2,452 and 2,082,
+                // with `emptyReadyCycles=0`: every cycle carries a real event for an fd that `activeFds` does not
+                // hold, so this branch discards it and the kernel reports it again immediately. Each of those cycles
+                // also runs `Scheduler.get.flush()`, so the spin churns the scheduler the rest of the process needs.
+                //
+                // Deregistering here was tried and is unsafe. `PollerIoDriverEdgeTriggeredTest`'s `lazyFdDelete` leaf
+                // catches it at once: the log reads `deregister(fd, fdClosing=true)` from the close, then the added
+                // `deregister(fd, fdClosing=false)`, which is an EV_DELETE against an fd number the process may have
+                // already recycled into another connection, taking that connection's registration with it. Absence
+                // from `activeFds` proves only that THIS driver stopped tracking the fd, never that the fd is still
+                // the one that was registered.
+                //
+                // The spin's own cause is upstream of here: for the kernel to keep reporting it, the fd must still be
+                // OPEN (kqueue drops a knote when its fd closes) while carrying a live registration nobody owns. That
+                // is what a skipped EV_DELETE plus a deferred `close(fd)` that never ran would leave behind, so the
+                // place to look is the claim-then-defer close path and whether `freeResources` always runs, not this
+                // discard.
             else
                 val f     = flags(i)
                 val read  = (f & PollFlags.Read) != 0
