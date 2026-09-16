@@ -715,6 +715,23 @@ The page loads the link as it would in production, so:
 - `console.log` and `console.info` reach sbt's standard output; `console.error`, `console.warn`, `console.assert`, and `console.trace` reach its standard error. An uncaught exception or unhandled rejection fails the run, as it does on Node.
 - Chrome for Testing publishes chrome-headless-shell for macOS, Linux x64, and Windows, but not for Linux arm64, where a run fails at launch.
 
+A page can only reach its own origin unless the other side agrees to be reached, and the run's own origin is the server serving the page. It answers four fixture paths, so a test of code that makes requests has somewhere to send them:
+
+| Path | Answers |
+|---|---|
+| `POST /__kyo_test__/echo` | the bytes it was sent, under the content type they were sent with |
+| `GET /__kyo_test__/headers` | the request's headers, one `name: value` per line, which is what the browser actually sent |
+| `GET /__kyo_test__/status?code=503` | that status |
+| `/__kyo_test__/ws-echo` | a WebSocket returning every frame it receives |
+
+```scala doctest:expect=skipped
+"a page posts and reads back".onlyBrowser in {
+  HttpClient.postText("/__kyo_test__/echo", "round trip").map { echoed =>
+    assert(echoed == "round trip")
+  }
+}
+```
+
 | Key | Default | Purpose |
 |---|---|---|
 | `kyoTestBrowserEnv` | | The environment to assign to `jsEnv` |

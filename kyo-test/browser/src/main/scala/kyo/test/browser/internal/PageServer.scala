@@ -165,13 +165,55 @@ private[browser] object PageServer:
         )
     end load
 
-    /** The handlers answering `GET /` with `page` and every other path from `files`. */
+    /** Where the fixtures answer. A linked output has no file under this path, so it shadows nothing a run serves. */
+    val fixturePath = "__kyo_test__"
+
+    /** An origin the page under test can talk to, for tests of code that makes requests.
+      *
+      * A page can only reach its own origin without the server on the other side agreeing, and the only origin a browser run has is this
+      * one, so a test of a client (kyo's own or a user's) has nowhere to send a request unless the run serves somewhere to send it. These
+      * four are that somewhere:
+      *
+      *   - `POST /__kyo_test__/echo` answers with the bytes it was sent, under the content type they were sent with.
+      *   - `GET /__kyo_test__/headers` answers with the request's headers, one `name: value` per line, which is how a page sees what the
+      *     browser actually sent rather than what the program asked for.
+      *   - `GET /__kyo_test__/status?code=404` answers with that status.
+      *   - `/__kyo_test__/ws-echo` is a WebSocket that returns every frame it receives.
+      */
+    def fixtures(using Frame): Seq[HttpHandler[?, ?, ?]] =
+        Seq(
+            HttpRoute.postBinary(s"$fixturePath/echo").handler { request =>
+                HttpResponse.ok(request.fields.body)
+                    .setHeader("Content-Type", request.headers.get("Content-Type").getOrElse("application/octet-stream"))
+                    .noCache
+            },
+            HttpRoute.getText(s"$fixturePath/headers").handler { request =>
+                val lines = StringBuilder()
+                request.headers.foreach((name, value) => discard(lines.append(name).append(": ").append(value).append('\n')))
+                HttpResponse.ok(lines.toString).setHeader("Content-Type", "text/plain; charset=utf-8").noCache
+            },
+            HttpRoute.getRaw(s"$fixturePath/status")
+                .request(_.query[Int]("code", default = Present(200)))
+                .response(_.bodyText)
+                .handler { request =>
+                    val code = request.fields.code
+                    HttpResponse(HttpStatus(code)).addField("body", s"status $code")
+                        .setHeader("Content-Type", "text/plain; charset=utf-8").noCache
+                },
+            HttpHandler.webSocket(s"$fixturePath/ws-echo") { (_, ws) =>
+                ws.stream.foreach(ws.put)
+            }
+        )
+    end fixtures
+
+    /** The handlers answering `GET /` with `page`, the [[fixtures]] on their own path, and every other path from `files`. */
     def handlers(page: String, files: Map[String, Span[Byte]])(using Frame): Seq[HttpHandler[?, ?, ?]] =
         val pageBytes = Span.fromUnsafe(page.getBytes("UTF-8"))
         Seq(
             HttpRoute.getRaw("").response(_.bodyBinary).handler { _ =>
                 HttpResponse.ok(pageBytes).setHeader("Content-Type", "text/html; charset=utf-8").noCache
-            },
+            }
+        ) ++ fixtures ++ Seq(
             HttpRoute.getRaw(Capture.Rest("path")).response(_.bodyBinary).handler { request =>
                 val path = request.fields.path.takeWhile(_ != '?')
                 files.get(path) match

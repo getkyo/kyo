@@ -113,6 +113,16 @@ object HttpServer:
     def initUnscoped(config: HttpServerConfig)(handlers: HttpHandler[?, ?, ?]*)(using
         Frame
     ): HttpServer < (Async & Abort[HttpBindException]) =
+        // A browser page has no port to bind and no way to accept a connection, so serving fails here rather than on the first
+        // request: the bind is what a page cannot do, and the cause names why.
+        if kyo.internal.Platform.isBrowser then
+            val bindTarget = config.unixSocket.getOrElse(config.host)
+            Abort.fail(HttpBindException(bindTarget, config.port, HttpUnsupportedOnHostException("An HTTP server")))
+        else initUnscopedHere(config)(handlers*)
+
+    private def initUnscopedHere(config: HttpServerConfig)(handlers: HttpHandler[?, ?, ?]*)(using
+        Frame
+    ): HttpServer < (Async & Abort[HttpBindException]) =
         val allHandlers = config.openApi match
             case Present(ep) =>
                 val spec = OpenApiGenerator.generate(
@@ -146,7 +156,7 @@ object HttpServer:
                     throw t
             }
         }
-    end initUnscoped
+    end initUnscopedHere
 
     def initUnscopedWith[A, S](handlers: HttpHandler[?, ?, ?]*)(f: HttpServer => A < S)(using
         Frame

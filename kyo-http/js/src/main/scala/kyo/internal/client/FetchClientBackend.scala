@@ -242,15 +242,18 @@ final private[kyo] class FetchClientBackend extends PolicyClientBackend:
                                     closeReasonRef.set(Present((code, reason))).andThen(outbound.closeDiscard)
                                 val ws = new HttpWebSocket(inbound, outbound, closeReasonRef, peerClosedPromise, closeFn)
                                 connect(url, config, inbound, closeReasonRef, peerClosedPromise, openedPromise).map { socket =>
-                                    awaitOpen(url, openedPromise, connectTimeout).andThen {
-                                        Fiber.initUnscoped(writeLoop(socket, outbound, closeReasonRef)).map { writeFiber =>
-                                            Sync.ensure(
-                                                writeFiber.interrupt.unit
-                                                    .andThen(inbound.closeDiscard)
-                                                    .andThen(outbound.closeDiscard)
-                                                    .andThen(Sync.defer(closeSocket(socket, 1000, "")))
-                                            ) {
-                                                f(ws)
+                                    // The socket exists from here on, so its close is ensured from here on: a handshake the server
+                                    // refuses leaves the browser one to clean up just as a finished session does.
+                                    Sync.ensure(Sync.defer(closeSocket(socket, 1000, ""))) {
+                                        awaitOpen(url, openedPromise, connectTimeout).andThen {
+                                            Fiber.initUnscoped(writeLoop(socket, outbound, closeReasonRef)).map { writeFiber =>
+                                                Sync.ensure(
+                                                    writeFiber.interrupt.unit
+                                                        .andThen(inbound.closeDiscard)
+                                                        .andThen(outbound.closeDiscard)
+                                                ) {
+                                                    f(ws)
+                                                }
                                             }
                                         }
                                     }

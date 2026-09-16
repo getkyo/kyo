@@ -20,6 +20,10 @@ class FetchClientBackendTest extends kyo.test.Test[Any]:
     private def origin: String =
         scalajs.js.Dynamic.global.location.origin.asInstanceOf[String]
 
+    /** The same origin as a WebSocket URL, which is what `HttpUrl` accepts for a socket. */
+    private def socketOrigin: String =
+        if origin.startsWith("https:") then s"wss:${origin.drop("https:".length)}" else s"ws:${origin.drop("http:".length)}"
+
     "a page fetches its own origin" - {
 
         "GET / answers with the page that loaded this bundle" in {
@@ -46,6 +50,27 @@ class FetchClientBackendTest extends kyo.test.Test[Any]:
                     response.headers.get("content-type").exists(_.contains("text/html")),
                     s"the content type was ${response.headers.get("content-type")}"
                 )
+            }
+        }
+    }
+
+    "a page sends a request body" - {
+
+        "a posted body comes back from the echo fixture" in {
+            HttpClient.postText("/__kyo_test__/echo", "the body a page sent").map { echoed =>
+                assert(echoed == "the body a page sent", s"the echo answered $echoed")
+            }
+        }
+
+        "a header the program sets reaches the server" in {
+            HttpClient.getText("/__kyo_test__/headers", headers = Seq("X-Kyo-Probe" -> "present")).map { lines =>
+                assert(lines.linesIterator.exists(_ == "X-Kyo-Probe: present"), s"the server saw $lines")
+            }
+        }
+
+        "a status the server chooses arrives as that status" in {
+            HttpClient.getTextResponse("/__kyo_test__/status?code=503", failOnError = false).map { response =>
+                assert(response.status.code == 503, s"the status was ${response.status.code}")
             }
         }
     }
@@ -108,12 +133,77 @@ class FetchClientBackendTest extends kyo.test.Test[Any]:
             }
         }
 
-        "a WebSocket fails" in {
-            Abort.get(HttpUrl.parse(s"$origin/socket")).map { url =>
-                Abort.run[HttpException](HttpClient.webSocket(url)(_ => Kyo.unit)).map {
+        "a WebSocket carrying headers fails, because the browser sends none" in {
+            Abort.get(HttpUrl.parse(s"$socketOrigin/__kyo_test__/ws-echo")).map { url =>
+                Abort.run[HttpException] {
+                    HttpClient.webSocket(url, HttpHeaders.init(Seq("Authorization" -> "Bearer t")), HttpWebSocket.Config())(_ => Kyo.unit)
+                }.map {
                     case Result.Failure(e: HttpUnsupportedOnHostException) =>
-                        assert(e.operation == "A WebSocket", s"the failure named ${e.operation}")
+                        assert(e.operation.startsWith("A WebSocket carrying request headers"), s"the failure named ${e.operation}")
                     case other => assert(false, s"the connection ended as $other")
+                }
+            }
+        }
+
+        "a WebSocket ping interval fails, because the browser answers pings itself" in {
+            Abort.get(HttpUrl.parse(s"$socketOrigin/__kyo_test__/ws-echo")).map { url =>
+                Abort.run[HttpException] {
+                    HttpClient.webSocket(url, HttpHeaders.empty, HttpWebSocket.Config(autoPingInterval = Present(1.second)))(_ => Kyo.unit)
+                }.map {
+                    case Result.Failure(e: HttpUnsupportedOnHostException) =>
+                        assert(e.operation == "A WebSocket ping interval", s"the failure named ${e.operation}")
+                    case other => assert(false, s"the connection ended as $other")
+                }
+            }
+        }
+    }
+
+    "a page runs a WebSocket session" - {
+
+        "a text frame comes back from the echo fixture" in {
+            Abort.get(HttpUrl.parse(s"$socketOrigin/__kyo_test__/ws-echo")).map { url =>
+                HttpClient.webSocket(url) { ws =>
+                    ws.put(HttpWebSocket.Payload.Text("hello from the page")).andThen {
+                        ws.take().map(frame => assert(frame == HttpWebSocket.Payload.Text("hello from the page"), s"the frame was $frame"))
+                    }
+                }
+            }
+        }
+
+        "a binary frame keeps its bytes" in {
+            val sent = Span.from(Array[Byte](0, 1, 2, 127, -1))
+            Abort.get(HttpUrl.parse(s"$socketOrigin/__kyo_test__/ws-echo")).map { url =>
+                HttpClient.webSocket(url) { ws =>
+                    ws.put(HttpWebSocket.Payload.Binary(sent)).andThen {
+                        ws.take().map {
+                            case HttpWebSocket.Payload.Binary(back) =>
+                                assert(back.toArray.sameElements(sent.toArray), s"the bytes came back as ${back.toArray.toSeq}")
+                            case other => assert(false, s"the frame was $other")
+                        }
+                    }
+                }
+            }
+        }
+
+        "frames arrive in the order they were sent" in {
+            Abort.get(HttpUrl.parse(s"$socketOrigin/__kyo_test__/ws-echo")).map { url =>
+                HttpClient.webSocket(url) { ws =>
+                    Kyo.foreachDiscard(1 to 20)(i => ws.put(HttpWebSocket.Payload.Text(s"frame $i"))).andThen {
+                        Kyo.foreach(1 to 20)(_ => ws.take()).map { frames =>
+                            val expected = (1 to 20).map(i => HttpWebSocket.Payload.Text(s"frame $i"))
+                            assert(frames == Chunk.from(expected), s"the frames arrived as $frames")
+                        }
+                    }
+                }
+            }
+        }
+
+        "closing the session reports the close reason" in {
+            Abort.get(HttpUrl.parse(s"$socketOrigin/__kyo_test__/ws-echo")).map { url =>
+                HttpClient.webSocket(url) { ws =>
+                    ws.close(1000, "done").andThen(ws.onPeerClose).andThen(ws.closeReason).map { reason =>
+                        assert(reason.exists((code, _) => code == 1000), s"the close reason was $reason")
+                    }
                 }
             }
         }
