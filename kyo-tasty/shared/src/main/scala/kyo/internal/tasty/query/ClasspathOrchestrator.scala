@@ -3137,12 +3137,13 @@ object ClasspathOrchestrator:
                     }
                 }
             ).map {
-            case Result.Success(fr) =>
-                mergeCompanionFromBytesMap(entryPath, fr, bytesMap, nextGlobalId).map(FileResultCase(_))
-            case Result.Failure(err: TastyError) => FileResultCase(emptyFileResultWithError(entryPath, err))
-            case Result.Panic(t) =>
-                FileResultCase(emptyFileResultWithError(entryPath, TastyError.CorruptedFile(entryPath, 0L, t.getMessage)))
-        }
+                case Result.Success(fr) =>
+                    mergeCompanionFromBytesMap(entryPath, fr, bytesMap, nextGlobalId).map(FileResultCase(_))
+                case Result.Failure(err: TastyError) => FileResultCase(emptyFileResultWithError(entryPath, err))
+                case Result.Panic(t) =>
+                    FileResultCase(emptyFileResultWithError(entryPath, TastyError.CorruptedFile(entryPath, 0L, t.getMessage)))
+            }
+        end if
     end decodeOneEntryFromBytesMap
 
     /** The name a pickle's classfile companion has, which is its own with the extension swapped. The file-reading
