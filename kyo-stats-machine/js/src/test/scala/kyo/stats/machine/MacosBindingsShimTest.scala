@@ -1,48 +1,55 @@
 package kyo.stats.machine
 
+import kyo.ffi.FfiLoadError
+import kyo.ffi.internal.NativeLoader
 import scala.scalajs.js.annotation.JSImport
 import scala.scalajs.js as sjs
 
 /** JS/Wasm-axis guard for the machine_macos shim wiring.
   *
-  * The generated MacosBindings impl loads the shim through NativeLoader.jsResolve, whose first step is the
-  * KYO_FFI_MACHINE_MACOS_PATH env var that build.sbt's Test / jsEnv sets to the plugin-compiled library. If
-  * that wiring breaks (the env var is unset, or the shim never compiled to the resolved path), koffi's load
-  * throws the opaque "Failed to load shared library" JavaScriptException from the first host read off macOS.
-  * This leaf fails first, with a plain message naming the missing path, so a wiring regression is legible
-  * instead of surfacing as that raw exception on a CI leg. It cannot live in shared/src/test: the env-var
-  * mechanism and node `fs` are JS/Wasm-only. It runs on both the JS and the Wasm backends.
+  * The generated MacosBindings impl loads the shim through NativeLoader.jsResolve, which finds it staged beside the linked test program:
+  * build.sbt wraps each JS test link with the kyo FFI plugin's `ffiWithJsNatives`, which copies the plugin-compiled shim from the test
+  * classpath into `kyo-ffi/native/<os>-<arch>/`, as an application's link does, and no `KYO_FFI_MACHINE_MACOS_PATH` is set. If that
+  * wiring breaks, koffi's load throws the opaque "Failed to load shared library" JavaScriptException from the first host read off macOS.
+  * This leaf fails first, with a plain message naming what the loader looked for, so a wiring regression is legible instead of
+  * surfacing as that raw exception on a CI leg. It cannot live in shared/src/test: staging beside a linked program and node `fs` are
+  * JS/Wasm-only. It runs on both the JS and the Wasm backends.
   *
-  * The shim FILE exists only where it is built. `machine_macos` is a Mach-only binding declared for darwin
-  * (`osTargets` in build.sbt), so a Linux or Windows build compiles nothing for it: there the env var still
-  * points at the path the shim WOULD occupy and no file is there, which is the correct outcome, not a wiring
-  * break. The existence half of this guard therefore asserts only on macOS.
+  * The shim exists only where it is built. `machine_macos` is a Mach-only binding declared for darwin (`osTargets` in build.sbt), so a
+  * Linux or Windows build compiles nothing for it and stages nothing, which is the correct outcome there, not a wiring break: the
+  * loader finds no shim and says so with `LibraryNotFound`.
   *
-  * The `scala.scalajs.js` package is aliased to `sjs` so it does not collide with the `js` platform-selector
-  * method the test base defines; `fs.existsSync` reaches Node through the `node:fs` `@JSImport` facade below
-  * rather than `require`, which is absent under the ESModule the Wasm backend mandates.
+  * The `scala.scalajs.js` package is aliased to `sjs` so it does not collide with the `js` platform-selector method the test base
+  * defines; `fs.existsSync` reaches Node through the `node:fs` `@JSImport` facade below rather than `require`, which is absent under the
+  * ESModule the Wasm backend mandates.
   */
 class MacosBindingsShimTest extends kyo.test.Test[Any]:
 
-    "the KYO_FFI_MACHINE_MACOS_PATH env override is set, and on macOS its shim file exists" in {
-        val raw = sjs.Dynamic.global.process.env.selectDynamic("KYO_FFI_MACHINE_MACOS_PATH")
+    "the machine_macos shim resolves from beside the linked test program on macOS, with no path variable, and is not built elsewhere" in {
+        val variable = sjs.Dynamic.global.process.env.selectDynamic("KYO_FFI_MACHINE_MACOS_PATH")
         assert(
-            !sjs.isUndefined(raw) && raw != null,
-            "KYO_FFI_MACHINE_MACOS_PATH is not set: build.sbt's Test / jsEnv must point it at the compiled machine_macos shim"
+            sjs.isUndefined(variable),
+            s"KYO_FFI_MACHINE_MACOS_PATH is set ($variable), so this row would not resolve the shim as a program does"
         )
-        val path = raw.asInstanceOf[String]
-        assert(path.nonEmpty, "KYO_FFI_MACHINE_MACOS_PATH is empty")
         val onMacOs = sjs.Dynamic.global.process.platform.asInstanceOf[String] == "darwin"
         if onMacOs then
-            assert(
-                ShimNodeFs.existsSync(path),
-                s"machine_macos shim missing at KYO_FFI_MACHINE_MACOS_PATH=$path: ffiCompile must produce it under <axis>/target/ffi before the JS/Wasm test run"
-            )
+            val path =
+                try NativeLoader.jsResolve("machine_macos")
+                catch
+                    case e: FfiLoadError.LibraryNotFound =>
+                        throw new AssertionError(
+                            s"machine_macos is not staged beside the linked test program: build.sbt's kyoJsTestNatives must wrap this row's link " +
+                                s"with ffiWithJsNatives, and ffiCompile must produce the shim before it. ${e.getMessage}"
+                        )
+            assert(path.contains("/kyo-ffi/native/darwin-"), s"machine_macos resolved to $path, not to the staged tree")
+            assert(ShimNodeFs.existsSync(path), s"machine_macos resolved to $path, which does not exist")
         else
-            assert(
-                !ShimNodeFs.existsSync(path),
-                s"machine_macos was built for a non-darwin host at $path: it is a Mach-only binding and no other platform can load it"
-            )
+            val missing =
+                try
+                    NativeLoader.jsResolve("machine_macos")
+                    false
+                catch case _: FfiLoadError.LibraryNotFound => true
+            assert(missing, "machine_macos resolved on a non-darwin host: it is a Mach-only binding and no other platform can load it")
         end if
     }
 

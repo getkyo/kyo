@@ -227,16 +227,16 @@ object KyoFfiPlugin extends AutoPlugin {
             link: Def.Initialize[Task[A]],
             outputDirectory: Def.Initialize[File],
             classpath: Configuration
-        ): Def.Initialize[Task[A]] =
-            Def.taskDyn {
-                val out = outputDirectory.value
-                IO.delete(out / JsNativeStaging.Prefix.split('/').head)
-                Def.task {
-                    val linked = link.value
-                    val _      = JsNativeStaging.stage((classpath / fullClasspath).value.map(_.data), out, streams.value.log)
-                    linked
-                }
+        ): Def.Initialize[Task[A]] = {
+            // Static composition only: a link task redefined in terms of itself reaches its previous definition through a static
+            // dependency, and a reference made from inside a dynamic task would not.
+            val unstaged = link.dependsOn(Def.task(IO.delete(outputDirectory.value / JsNativeStaging.Prefix.split('/').head)))
+            Def.task {
+                val linked = unstaged.value
+                val _      = JsNativeStaging.stage((classpath / fullClasspath).value.map(_.data), outputDirectory.value, streams.value.log)
+                linked
             }
+        }
     }
 
     import autoImport._

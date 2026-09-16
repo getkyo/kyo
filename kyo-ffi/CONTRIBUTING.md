@@ -99,7 +99,11 @@ On the build side, `ffiStubLibraries` declares which libraries ship as build-tim
 rather than real natives, and the `library-state` manifest records each library's state
 (stub / native / prebuilt / absent). A native reaches consumers as an `<os>-<arch>`
 classifier jar carrying the `META-INF/native/<os>-<arch>/` tree; `ffiHostOsArch` resolves
-the host tag both the build and the packaged layout name the native by.
+the host tag both the build and the packaged layout name the native by. On Scala.js the
+artifact itself carries `kyo-ffi/native/<os>-<arch>/`, and a program gets the natives
+beside its linked output through `ffiWithJsNatives` (see Cross-platform layout); kyo's own
+JS test rows are wired the same way (`kyoJsTestNatives` in `build.sbt`), with no
+`KYO_FFI_<ID>_PATH`, so a row resolves a native exactly as a user's program does.
 
 ## Thread-blocking substrate
 
@@ -149,10 +153,27 @@ leaf is used only when a platform primitive has no cross-platform Kyo wrapper:
   `ModuleKind.ESModule` (the WebAssembly backend requires it; the JS row selects it
   to match, so `require` is absent on both and the browser gate behaves
   identically). Nothing here is a static import: `node:fs` comes from
-  `process.getBuiltinModule` at the call (`NodeFs.module`), and koffi from the
-  CommonJS `require` when one exists, else from `node:module`'s `createRequire`
-  (`KoffiFacade`), so a bundle that links kyo-ffi still loads in a browser, where
-  `NativeLoader` rejects the load with a typed error. `Ffi.load` is a macro here
+  `process.getBuiltinModule` at the call (`NodeFs.module`), and koffi from
+  `PlatformJs.moduleRequire` (`KoffiFacade`), so a bundle that links kyo-ffi still
+  loads in a browser, where `NativeLoader` rejects the load with a typed error.
+  **The resolution rule for an npm package or a file on a synchronous path:**
+  `PlatformJs.moduleRequire`, and nothing else. `Ffi.load` is synchronous, and an
+  `import()` result is never synchronously observable, so koffi cannot come from
+  `js.import` the way an asynchronous seam loads a module. `moduleRequire` resolves
+  from the linked program, as an `import` written there would:
+  `createRequire(import.meta.url)` under ESModule, and under CommonJS and NoModule
+  the module's own wrapper `require`, read behind an inline `typeof` guard because no
+  property of `globalThis` reaches it. Never `js.Dynamic.global.require` on its own
+  (absent from every ES module, and harness-injected under the sbt launcher), and
+  never `createRequire(process.cwd())`, which resolves from wherever the program was
+  started rather than from the program. A built-in module is not an npm package: it
+  comes from `PlatformJs.nodeBuiltin`. Natives follow the same rule: `NativeLoader`
+  looks for `./kyo-ffi/native/<os>-<arch>/<file>` beside the linked program, where
+  the plugin's `ffiWithJsNatives` copies them from the classpath (a Scala.js
+  artifact carries them under that path, `Packager.copyForJs`). The linker deletes
+  what it did not write from its output directory and fails on a directory there
+  that holds files, which is why `ffiWithJsNatives` removes the staged tree before
+  each link and writes it again after. `Ffi.load` is a macro here
   (`FfiLoad`, `FfiLoadMacro`) that constructs the generated `<T>Impl` at the call
   site instead of looking it up by name. The Scala.js linker keeps every class
   registered for reflective instantiation in the module that starts the program, so

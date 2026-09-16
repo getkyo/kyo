@@ -950,12 +950,12 @@ Library resolution differs by platform in ways worth knowing when binding system
 
 - **JVM:** a `library = "c"` resolves through the JVM Foreign Linker (`SymbolLookup.libraryLookup` then `dlopen(3)`), which works on macOS and Linux out of the box.
 - **Native:** Scala Native auto-links libc for any `@extern` declaration; the emitted `@link("c")` folds into the default libc link with no warning.
-- **JS:** koffi loads shared libraries by absolute path, so a bare `"c"` fails on macOS (libc is folded into `libSystem`). Resolve it by priming `process.env.KYO_FFI_C_PATH` (and `KYO_FFI_M_PATH` for libm) with the absolute path before the first `Ffi.load` (`/usr/lib/libSystem.B.dylib` on darwin, `libc.so.6` on linux); the loader consults these env vars before npm-package resolution.
+- **JS:** koffi cannot load libc by a bare `"c"` everywhere (glibc's loadable name is `libc.so.6`, and macOS folds libc into `libSystem`), so the loader binds the system libraries (`c`, `m`, `pthread`, `dl`, `rt`) against the process's default symbol scope, which Node already carries, and `ucrtbase.dll` for `c` and `m` on Windows. A `KYO_FFI_<ID>_PATH` variable naming an existing file still wins over that.
 - **Windows:** POSIX bindings (`getpid`, `getenv`, `time`) are unavailable on native Windows without platform-specific shims.
 
 ### JS / koffi setup
 
-On JS (Node), kyo-ffi performs the native call through the [koffi](https://koffi.dev) npm package. koffi is a prebuilt native addon: it is loaded with `require('koffi')` at runtime and cannot be inlined into the emitted `.js`. A JS consumer must therefore have `koffi` resolvable in their `node_modules`. The required version is `^2.7` (`2.7.0 <= koffi < 3.0.0`), which matches the range the runtime checks against. Pin it in your `package.json`:
+On JS (Node), kyo-ffi performs the native call through the [koffi](https://koffi.dev) npm package. koffi is a prebuilt native addon: it is loaded at the first `Ffi.load` and cannot be inlined into the emitted `.js`. A JS consumer must therefore have `koffi` installed where their program resolves packages. The required version is `^2.7` (`2.7.0 <= koffi < 3.0.0`), which matches the range the runtime checks against. Pin it in your `package.json`:
 
 ```json
 { "dependencies": { "koffi": "^2.7" } }
@@ -963,16 +963,34 @@ On JS (Node), kyo-ffi performs the native call through the [koffi](https://koffi
 
 koffi ships prebuilt binaries for common platforms, so installing it needs no native toolchain (no C compiler, no node-gyp build step). kyo's own test build installs it automatically: a `Test / compile` hook writes a `package.json` pinning `koffi` to `^2.7` and runs `npm install` into the test target directory before the JS tests run.
 
-> **Caution:** the Scala.js linker must emit a CommonJS module (`ModuleKind.CommonJSModule`) so Node's `require('koffi')` resolves at runtime. A JS consumer that leaves the linker at the default module kind gets a runtime failure when the first `Ffi.load` tries to load koffi.
+koffi resolves the way an `import` written in the linked program would: from the directory of the program's own output file, walking up through each `node_modules`, whatever directory the program is started from. That holds for every module kind the linker emits (an ES module, which is also what the WebAssembly backend emits, CommonJS, and NoModule run by `node`), so the linker's module kind is the application's choice. A `node_modules` beside the linked output or in any directory above it works.
 
 The first `Ffi.load` call on Scala.js runs an ABI probe that verifies `koffi.version` satisfies `^2.7` and that all required methods are exported. A failed probe throws `FfiLoadError.Unsupported`. The probe runs once per Node session.
 
+### Shipping natives to a JS program
+
+A Scala.js artifact carries its natives as resources under `kyo-ffi/native/<os>-<arch>/`, for every platform it was published for, the way a JVM classifier jar carries `META-INF/native/<os>-<arch>/`. A running Node program reads no jar, so the natives have to sit beside the linked output, and the loader looks for them there: `./kyo-ffi/native/<os>-<arch>/lib<id>.<ext>` next to the program's output file. The plugin's `ffiWithJsNatives` wraps a link task so that, once it has linked, the natives every classpath entry carries (dependency jars included, such as kyo-net's) are copied into that tree:
+
+```scala doctest:expect=skipped
+// the JS project, or a crossProject's .jsSettings, with the plugin enabled
+.enablePlugins(kyo.ffi.sbt.KyoFfiPlugin)
+.settings(
+    Compile / fastLinkJS := ffiWithJsNatives(Compile / fastLinkJS, Compile / fastLinkJS / scalaJSLinkerOutputDirectory, Runtime).value,
+    Compile / fullLinkJS := ffiWithJsNatives(Compile / fullLinkJS, Compile / fullLinkJS / scalaJSLinkerOutputDirectory, Runtime).value
+)
+```
+
+Deploy the output directory as it is, `kyo-ffi/` included. A bundler that writes the program somewhere else needs that tree copied beside its output. The loader tries, in order: a `KYO_FFI_<ID>_PATH` variable naming an existing file (operator override, see "Security"); the staged tree beside the program; an npm package carrying natives under `native/<os>-<arch>/`, when `-Dkyo.ffi.js.packagePrefix` names one; the system libraries above; and last a `koffi.load` of the bare id. A native none of them finds fails with `FfiLoadError.LibraryNotFound`, listing each place it looked.
+
 ### Security
 
-Two operator-controlled knobs can load native code. Never set them from untrusted input:
+Three operator-controlled knobs can load native code. Never set them from untrusted input:
 
 - `-Dkyo.ffi.<libraryId>.path=/abs/path` overrides the bundled library lookup and loads the path directly. An attacker who controls this property can load an arbitrary shared object.
 - `-Dkyo.ffi.extractDir=/abs/path` (JVM only) changes where bundled libraries are unpacked before load. A writable directory under attacker control permits a swap-on-load attack.
+- `KYO_FFI_<ID>_PATH=/abs/path` (JS only) is the same override as the first, read from the environment.
+
+On JS, the staged `kyo-ffi/native/` tree beside the program is loaded as native code too, so it deserves the same protection as the program's own files.
 
 These names are one override chain, highest priority first: the runtime resolves the extraction directory as `kyo.ffi.extractDir`, then `kyo.ffi.tmpdir` (which the `ffiExtractDir` sbt setting emits), then the Java temp dir. Set the chain deliberately; a half-set chain extracts to an unexpected directory.
 

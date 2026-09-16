@@ -1,0 +1,14 @@
+# Natives staged beside a linked program. The library's jar carries its native under kyo-ffi/native/<os>-<arch>/; each application wraps
+# its link with ffiWithJsNatives, which copies it beside the linked output. Each application then runs under plain node from an unrelated
+# directory with no KYO_FFI_SN_LIB_PATH, so koffi (installed here, above both outputs) and the native are found from the program's own
+# location: once linked as an ES module, once as CommonJS.
+# koffi is pinned to the `^2.7` range, which matches `KoffiAbiProbe`'s supported-range check.
+$ exec sh -c 'npm init -y >/dev/null 2>&1 && npm install --no-audit --no-fund --silent koffi@^2.7 >/dev/null 2>&1'
+> esm/fastLinkJS
+> cjs/fastLinkJS
+$ exec sh -c 'set -eu; root=$(pwd); away=$(mktemp -d); for app in esm cjs; do main=$(find "$root/$app/target" -path "*-fastopt/main.*js" -type f | head -n1); [ -n "$main" ] || { echo "no linked main under $app/target" >&2; exit 1; }; staged=$(find "$(dirname "$main")/kyo-ffi/native" -type f -name "*sn_lib*" | head -n1); [ -n "$staged" ] || { echo "no native staged beside $main" >&2; exit 1; }; (cd "$away" && env -u KYO_FFI_SN_LIB_PATH node "$main") > "$away/$app.out" 2>&1 || { cat "$away/$app.out" >&2; exit 1; }; grep -q "OK: add=5 sub=6" "$away/$app.out" || { cat "$away/$app.out" >&2; exit 1; }; done'
+# A relink over a staged tree: the linker removes what it did not write and refuses a directory that still holds files, so the wrapper
+# clears the tree first and stages it again after.
+$ touch app/src/main/scala/sn/Main.scala
+> esm/fastLinkJS
+$ exec sh -c 'set -eu; main=$(find esm/target -path "*-fastopt/main.mjs" -type f | head -n1); find "$(dirname "$main")/kyo-ffi/native" -type f -name "*sn_lib*" | grep -q .'

@@ -298,7 +298,7 @@ The native I/O backend and BoringSSL are the primary on every posix platform; th
 
 - `stdio` is supported on every shipped transport: the posix transport, the pure-JDK NIO floor, and Node. It aborts `NetStdioAlreadyOpenException` if a stdio connection is already open (fds 0 and 1 are process-global, so only one can exist at a time); `NetStdioUnsupportedException` remains the contract for a transport with no byte stream to fds 0 and 1, such as an in-memory transport.
 - io_uring requires Linux with a usable ring; where it is unavailable the transport falls back to epoll/kqueue or the NIO floor automatically.
-- On JS and Wasm the transport runs on Node. The koffi-loaded posix transport (kqueue on macOS, epoll/io_uring on Linux) and its in-process BoringSSL TLS run through Node's libuv worker pool, so a Node host gets the native readiness transport; where the posix native is not staged, the `node` floor uses Node's own event loop and TLS. Native compiles the C shims at link time. Windows uses the NIO floor and JDK TLS only, with no native transport and no native TLS.
+- On JS and Wasm the transport runs on Node. The koffi-loaded posix transport (kqueue on macOS, epoll/io_uring on Linux) and its in-process BoringSSL TLS run through Node's libuv worker pool, so a Node host gets the native readiness transport; where koffi is not installed or the posix native is not staged beside the program (see [Native transport distribution (Scala.js)](#native-transport-distribution-scalajs)), the `node` floor uses Node's own event loop and TLS. Native compiles the C shims at link time. Windows uses the NIO floor and JDK TLS only, with no native transport and no native TLS.
 - The transport degrades rather than failing: if the native I/O backend or the native TLS engine is unavailable, selection falls to the next available (`epoll`/`kqueue` to `nio`; `boringssl` to `jdk` or `openssl`), and a plain JVM jar with no bundled natives runs on the NIO floor with JDK TLS. A `-D`-forced selection is the exception: it fails closed instead of degrading.
 
 ## Native transport distribution (JVM)
@@ -315,6 +315,29 @@ libraryDependencies += "io.getkyo" %% "kyo-net" % kyoVersion classifier "linux-x
 ```
 
 Migration: a consumer that upgrades to the classifier distribution without adding these classifier dependencies keeps compiling and running, but silently drops from the native transport to the NIO floor (and from BoringSSL to JDK TLS). Add the two classifier dependencies above to keep the native transport. The startup log line names the selected backend and TLS provider, and the release build's classifier completeness guard refuses to publish a native classifier jar that is missing its native or carries a placeholder stub, so a published classifier always carries a real native.
+
+## Native transport distribution (Scala.js)
+
+On Node, the posix transport and BoringSSL load through [koffi](https://koffi.dev), and there are no classifier artifacts to add: kyo-net's Scala.js artifact carries the same natives, for every platform the JVM classifiers cover, under `kyo-ffi/native/<os>-<arch>/`. A Node program reads no jar, so two things put them within its reach:
+
+- koffi installed where the program resolves packages (`npm i koffi`, version `^2.7`), in a `node_modules` beside the linked output or in any directory above it;
+- the natives staged beside the linked output, which the kyo FFI plugin's `ffiWithJsNatives` does after each link, from every jar on the classpath:
+
+```
+// project/plugins.sbt
+addSbtPlugin("io.getkyo" % "kyo-ffi-plugin" % kyoVersion)
+```
+
+```
+// the JS project, or a crossProject's .jsSettings
+.enablePlugins(kyo.ffi.sbt.KyoFfiPlugin)
+.settings(
+    Compile / fastLinkJS := ffiWithJsNatives(Compile / fastLinkJS, Compile / fastLinkJS / scalaJSLinkerOutputDirectory, Runtime).value,
+    Compile / fullLinkJS := ffiWithJsNatives(Compile / fullLinkJS, Compile / fullLinkJS / scalaJSLinkerOutputDirectory, Runtime).value
+)
+```
+
+Both resolve from the program's own output file, not from the directory the program is started in, and under any module kind the linker emits. Deploy the output directory with its `kyo-ffi/` tree. A program missing either one still runs, on the `node` floor with Node's TLS, and the selection report names what was missing: `npm i koffi` for koffi, `ffiWithJsNatives` or `KYO_FFI_<ID>_PATH` for a native. A page loads neither, and its link never fetches the posix transport (see [On Scala.js](#on-scalajs-the-backends-are-a-module-of-their-own)).
 
 ## Scala Native builds
 

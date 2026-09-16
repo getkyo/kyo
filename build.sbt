@@ -1130,14 +1130,10 @@ lazy val `kyo-ffi-it` =
         )
         .jsSettings(
             `js-settings`,
-            // koffi is loaded via CommonJS `require` at runtime, so align the linker.
+            // CommonJS for the Node row, so koffi and the bundled library resolve through a CommonJS module's own `require`.
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
-            // Point the JS runtime at the plugin-compiled library via KYO_FFI_<LIBID>_PATH. The os/arch/ext
-            // tags mirror the plugin's own CCompiler output name so the path matches the file ffiCompile
-            // wrote, including the linux-musl split and the empty (no `lib`) prefix on Windows.
-            kyoNodeEnv := Map(
-                "KYO_FFI_KYO_IT_BUNDLED_PATH" -> (target.value / "ffi" / ffiArtifactName("kyo_it_bundled", ffiHostOsArch)).getAbsolutePath
-            ),
+            // The plugin-compiled library, staged beside the linked test program, where the loader finds it with no variable set.
+            kyoJsTestNatives,
             // koffi bootstrap (idempotent npm install, hooked on Test / compile) via the kyo-ffi plugin.
             ffiKoffiJsBootstrap("kyo-ffi-it-js-test"),
             // A JVM-and-JS fixture for kyo-ffi's own tests; it has no Wasm row.
@@ -1484,23 +1480,14 @@ lazy val `kyo-stats-machine` =
         )
         .jsSettings(
             `js-settings`,
-            // koffi is loaded via CommonJS `require` at runtime, so align the linker.
+            // CommonJS for the Node row and ESModule for the Wasm row, so koffi and the shim resolve through both module kinds.
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
             // Disable the auto-started sampler for the module's own JS test runs (see the JVM note); the
-            // opt-out is read via System.Unsafe.env, which resolves process.env on Node. Also point the
-            // runtime at the plugin-compiled machine_macos shim through KYO_FFI_MACHINE_MACOS_PATH: the
-            // generated MacosBindings impl resolves the library through NativeLoader.jsResolve, whose first
-            // step is this env var. Without it the shim (produced by ffiCompile under <axis>/target/ffi) is
-            // unresolvable at Node runtime (@kyo/ffi-native is not installed), so koffi's load throws off
-            // macOS instead of the reader degrading. The os/arch/ext tags mirror the plugin's own
-            // CCompiler output name so the path matches the file it wrote, including the linux-musl split.
-            // The Wasm row (ESModule) has no `require` global, so KoffiFacade resolves koffi through node:module.createRequire, which
-            // searches NODE_PATH for the bootstrapped package; the CommonJS row ignores it.
-            kyoNodeEnv := Map(
-                "KYO_MACHINE_DISABLED"       -> "true",
-                "KYO_FFI_MACHINE_MACOS_PATH" -> (target.value / "ffi" / ffiArtifactName("machine_macos", ffiHostOsArch)).getAbsolutePath,
-                "NODE_PATH"                  -> (target.value / "node_modules").getAbsolutePath
-            ),
+            // opt-out is read via System.Unsafe.env, which resolves process.env on Node.
+            kyoNodeEnv := Map("KYO_MACHINE_DISABLED" -> "true"),
+            // The plugin-compiled machine_macos shim, staged beside the linked test programs: the generated MacosBindings impl
+            // resolves it through NativeLoader.jsResolve, which finds it there with no variable set.
+            kyoJsTestNatives,
             // koffi bootstrap (idempotent npm install, hooked on Test / compile) via the kyo-ffi plugin.
             // The CommonJS linker setting above stays in this .jsSettings block: the plugin is a Scala 2.12
             // sbt plugin with no sbt-scalajs dependency, so it cannot carry a scalaJSLinkerConfig setting.
@@ -1657,10 +1644,9 @@ def stagedBoringSslForceLoadLinkOpts(kyoNetBase: File): Seq[String] =
         forceLoad ++ boringSslCxxRuntimeFlags
     }
 
-// Koffi bootstrap for the Node-run test platforms. Both JS and Wasm run the koffi posix transport on Node and resolve koffi dynamically at
-// first native-load (the Wasm/ESModule leg via NODE_PATH; see kyoNetFfiEnvMap), so both need koffi installed in the target's node_modules
-// before tests run. Hooked on Test / compile (not Test / test) so test, testOnly,
-// and testQuick all trigger it, and it re-runs after a clean. Idempotent on the marker.
+// Koffi bootstrap for the Node-run test platforms. Both JS and Wasm run the koffi posix transport on Node and resolve koffi at first
+// native-load from the linked test program, which finds it in the node_modules installed here, under target/, before tests run. Hooked on
+// Test / compile (not Test / test) so test, testOnly, and testQuick all trigger it, and it re-runs after a clean. Idempotent on the marker.
 val kyoNetKoffiInstall: Def.Initialize[Task[Unit]] = Def.task {
     val log        = streams.value.log
     val targetBase = target.value
@@ -1683,22 +1669,14 @@ val kyoNetKoffiInstall: Def.Initialize[Task[Unit]] = Def.task {
     }
 }
 
-// The plugin-compiled native paths for the koffi posix transport and its BoringSSL TLS, exported via KYO_FFI_<LIBID>_PATH to the Node/Wasm
-// test runtime. The plugin owns the artifact-naming convention and the host os/arch (musl probe included); re-deriving them here is how the
-// path resolves `-linux-musl-x86_64.so` on Alpine where a naive `-linux-x86_64.so` would miss. ffiCompile always emits both artifacts (the
-// real staged lib when BoringSSL is staged for this host, else the probe-unavailable stub), so pointing koffi at them is safe either way:
-// on a staged host the `[posix / boringssl]` TLS cells run, on a non-staged host they cancel via the probe, matching JVM/Native.
-def kyoNetFfiEnvMap(targetDir: File): Map[String, String] = {
-    val ffiOut = targetDir / "ffi"
-    Map(
-        "KYO_FFI_KYONET_POSIX_URING_PATH" -> (ffiOut / ffiArtifactName("kyonet_posix_uring", ffiHostOsArch)).getAbsolutePath,
-        "KYO_FFI_KYONET_BORINGSSL_PATH"   -> (ffiOut / ffiArtifactName("kyonet_boringssl", ffiHostOsArch)).getAbsolutePath,
-        // The Wasm (ESModule) leg has no `require` global, so KoffiFacade resolves koffi via
-        // node:module.createRequire, which searches NODE_PATH. Point it at the target's node_modules where the
-        // koffi bootstrap installs the package. Harmless on the CommonJS (js) leg, which uses the `require` global.
-        "NODE_PATH" -> (targetDir / "node_modules").getAbsolutePath
-    )
-}
+// The natives a JS test row loads through koffi, staged beside the row's linked test program by the kyo FFI plugin's ffiWithJsNatives,
+// exactly as an application stages them, so a row finds them the way a user's program does rather than through a KYO_FFI_<ID>_PATH
+// variable only the build sets. The natives come from the test classpath, where ffiPackage files them under kyo-ffi/native/<os>-<arch>/.
+// koffi resolves from the linked program too, from the node_modules each module's koffi bootstrap installs under target/.
+lazy val kyoJsTestNatives: Seq[Def.Setting[?]] = Seq(
+    Test / fastLinkJS     := ffiWithJsNatives(Test / fastLinkJS, Test / fastLinkJS / scalaJSLinkerOutputDirectory, Test).value,
+    WasmTest / fastLinkJS := ffiWithJsNatives(WasmTest / fastLinkJS, WasmTest / fastLinkJS / scalaJSLinkerOutputDirectory, Test).value
+)
 
 // P2b completeness guard (DECISION-P2b-classifier.md Decision 5, layout-first per DECISION-P1 §6): a native
 // classifier jar must carry a real native for every library id the P1 library-state manifest records as `native`
@@ -1936,8 +1914,8 @@ lazy val `kyo-net` =
         .jsSettings(
             `js-settings`,
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
-            // Point the Node runtime at the plugin-compiled koffi natives and bootstrap koffi into node_modules before tests run.
-            kyoNodeEnv := kyoNetFfiEnvMap(target.value),
+            // Stage the plugin-compiled koffi natives beside the linked test programs and bootstrap koffi into node_modules before tests run.
+            kyoJsTestNatives,
             Test / compile := (Test / compile).dependsOn(kyoNetKoffiInstall).value,
             // Sockets: the backend probe selects no candidate in a page (node, epoll, kqueue and io_uring all need a
             // host), so every transport suite would report the same NetBackendUnavailableException. No browser row.
@@ -2047,12 +2025,9 @@ lazy val `kyo-aeron` =
         .jsSettings(
             `js-settings`,
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
-            // NODE_PATH: the Wasm row (ESModule) resolves koffi through node:module.createRequire, which searches it for the
-            // bootstrapped package; the CommonJS row ignores it.
-            kyoNodeEnv := Map(
-                "KYO_FFI_KYO_AERON_PATH" -> (target.value / "ffi" / ffiArtifactName("kyo_aeron", ffiHostOsArch)).getAbsolutePath,
-                "NODE_PATH"              -> (target.value / "node_modules").getAbsolutePath
-            ),
+            // The plugin-compiled shim, staged beside the linked test programs, where the loader finds it with no variable set; koffi
+            // resolves from the same programs, from the node_modules the bootstrap below installs.
+            kyoJsTestNatives,
             Test / compile := (Test / compile).dependsOn(Def.task {
                 val log        = streams.value.log
                 val targetBase = target.value

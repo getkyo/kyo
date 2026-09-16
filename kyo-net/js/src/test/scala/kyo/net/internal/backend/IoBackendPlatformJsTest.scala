@@ -32,6 +32,20 @@ class IoBackendPlatformJsTest extends Test:
         assert(NodeBackend.doProbe == CapabilityOutcome.Available)
     }
 
+    // The build stages kyo-net's natives beside each linked test program and installs koffi under target/, as an application does, and
+    // sets no KYO_FFI_<ID>_PATH. Without this leaf a staging that stopped working would only turn the readiness backend's leaves into
+    // cancels and every transport suite would still pass on the node floor.
+    "on macOS and Linux, the readiness backend probes available, with koffi and its native resolved from the linked program" in {
+        val backend: Maybe[PosixIoBackend] =
+            if kyo.internal.Platform.isMac then Present(KqueueBackend)
+            else if kyo.internal.Platform.isLinux then Present(EpollBackend)
+            else Absent
+        backend match
+            case Absent           => cancel(s"no koffi readiness backend runs on ${kyo.internal.Platform.os}")
+            case Present(backend) => assert(backend.probe == CapabilityOutcome.Available)
+        end match
+    }
+
     "with no process global" - {
         "the node backend probes unavailable, naming the host" in {
             val (outcome, host) = withoutProcessGlobal((NodeBackend.doProbe, kyo.internal.Platform.host))
