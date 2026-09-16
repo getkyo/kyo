@@ -4,6 +4,9 @@ import org.scalatest.freespec.AnyFreeSpec
 
 /** Pins the shape of [[Platform]]: every member with its type, compiled on every platform. A platform that lacks a member or declares it with
   * another type fails to compile this suite, so the interface cannot silently drift between JVM, Scala Native, and Scala.js.
+  *
+  * `linkTimeIf` is pinned here on a constant condition, which every build links; on a condition the linker resolves it is pinned by
+  * `PlatformLinkTimeIfLinkedTest`.
   */
 class PlatformInterfaceTest extends AnyFreeSpec {
 
@@ -13,7 +16,7 @@ class PlatformInterfaceTest extends AnyFreeSpec {
         val isNative: Boolean       = Platform.isNative
         val isWasm: Boolean         = Platform.isWasm
         val canSplit: Boolean       = Platform.canSplitModules
-        val linked: Int             = Platform.linkTimeIf(Platform.isWasm)(1)(2)
+        val linked: Int             = Platform.linkTimeIf(Platform.isJS)(1)(2)
         val maxStackDepth: Int      = Platform.maxStackDepth
         val isDebugEnabled: Boolean = Platform.isDebugEnabled
         val isNodeLike: Boolean     = Platform.isNodeLike
@@ -32,7 +35,7 @@ class PlatformInterfaceTest extends AnyFreeSpec {
         val pathSeparator: String   = Platform.pathSeparator
         val lineSeparator: String   = Platform.lineSeparator
         val exit: Int => Unit       = Platform.exit
-        assert(linked == (if (isWasm) 1 else 2))
+        assert(linked == (if (isJS) 1 else 2))
         assert(List(isJVM, isJS, isNative).count(identity) == 1)
         assert(!canSplit || (isJS && !isWasm))
         assert(maxStackDepth > 0)

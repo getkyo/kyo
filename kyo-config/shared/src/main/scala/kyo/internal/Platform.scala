@@ -18,7 +18,8 @@ package kyo.internal
   * To keep code for one platform out of another, branch with `inline if` on `isJVM`, `isJS`, or `isNative`. To keep code out of a JS or a
   * WasmGC link, branch with `Platform.linkTimeIf(Platform.isWasm)(...)(...)`: `inline if Platform.isWasm` compiles on the JVM and Native,
   * where `isWasm` is a constant, but not on Scala.js. `linkTimeIf` is available on Scala 3; the Scala 2.13 builds declare it as a plain
-  * run-time `if`.
+  * run-time `if`. On Scala.js it expands where it is called, so a branch on `isWasm` or `canSplitModules` needs a caller compiled for the
+  * Scala 3 Next line: the 3.3 LTS line, which kyo-config itself is published for, has no backend support for it.
   *
   * To keep code a host never runs out of what that host fetches, put it behind `js.dynamicImport` under
   * `Platform.linkTimeIf(Platform.canSplitModules)(split)(direct)`: the linker emits the split branch as a module loaded on demand where the

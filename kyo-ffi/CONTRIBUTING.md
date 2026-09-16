@@ -166,7 +166,11 @@ leaf is used only when a platform primitive has no cross-platform Kyo wrapper:
   property of `globalThis` reaches it. Never `js.Dynamic.global.require` on its own
   (absent from every ES module, and harness-injected under the sbt launcher), and
   never `createRequire(process.cwd())`, which resolves from wherever the program was
-  started rather than from the program. A built-in module is not an npm package: it
+  started rather than from the program. `moduleRequire` is `inline`, so its link-time
+  branch and its `import.meta` are compiled into kyo-ffi, which builds on the Scala 3
+  Next line: kyo-config is published for the 3.3 LTS line, whose Scala.js backend
+  cannot emit either, and `linkCheck` links against that release build of it, under
+  ESModule, CommonJS and NoModule. A built-in module is not an npm package: it
   comes from `PlatformJs.nodeBuiltin`. Natives follow the same rule: `NativeLoader`
   looks for `./kyo-ffi/native/<os>-<arch>/<file>` beside the linked program, where
   the plugin's `ffiWithJsNatives` copies them from the classpath (a Scala.js

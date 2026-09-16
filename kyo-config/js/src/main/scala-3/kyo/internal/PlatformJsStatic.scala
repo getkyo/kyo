@@ -3,10 +3,13 @@ package kyo.internal
 import scala.scalajs.LinkingInfo
 import scala.scalajs.js
 
-/** The members of [[PlatformJs]] that depend on how the application is linked, for the Scala 3 Next line.
+/** The members of [[PlatformJs]] that depend on how the application is linked, on Scala 3.
   *
-  * The Scala 3.3 LTS and Scala 2.13 lines declare none of these (`scala-3-lts`, `scala-2.13`): each needs a branch the linker resolves, and
-  * `LinkingInfo.linkTimeIf` is available only here.
+  * Each is `inline`, so its body is compiled where it is called rather than where kyo-config is. That is what makes it work from a release:
+  * kyo-config is published for the Scala 3.3 LTS line, whose Scala.js backend does not resolve `LinkingInfo.linkTimeIf`, and the modules that
+  * call these build on the Next line, whose backend does. A caller compiled for the 3.3 line cannot use them.
+  *
+  * Scala 2.13 has no `inline` to hand the linker such a branch, so that line declares none (`scala-2.13`).
   */
 trait PlatformJsStatic:
 
@@ -26,7 +29,7 @@ trait PlatformJsStatic:
       *     resolves from the file, and that binding is not a property of `globalThis`, so it is read by name. The read sits behind an inline
       *     `typeof` test on the same name, the one form that cannot throw a `ReferenceError`, so a NoModule script in a page reads nothing.
       */
-    def moduleRequire: js.UndefOr[js.Dynamic] =
+    inline def moduleRequire: js.UndefOr[js.Dynamic] =
         LinkingInfo.linkTimeIf[js.UndefOr[js.Dynamic]](LinkingInfo.moduleKind == LinkingInfo.ModuleKind.ESModule) {
             PlatformJs.nodeBuiltin("node:module").map(module => module.createRequire(js.`import`.meta.url))
         } {

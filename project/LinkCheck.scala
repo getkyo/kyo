@@ -286,7 +286,7 @@ object LinkCheck {
             val nodeImports = files.flatMap { f =>
                 staticNodeImport.findAllIn(read(f)).toSeq
             }.distinct
-            val kinds = if (platform == "JS") otherModuleKinds.map { case (label, kind) => moduleKindLink(state, release, ref, program, label, kind) } else Nil
+            val kinds = if (platform == "JS") otherModuleKinds.map { case (label, kind) => moduleKindLink(linkState, ref, program, label, kind) } else Nil
             val runs = Seq(
                 ("under plain node", program.lastLine, runNode(outDir, platform, withoutProcess = false)),
                 ("with no process global", program.withoutProcess, runNode(outDir, platform, withoutProcess = true))
@@ -351,47 +351,42 @@ object LinkCheck {
     private final case class KindLink(label: String, run: (String, Regex, Either[String, Seq[String]]), bareGlobals: Seq[String])
 
     /** Links `program` as `kind` into its own directory and runs `main.js` from there under plain node, the way an application that
-      * configures that module kind launches it. A link the linker rejects is reported as the run's failure rather than ending the check.
+      * configures that module kind launches it. `state` is the program's ES module link state, with the release build and its main class.
+      *
+      * The linker is called directly rather than through `fullLinkJS`, so a link it rejects comes back as that run's failure: a failed task
+      * inside this command would end the command for an sbt client before the other checks report.
       */
-    private def moduleKindLink(
-        state: State,
-        release: Seq[Setting[_]],
-        ref: ProjectReference,
-        program: Program,
-        label: String,
-        kind: ModuleKind
-    ): KindLink = {
+    private def moduleKindLink(state: State, ref: ProjectReference, program: Program, label: String, kind: ModuleKind): KindLink = {
         val extracted = Project.extract(state)
         val outDir    = extracted.get(ref / target) / "link-check" / s"js-$label" / program.name
         IO.delete(outDir)
-        val kindState = extracted.appendWithoutSession(
-            release ++ Seq(
-                ref / Compile / mainClass                                   := Some(program.mainClass),
-                ref / Compile / fullLinkJS / scalaJSLinkerOutputDirectory := outDir,
-                ref / Compile / fullLinkJS / scalaJSLinkerConfig ~= {
-                    _.withModuleKind(kind).withOutputPatterns(org.scalajs.linker.interface.OutputPatterns.Defaults)
-                }
-            ),
-            state
-        )
+        IO.createDirectory(outDir)
+        val config = extracted
+            .get(ref / Compile / fullLinkJS / scalaJSLinkerConfig)
+            .withModuleKind(kind)
+            .withOutputPatterns(org.scalajs.linker.interface.OutputPatterns.Defaults)
         val how = s"as $label under plain node"
-        try {
-            Project.extract(kindState).runTask(ref / Compile / fullLinkJS, kindState)
-            KindLink(label, (how, program.lastLine, runNode(outDir, "JS", withoutProcess = false, entry = "main.js")), checkedBareGlobals(kindState, ref))
-        } catch {
-            case e: Throwable =>
-                KindLink(label, (how, program.lastLine, Left(s"did not link: ${Option(e.getMessage).getOrElse(e.toString)}")), Nil)
+        linkIR(state, ref, config, org.scalajs.linker.PathOutputDirectory(outDir.toPath)) match {
+            case Left(err) => KindLink(label, (how, program.lastLine, Left(s"did not link: $err")), Nil)
+            case Right(moduleSet) =>
+                KindLink(label, (how, program.lastLine, runNode(outDir, "JS", withoutProcess = false, entry = "main.js")), bareHostGlobalReads(moduleSet))
         }
     }
 
-    /** [[bareHostGlobalReads]], with an IR that could not be read reported as a read, so it fails the check. */
-    private def checkedBareGlobals(state: State, ref: ProjectReference): Seq[String] =
-        try bareHostGlobalReads(state, ref)
+    /** The bare host-global reads of the program's ES module link, with a link that failed reported as a read, so it fails the check. */
+    private def checkedBareGlobals(state: State, ref: ProjectReference): Seq[String] = {
+        val config = Project.extract(state).get(ref / Compile / fullLinkJS / scalaJSLinkerConfig)
+        try
+            linkIR(state, ref, config, org.scalajs.linker.MemOutputDirectory()) match {
+                case Left(err)        => Seq(s"(the IR could not be read: $err)")
+                case Right(moduleSet) => bareHostGlobalReads(moduleSet)
+            }
         catch {
             case e: Throwable =>
                 val frames = e.getStackTrace.take(8).mkString(" <- ")
                 Seq(s"(the IR could not be read: $e at $frames)")
         }
+    }
 
     private final case class Row(
         program: Program,
@@ -407,19 +402,15 @@ object LinkCheck {
         runs: Seq[(String, Regex, Either[String, Seq[String]])]
     )
 
-    /** Every bare read of a [[hostGlobals]] name in the program as linked, each as `'name' in class.member`.
-      *
-      * Read from the linker's IR after optimization rather than from the emitted text: there a global read is a node of its own and
-      * `typeof name` another, so neither a guard, nor a string, nor a local that happens to share the name is mistaken for a read. A
-      * facade declared with `@JSGlobal` on one of the names is a bare read too, wherever it is loaded. A read inside the branch of an `if`
-      * whose condition compares `typeof name` with a string other than `"undefined"` is not counted: the name is declared there. That is
-      * the one form `require` keeps, in CommonJS and NoModule links only, where the module's own `require` is a wrapper parameter that no
-      * property of `globalThis` reaches.
+    /** Links the program of `ref` with `config` into `output` through the standard linker, and returns the modules it emitted, as the
+      * optimizer left them, or the errors the linker reported.
       */
-    private def bareHostGlobalReads(state: State, ref: ProjectReference): Seq[String] = {
-        import org.scalajs.ir.Traversers.Traverser
-        import org.scalajs.ir.Trees
-        import org.scalajs.linker.MemOutputDirectory
+    private def linkIR(
+        state: State,
+        ref: ProjectReference,
+        config: org.scalajs.linker.interface.StandardConfig,
+        output: org.scalajs.linker.interface.OutputDirectory
+    ): Either[String, org.scalajs.linker.standard.ModuleSet] = {
         import org.scalajs.linker.PathIRContainer
         import org.scalajs.linker.StandardImpl
         import org.scalajs.linker.interface.IRFile
@@ -438,7 +429,6 @@ object LinkCheck {
 
         implicit val ec: ExecutionContext = ExecutionContext.global
         val extracted         = Project.extract(state)
-        val config            = extracted.get(ref / Compile / fullLinkJS / scalaJSLinkerConfig)
         val (_, initializers) = extracted.runTask(ref / Compile / scalaJSModuleInitializers, state)
         val (_, classpath)    = extracted.runTask(ref / Compile / fullClasspath, state)
         // The frontend reports what it could not link through its logger, and the exception says only that it failed.
@@ -448,8 +438,8 @@ object LinkCheck {
                 if (level == org.scalajs.logging.Level.Error) errors.synchronized(errors += message)
             def trace(t: => Throwable): Unit = ()
         }
-        // The standard linker, whose backend records the modules it is handed before emitting them to memory: linking through the
-        // frontend alone would leave out the linker's own runtime library, which the standard linker adds.
+        // The standard linker, whose backend records the modules it is handed before emitting them: linking through the frontend alone
+        // would leave out the linker's own runtime library, which the standard linker adds.
         @volatile var linked: Option[ModuleSet] = None
         val standardBackend                      = StandardLinkerBackend(config)
         val recordingBackend = new LinkerBackend {
@@ -467,14 +457,28 @@ object LinkCheck {
         val linking = for {
             (containers, _) <- PathIRContainer.fromClasspath(classpath.map(_.data.toPath))
             irFiles         <- StandardImpl.irFileCache().newCache.cached(containers)
-            _               <- linker.link(irFiles, initializers, MemOutputDirectory(), logger)
+            _               <- linker.link(irFiles, initializers, output, logger)
         } yield linked.getOrElse(sys.error("the linker emitted no modules"))
-        val moduleSet =
-            try Await.result(linking, Duration.Inf)
-            catch {
-                case e: org.scalajs.linker.interface.LinkingException =>
-                    throw new RuntimeException(s"${e.getMessage}: ${errors.mkString(" | ")}", e)
-            }
+        try Right(Await.result(linking, Duration.Inf))
+        catch {
+            case e: org.scalajs.linker.interface.LinkingException =>
+                Left((Option(e.getMessage).toSeq ++ errors.distinct).mkString(" | "))
+        }
+    }
+
+    /** Every bare read of a [[hostGlobals]] name in `moduleSet`, each as `'name' in class.member`.
+      *
+      * Read from the linker's IR after optimization rather than from the emitted text: there a global read is a node of its own and
+      * `typeof name` another, so neither a guard, nor a string, nor a local that happens to share the name is mistaken for a read. A
+      * facade declared with `@JSGlobal` on one of the names is a bare read too, wherever it is loaded. A read inside the branch of an `if`
+      * whose condition compares `typeof name` with a string other than `"undefined"` is not counted: the name is declared there. That is
+      * the one form `require` keeps, in CommonJS and NoModule links only, where the module's own `require` is a wrapper parameter that no
+      * property of `globalThis` reaches.
+      */
+    private def bareHostGlobalReads(moduleSet: org.scalajs.linker.standard.ModuleSet): Seq[String] = {
+        import org.scalajs.ir.Traversers.Traverser
+        import org.scalajs.ir.Trees
+
         val classes   = moduleSet.modules.flatMap(_.classDefs) ++ moduleSet.abstractClasses
         val byName    = classes.map(c => c.className -> c).toMap
 
@@ -486,15 +490,27 @@ object LinkCheck {
           * `typeof` that is not `"undefined"` means the name is declared, so a read there cannot throw.
           */
         def declaredBy(cond: Trees.Tree): (Set[String], Set[String]) = {
+            // The optimizer casts `typeof name` to the string it is compared with, as the emitter's transient `Cast(expr, type)`:
+            // `(typeof name).as![String] === "function"`. That class is internal to the emitter, so it is taken apart as the case class it is.
+            def typeOfGlobal(tree: Trees.Tree): Option[String] = tree match {
+                case Trees.JSTypeOfGlobalRef(Trees.JSGlobalRef(name)) => Some(name)
+                case Trees.AsInstanceOf(expr, _)                      => typeOfGlobal(expr)
+                case Trees.Transient(cast: Product) if cast.productPrefix == "Cast" && cast.productArity > 0 =>
+                    cast.productElement(0) match {
+                        case expr: Trees.Tree => typeOfGlobal(expr)
+                        case _                => None
+                    }
+                case _ => None
+            }
             def compare(op: Int, lhs: Trees.Tree, rhs: Trees.Tree, eq: Int, ne: Int): (Set[String], Set[String]) =
-                (lhs, rhs) match {
-                    case (Trees.JSTypeOfGlobalRef(Trees.JSGlobalRef(name)), Trees.StringLiteral(value)) =>
+                (typeOfGlobal(lhs), rhs) match {
+                    case (Some(name), Trees.StringLiteral(value)) =>
                         val declaredWhenEqual = value != "undefined"
                         if (op == eq) { if (declaredWhenEqual) (Set(name), Set.empty) else (Set.empty, Set(name)) }
                         else if (op == ne) { if (declaredWhenEqual) (Set.empty, Set(name)) else (Set(name), Set.empty) }
                         else (Set.empty, Set.empty)
-                    case (Trees.StringLiteral(_), Trees.JSTypeOfGlobalRef(_)) => compare(op, rhs, lhs, eq, ne)
-                    case _                                                    => (Set.empty, Set.empty)
+                    case (None, _) if lhs.isInstanceOf[Trees.StringLiteral] && typeOfGlobal(rhs).isDefined => compare(op, rhs, lhs, eq, ne)
+                    case _                                                                                  => (Set.empty, Set.empty)
                 }
             cond match {
                 case Trees.BinaryOp(op, lhs, rhs)   => compare(op, lhs, rhs, Trees.BinaryOp.===, Trees.BinaryOp.!==)

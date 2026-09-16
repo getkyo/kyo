@@ -2,15 +2,18 @@ package kyo.internal
 
 import scala.scalajs.LinkingInfo
 
-/** The Scala 3 members of [[Platform]] on Scala.js, for the Scala 3 Next line (the one kyo builds with by default).
+/** The Scala 3 members of [[Platform]] on Scala.js.
   *
-  * One published Scala.js artifact is linked as JS or as WasmGC by each application, so `isWasm` is not known when kyo is compiled: it is a
-  * link-time property. These members are `transparent inline` so the call site sees `LinkingInfo` itself, which is the only form
-  * `LinkingInfo.linkTimeIf` accepts in its condition; a plain `def` or `inline def` forwarder is rejected there.
+  * One published Scala.js artifact is linked as JS or as WasmGC, and under the module kind each application picks, so `isWasm` and
+  * `canSplitModules` are not known when kyo is compiled: they are link-time properties. These members are `transparent inline` so the call
+  * site sees `LinkingInfo` itself, which is the only form `LinkingInfo.linkTimeIf` accepts in its condition; a plain `def` or `inline def`
+  * forwarder is rejected there.
   *
-  * The Scala 3.3 LTS line has its own declaration (`scala-3-lts`), because its Scala.js backend does not resolve `LinkingInfo.linkTimeIf`:
-  * code it compiles emits a call to a method that does not exist, and the link fails with "Referring to non-existent method
-  * LinkingInfo$.linkTimeIf".
+  * Being inline, they are also compiled where they are called rather than where kyo-config is, and that is what makes them work from a
+  * release. kyo-config is published for the Scala 3.3 LTS line, whose Scala.js backend does not resolve `LinkingInfo.linkTimeIf` (a link of
+  * code it compiled fails with "Referring to non-existent method LinkingInfo$.linkTimeIf"), while the modules that branch on a link-time
+  * condition build on the Next line, whose backend does. Code compiled for the 3.3 line can read `isWasm` and `canSplitModules`, and can
+  * branch with `linkTimeIf` on a condition that is a constant, but not on one of these two.
   */
 trait PlatformStatic:
 

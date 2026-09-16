@@ -14,8 +14,8 @@ import scala.scalajs.js
   *
   * [[detectHost]] is a pure function of a global object, so the classification can be tested against fabricated globals for every host.
   *
-  * The members that depend on how the application is linked, such as `moduleRequire`, come from [[PlatformJsStatic]], which each Scala
-  * release line declares on its own.
+  * The members that depend on how the application is linked, such as `moduleRequire`, come from [[PlatformJsStatic]], which Scala 3 and
+  * Scala 2.13 declare on their own.
   */
 object PlatformJs extends PlatformJsStatic {
 
