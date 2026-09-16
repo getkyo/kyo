@@ -1205,6 +1205,28 @@ class PathTest extends kyo.test.Test[Any]:
         })
     }
 
+    // A write that has returned is a write a listing must show. kyo-tasty's Native test fixtures carry a barrier
+    // that lists each directory before walking it, on the recorded belief that "the POSIX readdir cache in the
+    // Scala Native NIO compat sometimes misses the last few writes when the same fiber writes then walks the same
+    // directory within microseconds". If that is true it is a defect in this surface and belongs here, where it
+    // would be fixed; if it is not, nothing should be written around it. Many files, written and listed with
+    // nothing in between, is the shape that claim describes.
+    "every file just written into a directory appears in its listing" in {
+        val count = 64
+        Scope.run(Path.run {
+            for
+                dir      <- Path.tempDir("kyo-path-write-then-list")
+                _        <- Kyo.foreach(0 until count)(i => (dir / s"entry-$i.bin").writeBytes(Span.from(Array[Byte](i.toByte))))
+                children <- dir.list
+                _        <- dir.removeAll
+            yield
+                val names   = children.toList.map(_.parts.last).toSet
+                val missing = (0 until count).map(i => s"entry-$i.bin").filterNot(names.contains)
+                assert(missing.isEmpty, s"a listing taken right after the writes missed ${missing.size}: ${missing.take(8).mkString(", ")}")
+            end for
+        })
+    }
+
     "list with glob returns only matching files" in {
         Scope.run(Path.run {
             for
