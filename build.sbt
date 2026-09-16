@@ -2698,9 +2698,7 @@ lazy val `kyo-slack` =
         )
         .jsSettings(
             `js-settings`,
-            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
-            // Its web and socket-mode transports are kyo-net sockets, which a page has not. No browser row.
-            kyoBrowserRow := false
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
         )
         .nativeSettings(
             `native-settings`,
