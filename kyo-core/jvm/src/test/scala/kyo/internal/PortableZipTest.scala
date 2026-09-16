@@ -283,6 +283,26 @@ class PortableZipTest extends kyo.test.Test[Any]:
             assert(thrown)
         }
 
+        "damage anywhere is reported, never leaked" in {
+            // One valid stream, each of its bytes flipped in turn. Every outcome has to be one the caller can act
+            // on: the data back, other data with a checksum that catches it, or a DataFormatException. Anything
+            // else is the decoder reading somewhere it should not, which is what an incomplete or over-subscribed
+            // code table used to let a damaged stream do.
+            val clean = jdkDeflate(prose)
+            val leaked =
+                (0 until clean.length).flatMap { at =>
+                    val damaged = clean.clone()
+                    damaged(at) = (damaged(at) ^ 0x5a).toByte
+                    try
+                        val _ = portableInflate(damaged)
+                        None
+                    catch
+                        case _: PortableZip.DataFormatException => None
+                        case other: Throwable                   => Some(s"byte $at: ${other.getClass.getName}")
+                }
+            assert(leaked.isEmpty, leaked.take(5).mkString(", "))
+        }
+
         "a corrupted checksum" in {
             val stream = jdkDeflate(prose)
             stream(stream.length - 1) = (stream(stream.length - 1) ^ 0xff).toByte

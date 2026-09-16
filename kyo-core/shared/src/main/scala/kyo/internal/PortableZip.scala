@@ -156,8 +156,18 @@ private[kyo] object PortableZip:
             counts(lengths(i)) += 1
             i += 1
         counts(0) = 0
+        // A set of lengths that claims more codes than a tree of this depth has is not a code, and a stream carrying
+        // one is corrupt. Saying so here is what keeps the decode loop's index inside the symbol table.
+        var left = 1
+        var len  = 1
+        while len <= MaxCodeBits do
+            left <<= 1
+            left -= counts(len)
+            if left < 0 then throw new DataFormatException("A code table in the stream claims more codes than it can hold")
+            len += 1
+        end while
         val offsets = new Array[Int](MaxCodeBits + 2)
-        var len     = 1
+        len = 1
         while len <= MaxCodeBits do
             offsets(len + 1) = offsets(len) + counts(len)
             len += 1
@@ -630,7 +640,13 @@ private[kyo] object PortableZip:
                 else
                     code |= readBits(1)
                     val count = table.counts(len)
-                    if code - first < count then symbol = table.symbols(index + (code - first))
+                    if code - first < count then
+                        // A table can be incomplete, which RFC 1951 allows, and then a code can land past the symbols
+                        // it has. That is corrupt input, not a table to index with.
+                        val at = index + (code - first)
+                        if at >= table.symbols.length then
+                            throw new DataFormatException("A Huffman code in the stream points past its own table")
+                        symbol = table.symbols(at)
                     else
                         index += count
                         first = (first + count) << 1
