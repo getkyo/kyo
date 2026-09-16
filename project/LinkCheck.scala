@@ -35,7 +35,15 @@ object LinkCheck {
     /** A program, the link-check project it lives in (without the platform suffix), and the last line it prints under plain node and with no
       * `process` global.
       */
-    final case class Program(name: String, project: String, mainClass: String, lastLine: Regex, withoutProcess: Regex)
+    final case class Program(
+        name: String,
+        project: String,
+        mainClass: String,
+        lastLine: Regex,
+        withoutProcess: Regex,
+        /** Strings the linked output must NOT contain: code this program has no use for and must not drag in. */
+        absent: Seq[String] = Nil
+    )
 
     object Program {
         def apply(name: String, project: String, mainClass: String, lastLine: Regex): Program =
@@ -49,7 +57,17 @@ object LinkCheck {
         Program("UiMin", "kyo-link-check-ui", "linkcheck.UiMin", """Div\(Attrs\(.*\),Chunk\.Indexed\(\)\)""".r),
         Program("SystemPath", "kyo-link-check-system", "linkcheck.SystemPath", "kyo".r, "panic UnsupportedOperationException".r),
         // NetPlatform.transport is a plain lazy val, so a host with no usable backend gets its NetBackendUnavailableException as a throw.
-        Program("NetEcho", "kyo-link-check-net", "linkcheck.NetEcho", "echo kyo".r, "panic NetBackendUnavailableException".r)
+        Program("NetEcho", "kyo-link-check-net", "linkcheck.NetEcho", "echo kyo".r, "panic NetBackendUnavailableException".r),
+        // Names one HTTP provider and reads its completion. kyo-ai's two CLI harnesses spawn a process, which reaches
+        // node:child_process; a program that names neither must not carry them, and a page could not run them at all.
+        Program(
+            "AiHttp",
+            "kyo-link-check-ai",
+            "linkcheck.AiHttp",
+            "completion streams true".r,
+            "completion streams true".r,
+            absent = Seq("node:child_process")
+        )
     )
 
     /** A static import of a Node built-in in linked output: `import * as x from "node:fs"`, `import "node:fs"`. */
@@ -137,7 +155,8 @@ object LinkCheck {
             // Source maps are a debugging aid the application does not ship.
             val files = Option(outDir.listFiles).toSeq.flatten.filter(f => f.isFile && !f.getName.endsWith(".map"))
             val size  = files.map(_.length).sum
-            val found = dataMarkers.filter(marker => files.exists(f => contains(f, marker)))
+            val found  = dataMarkers.filter(marker => files.exists(f => contains(f, marker)))
+            val linked = program.absent.filter(marker => files.exists(f => contains(f, marker)))
             val nodeImports = files.flatMap { f =>
                 staticNodeImport.findAllIn(new String(Files.readAllBytes(f.toPath), StandardCharsets.UTF_8)).toSeq
             }.distinct
@@ -145,15 +164,17 @@ object LinkCheck {
                 ("under plain node", program.lastLine, runNode(outDir, platform, withoutProcess = false)),
                 ("with no process global", program.withoutProcess, runNode(outDir, platform, withoutProcess = true))
             )
-            (program, size, found, nodeImports, runs)
+            (program, size, found, linked, nodeImports, runs)
         }
         log(s"$platform sizes (bytes, all output files):")
-        rows.foreach { case (program, size, _, _, _) =>
+        rows.foreach { case (program, size, _, _, _, _) =>
             val ceiling = ceilings.get((platform, program.name)).fold("no ceiling")(c => f"ceiling $c%,d")
             log(f"  ${program.name}%-12s $size%,12d   $ceiling")
         }
-        rows.flatMap { case (program, size, found, nodeImports, runs) =>
+        rows.flatMap { case (program, size, found, linked, nodeImports, runs) =>
             val data = found.map(m => s"$platform ${program.name}: the linked output contains data it cannot reach (marker '$m')")
+            val reached =
+                linked.map(m => s"$platform ${program.name}: the linked output carries code this program does not use (marker '$m')")
             val imports = nodeImports.map(i => s"$platform ${program.name}: the linked output has a static Node import a browser cannot load: $i")
             val ceiling = ceilings.get((platform, program.name)) match {
                 case None                    => Seq(s"$platform ${program.name}: no ceiling in kyo-link-check/ceilings.txt")
@@ -167,7 +188,7 @@ object LinkCheck {
                     if (expected.pattern.matcher(last.trim).matches()) Nil
                     else Seq(s"$platform ${program.name}: unexpected output $how, last line '$last', expected '$expected'")
             }
-            data ++ imports ++ ceiling ++ output
+            data ++ reached ++ imports ++ ceiling ++ output
         }
     }
 
