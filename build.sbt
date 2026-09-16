@@ -8,25 +8,19 @@ import org.scalajs.jsenv.nodejs.*
 import sbtdynver.DynVerPlugin.autoImport.*
 import scala.scalanative.build.NativeConfig
 
-val scala3Version    = "3.8.4"
-val scala3LTSVersion = "3.3.8"
-val scala213Version  = "2.13.18"
-
-// Scaladoc runs from a newer release than the compiler that produced the code. It reads TASTy, and
-// TASTy is backward compatible, so the tool version moves independently of `scala3Version`. This one
-// carries scala/scala3#25779, without which rendering a method signature can fail with a null
-// SignatureBuilder.content on Linux x86_64 and abort the publish.
-val scaladocVersion = "3.9.0-RC4"
-
-// The scaladoc release used for a module: the fixed one for the current series, the module's own
-// everywhere else. Only the current series can read what the fixed tool carries.
-val scaladocToolVersion = Def.setting {
-    if (scalaVersion.value == scala3Version) scaladocVersion else scalaVersion.value
-}
+val scala39Version  = "3.9.0"
+val scala33Version  = "3.3.8"
+val scala213Version = "2.13.18"
 
 // Holds the scaladoc tool and its dependencies. Hidden so it stays out of published poms, and
 // separate from the compile classpath so the tool's own Scala version never reaches user code.
 lazy val ScaladocTool = config("scaladocTool").hide
+
+// Holds kyo-tasty's real-world fixture jars. Tests read them from `java.class.path` as data and never
+// compile against them, so they join the test runtime classpath only. They are intransitive, and a
+// compile classpath with dangling parents (`zio.Tag` extends the absent `izumi.reflect.Tag`) crashes
+// scalac 3.9.0 when it searches the classpath for import suggestions.
+lazy val TastyFixtureJars = config("tastyFixtureJars").hide
 
 val zioVersion       = "2.1.26"
 val catsVersion      = "3.7.0"
@@ -47,7 +41,7 @@ val compilerOptions = Set(
     ScalacOptions.advancedKindProjector
 )
 
-ThisBuild / scalaVersion := scala3Version
+ThisBuild / scalaVersion := scala39Version
 publish / skip           := true
 
 inThisBuild(List(
@@ -130,8 +124,8 @@ lazy val release17 = Seq(
 
 lazy val `kyo-settings` = Seq(
     fork               := true,
-    scalaVersion       := scala3Version,
-    crossScalaVersions := List(scala3Version),
+    scalaVersion       := scala39Version,
+    crossScalaVersions := List(scala39Version),
     scalacOptions ++= scalacOptionTokens(compilerOptions).value,
     // Re-check every macro expansion against the compiler's tree invariants. The macros kyo does ship sit
     // where most programs land (Tag, Frame, Schema derivation, Sql `.run`, `assert`) and read trees that
@@ -155,13 +149,10 @@ lazy val `kyo-settings` = Seq(
     scalafmtOnCompile := !insideCI.value,
     ivyConfigurations += ScaladocTool,
     // The tool ships its own standard library, so it can only read a module whose library it agrees
-    // with. That holds for the current series and not for the LTS one, whose `scala.caps` differs
-    // and leaves two of it on the classpath, at which point resolving anything from `Predef` fails.
-    // The LTS modules therefore document with their own version and forgo the fix, which they have
-    // never needed: the crash it addresses appears in the current series.
+    // with: each module documents with the scaladoc release of its own Scala version.
     libraryDependencies ++= (
         if (!scalaVersion.value.startsWith("3")) Nil
-        else Seq("org.scala-lang" % "scaladoc_3" % scaladocToolVersion.value % ScaladocTool.name)
+        else Seq("org.scala-lang" % "scaladoc_3" % scalaVersion.value % ScaladocTool.name)
     ),
     // Render the API from TASTy with a forked scaladoc rather than sbt's in-process one. Forking is
     // what bounds a tool crash to the module that provoked it: sbt's `doc` shares one JVM across
@@ -178,7 +169,7 @@ lazy val `kyo-settings` = Seq(
         // depending on it is what compiles this module before its TASTy is read.
         val classes     = (Compile / products).value
         val opts        = (Compile / doc / scalacOptions).value
-        val toolVersion = scaladocToolVersion.value
+        val toolVersion = scalaVersion.value
         // This tool reads TASTy, which only the Scala 3 series emits, so the 2.13 and 2.12 modules
         // (the kyo-scheduler family and the sbt plugins) have nothing it can read. They document
         // empty, the same way modules that opt out via `Compile / doc / sources := Seq.empty` do:
@@ -239,20 +230,20 @@ lazy val `kyo-settings` = Seq(
     // keeps the auto-scaling default so small machines are not over-committed.
     Test / javaOptions ++= (if (sys.env.contains("CI")) Seq("-Xmx5g") else Nil),
     doctestPredef := Seq("import kyo.*"),
-    // Non-LTS modules pick up kyo-doctest through Test/unmanagedJars so Test/fullClasspath
-    // dedups naturally. LTS fallback modules (3.3.7) must NOT have kyo-doctest on the Test
-    // compile classpath, because its scala3-library 3.8.3 clashes with the project's 3.3.7
+    // Scala 3.9 modules pick up kyo-doctest through Test/unmanagedJars so Test/fullClasspath
+    // dedups naturally. Scala 3.3 modules must NOT have kyo-doctest on the Test
+    // compile classpath, because its scala3-library 3.9 clashes with the module's 3.3
     // ("package scala contains object and package with same name: caps"). For those the
     // plugin's doctestExtraClasspath path supplies kyo-doctest at fork time only, and
     // reconcileClasspath strips the mismatched scala3-library before the fork starts.
     Test / unmanagedJars ++= {
-        if (scalaVersion.value == scala3Version)
+        if (scalaVersion.value == scala39Version)
             (LocalProject("kyo-doctestJVM") / Compile / fullClasspath).value
         else
             Seq.empty[Attributed[File]]
     },
     doctestExtraClasspath := {
-        if (scalaVersion.value == scala3Version)
+        if (scalaVersion.value == scala39Version)
             Seq.empty[File]
         else
             (LocalProject("kyo-doctestJVM") / Compile / fullClasspath).value.files
@@ -664,12 +655,12 @@ lazy val `kyo-scheduler` =
             release17,
             libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
             scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
-            crossScalaVersions := List(scala3LTSVersion, scala213Version)
+            crossScalaVersions := List(scala33Version, scala213Version)
         )
         .jvmSettings(mimaCheck(false))
         .nativeSettings(
             `native-settings`,
-            crossScalaVersions                         := List(scala3LTSVersion),
+            crossScalaVersions                         := List(scala33Version),
             libraryDependencies += "org.scala-native" %%% "scala-native-java-logging" % "1.0.0"
         )
         .jsSettings(
@@ -690,14 +681,14 @@ lazy val `kyo-scheduler-zio` = sbtcrossproject.CrossProject("kyo-scheduler-zio",
         `kyo-settings`,
         release17,
         scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
-        crossScalaVersions                      := List(scala3LTSVersion, scala213Version),
+        crossScalaVersions                      := List(scala33Version, scala213Version),
         libraryDependencies += "dev.zio"       %%% "zio"       % zioVersion,
         libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test
     )
     .jvmSettings(mimaCheck(false))
     .nativeSettings(
         `native-settings`,
-        crossScalaVersions := List(scala3LTSVersion)
+        crossScalaVersions := List(scala33Version)
     )
 
 lazy val `kyo-scheduler-pekko` =
@@ -715,7 +706,7 @@ lazy val `kyo-scheduler-pekko` =
         .jvmSettings(mimaCheck(false))
         .settings(
             scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
-            crossScalaVersions := List(scala3LTSVersion, scala213Version)
+            crossScalaVersions := List(scala33Version, scala213Version)
         )
 
 lazy val `kyo-scheduler-finagle` =
@@ -733,7 +724,7 @@ lazy val `kyo-scheduler-finagle` =
                     Seq.empty
             },
             scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
-            crossScalaVersions := Seq(scala213Version, scala3LTSVersion),
+            crossScalaVersions := Seq(scala213Version, scala33Version),
             publish / skip     := scalaVersion.value != scala213Version,
             Compile / unmanagedSourceDirectories := {
                 if (scalaVersion.value == scala213Version)
@@ -1283,11 +1274,12 @@ lazy val `kyo-ffi-plugin` =
                         "-Dplugin.version=" + version.value,
                         "-Dkyo.version=" + version.value,
                         // The sub-builds link against kyo artifacts this build publishLocal'd, so their
-                        // Scala.js and Scala Native plugins must be the ones those artifacts were built
-                        // with. Pinning the versions here rather than in each fixture's plugins.sbt
-                        // keeps the two from drifting: a stale sbt-scala-native fails at nativeLink on
-                        // an undefined runtime symbol, a stale sbt-scalajs at fastLinkJS on an IR
-                        // version it cannot read. Mirrors kyo-doctest-plugin's scalaVersion pin.
+                        // Scala version and their Scala.js and Scala Native plugins must be the ones
+                        // those artifacts were built with. Pinning them here rather than in each
+                        // fixture keeps the two from drifting: a stale Scala cannot read the artifacts'
+                        // TASTy, a stale sbt-scala-native fails at nativeLink on an undefined runtime
+                        // symbol, a stale sbt-scalajs at fastLinkJS on an IR version it cannot read.
+                        "-Dkyo.scalaVersion=" + scala39Version,
                         "-Dscalajs.version=" + scalaJSVersion,
                         "-Dscalanative.version=" + nativeVersion
                     )
@@ -1426,22 +1418,25 @@ lazy val `kyo-tasty` =
             // StackOverflowError under scoverage instrumentation.
             coverageMinimumStmtTotal := 75.3,
             coverageFailOnMinimum    := true,
-            // FROZEN: do not bump as part of routine dependency upgrades. The tasty-query oracle
-            // and the real-world fixture jars below are a deliberate spread of versions chosen to
-            // exercise TASTy decoding across compiler releases; changing them alters test-coverage
-            // intent rather than upgrading a dependency.
-            // Differential testing against tasty-query 1.7.0. JVM-only because
-            // tasty-query's ClasspathLoaders requires java.nio.
-            libraryDependencies += "ch.epfl.scala" %% "tasty-query" % "1.7.0" % Test,
+            // FROZEN: do not bump as part of routine dependency upgrades. The real-world fixture jars
+            // below are a deliberate spread of versions chosen to exercise TASTy decoding across compiler
+            // releases; changing them alters test-coverage intent rather than upgrading a dependency.
+            // Differential testing against tasty-query 1.9.0. JVM-only because
+            // tasty-query's ClasspathLoaders requires java.nio. Unlike the fixture jars, this oracle
+            // follows scalaVersion: it reads the fixtures this build compiles, and tasty-query rejects
+            // TASTy with a newer minor version than its own (1.9.0 reads up to 28.9, Scala 3.9).
+            libraryDependencies += "ch.epfl.scala" %% "tasty-query" % "1.9.0" % Test,
             // Real-world classpath fidelity targets. Each jar is intransitive to avoid
             // downloading large transitive closures (Spark: ~5 GB; Play: ~500 MB). kyo-tasty
             // loads only .tasty files in the jar; missing transitive deps produce
             // Symbol.Unresolved stubs (not TastyError entries), so errors.isEmpty holds.
-            libraryDependencies += "com.typesafe.akka"  % "akka-actor_3"    % "2.6.20" % Test intransitive (),
-            libraryDependencies += "org.apache.pekko"  %% "pekko-actor"     % "1.1.3"  % Test intransitive (),
-            libraryDependencies += "org.playframework" %% "play"            % "3.0.2"  % Test intransitive (),
-            libraryDependencies += "org.apache.spark"   % "spark-core_2.13" % "3.5.1"  % Test intransitive (),
-            libraryDependencies += "dev.zio"           %% "zio"             % "2.0.15" % Test intransitive ()
+            ivyConfigurations += TastyFixtureJars,
+            libraryDependencies += "com.typesafe.akka"  % "akka-actor_3"    % "2.6.20" % TastyFixtureJars intransitive (),
+            libraryDependencies += "org.apache.pekko"  %% "pekko-actor"     % "1.1.3"  % TastyFixtureJars intransitive (),
+            libraryDependencies += "org.playframework" %% "play"            % "3.0.2"  % TastyFixtureJars intransitive (),
+            libraryDependencies += "org.apache.spark"   % "spark-core_2.13" % "3.5.1"  % TastyFixtureJars intransitive (),
+            libraryDependencies += "dev.zio"           %% "zio"             % "2.0.15" % TastyFixtureJars intransitive (),
+            Test / fullClasspath ++= Attributed.blankSeq(update.value.select(configurationFilter(TastyFixtureJars.name)))
         )
         .nativeSettings(`native-settings`)
         .jsSettings(
@@ -1497,7 +1492,7 @@ lazy val `kyo-stats-registry` =
             release17,
             libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
             scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
-            crossScalaVersions := List(scala3LTSVersion, scala213Version)
+            crossScalaVersions := List(scala33Version, scala213Version)
         )
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
@@ -1513,7 +1508,7 @@ lazy val `kyo-config` =
             release17,
             libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
             scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
-            crossScalaVersions := List(scala3LTSVersion, scala213Version)
+            crossScalaVersions := List(scala33Version, scala213Version)
         )
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
@@ -2567,10 +2562,10 @@ lazy val `kyo-compat-future` =
             `kyo-settings`,
             release17,
             libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
-            // Default compile under scala3Version so unidoc reads consistent TASTy with the rest of the build.
-            // `+publish` still only emits LTS artifacts (crossScalaVersions + publish/skip guard).
-            crossScalaVersions := List(scala3LTSVersion),
-            publish / skip     := scalaVersion.value != scala3LTSVersion,
+            // Default compile under scala39Version so unidoc reads consistent TASTy with the rest of the build.
+            // `+publish` still only emits Scala 3.3 artifacts (crossScalaVersions + publish/skip guard).
+            crossScalaVersions := List(scala33Version),
+            publish / skip     := scalaVersion.value != scala33Version,
             scalacOptions += "-Xmax-inlines:1024",
             // Cross-platform: shared sources use atomics + ConcurrentLinkedQueue
             // (both polyfilled on JS and natively supported on Native).
@@ -2637,8 +2632,8 @@ lazy val `kyo-compat-zio` =
             `kyo-settings`,
             release17,
             libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
-            crossScalaVersions                      := List(scala3LTSVersion),
-            publish / skip                          := scalaVersion.value != scala3LTSVersion,
+            crossScalaVersions                      := List(scala33Version),
+            publish / skip                          := scalaVersion.value != scala33Version,
             scalacOptions += "-Xmax-inlines:1024",
             libraryDependencies += "dev.zio" %%% "zio"            % zioVersion,
             libraryDependencies += "dev.zio" %%% "zio-concurrent" % zioVersion,
@@ -2672,8 +2667,8 @@ lazy val `kyo-compat-ox` =
             `kyo-settings`,
             release17,
             libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
-            crossScalaVersions                      := List(scala3LTSVersion),
-            publish / skip                          := scalaVersion.value != scala3LTSVersion,
+            crossScalaVersions                      := List(scala33Version),
+            publish / skip                          := scalaVersion.value != scala33Version,
             scalacOptions += "-Xmax-inlines:1024",
             libraryDependencies += "com.softwaremill.ox" %% "core" % oxVersion,
             Test / unmanagedSourceDirectories += {
@@ -2702,8 +2697,8 @@ lazy val `kyo-compat-twitter-future` =
             `kyo-settings`,
             release17,
             libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
-            crossScalaVersions                      := List(scala3LTSVersion),
-            publish / skip                          := scalaVersion.value != scala3LTSVersion,
+            crossScalaVersions                      := List(scala33Version),
+            publish / skip                          := scalaVersion.value != scala33Version,
             scalacOptions += "-Xmax-inlines:1024",
             libraryDependencies += ("com.twitter" %% "util-core" % "24.2.0")
                 .exclude("org.scala-lang.modules", "scala-collection-compat_2.13"),
@@ -2738,8 +2733,8 @@ lazy val `kyo-compat-tests` =
             `kyo-settings`,
             release17,
             libraryDependencies += "org.scalatest" %% "scalatest" % scalaTestVersion % Test,
-            scalaVersion                           := scala3LTSVersion,
-            crossScalaVersions                     := List(scala3LTSVersion),
+            scalaVersion                           := scala33Version,
+            crossScalaVersions                     := List(scala33Version),
             scalacOptions += "-Xmax-inlines:1024",
             publish / skip := true,
             mimaCheck(false),
@@ -3234,7 +3229,7 @@ lazy val `kyo-doctest` =
         .jvmConfigure(_.disablePlugins(KyoDoctestPlugin))
         .settings(
             `kyo-settings`,
-            libraryDependencies += "org.scala-lang" %% "scala3-compiler" % scala3Version
+            libraryDependencies += "org.scala-lang" %% "scala3-compiler" % scala39Version
         )
 
 // Validates the root README.md (repo-level, outside any module directory).
@@ -3469,7 +3464,7 @@ lazy val `kyo-doctest-plugin` = (project in file("kyo-doctest/plugin"))
             // The sub-builds compile against the same Scala the runner classpath was built with.
             // Pinning it here rather than in each build.sbt keeps the two from drifting apart, which
             // breaks with a NoSuchMethodError once the two versions disagree on the standard library.
-            "-Dkyo.doctest.scalaVersion=" + scala3Version
+            "-Dkyo.scalaVersion=" + scala39Version
         ),
         scriptedBufferLog := false,
         // Provide the kyo-doctest runner's built classpath to the scripted forks without ivy
@@ -3748,7 +3743,7 @@ lazy val `kyo-test-sbt-publish` =
                 // three) OOMs inside nativeLink.
                 "-Xmx4G",
                 "-Dplugin.version=" + version.value,
-                "-Dkyo.scalaVersion=" + scala3Version
+                "-Dkyo.scalaVersion=" + scala39Version
             ),
             scriptedBufferLog := false,
             // The sub-builds resolve kyo-test-runner from ivy-local, and publishLocal is not

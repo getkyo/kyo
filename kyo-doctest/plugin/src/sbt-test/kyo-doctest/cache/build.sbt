@@ -1,6 +1,6 @@
 // Scripted test: second doctest run reports cache hits.
 
-ThisBuild / scalaVersion := sys.props("kyo.doctest.scalaVersion")
+ThisBuild / scalaVersion := sys.props("kyo.scalaVersion")
 
 lazy val root = (project in file("."))
     .enablePlugins(KyoDoctestPlugin)

@@ -231,20 +231,20 @@ object WebsiteMain extends KyoApp:
       * distinct from the `-fastopt` and `-test-fastopt` siblings). The first such directory that
       * actually contains a `main.js` is returned, so a stale `-fastopt` directory never wins.
       *
-      * When neither the flag nor a discovered directory is present, falls back to
-      * `<repoRoot>/kyo-website-bundle/js/target/scala-3.8.3/kyo-website-bundle-opt`, the path the
-      * current build (`build.sbt` `scala3Version`, ESModule bundle) writes to. `copyAssets` then
-      * reports a `WebsiteEmitException` if that path holds no `main.js`, so a missing bundle fails
-      * loud rather than emitting a site with a broken script reference.
+      * When neither the flag nor a discovered directory is present, fails with
+      * `WebsiteBundleNotFoundException` naming the `target` directory it searched, so a missing bundle
+      * fails loud rather than emitting a site with a broken script reference.
       */
     private[website] def parseBundleDir(theArgs: Chunk[String], repoRoot: String)(using Frame): String < (Sync & Abort[WebsiteException]) =
         flagValue(theArgs, "--bundle-dir") match
             case Present(dir) => dir
             case Absent =>
-                Abort.run[FileSystemException](discoverBundleDir(repoRoot)).map {
-                    case Result.Success(dir) => dir
-                    case Result.Failure(e)   => Abort.fail(WebsiteEmitException("bundle-dir discovery", e))
-                    case p: Result.Panic     => Abort.error(p)
+                val targetDir = Path(repoRoot, "kyo-website-bundle", "js", "target")
+                Abort.run[FileSystemException](discoverBundleDir(targetDir)).map {
+                    case Result.Success(Present(dir)) => dir
+                    case Result.Success(Absent)       => Abort.fail(WebsiteBundleNotFoundException(targetDir))
+                    case Result.Failure(e)            => Abort.fail(WebsiteEmitException("bundle-dir discovery", e))
+                    case p: Result.Panic              => Abort.error(p)
                 }
         end match
     end parseBundleDir
@@ -263,18 +263,16 @@ object WebsiteMain extends KyoApp:
             )
         }
 
-    private def discoverBundleDir(repoRoot: String)(using Frame): String < (Sync & Abort[FileSystemException]) =
-        val fallback  = Path(repoRoot, "kyo-website-bundle", "js", "target", "scala-3.8.3", "kyo-website-bundle-opt")
-        val targetDir = Path(repoRoot, "kyo-website-bundle", "js", "target")
+    private def discoverBundleDir(targetDir: Path)(using Frame): Maybe[String] < (Sync & Abort[FileSystemException]) =
         Path.runReadOnly {
             targetDir.isDirectory.map {
-                case false => fallback.toString
+                case false => Absent
                 case true =>
                     for
                         scalaDirs   <- childDirsMatching(targetDir, _.startsWith("scala-"))
                         optDirs     <- Kyo.foreach(scalaDirs)(childDirsMatching(_, _.endsWith("-opt"))).map(_.flattenChunk)
                         flaggedMain <- Kyo.foreach(optDirs)(d => (d / "main.js").isRegularFile.map(_ -> d))
-                    yield flaggedMain.collect { case (true, d) => d.toString }.headMaybe.getOrElse(fallback.toString)
+                    yield flaggedMain.collect { case (true, d) => d.toString }.headMaybe
             }
         }
     end discoverBundleDir

@@ -5,7 +5,7 @@ package kyo.internal.tasty.reader
   * Source: dotty/tools/tasty/TastyFormat.scala in tasty-core_3.
   *
   * Magic bytes (line 313): Array(0x5C, 0xA1, 0xAB, 0x1F), big-endian, MSB first. Version triple (lines 321-344): MajorVersion=28,
-  * MinorVersion=8, ExperimentalVersion=0.
+  * MinorVersion=9, ExperimentalVersion=0.
   *
   * AST tag layout:
   *   - Category 1 (1-59): tag only
@@ -22,7 +22,7 @@ object TastyFormat:
 
     // ── Version (TastyFormat.scala lines 321-344) ────────────────────────────
     final val MajorVersion: Int        = 28
-    final val MinorVersion: Int        = 8
+    final val MinorVersion: Int        = 9
     final val ExperimentalVersion: Int = 0
 
     // ── Section name constants (TastyFormat.scala lines 394-397) ─────────────

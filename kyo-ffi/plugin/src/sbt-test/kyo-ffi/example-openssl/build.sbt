@@ -1,4 +1,4 @@
-ThisBuild / scalaVersion := "3.8.3"
+ThisBuild / scalaVersion := sys.props("kyo.scalaVersion")
 ThisBuild / version      := "0.1.0-SNAPSHOT"
 
 // OpenSSL worked example. Real OpenSSL is not linked on the CI/build host, a

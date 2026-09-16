@@ -305,7 +305,7 @@ import kyo.doctest.*
 
 val config = Doctest.Config(
     sources = Chunk(Path("docs/README.md"), Path("docs/guide.md")),
-    classpath = Chunk(Path("target/scala-3.7.4/classes")),
+    classpath = Chunk(Path("target/scala-3.x/classes")),
     scalaOpts = Chunk("-release", "17"),
     cache = Path(".doctest-cache"),
     parallel = 8,
