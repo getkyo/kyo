@@ -430,7 +430,7 @@ class ChoiceTest extends kyo.test.Test[Any]:
         }
 
         "nested choice points stream in the order run collects them".pendingUntilFixed(
-            "ported from robustness; nested choice points stream in a different order than run collects them; behavior gap in this branch's Choice streaming order"
+            "known gap: nested choice points stream in a different order than run collects them"
         ) in {
             val computation =
                 Choice.eval(1, 2).map { a =>
