@@ -416,11 +416,19 @@ object Topic:
                         var tokOwned = true
                         Sync.ensure(Sync.Unsafe.defer(if tokOwned then transport.freeAsyncPub(tok) else ())) {
                             Loop.foreach[Maybe[Pub], Async & Abort[TopicTransportException]] {
-                                Sync.Unsafe.defer(transport.pollAddPublication(tok)).map {
+                                Sync.Unsafe.defer {
+                                    val poll = transport.pollAddPublication(tok)
+                                    // The transport's `_get` takes the token on a Done poll, so ownership is cleared in
+                                    // the same step as the poll: an interrupt landing between the poll and the clear
+                                    // would otherwise let the finalizer free a token the transport already took.
+                                    poll match
+                                        case _: AeronTransport.AddPoll.Done[?] => tokOwned = false
+                                        case _                                 => ()
+                                    poll
+                                }.map {
                                     poll =>
                                         (poll: AeronTransport.AddPoll[Pub]) match
                                             case AeronTransport.AddPoll.Done(pub) =>
-                                                tokOwned = false
                                                 Loop.done[Unit, Maybe[Pub]](Maybe(pub))
                                             case AeronTransport.AddPoll.Failed(code, detail)
                                                 if code != 0 || detail.nonEmpty =>
@@ -493,11 +501,19 @@ object Topic:
                         var tokOwned = true
                         Sync.ensure(Sync.Unsafe.defer(if tokOwned then transport.freeAsyncSub(tok) else ())) {
                             Loop.foreach[Maybe[Sub], Async & Abort[TopicTransportException]] {
-                                Sync.Unsafe.defer(transport.pollAddSubscription(tok)).map {
+                                Sync.Unsafe.defer {
+                                    val poll = transport.pollAddSubscription(tok)
+                                    // The transport's `_get` takes the token on a Done poll, so ownership is cleared in
+                                    // the same step as the poll: an interrupt landing between the poll and the clear
+                                    // would otherwise let the finalizer free a token the transport already took.
+                                    poll match
+                                        case _: AeronTransport.AddPoll.Done[?] => tokOwned = false
+                                        case _                                 => ()
+                                    poll
+                                }.map {
                                     poll =>
                                         (poll: AeronTransport.AddPoll[Sub]) match
                                             case AeronTransport.AddPoll.Done(sub) =>
-                                                tokOwned = false
                                                 Loop.done[Unit, Maybe[Sub]](Maybe(sub))
                                             case AeronTransport.AddPoll.Failed(code, detail)
                                                 if code != 0 || detail.nonEmpty =>

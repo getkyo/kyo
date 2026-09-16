@@ -246,7 +246,10 @@ class AeronTransportTest extends Test:
         def closePublication(pub: Publication)(using AllowUnsafe): Unit                          = discard(pubCloses.incrementAndGet())
         def asyncAddSubscription(uri: String, streamId: Int)(using AllowUnsafe): Maybe[AsyncSub] = Present(streamId)
         def pollAddSubscription(async: AsyncSub)(using AllowUnsafe): AeronTransport.AddPoll[Subscription] =
-            AeronTransport.AddPoll.Awaiting
+            interruptTook = interrupter()
+            doneObserved = true
+            AeronTransport.AddPoll.Done(async)
+        end pollAddSubscription
         def freeAsyncSub(async: AsyncSub)(using AllowUnsafe): Unit = if doneObserved then discard(subFreesAfterDone.incrementAndGet())
         def subscriptionIsConnected(sub: Subscription)(using AllowUnsafe): Boolean = false
         def pollOne(sub: Subscription)(using AllowUnsafe): Maybe[Array[Byte]]      = Absent
@@ -1387,9 +1390,7 @@ class AeronTransportTest extends Test:
     // abandonment. A bind between the add and its finalizer is where the interrupt would park instead, with the
     // publication in front of it and nothing owning it: an abandonment runs nothing of a remainder, so the
     // publication would never be closed.
-    "an interrupt on a completed add closes the publication the add produced".pendingUntilFixed(
-        "ported from robustness; the publication the completed add produced is not closed on interrupt (leak)"
-    ) in {
+    "an interrupt on a completed add closes the publication the add produced" in {
         val transport = new InterruptOnDoneTransport
         Latch.initWith(1) { gate =>
             Fiber.initUnscoped(
@@ -1427,9 +1428,7 @@ class AeronTransportTest extends Test:
     }
 
     // The same window on Topic.stream's subscription add.
-    "an interrupt on a completed add closes the subscription the add produced".pendingUntilFixed(
-        "ported from robustness; the subscription the completed add produced is not closed on interrupt (leak)"
-    ) in {
+    "an interrupt on a completed add closes the subscription the add produced" in {
         val transport = new InterruptOnDoneTransport
         Latch.initWith(1) { gate =>
             Fiber.initUnscoped(
