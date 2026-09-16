@@ -291,6 +291,11 @@ object DocsApp:
         contentLoading: Signal[Boolean]
     )(using Frame): UI =
         UI.main.cssClass("docs-content")(
+            // Where the current module runs, above its article. Gated on `contentLoading` like the pager below, so it never shows the
+            // previous module's platforms over a new module's article while that article loads.
+            UI.Ast.Reactive(route.combineLatest(contentLoading).map { case (r, loading) =>
+                if loading then UI.empty else platformLine(modules, r)
+            }),
             article,
             // The prev/next pager is gated on `contentLoading` so it never paints at the top of an
             // empty content area while the new route's article is mid-fetch (which read as a footer
@@ -305,6 +310,18 @@ object DocsApp:
             })
         )
     end contentArea
+
+    /** The platforms and environments the module on `currentRoute` is built for, one label each, as the root README's module table
+      * lists them (`WebsiteModule.Platforms.labels`). The overview route, and a module the table marks for nothing, show no line.
+      */
+    private def platformLine(modules: Chunk[WebsiteModule], currentRoute: String)(using Frame): UI =
+        modules.find(m => currentRoute.endsWith(s"/${m.slug}/")) match
+            case Some(module) if module.platforms.labels.nonEmpty =>
+                UI.ul.cssClass("docs-platforms").aria("label", "Runs on")(
+                    module.platforms.labels.toSeq.map(label => UI.li.cssClass("docs-platform")(label))*
+                )
+            case _ => UI.empty
+    end platformLine
 
     private def sidebarSections(toc: Chunk[DocsMarkdown.Heading])(using Frame): UI =
         // The active item's in-page section outline, nested under its rail entry. The rail is exactly

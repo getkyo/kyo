@@ -1406,6 +1406,19 @@ object WebsiteStyles:
                     .maxWidth(860.px)
                     .overflow(_.auto).padding(40.px, 52.px, 90.px, 52.px)
             )
+            // The platforms a module runs on, a quiet row of outlined labels above the article's title; the labels wrap onto a
+            // second row on a narrow viewport rather than overflowing it. The line is a list inside the article column, where the
+            // prose rules `.docs-content ul` and `.docs-content li` (0,1,1) give lists markers, an indent and body text, so these
+            // rules are scoped the same way (0,2,0) to take the flex row and the label style back.
+            .rule(
+                Selector.cls("docs-content").descendant(Selector.cls("docs-platforms")),
+                Style.display(_.flex).row.flexWrap(_.wrap).gap(6.px).listStyle(_.none).margin(0.px, 0.px, 14.px, 0.px).padding(0.px)
+            )
+            .rule(
+                Selector.cls("docs-content").descendant(Selector.cls("docs-platform")),
+                Style.fontSize(12.px).lineHeight(1.5).fontWeight(_.w500).letterSpacing(0.02.em).color(_.variable("faint"))
+                    .listStyle(_.none).margin(0.px).border(1.px, _.variable("line")).rounded(999.px).padding(2.px, 9.px)
+            )
             // prev/next pager: two cards. The prev card aligns its content left behind a leading
             // chevron; the next card aligns right with a trailing chevron. A small direction eyebrow
             // ("Previous"/"Next") sits above the target module name. A missing side is an invisible

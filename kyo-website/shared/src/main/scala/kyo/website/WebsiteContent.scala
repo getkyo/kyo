@@ -129,17 +129,52 @@ object WebsiteContent:
     private def buildGroup(root: Path, name: String, tableLines: Chunk[String])(using Frame): Group < (Sync & Abort[WebsiteException]) =
         val tableRows = tableLines.filter(l => l.trim.startsWith("|"))
         // The first pipe row is the header and one is the separator; the remaining rows are modules.
-        val moduleRows = tableRows.filter(l => !isSeparatorRow(l)).drop(1)
+        val contentRows = tableRows.filter(l => !isSeparatorRow(l))
+        val moduleRows  = contentRows.drop(1)
         if tableRows.size < 2 || !tableRows.exists(isSeparatorRow) then
             Abort.fail(WebsiteReadmeException(root / "README.md", WebsiteReadmeException.ReadmeFailure.MalformedGroups))
         else
+            val columns = PlatformColumns(pipeCells(contentRows.head))
             // buildModule yields Absent for a directory-link row (a module table entry pointing at a
             // bare directory rather than a `<slug>/README.md`, e.g. `[kyo-examples](kyo-examples)`):
             // such a module ships no doc-page README, so it is dropped from the rendered group rather
             // than aborting (degrade-not-fail). Present rows keep README order.
-            Kyo.foreach(moduleRows)(row => buildModule(root, name, row)).map(mods => Group(name, mods.flatMap(_.toChunk)))
+            Kyo.foreach(moduleRows)(row => buildModule(root, name, columns, row)).map(mods => Group(name, mods.flatMap(_.toChunk)))
         end if
     end buildGroup
+
+    /** Where each platform column of one group's table is, found by its header name, so a tag whose table has other columns, or the
+      * same ones in another order, still reads each cell as what its header says. The header names every tag has used: `JVM`, `JS`,
+      * `Native` and `WASM`, and the environment split that replaced the two Scala.js ones, `JS Node`, `JS Browser`, `WASM Node` and
+      * `WASM Browser`.
+      */
+    final private case class PlatformColumns(header: Chunk[String]):
+        private def index(name: String): Maybe[Int] =
+            val at = header.indexWhere(_.equalsIgnoreCase(name))
+            if at < 0 then Absent else Present(at)
+
+        private val jvm         = index("JVM")
+        private val native      = index("Native")
+        private val js          = index("JS")
+        private val jsNode      = index("JS Node")
+        private val jsBrowser   = index("JS Browser")
+        private val wasm        = index("WASM")
+        private val wasmNode    = index("WASM Node")
+        private val wasmBrowser = index("WASM Browser")
+
+        def platforms(cells: Chunk[String]): WebsiteModule.Platforms =
+            def marked(column: Maybe[Int]): Boolean = column.exists(i => i < cells.size && isSupported(cells(i)))
+            def environments(single: Maybe[Int], node: Maybe[Int], browser: Maybe[Int]): WebsiteModule.Environments =
+                if browser.nonEmpty then WebsiteModule.Environments(marked(node), Present(marked(browser)))
+                else WebsiteModule.Environments(marked(single) || marked(node), Absent)
+            WebsiteModule.Platforms(
+                jvm = marked(jvm),
+                js = environments(js, jsNode, jsBrowser),
+                native = marked(native),
+                wasm = environments(wasm, wasmNode, wasmBrowser)
+            )
+        end platforms
+    end PlatformColumns
 
     private def isSeparatorRow(line: String): Boolean =
         val cells = pipeCells(line)
@@ -147,13 +182,13 @@ object WebsiteContent:
     end isSeparatorRow
 
     /** Parse one module table row into a `WebsiteModule`, reading its README, or `Absent` when the row
-      * is a directory-link entry that ships no doc-page README (degrade-not-fail). The current
-      * columns are `| [slug](target) | JVM | JS | Native | WASM | Identity |`; a legacy tag predating the
-      * WASM column has `| [slug](target) | JVM | JS | Native | Identity |` and parses with `wasm = false`.
-      * The platform flags are read positionally (JVM/JS/Native at cells 1/2/3, WASM at cell 4 when the row
-      * has at least 6 cells), and the trailing Identity column is decorative (not consumed; the title is
-      * the slug). Aborts `MalformedTable` if the row does not have at least the 5 legacy cells or the link
-      * cannot be parsed.
+      * is a directory-link entry that ships no doc-page README (degrade-not-fail). The current columns
+      * are `| [slug](target) | JVM | JS Node | JS Browser | Native | WASM Node | WASM Browser | Identity |`;
+      * earlier tags have `| [slug](target) | JVM | JS | Native | WASM | Identity |`, and the earliest no
+      * WASM column. The platform flags are read from the columns `columns` found by header name, and the
+      * trailing Identity column is decorative (not consumed; the title is the slug), so a checkmark in
+      * an Identity cell is never read as a platform. Aborts `MalformedTable` if the row does not have
+      * at least the 5 cells of the earliest table or the link cannot be parsed.
       *
       * A `<slug>/README.md` link (`[kyo-data](kyo-data/README.md)`) is a documentation module: its
       * README is read from `root/<slug>/README.md` and a genuinely-absent file aborts `Missing`. A
@@ -161,7 +196,9 @@ object WebsiteContent:
       * module-level README, so it yields `Absent` and the module is dropped from the rendered group
       * rather than failing the whole site.
       */
-    private def buildModule(root: Path, group: String, row: String)(using Frame): Maybe[WebsiteModule] < (Sync & Abort[WebsiteException]) =
+    private def buildModule(root: Path, group: String, columns: PlatformColumns, row: String)(using
+        Frame
+    ): Maybe[WebsiteModule] < (Sync & Abort[WebsiteException]) =
         val cells = pipeCells(row)
         if cells.size < 5 then Abort.fail(WebsiteReadmeException(root / "README.md", WebsiteReadmeException.ReadmeFailure.MalformedTable))
         else
@@ -170,19 +207,9 @@ object WebsiteContent:
                 case Present(ModuleLink(slug, hasReadme)) =>
                     if !hasReadme then Maybe.empty[WebsiteModule]
                     else
-                        val platforms = WebsiteModule.Platforms(
-                            jvm = isSupported(cells(1)),
-                            js = isSupported(cells(2)),
-                            native = isSupported(cells(3)),
-                            // WASM is the 4th platform column, present only on tags whose table carries
-                            // it (>= 6 cells: slug + 4 platforms + Identity). A legacy 5-cell row has no
-                            // WASM column, so cells(4) there is the Identity prose, not a platform flag;
-                            // the size guard keeps it from being misread as WASM support.
-                            wasm = cells.size >= 6 && isSupported(cells(4))
-                        )
+                        val platforms = columns.platforms(cells)
                         // title = slug by design: the root README module table has no separate title
-                        // column (`| [slug](target) | JVM | JS | Native | WASM | Identity |`), and the slug
-                        // (`kyo-core`, `kyo-data`, ...) is the display title for kyo modules.
+                        // column, and the slug (`kyo-core`, `kyo-data`, ...) is the display title for kyo modules.
                         readRequired(root / slug / "README.md").map(readme => Present(WebsiteModule(slug, group, slug, readme, platforms)))
                     end if
             end match

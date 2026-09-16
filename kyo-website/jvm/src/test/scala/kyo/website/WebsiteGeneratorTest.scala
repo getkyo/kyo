@@ -28,9 +28,9 @@ class WebsiteGeneratorTest extends WebsiteTest:
     private val kernelReadme = "# kyo-kernel\n## Effects\nThe effect kernel.\n"
 
     private val moduleData =
-        WebsiteModule("kyo-data", "Foundation", "kyo-data", dataReadme, WebsiteModule.Platforms(true, true, true, true))
+        WebsiteModule("kyo-data", "Foundation", "kyo-data", dataReadme, WebsiteModule.Platforms.everywhere)
     private val moduleKernel =
-        WebsiteModule("kyo-kernel", "Foundation", "kyo-kernel", kernelReadme, WebsiteModule.Platforms(true, true, true, true))
+        WebsiteModule("kyo-kernel", "Foundation", "kyo-kernel", kernelReadme, WebsiteModule.Platforms.everywhere)
 
     private val vWithModules =
         WebsiteContent(
@@ -414,7 +414,7 @@ class WebsiteGeneratorTest extends WebsiteTest:
         // text in the page HTML (not a JS-hydrated stub) so non-JS crawlers index it.
         val prose  = "Channels carry values between fibers without blocking a thread."
         val readme = s"# kyo-distinct\n## Overview\n$prose\n"
-        val mod    = WebsiteModule("kyo-distinct", "Foundation", "kyo-distinct", readme, WebsiteModule.Platforms(true, true, true, true))
+        val mod    = WebsiteModule("kyo-distinct", "Foundation", "kyo-distinct", readme, WebsiteModule.Platforms.everywhere)
         val content =
             WebsiteContent("intro", Chunk(WebsiteContent.Group("Foundation", Chunk(mod))), WebsiteVersion("v1.0.0", "1.0.0", true))
         for
@@ -435,7 +435,7 @@ class WebsiteGeneratorTest extends WebsiteTest:
         // emitted page must point at the file on GitHub. The ref is the version's tag and the path is
         // prefixed with the module slug, in both the versioned tree and the /latest/ mirror.
         val readme = "# kyo-http\n## Demos\nRun the [ChatRoom](shared/src/test/scala/demo/ChatRoom.scala) demo.\n"
-        val mod    = WebsiteModule("kyo-http", "Applications", "kyo-http", readme, WebsiteModule.Platforms(true, true, true, true))
+        val mod    = WebsiteModule("kyo-http", "Applications", "kyo-http", readme, WebsiteModule.Platforms.everywhere)
         val content =
             WebsiteContent(
                 "intro",
@@ -510,7 +510,7 @@ class WebsiteGeneratorTest extends WebsiteTest:
         val prose = "Kyo is a Scala 3 toolkit for building applications across platforms."
         val intro = s"## Introduction\n$prose\n## Coming from ZIO\nNotes.\n"
         val mod =
-            WebsiteModule("kyo-core", "Foundation", "kyo-core", "# kyo-core\nCore.\n", WebsiteModule.Platforms(true, true, true, true))
+            WebsiteModule("kyo-core", "Foundation", "kyo-core", "# kyo-core\nCore.\n", WebsiteModule.Platforms.everywhere)
         val content =
             WebsiteContent(intro, Chunk(WebsiteContent.Group("Foundation", Chunk(mod))), WebsiteVersion("v1.0.0", "1.0.0", true))
         for
@@ -561,7 +561,7 @@ class WebsiteGeneratorTest extends WebsiteTest:
             Chunk(WebsiteContent.Group(
                 "Foundation",
                 Chunk(
-                    WebsiteModule("kyo-stable", "Foundation", "kyo-stable", "# stable\n", WebsiteModule.Platforms(true, true, true, true))
+                    WebsiteModule("kyo-stable", "Foundation", "kyo-stable", "# stable\n", WebsiteModule.Platforms.everywhere)
                 )
             )),
             WebsiteVersion("v1.0.0", "1.0.0", false)
@@ -571,7 +571,7 @@ class WebsiteGeneratorTest extends WebsiteTest:
             Chunk(WebsiteContent.Group(
                 "Foundation",
                 Chunk(
-                    WebsiteModule("kyo-rc", "Foundation", "kyo-rc", "# rc\n", WebsiteModule.Platforms(true, true, true, true))
+                    WebsiteModule("kyo-rc", "Foundation", "kyo-rc", "# rc\n", WebsiteModule.Platforms.everywhere)
                 )
             )),
             WebsiteVersion("v1.0.0-RC2", "1.0.0-RC2", false)
@@ -598,7 +598,7 @@ class WebsiteGeneratorTest extends WebsiteTest:
             Chunk(WebsiteContent.Group(
                 "Foundation",
                 Chunk(
-                    WebsiteModule("kyo-rc1", "Foundation", "kyo-rc1", "# rc1\n", WebsiteModule.Platforms(true, true, true, true))
+                    WebsiteModule("kyo-rc1", "Foundation", "kyo-rc1", "# rc1\n", WebsiteModule.Platforms.everywhere)
                 )
             )),
             WebsiteVersion("v1.0.0-RC1", "1.0.0-RC1", false)
@@ -608,7 +608,7 @@ class WebsiteGeneratorTest extends WebsiteTest:
             Chunk(WebsiteContent.Group(
                 "Foundation",
                 Chunk(
-                    WebsiteModule("kyo-rc2", "Foundation", "kyo-rc2", "# rc2\n", WebsiteModule.Platforms(true, true, true, true))
+                    WebsiteModule("kyo-rc2", "Foundation", "kyo-rc2", "# rc2\n", WebsiteModule.Platforms.everywhere)
                 )
             )),
             WebsiteVersion("v1.0.0-RC2", "1.0.0-RC2", false)
@@ -643,7 +643,7 @@ class WebsiteGeneratorTest extends WebsiteTest:
                     "Foundation",
                     "kyo-stable100",
                     "# stable\n",
-                    WebsiteModule.Platforms(true, true, true, true)
+                    WebsiteModule.Platforms.everywhere
                 ))
             )),
             WebsiteVersion("v1.0.0", "1.0.0", false)
@@ -652,7 +652,7 @@ class WebsiteGeneratorTest extends WebsiteTest:
             "intro",
             Chunk(WebsiteContent.Group(
                 "Foundation",
-                Chunk(WebsiteModule("kyo-rc101", "Foundation", "kyo-rc101", "# rc\n", WebsiteModule.Platforms(true, true, true, true)))
+                Chunk(WebsiteModule("kyo-rc101", "Foundation", "kyo-rc101", "# rc\n", WebsiteModule.Platforms.everywhere))
             )),
             WebsiteVersion("v1.0.1-RC1", "1.0.1-RC1", false)
         )
@@ -673,7 +673,7 @@ class WebsiteGeneratorTest extends WebsiteTest:
 
     "docs page embeds transpiled article AND content.md equals the source" in {
         val readme = "# MyModule\n## Scope\nDoes things.\n```scala\nval x = 1\n```\n"
-        val mod    = WebsiteModule("my-module", "Foundation", "my-module", readme, WebsiteModule.Platforms(true, true, true, true))
+        val mod    = WebsiteModule("my-module", "Foundation", "my-module", readme, WebsiteModule.Platforms.everywhere)
         val content =
             WebsiteContent("intro", Chunk(WebsiteContent.Group("Foundation", Chunk(mod))), WebsiteVersion("v1.0.0", "1.0.0", true))
         for
@@ -694,7 +694,7 @@ class WebsiteGeneratorTest extends WebsiteTest:
 
     "rail section links resolve to article anchors" in {
         val readme = "# Alpha\n## Beta\nText.\n### Gamma\nMore.\n"
-        val mod    = WebsiteModule("anchors", "Foundation", "anchors", readme, WebsiteModule.Platforms(true, true, true, true))
+        val mod    = WebsiteModule("anchors", "Foundation", "anchors", readme, WebsiteModule.Platforms.everywhere)
         val content =
             WebsiteContent("intro", Chunk(WebsiteContent.Group("Foundation", Chunk(mod))), WebsiteVersion("v1.0.0", "1.0.0", true))
         for
@@ -812,8 +812,8 @@ class WebsiteGeneratorTest extends WebsiteTest:
         // and latest/ (emitLatest). The v1.0.0/ copy must link within /v1.0.0/, not /latest/.
         val readme  = "# kyo-data\n## Overview\nData types.\n"
         val readmeB = "# kyo-core\n## Effects\nCore.\n"
-        val modA    = WebsiteModule("kyo-data", "Foundation", "kyo-data", readme, WebsiteModule.Platforms(true, true, true, true))
-        val modB    = WebsiteModule("kyo-core", "Foundation", "kyo-core", readmeB, WebsiteModule.Platforms(true, true, true, true))
+        val modA    = WebsiteModule("kyo-data", "Foundation", "kyo-data", readme, WebsiteModule.Platforms.everywhere)
+        val modB    = WebsiteModule("kyo-core", "Foundation", "kyo-core", readmeB, WebsiteModule.Platforms.everywhere)
         val content = WebsiteContent(
             "intro",
             Chunk(WebsiteContent.Group("Foundation", Chunk(modA, modB))),
@@ -1139,7 +1139,7 @@ class WebsiteGeneratorTest extends WebsiteTest:
 
     "article ids equal shipped heading slugs in content.html" in {
         val readme = "# Title\n## Section One\n### Sub\n"
-        val mod    = WebsiteModule("inv004", "Foundation", "inv004", readme, WebsiteModule.Platforms(true, true, true, true))
+        val mod    = WebsiteModule("inv004", "Foundation", "inv004", readme, WebsiteModule.Platforms.everywhere)
         val content =
             WebsiteContent("intro", Chunk(WebsiteContent.Group("Foundation", Chunk(mod))), WebsiteVersion("v1.0.0", "1.0.0", true))
         for
@@ -1243,7 +1243,7 @@ class WebsiteGeneratorTest extends WebsiteTest:
         // Build a README whose rendered article will contain < characters (via a heading with a code
         // snippet; the backtick renders to <code>, so the rendered HTML contains <code>...</code>).
         val readme = "# Test\n## Usage\n`myFunc` does things.\n"
-        val mod    = WebsiteModule("escape-test", "Foundation", "escape-test", readme, WebsiteModule.Platforms(true, true, true, true))
+        val mod    = WebsiteModule("escape-test", "Foundation", "escape-test", readme, WebsiteModule.Platforms.everywhere)
         val content =
             WebsiteContent("intro", Chunk(WebsiteContent.Group("Foundation", Chunk(mod))), WebsiteVersion("v1.0.0", "1.0.0", true))
         for
@@ -1296,7 +1296,7 @@ class WebsiteGeneratorTest extends WebsiteTest:
 
     "docs-island JSON escapes </script> to the JS-unicode form (no literal closing tag)" in {
         val readme = "# Test\n## Usage\n`myFunc` does things.\n"
-        val mod    = WebsiteModule("escape-chk", "Foundation", "escape-chk", readme, WebsiteModule.Platforms(true, true, true, true))
+        val mod    = WebsiteModule("escape-chk", "Foundation", "escape-chk", readme, WebsiteModule.Platforms.everywhere)
         val content =
             WebsiteContent("intro", Chunk(WebsiteContent.Group("Foundation", Chunk(mod))), WebsiteVersion("v1.0.0", "1.0.0", true))
         for
@@ -1322,7 +1322,7 @@ class WebsiteGeneratorTest extends WebsiteTest:
     "level-carrying headings in island, content.html, and manifest" in {
         // Use a README with explicit level-2 headings so the level==2 assertion is concrete.
         val readme = "# Alpha\n## Beta\nText.\n## Gamma\nMore.\n"
-        val mod    = WebsiteModule("inv010", "Foundation", "inv010", readme, WebsiteModule.Platforms(true, true, true, true))
+        val mod    = WebsiteModule("inv010", "Foundation", "inv010", readme, WebsiteModule.Platforms.everywhere)
         val content =
             WebsiteContent("intro", Chunk(WebsiteContent.Group("Foundation", Chunk(mod))), WebsiteVersion("v1.0.0", "1.0.0", true))
         for
@@ -1391,7 +1391,7 @@ class WebsiteGeneratorTest extends WebsiteTest:
 
     "each section in search-index.json carries level, text, slug, symbols, and body" in {
         val readme = "## Fibers and forks\nFibers are lightweight threads.\n### Interruption\nInterrupt a fiber.\n"
-        val mod    = WebsiteModule("kyo-async", "Foundation", "kyo-async", readme, WebsiteModule.Platforms(true, true, true, true))
+        val mod    = WebsiteModule("kyo-async", "Foundation", "kyo-async", readme, WebsiteModule.Platforms.everywhere)
         val content =
             WebsiteContent("intro", Chunk(WebsiteContent.Group("Foundation", Chunk(mod))), WebsiteVersion("v1.0.0", "1.0.0", true))
         for
@@ -1421,7 +1421,7 @@ class WebsiteGeneratorTest extends WebsiteTest:
         // Produce a prose block that exceeds 600 characters.
         val longProse = ("The quick brown fox jumps over the lazy dog " * 20).trim
         val readme    = s"## Section\n$longProse\n"
-        val mod       = WebsiteModule("kyo-long", "Foundation", "kyo-long", readme, WebsiteModule.Platforms(true, true, true, true))
+        val mod       = WebsiteModule("kyo-long", "Foundation", "kyo-long", readme, WebsiteModule.Platforms.everywhere)
         val content =
             WebsiteContent("intro", Chunk(WebsiteContent.Group("Foundation", Chunk(mod))), WebsiteVersion("v1.0.0", "1.0.0", true))
         for
@@ -1463,7 +1463,7 @@ class WebsiteGeneratorTest extends WebsiteTest:
 
     "a heading-less module emits sections [] in search-index.json" in {
         val readme = "Prose only, no headings.\n"
-        val mod    = WebsiteModule("kyo-noh", "Foundation", "kyo-noh", readme, WebsiteModule.Platforms(true, true, true, true))
+        val mod    = WebsiteModule("kyo-noh", "Foundation", "kyo-noh", readme, WebsiteModule.Platforms.everywhere)
         val content =
             WebsiteContent("intro", Chunk(WebsiteContent.Group("Foundation", Chunk(mod))), WebsiteVersion("v1.0.0", "1.0.0", true))
         for
@@ -1514,7 +1514,7 @@ class WebsiteGeneratorTest extends WebsiteTest:
         val headingText = "Results: \"quoted\" & <angle>"
         val snippetText = "See the reference for more."
         val readme      = s"## $headingText\n$snippetText\n"
-        val mod         = WebsiteModule("kyo-esc", "Foundation", "kyo-esc", readme, WebsiteModule.Platforms(true, true, true, true))
+        val mod         = WebsiteModule("kyo-esc", "Foundation", "kyo-esc", readme, WebsiteModule.Platforms.everywhere)
         val content =
             WebsiteContent("intro", Chunk(WebsiteContent.Group("Foundation", Chunk(mod))), WebsiteVersion("v1.0.0", "1.0.0", true))
         for
@@ -1544,7 +1544,7 @@ class WebsiteGeneratorTest extends WebsiteTest:
         val ctrl1f = 0x1f.toChar.toString // should become
         val title  = s"x${ctrl1}y${ctrl1f}z"
         val readme = s"# $title\n"
-        val mod    = WebsiteModule("kyo-ctrl", "Foundation", "kyo-ctrl", readme, WebsiteModule.Platforms(true, true, true, true))
+        val mod    = WebsiteModule("kyo-ctrl", "Foundation", "kyo-ctrl", readme, WebsiteModule.Platforms.everywhere)
         val content =
             WebsiteContent("intro", Chunk(WebsiteContent.Group("Foundation", Chunk(mod))), WebsiteVersion("v1.0.0", "1.0.0", true))
         for
@@ -1565,7 +1565,7 @@ class WebsiteGeneratorTest extends WebsiteTest:
         // escJson unmodified (the default arm of the match just appends the char).
         val title  = "Aborté日本語" // "Aborté日本語"
         val readme = s"# $title\n"
-        val mod    = WebsiteModule("kyo-uni", "Foundation", "kyo-uni", readme, WebsiteModule.Platforms(true, true, true, true))
+        val mod    = WebsiteModule("kyo-uni", "Foundation", "kyo-uni", readme, WebsiteModule.Platforms.everywhere)
         val content =
             WebsiteContent("intro", Chunk(WebsiteContent.Group("Foundation", Chunk(mod))), WebsiteVersion("v1.0.0", "1.0.0", true))
         for

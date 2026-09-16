@@ -4,62 +4,85 @@ import kyo.*
 
 class WebsiteModuleTest extends WebsiteTest:
 
+    import WebsiteModule.Environments
+    import WebsiteModule.Platforms
+
+    /** Built for the JVM and Native, and for JS and WASM on Node only: the shape of a module a page cannot run, such as kyo-net. */
+    private val nodeOnly = Platforms(true, Environments(true, Present(false)), true, Environments(true, Present(false)))
+
     "full construction" - {
         "fields read back correctly" in {
-            val m = WebsiteModule(
-                "kyo-core",
-                "Foundation",
-                "kyo-core",
-                "# kyo-core\n...",
-                WebsiteModule.Platforms(true, true, false, true)
-            )
-            assert(m.slug == "kyo-core")
-            assert(m.group == "Foundation")
-            assert(m.platforms.native == false)
-            assert(m.platforms.wasm == true)
+            val m = WebsiteModule("kyo-net", "Specialized tools", "kyo-net", "# kyo-net\n...", nodeOnly)
+            assert(m.slug == "kyo-net")
+            assert(m.group == "Specialized tools")
+            assert(m.platforms.native)
+            assert(m.platforms.js == Environments(true, Present(false)))
+            assert(m.platforms.wasm.browser == Present(false))
         }
     }
 
     "displayName" - {
         "kyo-core strips prefix and capitalizes" in {
-            val m = WebsiteModule("kyo-core", "g", "kyo-core", "", WebsiteModule.Platforms(true, true, true, true))
+            val m = WebsiteModule("kyo-core", "g", "kyo-core", "", Platforms.everywhere)
             assert(m.displayName == "Core")
         }
 
         "kyo-stats-registry splits on hyphen and capitalizes each segment (no hyphen survives)" in {
-            val m = WebsiteModule("kyo-stats-registry", "g", "kyo-stats-registry", "", WebsiteModule.Platforms(true, true, true, true))
+            val m = WebsiteModule("kyo-stats-registry", "g", "kyo-stats-registry", "", Platforms.everywhere)
             assert(m.displayName == "Stats Registry")
         }
 
         "multi-segment slug with an acronym tail leaves no hyphen" in {
-            val m = WebsiteModule("kyo-logging-slf4j", "g", "kyo-logging-slf4j", "", WebsiteModule.Platforms(true, false, false, false))
+            val jvmOnly = Platforms(true, Environments(false, Present(false)), false, Environments(false, Present(false)))
+            val m       = WebsiteModule("kyo-logging-slf4j", "g", "kyo-logging-slf4j", "", jvmOnly)
             assert(m.displayName == "Logging Slf4j")
             assert(!m.displayName.contains("-"))
         }
 
         "non-kyo slug capitalizes first letter only" in {
-            val m = WebsiteModule("prelude", "g", "prelude", "", WebsiteModule.Platforms(true, true, true, true))
+            val m = WebsiteModule("prelude", "g", "prelude", "", Platforms.everywhere)
             assert(m.displayName == "Prelude")
         }
     }
 
     "Platforms equality" - {
         "different platform sets are not equal" in {
-            val p1 = WebsiteModule.Platforms(true, true, false, false)
-            val p2 = WebsiteModule.Platforms(true, true, true, false)
-            assert(p1 != p2)
+            assert(nodeOnly != Platforms.everywhere)
         }
 
         "same platform set is equal" in {
-            val p1 = WebsiteModule.Platforms(true, true, false, false)
-            val p2 = WebsiteModule.Platforms(true, true, false, false)
-            assert(p1 == p2)
+            assert(nodeOnly == Platforms(true, Environments(true, Present(false)), true, Environments(true, Present(false))))
         }
 
-        "sets differing only in wasm are not equal (wasm participates in equality)" in {
-            val p1 = WebsiteModule.Platforms(true, true, true, false)
-            val p2 = WebsiteModule.Platforms(true, true, true, true)
-            assert(p1 != p2)
+        "a table that does not say whether a target runs in a browser is not one that says it does not" in {
+            val unsaid = Platforms(true, Environments(true, Absent), true, Environments(true, Absent))
+            assert(unsaid != nodeOnly)
+        }
+    }
+
+    "labels" - {
+        "name every platform and each Scala.js environment, in table order" in {
+            assert(Platforms.everywhere.labels == Chunk(
+                "JVM",
+                "JS on Node",
+                "JS in a browser",
+                "Native",
+                "WASM on Node",
+                "WASM in a browser"
+            ))
+        }
+
+        "leave out the environments a module does not run in" in {
+            assert(nodeOnly.labels == Chunk("JVM", "JS on Node", "Native", "WASM on Node"))
+        }
+
+        "name the target alone when the table predates the environment columns" in {
+            val earlier = Platforms(true, Environments(true, Absent), true, Environments(false, Absent))
+            assert(earlier.labels == Chunk("JVM", "JS", "Native"))
+        }
+
+        "are empty for a page that is not a module" in {
+            assert(Platforms.none.labels.isEmpty)
         }
     }
 
