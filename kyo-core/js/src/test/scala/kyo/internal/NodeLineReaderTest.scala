@@ -62,6 +62,38 @@ class NodeLineReaderTest extends kyo.test.Test[Any]:
         end try
     end linesOf
 
+    /** An `fs` that reports "nothing typed yet" a few times before it answers, which is what a non-blocking terminal
+      * does while a person is still typing. A real descriptor cannot be made to do this on demand, and the retry it
+      * drives is the one path in the reader that waits.
+      */
+    private def fsThatWaitsBefore(content: String, waits: Int): CoreNodeFs =
+        var remaining = waits
+        var offset    = 0
+        val bytes     = sjs.Dynamic.global.Buffer.applyDynamic("from")(content, "utf8")
+        val readSync: sjs.Function5[Int, sjs.Dynamic, Int, Int, sjs.Any, Int] =
+            (_: Int, buffer: sjs.Dynamic, off: Int, len: Int, _: sjs.Any) =>
+                if remaining > 0 then
+                    remaining -= 1
+                    throw sjs.JavaScriptException(sjs.Dynamic.literal(code = "EAGAIN"))
+                else
+                    val available = bytes.selectDynamic("length").asInstanceOf[Int] - offset
+                    val n         = if available < len then available else len
+                    if n <= 0 then 0
+                    else
+                        discard(bytes.applyDynamic("copy")(buffer, off, offset, offset + n))
+                        offset += n
+                        n
+                    end if
+                end if
+        sjs.Dynamic.literal(readSync = readSync).asInstanceOf[CoreNodeFs]
+    end fsThatWaitsBefore
+
+    "waits for a line that has not been typed yet, rather than reporting none" in {
+        val reader = new NodeLineReader(0)
+        val fs     = fsThatWaitsBefore("typed at last\n", waits = 3)
+        assert(reader.readLine(fs) == Present("typed at last"))
+    }
+
     "reads newline-terminated lines without their terminator" in {
         assert(linesOf("hello from stdin\nsecond line\n") == Chunk("hello from stdin", "second line"))
     }

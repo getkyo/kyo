@@ -1,6 +1,7 @@
 package kyo.internal
 
 import kyo.Maybe
+import kyo.discard
 import scala.scalajs.js
 
 /** Synchronous line reader over a Node file descriptor.
@@ -74,7 +75,7 @@ final private[kyo] class NodeLineReader(fd: Int):
             catch
                 case js.JavaScriptException(error) =>
                     errorCode(error) match
-                        case "EAGAIN" => ()
+                        case "EAGAIN" => NodeLineReader.pause()
                         case "EOF"    => result = 0
                         case _        => throw js.JavaScriptException(error)
         end while
@@ -110,6 +111,35 @@ private[kyo] object NodeLineReader:
             else size
         bytes.applyDynamic("toString")("utf8", 0, end).asInstanceOf[String]
     end decode
+
+    /** How long a retry waits when nothing has been typed yet. Short enough to feel immediate, long enough that
+      * waiting costs nothing.
+      */
+    private inline val PauseMillis = 20
+
+    /** A cell nothing else can reach, so a wait on it ends only by timing out. `null` where the host provides no
+      * `SharedArrayBuffer`, which is the one thing `Atomics.wait` needs.
+      */
+    private lazy val parkCell: js.Dynamic =
+        try
+            val shared = js.Dynamic.global.selectDynamic("SharedArrayBuffer")
+            if js.isUndefined(shared) then null
+            else js.Dynamic.newInstance(js.Dynamic.global.selectDynamic("Int32Array"))(js.Dynamic.newInstance(shared)(4))
+        catch case _: Throwable => null
+
+    /** Waits a moment before the read is attempted again, without spending the wait.
+      *
+      * `EAGAIN` means the descriptor is a non-blocking TTY with nothing typed yet, and a caller waiting for a line
+      * can be waiting for as long as a person takes to type one. Asking again immediately spends a core for all of
+      * it; `Atomics.wait` parks instead. Where it is unavailable the loop is what it was, which is no worse.
+      */
+    private[internal] def pause(): Unit =
+        try
+            val atomics = js.Dynamic.global.selectDynamic("Atomics")
+            if !js.isUndefined(atomics) && parkCell != null then
+                discard(atomics.applyDynamic("wait")(parkCell, 0, 0, PauseMillis))
+        catch case _: Throwable => ()
+    end pause
 
     /** The `code` property Node puts on a system error, or the empty string when the failure carries none. */
     private def errorCode(error: Any): String =
