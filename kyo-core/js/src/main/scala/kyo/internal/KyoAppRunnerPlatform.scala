@@ -22,8 +22,11 @@ trait KyoAppRunnerPlatform:
 
         initCode = Chunk(() =>
             deferredRuns.foreach(_.apply())
-            val raced = Async.raceFirst(Clock.repeatWithDelay(1.hour)(()).map(_.get), last)
-            val _     = Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(raced))
+            // The application is the one thing that holds the host running while it has work left: kyo's own timers are unref'd,
+            // matching the daemon threads the same cadences run on elsewhere, so nothing internal keeps a finished program alive.
+            // The hold is taken here rather than inside the carrier, so it already exists when this returns to the host.
+            val hold = HostKeepAlive.acquire()
+            discard(Fiber.Unsafe.init(Sync.ensure(Sync.defer(hold.release()))(last)))
         )
     end registerEffect
 end KyoAppRunnerPlatform
