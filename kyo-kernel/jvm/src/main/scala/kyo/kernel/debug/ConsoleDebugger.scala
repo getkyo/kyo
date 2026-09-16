@@ -19,7 +19,10 @@ final class ConsoleDebugger extends Debugger:
     private var counts       = Map.empty[String, Int]
     private var unfusedCount = 0
 
-    private val reported = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap[Any, java.lang.Boolean])
+    // Thread-safe: the fiber scheduler evaluates across carrier threads, so an arrow reported via onAlloc on one thread must be visible
+    // to checkReported on another; a plain IdentityHashMap set would throw "unreported allocation" on a value reported elsewhere.
+    private val reported =
+        java.util.Collections.synchronizedSet(java.util.Collections.newSetFromMap(new java.util.IdentityHashMap[Any, java.lang.Boolean]))
     reported.add(Arrow.id)
 
     // Every node and arrow should pass through onAlloc before any other hook sees it. One that has not is a

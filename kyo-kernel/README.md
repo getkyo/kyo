@@ -591,11 +591,11 @@ assert(Ask.run(41)(session(clean)).eval == 42)
 assert(clean.closings == Chunk(Maybe.empty[Throwable]))
 ```
 
-The ending is one `Maybe[Throwable]`. `Absent` is a clean end, which is what `clean` recorded, and it is also what a dropped remainder's release is told; `Present(t)` carries the failure an unwind took through the extent. Three ways for an extent to end, and two things a release is ever told.
+The ending is one `Maybe[Throwable]`. `Absent` is a clean end, which is what `clean` recorded; `Present(t)` carries either the failure an unwind took through the extent or the signal an abandoned remainder is discarded with. Three ways for an extent to end, and two things a release is ever told.
 
 > **Note:** the release is a plain `(A, Maybe[Throwable]) => Unit` rather than a computation, because it has to run where nothing is installed to answer an effect, and its result is discarded for the same reason. It exists to act outside the computation, closing a socket or handing a permit back, so nothing it does is observable to the computation it belonged to.
 
-The third ending is not hypothetical. A clause that discards its continuation drops the whole remainder of the computation, and every bracket outstanding in that remainder still releases, when the handler that dropped it ends, told `Absent`, the clean ending that handler reached:
+The third ending is not hypothetical. A clause that discards its continuation drops the whole remainder of the computation, and every bracket outstanding in that remainder still releases, told the discard signal rather than `Absent`, its extent never having run to an end:
 
 ```scala
 val abandoned = Connection()
@@ -607,10 +607,10 @@ val dropped: Int < Any =
     )
 
 assert(dropped.eval == -1)
-assert(abandoned.closings == Chunk(Maybe.empty[Throwable]))
+assert(abandoned.closings.head.exists(_.isInstanceOf[KyoException]))
 ```
 
-The clause answered `-1` without ever applying `cont`, so the `Ask.get.map(_ + 1)` behind it never ran and the region completed at the operation. The bracket inside the dropped remainder had moved what it owed to the handler holding its continuation, and released when that handler's region ended, exactly once, told the clean ending that handler reached rather than anything about its own extent, which never ran to an end.
+The clause answered `-1` without ever applying `cont`, so the `Ask.get.map(_ + 1)` behind it never ran and the region completed at the operation. The bracket inside the dropped remainder released on the way out, told the discard signal rather than a clean ending: how the extent ended is information the release could not have worked out for itself.
 
 `Bracket.ensuring(release)(body)` is the entry point for the case with nothing to acquire: release first, body second and by name, and the release handed only the ending. It is not sugar for `Bracket(())`, and the difference shows exactly here. `apply` cannot install its region until the acquire's value arrives, the release being owed that value, so a computation abandoned before it ever ran has no region and nothing to release. `ensuring` installs its region from the start, so its release runs whether or not a single step ever did.
 
@@ -922,7 +922,7 @@ assert(Ask.run(7)(outerAnswered).eval == ((Chunk("7"), 7)))
 
 Nor is masking limited to arrow effects. The region shadows its tag in the context as well as on the stack, so a `ContextEffect` read inside a mask of its effect tunnels past an inner binding and is answered by the binding outside, exactly as an operation tunnels past an inner handler.
 
-Masking moves where a value is answered, and that moves where a scope ends with it. A bracket inside a masked computation releases when the outer handler is done with the tunneled continuation, not at the mask boundary. If that outer handler discards the continuation instead of resuming it, the bracket releases when that handler ends, told `Absent`, exactly as it would without the mask in between.
+Masking moves where a value is answered, and that moves where a scope ends with it. A bracket inside a masked computation releases when the outer handler is done with the tunneled continuation, not at the mask boundary. If that outer handler discards the continuation instead of resuming it, the bracket releases when that handler ends, told the discard signal, exactly as it would without the mask in between.
 
 ## Putting it together
 

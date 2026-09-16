@@ -259,7 +259,7 @@ The handling variant is chosen by what the clause needs; each `handle*` scaladoc
 | To thread state between occurrences | `handleLoopState` | a `Loop.Outcome2`, `Loop.continue(nextState, answer)` | `Var.runWith`, where the state is the variable |
 | The region's result consumed by a known continuation | the `*With` form (`handleContWith`, `handleLoopWith`, `handleLoopStateWith`) | the same as the base form; the continuation is fused into the region node instead of mapped over it | `ArrowEffect.handleContWith` |
 | To complete with the body's own value | the form without a `done` clause, which delegates to the form with one | the same | `ArrowEffect.handleCont`, `ArrowEffect.handleLoop` |
-| To answer a failure of the handled body | the three-clause overload that adds `recover: Throwable => Maybe[B < (S & S2)]` | a replacement result, or `Absent` to let the failure propagate | `ArrowEffectTest`'s "recover, ported from catching" |
+| To answer a failure of the handled body | the three-clause overload that adds `recover: Throwable => Maybe[B < (S & S2)]` | a replacement result, or `Absent` to let the failure propagate | `ArrowEffectTest`'s "recover, exception dispatch" |
 
 The `recover` overloads are the one place in the file where `v` is taken **by name**, unlike every sibling: the body is forced inside the recovery clause, so a throw while building it is the region's to answer (`ArrowEffect.handleCont`, `ArrowEffect.handleLoop`, `ArrowEffect.handleLoopState`).
 
