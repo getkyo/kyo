@@ -5,9 +5,10 @@ abstract class PlatformSpecific extends PlatformStatic with PlatformOsFromValues
     final val isJVM      = true
     final val isJS       = false
     final val isNative   = false
-    final val isWasm     = false
-    final val isNodeLike = false
-    final val isBrowser  = false
+    final val isWasm          = false
+    final val canSplitModules = false
+    final val isNodeLike      = false
+    final val isBrowser       = false
 
     val host: Platform.Host = Platform.Host.Jvm
 

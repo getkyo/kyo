@@ -21,4 +21,9 @@ class PlatformLinkTimeIfTest extends AnyFreeSpec:
         val linked: String = Platform.linkTimeIf(!Platform.isNative && Platform.isWasm)("wasm")("not wasm")
         assert(linked == (if Platform.isWasm then "wasm" else "not wasm"))
     }
+
+    "resolves a condition on canSplitModules to the branch of the current link" in {
+        val linked: String = Platform.linkTimeIf(!Platform.isNative && Platform.canSplitModules)("splits")("one module")
+        assert(linked == (if Platform.canSplitModules then "splits" else "one module"))
+    }
 end PlatformLinkTimeIfTest

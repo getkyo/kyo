@@ -7,7 +7,7 @@ class PlatformJvmTest extends AnyFreeSpec {
     "the JVM host" - {
         "is the JVM" in {
             assert(Platform.host eq Platform.Host.Jvm)
-            assert(!Platform.isNodeLike && !Platform.isBrowser && !Platform.isWasm)
+            assert(!Platform.isNodeLike && !Platform.isBrowser && !Platform.isWasm && !Platform.canSplitModules)
         }
 
         "classifies os.name and os.arch" in {

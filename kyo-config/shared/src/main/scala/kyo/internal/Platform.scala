@@ -6,11 +6,12 @@ package kyo.internal
   * differs per platform is only when a member's value becomes known:
   *
   *   - Compile time: a scalac constant. `isJVM`, `isJS`, `isNative`, and `maxStackDepth` everywhere, plus the answers that are fixed on a
-  *     platform (`isWasm`, `isNodeLike`, and `isBrowser` are `false` on the JVM and Native). `inline if` on one of these emits only the
-  *     taken branch.
-  *   - Link time: fixed when the application is linked. `isWasm` on Scala.js, where one published artifact is linked as JS or as WasmGC,
-  *     and the operating system and architecture flags on Scala Native. The untaken branch is compiled into the published artifact but left
-  *     out of the application's output: through [[linkTimeIf]] on Scala.js, and through a plain `if` on Scala Native.
+  *     platform (`isWasm`, `canSplitModules`, `isNodeLike`, and `isBrowser` are `false` on the JVM and Native). `inline if` on one of these
+  *     emits only the taken branch.
+  *   - Link time: fixed when the application is linked. `isWasm` and `canSplitModules` on Scala.js, where one published artifact is linked
+  *     as JS or as WasmGC and under whichever module kind the application picks, and the operating system and architecture flags on Scala
+  *     Native. The untaken branch is compiled into the published artifact but left out of the application's output: through [[linkTimeIf]]
+  *     on Scala.js, and through a plain `if` on Scala Native.
   *   - Run time: read when the program runs. The host on Scala.js, and the operating system and architecture on the JVM and Scala.js, where
   *     one jar or one bundle runs on any machine.
   *
@@ -18,6 +19,10 @@ package kyo.internal
   * WasmGC link, branch with `Platform.linkTimeIf(Platform.isWasm)(...)(...)`: `inline if Platform.isWasm` compiles on the JVM and Native,
   * where `isWasm` is a constant, but not on Scala.js. `linkTimeIf` is available on Scala 3; the Scala 2.13 builds declare it as a plain
   * run-time `if`.
+  *
+  * To keep code a host never runs out of what that host fetches, put it behind `js.dynamicImport` under
+  * `Platform.linkTimeIf(Platform.canSplitModules)(split)(direct)`: the linker emits the split branch as a module loaded on demand where the
+  * link can split, and keeps the direct call where it cannot (WasmGC and `NoModule`, which reject a reachable `js.dynamicImport`).
   *
   * The capabilities that exist only on Scala.js (reading a global, loading a Node built-in) live in `PlatformJs`, which keeps this interface
   * identical everywhere.

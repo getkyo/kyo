@@ -67,6 +67,12 @@ class PlatformJsTest extends AnyFreeSpec {
             assert(Platform.isWasm == LinkingInfo.isWebAssembly)
         }
 
+        "resolves canSplitModules from the link: never under WasmGC or NoModule" in {
+            val expected = !LinkingInfo.isWebAssembly && LinkingInfo.moduleKind != LinkingInfo.ModuleKind.NoModule
+            assert(Platform.canSplitModules == expected)
+            assert(!(Platform.canSplitModules && Platform.isWasm))
+        }
+
         "classifies process.platform and process.arch" in {
             assert(Platform.os eq Platform.Os.fromNodePlatform(js.Dynamic.global.process.platform.asInstanceOf[String]))
             assert(Platform.arch eq Platform.Arch.fromToken(js.Dynamic.global.process.arch.asInstanceOf[String]))

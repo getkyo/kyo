@@ -12,6 +12,7 @@ class PlatformInterfaceTest extends AnyFreeSpec {
         val isJS: Boolean           = Platform.isJS
         val isNative: Boolean       = Platform.isNative
         val isWasm: Boolean         = Platform.isWasm
+        val canSplit: Boolean       = Platform.canSplitModules
         val linked: Int             = Platform.linkTimeIf(Platform.isWasm)(1)(2)
         val maxStackDepth: Int      = Platform.maxStackDepth
         val isDebugEnabled: Boolean = Platform.isDebugEnabled
@@ -33,6 +34,7 @@ class PlatformInterfaceTest extends AnyFreeSpec {
         val exit: Int => Unit       = Platform.exit
         assert(linked == (if (isWasm) 1 else 2))
         assert(List(isJVM, isJS, isNative).count(identity) == 1)
+        assert(!canSplit || (isJS && !isWasm))
         assert(maxStackDepth > 0)
         assert(!(isNodeLike && isBrowser))
         assert(host != null && os != null && arch != null && exit != null)

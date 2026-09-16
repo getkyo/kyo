@@ -8,7 +8,7 @@ class PlatformNativeTest extends AnyFreeSpec {
     "the Scala Native host" - {
         "is Native" in {
             assert(Platform.host eq Platform.Host.Native)
-            assert(!Platform.isNodeLike && !Platform.isBrowser && !Platform.isWasm && !Platform.isDebugEnabled)
+            assert(!Platform.isNodeLike && !Platform.isBrowser && !Platform.isWasm && !Platform.canSplitModules && !Platform.isDebugEnabled)
         }
 
         "classifies the link target" in {

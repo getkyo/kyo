@@ -13,12 +13,22 @@ trait PlatformStatic:
     /** Whether the application is linked with the WebAssembly (WasmGC) backend. Resolved by the linker, not by scalac. */
     transparent inline def isWasm: Boolean = LinkingInfo.isWebAssembly
 
-    /** `thenp` when `cond` holds and `elsep` otherwise, resolved before run time. `cond` may combine only `isJVM`, `isJS`, `isNative`, and
-      * `isWasm`.
+    /** Whether the application's link can split into modules a host loads on demand, which is what `js.dynamicImport` does. Resolved by the
+      * linker, not by scalac.
       *
-      * A condition that reduces to a constant (one without `isWasm`) is resolved when compiling, exactly as `inline if`: the untaken branch is
-      * never emitted. A condition that depends on `isWasm` goes to `LinkingInfo.linkTimeIf`, so the untaken branch is compiled into the
-      * artifact but left out of the linked output.
+      * Two links cannot: WasmGC, which emits a single module, and `NoModule`, which has no module system to load one with. Both reject a
+      * reachable `js.dynamicImport` outright ("The WebAssembly backend does not support multiple modules", "Uses dynamic import but module
+      * support is disabled"), so a split point sits under `linkTimeIf(canSplitModules)` with a direct call in the other branch.
+      */
+    transparent inline def canSplitModules: Boolean =
+        !LinkingInfo.isWebAssembly && LinkingInfo.moduleKind != LinkingInfo.ModuleKind.NoModule
+
+    /** `thenp` when `cond` holds and `elsep` otherwise, resolved before run time. `cond` may combine only `isJVM`, `isJS`, `isNative`,
+      * `isWasm`, and `canSplitModules`.
+      *
+      * A condition that reduces to a constant (one without `isWasm` or `canSplitModules`) is resolved when compiling, exactly as `inline if`:
+      * the untaken branch is never emitted. A condition that depends on either goes to `LinkingInfo.linkTimeIf`, so the untaken branch is
+      * compiled into the artifact but left out of the linked output.
       */
     transparent inline def linkTimeIf[T](inline cond: Boolean)(inline thenp: T)(inline elsep: T): T =
         inline cond match
