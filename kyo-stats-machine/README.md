@@ -197,10 +197,10 @@ The structural absences are deliberate, and each is the absence of a real host c
 | Target | Status |
 | --- | --- |
 | JVM | auto-loads via `META-INF/services`, no extra step |
-| Scala.js (Node) | auto-loads via `@JSExportTopLevel`; native calls go through a koffi-backed FFI binding; keep `MachineRegistration` referenced so the linker does not tree-shake it (see the Caution above) |
+| Scala.js (Node) | auto-loads via `@JSExportTopLevel`; native calls go through a koffi-backed FFI binding, so `koffi` has to be installed where the program resolves packages. On macOS the reads also go through this module's `machine_macos` shim, which has to sit beside the linked program: wrap the link with kyo-ffi's `ffiWithJsNatives` (see [Shipping natives to a JS program](../kyo-ffi/README.md#shipping-natives-to-a-js-program)). Without koffi, every reading that needs a native call is absent, which on macOS is every reading; a missing shim does the same on macOS. Keep `MachineRegistration` referenced so the linker does not tree-shake it (see the Caution above) |
 | Scala.js (browser) | degrades: no koffi in a browser environment, so host reads are unavailable |
 | Scala Native | requires the `nativeConfig.withServiceProviders(...)` build line above; auto-loads identically to JVM/JS once declared |
-| Wasm (Node) | auto-loads via `@JSExportTopLevel` like Scala.js; native calls go through the same koffi-backed FFI binding, linked as `ModuleKind.ESModule` (koffi is imported through a default `@JSImport`, which the ESModule interop needs to reach a CommonJS addon's members). Requires Node 24+. Keep `MachineRegistration` referenced so the linker does not tree-shake it |
+| Wasm (Node) | auto-loads via `@JSExportTopLevel` like Scala.js; native calls go through the same koffi-backed FFI binding, and koffi and the macOS shim are found the same way, beside the linked output. Links as `ModuleKind.ESModule`. Requires Node 24+. Keep `MachineRegistration` referenced so the linker does not tree-shake it |
 
 > **Note:** every row above where a family or platform is unsupported means the metric is simply absent from the exported set, structurally, not just by documentation. An OS with no PSI support never creates the PSI handles at all; a browser-JS build never attempts the koffi-backed reads. You will never see a fake zero standing in for "not available here." A metric's total absence from what your backend receives is the signal that the current host or platform does not support it.
 
