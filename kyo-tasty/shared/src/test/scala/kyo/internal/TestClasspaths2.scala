@@ -111,11 +111,13 @@ private[kyo] object TestClasspaths2:
     )(using Frame): Boolean < (Async & Scope & Abort[TastyError]) =
         TestClasspaths2Platform.runConcurrentReaderWriterTest(classpath, digest, tmpDir)
 
-    /** Load the embedded-fixture classpath with a warning sink (cross-platform).
+    /** Load this host's default classpath with a warning sink, and capture the warnings decode emits so a caller can
+      * assert on unknown-tag counts. Works on JVM, JS and Native.
       *
-      * Uses `TestClasspaths.withClasspath` (embedded fixtures on all platforms, including JVM) instead of the real
-      * stdlib classpath. Captures warn messages emitted during decode so callers can assert on unknown-tag counts.
-      * Works on JVM, JS, and Native.
+      * Not the embedded fixtures on every platform: `TestClasspaths.withClasspath()` gives each host its own default,
+      * which on the JVM is `standard`, the real kyo-tasty, kyo-data, scala-library and fixture classpath read from
+      * disk. The embedded corpus is what JS and Native get. Anything asserting a count that depends on WHICH classes
+      * were decoded will therefore see different numbers per platform.
       */
     def loadEmbeddedWithSink(using Frame): (Tasty.Classpath, WarningSink) < (Sync & Async & Abort[TastyError]) =
         import AllowUnsafe.embrace.danger
@@ -146,10 +148,14 @@ private[kyo] object TestClasspaths2:
 
     /** Perform a cold load then serialize a snapshot and read it back, returning (cold, warm).
       *
-      * Cross-platform: uses `SnapshotWriter.serializeToBytes` and `SnapshotReader.readFromBytes`. Works on JVM, JS, and Native. On JVM the
-      * cold load uses the embedded fixture set from `TestClasspaths.withClasspath` (same as JS/Native). This helper is suitable for testing
-      * snapshot round-trip correctness on any platform; for tests requiring the full real stdlib classpath use
-      * `TestClasspaths2.standardWithSnapshot` (JVM only).
+      * The snapshot half is in memory on every platform: `SnapshotWriter.serializeToBytes` and
+      * `SnapshotReader.readFromBytes`, never a file. The COLD half is not. It is whatever
+      * `TestClasspaths.withClasspath()` gives this host, which on the JVM is `standard`, the real classpath read from
+      * disk, and on JS and Native the embedded fixtures staged through a temp directory. Only a page decodes pickles.
+      *
+      * So the cold and warm pair compared here is built from a different corpus on the JVM than on JS and Native.
+      * That costs a cold-versus-warm parity property nothing, which is what the callers assert, but it is not a
+      * shared fixture set and nothing should be written as though it were.
       */
     def withSnapshotInMemory()(using Frame): (Tasty.Classpath, Tasty.Classpath) < (Sync & Async & Abort[TastyError]) =
         TestClasspaths.withClasspath()(Tasty.classpath).map { coldCp =>

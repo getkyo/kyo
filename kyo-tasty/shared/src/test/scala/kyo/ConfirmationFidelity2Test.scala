@@ -108,9 +108,10 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
         }
     }
 
-    // Kept on the file system rather than converted to `withPickles`, which now decodes a standalone classfile from
-    // memory: that is a second route to the same symbols, and `WithClasspathTest` guards it. This leaf is what holds
-    // the disk route, so it is the one leaf here a page cannot run.
+    // Kept on the file system rather than converted to the in-memory decode, for what it stages rather than for the
+    // route: a directory written from nothing, holding one classfile and no build output. The two leaves that pass
+    // `standardWithJavaFixture` already cover a standalone `.class` root on disk on every host, so the disk route is
+    // not what would be lost; a classfile reached without a compiled tree around it is.
     "findClass(kyo.fixtures.JavaSimpleFixture) returns Present with isJava via temp dir".notBrowser in {
         // Write the .class file to a temp dir and use ClasspathOrchestrator.init with a real path.
         Scope.run {
