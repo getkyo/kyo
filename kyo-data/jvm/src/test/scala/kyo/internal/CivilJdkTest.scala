@@ -42,16 +42,16 @@ class CivilJdkTest extends kyo.test.Test[Any]:
 
     "every field agrees at the ends and the boundaries" in {
         val edges = Chunk(
-            0L,                  // the epoch itself
-            -1L,                 // the second before it
-            -62135596800L,       // 0001-01-01T00:00:00Z
-            253402300799L,       // 9999-12-31T23:59:59Z
-            951782400L,          // 2000-02-29, the leap day of a leap century
-            -2203977600L,        // 1900-02-28, the year a century is not a leap year
-            4107542400L,         // 2100-03-01, the next one
-            1709164800L,         // 2024-02-29
-            -2208988800L,        // 1900-01-01, the first second of the swept range
-            4102444799L          // the last second of 2099
+            0L,            // the epoch itself
+            -1L,           // the second before it
+            -62135596800L, // 0001-01-01T00:00:00Z
+            253402300799L, // 9999-12-31T23:59:59Z
+            951782400L,    // 2000-02-29, the leap day of a leap century
+            -2203977600L,  // 1900-02-28, the year a century is not a leap year
+            4107542400L,   // 2100-03-01, the next one
+            1709164800L,   // 2024-02-29
+            -2208988800L,  // 1900-01-01, the first second of the swept range
+            4102444799L    // the last second of 2099
         )
         val bad = report(edges)
         assert(bad.isEmpty, bad.mkString("; "))
