@@ -152,13 +152,23 @@ Use `FileIOException(path, operation, cause)` only when no more precise leaf des
 Preserve `Result.Panic` as a panic. Do not translate interruption, programmer defects, or unexpected
 throwables into expected filesystem failures.
 
+A host with no file system at all is a failure, not a panic. `FileSystemUnsupportedOnHostException`
+mixes in all five marker traits for that reason: whichever channel an operation declares, that is the
+channel the answer arrives on, so `Abort[FileReadException]` in a signature is a promise kept on every
+host rather than on the hosts that happen to have one. `CommandUnsupportedOnHostException` is the same
+for `CommandException`. A page is the host this is about, and the rule to keep is that a capability the
+host lacks is reported, never thrown: an operation that reaches a Node module must catch
+`NodeError.NodeFailure`, which covers both a JavaScript error and a module the host does not provide,
+and translate it, rather than catching `js.JavaScriptException` alone and letting the other escape.
+
 ## Adding an operation
 
 1. Decide whether the operation needs read, write, or watch authority.
 2. Add a focused shared test that proves behavior and its precise failure case.
 3. Add the safe Path surface and reified operation when it is a Path capability operation.
 4. Add the narrowest `FileSystem` tier method and precise effect row.
-5. Implement both platform leaves for host behavior.
+5. Implement both platform leaves for host behavior, including what a host without the capability
+   answers, which is a named failure on the operation's own channel.
 6. Add the safe-to-unsafe bridge with its `// Unsafe:` explanation.
 7. Extend the reusable conformance suite when the contract applies to multiple backends.
 8. Compile and test JVM, JavaScript, Native, and the Wasm row (`kyo-systemJS/WasmTest/test`).
