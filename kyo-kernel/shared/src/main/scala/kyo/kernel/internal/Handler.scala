@@ -242,11 +242,13 @@ sealed abstract private[kernel] class Handler[E <: Effect, A, -S]:
         def join(parent: State, forked: State, child: State): State
         def release(state: State, failure: Maybe[Throwable]): Unit
 
-        /** Called when the region's extent runs to a clean end in place, versus [[release]] which also covers an unwind or a drop. Default is
-          * `release` told the clean ending; a handler overrides when the clean end differs from the others, as a bracket does to record that
-          * its extent ran (so a later refused re-entry can say which way its cell fired).
+        /** Called when the region's extent runs to a clean end, whether in place or under a handler that resumed the remainder holding it.
+          * It records the clean end but does not fire; [[release]], run here or by the scope that holds the region, fires and reads what was
+          * recorded to tell a clean ending apart from a drop. The default records nothing; a handler overrides when a clean end differs from
+          * a drop, as a bracket does to mark that its extent ran (so its release tells a clean ending, not the discard signal, and a later
+          * refused re-entry can say which way its cell fired).
           */
-        private[kyo] def complete(state: State): Unit = release(state, Maybe.Absent)
+        private[kyo] def complete(state: State): Unit = ()
 
         /** Called when a region is reinstalled by a resumed remainder. A region whose release has already run refuses here (a bracket
           * resumed after its resource was released is a use-after-release), by throwing. Default allows the resumption.

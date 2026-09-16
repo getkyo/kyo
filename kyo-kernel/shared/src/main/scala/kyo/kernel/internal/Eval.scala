@@ -370,6 +370,11 @@ import scala.annotation.tailrec
                             stack.handler(top) match
                                 case hc: Handler.ContextHandler[VX, CX, AX, ?] @unchecked =>
                                     Debugger.onRegionExit(hc, res)
+                                    // the extent ran to a clean end: record it on the region, whether the region is here in
+                                    // place or was reinstalled by a resumed remainder, so its release (run here or by the
+                                    // scope that holds it) tells a clean ending rather than the discard signal a dropped
+                                    // remainder gets.
+                                    hc.complete(stack.state(top).asInstanceOf[VX])
                                     // the region's own release runs its clean end against the entry's live state (a fork's
                                     // join may have written it), before the pop while the entry is live. A remainder still
                                     // owed to it was never resumed, so its regions drain as discarded.
@@ -486,10 +491,10 @@ import scala.annotation.tailrec
         def drainClean(releases: Stack.Releases): Unit =
             releases.run(Absent)(t => Report.unhandled(t))
 
-        // a context region's own clean completion: the own release runs through `complete` (the extent ran to an end in
-        // place), and a finalizer that throws here fails the computation, so the throw propagates.
+        // a context region's clean completion: the extent ran to an end (recorded above), so the release runs told the
+        // clean ending, and a finalizer that throws here fails the computation, so the throw propagates.
         def drainCleanOwn(releases: Stack.Releases, state: Any): Unit =
-            releases.runOwnComplete(state)(t => throw t)
+            releases.runOwn(state, Absent)(t => throw t)
 
         // A dropped remainder (its region ended without resuming it) is drained here, each release resolved against the
         // state its snapshot carried since no entry is live; a throw is reported on a clean end, suppressed on an unwind.
@@ -647,23 +652,22 @@ import scala.annotation.tailrec
       * it has just refused would otherwise run the very thing the refusal exists to stop.
       */
     def release[A, S](v: A < S, ex: Throwable): Unit =
-        release(v, ex, Absent, _ => (), 0)
+        release(v, ex, Absent, _ => ())
 
     /** Releases the regions `v` still holds, and hands `f` the input of the first operation under them that `effectTag` answers, so a caller
-      * owing something to an operation the computation never reached can settle it without a second walk. `f` runs before anything is
-      * released.
+      * owing something to an operation the computation stands at can settle it without a second walk. `f` runs before anything is released.
       *
-      * An operation under a deferral exists only once the deferral has run, so this evaluates them to reach it, bounded: running a little of
-      * what was about to run is the price of not stranding what a caller abandoning the whole computation was about to wait on. A caller
-      * releasing a cont it refused wants [[release]] above, which evaluates nothing.
+      * The walk runs none of the computation: a deferral is walked, not evaluated. An operation under a deferral does not exist yet, and
+      * neither does anything it would have waited on, so it is not reported; a step of the deferral here would be the caller's code, which
+      * after an interrupt would acquire what nothing then releases.
       */
     def release[I[_], O[_], E <: ArrowEffect[I, O], A, S](v: A < S, ex: Throwable, effectTag: Tag[E])(
         f: [C] => I[C] => Unit
     ): Unit =
         // Erasure-forced: the operation's state type is existential here, and `f` takes it back at that type.
-        release(v, ex, Present(effectTag.erased), input => f[Any](input.asInstanceOf[I[Any]]), 16)
+        release(v, ex, Present(effectTag.erased), input => f[Any](input.asInstanceOf[I[Any]]))
 
-    private def release[A, S](v: A < S, ex: Throwable, effectTag: Maybe[Tag[Any]], f: Any => Unit, fuel: Int): Unit =
+    private def release[A, S](v: A < S, ex: Throwable, effectTag: Maybe[Tag[Any]], f: Any => Unit): Unit =
         var collected: Stack.Releases = Stack.Releases.empty
 
         def collectContext(hc: Handler.ContextHandler[?, ?, ?, ?], state: Any): Unit =
@@ -684,34 +688,59 @@ import scala.annotation.tailrec
         // `Bracket` does, has only just created what owes it. So the result is walked too, at no budget.
         def ensuring(v: Any, cont: Arrow[Any, Any, Any]): Unit =
             leftmost(cont) match
-                case step: Arrow.Ensure[Any, Any, Any] @unchecked => collect(step(v), Arrow.id, 0)
+                case step: Arrow.Ensure[Any, Any, Any] @unchecked => collect(step(v), Arrow.id)
                 case _                                            => ()
 
-        @tailrec def collect(v: Any, cont: Arrow[Any, Any, Any], fuel: Int): Unit =
+        // The resource a parked remainder settled to, walking its deferrals without running them; Absent while it still holds a computation.
+        @tailrec def settledResource(v: Any): Maybe[Any] =
+            v match
+                case d: Pending.Defer[?, ?, ?, ?] @unchecked => settledResource(d.value)
+                case _: Pending[?, ?]                        => Maybe.empty
+                case s                                       => Present(s)
+
+        // The first arrow the value meets, skipping value-preserving `Id`s; Absent when the continuation is all `Id`.
+        def firstStep(cont: Arrow[Any, Any, Any]): Maybe[Arrow[Any, Any, Any]] =
+            cont match
+                case c: Arrow.Chain[Any, Any, Any, Any] @unchecked =>
+                    firstStep(c.a.asInstanceOf[Arrow[Any, Any, Any]]) match
+                        case p @ Present(_) => p
+                        case Absent         => firstStep(c.b.asInstanceOf[Arrow[Any, Any, Any]])
+                case _: Arrow.Id[?] => Absent
+                case other          => Present(other)
+
+        // A bracket whose acquire settles under an inner region leaves its `Ensure` un-applied in an entry's continuation, missed by both
+        // `entries.releases` and the leftmost walk above. Only the step the value flows into directly may take `resource`: the bracket's own
+        // `Ensure`, reached through value-preserving `Id`s. A real transform before it would change the value the `Ensure` receives, which the
+        // walk cannot reconstruct, so it stops there rather than hand over a wrong resource. Applying the `Ensure` installs the region the
+        // abandonment then releases; it is never run.
+        def ensuringInCont(cont: Arrow[Any, Any, Any], resource: Any): Unit =
+            firstStep(cont) match
+                case Present(step: Arrow.Ensure[Any, Any, Any] @unchecked) => collect(step(resource), Arrow.id)
+                case _                                                     => ()
+
+        @tailrec def collect(v: Any, cont: Arrow[Any, Any, Any]): Unit =
             v match
                 case p: Pending[?, ?] =>
                     p match
-                        // A deferral whose value is still a computation is walked, reaching what is under it for free; one
-                        // whose value is settled holds its body in the cont, so reaching it runs a step, and only that spends budget.
+                        // A deferral is walked, not run. When its value is still a computation the walk descends into it;
+                        // when its value is settled the body under the deferral is not reached, since running it here would
+                        // be the caller's code, which after an interrupt would acquire what nothing then releases, and an
+                        // operation under a deferral that never ran is not waited on yet. Only an `Ensure` already waiting
+                        // on this settled value runs.
                         case kyo: Pending.Defer[a, b, c, s] @unchecked =>
                             // Erasure-forced: the types joining a chain's links are existential from out here.
                             val after = kyo.contB.chain(cont).asInstanceOf[Arrow[Any, Any, Any]]
                             val below = kyo.contA.chain(after).asInstanceOf[Arrow[Any, Any, Any]]
                             kyo.value match
-                                case _: Pending[?, ?] => collect(kyo.value, below, fuel)
-                                // `Arrow.id` rather than the node's own cont, so a unit of budget buys one step (an arrow
-                                // runs as many as it likes once handed one); what follows is carried, a release may wait there.
-                                case _ if fuel > 0 =>
-                                    ensuring(kyo.value, below)
-                                    collect(kyo.contA(kyo.value, Arrow.id), after, fuel - 1)
-                                case _ => ensuring(kyo.value, below)
+                                case _: Pending[?, ?] => collect(kyo.value, below)
+                                case _                => ensuring(kyo.value, below)
                             end match
                         case kyo: Pending.HandleContext[VX, CX, ?, ?] @unchecked =>
                             val hc = kyo.handler
                             collectContext(hc, hc.derive(Maybe.empty))
-                            collect(kyo.value, cont, fuel)
+                            collect(kyo.value, cont)
                         case kyo: Pending.Handle[?, ?, ?, ?] =>
-                            collect(kyo.value, cont, fuel)
+                            collect(kyo.value, cont)
                         case kyo: Pending.Park[?, ?] =>
                             // remainders a park owed are abandoned too: each carries its regions' releases, resolved
                             // against the state each snapshot carried
@@ -737,21 +766,34 @@ import scala.annotation.tailrec
                                 if i < entryOwed.size then collectOwed(entryOwed(i))
                                 i += 1
                             end while
+                            // install a bracket `Ensure` left un-applied in an entry's continuation, so its release is collected
+                            settledResource(kyo.value) match
+                                case Present(resource) =>
+                                    var k = 0
+                                    while k < entries.regions do
+                                        ensuringInCont(entries.continuation(k).asInstanceOf[Arrow[Any, Any, Any]], resource)
+                                        k += 1
+                                    end while
+                                case Absent => ()
+                            end match
                             collectOwed(kyo.owedRemainders)
-                            collect(kyo.value, cont, fuel)
+                            collect(kyo.value, cont)
                         case kyo: Pending.SuspendArrow[?, ?, ?, ?, ?, ?] @unchecked =>
                             effectTag.foreach(t => if t <:< kyo.tag.erased then f(kyo.input))
                         case _: Pending.Suspend[?, ?, ?, ?] => ()
                         case _: Pending.Snapshot[?, ?]      => ()
                 case settled => ensuring(settled, cont)
-        // A deferral declines to run while the Safepoint is stopped, and it always is here (this walks a just-interrupted
-        // fiber's computation), so the walk gets its own state to reach what a deferral holds, and the caller's is put back.
-        if fuel > 0 then
+        // The tagged walk (a fiber abandonment) runs on the just-interrupted fiber's stopped Safepoint. Applying a
+        // region's `Ensure` here rebuilds the region and hands it the settled value, and reaching the value across
+        // a stopped Safepoint needs a live state, so the walk takes its own and restores the caller's after. Without
+        // it the abandoned regions are not reached and their releases are lost (#1735, and #1928's drain never ends).
+        // The untagged walk (releasing a refused cont) runs where nothing is stopped, so it uses the caller's state.
+        if effectTag.isDefined then
             val slot  = Safepoint.get()
             val saved = Safepoint.save(slot)
-            try collect(v, Arrow.id, fuel)
+            try collect(v, Arrow.id)
             finally Safepoint.restore(slot, saved)
-        else collect(v, Arrow.id, fuel)
+        else collect(v, Arrow.id)
         end if
         collected.run(Maybe(ex))(t => if t ne ex then ex.addSuppressed(t))
     end release
