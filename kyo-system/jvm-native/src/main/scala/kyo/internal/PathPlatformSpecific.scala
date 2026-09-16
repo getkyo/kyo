@@ -60,14 +60,17 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
 
     // --- Inspection ---
 
-    def exists()(using AllowUnsafe, Frame): Result[FileInvalidPathException | FileAccessDeniedException | FileIOException, Boolean] =
+    def exists()(using
+        AllowUnsafe,
+        Frame
+    ): Result[FileInvalidPathException | FileAccessDeniedException | FileIOException | FileSystemUnsupportedOnHostException, Boolean] =
         exists(followLinks = true)
 
     def exists(followLinks: Boolean)(using
         AllowUnsafe,
         Frame
     )
-        : Result[FileInvalidPathException | FileAccessDeniedException | FileIOException, Boolean] =
+        : Result[FileInvalidPathException | FileAccessDeniedException | FileIOException | FileSystemUnsupportedOnHostException, Boolean] =
         try
             val options = if followLinks then Array.empty[LinkOption] else Array(LinkOption.NOFOLLOW_LINKS)
             discard(Files.readAttributes(jpath, classOf[BasicFileAttributes], options*))
@@ -89,7 +92,11 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
         AllowUnsafe,
         Frame
     )
-        : Result[FileInvalidPathException | FileNotFoundException | FileAccessDeniedException | FileIOException, Path] =
+        : Result[
+            FileInvalidPathException | FileNotFoundException | FileAccessDeniedException | FileIOException |
+                FileSystemUnsupportedOnHostException,
+            Path
+        ] =
         try Result.succeed(Path.of(jpath.toRealPath()))
         catch
             case e: IOException if NioExceptionBoundary.isInterrupted(e)  => Result.panic(e)

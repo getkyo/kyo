@@ -77,6 +77,24 @@ case class FileWatchInvalidatedException(path: Path)(using Frame)
     extends FileSystemException(s"Watch invalidated for $path")
     with FileWatchException derives CanEqual
 
+/** Raised when the host has no file system to perform the operation on.
+  *
+  * Not a missing file and not a permission: the capability itself is absent, which is what a browser page answers for
+  * every file-system operation. Named rather than left to panic, so a program that can work without one can say so,
+  * and so `Abort[FileSystemException]` in the signature is a promise the implementation keeps on every host.
+  *
+  * Carries every channel because every channel can reach such a host: a caller that recovers only reads still sees it.
+  *
+  * @param operation
+  *   The operation that had nowhere to run.
+  * @param host
+  *   The host, as [[kyo.internal.Platform.host]] names it.
+  */
+case class FileSystemUnsupportedOnHostException(operation: FileSystemOperation, host: String)(using Frame)
+    extends FileSystemException(s"No file system on this host for $operation: $host")
+    with FileReadException with FileWriteException with FileStructureException with FileLockException with FileWatchException
+    derives CanEqual
+
 object FileSystemException:
     given Render[FileSystemException] with
         def asString(value: FileSystemException): String = value.getMessage

@@ -137,9 +137,10 @@ class CommandTest extends kyo.test.Test[Any]:
             result match
                 case Result.Failure(err) =>
                     val msg = err match
-                        case ProgramNotFoundException(cmd)        => s"not found: $cmd"
-                        case PermissionDeniedException(cmd)       => s"denied: $cmd"
-                        case WorkingDirectoryNotFoundException(p) => s"missing cwd: $p"
+                        case ProgramNotFoundException(cmd)                  => s"not found: $cmd"
+                        case PermissionDeniedException(cmd)                 => s"denied: $cmd"
+                        case WorkingDirectoryNotFoundException(p)           => s"missing cwd: $p"
+                        case CommandUnsupportedOnHostException(op, host)    => s"no process table for $op: $host"
                     assert(msg.startsWith("not found:"))
                 case Result.Success(_) =>
                     fail("Expected failure, got success")
@@ -349,9 +350,10 @@ class CommandTest extends kyo.test.Test[Any]:
         )
         errors.foreach { err =>
             err match
-                case ProgramNotFoundException(cmd)           => assert(cmd == "test")
-                case PermissionDeniedException(cmd)          => assert(cmd == "test")
-                case WorkingDirectoryNotFoundException(path) => ()
+                case ProgramNotFoundException(cmd)              => assert(cmd == "test")
+                case PermissionDeniedException(cmd)             => assert(cmd == "test")
+                case WorkingDirectoryNotFoundException(path)    => ()
+                case CommandUnsupportedOnHostException(_, host) => fail(s"no host refusal expected here, got $host")
         }
         ()
     }

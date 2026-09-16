@@ -309,6 +309,15 @@ class InstantTest extends kyo.test.Test[Any]:
             succeed
         }
 
+        "toEpochNanos counts the whole instant, and refuses what a Long cannot hold" in {
+            assert(Instant.ofEpochSecond(0L, 0L).toEpochNanos == 0L)
+            assert(Instant.ofEpochSecond(1L, 2L).toEpochNanos == 1000000002L)
+            assert(Instant.ofEpochSecond(-1L, 0L).toEpochNanos == -1000000000L)
+            // The last second a Long count of nanoseconds reaches is in 2262.
+            assert(Instant.ofEpochSecond(9223372036L, 854775807L).toEpochNanos == Long.MaxValue)
+            assert(intercept[ArithmeticException](Instant.Max.toEpochNanos).isInstanceOf[ArithmeticException])
+        }
+
         "toEpochMilli drops the sub-millisecond part" in {
             assert(Instant.ofEpochSecond(1L, 999999L).toEpochMilli == 1000L)
             assert(Instant.ofEpochSecond(1L, 1000000L).toEpochMilli == 1001L)

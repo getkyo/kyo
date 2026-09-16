@@ -102,67 +102,83 @@ private[kyo] object NodeError:
         if js.isUndefined(c) then "UNKNOWN" else c.asInstanceOf[String]
     end codeOf
 
+    /** What a Node-backed file-system call can fail with: the host's own error, or the host not having the module. */
+    type NodeFailure = js.JavaScriptException | NodeModuleUnavailable
+
+    /** The named failure for an operation on a host with no file system. */
+    def unsupported(operation: FileSystemOperation, e: NodeModuleUnavailable)(using Frame): FileSystemUnsupportedOnHostException =
+        FileSystemUnsupportedOnHostException(operation, e.host)
+
     def isMissing(e: js.JavaScriptException): Boolean =
         val code = codeOf(e)
         code == "ENOENT" || code == "ENOTDIR"
 
-    def translateRead(path: Path, e: js.JavaScriptException)(using Frame): FileReadException =
-        codeOf(e) match
-            case "ENOENT"           => FileNotFoundException(path)
-            case "EACCES" | "EPERM" => FileAccessDeniedException(path)
-            case "EISDIR"           => FileIsADirectoryException(path)
-            case "EINVAL"           => FileInvalidPathException(path.toString, FileSystemOperation.Read)
-            case _                  => FileIOException(path, FileSystemOperation.Read, e)
+    def translateRead(path: Path, e: NodeFailure)(using Frame): FileReadException = e match
+        case u: NodeModuleUnavailable => unsupported(FileSystemOperation.Read, u)
+        case e: js.JavaScriptException => codeOf(e) match
+                case "ENOENT"           => FileNotFoundException(path)
+                case "EACCES" | "EPERM" => FileAccessDeniedException(path)
+                case "EISDIR"           => FileIsADirectoryException(path)
+                case "EINVAL"           => FileInvalidPathException(path.toString, FileSystemOperation.Read)
+                case _                  => FileIOException(path, FileSystemOperation.Read, e)
 
-    def translateExists(path: Path, e: js.JavaScriptException)(using
+    def translateExists(path: Path, e: NodeFailure)(using
         Frame
     )
-        : FileInvalidPathException | FileAccessDeniedException | FileIOException =
-        codeOf(e) match
-            case "EACCES" | "EPERM" => FileAccessDeniedException(path)
-            case "EINVAL"           => FileInvalidPathException(path.toString, FileSystemOperation.Exists)
-            case _                  => FileIOException(path, FileSystemOperation.Exists, e)
+        : FileInvalidPathException | FileAccessDeniedException | FileIOException | FileSystemUnsupportedOnHostException = e match
+        case u: NodeModuleUnavailable => unsupported(FileSystemOperation.Exists, u)
+        case e: js.JavaScriptException => codeOf(e) match
+                case "EACCES" | "EPERM" => FileAccessDeniedException(path)
+                case "EINVAL"           => FileInvalidPathException(path.toString, FileSystemOperation.Exists)
+                case _                  => FileIOException(path, FileSystemOperation.Exists, e)
 
-    def translateMove(source: Path, target: Path, atomicity: Path.Atomicity, e: js.JavaScriptException)(using
+    def translateMove(source: Path, target: Path, atomicity: Path.Atomicity, e: NodeFailure)(using
         Frame
     ): FileStructureException =
-        if atomicity == Path.Atomicity.Required && codeOf(e) == "EXDEV" then FileAtomicMoveUnsupportedException(source, target)
-        else translateFs(source, FileSystemOperation.Move, e)
+        e match
+            case u: NodeModuleUnavailable => unsupported(FileSystemOperation.Move, u)
+            case e: js.JavaScriptException =>
+                if atomicity == Path.Atomicity.Required && codeOf(e) == "EXDEV" then FileAtomicMoveUnsupportedException(source, target)
+                else translateFs(source, FileSystemOperation.Move, e)
 
-    def translateWrite(path: Path, e: js.JavaScriptException)(using Frame): FileWriteException =
-        codeOf(e) match
-            case "ENOENT"           => FileNotFoundException(path)
-            case "EACCES" | "EPERM" => FileAccessDeniedException(path)
-            case "EISDIR"           => FileIsADirectoryException(path)
-            case "EINVAL"           => FileInvalidPathException(path.toString, FileSystemOperation.Write)
-            case _                  => FileIOException(path, FileSystemOperation.Write, e)
+    def translateWrite(path: Path, e: NodeFailure)(using Frame): FileWriteException = e match
+        case u: NodeModuleUnavailable => unsupported(FileSystemOperation.Write, u)
+        case e: js.JavaScriptException => codeOf(e) match
+                case "ENOENT"           => FileNotFoundException(path)
+                case "EACCES" | "EPERM" => FileAccessDeniedException(path)
+                case "EISDIR"           => FileIsADirectoryException(path)
+                case "EINVAL"           => FileInvalidPathException(path.toString, FileSystemOperation.Write)
+                case _                  => FileIOException(path, FileSystemOperation.Write, e)
 
-    def translateSync(path: Path, e: js.JavaScriptException)(using Frame): FileWriteException =
-        codeOf(e) match
-            case "ENOENT"           => FileNotFoundException(path)
-            case "EACCES" | "EPERM" => FileAccessDeniedException(path)
-            case "EISDIR"           => FileIsADirectoryException(path)
-            case "EINVAL"           => FileInvalidPathException(path.toString, FileSystemOperation.Sync)
-            case _                  => FileIOException(path, FileSystemOperation.Sync, e)
+    def translateSync(path: Path, e: NodeFailure)(using Frame): FileWriteException = e match
+        case u: NodeModuleUnavailable => unsupported(FileSystemOperation.Sync, u)
+        case e: js.JavaScriptException => codeOf(e) match
+                case "ENOENT"           => FileNotFoundException(path)
+                case "EACCES" | "EPERM" => FileAccessDeniedException(path)
+                case "EISDIR"           => FileIsADirectoryException(path)
+                case "EINVAL"           => FileInvalidPathException(path.toString, FileSystemOperation.Sync)
+                case _                  => FileIOException(path, FileSystemOperation.Sync, e)
 
-    def translateFs(path: Path, operation: FileSystemOperation, e: js.JavaScriptException)(using Frame): FileStructureException =
-        codeOf(e) match
-            case "ENOENT"           => FileNotFoundException(path)
-            case "EACCES" | "EPERM" => FileAccessDeniedException(path)
-            case "ENOTDIR"          => FileNotADirectoryException(path)
-            case "EEXIST"           => FileAlreadyExistsException(path)
-            case "ENOTEMPTY"        => FileDirectoryNotEmptyException(path)
-            case "EINVAL"           => FileInvalidPathException(path.toString, operation)
-            case _                  => FileIOException(path, operation, e)
+    def translateFs(path: Path, operation: FileSystemOperation, e: NodeFailure)(using Frame): FileStructureException = e match
+        case u: NodeModuleUnavailable => unsupported(operation, u)
+        case e: js.JavaScriptException => codeOf(e) match
+                case "ENOENT"           => FileNotFoundException(path)
+                case "EACCES" | "EPERM" => FileAccessDeniedException(path)
+                case "ENOTDIR"          => FileNotADirectoryException(path)
+                case "EEXIST"           => FileAlreadyExistsException(path)
+                case "ENOTEMPTY"        => FileDirectoryNotEmptyException(path)
+                case "EINVAL"           => FileInvalidPathException(path.toString, operation)
+                case _                  => FileIOException(path, operation, e)
 
     /** Distinguishes the O_EXCL lockfile contention code (`EEXIST`) from every other filesystem
       * error `Path.Unsafe.lock` can raise.
       */
-    def translateLock(path: Path, e: js.JavaScriptException)(using Frame): FileLockException =
-        codeOf(e) match
-            case "EEXIST" => FileLockUnavailableException(path)
-            case "EINVAL" => FileInvalidPathException(path.toString, FileSystemOperation.Lock)
-            case _        => FileIOException(path, FileSystemOperation.Lock, e)
+    def translateLock(path: Path, e: NodeFailure)(using Frame): FileLockException = e match
+        case u: NodeModuleUnavailable => unsupported(FileSystemOperation.Lock, u)
+        case e: js.JavaScriptException => codeOf(e) match
+                case "EEXIST" => FileLockUnavailableException(path)
+                case "EINVAL" => FileInvalidPathException(path.toString, FileSystemOperation.Lock)
+                case _        => FileIOException(path, FileSystemOperation.Lock, e)
 
 end NodeError
 
@@ -326,7 +342,7 @@ private[kyo] object NodePathLock:
                     Result.succeed(true)
             catch
                 case e: js.JavaScriptException if NodeError.codeOf(e) == "EEXIST" => Result.succeed(false)
-                case e: js.JavaScriptException                                    => Result.fail(NodeError.translateLock(target, e))
+                case e: NodeError.NodeFailure                                     => Result.fail(NodeError.translateLock(target, e))
                 case e: Throwable                                                 => Result.panic(e)
         val cleanup =
             if !temporaryOwned then Result.unit
@@ -337,7 +353,7 @@ private[kyo] object NodePathLock:
                     Result.unit
                 catch
                     case e: js.JavaScriptException if NodeError.codeOf(e) == "ENOENT" => Result.unit
-                    case e: js.JavaScriptException                                    => Result.fail(NodeError.translateLock(target, e))
+                    case e: NodeError.NodeFailure                                     => Result.fail(NodeError.translateLock(target, e))
                     case e: Throwable                                                 => Result.panic(e)
         cleanup match
             case Result.Success(_) => published
@@ -364,8 +380,8 @@ private[kyo] object NodePathLock:
             gates.foreach(reclaimIfProvenDead(_))
             if gates.exists(exists) then Result.succeed(false) else create(target, gate, owner, beforeCleanup)
         catch
-            case e: js.JavaScriptException => Result.fail(NodeError.translateLock(target, e))
-            case e: Throwable              => Result.panic(e)
+            case e: NodeError.NodeFailure => Result.fail(NodeError.translateLock(target, e))
+            case e: Throwable             => Result.panic(e)
     end acquireGate
 
     private def releaseOwned(target: Path, path: String, owner: Owner)(using Frame): Result[FileLockException, Unit] =
@@ -378,8 +394,8 @@ private[kyo] object NodePathLock:
         catch
             case e: js.JavaScriptException if NodeError.codeOf(e) == "ENOENT" =>
                 Result.fail(FileLockOwnershipLostException(target))
-            case e: js.JavaScriptException => Result.fail(NodeError.translateLock(target, e))
-            case e: Throwable              => Result.panic(e)
+            case e: NodeError.NodeFailure => Result.fail(NodeError.translateLock(target, e))
+            case e: Throwable             => Result.panic(e)
         end try
     end releaseOwned
 
@@ -466,8 +482,8 @@ private[kyo] object NodePathLock:
                         result
                 end match
             catch
-                case e: js.JavaScriptException => Result.fail(NodeError.translateLock(target, e))
-                case e: Throwable              => Result.panic(e)
+                case e: NodeError.NodeFailure => Result.fail(NodeError.translateLock(target, e))
+                case e: Throwable             => Result.panic(e)
             end try
         end acquired
         if !gateAcquired then acquired
@@ -532,14 +548,17 @@ final private[kyo] class NodePathUnsafe(raw: String) extends Path.Unsafe:
 
     // --- Inspection ---
 
-    def exists()(using AllowUnsafe, Frame): Result[FileInvalidPathException | FileAccessDeniedException | FileIOException, Boolean] =
+    def exists()(using
+        AllowUnsafe,
+        Frame
+    ): Result[FileInvalidPathException | FileAccessDeniedException | FileIOException | FileSystemUnsupportedOnHostException, Boolean] =
         exists(followLinks = true)
 
     def exists(followLinks: Boolean)(using
         AllowUnsafe,
         Frame
     )
-        : Result[FileInvalidPathException | FileAccessDeniedException | FileIOException, Boolean] =
+        : Result[FileInvalidPathException | FileAccessDeniedException | FileIOException | FileSystemUnsupportedOnHostException, Boolean] =
         try
             if followLinks then
                 discard(NodeModules.fs.statSync(pathStr))
@@ -549,7 +568,7 @@ final private[kyo] class NodePathUnsafe(raw: String) extends Path.Unsafe:
             Result.succeed(true)
         catch
             case e: js.JavaScriptException if NodeError.isMissing(e) => Result.succeed(false)
-            case e: js.JavaScriptException                           => Result.fail(NodeError.translateExists(safe, e))
+            case e: NodeError.NodeFailure                            => Result.fail(NodeError.translateExists(safe, e))
             case e: Throwable                                        => Result.panic(e)
 
     def isDirectory()(using AllowUnsafe): Boolean =
@@ -568,11 +587,16 @@ final private[kyo] class NodePathUnsafe(raw: String) extends Path.Unsafe:
         AllowUnsafe,
         Frame
     )
-        : Result[FileInvalidPathException | FileNotFoundException | FileAccessDeniedException | FileIOException, Path] =
+        : Result[
+            FileInvalidPathException | FileNotFoundException | FileAccessDeniedException | FileIOException |
+                FileSystemUnsupportedOnHostException,
+            Path
+        ] =
         try Result.succeed(Path(NodeModules.fs.realpathSync(pathStr)))
         catch
             case e: js.JavaScriptException =>
-                val failure: FileInvalidPathException | FileNotFoundException | FileAccessDeniedException | FileIOException =
+                val failure: FileInvalidPathException | FileNotFoundException | FileAccessDeniedException | FileIOException |
+                    FileSystemUnsupportedOnHostException =
                     NodeError.translateRead(safe, e) match
                         case value: FileNotFoundException     => value
                         case value: FileAccessDeniedException => value
@@ -751,8 +775,8 @@ final private[kyo] class NodePathUnsafe(raw: String) extends Path.Unsafe:
             NodeModules.fs.renameSync(pathStr, toStr)
             Result.succeed(())
         catch
-            case e: js.JavaScriptException => Result.fail(NodeError.translateMove(safe, to, options.atomicity, e))
-            case e: Throwable              => Result.panic(e)
+            case e: NodeError.NodeFailure => Result.fail(NodeError.translateMove(safe, to, options.atomicity, e))
+            case e: Throwable             => Result.panic(e)
 
     def copy(to: Path, options: Path.CopyOptions)(using
         AllowUnsafe,
@@ -820,8 +844,8 @@ final private[kyo] class NodePathUnsafe(raw: String) extends Path.Unsafe:
                 end if
                 Result.succeed(true)
         catch
-            case e: js.JavaScriptException => Result.fail(NodeError.translateFs(safe, FileSystemOperation.Remove, e))
-            case e: Throwable              => Result.panic(e)
+            case e: NodeError.NodeFailure => Result.fail(NodeError.translateFs(safe, FileSystemOperation.Remove, e))
+            case e: Throwable             => Result.panic(e)
 
     def removeExisting()(using AllowUnsafe, Frame): Result[FileStructureException, Unit] =
         catchFs(FileSystemOperation.Remove) {
@@ -948,14 +972,14 @@ final private[kyo] class NodePathUnsafe(raw: String) extends Path.Unsafe:
     private def catchRead[A](expr: => A)(using Frame): Result[FileReadException, A] =
         try Result.succeed(expr)
         catch
-            case e: js.JavaScriptException => Result.fail(NodeError.translateRead(safe, e))
-            case e: Throwable              => Result.panic(e)
+            case e: NodeError.NodeFailure => Result.fail(NodeError.translateRead(safe, e))
+            case e: Throwable             => Result.panic(e)
 
     private def catchWrite[A](expr: => A)(using Frame): Result[FileWriteException, A] =
         try Result.succeed(expr)
         catch
-            case e: js.JavaScriptException => Result.fail(NodeError.translateWrite(safe, e))
-            case e: Throwable              => Result.panic(e)
+            case e: NodeError.NodeFailure => Result.fail(NodeError.translateWrite(safe, e))
+            case e: Throwable             => Result.panic(e)
 
     private def catchChannelWrite[A](expr: => A)(using Frame): Result[FileWriteException | FileStructureException, A] =
         try Result.succeed(expr)
@@ -964,14 +988,14 @@ final private[kyo] class NodePathUnsafe(raw: String) extends Path.Unsafe:
                 if !js.isUndefined(e.exception.asInstanceOf[js.Dynamic].code) &&
                     e.exception.asInstanceOf[js.Dynamic].code.asInstanceOf[String] == "EEXIST" =>
                 Result.fail(FileAlreadyExistsException(safe))
-            case e: js.JavaScriptException => Result.fail(NodeError.translateWrite(safe, e))
-            case e: Throwable              => Result.panic(e)
+            case e: NodeError.NodeFailure => Result.fail(NodeError.translateWrite(safe, e))
+            case e: Throwable             => Result.panic(e)
 
     private def catchFs[A](operation: FileSystemOperation)(expr: => A)(using Frame): Result[FileStructureException, A] =
         try Result.succeed(expr)
         catch
-            case e: js.JavaScriptException => Result.fail(NodeError.translateFs(safe, operation, e))
-            case e: Throwable              => Result.panic(e)
+            case e: NodeError.NodeFailure => Result.fail(NodeError.translateFs(safe, operation, e))
+            case e: Throwable             => Result.panic(e)
 
 end NodePathUnsafe
 
@@ -1044,8 +1068,8 @@ final private[kyo] class NodeReadHandle(fd: Int, path: Path) extends Path.ReadHa
         // even once the name has been renamed away or unlinked. Same translation catchRead applies.
         try Result.succeed(NodeModules.fs.fstatSync(fd).size.toLong)
         catch
-            case e: js.JavaScriptException => Result.fail(NodeError.translateRead(path, e))
-            case e: Throwable              => Result.panic(e)
+            case e: NodeError.NodeFailure => Result.fail(NodeError.translateRead(path, e))
+            case e: Throwable             => Result.panic(e)
 
     def close()(using AllowUnsafe): Unit =
         NodeModules.fs.closeSync(fd)
@@ -1144,7 +1168,7 @@ final private[kyo] class NodeWriteHandle(fd: Int, path: Path) extends Path.Write
             loop(0)
             Result.unit
         catch
-            case e: js.JavaScriptException =>
+            case e: NodeError.NodeFailure =>
                 Result.fail(NodeError.translateWrite(path, e))
             case e: Throwable =>
                 Result.panic(e)
@@ -1191,8 +1215,8 @@ final private[kyo] class NodeRawChannel(fd: Int, path: Path) extends Path.RawCha
                 i += 1
             Result.succeed(out)
         catch
-            case e: js.JavaScriptException => Result.fail(NodeError.translateRead(path, e))
-            case e: Throwable              => Result.panic(e)
+            case e: NodeError.NodeFailure => Result.fail(NodeError.translateRead(path, e))
+            case e: Throwable             => Result.panic(e)
 
     def writeAt(pos: Long, bytes: Array[Byte])(using AllowUnsafe, Frame): Result[FileWriteException, Unit] =
         try
@@ -1202,30 +1226,30 @@ final private[kyo] class NodeRawChannel(fd: Int, path: Path) extends Path.RawCha
                 written += NodeModules.fs.writeSync(fd, uint8, written, bytes.length - written, (pos + written).toDouble)
             Result.unit
         catch
-            case e: js.JavaScriptException => Result.fail(NodeError.translateWrite(path, e))
-            case e: Throwable              => Result.panic(e)
+            case e: NodeError.NodeFailure => Result.fail(NodeError.translateWrite(path, e))
+            case e: Throwable             => Result.panic(e)
 
     def sync(metadata: Boolean)(using AllowUnsafe, Frame): Result[FileWriteException, Unit] =
         try
             if metadata then NodeModules.fs.fsyncSync(fd) else NodeModules.fs.fdatasyncSync(fd)
             Result.unit
         catch
-            case e: js.JavaScriptException => Result.fail(NodeError.translateSync(path, e))
-            case e: Throwable              => Result.panic(e)
+            case e: NodeError.NodeFailure => Result.fail(NodeError.translateSync(path, e))
+            case e: Throwable             => Result.panic(e)
 
     def truncate(size: Long)(using AllowUnsafe, Frame): Result[FileWriteException, Unit] =
         try
             NodeModules.fs.ftruncateSync(fd, size.toDouble)
             Result.unit
         catch
-            case e: js.JavaScriptException => Result.fail(NodeError.translateWrite(path, e))
-            case e: Throwable              => Result.panic(e)
+            case e: NodeError.NodeFailure => Result.fail(NodeError.translateWrite(path, e))
+            case e: Throwable             => Result.panic(e)
 
     def size()(using AllowUnsafe, Frame): Result[FileReadException, Long] =
         try Result.succeed(NodeModules.fs.fstatSync(fd).size.toLong)
         catch
-            case e: js.JavaScriptException => Result.fail(NodeError.translateRead(path, e))
-            case e: Throwable              => Result.panic(e)
+            case e: NodeError.NodeFailure => Result.fail(NodeError.translateRead(path, e))
+            case e: Throwable             => Result.panic(e)
 
     def close()(using AllowUnsafe): Unit =
         if closed.compareAndSet(false, true) then NodeModules.fs.closeSync(fd)

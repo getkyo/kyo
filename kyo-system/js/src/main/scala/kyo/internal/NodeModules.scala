@@ -32,13 +32,27 @@ private[kyo] object NodeModules:
     /** Whether the host provides `id` through `process.getBuiltinModule`. */
     def isAvailable(id: String): Boolean = PlatformJs.nodeBuiltin(id).isDefined
 
-    /** The failure of an operation that needs `id` on a host that does not provide it. */
-    def unsupported(id: String): UnsupportedOperationException =
-        new UnsupportedOperationException(
-            s"kyo-system needs Node's $id module for this operation (Node 20.16 or 22.3, Bun 1.2.6, Deno 2.1, or later); this host is ${Platform.host}"
-        )
+    /** The failure of an operation that needs `id` on a host that does not provide it.
+      *
+      * A type of its own rather than a bare `UnsupportedOperationException`, so an operation with an error channel
+      * can catch it and report the named failure its signature promises, and one without a channel still carries the
+      * module and the host in what it throws.
+      */
+    def unsupported(id: String): NodeModuleUnavailable = new NodeModuleUnavailable(id, Platform.host.toString)
 
     private def module(id: String): js.Dynamic =
         PlatformJs.nodeBuiltin(id).getOrElse(throw unsupported(id))
 
 end NodeModules
+
+/** Thrown when a Node built-in an operation needs is not on this host.
+  *
+  * @param id
+  *   The module specifier, such as `node:fs`.
+  * @param host
+  *   The host, as [[Platform.host]] names it.
+  */
+final private[kyo] class NodeModuleUnavailable(val id: String, val host: String)
+    extends UnsupportedOperationException(
+        s"kyo-system needs Node's $id module for this operation (Node 20.16 or 22.3, Bun 1.2.6, Deno 2.1, or later); this host is $host"
+    )

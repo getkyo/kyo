@@ -63,7 +63,8 @@ object FileSystem:
         def realPath(path: Path)(using
             Frame
         ): Path < (S & Abort[
-            FileInvalidPathException | FileNotFoundException | FileAccessDeniedException | FileIOException
+            FileInvalidPathException | FileNotFoundException | FileAccessDeniedException | FileIOException |
+                FileSystemUnsupportedOnHostException
         ])
 
         /** Resolves the longest existing prefix of `path` and re-appends the segments below it.
@@ -82,7 +83,7 @@ object FileSystem:
         def realPathPrefix(path: Path)(using
             Frame
         ): Path < (S & Abort[
-            FileInvalidPathException | FileAccessDeniedException | FileIOException
+            FileInvalidPathException | FileAccessDeniedException | FileIOException | FileSystemUnsupportedOnHostException
         ]) =
             Abort.run[FileNotFoundException](realPath(path)).map {
                 case Result.Success(resolved) => resolved

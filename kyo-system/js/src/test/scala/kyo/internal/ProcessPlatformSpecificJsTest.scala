@@ -39,31 +39,35 @@ class ProcessPlatformSpecificJsTest extends kyo.test.Test[Any]:
         end try
     end withoutGetBuiltinModule
 
-    private def message(host: Platform.Host): String =
-        s"kyo-system needs Node's node:child_process module for this operation (Node 20.16 or 22.3, Bun 1.2.6, Deno 2.1, or later); this host is $host"
-
-    /** The panic's class name and message, or a description of what came back instead. */
-    private def panicOf(result: Result[CommandException, Process.Unsafe]): (String, String) =
+    /** What came back: the failure and its message, or a description of whatever arrived instead.
+      *
+      * A host with no process table is reported on the channel `Command` declares, not as a panic: the caller can be
+      * told, and a page is a host where being told is the only useful outcome.
+      */
+    private def refusalOf(result: Result[CommandException, Process.Unsafe]): (String, String) =
         result match
-            case Result.Panic(error) => (error.getClass.getName, error.getMessage)
-            case other               => ("no panic", other.toString)
+            case Result.Failure(e: CommandUnsupportedOnHostException) => (e.getClass.getSimpleName, e.getMessage)
+            case other                                                => ("no typed refusal", other.toString)
+
+    private def refusal(host: Platform.Host): (String, String) =
+        ("CommandUnsupportedOnHostException", s"No process table on this host for spawn: $host")
 
     "with no process global" - {
-        "spawning panics naming the module and the host instead of throwing ReferenceError" in {
+        "spawning fails naming the host instead of throwing ReferenceError" in {
             val (result, host) = withoutProcessGlobal((Command("/bin/sh", "-c", "true").unsafe.spawn(), Platform.host))
-            assert(panicOf(result) == ("java.lang.UnsupportedOperationException", message(host)))
+            assert(refusalOf(result) == refusal(host))
         }
 
-        "a pipeline panics the same way" in {
+        "a pipeline fails the same way" in {
             val (result, host) =
                 withoutProcessGlobal((Command("/bin/sh", "-c", "true").andThen(Command("/bin/cat")).unsafe.spawn(), Platform.host))
-            assert(panicOf(result) == ("java.lang.UnsupportedOperationException", message(host)))
+            assert(refusalOf(result) == refusal(host))
         }
     }
 
-    "without process.getBuiltinModule, spawning panics naming the module and the host" in {
+    "without process.getBuiltinModule, spawning fails naming the host" in {
         val result = withoutGetBuiltinModule(Command("/bin/sh", "-c", "true").unsafe.spawn())
-        assert(panicOf(result) == ("java.lang.UnsupportedOperationException", message(Platform.host)))
+        assert(refusalOf(result) == refusal(Platform.host))
     }
 
 end ProcessPlatformSpecificJsTest

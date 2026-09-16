@@ -65,6 +65,7 @@ class FileSystemExceptionTest extends kyo.test.Test[Any]:
             case _: FileIsADirectoryException => "FileIsADirectoryException"
             case _: FileInvalidPathException  => "FileInvalidPathException"
             case _: FileIOException           => "FileIOException"
+            case _: FileSystemUnsupportedOnHostException => "FileSystemUnsupportedOnHostException"
         assert(result == "FileNotFoundException")
     }
 
@@ -113,8 +114,9 @@ class FileSystemExceptionTest extends kyo.test.Test[Any]:
             case _: FileAlreadyExistsException         => "FileAlreadyExistsException"
             case _: FileDirectoryNotEmptyException     => "FileDirectoryNotEmptyException"
             case _: FileInvalidPathException           => "FileInvalidPathException"
-            case _: FileIOException                    => "FileIOException"
-            case _: FileAtomicMoveUnsupportedException => "FileAtomicMoveUnsupportedException"
+            case _: FileIOException                      => "FileIOException"
+            case _: FileAtomicMoveUnsupportedException   => "FileAtomicMoveUnsupportedException"
+            case _: FileSystemUnsupportedOnHostException => "FileSystemUnsupportedOnHostException"
         assert(result == "FileNotFoundException")
     }
 
@@ -129,6 +131,7 @@ class FileSystemExceptionTest extends kyo.test.Test[Any]:
             case _: FileIsADirectoryException => "FileIsADirectoryException"
             case _: FileInvalidPathException  => "FileInvalidPathException"
             case _: FileIOException           => "FileIOException"
+            case _: FileSystemUnsupportedOnHostException => "FileSystemUnsupportedOnHostException"
         assert(result == "FileNotFoundException")
     }
 

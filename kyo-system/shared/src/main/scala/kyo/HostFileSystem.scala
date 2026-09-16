@@ -108,7 +108,8 @@ private[kyo] object HostFileSystem:
         def realPath(path: Path)(using
             Frame
         ): Path < (Sync & Abort[
-            FileInvalidPathException | FileNotFoundException | FileAccessDeniedException | FileIOException
+            FileInvalidPathException | FileNotFoundException | FileAccessDeniedException | FileIOException |
+                FileSystemUnsupportedOnHostException
         ]) =
             // Unsafe: bridges Path.Unsafe.realPath; the Result maps to Abort[FileSystemException]
             Sync.Unsafe.defer(Abort.get(path.unsafe.realPath()))

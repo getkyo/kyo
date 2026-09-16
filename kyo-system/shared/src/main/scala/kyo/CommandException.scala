@@ -54,6 +54,22 @@ case class WorkingDirectoryNotFoundException(path: kyo.Path)(using Frame)
         s"Working directory does not exist: $path"
     ) derives CanEqual
 
+/** Raised when the host has no process table to run the command on.
+  *
+  * Not a missing program and not a permission: the capability itself is absent, which is what a browser page answers
+  * for every spawn. Named rather than left to panic, so `Abort[CommandException]` in the signature is a promise the
+  * implementation keeps on every host.
+  *
+  * @param operation
+  *   The operation that had nowhere to run.
+  * @param host
+  *   The host, as [[kyo.internal.Platform.host]] names it.
+  */
+case class CommandUnsupportedOnHostException(operation: String, host: String)(using Frame)
+    extends CommandException(
+        s"No process table on this host for $operation: $host"
+    ) derives CanEqual
+
 object CommandException:
     given Render[CommandException] with
         def asString(value: CommandException): String = value.getMessage

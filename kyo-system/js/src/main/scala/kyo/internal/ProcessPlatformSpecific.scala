@@ -590,7 +590,10 @@ final private[kyo] class NodeCommandUnsafe(
     def spawn()(using AllowUnsafe, Frame): Result[CommandException, Process.Unsafe] =
         if args.isEmpty then Result.fail(ProgramNotFoundException(""))
         // Checked before the program lookup, whose catch-all would read a missing module as "let spawn decide".
-        else if !NodeModules.isAvailable("node:child_process") then Result.panic(NodeModules.unsupported("node:child_process"))
+        // A failure rather than a panic: a host with no process table is something the caller can be told about on
+        // the channel `Command` already declares, not a defect no caller can handle.
+        else if !NodeModules.isAvailable("node:child_process") then
+            Result.fail(CommandUnsupportedOnHostException("spawn", Platform.host.toString))
         else
             // Validate program exists synchronously so spawn() can return Result.Failure without
             // waiting for the async 'error' event (which would prevent synchronous error reporting).

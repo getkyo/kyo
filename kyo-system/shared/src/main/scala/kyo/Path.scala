@@ -1555,12 +1555,15 @@ object Path extends PathPlatformSpecific:
 
         // --- Inspection ---
 
-        def exists()(using AllowUnsafe, Frame): Result[FileInvalidPathException | FileAccessDeniedException | FileIOException, Boolean]
+        def exists()(using
+            AllowUnsafe,
+            Frame
+        ): Result[FileInvalidPathException | FileAccessDeniedException | FileIOException | FileSystemUnsupportedOnHostException, Boolean]
         def exists(followLinks: Boolean)(using
             AllowUnsafe,
             Frame
         )
-            : Result[FileInvalidPathException | FileAccessDeniedException | FileIOException, Boolean]
+            : Result[FileInvalidPathException | FileAccessDeniedException | FileIOException | FileSystemUnsupportedOnHostException, Boolean]
         def isDirectory()(using AllowUnsafe): Boolean
         def isRegularFile()(using AllowUnsafe): Boolean
         def isSymbolicLink()(using AllowUnsafe): Boolean
@@ -1568,7 +1571,11 @@ object Path extends PathPlatformSpecific:
             AllowUnsafe,
             Frame
         )
-            : Result[FileInvalidPathException | FileNotFoundException | FileAccessDeniedException | FileIOException, Path]
+            : Result[
+                FileInvalidPathException | FileNotFoundException | FileAccessDeniedException | FileIOException |
+                    FileSystemUnsupportedOnHostException,
+                Path
+            ]
 
         // --- Read ---
 
