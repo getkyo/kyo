@@ -119,13 +119,23 @@ class IdiomRenderTest extends Test:
             case value: Array[Byte] => assert(value.sameElements(Array[Byte](1, 2, 3, 4)))
             case other              => fail(s"expected the Array[Byte] backing a Span, got $other")
 
-        val stamped = rendered(Sql.from[Stamped]("s").where(c =>
-            c.s.moment == Instant.fromJava(java.time.Instant.ofEpochMilli(1705312245123L))
-        ))
+        // A bind carries its value AND its column codec, and the backend encodes by asking that codec, so what the
+        // encoder will see is what the codec writes rather than whatever the opaque type happens to be backed by.
+        // Asserting the backing directly pinned `kyo.Instant` to `java.time.Instant`, which it no longer is; the
+        // conversion it used to stand in for happens in the codec, so that is where it is checked.
+        val moment  = Instant.fromJava(java.time.Instant.ofEpochMilli(1705312245123L))
+        val stamped = rendered(Sql.from[Stamped]("s").where(c => c.s.moment == moment))
         assert(stamped.params.size == 1)
-        (stamped.params(0).value: Any) match
-            case value: java.time.Instant => assert(value.toEpochMilli == 1705312245123L)
-            case other                    => fail(s"expected the java.time.Instant backing a kyo.Instant, got $other")
+        val bound = stamped.params.head
+        assert((bound.value: Any) == moment, s"the bind must carry the instant it was given, got ${bound.value}")
+        assert(SqlColumns.eqRef(bound.schema, summon[SqlSchema.Column[Instant]]))
+
+        val writer = new SqlSchemaWriterMock(SqlSchemaWriterMock.postgres)
+        bound.schema.asInstanceOf[SqlSchema.Column[Any]].write(bound.value, writer)
+        assert(
+            writer.onlyCall == Present(SqlSchemaWriterMock.Call.Instant(java.time.Instant.ofEpochMilli(1705312245123L))),
+            s"the codec must write the instant the driver binds, got ${writer.calls}"
+        )
     }
 
     "a temporal bind round-trips as itself" in {

@@ -1,6 +1,5 @@
 package kyo
 
-
 /** Behavioral enforcement: side effects only in named sites.
   *
   * Pure Tasty.* query methods perform zero IO. Every pure query returns its expected value.
