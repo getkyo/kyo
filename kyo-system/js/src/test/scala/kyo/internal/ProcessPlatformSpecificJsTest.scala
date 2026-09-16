@@ -46,11 +46,14 @@ class ProcessPlatformSpecificJsTest extends kyo.test.Test[Any]:
       */
     private def refusalOf(result: Result[CommandException, Process.Unsafe]): (String, String) =
         result match
-            case Result.Failure(e: CommandUnsupportedOnHostException) => (e.getClass.getSimpleName, e.getMessage)
+            case Result.Failure(e: CommandUnsupportedOnHostException) => (e.operation, e.host)
             case other                                                => ("no typed refusal", other.toString)
 
+    /** The operation and host the failure names. Its rendered message carries a frame under a development build, so the
+      * fields are what a test can pin.
+      */
     private def refusal(host: Platform.Host): (String, String) =
-        ("CommandUnsupportedOnHostException", s"No process table on this host for spawn: $host")
+        ("spawn", host.toString)
 
     "with no process global" - {
         "spawning fails naming the host instead of throwing ReferenceError" in {

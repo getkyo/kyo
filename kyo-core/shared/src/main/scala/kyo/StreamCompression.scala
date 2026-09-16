@@ -47,6 +47,15 @@ object StreamCompression:
         builder.result()
     end toUnboxByteArray
 
+    /** Whether the deflater still owes work for what it was already given.
+      *
+      * `deflate` answering 0 does not mean the input is spent. A deflater feeds its own buffer to the codec in steps, and `setInput`
+      * replaces whatever is left of that buffer, so pulling the next chunk on a 0 drops input that was never read. It has to be asked:
+      * while input is still arriving, that question is `needsInput`; once `finish` has been called, it is `finished`.
+      */
+    private def owesOutput(deflater: Zip.Deflater, finishing: Boolean): Boolean =
+        if finishing then !deflater.finished else !deflater.needsInput
+
     /** What an inflater did not reach: the bytes after a finished stream, which is where a concatenated member starts. */
     private def leftOverOf(inflater: Zip.Inflater): Chunk[Byte] =
         val rest = inflater.remainingBytes
@@ -185,7 +194,9 @@ object StreamCompression:
                         Sync.defer(deflater.deflate(buffer, 0, buffer.length, flushMode.value))
                             .map:
                                 case 0 =>
-                                    Loop.continue(DeflateState.EmitDeflated(deflater, maybeEmitFn, chunk))
+                                    Sync.defer(owesOutput(deflater, finishing = maybeEmitFn.isEmpty)).map: owes =>
+                                        if owes then Loop.continue(DeflateState.PullDeflater(deflater, maybeEmitFn, chunk))
+                                        else Loop.continue(DeflateState.EmitDeflated(deflater, maybeEmitFn, chunk))
                                 case size =>
                                     Sync.defer(chunk.concat(fromUnboxByteArray(buffer, size)))
                                         .map(nextChunk => Loop.continue(DeflateState.PullDeflater(deflater, maybeEmitFn, nextChunk)))
@@ -295,7 +306,10 @@ object StreamCompression:
                     bufferIO.map: buffer =>
                         Sync.defer(deflater.deflate(buffer, 0, buffer.length, flushMode.value))
                             .map:
-                                case 0 => Loop.continue(GZipState.EmitDeflated(deflater, crc32, maybeEmitFn, chunk))
+                                case 0 =>
+                                    Sync.defer(owesOutput(deflater, finishing = maybeEmitFn.isEmpty)).map: owes =>
+                                        if owes then Loop.continue(GZipState.PullDeflater(deflater, crc32, maybeEmitFn, chunk))
+                                        else Loop.continue(GZipState.EmitDeflated(deflater, crc32, maybeEmitFn, chunk))
                                 case size => Sync.defer(chunk.concat(fromUnboxByteArray(buffer, size)))
                                         .map(nextChunk => Loop.continue(GZipState.PullDeflater(deflater, crc32, maybeEmitFn, nextChunk)))
                 case GZipState.EmitDeflated(deflater, crc32, maybeEmitFn, chunk) =>
@@ -372,16 +386,19 @@ object StreamCompression:
                             Sync.defer(Loop.continue(InflateState.PullInflater(inflater, Absent)))
                 case InflateState.PullInflater(inflater, maybeEmitFn) =>
                     if inflater.finished then
+                        // Input this stream did not reach is where the next concatenated stream starts, so it goes to a new
+                        // inflater. Emitting it would put compressed bytes in the middle of the decompressed output.
                         val leftOver = leftOverOf(inflater)
-                        Emit.valueWith(leftOver):
+                        val next     = Scope.acquireRelease(Sync.defer(new Zip.Inflater(noWrap)))(i => Sync.defer(i.end()))
+                        if leftOver.isEmpty then
                             maybeEmitFn match
-                                case Present(emitFn) =>
-                                    Scope
-                                        .acquireRelease(Sync.defer(new Zip.Inflater(noWrap)))(inflater => Sync.defer(inflater.end()))
-                                        .map: inflater =>
-                                            Loop.continue(InflateState.InflateInput(inflater, emitFn()))
-                                case Absent =>
-                                    Loop.done
+                                case Present(emitFn) => next.map(i => Loop.continue(InflateState.InflateInput(i, emitFn())))
+                                case Absent          => Loop.done
+                        else
+                            next.map: i =>
+                                Sync.defer(i.setInput(toUnboxByteArray(leftOver)))
+                                    .andThen(Loop.continue(InflateState.PullInflater(i, maybeEmitFn)))
+                        end if
                     else if inflater.needsInput then
                         Emit.valueWith(Chunk.empty[Byte]):
                             maybeEmitFn match

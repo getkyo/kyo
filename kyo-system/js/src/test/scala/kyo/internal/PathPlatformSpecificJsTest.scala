@@ -45,11 +45,14 @@ class PathPlatformSpecificJsTest extends kyo.test.Test[Any]:
       */
     private def refusalOf[E, A](result: Result[E, A]): (String, String) =
         result match
-            case Result.Failure(e: FileSystemUnsupportedOnHostException) => (e.getClass.getSimpleName, e.getMessage)
+            case Result.Failure(e: FileSystemUnsupportedOnHostException) => (e.operation.toString, e.host)
             case other                                                   => ("no typed refusal", other.toString)
 
+    /** The operation and host the failure names. Its rendered message carries a frame under a development build, so the
+      * fields are what a test can pin.
+      */
     private def refusal(host: Platform.Host): (String, String) =
-        ("FileSystemUnsupportedOnHostException", s"No file system on this host for Read: $host")
+        (FileSystemOperation.Read.toString, host.toString)
 
     "without process.getBuiltinModule" - {
         "a file read fails naming the host" in {

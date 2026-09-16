@@ -71,6 +71,19 @@ class StreamCompressionTest extends kyo.test.Test[Any]:
                 assert(text(out) == shortText + shortText)
         }
 
+        // The two above arrive as one chunk each, so the first stream ends exactly where a chunk does. These two put
+        // both streams in one chunk, which is where the input the first stream did not reach has to become the second
+        // stream's input rather than anything else.
+        "two ZLIB framed streams in one chunk" in {
+            Stream.init(zlibShort.concat(zlibShort)).inflate().run.map: out =>
+                assert(text(out) == shortText + shortText)
+        }
+
+        "two gzip members in one chunk" in {
+            Stream.init(gzipShort.concat(gzipOther)).gunzip().run.map: out =>
+                assert(text(out) == shortText + otherShortText)
+        }
+
         "a block with a dynamic code table" in {
             Stream.init(zlibLong).inflate().run.map(out => assert(text(out) == longText))
         }
@@ -133,9 +146,28 @@ class StreamCompressionTest extends kyo.test.Test[Any]:
             }.map(results => assert(results.forall(_ == input)))
         }
 
-        "with the huffman-only strategy" in {
+        // Input arrives here in the stream's default 4 KB chunks, which is what makes this more than a repeat of the
+        // level leaf: a deflater that has not read all of a chunk must not be handed the next one.
+        "at each strategy" in {
             val input = Chunk.from(longText.getBytes)
-            Stream.init(input).deflate(strategy = CompressionStrategy.HuffmanOnly).inflate().run.map(out => assert(out == input))
+            Kyo.foreach(Chunk(
+                CompressionStrategy.Default,
+                CompressionStrategy.Filtered,
+                CompressionStrategy.HuffmanOnly
+            )) { strategy =>
+                Stream.init(input).deflate(strategy = strategy).inflate().run
+            }.map(results => assert(results.forall(_ == input)))
+        }
+
+        "at each strategy, through gzip" in {
+            val input = Chunk.from(longText.getBytes)
+            Kyo.foreach(Chunk(
+                CompressionStrategy.Default,
+                CompressionStrategy.Filtered,
+                CompressionStrategy.HuffmanOnly
+            )) { strategy =>
+                Stream.init(input).gzip(strategy = strategy).gunzip().run
+            }.map(results => assert(results.forall(_ == input)))
         }
 
         "at each flush mode" in {
@@ -157,9 +189,10 @@ class StreamCompressionTest extends kyo.test.Test[Any]:
                 case other                                  => fail(s"Expected a StreamCompressionException but got $other")
         }
 
-        "a truncated stream ends without a value" in {
-            Abort.run(Stream.init(zlibShort.take(12)).inflate().run).map: result =>
-                assert(result.fold(_ => true)(out => text(out) != shortText))
+        "a truncated stream does not answer with the whole text" in {
+            Abort.run(Stream.init(zlibShort.take(12)).inflate().run).map:
+                case Result.Success(out) => assert(text(out) != shortText)
+                case _                   => succeed
         }
     }
 

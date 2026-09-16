@@ -64,7 +64,15 @@ private[kyo] object PortableZip:
         end Table
     end Crc32
 
-    /** Adler-32 as RFC 1950 defines it. The sums are reduced every 5552 bytes, the longest run that cannot overflow an `Int`. */
+    /** The longest run of bytes that can be added to both Adler-32 sums before either could pass `Int.MaxValue`.
+      *
+      * zlib reduces every 5552, the bound for unsigned 32-bit arithmetic. These sums are `Int`, which is signed, so the bound is the
+      * largest n with `65520 + 65520n + 255n(n+1)/2 <= Int.MaxValue`. At 5552 the second sum goes negative on bytes with high values, and
+      * the remainder of a negative number is negative, which is how a checksum over long input silently stops matching.
+      */
+    private val AdlerRun = 3854
+
+    /** Adler-32 as RFC 1950 defines it. */
     final class Adler32:
         private var a: Int = 1
         private var b: Int = 0
@@ -73,7 +81,7 @@ private[kyo] object PortableZip:
             var i         = off
             var remaining = len
             while remaining > 0 do
-                val run = if remaining < 5552 then remaining else 5552
+                val run = if remaining < AdlerRun then remaining else AdlerRun
                 var k   = 0
                 while k < run do
                     a += bytes(i) & 0xff
@@ -257,6 +265,8 @@ private[kyo] object PortableZip:
             end if
         end writeBits
 
+        def committed: Int = length
+
         def writeCode(code: Int, count: Int): Unit = writeBits(reverseBits(code, count), count)
 
         def alignToByte(): Unit =
@@ -294,6 +304,7 @@ private[kyo] object PortableZip:
         private var strategy       = 0
         private var headerWritten  = noWrap
         private var finishing      = false
+        private var flushed        = false
         private var complete       = false
         private var read: Long     = 0
 
@@ -308,10 +319,17 @@ private[kyo] object PortableZip:
             Array.copy(bytes, 0, input, inputLength, bytes.length)
             inputLength += bytes.length
             read += bytes.length
+            flushed = false
             if !noWrap then adler.update(bytes)
         end setInput
 
         def finish(): Unit = finishing = true
+
+        /** Every byte handed over is taken into this deflater's own buffer, so it is always ready for the next one. */
+        def needsInput: Boolean = true
+
+        /** Finished once the last block is written and the caller has taken every byte of it. */
+        def finished: Boolean = complete && out.committed == 0
 
         def getBytesRead: Long = read
 
@@ -340,7 +358,7 @@ private[kyo] object PortableZip:
                         out.writeBits(checksum.toInt & 0xff, 8)
                     end if
                     complete = true
-                else if flush == SyncFlush || flush == FullFlush then
+                else if (flush == SyncFlush || flush == FullFlush) && !flushed then
                     while inputLength > BlockLimit do emitBlock(BlockLimit, last = false)
                     if inputLength > 0 then emitBlock(inputLength, last = false)
                     // An empty stored block is what a reader takes as a flush point, and it leaves the stream byte aligned.
@@ -348,6 +366,9 @@ private[kyo] object PortableZip:
                     out.alignToByte()
                     out.writeBits(0x0000, 16)
                     out.writeBits(0xffff, 16)
+                    // The caller asks again until nothing comes back, and the marker belongs to the input just given, not
+                    // to each of those asks.
+                    flushed = true
                 else
                     while inputLength >= BlockLimit do emitBlock(BlockLimit, last = false)
                 end if
@@ -503,9 +524,11 @@ private[kyo] object PortableZip:
             starved = false
         end setInput
 
-        def needsInput: Boolean = starved
+        // Both answers wait on the window: output already decoded is owed to the caller, and a caller that reads these
+        // to decide whether to call `inflate` again would otherwise stop with bytes still here.
+        def needsInput: Boolean = starved && windowStart == windowEnd
 
-        def finished: Boolean = state == Finished
+        def finished: Boolean = state == Finished && windowStart == windowEnd
 
         def getBytesWritten: Long = written
 
@@ -520,6 +543,7 @@ private[kyo] object PortableZip:
 
         def inflate(target: Array[Byte]): Int =
             var produced = 0
+            var decoding = true
             var running  = true
             while running && produced < target.length do
                 if windowEnd > windowStart then
@@ -529,10 +553,10 @@ private[kyo] object PortableZip:
                     Array.copy(window, windowStart, target, produced, n)
                     windowStart += n
                     produced += n
-                else if state == Finished then running = false
+                else if !decoding || state == Finished then running = false
                 else
                     makeRoom()
-                    running = decodeStep()
+                    decoding = decodeStep()
                 end if
             end while
             produced
@@ -578,7 +602,7 @@ private[kyo] object PortableZip:
                 adlerA += byte & 0xff
                 adlerB += adlerA
                 adlerCount += 1
-                if adlerCount == 5552 then
+                if adlerCount == AdlerRun then
                     adlerA %= 65521
                     adlerB %= 65521
                     adlerCount = 0

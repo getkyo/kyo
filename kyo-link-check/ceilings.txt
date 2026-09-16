@@ -17,6 +17,11 @@
 #   JS    CoreApp 1,772,186
 # CoreApp against CoreReadLine's 1,799,710 says what the 735 KB over CoreLog buys: the application runtime is
 # 1.77 MB of it and reading a line is the remaining 27 KB.
+#
+# Measured at the change that took java.time out of the schema model, the UUID generator and the trace span (#1878):
+#   JS    HttpGet 5,388,998   AiHttp 7,226,062   MachineStats 2,283,888
+# Every program also lost weight here: CoreMin 914,678 to 879,915, CoreApp 1,772,186 to 1,759,327, NetEcho
+# 3,304,836 to 3,284,716. The locale database is what left.
 
 JS   CoreMin 1,010,000
 JS   CoreLog 1,175,000
@@ -31,3 +36,6 @@ JS   NetEcho      3,640,000
 Wasm CoreReadLine   990,000
 Wasm SystemPath   1,195,000
 Wasm NetEcho      1,620,000
+JS   HttpGet      5,930,000
+JS   AiHttp       7,950,000
+JS   MachineStats 2,515,000

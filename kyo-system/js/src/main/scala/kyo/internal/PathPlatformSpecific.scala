@@ -596,15 +596,16 @@ final private[kyo] class NodePathUnsafe(raw: String) extends Path.Unsafe:
         ] =
         try Result.succeed(Path(NodeModules.fs.realpathSync(pathStr)))
         catch
-            case e: js.JavaScriptException =>
+            case e: NodeError.NodeFailure =>
                 val failure: FileInvalidPathException | FileNotFoundException | FileAccessDeniedException | FileIOException |
                     FileSystemUnsupportedOnHostException =
                     NodeError.translateRead(safe, e) match
-                        case value: FileNotFoundException     => value
-                        case value: FileAccessDeniedException => value
-                        case value: FileInvalidPathException  => value
-                        case value: FileIOException           => value
-                        case _                                => FileIOException(safe, FileSystemOperation.RealPath, e)
+                        case value: FileSystemUnsupportedOnHostException => value
+                        case value: FileNotFoundException                => value
+                        case value: FileAccessDeniedException            => value
+                        case value: FileInvalidPathException             => value
+                        case value: FileIOException                      => value
+                        case _                                           => FileIOException(safe, FileSystemOperation.RealPath, e)
                 Result.fail(failure)
             case e: Throwable => Result.panic(e)
 
@@ -1363,8 +1364,8 @@ abstract private[kyo] class PathPlatformSpecific extends PathDirectories:
                     NodeModules.fs.writeFileSync(tmpPath, "")
                     Result.succeed(new NodePathUnsafe(tmpPath).safe)
                 catch
-                    case e: js.JavaScriptException =>
-                        Result.fail(FileIOException(make(Chunk(prefix + suffix)), FileSystemOperation.Create, e))
+                    case e: NodeError.NodeFailure =>
+                        Result.fail(NodeError.translateFs(make(Chunk(prefix + suffix)), FileSystemOperation.Create, e))
             }
         }
 
@@ -1379,8 +1380,8 @@ abstract private[kyo] class PathPlatformSpecific extends PathDirectories:
                     val created = NodeModules.fs.mkdtempSync(tmpDir + NodeModules.path.sep + prefix)
                     Result.succeed(new NodePathUnsafe(created).safe)
                 catch
-                    case e: js.JavaScriptException =>
-                        Result.fail(FileIOException(make(Chunk(prefix)), FileSystemOperation.Create, e))
+                    case e: NodeError.NodeFailure =>
+                        Result.fail(NodeError.translateFs(make(Chunk(prefix)), FileSystemOperation.Create, e))
             }
         }
 

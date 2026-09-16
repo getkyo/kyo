@@ -1,6 +1,7 @@
 package kyo.internal
 
 import java.util.Arrays
+import kyo.*
 
 /** The portable codec against the JDK's zlib, in both directions.
   *
@@ -45,6 +46,7 @@ class PortableZipTest extends kyo.test.Test[Any]:
             deflater.setInput(Arrays.copyOfRange(data, pos, pos + n))
             pos += n
             drain()
+        end while
         deflater.finish()
         drain()
         deflater.end()
@@ -224,7 +226,7 @@ class PortableZipTest extends kyo.test.Test[Any]:
         }
 
         "Adler-32 of nothing" in {
-            val jdk = new java.util.zip.Adler32
+            val jdk      = new java.util.zip.Adler32
             val portable = new PortableZip.Adler32
             assert(portable.getValue == jdk.getValue)
         }

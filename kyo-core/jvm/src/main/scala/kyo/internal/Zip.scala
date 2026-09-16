@@ -16,6 +16,8 @@ private[kyo] object Zip:
         def setInput(bytes: Array[Byte]): Unit                                = under.setInput(bytes)
         def finish(): Unit                                                    = under.finish()
         def deflate(target: Array[Byte], off: Int, len: Int, flush: Int): Int = under.deflate(target, off, len, flush)
+        def needsInput: Boolean                                               = under.needsInput()
+        def finished: Boolean                                                 = under.finished()
         def getBytesRead: Long                                                = under.getBytesRead()
         def end(): Unit                                                       = under.end()
     end Deflater
