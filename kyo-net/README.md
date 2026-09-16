@@ -7,9 +7,38 @@ Most applications should use kyo-http, not kyo-net directly. Reach for kyo-net w
 ## Where it runs
 
 JVM, Node, Bun, Deno and Scala Native, and not a browser page. Every transport this module can select (io_uring,
-epoll, kqueue, and Node's own) needs a host that owns sockets, and a page owns none: the backend probe selects
-nothing there and reports `NetBackendUnavailableException` naming what it tried. A page's outbound HTTP goes
-through kyo-http, whose client there is the page's own `fetch`.
+epoll, kqueue, and Node's own) needs a host that owns sockets, and a page owns none: there, every operation on
+`NetPlatform.transport` fails with `NetBackendUnavailableException` on the `Abort[NetException]` channel it already
+declares. A page's outbound HTTP goes through kyo-http, whose client there is the page's own `fetch`.
+
+### On Scala.js: the backends are a module of their own
+
+One Scala.js artifact serves Node programs and pages, so the backends are not part of the code a host loads first.
+`NetPlatform.transport` on JS is a stand-in, and the first operation on it loads the backends and runs once they
+arrive. The linker emits that code as its own module, which a Node program fetches on that first operation and a page
+never fetches at all, because on a page the operation fails before any load starts.
+
+A link that can hold more than one module splits this way: `ModuleKind.ESModule` or `ModuleKind.CommonJSModule`. A
+`NoModule` link and a WebAssembly link are one module by construction, so both backends are part of that module and
+nothing is loaded later.
+
+A bundler building a page from the split output has to leave `node:` specifiers alone, even though the page never
+reaches the module that imports them. webpack fails the build otherwise; vite and rollup build either way. The line
+is the same in all three:
+
+```js
+// vite.config.js: build.rollupOptions; rollup.config.js: the top level
+external: [/^node:/]
+```
+
+```js
+// webpack.config.js
+externalsType: "module",
+externals: [({ request }, callback) => (/^node:/.test(request) ? callback(null, "module " + request) : callback())]
+```
+
+`linkCheck JS` builds representative programs this way with each of the three bundlers, loads every build in Chrome,
+and fails when a page fetches a module carrying a Node backend (`kyo-link-check/bundlers/check.mjs`).
 
 ## The unsafe surface
 

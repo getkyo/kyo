@@ -251,16 +251,25 @@ If you prefer direct-style code, [kyo-direct](kyo-direct/README.md) ships a `dir
 
 One source tree, one Scala 3 LTS compiler, four published targets:
 
-| Platform     | Runtime              | Coordinate |
-| ------------ | -------------------- | ---------- |
-| JVM          | JDK 21+              | `%%`       |
-| Scala.js     | Node.js, browsers    | `%%%`      |
-| Scala Native | Native binary (LLVM) | `%%`       |
-| WebAssembly  | Node.js 24+          | `%%%`      |
+| Platform     | Runtime               | Coordinate |
+| ------------ | --------------------- | ---------- |
+| JVM          | JDK 21+               | `%%`       |
+| Scala.js     | Node.js, browsers     | `%%%`      |
+| Scala Native | Native binary (LLVM)  | `%%`       |
+| WebAssembly  | Node.js 24+, browsers | `%%%`      |
 
 Scala.js and the WebAssembly backend share a single-threaded, event-loop concurrency model; on the JVM, Kyo runs its multi-threaded work-stealing scheduler.
 
-WebAssembly uses the experimental Scala.js WebAssembly backend (WasmGC). It runs on Node.js 24+, where V8's Turboshaft Wasm pipeline is the default; Kyo passes `--experimental-wasm-exnref` for the exception-handling opcodes the backend emits. Because the backend shares Scala.js's source and model, WASM coverage matches Scala.js.
+WebAssembly is not a separate artifact. It is the Scala.js artifact (`_sjs1`) linked with the experimental Scala.js WebAssembly backend (WasmGC), which an application selects in its own build:
+
+```sbt doctest:expect=skipped
+scalaJSLinkerConfig ~= {
+    _.withESFeatures(_.withESVersion(ESVersion.ES2022).withUseWebAssembly(true))
+        .withModuleKind(ModuleKind.ESModule)
+}
+```
+
+The output runs on Node.js 24+, where V8's Turboshaft Wasm pipeline is the default (Kyo passes `--experimental-wasm-exnref` for the exception-handling opcodes the backend emits), and in a browser page: every module's suites run in Chrome as the `BrowserWasmTest` row, on the Chrome version pinned in `project/chrome-for-testing.version`. Because the backend shares Scala.js's source and model, WASM coverage matches Scala.js.
 
 ## Tested platforms
 

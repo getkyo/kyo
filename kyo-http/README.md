@@ -1069,6 +1069,14 @@ Three settings have nothing to act on rather than something to refuse, because t
 
 A page cannot serve: `HttpServer` fails where it would have bound, with the host named as the cause.
 
+The same client runs outside a page on any JS host without sockets, such as a worker, an edge runtime or an embedded engine. Such a host can lack what a page has, so each of these fails with `HttpUnsupportedOnHostException` too: a request where there is no `fetch`, a WebSocket where there is no `WebSocket`, and a WebSocket URL without a scheme or host where there is no page location to resolve it against.
+
+### What each host loads
+
+A Node program and a page run the same Scala.js artifact, and each loads only its own client. The client is built on the first request, and the linker emits each backend as a module of its own: a Node program fetches the socket client then, and a page fetches the fetch client, so neither downloads the other's. This holds for a link that can hold more than one module (`ModuleKind.ESModule` or `ModuleKind.CommonJSModule`); a `NoModule` link and a WebAssembly link are one module, with both clients in it.
+
+A bundler building a page from the split output must leave `node:` specifiers to the host, even in modules the page never loads, or webpack fails the build. The `external` line and the check that holds it are in kyo-net's [On Scala.js: the backends are a module of their own](../kyo-net/README.md#on-scalajs-the-backends-are-a-module-of-their-own).
+
 ## Migrating from kyo-sttp and kyo-tapir
 
 `kyo-sttp` (sttp client wrapper) and `kyo-tapir` (tapir + Netty server) have been replaced by `kyo-http`, which provides a unified client/server API across JVM, JavaScript, and Scala Native. The sections below show the most common kyo-sttp / kyo-tapir patterns and their kyo-http equivalents.
