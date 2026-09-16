@@ -17,6 +17,10 @@ import kyo.*
   */
 class SlackWebApiLiveTest extends kyo.test.Test[Any]:
 
+    // Every leaf proves the live path against a server this process stands up, and a browser page cannot bind a port.
+    // The in-memory transport covers the same decode and ack logic on every host.
+    override protected def hostFilters = Chunk(kyo.test.HostFilter.NotBrowser)
+
     // Socket-only opt-out: this suite runs an HttpServer/HttpClient on the NIO transport, whose closed-channel fd
     // close is deferred to the idle selector's next select() (an opaque socket:[inode] no allowlist matches), the
     // same transport-deferred reason as BaseHttpTest. Thread, fiber, and file-descriptor detection stay on.
