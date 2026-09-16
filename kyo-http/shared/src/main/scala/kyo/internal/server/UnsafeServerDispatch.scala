@@ -1,9 +1,6 @@
 package kyo.internal.server
 
 import java.nio.charset.StandardCharsets
-import java.time.Instant
-import java.time.ZonedDateTime
-import java.time.ZoneOffset
 import kyo.*
 import kyo.internal.codec.*
 import kyo.internal.http1.*
@@ -54,6 +51,8 @@ private[kyo] object UnsafeServerDispatch:
     private val monthNames =
         Array("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 
+    private val SecondsPerDay = 86400L
+
     @volatile private var cachedDateSecond: Long  = 0L
     @volatile private var cachedDateValue: String = ""
 
@@ -67,19 +66,47 @@ private[kyo] object UnsafeServerDispatch:
         cachedDateValue
     end currentDate
 
-    /** The `Date` header value for an epoch second, as the IMF-fixdate RFC 9110 section 5.6.7 requires: `Sun, 06 Nov 1994 08:49:37 GMT`. */
+    /** The `Date` header value for an epoch second, as the IMF-fixdate RFC 9110 section 5.6.7 requires: `Sun, 06 Nov 1994 08:49:37 GMT`.
+      *
+      * The calendar arithmetic is done here rather than by `ZonedDateTime`, which is what the java.time types cost off the JVM: a
+      * `ZonedDateTime` reaches `IsoChronology`, which names `DateTimeFormatter`, which names `java.util.Locale`, which loads the CLDR
+      * fallback tables. A UTC date has no zone rules and no locale in it, so nothing in that chain is answering a question this header asks.
+      */
     private[internal] def imfFixdate(epochSecond: Long): String =
-        val dt = ZonedDateTime.ofInstant(Instant.ofEpochSecond(epochSecond), ZoneOffset.UTC)
-        val sb = new java.lang.StringBuilder(29)
-        sb.append(dayNames(dt.getDayOfWeek.getValue - 1)).append(", ")
-        appendPadded(sb, dt.getDayOfMonth, 2).append(' ')
-        sb.append(monthNames(dt.getMonthValue - 1)).append(' ')
-        appendPadded(sb, dt.getYear, 4).append(' ')
-        appendPadded(sb, dt.getHour, 2).append(':')
-        appendPadded(sb, dt.getMinute, 2).append(':')
-        appendPadded(sb, dt.getSecond, 2).append(" GMT")
+        val epochDay      = Math.floorDiv(epochSecond, SecondsPerDay)
+        val secondOfDay   = Math.floorMod(epochSecond, SecondsPerDay).toInt
+        val dayOfWeek     = Math.floorMod(epochDay + 3L, 7L).toInt // epoch day 0 is a Thursday, index 3 of `dayNames`
+        val (year, month, day) = civilFromEpochDay(epochDay)
+        val sb                 = new java.lang.StringBuilder(29)
+        sb.append(dayNames(dayOfWeek)).append(", ")
+        appendPadded(sb, day, 2).append(' ')
+        sb.append(monthNames(month - 1)).append(' ')
+        appendPadded(sb, year, 4).append(' ')
+        appendPadded(sb, secondOfDay / 3600, 2).append(':')
+        appendPadded(sb, (secondOfDay / 60) % 60, 2).append(':')
+        appendPadded(sb, secondOfDay % 60, 2).append(" GMT")
         sb.toString
     end imfFixdate
+
+    /** The proleptic Gregorian year, month (1-12) and day (1-31) of a day number counted from 1970-01-01.
+      *
+      * Shifts the era to start on 1 March so that the leap day falls at the end of a year and the month lengths run in a repeating 5-month
+      * pattern, which is what lets the month and day come out of two divisions with no table and no branch per month. The 400-year era is
+      * the Gregorian cycle: 146097 days, exactly. A negative day number is as valid as a positive one, so the divisions floor rather than
+      * truncate.
+      */
+    private def civilFromEpochDay(epochDay: Long): (Int, Int, Int) =
+        val shifted        = epochDay + 719468L // day 0 becomes 0000-03-01 of the era, 719468 days before 1970-01-01
+        val era            = Math.floorDiv(shifted, 146097L)
+        val dayOfEra       = shifted - era * 146097L                                                     // [0, 146096]
+        val yearOfEra      = (dayOfEra - dayOfEra / 1460L + dayOfEra / 36524L - dayOfEra / 146096L) / 365L // [0, 399]
+        val dayOfYear      = dayOfEra - (365L * yearOfEra + yearOfEra / 4L - yearOfEra / 100L)           // [0, 365], from 1 March
+        val monthsFromMarch = (5L * dayOfYear + 2L) / 153L                                               // [0, 11]
+        val day             = (dayOfYear - (153L * monthsFromMarch + 2L) / 5L + 1L).toInt                // [1, 31]
+        val month           = (if monthsFromMarch < 10L then monthsFromMarch + 3L else monthsFromMarch - 9L).toInt
+        val year            = (yearOfEra + era * 400L + (if month <= 2 then 1L else 0L)).toInt // January and February belong to the next year
+        (year, month, day)
+    end civilFromEpochDay
 
     /** Appends `value` right-aligned in `width` digits, zero-padded, which is the fixed width every IMF-fixdate field has. */
     private def appendPadded(sb: java.lang.StringBuilder, value: Int, width: Int): java.lang.StringBuilder =
