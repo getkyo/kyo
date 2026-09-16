@@ -58,19 +58,24 @@ end Completion
 
 object Completion:
 
+    // Each backend is reached through its own accessor rather than named in this object's constructor, so a program
+    // links the ones it asks for. On Scala.js that is the difference between an application that talks to a model over
+    // HTTP and one that also carries the two CLI harnesses below, which spawn a process a browser page has no way to
+    // run. Still one instance each, created the first time it is asked for.
+
     /** The completion backend for every provider whose endpoint speaks the OpenAI-compatible request shape.
       * The concrete implementation is package-private; reach it through this accessor.
       */
-    val openAI: Completion = OpenAICompletion
+    lazy val openAI: Completion = OpenAICompletion
 
     /** The Anthropic Messages backend. */
-    val anthropic: Completion = AnthropicCompletion
+    lazy val anthropic: Completion = AnthropicCompletion
 
     /** The Claude Code CLI harness backend. */
-    val claudeCode: Completion = ClaudeCodeCompletion
+    lazy val claudeCode: Completion = ClaudeCodeCompletion
 
     /** The Codex CLI harness backend. */
-    val codex: Completion = CodexCompletion
+    lazy val codex: Completion = CodexCompletion
 
     /** The reserved name of the result tool. A backend matches a tool by this name to substitute the
       * thought-aware result envelope schema for the tool's opaque `Structure.Value` input schema.

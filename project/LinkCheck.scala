@@ -61,12 +61,15 @@ object LinkCheck {
         Program("NetEcho", "kyo-link-check-net", "linkcheck.NetEcho", "echo kyo".r, "panic NetBackendUnavailableException".r),
         // Names one HTTP provider and reads its completion. kyo-ai's two CLI harnesses spawn a process, which reaches
         // node:child_process; a program that names neither must not carry them, and a page could not run them at all.
+        // One request to a closed port, on a host that has sockets and on one that does not. The program also has to exit,
+        // which is how a client that leaves something running behind it is caught.
+        Program("HttpGet", "kyo-link-check-http", "linkcheck.HttpGet", "failure HttpConnectException".r),
         Program(
             "AiHttp",
             "kyo-link-check-ai",
             "linkcheck.AiHttp",
-            "completion streams true".r,
-            "completion streams true".r,
+            "failure AITransportException".r,
+            "failure AITransportException".r,
             absent = Seq("node:child_process")
         ),
         // The machine-stats factory registers itself at module load, and registering starts a sampler that reads the

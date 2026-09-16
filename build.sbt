@@ -2839,6 +2839,15 @@ lazy val `kyo-link-check-net` =
         .settings(`kyo-settings`, `link-check-settings`)
         .jsSettings(`js-settings`)
 
+lazy val `kyo-link-check-http` =
+    crossProject(JSPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-link-check/http"))
+        .dependsOn(`kyo-link-check-core`, `kyo-http`)
+        .disablePlugins(MimaPlugin)
+        .settings(`kyo-settings`, `link-check-settings`)
+        .jsSettings(`js-settings`)
+
 lazy val `kyo-link-check-ai` =
     crossProject(JSPlatform)
         .crossType(CrossType.Full)
