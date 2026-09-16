@@ -761,7 +761,9 @@ class HttpClientUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
 
     "unix socket error messages" - {
 
-        "unix socket connect failure mentions socket path" in {
+        // Names a socket path directly rather than staging one, so the unix-socket gate does not cover it; a page refuses
+        // the unix scheme outright instead of failing to connect to it.
+        "unix socket connect failure mentions socket path".notBrowser in {
             val socketPath = "/tmp/kyo-nonexistent-test.sock"
             val url        = mkUrl(socketPath, "/test")
             Abort.run[HttpException] {

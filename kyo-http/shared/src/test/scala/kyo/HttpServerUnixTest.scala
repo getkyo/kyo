@@ -74,7 +74,9 @@ class HttpServerUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
             }
         }
 
-        "non-existent socket path fails with HttpUnixConnectException" in {
+        // Names a socket path directly rather than staging one, so the unix-socket gate does not cover it; a page refuses
+        // the unix scheme outright instead of failing to connect to it.
+        "non-existent socket path fails with HttpUnixConnectException".notBrowser in {
             Abort.run[HttpException] {
                 HttpClient.getText("http+unix://%2Ftmp%2Fnonexistent_kyo_unix_test.sock/test")
             }.map { result =>

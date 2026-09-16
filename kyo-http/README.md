@@ -1038,7 +1038,9 @@ val sync = FlagSync.startSync(30.seconds, name => fetchExpression(name))
 All APIs are shared across platforms. The same code compiles for JVM, JavaScript, and Scala Native without changes. The backend is selected automatically based on the target platform (see the table in the introduction).
 
 - **JVM**: No additional setup required.
-- **JavaScript**: The server backend requires a Node.js runtime.
+- **JavaScript**: Node, Bun and Deno run the client and the server over sockets, as the JVM does. A browser page has
+  neither, so the client there sends through the page's own `fetch` and opens a `WebSocket` through the browser's. See
+  [In a browser page](#in-a-browser-page) for what that changes.
 - **Native**: The build needs the kyo FFI plugin, `addSbtPlugin("io.getkyo" % "kyo-ffi-plugin" % kyoVersion)` plus
   `.nativeConfigure(_.enablePlugins(kyo.ffi.sbt.KyoFfiPlugin))` and the two `ffiNativeDependency*Options` tasks folded into
   `nativeConfig`, because kyo-net's C shims are linked into the binary and those tasks carry their link flags; without them the link
@@ -1046,6 +1048,25 @@ All APIs are shared across platforms. The same code compiles for JVM, JavaScript
   additionally requires OpenSSL on the system.
 
 Backends are expected to behave uniformly across platforms. If you encounter a behavioral difference between backends, please [report it](https://github.com/getkyo/kyo/issues).
+
+### In a browser page
+
+The same `HttpClient` calls work in a page. What carries them is the browser: it owns the connection, its reuse, TLS, the framing and the redirect chain, and it answers with a response. Everything above the wire is unchanged, so the base URL, the retry schedule, the request timeout, the response size cap and the client filters apply as they do anywhere else, and a relative URL resolves against the page's own origin.
+
+What a page cannot do fails with `HttpUnsupportedOnHostException` rather than quietly doing something else, because the browser drops most of these silently:
+
+| Asked for | Why a page refuses |
+|---|---|
+| a unix socket, a raw connection | the page has no socket of its own |
+| `HttpTlsConfig` other than the default | the browser's trust store is the only one |
+| `Host`, `Connection`, `Content-Length`, `Cookie`, `Origin`, and the `Sec-` and `Proxy-` prefixes | the fetch specification reserves them for the browser, which drops them from a request without saying so |
+| `followRedirects(false)`, or a redirect limit of your own | a redirect answered manually carries neither status nor `Location`, so there is nothing for your program to read |
+| a streamed request body | needs `duplex`, which is a recent browser's and only over HTTP/2 |
+| a WebSocket with headers, or a ping interval | the browser's constructor takes a URL and subprotocols, and it answers pings itself |
+
+Three settings have nothing to act on rather than something to refuse, because the browser owns what they tune: the connection pool (`maxConnectionsPerHost`, `idleConnectionTimeout`), the byte transport (`HttpTransportConfig`), and the connect timeout, which is not separable from the request timeout that bounds the whole exchange.
+
+A page cannot serve: `HttpServer` fails where it would have bound, with the host named as the cause.
 
 ## Migrating from kyo-sttp and kyo-tapir
 

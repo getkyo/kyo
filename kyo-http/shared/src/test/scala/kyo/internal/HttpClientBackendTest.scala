@@ -16,9 +16,13 @@ import kyo.net.internal.transport.Connection as TransportConnection
   */
 class HttpClientBackendTest extends kyo.BaseHttpTest:
 
+    // The subject is the socket backend itself: its pool, its connections and what its failures are classified as. A page
+    // has a different backend entirely, covered by FetchClientBackendTest.
+    override protected def hostFilters = Chunk(kyo.test.HostFilter.NotBrowser)
+
     import AllowUnsafe.embrace.danger
 
-    // Lazy so a host without a socket client cancels the leaf that reaches for it, not the suite\'s construction.
+    // Lazy so a host without a socket client cancels the leaf that reaches for it, not the suite's construction.
     lazy val client = HttpTestPlatformBackend.client
 
     final private class FixedUUIDGenerator(value: UUID) extends UUIDGenerator:

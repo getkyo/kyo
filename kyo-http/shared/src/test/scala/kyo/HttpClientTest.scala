@@ -6,12 +6,16 @@ import scala.language.implicitConversions
 
 class HttpClientTest extends BaseHttpTest:
 
+    // Every leaf drives the socket client against a server this process stands up, and several assert on what a failed
+    // socket reports, so in a page there is nothing to run rather than something that fails a different way.
+    override protected def hostFilters = Chunk(kyo.test.HostFilter.NotBrowser)
+
     import HttpPath.*
 
     case class User(id: Int, name: String) derives Schema, CanEqual
     case class LoginForm(username: String, password: String) derives HttpFormCodec, CanEqual
 
-    // Lazy so a host without a socket client cancels the leaf that reaches for it, not the suite\'s construction.
+    // Lazy so a host without a socket client cancels the leaf that reaches for it, not the suite's construction.
     lazy val client = internal.HttpTestPlatformBackend.client
 
     private def tlsTest(handlers: Seq[HttpHandler[?, ?, ?]])(

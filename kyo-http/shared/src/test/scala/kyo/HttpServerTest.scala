@@ -10,7 +10,7 @@ class HttpServerTest extends BaseHttpTest:
     case class User(id: Int, name: String) derives Schema, CanEqual
     case class LoginForm(username: String, password: String) derives HttpFormCodec, CanEqual
 
-    // Lazy so a host without a socket client cancels the leaf that reaches for it, not the suite\'s construction.
+    // Lazy so a host without a socket client cancels the leaf that reaches for it, not the suite's construction.
     lazy val client = internal.HttpTestPlatformBackend.client
 
     /** Registers "plain" and "tls" sub-tests. Caller uses: "name" - { runServer(handler) { url => ... } } */
@@ -327,7 +327,8 @@ class HttpServerTest extends BaseHttpTest:
             }
         }
 
-        "rest capture must be last segment" in {
+        // Reads the routing error a server reports at construction, which a page never reaches: it fails at the bind first.
+        "rest capture must be last segment".notBrowser in {
             val route = HttpRoute.getRaw("api" / Capture.Rest("mid") / "suffix").response(_.bodyText)
             val ep    = route.handler(_ => HttpResponse.ok("unreachable"))
             Abort.run[Throwable] {
