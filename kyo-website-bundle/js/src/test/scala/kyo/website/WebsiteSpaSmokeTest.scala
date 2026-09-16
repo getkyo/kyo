@@ -56,7 +56,8 @@ class WebsiteSpaSmokeTest extends kyo.test.Test[Any]:
         for
             body <- LandingApp.body(docsHome)
             view <- siteShell(Signal.initConst(body), (_: String) => Kyo.unit)
-            ssg  <- UI.runRender(view).run.map(_.mkString)
+            // The render re-emits on every reactive change, so the SSG's own page is its first emission.
+            ssg <- UI.runRender(view).take(1).run.map(_.headMaybe.getOrElse(""))
             // Read the SSG's HTML back out of the DOM, so both sides of the comparison went through the browser's own
             // parser and serializer and differ only where the trees do.
             parsed <- Sync.defer {
