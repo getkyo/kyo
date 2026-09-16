@@ -2,19 +2,20 @@ package kyo.internal
 
 import kyo.*
 import scala.scalajs.js
-import scala.scalajs.js.annotation.*
 
-// Node's process module, reached through a namespace import rather than the `process` global for the reason
-// kyo-core's NodeChildProcess records: @JSImport compiles to require() under CommonJS and to import under
-// ESModule, so one facade serves both the JS and the WebAssembly backend.
-// The name carries the Test prefix, as TestNodeOs does: `kyo.internal.NodeProcess` is kyo-system's own Scala object,
-// and a second class of that name on the same link is one the Scala.js linker resolves to whichever it saw first,
-// which fails a later lookup of the other one's methods.
-@js.native
-@JSImport("node:process", JSImport.Namespace)
-private object TestNodeProcess extends js.Object:
-    def pid: Int                             = js.native
-    def kill(pid: Int, signal: Int): Boolean = js.native
+// Node's process module, reached through TestNodeBuiltins at the call rather than through an import at load, for the
+// reason that file records: an import runs as the module loads, and a page resolves none, so one of them here kept
+// every suite in this module from loading there. The name carries the Test prefix because `kyo.internal.NodeProcess`
+// is kyo-system's own Scala object, and a second class of that name on the same link is one the Scala.js linker
+// resolves to whichever it saw first, which fails a later lookup of the other one's methods.
+private object TestNodeProcess:
+    private def module: Maybe[js.Dynamic] = TestNodeBuiltins.get("node:process")
+
+    /** This process's pid, or 0 where there is no process to have one. */
+    def pid: Int = module.fold(0)(_.selectDynamic("pid").asInstanceOf[Int])
+
+    def kill(pid: Int, signal: Int): Boolean =
+        module.fold(false)(p => p.applyDynamic("kill")(pid, signal).asInstanceOf[Boolean])
 end TestNodeProcess
 
 /** This test process's own pid, plus a liveness probe for a foreign pid, for [[SqlTestContainers]]'s ownership predicate.
