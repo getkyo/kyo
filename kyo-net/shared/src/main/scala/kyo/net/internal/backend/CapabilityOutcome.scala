@@ -38,6 +38,8 @@ private[net] enum CapabilityOutcome derives CanEqual:
       * the probe reaches this outcome and the backend demotes at selection time instead. Carries the library id the loader could not resolve
       * and the platform tag it searched for.
       *
+      * On Scala.js [[describe]] names what a JS application does instead: install the koffi package, or point the loader at the native.
+      *
       * On the JVM this is usually a missing line in the reader's build rather than a gap in what kyo publishes, which is why
       * [[describe]] names the line: kyo-net ships each platform's native as a CLASSIFIER artifact, and the platform tag here IS the
       * classifier string. Read as a bare statement about kyo's release contents ("not bundled for darwin-aarch64"), it costs hours on the
@@ -66,9 +68,18 @@ private[net] enum CapabilityOutcome derives CanEqual:
         case UnsupportedOS       => "not applicable to this OS/runtime"
         case Unavailable(reason) => s"unavailable ($reason)"
         case NotBundled(id, platform) =>
-            s"native library '$id' is not on the classpath for $platform; on the JVM, add kyo-net's $platform classifier artifact, " +
-                s"""libraryDependencies += "io.getkyo" %% "kyo-net" % <version> classifier "$platform""""
+            // A JS application supplies a native the way kyo-ffi's JS loader looks for one, which no JVM classifier artifact reaches.
+            if kyo.internal.Platform.isJS then
+                if id == "koffi" then
+                    "the koffi npm package is not installed or not resolvable; install it (npm i koffi) to use the native backends"
+                else s"native library '$id' is not staged for $platform; on Scala.js, set ${jsPathVariable(id)} to the library's absolute path"
+            else
+                s"native library '$id' is not on the classpath for $platform; on the JVM, add kyo-net's $platform classifier artifact, " +
+                    s"""libraryDependencies += "io.getkyo" %% "kyo-net" % <version> classifier "$platform""""
         case VersionTooOld(have, need) => s"native version $have is below the required $need"
         case ProbeFailed(cause)        => s"probe failed (${NetException.show(cause)})"
+
+    /** The environment variable kyo-ffi's JS loader reads a native's path from before anything else (`NativeLoader.jsResolve`). */
+    private def jsPathVariable(id: String): String = s"KYO_FFI_${id.toUpperCase.replace('-', '_')}_PATH"
 
 end CapabilityOutcome
