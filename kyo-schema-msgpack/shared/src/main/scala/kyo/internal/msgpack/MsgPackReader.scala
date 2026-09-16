@@ -383,8 +383,8 @@ final class MsgPackReader(data: Array[Byte], config: MsgPack.Config)(using _fram
             val n     = readArrayHeader()
             val secs  = readLongValue()
             val nanos = if n > 1 then readLongValue() else 0L
-            java.time.Instant.ofEpochSecond(secs, nanos)
-        else if isInt(b) then java.time.Instant.ofEpochMilli(readLongValue())
+            Instant.ofEpochSecond(secs, nanos)
+        else if isInt(b) then Instant.ofEpochMilli(readLongValue())
         else mismatch("Instant (array, timestamp ext, or integer)", b)
         end if
     end instant

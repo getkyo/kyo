@@ -641,7 +641,7 @@ class YamlEventsTest extends kyo.test.Test[Any]:
                 bytes = direct(_.bytes(Span.fromUnsafe(Array[Byte](1, 2, 3)))),
                 bigInt = direct(_.bigInt(BigInt("12345678901234567890"))),
                 bigDecimal = direct(_.bigDecimal(BigDecimal("1234567890.0987654321"))),
-                instant = direct(_.instant(java.time.Instant.parse("2026-05-30T12:34:56Z"))),
+                instant = direct(_.instant(Instant.parse("2026-05-30T12:34:56Z").getOrThrow)),
                 duration = direct(_.duration(java.time.Duration.parse("PT1H2M3S")))
             )
             assert(obtained9.bytes == "\"AQID\"\n")

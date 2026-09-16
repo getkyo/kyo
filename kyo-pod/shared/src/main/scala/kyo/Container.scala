@@ -2176,6 +2176,15 @@ object Container:
             case Absent     => ContainerBackend.detect()
         }
 
+    /** Runs `v` with `backend` as the active backend.
+      *
+      * [[withBackendConfig]] resolves a backend from a configuration, which is what an application wants. This takes
+      * the backend itself, which is what a harness wants when it needs to observe what a block did to the daemon
+      * rather than to choose which daemon that is.
+      */
+    private[kyo] def withBackend[A, S](backend: ContainerBackend)(v: => A < S)(using Frame): A < S =
+        backendLocal.let(Present(backend))(v)
+
     // --- Host-side kill fallback ---
 
     /** Daemon message fragments that mean the runtime asked the OCI runtime to reap a container's process and the process outlived the

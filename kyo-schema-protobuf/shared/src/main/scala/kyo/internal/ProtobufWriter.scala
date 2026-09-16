@@ -1,6 +1,7 @@
 package kyo.internal
 
 import kyo.Codec.Writer
+import kyo.Instant
 import kyo.Span
 import scala.annotation.tailrec
 

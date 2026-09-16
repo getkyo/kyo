@@ -4,6 +4,7 @@ import java.nio.charset.CodingErrorAction
 import java.nio.charset.StandardCharsets
 import kyo.Chunk
 import kyo.Codec
+import kyo.Instant
 import kyo.OrderedDictBuilder
 import kyo.ParseException
 import kyo.RangeException

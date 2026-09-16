@@ -3,6 +3,7 @@ package kyo.internal.bson
 import java.io.ByteArrayOutputStream
 import java.nio.charset.StandardCharsets
 import kyo.Codec
+import kyo.Instant
 import kyo.OrderedDict
 import kyo.OrderedDictBuilder
 import kyo.SchemaNotSerializableException

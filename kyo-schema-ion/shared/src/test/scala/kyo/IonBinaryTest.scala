@@ -65,7 +65,7 @@ class IonBinaryTest extends kyo.test.Test[Any]:
             roundTrip(Span.from(Array[Byte](0, 1, -1)))
             roundTrip(BigInt("123456789012345678901234567890"))
             roundTrip(BigDecimal("12345.6789"))
-            roundTrip(java.time.Instant.parse("2024-01-02T03:04:05.123456789Z"))
+            roundTrip(Instant.parse("2024-01-02T03:04:05.123456789Z").getOrThrow)
             roundTrip(java.time.Duration.ofSeconds(12, 345))
             roundTrip(kyo.Duration.fromNanos(123456789L))
             val shape: MTShape = MTCircle(2.5)
@@ -187,7 +187,7 @@ class IonBinaryTest extends kyo.test.Test[Any]:
         "materializes binary values through readStructure" in {
             val fields = Chunk.newBuilder[(String, Structure.Value)]
             fields += "data" -> Structure.Value.Bytes(Span.from(Array[Byte](1, 2)))
-            fields += "at"   -> Structure.Value.Instant(java.time.Instant.parse("2024-01-02T03:04:05Z"))
+            fields += "at"   -> Structure.Value.Instant(Instant.parse("2024-01-02T03:04:05Z").getOrThrow)
             val value  = Structure.Value.Record(fields.result())
             val schema = summon[Schema[Structure.Value]]
             val bytes  = schema.encode[IonBinary](value)

@@ -3,6 +3,7 @@ package kyo.internal.msgpack
 import java.io.ByteArrayOutputStream
 import java.nio.charset.StandardCharsets
 import kyo.Codec.Writer
+import kyo.Instant
 import kyo.MsgPack
 import kyo.Span
 import scala.annotation.tailrec

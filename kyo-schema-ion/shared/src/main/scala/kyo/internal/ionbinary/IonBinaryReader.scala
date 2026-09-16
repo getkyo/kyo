@@ -4,6 +4,7 @@ import java.nio.charset.StandardCharsets
 import kyo.*
 import kyo.Codec.IntrospectingReader
 import kyo.Codec.Reader
+import kyo.internal.Civil
 import scala.annotation.tailrec
 import scala.util.control.NonFatal
 
@@ -488,12 +489,9 @@ object IonBinaryReader:
                         case _ => 0
                 else 0
             if pos != end then parseError("timestamp length", "timestamp boundary")
-            Civil.epochSecondOf(year, month, day, hour, minute, second) match
-                case Present(utcSecond) =>
-                    TimestampValue(Instant.ofEpochSecond(utcSecond - offset.value.toLong * 60L, nanos.toLong))
-                case Absent =>
-                    parseError(s"$year-$month-$day $hour:$minute:$second", "valid timestamp")
-            end match
+            val utcSecond = Civil.epochSecondOf(year, month, day, hour, minute, second)
+            if utcSecond.isEmpty then parseError(s"$year-$month-$day $hour:$minute:$second", "valid timestamp")
+            TimestampValue(Instant.ofEpochSecond(utcSecond.get - offset.value.toLong * 60L, nanos.toLong))
         end readTimestamp
 
         private def readSymbol(len: Int, limit: Int): IonBinaryValue =

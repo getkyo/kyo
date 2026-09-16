@@ -39,25 +39,31 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
     override def aroundLeaf[A](body: A < (Async & Abort[Any] & Scope))(using Frame): A < (Async & Abort[Any] & Scope) =
         HttpClient.withConfig(_.timeout(60.seconds))(body)
 
-    /** Fails the leaf if it leaves a container behind (diffs the container set around the body, run under its own `Scope`
-      * first). Unchecked, leaks exhaust the rootless kernel keyring (`runc create` session keys, capped at `kernel.keys.maxkeys`).
+    /** Fails the leaf if it leaves behind a container it created (the body runs under its own `Scope` first).
+      * Unchecked, leaks exhaust the rootless kernel keyring (`runc create` session keys, capped at `kernel.keys.maxkeys`).
+      *
+      * Asks about the containers this leaf created rather than diffing the daemon's whole list around the leaf. The
+      * diff could not tell one leaf's container from another writer's: container suites fork once per runtime and the
+      * forks run concurrently (`Test / testForkedParallel`), and where a host's docker socket is a symlink to podman's
+      * (a podman machine on macOS installs one) those forks share a daemon, so each saw the other's containers appear
+      * mid-leaf and called them leaks. It also missed the leak of a container that already existed. Recording what the
+      * leaf's own backend created answers exactly the question the check is named for.
       */
     private def checkingContainerLeak(v: kyo.test.AssertScope ?=> Unit < (Async & Abort[Any] & Scope))(using
         Frame,
         kyo.test.AssertScope
     ): Unit < (Async & Abort[Any] & Scope) =
         Container.currentBackend.map { backend =>
-            Container.list(all = true).map { before =>
-                val beforeIds = before.map(_.id).toSet
-                Scope.run(v).andThen {
-                    Container.list(all = true).map { after =>
-                        val candidates = after.filterNot(s => beforeIds.contains(s.id))
-                        // The daemon's listing lags inspect on podman: a just-removed container can still appear in `list`.
-                        // Confirm each candidate via an authoritative inspect before flagging, avoiding a false leak.
-                        Kyo.foreach(candidates) { s =>
-                            Abort.run[ContainerException](backend.state(s.id)).map {
-                                case Result.Failure(_: ContainerMissingException) => Maybe.empty[Container.Summary]
-                                case _                                            => Maybe(s)
+            AtomicRef.init(Chunk.empty[Container.Id]).map { created =>
+                Container.withBackend(RecordingBackend(backend, created))(Scope.run(v)).andThen {
+                    created.get.map { ids =>
+                        // The daemon's listing lags inspect on podman: a just-removed container can still be listed.
+                        // Ask inspect, which is authoritative, and treat a missing container as the freed one it is.
+                        Kyo.foreach(ids) { id =>
+                            Abort.run[ContainerException](backend.state(id)).map {
+                                case Result.Failure(_: ContainerMissingException) => Maybe.empty[(Container.Id, Container.State)]
+                                case Result.Success(state)                        => Maybe((id, state))
+                                case _                                            => Maybe.empty[(Container.Id, Container.State)]
                             }
                         }.map { results =>
                             val leaked = results.flatMap(m => Chunk.from(m.toList))
@@ -65,7 +71,7 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
                             else
                                 fail(
                                     s"leaf leaked ${leaked.size} container(s) not freed before exit: " +
-                                        leaked.map(s => s"${s.id.value.take(12)}[${s.state}]").mkString(", ")
+                                        leaked.map((id, state) => s"${id.value.take(12)}[$state]").mkString(", ")
                                 )
                             end if
                         }
@@ -239,3 +245,16 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
             cancel(s"the $runtime CLI is not available on this host, so the shell backend cannot run")
 
 end BasePodTest
+
+/** A backend that remembers every container created through it, so a leaf's leak check can ask about the containers
+  * that leaf made. Everything else is the backend it wraps.
+  */
+final private class RecordingBackend(under: kyo.internal.ContainerBackend, created: AtomicRef[Chunk[Container.Id]])
+    extends kyo.internal.ContainerBackend(under.meter):
+
+    export under.{create => _, meter => _, *}
+
+    def create(config: Container.Config)(using Frame): Container.Id < (Async & Abort[ContainerException]) =
+        under.create(config).map(id => created.updateAndGet(_.append(id)).andThen(id))
+
+end RecordingBackend

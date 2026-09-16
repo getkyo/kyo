@@ -1,9 +1,8 @@
 package kyo.internal
 
 import kyo.*
-import kyo.Test
 
-class CivilTest extends Test:
+class CivilTest extends kyo.test.Test[Any]:
 
     "of" - {
         "names the calendar fields of a second" in {

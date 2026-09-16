@@ -1,5 +1,6 @@
 package kyo.internal.bson
 
+import kyo.Instant
 import kyo.OrderedDict
 import kyo.Span
 

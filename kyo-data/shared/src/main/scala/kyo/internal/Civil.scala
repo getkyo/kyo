@@ -37,7 +37,7 @@ final private[kyo] case class Civil(
     minute: Int,
     second: Int,
     dayOfWeek: Int
-)
+) derives CanEqual
 
 private[kyo] object Civil:
 

@@ -4,6 +4,7 @@ import java.io.ByteArrayOutputStream
 import java.nio.charset.StandardCharsets
 import kyo.*
 import kyo.Codec.Writer
+import kyo.internal.Civil
 import scala.annotation.tailrec
 
 final class IonBinaryWriter private (private val config: Ion.Config) extends Writer:

@@ -3,6 +3,7 @@ package kyo.internal
 import java.nio.charset.StandardCharsets
 import kyo.Chunk
 import kyo.Codec.Writer
+import kyo.Instant
 import kyo.Ion
 import kyo.Span
 

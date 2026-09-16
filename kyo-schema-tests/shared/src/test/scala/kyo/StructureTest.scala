@@ -723,7 +723,7 @@ class StructureTest extends kyo.test.Test[Any]:
             }
 
             "instant primitive" in {
-                val instant = java.time.Instant.parse("2026-07-09T12:34:56Z")
+                val instant = Instant.parse("2026-07-09T12:34:56Z").getOrThrow
                 val v       = Structure.Value.primitive(instant)
                 v match
                     case Structure.Value.Instant(value) =>
@@ -799,8 +799,14 @@ class StructureTest extends kyo.test.Test[Any]:
             }
 
             "instant toStructureValue" in {
-                val instant = java.time.Instant.parse("2026-07-09T12:34:56Z")
-                val dv      = summon[Schema[java.time.Instant]].toStructureValue(instant)
+                val instant = Instant.parse("2026-07-09T12:34:56Z").getOrThrow
+                val dv      = summon[Schema[Instant]].toStructureValue(instant)
+                assert(dv == Structure.Value.Instant(instant))
+            }
+
+            "the java.time instant schema encodes as the same wire value" in {
+                val instant = Instant.parse("2026-07-09T12:34:56Z").getOrThrow
+                val dv      = summon[Schema[java.time.Instant]].toStructureValue(instant.toJava)
                 assert(dv == Structure.Value.Instant(instant))
             }
 
@@ -864,7 +870,7 @@ class StructureTest extends kyo.test.Test[Any]:
                     Structure.Value.Decimal(1.5),
                     Structure.Value.BigNum(BigDecimal("1.5")),
                     Structure.Value.Bytes(Span.from(Array[Byte](1, 2, 3))),
-                    Structure.Value.Instant(java.time.Instant.parse("2024-01-01T00:00:00Z")),
+                    Structure.Value.Instant(Instant.parse("2024-01-01T00:00:00Z").getOrThrow),
                     Structure.Value.Duration(java.time.Duration.ofSeconds(5)),
                     Structure.Value.Null
                 )
@@ -1282,7 +1288,7 @@ class StructureTest extends kyo.test.Test[Any]:
         }
 
         "json instant round-trip" in {
-            val value = java.time.Instant.parse("2024-06-15T10:30:00Z")
+            val value = Instant.parse("2024-06-15T10:30:00Z").getOrThrow
             val w     = JsonWriter()
             w.instant(value)
             val json = w.resultString
@@ -1355,7 +1361,7 @@ class StructureTest extends kyo.test.Test[Any]:
         }
 
         "protobuf instant round-trip" in {
-            val value = java.time.Instant.parse("2024-01-01T00:00:00Z")
+            val value = Instant.parse("2024-01-01T00:00:00Z").getOrThrow
             val w     = new ProtobufWriter
             w.field("value", 0)
             w.instant(value)
@@ -1464,7 +1470,7 @@ class StructureTest extends kyo.test.Test[Any]:
         }
 
         "dynamic instant round-trip" in {
-            val value = java.time.Instant.parse("2025-12-31T23:59:59Z")
+            val value = Instant.parse("2025-12-31T23:59:59Z").getOrThrow
             val w     = new StructureValueWriter
             w.instant(value)
             val dv = w.getResult
@@ -1474,7 +1480,7 @@ class StructureTest extends kyo.test.Test[Any]:
         }
 
         "legacy string instant decode" in {
-            val value = java.time.Instant.parse("2025-12-31T23:59:59Z")
+            val value = Instant.parse("2025-12-31T23:59:59Z").getOrThrow
             val r     = new StructureValueReader(Structure.Value.Str(value.toString))
             assert(r.instant() == value)
         }

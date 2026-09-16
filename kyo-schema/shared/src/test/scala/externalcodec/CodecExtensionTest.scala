@@ -1,8 +1,8 @@
 package externalcodec
 
 import java.time.Duration
-import java.time.Instant
 import kyo.Codec.Writer
+import kyo.Instant
 import kyo.Span
 
 // A Writer defined OUTSIDE the kyo package. It can only see the public surface of Codec.Writer,

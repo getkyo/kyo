@@ -1,6 +1,7 @@
 package kyo.internal
 
 import kyo.Codec.Writer
+import kyo.Instant
 import kyo.Maybe
 import kyo.Maybe.*
 import kyo.Span
