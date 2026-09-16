@@ -2,6 +2,7 @@ import java.io.File
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.util.concurrent.TimeUnit
+import org.scalajs.linker.interface.ModuleKind
 import org.scalajs.sbtplugin.ScalaJSPlugin.autoImport.*
 import sbt.*
 import sbt.Keys.*
@@ -40,6 +41,16 @@ import scala.util.matching.Regex
   *     (`kyo-link-check/bundlers/check.mjs`; the bundler versions are pinned in its `package.json`).
   *
   * A WasmGC link is one module by necessity, so it carries both sides inline and its initial load is its whole output.
+  *
+  * On JS each program is also linked as CommonJS and as NoModule, the kind Scala.js emits when an application configures none, and run under
+  * plain node from its output file. The linker rejects a `js.dynamicImport` and an `import.meta` under NoModule, so this is what shows a
+  * split point or a module-relative lookup collapsing for that link, and it holds those links to the same bare-global rule.
+  *
+  * Every link is made against the modules as a release builds them. A release publishes each project for each of its own
+  * `crossScalaVersions`, so a project that does not list the build's Scala version, such as kyo-config, which is published for the Scala 3.3
+  * LTS line and 2.13, is built for the entry of the same major version, and every module that depends on it compiles against that build.
+  * An application links exactly those artifacts, so a module that relies on something only the default build of a dependency has fails
+  * here, as it would in a release.
   *
   * On every platform it fails when a kyo module declares, outside tests, a dependency on an artifact that only carries that data. Linking a
   * data artifact is the application's choice, never kyo's.
@@ -164,8 +175,11 @@ object LinkCheck {
             case Seq(platform, only @ _*) if platforms.contains(platform) && only.forall(name => programs.exists(_.name == name)) =>
                 // Naming programs links only those, for iterating on one; CI names none.
                 val selected = if (only.isEmpty) programs else programs.filter(p => only.contains(p.name))
+                // Checked against the release build without making it the session's: the state after the command is the one before it.
+                val release = releaseSettings(state)
                 val failures =
-                    dependencyFailures(state, platform) ++ (if (platform == "Native") Nil else linkFailures(state, platform, selected))
+                    dependencyFailures(state, release, platform) ++
+                        (if (platform == "Native") Nil else linkFailures(state, release, platform, selected))
                 if (failures.isEmpty) {
                     log(s"$platform: all checks passed")
                     state
@@ -179,6 +193,37 @@ object LinkCheck {
         }
     }
 
+    /** The settings that put every project on the Scala version a release builds it with: a project whose `crossScalaVersions` do not
+      * include its `scalaVersion` takes the entry with the same binary version, which is the build a `+publish` compiles it for and every
+      * module on the build's Scala version compiles against.
+      *
+      * They go into every state this command appends settings to, because `appendWithoutSession` starts again from the build's own settings
+      * and would drop them from a state that already carried them.
+      */
+    private def releaseSettings(state: State): Seq[Setting[_]] = {
+        val extracted = Project.extract(state)
+        val moved = extracted.structure.allProjectRefs.flatMap { ref =>
+            val version = extracted.get(ref / scalaVersion)
+            val cross   = extracted.get(ref / crossScalaVersions)
+            if (cross.isEmpty || cross.contains(version)) Nil
+            else
+                cross
+                    .find(v => CrossVersion.binaryScalaVersion(v) == CrossVersion.binaryScalaVersion(version))
+                    .map(released => (ref, released))
+                    .toSeq
+        }
+        moved.groupBy(_._2).toSeq.sortBy(_._1).foreach { case (released, refs) =>
+            log(s"linking against the release build of ${refs.map(_._1.project).sorted.mkString(", ")}: Scala $released")
+        }
+        moved.map { case (ref, released) => ref / scalaVersion := released }
+    }
+
+    /** The module kinds each program is also linked as on JS, besides the ES module an application ships and the sizes are measured on,
+      * with the directory label of each.
+      */
+    private val otherModuleKinds: Seq[(String, ModuleKind)] =
+        Seq("commonjs" -> ModuleKind.CommonJSModule, "nomodule" -> ModuleKind.NoModule)
+
     private def isDataArtifact(name: String): Boolean =
         dataArtifacts.exists(a => name == a || name.startsWith(s"${a}_"))
 
@@ -186,7 +231,8 @@ object LinkCheck {
       * only through a third-party library declaring it, as zio-test declares the tzdb, is that library's choice, already made for any
       * application using the library, so it is reported and not failed.
       */
-    private def dependencyFailures(state: State, platform: String): Seq[String] = {
+    private def dependencyFailures(original: State, release: Seq[Setting[_]], platform: String): Seq[String] = {
+        val state     = Project.extract(original).appendWithoutSession(release, original)
         val extracted = Project.extract(state)
         // The Wasm row links the JS projects, so it has their dependencies.
         val suffix = if (platform == "Wasm") "JS" else platform
@@ -210,7 +256,7 @@ object LinkCheck {
         declared.distinct.map { case (project, id) => s"$project declares $id outside tests" }
     }
 
-    private def linkFailures(state: State, platform: String, programs: Seq[Program]): Seq[String] = {
+    private def linkFailures(state: State, release: Seq[Setting[_]], platform: String, programs: Seq[Program]): Seq[String] = {
         val extracted = Project.extract(state)
         val ceilings  = readCeilings(extracted.get(LocalRootProject / baseDirectory) / "kyo-link-check" / "ceilings.txt")
         // Installed and resolved once per run, and only when a program bundles.
@@ -224,7 +270,7 @@ object LinkCheck {
                 if (platform == "Wasm") Seq(ref / Compile / fullLinkJS / scalaJSLinkerConfig ~= KyoJsRows.wasmLinkerConfig)
                 else Nil
             val linkState = extracted.appendWithoutSession(
-                Seq(
+                release ++ Seq(
                     ref / Compile / mainClass                                   := Some(program.mainClass),
                     ref / Compile / fullLinkJS / scalaJSLinkerOutputDirectory := outDir
                 ) ++ wasmLink,
@@ -240,10 +286,11 @@ object LinkCheck {
             val nodeImports = files.flatMap { f =>
                 staticNodeImport.findAllIn(read(f)).toSeq
             }.distinct
+            val kinds = if (platform == "JS") otherModuleKinds.map { case (label, kind) => moduleKindLink(state, release, ref, program, label, kind) } else Nil
             val runs = Seq(
                 ("under plain node", program.lastLine, runNode(outDir, platform, withoutProcess = false)),
                 ("with no process global", program.withoutProcess, runNode(outDir, platform, withoutProcess = true))
-            ) ++ hostChunkRuns(program, outDir, platform, files, initial)
+            ) ++ hostChunkRuns(program, outDir, platform, files, initial) ++ kinds.map(_.run)
             val eager =
                 if (program.hostChunks && platform == "JS")
                     (nodeBackend ++ pageBackend).filter(name => initial.exists(f => contains(f, quoted(name))))
@@ -251,13 +298,7 @@ object LinkCheck {
             // The WasmGC row links the same IR, so the JS row answers for both.
             val bareGlobals =
                 if (platform != "JS") Nil
-                else
-                    try bareHostGlobalReads(linkState, ref)
-                    catch {
-                        case e: Throwable =>
-                            val frames = e.getStackTrace.take(8).mkString(" <- ")
-                            Seq(s"(the IR could not be read: $e at $frames)")
-                    }
+                else checkedBareGlobals(linkState, ref) ++ kinds.flatMap(kind => kind.bareGlobals.map(read => s"$read, as ${kind.label}"))
             val bundlers    = if (program.hostChunks && platform == "JS") bundlerRuns(program, outDir, tools) else Right(Nil)
             Row(program, size, initial.map(_.length).sum, gzipSize(initial), found, linked, nodeImports, eager, bareGlobals, bundlers, runs)
         }
@@ -303,6 +344,54 @@ object LinkCheck {
             data ++ reached ++ imports ++ eager ++ bareGlobals ++ bundled ++ ceiling ++ initialCeiling ++ output
         }
     }
+
+    /** What linking a program as one of [[otherModuleKinds]] showed: its run under plain node, which is a failure when it did not link, and
+      * its bare host-global reads.
+      */
+    private final case class KindLink(label: String, run: (String, Regex, Either[String, Seq[String]]), bareGlobals: Seq[String])
+
+    /** Links `program` as `kind` into its own directory and runs `main.js` from there under plain node, the way an application that
+      * configures that module kind launches it. A link the linker rejects is reported as the run's failure rather than ending the check.
+      */
+    private def moduleKindLink(
+        state: State,
+        release: Seq[Setting[_]],
+        ref: ProjectReference,
+        program: Program,
+        label: String,
+        kind: ModuleKind
+    ): KindLink = {
+        val extracted = Project.extract(state)
+        val outDir    = extracted.get(ref / target) / "link-check" / s"js-$label" / program.name
+        IO.delete(outDir)
+        val kindState = extracted.appendWithoutSession(
+            release ++ Seq(
+                ref / Compile / mainClass                                   := Some(program.mainClass),
+                ref / Compile / fullLinkJS / scalaJSLinkerOutputDirectory := outDir,
+                ref / Compile / fullLinkJS / scalaJSLinkerConfig ~= {
+                    _.withModuleKind(kind).withOutputPatterns(org.scalajs.linker.interface.OutputPatterns.Defaults)
+                }
+            ),
+            state
+        )
+        val how = s"as $label under plain node"
+        try {
+            Project.extract(kindState).runTask(ref / Compile / fullLinkJS, kindState)
+            KindLink(label, (how, program.lastLine, runNode(outDir, "JS", withoutProcess = false, entry = "main.js")), checkedBareGlobals(kindState, ref))
+        } catch {
+            case e: Throwable =>
+                KindLink(label, (how, program.lastLine, Left(s"did not link: ${Option(e.getMessage).getOrElse(e.toString)}")), Nil)
+        }
+    }
+
+    /** [[bareHostGlobalReads]], with an IR that could not be read reported as a read, so it fails the check. */
+    private def checkedBareGlobals(state: State, ref: ProjectReference): Seq[String] =
+        try bareHostGlobalReads(state, ref)
+        catch {
+            case e: Throwable =>
+                val frames = e.getStackTrace.take(8).mkString(" <- ")
+                Seq(s"(the IR could not be read: $e at $frames)")
+        }
 
     private final case class Row(
         program: Program,
@@ -569,15 +658,16 @@ object LinkCheck {
         at
     }
 
-    /** Runs `main.mjs` with plain node from its own directory, directly or through [[withoutProcessLauncher]], and returns the lines it
-      * printed. The launcher is written beside the output, never into it, so it is not counted in the size.
+    /** Runs `entry` (an ES module's `main.mjs` by default) with plain node from its own directory, directly or, for an ES module, through
+      * [[withoutProcessLauncher]], and returns the lines it printed. The launcher is written beside the output, never into it, so it is not
+      * counted in the size.
       */
-    private def runNode(outDir: File, platform: String, withoutProcess: Boolean): Either[String, Seq[String]] = {
-        val main = outDir / "main.mjs"
-        if (!main.exists) Left(s"no main.mjs in $outDir")
+    private def runNode(outDir: File, platform: String, withoutProcess: Boolean, entry: String = "main.mjs"): Either[String, Seq[String]] = {
+        val main = outDir / entry
+        if (!main.exists) Left(s"no $entry in $outDir")
         else {
             val suffix = if (withoutProcess) "-no-process" else ""
-            val entry =
+            val launched =
                 if (!withoutProcess) main.getAbsolutePath
                 else {
                     val launcher = outDir.getParentFile / s"${outDir.getName}-no-process.mjs"
@@ -589,7 +679,7 @@ object LinkCheck {
             // An empty file, not the build's own stdin, so a program that reads standard input sees its end instead of waiting.
             val stdin = outDir.getParentFile / "empty-stdin"
             IO.write(stdin, "")
-            val process = new ProcessBuilder((Seq("node") ++ flags :+ entry)*)
+            val process = new ProcessBuilder((Seq("node") ++ flags :+ launched)*)
                 .directory(outDir)
                 .redirectInput(stdin)
                 .redirectErrorStream(true)
