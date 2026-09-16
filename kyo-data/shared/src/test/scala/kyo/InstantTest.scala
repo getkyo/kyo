@@ -276,6 +276,55 @@ class InstantTest extends kyo.test.Test[Any]:
         }
     }
 
+    "epoch accessors" - {
+        "name the second and nanosecond of an instant, and build it back" in {
+            val cases = Seq(
+                (0L, 0),
+                (784111777L, 0),
+                (1705312245L, 123456789),
+                (-1L, 0),
+                (-2208988800L, 999999999)
+            )
+            cases.foreach { (second, nano) =>
+                val instant = Instant.ofEpochSecond(second, nano.toLong)
+                assert(instant.epochSecond == second, s"epochSecond of ($second, $nano)")
+                assert(instant.nano == nano, s"nano of ($second, $nano)")
+                assert(Instant.ofEpochSecond(instant.epochSecond, instant.nano.toLong) == instant, s"round trip of ($second, $nano)")
+            }
+            succeed
+        }
+
+        "count nanoseconds forward from a second before the epoch, as java.time does" in {
+            // One nanosecond before the epoch is second -1 plus 999999999 nanos, not second 0 minus one.
+            val instant = Instant.ofEpochSecond(0L, -1L)
+            assert(instant.epochSecond == -1L)
+            assert(instant.nano == 999999999)
+            assert(instant.show == "1969-12-31T23:59:59.999999999Z")
+        }
+
+        "ofEpochMilli and toEpochMilli agree, on both sides of the epoch" in {
+            Seq(0L, 1L, -1L, 1705312245123L, -2208988800000L, 1000L).foreach { millis =>
+                assert(Instant.ofEpochMilli(millis).toEpochMilli == millis, s"$millis")
+            }
+            succeed
+        }
+
+        "toEpochMilli drops the sub-millisecond part" in {
+            assert(Instant.ofEpochSecond(1L, 999999L).toEpochMilli == 1000L)
+            assert(Instant.ofEpochSecond(1L, 1000000L).toEpochMilli == 1001L)
+        }
+
+        "agree with the java.time conversion they replace" in {
+            Seq(0L, 784111777L, -1L, -2208988800L, 253402300799L).foreach { second =>
+                val instant = Instant.ofEpochSecond(second, 123456789L)
+                assert(instant.epochSecond == instant.toJava.getEpochSecond, s"epochSecond at $second")
+                assert(instant.nano == instant.toJava.getNano, s"nano at $second")
+                assert(instant.toEpochMilli == instant.toJava.toEpochMilli, s"toEpochMilli at $second")
+            }
+            succeed
+        }
+    }
+
     "Ordering" - {
         "equal instants" in {
             val instant1 = Instant.Epoch

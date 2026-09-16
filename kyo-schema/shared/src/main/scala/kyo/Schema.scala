@@ -1763,7 +1763,7 @@ object Schema:
             delegate.bigDecimal(value)
         end bigDecimal
 
-        def instant(value: java.time.Instant): Unit =
+        def instant(value: Instant): Unit =
             beforeValue()
             delegate.instant(value)
         end instant
@@ -2644,16 +2644,27 @@ object Schema:
         structure = Structure.Type.Primitive(Structure.PrimitiveKind.BigInt, Tag[BigInt].asInstanceOf[Tag[Any]])
     )
 
-    /** Schema for java.time.Instant values. */
-    given instantSchema: Schema[java.time.Instant] =
-        Schema.init[java.time.Instant](
+    /** Schema for kyo.Instant values, and the instant wire primitive every other instant type converts through.
+      *
+      * kyo's own Instant is the one the model carries, so that a program with a schema in it links no date-time
+      * library: a `java.time.Instant` reaches `DateTimeFormatter` through its own `toString`, and that reaches the
+      * locale database. The wire form is unchanged, since both types encoded as this same primitive before.
+      */
+    given kyoInstantSchema: Schema[kyo.Instant] =
+        Schema.init[kyo.Instant](
             writeFn = (v, w) => w.instant(v),
             readFn = _.instant(),
-            absentDefaultValue = Maybe(java.time.Instant.EPOCH),
-            structure = Structure.Type.Primitive(Structure.PrimitiveKind.Instant, Tag[java.time.Instant].asInstanceOf[Tag[Any]])
+            absentDefaultValue = Maybe(kyo.Instant.Epoch),
+            structure = Structure.Type.Primitive(Structure.PrimitiveKind.Instant, Tag[kyo.Instant].asInstanceOf[Tag[Any]])
         )
 
-    /** Schema for java.time.Duration values. */
+    /** Schema for java.time.Duration values.
+      *
+      * Duration stays a java.time type where Instant does not, because `kyo.Duration` cannot carry what this one
+      * can: it clamps a negative duration to zero and saturates past `Long.MaxValue` nanoseconds, so routing a
+      * `java.time.Duration` through it would silently rewrite values. `java.time.Duration` builds its own text and
+      * parses with a regex, reaching no formatter and no locale data, so it costs a class rather than a database.
+      */
     given durationSchema: Schema[java.time.Duration] =
         Schema.init[java.time.Duration](
             writeFn = (v, w) => w.duration(v),
@@ -2662,9 +2673,12 @@ object Schema:
             structure = Structure.Type.Primitive(Structure.PrimitiveKind.Duration, Tag[java.time.Duration].asInstanceOf[Tag[Any]])
         )
 
-    /** Schema for kyo.Instant values. */
-    given kyoInstantSchema: Schema[kyo.Instant] =
-        instantSchema.transform[kyo.Instant](kyo.Instant.fromJava)(_.toJava)
+    /** Schema for java.time.Instant values, as a conversion of the instant primitive.
+      *
+      * A given with no parameters is a lazy val, so a program that never asks for this never links java.time.
+      */
+    given instantSchema: Schema[java.time.Instant] =
+        kyoInstantSchema.transform[java.time.Instant](_.toJava)(kyo.Instant.fromJava)
 
     /** Schema for kyo.Duration values. */
     given kyoDurationSchema: Schema[kyo.Duration] =

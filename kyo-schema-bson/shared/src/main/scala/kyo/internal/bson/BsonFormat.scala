@@ -31,7 +31,7 @@ private[kyo] enum BsonValue derives CanEqual:
     case DoubleValue(value: Double)
     case BinaryValue(value: Span[Byte], subtype: Int)
     case BooleanValue(value: Boolean)
-    case DateTimeValue(value: java.time.Instant)
+    case DateTimeValue(value: Instant)
     case NullValue
     case Int32Value(value: Int)
     case Int64Value(value: Long)

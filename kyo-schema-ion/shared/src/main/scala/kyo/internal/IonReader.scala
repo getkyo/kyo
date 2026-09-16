@@ -225,18 +225,18 @@ final class IonReader private (
                 else BigDecimal(v)
             case other => mismatch("decimal", other)
 
-    def instant(): java.time.Instant =
+    def instant(): Instant =
         val text =
             value match
                 case Timestamp(v) => v
                 case Str(v)       => v
                 case Symbol(v)    => v
                 case other        => mismatch("timestamp", other)
-        try java.time.Instant.parse(text)
-        catch
-            case e: java.time.format.DateTimeParseException =>
-                throw ParseException(Ion(), text, s"Instant (${e.getMessage})")(using _frame)
-        end try
+        Instant.parse(text) match
+            case Result.Success(parsed) => parsed
+            case Result.Failure(e)      => throw ParseException(Ion(), text, s"Instant (${e.getMessage})")(using _frame)
+            case Result.Panic(e)        => throw e
+        end match
     end instant
 
     def duration(): java.time.Duration =

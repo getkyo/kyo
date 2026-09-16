@@ -83,7 +83,7 @@ final private[kyo] class YamlWriter private (private var config: Yaml.WriterConf
     def bytes(value: Span[Byte]): Unit            = writeScalar(Scalar.Quoted(java.util.Base64.getEncoder.encodeToString(value.toArray)))
     def bigInt(value: BigInt): Unit               = writeScalar(Scalar.Quoted(value.toString))
     def bigDecimal(value: BigDecimal): Unit       = writeScalar(Scalar.Quoted(value.toString))
-    def instant(value: java.time.Instant): Unit   = writeScalar(Scalar.Quoted(value.toString))
+    def instant(value: Instant): Unit             = writeScalar(Scalar.Quoted(value.show))
     def duration(value: java.time.Duration): Unit = writeScalar(Scalar.Quoted(value.toString))
 
     def result(): Span[Byte] =

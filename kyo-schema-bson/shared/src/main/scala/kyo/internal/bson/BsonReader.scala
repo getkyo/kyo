@@ -275,7 +275,7 @@ final class BsonReader private (
         result
     end bigDecimal
 
-    def instant(): java.time.Instant =
+    def instant(): Instant =
         val result =
             value match
                 case DateTimeValue(value) => value
@@ -494,7 +494,7 @@ object BsonReader:
                         case 1 => BooleanValue(true)
                         case _ => fail("boolean byte")
                 case DateTime =>
-                    DateTimeValue(java.time.Instant.ofEpochMilli(readInt64(limit)))
+                    DateTimeValue(Instant.ofEpochMilli(readInt64(limit)))
                 case Null =>
                     NullValue
                 case Int32 =>

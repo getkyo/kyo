@@ -154,7 +154,7 @@ final class StructureValueWriter extends Writer:
     def bytes(value: Span[Byte]): Unit            = addValue(Structure.Value.Bytes(value))
     def bigInt(value: BigInt): Unit               = addValue(Structure.Value.BigNum(BigDecimal(value)))
     def bigDecimal(value: BigDecimal): Unit       = addValue(Structure.Value.BigNum(value))
-    def instant(value: java.time.Instant): Unit   = addValue(Structure.Value.Instant(value))
+    def instant(value: Instant): Unit             = addValue(Structure.Value.Instant(value))
     def duration(value: java.time.Duration): Unit = addValue(Structure.Value.Duration(value))
 
     def getResult: Structure.Value = resultValue

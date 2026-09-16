@@ -431,13 +431,13 @@ final private[kyo] class YamlReader private (
             case _: NumberFormatException => error(s"Invalid BigDecimal value: '$value'")
     end bigDecimal
 
-    def instant(): java.time.Instant =
+    def instant(): Instant =
         val value = string()
-        try java.time.Instant.parse(value)
-        catch
-            case e: java.time.format.DateTimeParseException =>
-                error(s"Invalid Instant value: '$value' (${e.getMessage})")
-        end try
+        Instant.parse(value) match
+            case Result.Success(parsed) => parsed
+            case Result.Failure(e)      => error(s"Invalid Instant value: '$value' (${e.getMessage})")
+            case Result.Panic(e)        => throw e
+        end match
     end instant
 
     def duration(): java.time.Duration =

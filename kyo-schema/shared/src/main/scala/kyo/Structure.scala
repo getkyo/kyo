@@ -879,7 +879,7 @@ object Structure:
         case Bytes(value: Span[Byte])
 
         /** An instant scalar. */
-        case Instant(value: java.time.Instant)
+        case Instant(value: kyo.Instant)
 
         /** A duration scalar. */
         case Duration(value: java.time.Duration)
@@ -1004,7 +1004,9 @@ object Structure:
             else if tag =:= Tag[BigDecimal] then BigNum(value.asInstanceOf[BigDecimal])
             else if tag =:= Tag[BigInt] then BigNum(BigDecimal(value.asInstanceOf[BigInt]))
             else if tag =:= Tag[Span[Byte]] then Bytes(value.asInstanceOf[Span[Byte]])
-            else if tag =:= Tag[java.time.Instant] then Instant(value.asInstanceOf[java.time.Instant])
+            // java.time values do not reach here: their schemas transform to kyo's own types first, which is what
+            // keeps a date-time library out of the link of every program that has a schema in it.
+            else if tag =:= Tag[kyo.Instant] then Instant(value.asInstanceOf[kyo.Instant])
             else if tag =:= Tag[java.time.Duration] then Duration(value.asInstanceOf[java.time.Duration])
             else if tag =:= Tag[Char] then Str(value.asInstanceOf[Char].toString)
             else Str(value.toString)

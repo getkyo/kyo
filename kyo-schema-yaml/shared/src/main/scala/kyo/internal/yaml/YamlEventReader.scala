@@ -97,7 +97,7 @@ final private[kyo] class YamlEventReader private (private val inner: YamlReader)
     def bigDecimal(): BigDecimal =
         inner.bigDecimal()
 
-    def instant(): java.time.Instant =
+    def instant(): Instant =
         inner.instant()
 
     def duration(): java.time.Duration =

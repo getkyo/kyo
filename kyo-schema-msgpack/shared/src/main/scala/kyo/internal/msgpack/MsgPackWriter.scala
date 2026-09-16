@@ -192,19 +192,19 @@ final class MsgPackWriter(config: MsgPack.Config) extends Writer:
     def bigInt(value: BigInt): Unit         = string(value.toString)
     def bigDecimal(value: BigDecimal): Unit = string(value.toString)
 
-    def instant(value: java.time.Instant): Unit =
+    def instant(value: Instant): Unit =
         config.instantEncoding match
             case MsgPack.InstantEncoding.Primitive =>
                 writeArrayHeaderTo(current, 2)
-                writeLongValue(value.getEpochSecond)
-                writeLongValue(value.getNano.toLong)
+                writeLongValue(value.epochSecond)
+                writeLongValue(value.nano.toLong)
             case MsgPack.InstantEncoding.Extension =>
                 // MessagePack timestamp 96: ext8, length 12, type -1, 32-bit nanos + 64-bit seconds.
                 writeByte(Ext8)
                 writeByte(12)
                 writeByte(ExtTypeTimestamp & 0xff)
-                writeBE32(current, value.getNano)
-                writeBE64(value.getEpochSecond)
+                writeBE32(current, value.nano)
+                writeBE64(value.epochSecond)
     end instant
 
     def duration(value: java.time.Duration): Unit =

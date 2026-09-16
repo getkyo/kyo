@@ -485,8 +485,8 @@ private[kyo] object YamlEvents:
         def bigDecimal(value: BigDecimal): Unit =
             quoted(value.toString)
 
-        def instant(value: java.time.Instant): Unit =
-            quoted(value.toString)
+        def instant(value: Instant): Unit =
+            quoted(value.show)
 
         def duration(value: java.time.Duration): Unit =
             quoted(value.toString)

@@ -827,13 +827,14 @@ private[kyo] object SchemaSerializer:
                 case bd: BigDecimal           => Structure.Value.BigNum(bd)
                 case bi: BigInt               => Structure.Value.BigNum(BigDecimal(bi))
                 case bytes: Array[Byte]       => Structure.Value.Bytes(Span.from(bytes))
-                case i: java.time.Instant     => Structure.Value.Instant(i)
                 case d: java.time.Duration    => Structure.Value.Duration(d)
                 case m: (Maybe[?] @unchecked) => m.fold(Structure.Value.Null)(v => anyToStructureValue(v))
                 case o: Option[?]             => o.fold(Structure.Value.Null)(v => anyToStructureValue(v))
                 case sv: Structure.Value      => sv
                 case s: Iterable[?]           => Structure.Value.Sequence(Chunk.from(s.map(anyToStructureValue)))
-                case other                    => Structure.Value.Str(other.toString)
+                // Instant is opaque, so it cannot be a type test like the cases above it.
+                case other =>
+                    Instant.fromAny(other).fold(Structure.Value.Str(other.toString))(Structure.Value.Instant(_))
             end match
     end anyToStructureValue
 
@@ -1443,7 +1444,7 @@ private[kyo] object SchemaSerializer:
             if delegateReader.nonEmpty then delegateReader.get.bigDecimal()
             else throw TypeMismatchException(Seq.empty, "BigDecimal", s"unexpected phase $phase")(using _frame)
 
-        def instant(): java.time.Instant =
+        def instant(): Instant =
             if delegateReader.nonEmpty then delegateReader.get.instant()
             else throw TypeMismatchException(Seq.empty, "Instant", s"unexpected phase $phase")(using _frame)
 
@@ -2324,7 +2325,7 @@ private[kyo] object SchemaSerializer:
                 value
             else inner.bigDecimal()
 
-        def instant(): java.time.Instant =
+        def instant(): Instant =
             if _syntheticActive then
                 val value = syntheticReader().instant()
                 finishSyntheticScalar()

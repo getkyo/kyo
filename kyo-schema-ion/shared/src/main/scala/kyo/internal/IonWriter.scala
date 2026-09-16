@@ -136,9 +136,9 @@ final class IonWriter private (private val out: StringBuilder, private val confi
         beforeValue()
         out.append(value.toString.replace('E', 'd').replace('e', 'd'))
 
-    def instant(value: java.time.Instant): Unit =
+    def instant(value: Instant): Unit =
         beforeValue()
-        out.append(value.toString)
+        out.append(value.show)
 
     def duration(value: java.time.Duration): Unit =
         beforeValue()

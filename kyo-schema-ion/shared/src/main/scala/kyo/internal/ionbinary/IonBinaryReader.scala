@@ -13,7 +13,7 @@ private[kyo] enum IonBinaryValue derives CanEqual:
     case IntValue(value: BigInt)
     case FloatValue(value: Double)
     case DecimalValue(value: BigDecimal)
-    case TimestampValue(value: java.time.Instant)
+    case TimestampValue(value: Instant)
     case StringValue(value: String)
     case SymbolValue(value: String)
     case BlobValue(value: Span[Byte])
@@ -216,7 +216,7 @@ final class IonBinaryReader private (
                 else BigDecimal(v)
             case other => mismatch("decimal", other)
 
-    def instant(): java.time.Instant =
+    def instant(): Instant =
         value match
             case TimestampValue(v) => v
             case other             => mismatch("timestamp", other)
@@ -488,13 +488,12 @@ object IonBinaryReader:
                         case _ => 0
                 else 0
             if pos != end then parseError("timestamp length", "timestamp boundary")
-            try
-                val ldt = java.time.LocalDateTime.of(year, month, day, hour, minute, second, nanos)
-                TimestampValue(ldt.toInstant(java.time.ZoneOffset.ofTotalSeconds(offset.value.toInt * 60)))
-            catch
-                case ex: java.time.DateTimeException if NonFatal(ex) =>
-                    parseError(ex.getMessage, "valid timestamp")
-            end try
+            Civil.epochSecondOf(year, month, day, hour, minute, second) match
+                case Present(utcSecond) =>
+                    TimestampValue(Instant.ofEpochSecond(utcSecond - offset.value.toLong * 60L, nanos.toLong))
+                case Absent =>
+                    parseError(s"$year-$month-$day $hour:$minute:$second", "valid timestamp")
+            end match
         end readTimestamp
 
         private def readSymbol(len: Int, limit: Int): IonBinaryValue =

@@ -61,6 +61,30 @@ object Instant:
     def of(seconds: Duration, nanos: Duration): Instant =
         fromEpoch(seconds.toSeconds, nanos.toNanos)
 
+    /** An Instant from a count of seconds from the epoch of 1970-01-01T00:00:00Z and a nanosecond adjustment.
+      *
+      * The inverse of [[epochSecond]] and [[nano]], and the constructor that can name a time before the epoch: [[of]] takes `Duration`s,
+      * which are never negative. The adjustment may have any sign and is normalized, so `ofEpochSecond(1, -1)` is the same instant as
+      * `ofEpochSecond(0, 999999999)`. The caller keeps the result within [[Min]] and [[Max]].
+      *
+      * @param epochSecond
+      *   The number of seconds from the epoch, negative before it.
+      * @param nano
+      *   The nanosecond adjustment to that second.
+      * @return
+      *   An Instant instance.
+      */
+    def ofEpochSecond(epochSecond: Long, nano: Long = 0L): Instant = fromEpoch(epochSecond, nano)
+
+    /** An Instant from a count of milliseconds from the epoch of 1970-01-01T00:00:00Z, negative before it.
+      *
+      * @param epochMilli
+      *   The number of milliseconds from the epoch.
+      * @return
+      *   An Instant instance.
+      */
+    def ofEpochMilli(epochMilli: Long): Instant = fromEpochMilli(epochMilli)
+
     /** Parses an Instant from an ISO-8601 formatted string, accepting what `java.time.Instant.parse` accepts: `2011-12-03T10:15:30Z`, an
       * offset such as `+01:00` in place of `Z`, zero to nine fraction digits, and signed years beyond four digits.
       *
@@ -80,6 +104,16 @@ object Instant:
       *   An Instant instance.
       */
     def fromJava(javaInstant: JInstant): Instant = new Repr(javaInstant.getEpochSecond, javaInstant.getNano)
+
+    /** The value as an Instant when it is one, for code that dispatches on an untyped value's runtime class.
+      *
+      * `Instant` is opaque, so a type test written anywhere else cannot see through to the representation it erases
+      * to, and a serializer handed an `Any` has nothing else to test.
+      */
+    private[kyo] def fromAny(value: Any): Maybe[Instant] =
+        value match
+            case repr: Repr => Present(repr)
+            case _          => Absent
 
     /** An Instant from epoch seconds and a nanosecond adjustment of any sign, normalized as `java.time.Instant.ofEpochSecond` does. The
       * caller keeps the result inside the supported range.
@@ -247,6 +281,34 @@ object Instant:
           *   A string representation of this Instant in ISO-8601 format.
           */
         def show: String = InstantText.format(instant.seconds, instant.nanos)
+
+        /** The number of whole seconds from the epoch of 1970-01-01T00:00:00Z, negative before it.
+          *
+          * With [[nano]], the pair that names this instant exactly. They are what a codec writing a timestamp needs,
+          * and reaching them through [[toJava]] would make that codec carry a date-time library.
+          *
+          * @return
+          *   The epoch second.
+          */
+        def epochSecond: Long = instant.seconds
+
+        /** The nanosecond of the second, always in `[0, 999999999]`, counted forward even before the epoch.
+          *
+          * @return
+          *   The nanosecond adjustment to [[epochSecond]].
+          */
+        def nano: Int = instant.nanos
+
+        /** The number of milliseconds from the epoch of 1970-01-01T00:00:00Z, negative before it.
+          *
+          * Any sub-millisecond part is dropped. Throws `ArithmeticException` for an instant whose millisecond count
+          * does not fit a `Long`, which the far ends of the supported range do not, as `java.time.Instant` does.
+          *
+          * @return
+          *   The epoch millisecond.
+          */
+        def toEpochMilli: Long =
+            Math.addExact(Math.multiplyExact(instant.seconds, 1000L), (instant.nanos / 1000000).toLong)
 
         /** Converts this Instant to a java.time.Instant.
           *

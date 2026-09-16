@@ -513,8 +513,8 @@ final class ProtobufReader(data: Array[Byte])(using _frame: Frame) extends Reade
         end try
     end bigDecimal
 
-    def instant(): java.time.Instant =
-        java.time.Instant.ofEpochMilli(long())
+    def instant(): Instant =
+        Instant.ofEpochMilli(long())
 
     def duration(): java.time.Duration =
         java.time.Duration.ofMillis(long())

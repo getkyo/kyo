@@ -179,9 +179,9 @@ final class JsonWriter private (
         maybeComma()
         writeAscii(value.toString)
 
-    def instant(value: java.time.Instant): Unit =
+    def instant(value: Instant): Unit =
         maybeComma()
-        writeQuotedString(value.toString)
+        writeQuotedString(value.show)
 
     def duration(value: java.time.Duration): Unit =
         maybeComma()

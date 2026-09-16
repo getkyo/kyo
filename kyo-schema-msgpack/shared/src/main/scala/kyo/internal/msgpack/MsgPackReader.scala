@@ -359,23 +359,23 @@ final class MsgPackReader(data: Array[Byte], config: MsgPack.Config)(using _fram
         (tpe, len)
     end readExtHeader
 
-    def instant(): java.time.Instant =
+    def instant(): Instant =
         val b = peekByte()
         if isExt(b) then
             val (tpe, len) = readExtHeader()
             if tpe != ExtTypeTimestamp.toInt then
                 throw ParseException(self, s"ext type $tpe", "Instant")(using _frame)
             len match
-                case 4 => java.time.Instant.ofEpochSecond(readU32Long())
+                case 4 => Instant.ofEpochSecond(readU32Long())
                 case 8 =>
                     val d     = readBE64()
                     val nanos = (d >>> 34).toInt
                     val secs  = d & 0x3ffffffffL
-                    java.time.Instant.ofEpochSecond(secs, nanos.toLong)
+                    Instant.ofEpochSecond(secs, nanos.toLong)
                 case 12 =>
                     val nanos = readBE32()
                     val secs  = readBE64()
-                    java.time.Instant.ofEpochSecond(secs, nanos.toLong)
+                    Instant.ofEpochSecond(secs, nanos.toLong)
                 case other =>
                     throw ParseException(self, s"timestamp ext length $other", "Instant")(using _frame)
             end match

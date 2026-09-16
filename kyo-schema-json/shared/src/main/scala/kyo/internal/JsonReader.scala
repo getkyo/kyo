@@ -377,13 +377,13 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
         end try
     end bigDecimal
 
-    def instant(): java.time.Instant =
+    def instant(): Instant =
         val s = string()
-        try java.time.Instant.parse(s)
-        catch
-            case e: java.time.format.DateTimeParseException =>
-                error(s"Invalid Instant value: '$s' (${e.getMessage})")
-        end try
+        Instant.parse(s) match
+            case Result.Success(value) => value
+            case Result.Failure(e)     => error(s"Invalid Instant value: '$s' (${e.getMessage})")
+            case Result.Panic(e)       => throw e
+        end match
     end instant
 
     def duration(): java.time.Duration =

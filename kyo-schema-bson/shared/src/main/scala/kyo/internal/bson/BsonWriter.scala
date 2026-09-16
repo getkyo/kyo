@@ -92,10 +92,10 @@ final class BsonWriter(config: kyo.Bson.Config) extends Codec.Writer:
         pushValue(Decimal128Value(value))
     end bigDecimal
 
-    def instant(value: java.time.Instant): Unit =
-        if value.getNano % 1000000 != 0 then
+    def instant(value: Instant): Unit =
+        if value.nano % 1000000 != 0 then
             invalid("BSON UTC datetime has millisecond precision and cannot encode an Instant with sub-millisecond nanos")
-        try pushValue(DateTimeValue(java.time.Instant.ofEpochMilli(value.toEpochMilli)))
+        try pushValue(DateTimeValue(Instant.ofEpochMilli(value.toEpochMilli)))
         catch
             case _: ArithmeticException => invalid("Instant is outside BSON UTC datetime millisecond range")
     end instant

@@ -375,12 +375,13 @@ final class ProtobufWriter extends Writer:
     def bigInt(value: BigInt): Unit         = string(value.toString)
     def bigDecimal(value: BigDecimal): Unit = string(value.toString)
 
-    def instant(value: java.time.Instant): Unit =
-        val buf = packedTarget
-        if buf != null then writeVarintTo(buf, encodeZigZag64(value.toEpochMilli))
+    def instant(value: Instant): Unit =
+        val millis = value.toEpochMilli
+        val buf    = packedTarget
+        if buf != null then writeVarintTo(buf, encodeZigZag64(millis))
         else
             writeTag(currentFieldNumber, Varint)
-            writeVarint(encodeZigZag64(value.toEpochMilli))
+            writeVarint(encodeZigZag64(millis))
         end if
     end instant
 

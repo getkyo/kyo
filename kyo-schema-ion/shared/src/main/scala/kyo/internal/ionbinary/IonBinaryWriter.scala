@@ -19,7 +19,7 @@ final class IonBinaryWriter private (private val config: Ion.Config) extends Wri
         case IntValue(value: BigInt)
         case FloatValue(value: Double, width: Int)
         case DecimalValue(value: BigDecimal)
-        case TimestampValue(value: java.time.Instant)
+        case TimestampValue(value: Instant)
         case StringValue(value: String)
         case BlobValue(value: Array[Byte])
         case ListValue(values: Vector[Value])
@@ -83,20 +83,20 @@ final class IonBinaryWriter private (private val config: Ion.Config) extends Wri
         end match
     end field
 
-    def string(value: String): Unit             = appendValue(StringValue(value))
-    def int(value: Int): Unit                   = appendValue(IntValue(BigInt(value)))
-    def long(value: Long): Unit                 = appendValue(IntValue(BigInt(value)))
-    def short(value: Short): Unit               = appendValue(IntValue(BigInt(value.toInt)))
-    def byte(value: Byte): Unit                 = appendValue(IntValue(BigInt(value.toInt)))
-    def char(value: Char): Unit                 = appendValue(StringValue(value.toString))
-    def float(value: Float): Unit               = appendValue(FloatValue(value.toDouble, 4))
-    def double(value: Double): Unit             = appendValue(FloatValue(value, 8))
-    def boolean(value: Boolean): Unit           = appendValue(Bool(value))
-    def nil(): Unit                             = appendValue(NullValue)
-    def bytes(value: Span[Byte]): Unit          = appendValue(BlobValue(value.toArray))
-    def bigInt(value: BigInt): Unit             = appendValue(IntValue(value))
-    def bigDecimal(value: BigDecimal): Unit     = appendValue(DecimalValue(value))
-    def instant(value: java.time.Instant): Unit = appendValue(TimestampValue(value))
+    def string(value: String): Unit         = appendValue(StringValue(value))
+    def int(value: Int): Unit               = appendValue(IntValue(BigInt(value)))
+    def long(value: Long): Unit             = appendValue(IntValue(BigInt(value)))
+    def short(value: Short): Unit           = appendValue(IntValue(BigInt(value.toInt)))
+    def byte(value: Byte): Unit             = appendValue(IntValue(BigInt(value.toInt)))
+    def char(value: Char): Unit             = appendValue(StringValue(value.toString))
+    def float(value: Float): Unit           = appendValue(FloatValue(value.toDouble, 4))
+    def double(value: Double): Unit         = appendValue(FloatValue(value, 8))
+    def boolean(value: Boolean): Unit       = appendValue(Bool(value))
+    def nil(): Unit                         = appendValue(NullValue)
+    def bytes(value: Span[Byte]): Unit      = appendValue(BlobValue(value.toArray))
+    def bigInt(value: BigInt): Unit         = appendValue(IntValue(value))
+    def bigDecimal(value: BigDecimal): Unit = appendValue(DecimalValue(value))
+    def instant(value: Instant): Unit       = appendValue(TimestampValue(value))
     def duration(value: java.time.Duration): Unit =
         appendValue(StructValue(Vector(
             "seconds" -> IntValue(BigInt(value.getSeconds)),
@@ -256,23 +256,23 @@ final class IonBinaryWriter private (private val config: Ion.Config) extends Wri
         out.write(body.toByteArray)
     end writeDecimal
 
-    private def writeTimestamp(out: ByteArrayOutputStream, value: java.time.Instant): Unit =
-        val zdt = java.time.ZonedDateTime.ofInstant(value, java.time.ZoneOffset.UTC)
-        if zdt.getYear < 0 then
+    private def writeTimestamp(out: ByteArrayOutputStream, value: Instant): Unit =
+        val civil = Civil.of(value.epochSecond)
+        if civil.year < 0 then
             invalid(
-                s"Ion binary timestamp cannot encode Instant $value: proleptic year ${zdt.getYear} is negative and Ion binary's timestamp year field is an unsigned VarUInt"
+                s"Ion binary timestamp cannot encode Instant ${value.show}: proleptic year ${civil.year} is negative and Ion binary's timestamp year field is an unsigned VarUInt"
             )
         end if
         val body = new ByteArrayOutputStream(32)
         writeVarInt(body, BigInt(0))
-        writeVarUInt(body, BigInt(zdt.getYear))
-        writeVarUInt(body, BigInt(zdt.getMonthValue))
-        writeVarUInt(body, BigInt(zdt.getDayOfMonth))
-        writeVarUInt(body, BigInt(zdt.getHour))
-        writeVarUInt(body, BigInt(zdt.getMinute))
-        writeVarUInt(body, BigInt(zdt.getSecond))
-        if value.getNano != 0 then
-            val frac = BigDecimal(BigInt(value.getNano), 9)
+        writeVarUInt(body, BigInt(civil.year))
+        writeVarUInt(body, BigInt(civil.month))
+        writeVarUInt(body, BigInt(civil.day))
+        writeVarUInt(body, BigInt(civil.hour))
+        writeVarUInt(body, BigInt(civil.minute))
+        writeVarUInt(body, BigInt(civil.second))
+        if value.nano != 0 then
+            val frac = BigDecimal(BigInt(value.nano), 9)
             val f    = new ByteArrayOutputStream(16)
             writeVarInt(f, BigInt(-frac.scale))
             f.write(signedMagnitude(BigInt(frac.bigDecimal.unscaledValue)))
