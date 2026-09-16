@@ -178,6 +178,12 @@ final private[kyo] class FetchClientBackend extends PolicyClientBackend:
             }
         }
 
+    /** Opens the page's own `WebSocket` and runs the session over it.
+      *
+      * The browser's constructor takes a URL and a subprotocol list and nothing else, so a handshake header of any kind, whether the caller
+      * set it or a filter did, fails rather than being dropped on the way out. Ping frames are the browser's: it answers a peer's ping
+      * itself and offers no way to send one, so a configured ping interval fails too instead of quietly never happening.
+      */
     def connectWebSocket[A, S](
         url: HttpUrl,
         headers: HttpHeaders,
@@ -188,7 +194,152 @@ final private[kyo] class FetchClientBackend extends PolicyClientBackend:
     )(
         f: HttpWebSocket => A < S
     )(using Frame): A < (S & Async & Abort[HttpException]) =
-        Abort.fail(HttpUnsupportedOnHostException("A WebSocket"))
+        if config.autoPingInterval.isDefined then Abort.fail(HttpUnsupportedOnHostException("A WebSocket ping interval"))
+        else
+            val autoFilter = if autoFilters then HttpFilter.Factory.composedClient else HttpFilter.noop
+            val filter     = autoFilter.andThen(clientFilter)
+            if filter.eq(HttpFilter.noop) then openSession(url, headers, config, connectTimeout)(f)
+            else
+                val request = HttpRequest(HttpMethod.GET, url, headers, Record.empty)
+                Abort.run[HttpResponse.Halt] {
+                    filter[Any, "body" ~ A, HttpException, S](
+                        request,
+                        (filtered: HttpRequest[Any]) =>
+                            openSession(filtered.url, filtered.headers, config, connectTimeout)(f).map { result =>
+                                HttpResponse(HttpStatus.SwitchingProtocols).addField("body", result)
+                            }
+                    ).map(_.fields.body)
+                }.map {
+                    case Result.Success(value) => value
+                    case Result.Failure(halt) =>
+                        Abort.fail(HttpStatusException(
+                            halt.response.status,
+                            HttpMethod.GET.name,
+                            url.baseUrl,
+                            halt.response.rawBody.getOrElse("")
+                        ))
+                    case Result.Panic(t) => Abort.panic(t)
+                }
+            end if
+
+    private def openSession[A, S](
+        url: HttpUrl,
+        headers: HttpHeaders,
+        config: HttpWebSocket.Config,
+        connectTimeout: Duration
+    )(
+        f: HttpWebSocket => A < S
+    )(using Frame): A < (S & Async & Abort[HttpException]) =
+        if headers.nonEmpty then
+            Abort.fail(HttpUnsupportedOnHostException("A WebSocket carrying request headers, which the browser does not send,"))
+        else
+            Channel.initUnscopedWith[HttpWebSocket.Payload](config.bufferSize) { inbound =>
+                Channel.initUnscopedWith[HttpWebSocket.Payload](config.bufferSize) { outbound =>
+                    AtomicRef.initWith(Absent: Maybe[(Int, String)]) { closeReasonRef =>
+                        Fiber.Promise.init[Unit, Any].map { peerClosedPromise =>
+                            Fiber.Promise.init[Unit, Abort[HttpException]].map { openedPromise =>
+                                val closeFn: (Int, String) => Unit < Async = (code, reason) =>
+                                    closeReasonRef.set(Present((code, reason))).andThen(outbound.closeDiscard)
+                                val ws = new HttpWebSocket(inbound, outbound, closeReasonRef, peerClosedPromise, closeFn)
+                                connect(url, config, inbound, closeReasonRef, peerClosedPromise, openedPromise).map { socket =>
+                                    awaitOpen(url, openedPromise, connectTimeout).andThen {
+                                        Fiber.initUnscoped(writeLoop(socket, outbound, closeReasonRef)).map { writeFiber =>
+                                            Sync.ensure(
+                                                writeFiber.interrupt.unit
+                                                    .andThen(inbound.closeDiscard)
+                                                    .andThen(outbound.closeDiscard)
+                                                    .andThen(Sync.defer(closeSocket(socket, 1000, "")))
+                                            ) {
+                                                f(ws)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+    /** Waits for the browser to report the connection open, for as long as the caller allows. */
+    private def awaitOpen(url: HttpUrl, opened: Fiber.Promise[Unit, Abort[HttpException]], connectTimeout: Duration)(using
+        Frame
+    ): Unit < (Async & Abort[HttpException]) =
+        if connectTimeout.isFinite then
+            Abort.run[Timeout](Async.timeout(connectTimeout)(opened.get)).map {
+                case Result.Success(_) => ()
+                case Result.Failure(_) => Abort.fail(HttpConnectTimeoutException(url.host, url.port, connectTimeout))
+                case Result.Panic(t)   => Abort.panic(t)
+            }
+        else opened.get
+
+    /** Builds the browser socket and wires its events into the session's channels.
+      *
+      * Every handler below runs on the page's event loop, outside any kyo context, so each crossing is one unsafe evaluation. An inbound
+      * message is handed to `putFiber` rather than `offer`: the browser has already delivered the bytes and cannot be pushed back on, so a
+      * message that finds the buffer full waits its turn in arrival order instead of being dropped.
+      */
+    private def connect(
+        url: HttpUrl,
+        config: HttpWebSocket.Config,
+        inbound: Channel[HttpWebSocket.Payload],
+        closeReasonRef: AtomicRef[Maybe[(Int, String)]],
+        peerClosedPromise: Fiber.Promise[Unit, Any],
+        openedPromise: Fiber.Promise[Unit, Abort[HttpException]]
+    )(using Frame): js.Dynamic < Sync =
+        // Unsafe: the browser calls these handlers with no kyo context, so this is the one crossing point.
+        Sync.Unsafe.defer {
+            val protocols = js.Array(config.subprotocols*)
+            val socket    = js.Dynamic.newInstance(js.Dynamic.global.WebSocket)(socketUrl(url), protocols)
+            socket.binaryType = "arraybuffer"
+            socket.onopen = { (_: js.Dynamic) =>
+                discard(openedPromise.unsafe.complete(Result.succeed(())))
+            }: js.Function1[js.Dynamic, Unit]
+            socket.onmessage = { (event: js.Dynamic) =>
+                payload(event.data, config.maxFrameSize) match
+                    case Present(frame) => discard(inbound.unsafe.putFiber(frame))
+                    // A frame past the configured limit ends the connection the way the protocol says to, rather than
+                    // delivering bytes the caller asked not to receive.
+                    case Absent => closeSocket(socket, 1009, "frame too large")
+            }: js.Function1[js.Dynamic, Unit]
+            socket.onerror = { (_: js.Dynamic) =>
+                // The page is told a WebSocket failed and never why: the event carries no code, no status and no reason,
+                // by design, so the failure says the connection did not come up and stops there.
+                discard(openedPromise.unsafe.complete(Result.fail(HttpConnectException(url.host, url.port, WebSocketFailed))))
+            }: js.Function1[js.Dynamic, Unit]
+            socket.onclose = { (event: js.Dynamic) =>
+                val code   = event.code.asInstanceOf[Int]
+                val reason = event.reason.asInstanceOf[String]
+                Sync.Unsafe.evalOrThrow {
+                    // A close before the open event is a handshake the server refused: the browser reports the same 1006
+                    // it reports for a connection that dropped later, so the failure is the same either way.
+                    discard(openedPromise.unsafe.complete(Result.fail(HttpConnectException(url.host, url.port, WebSocketFailed))))
+                    closeReasonRef.set(Present((code, reason)))
+                        .andThen(inbound.closeDiscard)
+                        .andThen(peerClosedPromise.completeUnit.unit)
+                }
+            }: js.Function1[js.Dynamic, Unit]
+            socket
+        }
+
+    /** Drains the outbound channel to the browser socket, then closes it with whatever reason the session recorded. */
+    private def writeLoop(
+        socket: js.Dynamic,
+        outbound: Channel[HttpWebSocket.Payload],
+        closeReasonRef: AtomicRef[Maybe[(Int, String)]]
+    )(using Frame): Unit < Async =
+        Abort.run[Closed] {
+            Loop.foreach {
+                outbound.take.map { frame =>
+                    Sync.defer(sendFrame(socket, frame)).andThen(Loop.continue)
+                }
+            }
+        }.map { _ =>
+            closeReasonRef.get.map {
+                case Present((code, reason)) => Sync.defer(closeSocket(socket, code, reason))
+                case Absent                  => Sync.defer(closeSocket(socket, 1000, ""))
+            }.andThen(outbound.closeDiscard)
+        }
 
     def connectRaw(
         url: HttpUrl,
@@ -249,6 +400,49 @@ private[kyo] object FetchClientBackend:
     end reservedHeader
 
     private[client] def status(response: js.Dynamic): Int = response.status.asInstanceOf[Int]
+
+    /** What a browser reports when a WebSocket fails: that it failed. The event carries no code, status or reason. */
+    private[client] val WebSocketFailed = new RuntimeException("the browser reported a WebSocket failure and no reason for it")
+
+    /** The `ws` or `wss` URL for a socket, whichever the page's own scheme implies when the caller named none. */
+    private[client] def socketUrl(url: HttpUrl): String =
+        val scheme =
+            url.scheme match
+                case Present(s) if s == "ws" || s == "wss" => s
+                case Present(s) if s == "https"            => "wss"
+                case Present(_)                            => "ws"
+                case Absent =>
+                    val pageScheme = js.Dynamic.global.location.protocol.asInstanceOf[String]
+                    if pageScheme == "https:" then "wss" else "ws"
+        if url.host.isEmpty then
+            val host = js.Dynamic.global.location.host.asInstanceOf[String]
+            s"$scheme://$host${url.pathWithQuery}"
+        else
+            val isDefaultPort = if scheme == "wss" then url.port == 443 else url.port == 80
+            val authority     = if isDefaultPort then url.host else s"${url.host}:${url.port}"
+            s"$scheme://$authority${url.pathWithQuery}"
+        end if
+    end socketUrl
+
+    /** The frame a message event carries, or `Absent` when it is larger than the session allows. */
+    private[client] def payload(data: Any, maxFrameSize: Int): Maybe[HttpWebSocket.Payload] =
+        data match
+            case text: String =>
+                if text.length > maxFrameSize then Absent else Present(HttpWebSocket.Payload.Text(text))
+            case other =>
+                val buffer = other.asInstanceOf[ArrayBuffer]
+                if buffer.byteLength > maxFrameSize then Absent
+                else Present(HttpWebSocket.Payload.Binary(Span.from(new Int8Array(buffer).toArray)))
+
+    private[client] def sendFrame(socket: js.Dynamic, frame: HttpWebSocket.Payload): Unit =
+        frame match
+            case HttpWebSocket.Payload.Text(data)   => discard(socket.send(data))
+            case HttpWebSocket.Payload.Binary(data) => discard(socket.send(new Uint8Array(data.toArray.toTypedArray.buffer)))
+
+    /** Closes the browser socket, tolerating the states where closing is not allowed (still connecting, already closed). */
+    private[client] def closeSocket(socket: js.Dynamic, code: Int, reason: String): Unit =
+        try discard(socket.close(code, reason))
+        catch case _: js.JavaScriptException => ()
 
     /** The response's headers, read through the `Headers` iteration the fetch specification defines. */
     private[client] def responseHeaders(response: js.Dynamic): HttpHeaders =
