@@ -1227,6 +1227,30 @@ class PathTest extends kyo.test.Test[Any]:
         })
     }
 
+    // The walk counterpart of the leaf above, and the one that matches what the barrier in kyo-tasty's Native
+    // fixtures actually guards: writes into two levels, then a recursive walk from the parent, with nothing in
+    // between. A flat listing being correct would not rule out a recursive walk missing a just-written entry.
+    "every file just written into a tree appears in a walk of it" in {
+        val perDir = 32
+        Scope.run(Path.run {
+            for
+                dir <- Path.tempDir("kyo-path-write-then-walk")
+                sub = dir / "nested"
+                _ <- sub.mkDir
+                _ <- Kyo.foreach(0 until perDir)(i => (dir / s"top-$i.bin").writeBytes(Span.from(Array[Byte](i.toByte))))
+                _ <- Kyo.foreach(0 until perDir)(i => (sub / s"deep-$i.bin").writeBytes(Span.from(Array[Byte](i.toByte))))
+                paths <- Scope.run(dir.walk.run)
+                _     <- dir.removeAll
+            yield
+                val names = paths.toList.map(_.parts.last).toSet
+                val missing =
+                    (0 until perDir).map(i => s"top-$i.bin").filterNot(names.contains) ++
+                        (0 until perDir).map(i => s"deep-$i.bin").filterNot(names.contains)
+                assert(missing.isEmpty, s"a walk taken right after the writes missed ${missing.size}: ${missing.take(8).mkString(", ")}")
+            end for
+        })
+    }
+
     "list with glob returns only matching files" in {
         Scope.run(Path.run {
             for
