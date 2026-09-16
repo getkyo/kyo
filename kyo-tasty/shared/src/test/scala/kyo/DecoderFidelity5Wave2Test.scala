@@ -13,8 +13,8 @@ import kyo.test.HostFilter
   */
 class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
 
-    // Stages snapshot and fixture files through Path, which a browser has not.
-    override protected def hostFilters = Chunk(HostFilter.NotBrowser)
+    // One leaf here needs a file system to have a write fail on; it carries its own gate. The rest are in-memory,
+    // which is what this suite's own header says of it.
 
     import AllowUnsafe.embrace.danger
 
@@ -176,7 +176,9 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
         }
     }
 
-    "snapshot write to unwritable path produces SnapshotIoError" in {
+    // Needs a real file system: the failure under test is a write that the host refuses, and a host with no file
+    // system refuses every write, so the leaf would pass for a reason that is not the one it names.
+    "snapshot write to unwritable path produces SnapshotIoError".notBrowser in {
         // Create a temp file and attempt to use it as a cache directory.
         // Path.mkDir on a path occupied by a regular file fails with FileSystemException,
         // which SnapshotWriter wraps as SnapshotIoError.

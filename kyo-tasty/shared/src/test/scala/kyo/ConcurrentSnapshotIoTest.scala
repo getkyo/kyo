@@ -17,7 +17,8 @@ import kyo.test.HostFilter
   */
 class ConcurrentSnapshotIoTest extends kyo.test.Test[Any]:
 
-    // Stages snapshot and fixture files through Path, which a browser has not.
+    // The subject is an atomic file rename, which a page has no file system to perform. Not incidental staging:
+    // there is nothing to move this suite in memory to, because a rename is the thing under test.
     override protected def hostFilters = Chunk(HostFilter.NotBrowser)
 
     "concurrent snapshot reader+writer: reader sees pre- or post-write, not corrupt" in {

@@ -11,8 +11,7 @@ import kyo.test.HostFilter
   */
 class ConfirmationFidelity2Test extends Fidelity2TestBase:
 
-    // Stages snapshot and fixture files through Path, which a browser has not.
-    override protected def hostFilters = Chunk(HostFilter.NotBrowser)
+    // One leaf here stages a classfile through Path; it carries its own gate. The rest are in-memory.
 
     import AllowUnsafe.embrace.danger
 
@@ -109,7 +108,10 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
         }
     }
 
-    "findClass(kyo.fixtures.JavaSimpleFixture) returns Present with isJava via temp dir" in {
+    // Kept on the file system rather than converted to `withPickles`, which now decodes a standalone classfile from
+    // memory: that is a second route to the same symbols, and `WithClasspathTest` guards it. This leaf is what holds
+    // the disk route, so it is the one leaf here a page cannot run.
+    "findClass(kyo.fixtures.JavaSimpleFixture) returns Present with isJava via temp dir".notBrowser in {
         // Write the .class file to a temp dir and use ClasspathOrchestrator.init with a real path.
         Scope.run {
             Path.run(Path.tempDir("kyo-cf2-java")).map { tmpDir =>

@@ -10,8 +10,8 @@ import kyo.test.HostFilter
   */
 class ErrorFidelity2Test extends Fidelity2TestBase:
 
-    // Stages snapshot and fixture files through Path, which a browser has not.
-    override protected def hostFilters = Chunk(HostFilter.NotBrowser)
+    // Two leaves here name a root that does not exist, which only a file system can mean; they carry their own
+    // gates. The other six read corrupt pickle bytes and need no host at all.
 
     import AllowUnsafe.embrace.danger
 
@@ -55,7 +55,10 @@ class ErrorFidelity2Test extends Fidelity2TestBase:
         }
     end loadCorruptPickle
 
-    "SoftFail missing root accumulates FileNotFound in classpath.errors" in {
+    // A root that is absent has no meaning without a file system: an in-memory root exists by construction, and the
+    // loader deliberately reports a host with no file system as SnapshotIoError rather than as a missing file, so a
+    // page would answer a different error for a sound reason.
+    "SoftFail missing root accumulates FileNotFound in classpath.errors".notBrowser in {
         // Use a real temp dir with a non-existent sub-path to trigger FileNotFound.
         Scope.run {
             Path.run(Path.tempDir("kyo-err-f2-missing")).map { tmp =>
@@ -85,7 +88,7 @@ class ErrorFidelity2Test extends Fidelity2TestBase:
         }
     }
 
-    "FailFast missing root still raises FileNotFound" in {
+    "FailFast missing root still raises FileNotFound".notBrowser in {
         Scope.run {
             Path.run(Path.tempDir("kyo-err-f2-failfast")).map { tmp =>
                 val missing = (tmp / "no-such-root").toString

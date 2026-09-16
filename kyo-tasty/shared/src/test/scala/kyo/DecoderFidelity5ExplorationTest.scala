@@ -3,16 +3,12 @@ package kyo
 import kyo.internal.TestClasspaths
 import kyo.internal.tasty.snapshot.SnapshotReader
 import kyo.internal.tasty.snapshot.SnapshotWriter
-import kyo.test.HostFilter
 
 /** Adversarial edge-case probe for the decoder: truncated and bit-flipped TASTy files,
   * empty/long/null fully-qualified name API edges, corrupt/truncated/random KRFL snapshot bytes, and
   * pathological structural inputs. Uses embedded fixture bytes via withPickles only.
   */
 class DecoderFidelity5ExplorationTest extends kyo.test.Test[Any]:
-
-    // Stages snapshot and fixture files through Path, which a browser has not.
-    override protected def hostFilters = Chunk(HostFilter.NotBrowser)
 
     import AllowUnsafe.embrace.danger
 
