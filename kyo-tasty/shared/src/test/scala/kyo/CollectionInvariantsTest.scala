@@ -89,7 +89,10 @@ class CollectionInvariantsTest extends kyo.test.Test[Any]:
         }
     }
 
-    "at least one class has javaMetadata Present after .class companion merge" in {
+    // `javaMetadata` is decoded from a class file sitting next to its pickle. A page reads no files, so its classpath
+    // is bound from pickle bytes alone (`Tasty.withPickles`) and has no companion to merge; the property this asserts
+    // is not one a browser classpath can have, rather than one it gets wrong.
+    "at least one class has javaMetadata Present after .class companion merge".notBrowser in {
         TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
             val withMeta = classpath.allClassLike.filter(_.javaMetadata.isDefined)
             assert(

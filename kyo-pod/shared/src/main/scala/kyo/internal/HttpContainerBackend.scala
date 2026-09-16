@@ -34,9 +34,21 @@ final private[kyo] class HttpContainerBackend(
 
     import Container.*
 
-    /** Runtime family derived from the socket path — "podman" if the path contains "podman", else "docker". Diagnostic only. */
-    private val runtimeName: String =
+    /** The runtime family answering on this socket, "podman" or "docker".
+      *
+      * This is not diagnostic: `update` and `stats` both branch on it, because podman's docker-compat shim does not
+      * implement `/containers/{id}/update` at all and misreports a memory limit it did not apply. [[detect]] asks the
+      * daemon, which is the only reliable answer: a socket's path does not say what serves it, and a podman machine
+      * on macOS installs `/var/run/docker.sock` as a symlink to its own socket, where the path says "docker" and
+      * every podman-specific branch is then skipped against a podman daemon.
+      */
+    @volatile private var probedRuntime: Maybe[String] = Absent
+
+    /** The runtime the socket path suggests, which is all there is to go on until the daemon has been asked. */
+    private val pathRuntimeName: String =
         if socketPath.contains("podman") then "podman" else "docker"
+
+    private def runtimeName: String = probedRuntime.getOrElse(pathRuntimeName)
 
     /** Builds an `http+unix://` URL for the Docker API.
       *
@@ -1988,12 +2000,27 @@ final private[kyo] class HttpContainerBackend(
     def describe: String =
         s"HttpContainerBackend(socket=$socketPath, apiVersion=$apiVersion, runtime=$runtimeName)"
 
+    /** Ask the daemon which runtime it is, and record the answer for [[runtimeName]].
+      *
+      * The libpod API is podman's own and docker does not serve it, so a `/libpod/_ping` that answers `OK` identifies
+      * a podman daemon whatever the socket is called, and anything else (a 404 body, a refusal) identifies a daemon
+      * that has no libpod endpoints to offer. Asked once, at detect time, so no later call pays for it.
+      */
+    private def probeRuntime()(using Frame): Unit < Async =
+        Abort.run[HttpException](HttpClient.getText(libpodUrl("/_ping"))).map { result =>
+            val runtime =
+                result match
+                    case Result.Success(response) if response.trim == "OK" => "podman"
+                    case _                                                 => "docker"
+            Sync.defer(probedRuntime = Present(runtime))
+        }
+
     /** Probe THIS backend's configured socket via `_ping`. Used by [[HttpContainerBackend.detect]] (companion) during candidate
-      * enumeration.
+      * enumeration. A socket that answers is then asked which runtime it is.
       */
     def detect()(using Frame): Unit < (Async & Abort[ContainerException]) =
         Abort.runWith[HttpException](HttpClient.getText(url("/_ping"))) {
-            case Result.Success(response) if response.trim == "OK" => ()
+            case Result.Success(response) if response.trim == "OK" => probeRuntime()
             case Result.Success(response) =>
                 Abort.fail(ContainerBackendUnavailableException(
                     "http",
