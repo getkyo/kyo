@@ -1,6 +1,7 @@
 package kyo.internal.client
 
 import kyo.*
+import kyo.internal.PlatformJs
 import kyo.internal.server.RouteUtil
 import scala.scalajs.js
 import scala.scalajs.js.typedarray.*
@@ -129,14 +130,18 @@ final private[kyo] class FetchClientBackend extends PolicyClientBackend:
     private def fetch(target: HttpUrl, url: String, method: String, headers: HttpHeaders, body: Maybe[Span[Byte]])(using
         Frame
     ): js.Dynamic < (Async & Abort[HttpException]) =
-        Sync.defer {
-            val init      = js.Dynamic.literal(method = method, redirect = "follow")
-            val jsHeaders = js.Dynamic.literal()
-            headers.foreach((name, value) => jsHeaders.updateDynamic(name)(value))
-            init.updateDynamic("headers")(jsHeaders)
-            body.foreach(span => init.updateDynamic("body")(new Uint8Array(span.toArray.toTypedArray.buffer)))
-            js.Dynamic.global.fetch(url, init).asInstanceOf[js.Promise[js.Dynamic]]
-        }.map(promise => awaited(promise, target))
+        // Read from `globalThis`: a host that does not declare `fetch` throws a ReferenceError at a bare read, before any check.
+        if PlatformJs.jsGlobal("fetch").isEmpty then Abort.fail(HttpUnsupportedOnHostException("fetch"))
+        else
+            Sync.defer {
+                val init      = js.Dynamic.literal(method = method, redirect = "follow")
+                val jsHeaders = js.Dynamic.literal()
+                headers.foreach((name, value) => jsHeaders.updateDynamic(name)(value))
+                init.updateDynamic("headers")(jsHeaders)
+                body.foreach(span => init.updateDynamic("body")(new Uint8Array(span.toArray.toTypedArray.buffer)))
+                // Called on `globalThis`, the receiver a page's `fetch` requires.
+                js.Dynamic.global.globalThis.applyDynamic("fetch")(url, init).asInstanceOf[js.Promise[js.Dynamic]]
+            }.map(promise => awaited(promise, target))
 
     /** Awaits a browser promise, with a rejection as this client's typed connect failure.
       *
@@ -254,27 +259,45 @@ final private[kyo] class FetchClientBackend extends PolicyClientBackend:
         if headers.nonEmpty then
             Abort.fail(HttpUnsupportedOnHostException("A WebSocket carrying request headers, which the browser does not send,"))
         else
-            Channel.initUnscopedWith[HttpWebSocket.Payload](config.bufferSize) { inbound =>
-                Channel.initUnscopedWith[HttpWebSocket.Payload](config.bufferSize) { outbound =>
-                    AtomicRef.initWith(Absent: Maybe[(Int, String)]) { closeReasonRef =>
-                        Fiber.Promise.init[Unit, Any].map { peerClosedPromise =>
-                            Fiber.Promise.init[Unit, Abort[HttpException]].map { openedPromise =>
-                                val closeFn: (Int, String) => Unit < Async = (code, reason) =>
-                                    closeReasonRef.set(Present((code, reason))).andThen(outbound.closeDiscard)
-                                val ws = new HttpWebSocket(inbound, outbound, closeReasonRef, peerClosedPromise, closeFn)
-                                connect(url, config, inbound, closeReasonRef, peerClosedPromise, openedPromise).map { socket =>
-                                    // The socket exists from here on, so its close is ensured from here on: a handshake the server
-                                    // refuses leaves the browser one to clean up just as a finished session does.
-                                    Sync.ensure(Sync.defer(closeSocket(socket, 1000, ""))) {
-                                        awaitOpen(url, openedPromise, connectTimeout).andThen {
-                                            Fiber.initUnscoped(writeLoop(socket, outbound, closeReasonRef)).map { writeFiber =>
-                                                Sync.ensure(
-                                                    writeFiber.interrupt.unit
-                                                        .andThen(inbound.closeDiscard)
-                                                        .andThen(outbound.closeDiscard)
-                                                ) {
-                                                    f(ws)
-                                                }
+            // Both are read from `globalThis`: a host that does not declare one throws a ReferenceError at a bare read, before any check.
+            socketUrl(url) match
+                case Absent =>
+                    Abort.fail(HttpUnsupportedOnHostException("A WebSocket URL missing its scheme or host, which resolves against a page's location,"))
+                case Present(target) =>
+                    PlatformJs.jsGlobal("WebSocket").toOption match
+                        case None              => Abort.fail(HttpUnsupportedOnHostException("WebSocket"))
+                        case Some(constructor) => runSession(constructor, target, url, config, connectTimeout)(f)
+
+    /** A session over the host's `WebSocket` constructor, connected to `target`. */
+    private def runSession[A, S](
+        constructor: js.Dynamic,
+        target: String,
+        url: HttpUrl,
+        config: HttpWebSocket.Config,
+        connectTimeout: Duration
+    )(
+        f: HttpWebSocket => A < S
+    )(using Frame): A < (S & Async & Abort[HttpException]) =
+        Channel.initUnscopedWith[HttpWebSocket.Payload](config.bufferSize) { inbound =>
+            Channel.initUnscopedWith[HttpWebSocket.Payload](config.bufferSize) { outbound =>
+                AtomicRef.initWith(Absent: Maybe[(Int, String)]) { closeReasonRef =>
+                    Fiber.Promise.init[Unit, Any].map { peerClosedPromise =>
+                        Fiber.Promise.init[Unit, Abort[HttpException]].map { openedPromise =>
+                            val closeFn: (Int, String) => Unit < Async = (code, reason) =>
+                                closeReasonRef.set(Present((code, reason))).andThen(outbound.closeDiscard)
+                            val ws = new HttpWebSocket(inbound, outbound, closeReasonRef, peerClosedPromise, closeFn)
+                            connect(constructor, target, url, config, inbound, closeReasonRef, peerClosedPromise, openedPromise).map { socket =>
+                                // The socket exists from here on, so its close is ensured from here on: a handshake the server
+                                // refuses leaves the browser one to clean up just as a finished session does.
+                                Sync.ensure(Sync.defer(closeSocket(socket, 1000, ""))) {
+                                    awaitOpen(url, openedPromise, connectTimeout).andThen {
+                                        Fiber.initUnscoped(writeLoop(socket, outbound, closeReasonRef)).map { writeFiber =>
+                                            Sync.ensure(
+                                                writeFiber.interrupt.unit
+                                                    .andThen(inbound.closeDiscard)
+                                                    .andThen(outbound.closeDiscard)
+                                            ) {
+                                                f(ws)
                                             }
                                         }
                                     }
@@ -284,6 +307,7 @@ final private[kyo] class FetchClientBackend extends PolicyClientBackend:
                     }
                 }
             }
+        }
 
     /** Waits for the browser to report the connection open, for as long as the caller allows. */
     private def awaitOpen(url: HttpUrl, opened: Fiber.Promise[Unit, Abort[HttpException]], connectTimeout: Duration)(using
@@ -304,6 +328,8 @@ final private[kyo] class FetchClientBackend extends PolicyClientBackend:
       * message that finds the buffer full waits its turn in arrival order instead of being dropped.
       */
     private def connect(
+        constructor: js.Dynamic,
+        target: String,
         url: HttpUrl,
         config: HttpWebSocket.Config,
         inbound: Channel[HttpWebSocket.Payload],
@@ -314,7 +340,7 @@ final private[kyo] class FetchClientBackend extends PolicyClientBackend:
         // Unsafe: the browser calls these handlers with no kyo context, so this is the one crossing point.
         Sync.Unsafe.defer {
             val protocols = js.Array(config.subprotocols*)
-            val socket    = js.Dynamic.newInstance(js.Dynamic.global.WebSocket)(socketUrl(url), protocols)
+            val socket    = js.Dynamic.newInstance(constructor)(target, protocols)
             socket.binaryType = "arraybuffer"
             socket.onopen = { (_: js.Dynamic) =>
                 discard(openedPromise.unsafe.complete(Result.succeed(())))
@@ -431,24 +457,26 @@ private[kyo] object FetchClientBackend:
     /** What a browser reports when a WebSocket fails: that it failed. The event carries no code, status or reason. */
     private[client] val WebSocketFailed = new RuntimeException("the browser reported a WebSocket failure and no reason for it")
 
-    /** The `ws` or `wss` URL for a socket, whichever the page's own scheme implies when the caller named none. */
-    private[client] def socketUrl(url: HttpUrl): String =
+    /** The `ws` or `wss` URL for a socket, whichever the page's own scheme implies when the caller named none.
+      *
+      * `Absent` when the URL is missing its scheme or host and the host has no page location to take them from, as a worker without one,
+      * an edge runtime or an embedded engine may.
+      */
+    private[client] def socketUrl(url: HttpUrl): Maybe[String] =
+        def page: Maybe[js.Dynamic] = Maybe.fromOption(PlatformJs.jsGlobal("location").toOption)
         val scheme =
             url.scheme match
-                case Present(s) if s == "ws" || s == "wss" => s
-                case Present(s) if s == "https"            => "wss"
-                case Present(_)                            => "ws"
-                case Absent =>
-                    val pageScheme = js.Dynamic.global.location.protocol.asInstanceOf[String]
-                    if pageScheme == "https:" then "wss" else "ws"
-        if url.host.isEmpty then
-            val host = js.Dynamic.global.location.host.asInstanceOf[String]
-            s"$scheme://$host${url.pathWithQuery}"
-        else
-            val isDefaultPort = if scheme == "wss" then url.port == 443 else url.port == 80
-            val authority     = if isDefaultPort then url.host else s"${url.host}:${url.port}"
-            s"$scheme://$authority${url.pathWithQuery}"
-        end if
+                case Present(s) if s == "ws" || s == "wss" => Present(s)
+                case Present(s) if s == "https"            => Present("wss")
+                case Present(_)                            => Present("ws")
+                case Absent => page.map(location => if location.protocol.asInstanceOf[String] == "https:" then "wss" else "ws")
+        scheme.flatMap { scheme =>
+            if url.host.isEmpty then page.map(location => s"$scheme://${location.host.asInstanceOf[String]}${url.pathWithQuery}")
+            else
+                val isDefaultPort = if scheme == "wss" then url.port == 443 else url.port == 80
+                val authority     = if isDefaultPort then url.host else s"${url.host}:${url.port}"
+                Present(s"$scheme://$authority${url.pathWithQuery}")
+        }
     end socketUrl
 
     /** The frame a message event carries, or `Absent` when it is larger than the session allows.

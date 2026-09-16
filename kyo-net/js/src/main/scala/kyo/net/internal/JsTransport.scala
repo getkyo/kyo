@@ -819,8 +819,8 @@ final private[kyo] class JsTransport private (
       * no-op so neither process fd is ever closed.
       */
     private def stdioShim(process: js.Dynamic)(using AllowUnsafe): js.Dynamic =
-        val stdin   = process.stdin
-        val stdout  = process.stdout
+        val stdin  = process.stdin
+        val stdout = process.stdout
         // The set of read-side events JsHandle/JsIoDriver subscribe to on the readable stream. Node passes the
         // event name as a JS string; `toString` returns it unchanged, so it is compared as a Scala String.
         def isReadEvent(event: js.Any): Boolean =

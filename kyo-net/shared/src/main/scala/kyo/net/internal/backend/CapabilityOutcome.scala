@@ -64,15 +64,16 @@ private[net] enum CapabilityOutcome derives CanEqual:
 
     /** One line for the selection report and for the terminal exception's cause. */
     def describe: String = this match
-        case Available           => "available"
-        case UnsupportedOS       => "not applicable to this OS/runtime"
-        case Unavailable(reason) => s"unavailable ($reason)"
+        case Available                => "available"
+        case UnsupportedOS            => "not applicable to this OS/runtime"
+        case Unavailable(reason)      => s"unavailable ($reason)"
         case NotBundled(id, platform) =>
             // A JS application supplies a native the way kyo-ffi's JS loader looks for one, which no JVM classifier artifact reaches.
             if kyo.internal.Platform.isJS then
                 if id == "koffi" then
                     "the koffi npm package is not installed or not resolvable; install it (npm i koffi) to use the native backends"
-                else s"native library '$id' is not staged for $platform; on Scala.js, set ${jsPathVariable(id)} to the library's absolute path"
+                else
+                    s"native library '$id' is not staged for $platform; on Scala.js, set ${jsPathVariable(id)} to the library's absolute path"
             else
                 s"native library '$id' is not on the classpath for $platform; on the JVM, add kyo-net's $platform classifier artifact, " +
                     s"""libraryDependencies += "io.getkyo" %% "kyo-net" % <version> classifier "$platform""""
