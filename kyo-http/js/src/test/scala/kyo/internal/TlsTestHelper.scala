@@ -10,8 +10,16 @@ import scala.scalajs.js
   */
 object TlsTestHelper:
 
+    private given Frame = Frame.internal
+
     private def builtin(id: String): js.Dynamic =
-        PlatformJs.nodeBuiltin(id).getOrElse(throw new IllegalStateException(s"TlsTestHelper needs $id, which the host does not provide"))
+        PlatformJs.nodeBuiltin(id).getOrElse {
+            // A page has no server to hand a certificate to and no file system to stage one on, so a leaf that asks for
+            // TLS has nothing to run rather than something to fail. On a Node-like host a missing built-in is a fault.
+            if Platform.isBrowser then
+                throw kyo.test.TestCancelled("a TLS server stages its certificate on the file system, and this host is a browser page")
+            else throw new IllegalStateException(s"TlsTestHelper needs $id, which the host does not provide")
+        }
 
     lazy val (certPath, keyPath) =
         val path     = builtin("node:path")
