@@ -184,6 +184,21 @@ final private[net] class PollerIoDriver private[posix] (
     // value when a leaf hangs means the poll loop is dead/stuck; an advancing value means it is live but not delivering to some fd.
     @volatile private var diagPollCycles: Long = 0L
 
+    // What the poll actually returned, which is what tells a loop spinning on a stuck event apart from one returning
+    // with nothing. A driver whose own tables are empty should be parked; when one is instead cycling millions of
+    // times against siblings in the thousands, the dump above cannot say which of those two it is, and they have
+    // different causes. Three fields, all written only on the poll-loop carrier and read only by the dump.
+    @volatile private var diagEmptyReadyCycles: Long = 0L
+    @volatile private var diagLastReadyFd: Int       = -1
+    @volatile private var diagLastReadyFlags: Int    = 0
+
+    /** Record what the last poll returned, for the diagnostic dump. Poll-fiber-confined, like the cycle counter. */
+    private def recordReadyForDiagnostics(fds: Array[Int], flags: Array[Int], n: Int): Unit =
+        if n <= 0 then diagEmptyReadyCycles += 1L
+        else
+            diagLastReadyFd = fds(0)
+            diagLastReadyFlags = flags(0)
+
     // This driver's Diagnostics registration, held from start() and closed from close() so a per-test driver's dumper/probe does not
     // outlive it (Diagnostics is a process-global registry; every driver ever built registers now, not just the process-shared
     // singleton, so an unclosed registration would accumulate for the life of the process). Null until start() registers it; start()
@@ -363,7 +378,8 @@ final private[net] class PollerIoDriver private[posix] (
                 pendingWritables.foreach((fd, _) => discard(writes.append(fd).append(' ')))
                 val accepts = new StringBuilder
                 pendingAccepts.foreach((fd, h) => discard(accepts.append(fd).append("(id=").append(h.id).append(") ")))
-                s"closed=${closedFlag.get()} pollCycles=$diagPollCycles activeFds=${activeFds.size} " +
+                s"closed=${closedFlag.get()} pollCycles=$diagPollCycles emptyReadyCycles=$diagEmptyReadyCycles " +
+                    s"lastReadyFd=$diagLastReadyFd lastReadyFlags=$diagLastReadyFlags activeFds=${activeFds.size} " +
                     s"changeQueuePending=${changeQueue.peekNonEmpty()} engineQueuePending=${!engineQueue.isEmpty()} " +
                     s"pendingClosesSize=${pendingCloses.size()} wakePending=${wakePending.get()} " +
                     s"pendingReads=[$reads] pendingWritables=[$writes] pendingAccepts=[$accepts]"
@@ -608,6 +624,7 @@ final private[net] class PollerIoDriver private[posix] (
       * exit, at the cost of one extra activation, rather than duplicating teardown at a second site.
       */
     private def dispatchAndContinue(task: Task)(using AllowUnsafe, Frame): Unit =
+        recordReadyForDiagnostics(pollScratch.fds, pollScratch.flags, pollScratch.readyCount)
         drainReady(pollScratch.fds, pollScratch.flags, pollScratch.ids, pollScratch.readyCount)
         // Sole consumer of the change/engine FIFOs, once per cycle, whether or not events fired: a command or engine op enqueued by
         // submitChange/submitEngineOp (or by this cycle's own dispatch) is drained within one cycle, and each submit wakes the park so an idle
