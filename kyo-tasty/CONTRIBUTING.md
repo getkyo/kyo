@@ -522,7 +522,16 @@ readers, so the loading and query paths work on all three platforms.
   on every platform. JVM, JS, and Native each map files with their own backend.
 - `Tasty.withClasspath(classpath: Classpath)`: binds a pre-loaded pure-data
   classpath; no filesystem access.
-- `Tasty.withPickles(pickles)`: decodes in-memory pickle bytes; no filesystem.
+- `Tasty.withPickles(pickles, classfiles)`: decodes in-memory bytes; no filesystem. It reaches the
+  same symbols the walking entry point does, and that parity is the point of it rather than a
+  convenience: a browser has no file system at all, so this is the only way it can load anything.
+  Keeping the two in step needs care, because the walking path finds things by NAME on disk and
+  nothing in memory can be found that way. Two cases exist for that reason. A Scala class's `.class`
+  is found beside its `.tasty` there, so here it rides on its own pickle as `Pickle.classfile`, and
+  the two merge into one symbol (this is where `javaMetadata` comes from; a pickle decoded without
+  it yields symbols that carry none). A Java class has no pickle at all, so it is passed on its own
+  as a `Classfile` and is a root in its own right. When adding anything the walking path discovers
+  by looking around a directory, ask what states it here, because nothing will.
 - All lookup and navigation methods (`findClass`, `allMethods`, `isSubtypeOf`,
   ...): pure once a classpath is bound.
 - Symbol-index lookups (`symbolsInFile`, `symbolsByName`, `symbolsByPrefix`): pure `Sync`
@@ -549,6 +558,21 @@ the `kyo-test` filter `"name".onlyJvm in { ... }` (and the symmetric `.onlyJs` /
 `.onlyNative`). These phantom-typed filters compile-exclude the leaf on other
 platforms. Use them only for platform-specific MECHANICS (a real `jrt:/` walk, a
 real on-disk stdlib classpath), never to dodge a cross-platform contract gap.
+
+**Browser gating: gate the leaf, and say what that leaf needs.** A page has no file
+system, so `.notBrowser` goes on the leaf that touches one, never on the suite for the
+sake of a leaf or two. Twelve suites here once carried a suite-level gate with the same
+copied sentence, "Stages snapshot and fixture files through Path, which a browser has
+not". It was false on one suite (no `Path` reference anywhere in it) and over-broad on
+nine more, one of which gated forty leaves for two, and together they kept about a
+hundred and seventy runnable leaves off the browser row. A shared reason copied between
+suites is the failure mode: write what THIS leaf needs (a cache directory to evict from,
+an atomic rename, a write the host must refuse, a root that must be absent), because a
+reason that would fit anywhere is one nobody checked.
+
+And before gating, ask whether the page genuinely cannot do it or whether kyo has not
+offered the way. `javaMetadata` was unreachable in a page because `withPickles` decoded
+TASTy only, which reads like a host limit and was a missing argument.
 
 ---
 
