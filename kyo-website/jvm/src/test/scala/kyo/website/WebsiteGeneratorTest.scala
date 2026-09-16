@@ -797,6 +797,11 @@ class WebsiteGeneratorTest extends WebsiteTest:
             val decoded = islandJson.replace("\\u003c", "<").replace("\\u003e", ">")
             assert(decoded.contains("\"tag\": \"v1.0.0-RC2\""), s"island must carry the version tag: $decoded")
             assert(decoded.contains("\"slug\": \"kyo-data\""), s"island must carry the kyo-data module: $decoded")
+            // Each module carries its platforms, so the bundle hydrates the same "Runs on" line the page was generated with.
+            assert(
+                decoded.contains(s"\"title\": \"kyo-data\", \"platforms\": \"${WebsiteModule.Platforms.everywhere.encoded}\""),
+                s"island must carry kyo-data's platforms: $decoded"
+            )
             // The island carries "article" + "headings", not "markdown".
             assert(decoded.contains("\"article\""), s"island must carry article field: $decoded")
             assert(decoded.contains("\"headings\""), s"island must carry headings field: $decoded")
@@ -1486,12 +1491,13 @@ class WebsiteGeneratorTest extends WebsiteTest:
         // MANIFESTO.md, whose only heading is the level-1 "After Scarcity"). The pager chains through
         // it: kyo-kernel's `next` is now "manifesto", and the manifesto's `prev` is "kyo-kernel". This
         // guards against any future manifest reformatting and proves the search-index emit is purely
-        // additive (the manifest bytes are identical before and after adding writeSearchIndex).
+        // additive (the manifest bytes are identical before and after adding writeSearchIndex). Each entry carries the module's
+        // encoded platforms, which the bundle renders; the manifesto is not a module and carries none.
         val expectedManifest =
             """|[
-               |  {"slug": "kyo-data", "group": "Foundation", "title": "kyo-data", "prev": null, "next": "kyo-kernel", "toc": [{"level": 1, "text": "kyo-data", "slug": "kyo-data"}, {"level": 2, "text": "Overview", "slug": "overview"}]},
-               |  {"slug": "kyo-kernel", "group": "Foundation", "title": "kyo-kernel", "prev": "kyo-data", "next": "manifesto", "toc": [{"level": 1, "text": "kyo-kernel", "slug": "kyo-kernel"}, {"level": 2, "text": "Effects", "slug": "effects"}]},
-               |  {"slug": "manifesto", "group": "Manifesto", "title": "Manifesto", "prev": "kyo-kernel", "next": null, "toc": [{"level": 1, "text": "After Scarcity", "slug": "after-scarcity"}]}
+               |  {"slug": "kyo-data", "group": "Foundation", "title": "kyo-data", "platforms": "jvm=1 js=11 native=1 wasm=11", "prev": null, "next": "kyo-kernel", "toc": [{"level": 1, "text": "kyo-data", "slug": "kyo-data"}, {"level": 2, "text": "Overview", "slug": "overview"}]},
+               |  {"slug": "kyo-kernel", "group": "Foundation", "title": "kyo-kernel", "platforms": "jvm=1 js=11 native=1 wasm=11", "prev": "kyo-data", "next": "manifesto", "toc": [{"level": 1, "text": "kyo-kernel", "slug": "kyo-kernel"}, {"level": 2, "text": "Effects", "slug": "effects"}]},
+               |  {"slug": "manifesto", "group": "Manifesto", "title": "Manifesto", "platforms": "jvm=0 js=0? native=0 wasm=0?", "prev": "kyo-kernel", "next": null, "toc": [{"level": 1, "text": "After Scarcity", "slug": "after-scarcity"}]}
                |]""".stripMargin
         for
             out       <- tmpDir

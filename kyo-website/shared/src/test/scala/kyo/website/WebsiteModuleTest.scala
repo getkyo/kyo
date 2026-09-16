@@ -86,4 +86,26 @@ class WebsiteModuleTest extends WebsiteTest:
         }
     }
 
+    "encoded" - {
+        "reads back to the same platforms, a browser the table does not state included" in {
+            val earlier = Platforms(true, Environments(true, Absent), false, Environments(false, Absent))
+            Chunk(Platforms.everywhere, nodeOnly, earlier, Platforms.none).foreach { platforms =>
+                assert(Platforms.decode(platforms.encoded) == Present(platforms), s"${platforms.encoded}")
+            }
+        }
+
+        "is one digit per Boolean, with ? for an unstated browser" in {
+            assert(nodeOnly.encoded == "jvm=1 js=10 native=1 wasm=10")
+            assert(Platforms.none.encoded == "jvm=0 js=0? native=0 wasm=0?")
+        }
+
+        "does not read what it did not write" in {
+            assert(Platforms.decode("") == Absent)
+            assert(Platforms.decode("jvm=1 js=11 native=1") == Absent)
+            assert(Platforms.decode("jvm=2 js=11 native=1 wasm=11") == Absent)
+            assert(Platforms.decode("jvm=1 js=1 native=1 wasm=11") == Absent)
+            assert(Platforms.decode("jvm=1 js=11 native=1 wasm=1x") == Absent)
+        }
+    }
+
 end WebsiteModuleTest

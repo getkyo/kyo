@@ -417,11 +417,12 @@ object DocsClient:
             slug  <- extractString(obj, "slug")
             group <- extractString(obj, "group")
             title <- extractString(obj, "title")
-        // The manifest/island JSON carries only slug/group/title (the fields the client nav needs);
-        // it does not serialize per-platform support or the raw README. Article content is fetched
-        // on demand via fetchArticle, and `Platforms(true, true, true, true)` is an unused placeholder
-        // here (the client never reads module.platforms), not a claim that every module is cross-platform.
-        yield WebsiteModule(slug, group, title, "", WebsiteModule.Platforms(true, true, true, true))
+        // The manifest/island JSON carries slug/group/title, the fields the client nav needs, and `platforms`, which the content area's
+        // "Runs on" line renders (`WebsiteModule.Platforms.encoded`). It does not carry the raw README: article content is fetched on
+        // demand via fetchArticle. A module whose platforms are missing or unreadable renders no line rather than a guessed one.
+        yield
+            val platforms = extractString(obj, "platforms").flatMap(WebsiteModule.Platforms.decode).getOrElse(WebsiteModule.Platforms.none)
+            WebsiteModule(slug, group, title, "", platforms)
     end parseModule
 
     /** Split a JSON array's top-level elements, respecting string literals.

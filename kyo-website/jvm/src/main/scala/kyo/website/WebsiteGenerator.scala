@@ -501,7 +501,7 @@ object WebsiteGenerator:
         val nextJson = next.map(s => s""""${escJson(s)}"""").getOrElse("null")
         s"""  {"slug": "${escJson(m.slug)}", "group": "${escJson(m.group)}", "title": "${escJson(
                 m.title
-            )}", "prev": $prevJson, "next": $nextJson, "toc": $tocJson}"""
+            )}", "platforms": "${escJson(m.platforms.encoded)}", "prev": $prevJson, "next": $nextJson, "toc": $tocJson}"""
     end manifestEntry
 
     // The per-section body cap shipped in the search index: generous enough that a section's defining
@@ -562,7 +562,9 @@ object WebsiteGenerator:
         val versionObj = s"""{"tag": "${escJson(v.tag)}", "label": "${escJson(v.label)}", "latest": ${v.latest}}"""
         val groupsJson = c.groups.toSeq.map { g =>
             val mods = g.modules.toSeq.map { m =>
-                s"""{"slug": "${escJson(m.slug)}", "group": "${escJson(m.group)}", "title": "${escJson(m.title)}"}"""
+                s"""{"slug": "${escJson(m.slug)}", "group": "${escJson(m.group)}", "title": "${escJson(m.title)}", "platforms": "${escJson(
+                        m.platforms.encoded
+                    )}"}"""
             }.mkString("[", ", ", "]")
             s"""{"name": "${escJson(g.name)}", "modules": $mods}"""
         }.mkString("[", ", ", "]")

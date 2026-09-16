@@ -146,7 +146,7 @@ class DocsClientTest extends kyo.test.Test[Any]:
         val islandJson =
             """{"version": {"tag": "v1.0.0-RC2", "label": "1.0.0-RC2", "latest": true}, """ +
                 """"intro": "intro text", """ +
-                """"groups": [{"name": "Foundation", "modules": [{"slug": "kyo-data", "group": "Foundation", "title": "kyo-data"}, {"slug": "kyo-kernel", "group": "Foundation", "title": "kyo-kernel"}]}], """ +
+                """"groups": [{"name": "Foundation", "modules": [{"slug": "kyo-data", "group": "Foundation", "title": "kyo-data", "platforms": "jvm=1 js=10 native=1 wasm=10"}, {"slug": "kyo-kernel", "group": "Foundation", "title": "kyo-kernel"}]}], """ +
                 """"versions": [{"tag": "v1.0.0-RC2", "label": "1.0.0-RC2", "latest": true}, {"tag": "v0.9.3", "label": "0.9.3", "latest": false}], """ +
                 """"article": "<h1 id=\"kyo-data\">kyo-data</h1>", """ +
                 """"headings": [{"level": 1, "text": "kyo-data", "slug": "kyo-data"}, {"level": 2, "text": "Overview", "slug": "overview"}], """ +
@@ -162,6 +162,14 @@ class DocsClientTest extends kyo.test.Test[Any]:
             assert(
                 island.content.groups.head.modules.map(_.slug) == Chunk("kyo-data", "kyo-kernel"),
                 s"module slugs: ${island.content.groups.head.modules.map(_.slug)}"
+            )
+            // A module's platforms round-trip, so the hydrated page shows the line the generated page showed; a module whose entry
+            // carries none shows no line rather than a guessed one.
+            val nodeOnly = WebsiteModule.Environments(true, Present(false))
+            assert(
+                island.content.groups.head.modules.map(_.platforms) ==
+                    Chunk(WebsiteModule.Platforms(true, nodeOnly, true, nodeOnly), WebsiteModule.Platforms.none),
+                s"module platforms: ${island.content.groups.head.modules.map(_.platforms)}"
             )
             assert(island.versions.size == 2, s"versions: ${island.versions.size}")
             assert(island.versions(1).tag == "v0.9.3", s"second version: ${island.versions(1).tag}")
@@ -650,7 +658,7 @@ class DocsClientTest extends kyo.test.Test[Any]:
     // not upgraded (i.e. searchIndex.set(idx) was not called on the success arm).
     "refreshSearchIndex upgrades the searchIndex ref on a successful fetch" in {
         // Build the title-only seed: one module, no headings.
-        val modules       = Chunk(WebsiteModule("kyo-core", "Effects", "kyo-core", "", WebsiteModule.Platforms(true, true, true, true)))
+        val modules       = Chunk(WebsiteModule("kyo-core", "Effects", "kyo-core", "", WebsiteModule.Platforms.everywhere))
         val content       = WebsiteContent("", Chunk(WebsiteContent.Group("Effects", modules)), WebsiteVersion("v0.9.0", "0.9.0", false))
         val titleOnlySeed = DocsSearch.seed("v0.9.0", modules)
         // The stub search-index.json body carries a section heading not present in the title-only seed.
@@ -687,7 +695,7 @@ class DocsClientTest extends kyo.test.Test[Any]:
     // cleared or overwritten with an empty/wrong index instead of retaining the seed).
     "refreshSearchIndex retains the title-only seed when the fetch fails" in {
         // Build the title-only seed: one module, no headings.
-        val modules       = Chunk(WebsiteModule("kyo-core", "Effects", "kyo-core", "", WebsiteModule.Platforms(true, true, true, true)))
+        val modules       = Chunk(WebsiteModule("kyo-core", "Effects", "kyo-core", "", WebsiteModule.Platforms.everywhere))
         val titleOnlySeed = DocsSearch.seed("v0.9.0", modules)
         // Empty stub map: any fetch throws, simulating a network or HTTP error.
         withFetch(Map.empty) {

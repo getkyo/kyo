@@ -45,6 +45,15 @@ object WebsiteModule:
             (if jvm then Chunk("JVM") else Chunk.empty) ++ target("JS", js) ++ (if native then Chunk("Native") else Chunk.empty) ++
                 target("WASM", wasm)
         end labels
+
+        /** The compact form the generated pages carry for the bundle, which rebuilds each module from them: `jvm=1 js=1? native=1
+          * wasm=10`, one digit per Boolean, and `?` for a `browser` the table does not state. [[Platforms.decode]] reads it back.
+          */
+        def encoded: String =
+            def bit(b: Boolean): String               = if b then "1" else "0"
+            def environments(e: Environments): String = bit(e.node) + e.browser.fold("?")(bit)
+            s"jvm=${bit(jvm)} js=${environments(js)} native=${bit(native)} wasm=${environments(wasm)}"
+        end encoded
     end Platforms
 
     object Platforms:
@@ -53,6 +62,37 @@ object WebsiteModule:
 
         /** Built for nothing, the value of a docs page that is not a module, such as the manifesto, and shows no platform line. */
         val none: Platforms = Platforms(false, Environments(false, Absent), false, Environments(false, Absent))
+
+        /** [[Platforms.encoded]] read back, or `Absent` for anything it did not write. */
+        def decode(text: String): Maybe[Platforms] =
+            def bit(c: Char): Maybe[Boolean] = c match
+                case '1' => Present(true)
+                case '0' => Present(false)
+                case _   => Absent
+            def environments(v: String): Maybe[Environments] =
+                if v.length != 2 then Absent
+                else
+                    val browser: Maybe[Maybe[Boolean]] = if v(1) == '?' then Present(Absent) else bit(v(1)).map(Present(_))
+                    for
+                        node <- bit(v(0))
+                        b    <- browser
+                    yield Environments(node, b)
+                    end for
+            val fields = text.trim.split(' ').toSeq.flatMap { field =>
+                field.split('=') match
+                    case Array(key, value) => Seq(key -> value)
+                    case _                 => Seq.empty
+            }.toMap
+            if fields.size != 4 then Absent
+            else
+                for
+                    jvmValue    <- Maybe.fromOption(fields.get("jvm")).filter(_.length == 1).flatMap(v => bit(v(0)))
+                    jsValue     <- Maybe.fromOption(fields.get("js")).flatMap(environments)
+                    nativeValue <- Maybe.fromOption(fields.get("native")).filter(_.length == 1).flatMap(v => bit(v(0)))
+                    wasmValue   <- Maybe.fromOption(fields.get("wasm")).flatMap(environments)
+                yield Platforms(jvmValue, jsValue, nativeValue, wasmValue)
+            end if
+        end decode
     end Platforms
 
     /** Where a Scala.js target's output runs: a Node process, and a browser page. `browser` is `Absent` when the table does not say. */
