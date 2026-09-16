@@ -370,7 +370,6 @@ private[kernel] object Stack:
         private def hc                             = handler.asInstanceOf[Handler.ContextHandler[Any, ContextEffect[Any], Any, Any]]
         def apply(failure: Maybe[Throwable]): Unit = bug("OwnRelease must be resolved against its region's state")
         def run(state: Any, failure: Maybe[Throwable]): Unit = hc.release(state, failure)
-        def runComplete(state: Any): Unit                    = hc.complete(state)
         def captured(state: Any): Maybe[Throwable] => Unit   = failure => hc.release(state, failure)
     end OwnRelease
 
@@ -450,30 +449,6 @@ private[kernel] object Stack:
                         catch case ex if !IsFatal(ex) => onError(ex)
                     case f =>
                         try f.asInstanceOf[Maybe[Throwable] => Unit](failure)
-                        catch case ex if !IsFatal(ex) => onError(ex)
-
-        /** Like [[runOwn]] with `Absent`, but the [[OwnRelease]] runs through `complete` rather than `release`: the extent ran to a clean end
-          * in place.
-          */
-        inline def runOwnComplete(state: Any)(inline onError: Throwable => Unit): Unit =
-            if !self.isEmpty then
-                self match
-                    case c: Chunk[Maybe[Throwable] => Unit] @unchecked =>
-                        var i = c.size - 1
-                        while i >= 0 do
-                            try
-                                c(i) match
-                                    case o: OwnRelease => o.runComplete(state)
-                                    case f             => f(Maybe.Absent)
-                            catch case ex if !IsFatal(ex) => onError(ex)
-                            end try
-                            i -= 1
-                        end while
-                    case o: OwnRelease =>
-                        try o.runComplete(state)
-                        catch case ex if !IsFatal(ex) => onError(ex)
-                    case f =>
-                        try f.asInstanceOf[Maybe[Throwable] => Unit](Maybe.Absent)
                         catch case ex if !IsFatal(ex) => onError(ex)
     end extension
 
