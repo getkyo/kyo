@@ -95,9 +95,11 @@ class PlatformJsTest extends AnyFreeSpec {
     "on a browser test host" - {
         "detects the page, and a page is not Node-like" in {
             assume(Platform.isBrowser, "asserts the page host, and this run is under Node")
+            // Bound first: ScalaTest's assert macro rewrites a call on the js.UndefOr union into a form the Scala.js backend cannot emit.
+            val noProcess = PlatformJs.jsGlobal("process").isEmpty
             assert(Platform.host eq Host.BrowserMain)
             assert(!Platform.isNodeLike)
-            assert(PlatformJs.jsGlobal("process").isEmpty)
+            assert(noProcess)
         }
     }
 
