@@ -159,10 +159,13 @@ object LinkCheck {
 
     // Reads each (possibly multi-megabyte) output file once per marker; linear, and only three programs.
 
-    def command: Command = Command.args("linkCheck", "<JS|Wasm|Native>") { (state, args) =>
+    def command: Command = Command.args("linkCheck", "<JS|Wasm|Native> [program...]") { (state, args) =>
         args match {
-            case Seq(platform) if platforms.contains(platform) =>
-                val failures = dependencyFailures(state, platform) ++ (if (platform == "Native") Nil else linkFailures(state, platform))
+            case Seq(platform, only @ _*) if platforms.contains(platform) && only.forall(name => programs.exists(_.name == name)) =>
+                // Naming programs links only those, for iterating on one; CI names none.
+                val selected = if (only.isEmpty) programs else programs.filter(p => only.contains(p.name))
+                val failures =
+                    dependencyFailures(state, platform) ++ (if (platform == "Native") Nil else linkFailures(state, platform, selected))
                 if (failures.isEmpty) {
                     log(s"$platform: all checks passed")
                     state
@@ -171,7 +174,7 @@ object LinkCheck {
                     state.fail
                 }
             case _ =>
-                state.log.error("usage: linkCheck <JS|Wasm|Native>")
+                state.log.error(s"usage: linkCheck <JS|Wasm|Native> [program...], where a program is one of ${programs.map(_.name).mkString(", ")}")
                 state.fail
         }
     }
@@ -207,7 +210,7 @@ object LinkCheck {
         declared.distinct.map { case (project, id) => s"$project declares $id outside tests" }
     }
 
-    private def linkFailures(state: State, platform: String): Seq[String] = {
+    private def linkFailures(state: State, platform: String, programs: Seq[Program]): Seq[String] = {
         val extracted = Project.extract(state)
         val ceilings  = readCeilings(extracted.get(LocalRootProject / baseDirectory) / "kyo-link-check" / "ceilings.txt")
         // Installed and resolved once per run, and only when a program bundles.
@@ -246,7 +249,15 @@ object LinkCheck {
                     (nodeBackend ++ pageBackend).filter(name => initial.exists(f => contains(f, quoted(name))))
                 else Nil
             // The WasmGC row links the same IR, so the JS row answers for both.
-            val bareGlobals = if (platform == "JS") bareHostGlobalReads(linkState, ref) else Nil
+            val bareGlobals =
+                if (platform != "JS") Nil
+                else
+                    try bareHostGlobalReads(linkState, ref)
+                    catch {
+                        case e: Throwable =>
+                            val frames = e.getStackTrace.take(8).mkString(" <- ")
+                            Seq(s"(the IR could not be read: $e at $frames)")
+                    }
             val bundlers    = if (program.hostChunks && platform == "JS") bundlerRuns(program, outDir, tools) else Right(Nil)
             Row(program, size, initial.map(_.length).sum, gzipSize(initial), found, linked, nodeImports, eager, bareGlobals, bundlers, runs)
         }
@@ -316,11 +327,19 @@ object LinkCheck {
     private def bareHostGlobalReads(state: State, ref: ProjectReference): Seq[String] = {
         import org.scalajs.ir.Traversers.Traverser
         import org.scalajs.ir.Trees
+        import org.scalajs.linker.MemOutputDirectory
         import org.scalajs.linker.PathIRContainer
         import org.scalajs.linker.StandardImpl
+        import org.scalajs.linker.interface.IRFile
+        import org.scalajs.linker.interface.OutputDirectory
+        import org.scalajs.linker.interface.Report
+        import org.scalajs.linker.standard.CoreSpec
+        import org.scalajs.linker.standard.LinkerBackend
+        import org.scalajs.linker.standard.ModuleSet
+        import org.scalajs.linker.standard.StandardLinkerBackend
         import org.scalajs.linker.standard.StandardLinkerFrontend
+        import org.scalajs.linker.standard.StandardLinkerImpl
         import org.scalajs.linker.standard.SymbolRequirement
-        import org.scalajs.logging.NullLogger
         import scala.concurrent.Await
         import scala.concurrent.ExecutionContext
         import scala.concurrent.duration.Duration
@@ -330,13 +349,40 @@ object LinkCheck {
         val config            = extracted.get(ref / Compile / fullLinkJS / scalaJSLinkerConfig)
         val (_, initializers) = extracted.runTask(ref / Compile / scalaJSModuleInitializers, state)
         val (_, classpath)    = extracted.runTask(ref / Compile / fullClasspath, state)
+        // The frontend reports what it could not link through its logger, and the exception says only that it failed.
+        val errors = scala.collection.mutable.ListBuffer.empty[String]
+        val logger = new org.scalajs.logging.Logger {
+            def log(level: org.scalajs.logging.Level, message: => String): Unit =
+                if (level == org.scalajs.logging.Level.Error) errors.synchronized(errors += message)
+            def trace(t: => Throwable): Unit = ()
+        }
+        // The standard linker, whose backend records the modules it is handed before emitting them to memory: linking through the
+        // frontend alone would leave out the linker's own runtime library, which the standard linker adds.
+        @volatile var linked: Option[ModuleSet] = None
+        val standardBackend                      = StandardLinkerBackend(config)
+        val recordingBackend = new LinkerBackend {
+            val coreSpec: CoreSpec                     = standardBackend.coreSpec
+            val symbolRequirements: SymbolRequirement  = standardBackend.symbolRequirements
+            def injectedIRFiles: scala.collection.Seq[IRFile] = standardBackend.injectedIRFiles
+            def emit(moduleSet: ModuleSet, output: OutputDirectory, logger: org.scalajs.logging.Logger)(implicit
+                ec: ExecutionContext
+            ): scala.concurrent.Future[Report] = {
+                linked = Some(moduleSet)
+                standardBackend.emit(moduleSet, output, logger)
+            }
+        }
+        val linker = StandardLinkerImpl(StandardLinkerFrontend(config), recordingBackend)
         val linking = for {
             (containers, _) <- PathIRContainer.fromClasspath(classpath.map(_.data.toPath))
             irFiles         <- StandardImpl.irFileCache().newCache.cached(containers)
-            moduleSet <-
-                StandardLinkerFrontend(config).link(irFiles, initializers, SymbolRequirement.factory("linkCheck").none(), NullLogger)
-        } yield moduleSet
-        val moduleSet = Await.result(linking, Duration.Inf)
+            _               <- linker.link(irFiles, initializers, MemOutputDirectory(), logger)
+        } yield linked.getOrElse(sys.error("the linker emitted no modules"))
+        val moduleSet =
+            try Await.result(linking, Duration.Inf)
+            catch {
+                case e: org.scalajs.linker.interface.LinkingException =>
+                    throw new RuntimeException(s"${e.getMessage}: ${errors.mkString(" | ")}", e)
+            }
         val classes   = moduleSet.modules.flatMap(_.classDefs) ++ moduleSet.abstractClasses
         val byName    = classes.map(c => c.className -> c).toMap
 

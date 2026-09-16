@@ -126,7 +126,8 @@ async function page(dist) {
   await send("Network.enable", {}, session);
   await send("Runtime.enable", {}, session);
   await send("Page.navigate", { url: `http://127.0.0.1:${port}/index.html` }, session);
-  const deadline = Date.now() + 20000;
+  // The same bound linkCheck gives a node run: a program can take a while to fail, as kyo-ai retries a transport failure first.
+  const deadline = Date.now() + 120000;
   const logged = () => events.filter((e) => e.method === "Runtime.consoleAPICalled").map((e) => e.params.args.map((a) => a.value).join(" "));
   const errors = () => events.filter((e) => e.method === "Runtime.exceptionThrown").map((e) => e.params.exceptionDetails.exception?.description || e.params.exceptionDetails.text);
   while (Date.now() < deadline && !logged().some((l) => new RegExp(expected).test(l)) && errors().length === 0) {
@@ -163,6 +164,7 @@ for (const name of Object.keys(builds)) {
     row.totalBytes = files.reduce((s, f) => s + fs.statSync(f).size, 0);
     const result = await page(dist);
     row.answered = result.logged.find((l) => new RegExp(expected).test(l)) || null;
+    row.logged = result.logged;
     row.pageErrors = result.errors;
     row.requested = result.requested.filter((p) => /\.m?js$/.test(p));
     row.requestedNode = row.requested.filter((p) => row.nodeFiles.includes(p.replace(/^\//, "")));
@@ -184,7 +186,10 @@ for (const row of rows) {
     continue;
   }
   const problems = [];
-  if (!row.answered) problems.push(`the page never printed a line matching '${expected}'`);
+  if (!row.answered) {
+    const last = row.logged.slice(-3).join(" | ") || "nothing";
+    problems.push(`the page never printed a line matching '${expected}'; it printed ${last}`);
+  }
   if (row.pageErrors.length > 0) problems.push(`the page threw: ${row.pageErrors.join(" | ")}`);
   if (row.nodeFiles.length === 0) problems.push("no output file carries the Node backends, so the build's split cannot be told apart");
   if (row.requestedNode.length > 0) problems.push(`the page fetched Node code: ${row.requestedNode.join(", ")}`);
