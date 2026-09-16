@@ -65,7 +65,7 @@ private class RemoteSpanUnsafe(
     val traceId: String,
     val spanId: String
 ) extends UnsafeTraceSpan with UnsafeTraceSpan.Propagatable:
-    def end(now: java.time.Instant)(using AllowUnsafe): Unit                                = ()
-    def event(name: String, a: Attributes, now: java.time.Instant)(using AllowUnsafe): Unit = ()
+    def end(nowEpochNanos: Long)(using AllowUnsafe): Unit                                = ()
+    def event(name: String, a: Attributes, nowEpochNanos: Long)(using AllowUnsafe): Unit = ()
     def setStatus(status: UnsafeTraceSpan.Status)(using AllowUnsafe): Unit                  = ()
 end RemoteSpanUnsafe

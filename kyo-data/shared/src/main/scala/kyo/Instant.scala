@@ -310,6 +310,17 @@ object Instant:
         def toEpochMilli: Long =
             Math.addExact(Math.multiplyExact(instant.seconds, 1000L), (instant.nanos / 1000000).toLong)
 
+        /** The number of nanoseconds from the epoch of 1970-01-01T00:00:00Z, negative before it.
+          *
+          * Throws `ArithmeticException` outside the range a `Long` count of nanoseconds covers, which ends in 2262.
+          * That is the unit telemetry protocols use, OTLP among them.
+          *
+          * @return
+          *   The epoch nanosecond.
+          */
+        def toEpochNanos: Long =
+            Math.addExact(Math.multiplyExact(instant.seconds, 1000000000L), instant.nanos.toLong)
+
         /** Converts this Instant to a java.time.Instant.
           *
           * @return

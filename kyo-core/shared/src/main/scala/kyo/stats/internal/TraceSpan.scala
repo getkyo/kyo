@@ -8,10 +8,10 @@ import scala.annotation.tailrec
 final case class TraceSpan(unsafe: UnsafeTraceSpan):
 
     def end(using Frame): Unit < Sync =
-        Clock.nowWith(now => Sync.Unsafe.defer(unsafe.end(now.toJava)))
+        Clock.nowWith(now => Sync.Unsafe.defer(unsafe.end(now.toEpochNanos)))
 
     def event(name: String, a: Attributes)(using Frame): Unit < Sync =
-        Clock.nowWith(now => Sync.Unsafe.defer(unsafe.event(name, a, now.toJava)))
+        Clock.nowWith(now => Sync.Unsafe.defer(unsafe.event(name, a, now.toEpochNanos)))
 
     def setStatus(status: UnsafeTraceSpan.Status)(using Frame): Unit < Sync =
         Sync.Unsafe.defer(unsafe.setStatus(status))
@@ -36,17 +36,17 @@ object TraceSpan:
             case l =>
                 TraceSpan(
                     new UnsafeTraceSpan:
-                        def end(now: java.time.Instant)(using AllowUnsafe) =
+                        def end(nowEpochNanos: Long)(using AllowUnsafe) =
                             @tailrec def loop(c: Seq[TraceSpan]): Unit =
                                 if c.nonEmpty then
-                                    c.head.unsafe.end(now)
+                                    c.head.unsafe.end(nowEpochNanos)
                                     loop(c.tail)
                             loop(l)
                         end end
-                        def event(name: String, a: Attributes, now: java.time.Instant)(using AllowUnsafe) =
+                        def event(name: String, a: Attributes, nowEpochNanos: Long)(using AllowUnsafe) =
                             @tailrec def loop(c: Seq[TraceSpan]): Unit =
                                 if c.nonEmpty then
-                                    c.head.unsafe.event(name, a, now)
+                                    c.head.unsafe.event(name, a, nowEpochNanos)
                                     loop(c.tail)
                             loop(l)
                         end event
@@ -77,7 +77,7 @@ object TraceSpan:
             currentSpan.use { parent =>
                 Sync.Unsafe.defer {
                     val parentUnsafe = parent.toOption.map(_.unsafe)
-                    val child        = TraceSpan(exporter.startSpan(scope, name, now.toJava, parentUnsafe, attributes))
+                    val child        = TraceSpan(exporter.startSpan(scope, name, now.toEpochNanos, parentUnsafe, attributes))
                     Sync.ensure(child.end) {
                         currentSpan.let(Maybe(child))(v)
                     }

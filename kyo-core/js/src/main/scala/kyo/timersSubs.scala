@@ -13,11 +13,14 @@ class ScheduledFuture[A](r: => A):
     private[concurrent] def armedWith(stop: () => Unit): Unit =
         if _cancelled then stop() else stopPending = stop
 
-    def cancel(b: Boolean) =
+    /** Stops the task, answering whether this call is what prevented it from running, the way `Future.cancel` does. */
+    def cancel(b: Boolean): Boolean =
+        val prevented = !_cancelled && !_done
         _cancelled = true
         val stop = stopPending
         stopPending = ScheduledFuture.noStop
         stop()
+        prevented
     end cancel
     def isCancelled(): Boolean = _cancelled
     def run(): Unit =

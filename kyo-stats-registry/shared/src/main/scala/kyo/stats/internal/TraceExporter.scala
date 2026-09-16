@@ -1,6 +1,5 @@
 package kyo.stats.internal
 
-import java.time.Instant
 import kyo.AllowUnsafe
 import kyo.stats.Attributes
 import scala.util.control.NonFatal
@@ -14,7 +13,7 @@ abstract class TraceExporter extends Serializable {
     def startSpan(
         scope: List[String],
         name: String,
-        now: Instant,
+        nowEpochNanos: Long,
         parent: Option[UnsafeTraceSpan] = None,
         attributes: Attributes = Attributes.empty
     )(implicit _au: AllowUnsafe): UnsafeTraceSpan
@@ -69,7 +68,7 @@ object TraceExporter {
             def startSpan(
                 scope: List[String],
                 name: String,
-                now: Instant,
+                nowEpochNanos: Long,
                 parent: Option[UnsafeTraceSpan] = None,
                 attributes: Attributes = Attributes.empty
             )(implicit _au: AllowUnsafe): UnsafeTraceSpan =
@@ -81,25 +80,27 @@ object TraceExporter {
             def startSpan(
                 scope: List[String],
                 name: String,
-                now: Instant,
+                nowEpochNanos: Long,
                 parent: Option[UnsafeTraceSpan] = None,
                 attributes: Attributes = Attributes.empty
             )(implicit _au: AllowUnsafe): UnsafeTraceSpan = {
-                val spans        = exporters.map(_.startSpan(scope, name, now, parent, attributes))
+                val spans        = exporters.map(_.startSpan(scope, name, nowEpochNanos, parent, attributes))
                 val propagatable = spans.collectFirst { case p: UnsafeTraceSpan.Propagatable => p }
                 propagatable match {
                     case Some(p) =>
                         new UnsafeTraceSpan with UnsafeTraceSpan.Propagatable {
                             def traceId                                                                  = p.traceId
                             def spanId                                                                   = p.spanId
-                            def end(now: Instant)(implicit _au: AllowUnsafe)                             = spans.foreach(_.end(now))
-                            def event(n: String, a: Attributes, now: Instant)(implicit _au: AllowUnsafe) = spans.foreach(_.event(n, a, now))
+                            def end(nowEpochNanos: Long)(implicit _au: AllowUnsafe) = spans.foreach(_.end(nowEpochNanos))
+                            def event(n: String, a: Attributes, nowEpochNanos: Long)(implicit _au: AllowUnsafe) =
+                                spans.foreach(_.event(n, a, nowEpochNanos))
                             def setStatus(status: UnsafeTraceSpan.Status)(implicit _au: AllowUnsafe) = spans.foreach(_.setStatus(status))
                         }
                     case None =>
                         new UnsafeTraceSpan {
-                            def end(now: Instant)(implicit _au: AllowUnsafe)                             = spans.foreach(_.end(now))
-                            def event(n: String, a: Attributes, now: Instant)(implicit _au: AllowUnsafe) = spans.foreach(_.event(n, a, now))
+                            def end(nowEpochNanos: Long)(implicit _au: AllowUnsafe) = spans.foreach(_.end(nowEpochNanos))
+                            def event(n: String, a: Attributes, nowEpochNanos: Long)(implicit _au: AllowUnsafe) =
+                                spans.foreach(_.event(n, a, nowEpochNanos))
                             def setStatus(status: UnsafeTraceSpan.Status)(implicit _au: AllowUnsafe) = spans.foreach(_.setStatus(status))
                         }
                 }

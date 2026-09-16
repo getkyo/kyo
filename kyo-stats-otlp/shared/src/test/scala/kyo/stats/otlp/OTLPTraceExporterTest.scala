@@ -16,7 +16,7 @@ class OTLPTraceExporterTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
-    private def now() = java.time.Instant.now()
+    private def now() = Instant.systemNow().toEpochNanos
 
     "noop exporter" - {
         val exporter = TraceExporter.noop

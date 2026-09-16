@@ -30,7 +30,10 @@ object UUIDGenerator:
 
     /** The default generator backed by the ambient [[SecureRandom]] and the dynamically scoped Kyo clock. */
     val live: UUIDGenerator =
-        make(Clock.nowWith(_.toJava.toEpochMilli), SecureRandom.nextBytes(16))
+        // `toEpochMilli` on kyo's own Instant, not through `toJava`: a java.time.Instant carries its `toString`, which
+        // is a DateTimeFormatter, which is a Locale, which off the JVM loads a locale database into every program that
+        // generates a UUID.
+        make(Clock.nowWith(_.toEpochMilli), SecureRandom.nextBytes(16))
 
     private val local = Local.init(live)
 

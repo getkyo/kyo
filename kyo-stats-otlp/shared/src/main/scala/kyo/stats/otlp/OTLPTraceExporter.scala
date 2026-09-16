@@ -69,7 +69,7 @@ class OTLPTraceExporter private (val config: OTLPConfig)(using AllowUnsafe) exte
     def startSpan(
         scope: List[String],
         name: String,
-        now: java.time.Instant,
+        nowEpochNanos: Long,
         parent: Option[UnsafeTraceSpan] = None,
         attributes: Attributes = Attributes.empty
     )(using AllowUnsafe): UnsafeTraceSpan =
@@ -80,7 +80,7 @@ class OTLPTraceExporter private (val config: OTLPConfig)(using AllowUnsafe) exte
         val parentSpanId = parent match
             case Some(p: UnsafeTraceSpan.Propagatable) => p.spanId
             case _                                     => ""
-        val startNanos = Instant.fromJava(now).toDuration.toNanos
+        val startNanos = nowEpochNanos
         new SpanUnsafe(
             traceId,
             spanId,
@@ -108,9 +108,9 @@ class OTLPTraceExporter private (val config: OTLPConfig)(using AllowUnsafe) exte
             spanStatus = status
 
         // UnsafeTraceSpan (kyo-stats-registry) can't have Frame
-        def end(now: java.time.Instant)(using AllowUnsafe): Unit =
+        def end(nowEpochNanos: Long)(using AllowUnsafe): Unit =
             given Frame  = Frame.internal
-            val endNanos = Instant.fromJava(now).toDuration.toNanos
+            val endNanos = nowEpochNanos
             val status = (spanStatus: UnsafeTraceSpan.Status) match
                 case _: UnsafeTraceSpan.Status.Unset.type => SpanStatus(code = OTLPModel.StatusUnset)
                 case _: UnsafeTraceSpan.Status.Ok.type    => SpanStatus(code = OTLPModel.StatusOk)
@@ -137,8 +137,8 @@ class OTLPTraceExporter private (val config: OTLPConfig)(using AllowUnsafe) exte
             end match
         end end
 
-        def event(name: String, a: Attributes, now: java.time.Instant)(using AllowUnsafe): Unit =
-            val eventNanos = Instant.fromJava(now).toDuration.toNanos
+        def event(name: String, a: Attributes, nowEpochNanos: Long)(using AllowUnsafe): Unit =
+            val eventNanos = nowEpochNanos
             val _ = events.add(SpanEvent(
                 name = name,
                 timeUnixNano = eventNanos.toString,

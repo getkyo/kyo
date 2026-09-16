@@ -27,6 +27,14 @@ case class AllPrimitives(
 ) derives Schema,
       CanEqual
 
+// Defaulted instant fields: the default is materialized by the focus macro through `Structure.Value.primitive`,
+// which dispatches on the field's tag, so both spellings of an instant must land on `Value.Instant` rather than on
+// its text. The model carries kyo's Instant and java.time's is a conversion of it, and a default must not notice.
+case class DefaultedInstants(
+    kyoAt: Instant = Instant.Epoch,
+    javaAt: java.time.Instant = java.time.Instant.EPOCH
+) derives Schema, CanEqual
+
 // Variant dispatch for all-no-arg enums must use reference equality, not isInstanceOf. Widening a singleton term-ref to the parent enum type would match every variant.
 
 enum AllNoArgEnumA derives Schema, CanEqual:
@@ -429,6 +437,22 @@ class StructureTest extends kyo.test.Test[Any]:
                     assert(f2.default == Maybe.empty)
                     assert(f2.optional == true)
                 case other => fail(s"Expected Success, got $other")
+            end match
+        }
+
+        "a defaulted instant field carries an instant, whichever spelling declared it" in {
+            Structure.of[DefaultedInstants] match
+                case p: Structure.Type.Product =>
+                    val byName = p.fields.map(f => f.name -> f.default).toMap
+                    assert(
+                        byName("kyoAt") == Maybe(Structure.Value.Instant(Instant.Epoch)),
+                        s"kyoAt default was ${byName("kyoAt")}"
+                    )
+                    assert(
+                        byName("javaAt") == Maybe(Structure.Value.Instant(Instant.Epoch)),
+                        s"javaAt default was ${byName("javaAt")}"
+                    )
+                case other => fail(s"expected a Product, got $other")
             end match
         }
 
