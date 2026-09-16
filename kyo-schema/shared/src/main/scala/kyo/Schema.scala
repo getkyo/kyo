@@ -2673,18 +2673,21 @@ object Schema:
             structure = Structure.Type.Primitive(Structure.PrimitiveKind.Duration, Tag[java.time.Duration].asInstanceOf[Tag[Any]])
         )
 
-    /** Schema for java.time.Instant values, as a conversion of the instant primitive.
+    /** Schema for java.time.Instant values, converting through the instant primitive on the way to the wire.
       *
-      * A given with no parameters is a lazy val, so a program that never asks for this never links java.time.
+      * A given with no parameters is a lazy val, so a program that never asks for this never links java.time. The
+      * conversion is arithmetic on the epoch fields, so asking for it still reaches no formatter and no locale data.
       *
-      * Reports its own type rather than the primitive's, which is what it reported before the primitive moved to
-      * kyo's Instant: the structure is what tooling reads to say which Scala type a field holds, and the wire shape
-      * it names is the one the codec writes, so the report and the wire still agree.
+      * Built like every other java.time schema here rather than as a transform of the kyo one, so it reports its own
+      * Scala type, as `LocalDate` and `Duration` do, and keeps the absent default a transform would drop.
       */
     given instantSchema: Schema[java.time.Instant] =
-        kyoInstantSchema
-            .transform[java.time.Instant](_.toJava)(kyo.Instant.fromJava)
-            .withStructure(Structure.Type.Primitive(Structure.PrimitiveKind.Instant, Tag[java.time.Instant].asInstanceOf[Tag[Any]]))
+        Schema.init[java.time.Instant](
+            writeFn = (v, w) => w.instant(kyo.Instant.fromJava(v)),
+            readFn = _.instant().toJava,
+            absentDefaultValue = Maybe(java.time.Instant.EPOCH),
+            structure = Structure.Type.Primitive(Structure.PrimitiveKind.Instant, Tag[java.time.Instant].asInstanceOf[Tag[Any]])
+        )
 
     /** Schema for kyo.Duration values. */
     given kyoDurationSchema: Schema[kyo.Duration] =

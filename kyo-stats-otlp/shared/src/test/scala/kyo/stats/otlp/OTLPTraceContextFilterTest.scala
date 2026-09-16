@@ -14,7 +14,7 @@ class OTLPTraceContextFilterTest extends kyo.test.Test[Any]:
         extends UnsafeTraceSpan with UnsafeTraceSpan.Propagatable:
         def end(nowEpochNanos: Long)(using AllowUnsafe): Unit                                = ()
         def event(name: String, a: Attributes, nowEpochNanos: Long)(using AllowUnsafe): Unit = ()
-        def setStatus(status: UnsafeTraceSpan.Status)(using AllowUnsafe): Unit                  = ()
+        def setStatus(status: UnsafeTraceSpan.Status)(using AllowUnsafe): Unit               = ()
     end TestPropagatable
 
     "server filter" - {

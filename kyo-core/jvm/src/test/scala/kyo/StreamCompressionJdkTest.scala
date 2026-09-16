@@ -16,7 +16,13 @@ import kyo.Result.Failure
 import kyo.StreamCompression.*
 import scala.annotation.tailrec
 
-class StreamCompressionTest extends kyo.test.Test[Any]:
+/** The compression drivers against the JDK's zlib: what kyo writes, `java.util.zip` reads, and the reverse.
+  *
+  * This is the half of the coverage only the JVM can carry, since it is the only platform with another
+  * implementation to hold the drivers to. `StreamCompressionTest`, in shared, covers the behaviour every platform
+  * owes and runs on all three.
+  */
+class StreamCompressionJdkTest extends kyo.test.Test[Any]:
     private inline val shortText      = "abcdefg1234567890"
     private inline val otherShortText = "AXXX\u0000XXXA"
 
@@ -467,4 +473,4 @@ class StreamCompressionTest extends kyo.test.Test[Any]:
             end for
         }
     }
-end StreamCompressionTest
+end StreamCompressionJdkTest

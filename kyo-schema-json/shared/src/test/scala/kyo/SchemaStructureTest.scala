@@ -1981,8 +1981,11 @@ class SchemaStructureTest extends kyo.test.Test[Any]:
             end match
         }
 
-        "kyoInstantSchema.structure is the same reference as instantSchema.structure" in {
-            assert(Schema.kyoInstantSchema.structure.eq(Schema.instantSchema.structure))
+        "kyoInstantSchema and instantSchema each name their own type on the one instant primitive" in {
+            assert(Schema.kyoInstantSchema.structure ==
+                Structure.Type.Primitive(Structure.PrimitiveKind.Instant, Tag[kyo.Instant].asInstanceOf[Tag[Any]]))
+            assert(Schema.instantSchema.structure ==
+                Structure.Type.Primitive(Structure.PrimitiveKind.Instant, Tag[java.time.Instant].asInstanceOf[Tag[Any]]))
         }
 
         "kyoDurationSchema.structure is the same reference as longSchema.structure" in {
@@ -2001,8 +2004,10 @@ class SchemaStructureTest extends kyo.test.Test[Any]:
             assert(Structure.Type.compatible(Schema.longSchema.structure, Schema.kyoDurationSchema.structure))
         }
 
-        "Structure.Type.compatible(instantSchema.structure, kyoInstantSchema.structure) returns true" in {
-            assert(Structure.Type.compatible(Schema.instantSchema.structure, Schema.kyoInstantSchema.structure))
+        // The two instant schemas are each built as a primitive naming their own Scala type, so compatible, which
+        // compares those types, separates them. They still write the same wire primitive, which is the kind below.
+        "Structure.Type.compatible(instantSchema.structure, kyoInstantSchema.structure) returns false" in {
+            assert(!Structure.Type.compatible(Schema.instantSchema.structure, Schema.kyoInstantSchema.structure))
         }
 
     }
