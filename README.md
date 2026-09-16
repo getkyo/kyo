@@ -318,6 +318,7 @@ The vertical an application developer assembles: HTTP services and clients, SQL 
 | [kyo-sql](kyo-sql/README.md)                 | ✅  | ✅  | ✅     | ✅   | Raw SQL and a typed DSL over one AST; the database is a `DB` dependency in the effect row, no JDBC          |
 | [kyo-sql-postgres](kyo-sql-postgres/README.md) | ✅  | ✅  | ✅     | ✅   | PostgreSQL driver speaking the wire protocol on kyo-net, plus `COPY` and `LISTEN`/`NOTIFY`                 |
 | [kyo-sql-mysql](kyo-sql-mysql/README.md)     | ✅  | ✅  | ✅     | ✅   | MySQL driver speaking the wire protocol on kyo-net, plus `LOAD DATA LOCAL INFILE`                          |
+| [kyo-sql-sqlite](kyo-sql-sqlite/README.md)   | ✅  | ✅  | ✅     | ✅   | SQLite driver over the C library through kyo-ffi, an embedded file or in-memory database, no server        |
 | [kyo-schema](kyo-schema/README.md)           | ✅  | ✅  | ✅     | ✅   | One `derives Schema` powers validation, lenses, diffs, builders, and structural conversion; codecs plug in |
 | [kyo-schema-json](kyo-schema-json/README.md) | ✅  | ✅  | ✅     | ✅   | JSON codec, JSON Schema generation, pure `Json.Lines` framing, and effectful `Jsonl` streams and files    |
 | [kyo-schema-protobuf](kyo-schema-protobuf/README.md) | ✅  | ✅  | ✅     | ✅   | Protocol Buffers codec for kyo-schema: `Protobuf.encode`/`decode` binary plus `.proto` schema export       |

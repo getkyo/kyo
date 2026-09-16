@@ -393,6 +393,8 @@ lazy val kyoJVM: Project = project
         `kyo-sql`.jvm,
         `kyo-sql-postgres`.jvm,
         `kyo-sql-mysql`.jvm,
+        `kyo-sql-sqlite-driver`.jvm,
+        `kyo-sql-sqlite`.jvm,
         `kyo-sql-tests`.jvm,
         `kyo-system`.jvm,
         `kyo-http`.jvm,
@@ -480,6 +482,8 @@ lazy val kyoJS = project
         `kyo-sql`.js,
         `kyo-sql-postgres`.js,
         `kyo-sql-mysql`.js,
+        `kyo-sql-sqlite-driver`.js,
+        `kyo-sql-sqlite`.js,
         `kyo-sql-tests`.js,
         `kyo-system`.js,
         `kyo-http`.js,
@@ -546,6 +550,8 @@ lazy val kyoNative = project
         `kyo-sql`.native,
         `kyo-sql-postgres`.native,
         `kyo-sql-mysql`.native,
+        `kyo-sql-sqlite-driver`.native,
+        `kyo-sql-sqlite`.native,
         `kyo-sql-tests`.native,
         `kyo-system`.native,
         `kyo-http`.native,
@@ -604,6 +610,8 @@ lazy val kyoWasm = project
         `kyo-sql`.wasm,
         `kyo-sql-postgres`.wasm,
         `kyo-sql-mysql`.wasm,
+        `kyo-sql-sqlite-driver`.wasm,
+        `kyo-sql-sqlite`.wasm,
         `kyo-sql-tests`.wasm,
         `kyo-system`.wasm,
         `kyo-scheduler`.wasm,
@@ -973,8 +981,10 @@ lazy val `kyo-sql` =
         .nativeSettings(`native-settings`, `openssl-native-settings`)
         .wasmSettings(`wasm-settings`)
 
-// The two backend modules below are deliberately symmetric (same platforms, edges, settings); a difference is
-// a bug unless it names a wire feature only one engine has. Both take `test->test` on `kyo-sql` (not just
+// The two network backends below are deliberately symmetric (same platforms, edges, settings); a difference is
+// a bug unless it names a wire feature only one engine has. `kyo-sql-sqlite` is not held to this symmetry: it
+// speaks no protocol, so it takes `kyo-ffi` and the C toolchain settings instead of `kyo-net`. Both take
+// `test->test` on `kyo-sql` (not just
 // `compile->compile`) to reuse its test fixtures (`Test`, `FakeServer`, `OwnContainer`, `StubConnection`, the
 // mocks) rather than duplicate them. Other edges (`kyo-core`, `kyo-net`, `kyo-schema-json`) arrive transitively;
 // `kyo-pod` is redeclared because `kyo-sql` takes it test-scope only and that does not propagate.
@@ -1013,11 +1023,125 @@ lazy val `kyo-sql-mysql` =
         .nativeSettings(`native-settings`, `openssl-native-settings`)
         .wasmSettings(`wasm-settings`)
 
-// Unpublished; it holds the suites whose SUBJECT spans both engines and so have no single-module home: the
-// cross-backend suites that name both clients/factories to prove they behave the same through one abstract
-// surface, and the container-driven suites sharing `internal/SqlSharedContainers`. That fixture connects to
-// both engines directly, so it can live neither in core (which must compile with no backend) nor in one engine
-// module (the other's suites could not see it). `test->test` on all three lets the suites reuse core's `Test`
+
+// The SQLite DRIVER: connection, pool plumbing, codecs, row reader, dialect and URL parsing, plus the binding
+// trait as DECLARATIONS ONLY. No C, no FFI plugin, no engine.
+//
+// Split from the engine because on Scala Native an FFI module's C is compiled INTO the binary, so a module
+// depending on an engine module links that engine in. A second engine reusing this driver therefore cannot
+// depend on kyo-sql-sqlite: its Native binary would carry the vendored sqlite3.c as well, and the sqlite3_*
+// calls could bind to either. Depending on declarations carries no C, so each engine module links exactly one.
+lazy val `kyo-sql-sqlite-driver` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .dependsOn(`kyo-sql` % "test->test;compile->compile")
+        .dependsOn(`kyo-ffi`)
+        .in(file("kyo-sql-sqlite-driver"))
+        .withKyoTest
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
+        .jsSettings(
+            `js-settings`,
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
+        )
+        .nativeSettings(`native-settings`, `openssl-native-settings`)
+        .wasmSettings(`wasm-settings`)
+
+
+// The embedded engine: the dialect, row codec and type mapping of the other two backends with none of their
+// wire machinery, over a vendored C library, which is why this is the only kyo-sql module enabling KyoFfiPlugin.
+//
+// SQLite's C source is fetched at a pinned version by kyo-sql-sqlite/scripts/build-sqlite.sh and staged under
+// build/sqlite/, the shape kyo-aeron and kyo-net use; the staged tree is a gitignored build artifact. Compiling
+// from source rather than linking a host libsqlite3 pins the VERSION, which several conformance answers depend
+// on (a current macOS ships 3.43.2 against the 3.53.4 pinned here). Nothing is staged per os-arch: SQLite is one
+// architecture-independent .c, and the FfiLibrary already compiles per platform.
+lazy val `kyo-sql-sqlite` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .enablePlugins(KyoFfiPlugin)
+        .dependsOn(`kyo-sql` % "test->test;compile->compile")
+        .dependsOn(`kyo-sql-sqlite-driver` % "test->test;compile->compile")
+        .dependsOn(`kyo-ffi`)
+        // Declared rather than left to transitivity through kyo-sql's own test->compile, matching the other two
+        // backend modules: SqlTestBackend names Container.Config, so the descriptor needs it on the test classpath.
+        .dependsOn(`kyo-pod` % "test->compile")
+        .in(file("kyo-sql-sqlite"))
+        .withKyoTest
+        .settings(
+            `kyo-settings`,
+            // Hand the plugin the codegen project's classpath, as kyo-aeron does, so a cold build compiles the
+            // codegen first rather than falling back to a bundled resource absent on a clean checkout.
+            ffiCodegenClasspath := (LocalProject("kyo-ffi-codegen") / Compile / fullClasspath).value.map(_.data),
+            ffiLibraries := {
+                // baseDirectory is the per-platform dir for a cross-project, so the shim and the staged SQLite
+                // source are one level up. The shim is ours and lives in the repo; SQLite's own source is staged
+                // by scripts/build-sqlite.sh. Both compile into one shared library.
+                val sharedBase    = baseDirectory.value / ".." / "shared"
+                val sqliteStaged  = baseDirectory.value / ".." / "build" / "sqlite" / "staged"
+                val stagedSources = (sqliteStaged * "*.c").get
+                if (stagedSources.isEmpty)
+                    sys.error(
+                        "kyo-sql-sqlite: SQLite source is not staged. Run kyo-sql-sqlite/scripts/build-sqlite.sh " +
+                            s"once for this checkout; it fetches the pinned version into $sqliteStaged."
+                    )
+                Seq(
+                    FfiLibrary(
+                        id = "kyo_sqlite",
+                        cSources = (sharedBase / "src" / "main" / "c" ** "*.c").get ++ stagedSources,
+                        // The staged directory carries sqlite3.h, which the shim includes.
+                        includeDirs = Seq(sharedBase / "src" / "main" / "c", sqliteStaged),
+                        // THREADSAFE=1 because connections in a pool are handed between carrier threads.
+                        // Column metadata is deliberately NOT enabled: sqlite3_column_decltype, which the
+                        // codec dispatches on, needs no flag, and only sqlite3_column_origin_name would,
+                        // which nothing here uses.
+                        cFlags = Seq("-DSQLITE_THREADSAFE=1", "-DSQLITE_ENABLE_MATH_FUNCTIONS=1"),
+                        staticLink = false
+                    )
+                )
+            }
+        )
+        .jvmSettings(
+            mimaCheck(false),
+            // Publish the compiled engine per platform, so a consumer needs no C toolchain.
+            kyoSqlSqliteClassifierArtifacts := ffiClassifierArtifacts(
+                "kyo-sql-sqlite",
+                (Compile / managedResources).value,
+                version.value,
+                crossTarget.value
+            ),
+            // Project-scoped `packagedArtifacts` is what publish/ci-release uploads.
+            packagedArtifacts ++= kyoSqlSqliteClassifierArtifacts.value
+        )
+        .jsSettings(
+            `js-settings`,
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
+            // The driver loads its vendored library through koffi on Node, so the runtime needs both the compiled path
+            // and koffi itself.
+            Test / jsEnv := new NodeJSEnv(
+                NodeJSEnv.Config()
+                    .withArgs(List("--max_old_space_size=5120"))
+                    .withEnv(kyoSqliteFfiEnvMap(target.value))
+            ),
+            Test / compile := (Test / compile).dependsOn(kyoSqliteKoffiInstall).value
+        )
+        .nativeSettings(
+            // The transitive kyo-net TLS shim needs libssl at link time even though nothing in this module
+            // authenticates or encrypts anything.
+            `native-settings`,
+            `openssl-native-settings`
+        )
+        .wasmSettings(
+            `wasm-settings`,
+            Test / jsEnv := new NodeJSEnv(
+                NodeJSEnv.Config()
+                    .withArgs(List("--max_old_space_size=5120", "--experimental-wasm-exnref"))
+                    .withEnv(kyoSqliteFfiEnvMap(target.value))
+            ),
+            Test / compile := (Test / compile).dependsOn(kyoSqliteKoffiInstall).value
+        )
+
+
 // base and mocks plus each engine's fixtures; `publish / skip` keeps the shipped artifact count at three.
 lazy val `kyo-sql-tests` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
@@ -1025,6 +1149,7 @@ lazy val `kyo-sql-tests` =
         .dependsOn(`kyo-sql` % "test->test;compile->compile")
         .dependsOn(`kyo-sql-postgres` % "test->test;compile->compile")
         .dependsOn(`kyo-sql-mysql` % "test->test;compile->compile")
+        .dependsOn(`kyo-sql-sqlite` % "test->test;compile->compile")
         .dependsOn(`kyo-pod` % "test->compile")
         .in(file("kyo-sql-tests"))
         .withKyoTest
@@ -1043,7 +1168,8 @@ lazy val `kyo-sql-tests` =
             // also enlisted here; without this, runtime backend discovery finds nothing on Native.
             Test / nativeConfig ~= (_.withServiceProviders(Map("kyo.db.Backend" -> Seq(
                 "kyo.internal.postgres.PostgresBackendFactory",
-                "kyo.internal.mysql.MysqlBackendFactory"
+                "kyo.internal.mysql.MysqlBackendFactory",
+                "kyo.internal.sqlite.SqliteBackendFactory"
             ))))
         )
         .wasmSettings(`wasm-settings`)
@@ -1850,6 +1976,43 @@ val kyoNetKoffiInstall: Def.Initialize[Task[Unit]] = Def.task {
     }
 }
 
+// Koffi bootstrap for the SQLite module's Node-run test platforms, the same shape as kyoNetKoffiInstall and for the same reason: the driver
+// reaches its vendored library through koffi at first native-load, so koffi has to be in the target's node_modules before tests run.
+val kyoSqliteKoffiInstall: Def.Initialize[Task[Unit]] = Def.task {
+    val log        = streams.value.log
+    val targetBase = target.value
+    val nodeMods   = targetBase / "node_modules"
+    val marker     = nodeMods / "koffi" / "package.json"
+    val koffiRange = "^2.7" // must match kyo.ffi.internal.FfiErrors.KoffiSupportedRange
+    val pjContent  = s"""{"name":"kyo-sql-sqlite-node-test","private":true,"dependencies":{"koffi":"$koffiRange"}}"""
+    val pj         = targetBase / "package.json"
+    if (!pj.exists() || IO.read(pj) != pjContent) {
+        IO.createDirectory(targetBase)
+        IO.write(pj, pjContent)
+    }
+    if (!marker.exists()) {
+        log.info(s"[kyo-sql-sqlite] installing koffi@$koffiRange into $targetBase ...")
+        val rc = scala.sys.process.Process(
+            Seq(npmCommand, "install", "--no-audit", "--no-fund", "--silent"),
+            targetBase
+        ).!
+        if (rc != 0) sys.error(s"npm install koffi failed (exit $rc)")
+    }
+}
+
+
+// Points the Node/Wasm test runtime at the plugin-compiled SQLite library. The plugin owns the artifact-naming convention and the host
+// os/arch, so re-deriving them here is what makes the path right on every host rather than only the obvious one.
+def kyoSqliteFfiEnvMap(targetDir: File): Map[String, String] = {
+    val ffiOut = targetDir / "ffi"
+    Map(
+        "KYO_FFI_KYO_SQLITE_PATH" -> (ffiOut / ffiArtifactName("kyo_sqlite", ffiHostOsArch)).getAbsolutePath,
+        // The Wasm (ESModule) leg has no `require` global, so koffi resolves through node:module.createRequire,
+        // which searches NODE_PATH. Harmless on the CommonJS (js) leg.
+        "NODE_PATH" -> (targetDir / "node_modules").getAbsolutePath
+    )
+}
+
 // The plugin-compiled native paths for the koffi posix transport and its BoringSSL TLS, exported via KYO_FFI_<LIBID>_PATH to the Node/Wasm
 // test runtime. The plugin owns the artifact-naming convention and the host os/arch (musl probe included); re-deriving them here is how the
 // path resolves `-linux-musl-x86_64.so` on Alpine where a naive `-linux-x86_64.so` would miss. ffiCompile always emits both artifacts (the
@@ -1880,6 +2043,35 @@ val kyoNetNativeClassifierGuard = taskKey[Unit](
 // P2b classifier slice: the per-os-arch native classifier jars + the all-natives aggregator, appended to
 // `Compile / packagedArtifacts` (via `++=`, never a self-referential `:=`). Separate task so the extension is
 // non-cyclic. DECISION-P2b-classifier.md Decisions 1 + 3.
+/** Slices an FFI module's compiled natives into per-os-arch classifier jars plus an `all-natives` aggregator.
+  *
+  * The plugin already writes each library to `META-INF/native/<os-arch>/lib<id>.<ext>` in the managed resources; what
+  * this adds is publishing them as their own artifacts, so a consumer gets a prebuilt library for their platform
+  * instead of needing a C toolchain. kyo-net does the same thing with its own task, which carries extra rules about
+  * which library families earn a classifier; a module with a single library needs none of that, so the shared shape
+  * lives here and kyo-net keeps its own.
+  */
+def ffiClassifierArtifacts(base: String, resources: Seq[File], version: String, out: File): Map[Artifact, File] = {
+    val natives = resources.filter { f =>
+        (f.getName.endsWith(".so") || f.getName.endsWith(".dylib") || f.getName.endsWith(".dll")) &&
+        f.getParentFile.getParentFile.getName == "native"
+    }
+    def sliceJar(classifier: String, files: Seq[File]): (Artifact, File) = {
+        val jar     = out / s"$base-$version-$classifier-natives.jar"
+        val entries = files.map(f => f -> s"META-INF/native/${f.getParentFile.getName}/${f.getName}")
+        IO.zip(entries, jar, None)
+        Artifact(base).withType("jar").withExtension("jar").withClassifier(Some(classifier)) -> jar
+    }
+    val perOsArch = natives.groupBy(_.getParentFile.getName).map { case (osArch, files) => sliceJar(osArch, files) }
+    val all       = if (natives.nonEmpty) Map(sliceJar("all-natives", natives)) else Map.empty[Artifact, File]
+    perOsArch ++ all
+}
+
+val kyoSqlSqliteClassifierArtifacts = taskKey[Map[Artifact, File]](
+    "Per-os-arch native classifier jars for the vendored SQLite build, plus the `all-natives` aggregator."
+)
+
+
 val kyoNetClassifierArtifacts = taskKey[Map[Artifact, File]](
     "Per-os-arch native classifier jars (transport-native `<os-arch>`, vendored-BoringSSL `<os-arch>-boringssl`) + the `all-natives` aggregator."
 )

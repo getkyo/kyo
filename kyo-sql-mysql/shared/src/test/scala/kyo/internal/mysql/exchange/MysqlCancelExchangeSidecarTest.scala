@@ -180,7 +180,7 @@ class MysqlCancelExchangeSidecarTest extends kyo.Test:
         Channel.initUnscoped[String](64).flatMap { events =>
             AtomicInt.init(0).flatMap { arrivals =>
                 FakeServer.listenPort(serve(events, arrivals, killError)).flatMap { listener =>
-                    val address = SqlConfig.Address("mysql", "127.0.0.1", listener.port, "probe", Present("probe"))
+                    val address = SqlConfig.Address.Network("mysql", "127.0.0.1", listener.port, "probe", Present("probe"))
                     val options = SqlConfig.Url.Options.default
                     MysqlSqlConnection.connect(address, Present("probe"), config, options).flatMap { conn =>
                         conn.connectionId.get.flatMap { cid =>

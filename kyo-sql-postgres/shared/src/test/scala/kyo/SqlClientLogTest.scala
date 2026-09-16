@@ -276,8 +276,11 @@ class SqlClientLogTest extends SqlContainerTest:
                 }.map { case (sink, _) =>
                     val logs = sink.captured
                     assert(
+                        // The endpoint is logged as one rendered address rather than as `host=` and `port=`, because an address is a
+                        // network endpoint OR a local path and the local one has neither. The host still has to appear in it: naming
+                        // which server the connection reached is the whole point of the line.
                         logs.exists { case (level, msg) =>
-                            level == Log.Level.debug && msg.contains("kyo.sql: opened connection") && msg.contains("host=127.0.0.1")
+                            level == Log.Level.debug && msg.contains("kyo.sql: opened connection") && msg.contains("127.0.0.1")
                         },
                         s"Expected 'kyo.sql: opened connection' debug log. Captured: ${logs.map(_._2).mkString(", ")}"
                     )
@@ -570,7 +573,7 @@ class SqlClientLogTest extends SqlContainerTest:
 
         Log.let(Log(silentSink)) {
             // Call debug and warn, they should be filtered by the sink's level.
-            Log.debug("kyo.sql: opened connection id=1 host=localhost port=5432 tls=false").andThen(
+            Log.debug("kyo.sql: opened connection id=1 address=postgres://localhost:5432/db tls=false").andThen(
                 Log.warn("kyo.sql: retrying after connection failure attempt=1 schedule=test")
             )
         }.map { _ =>

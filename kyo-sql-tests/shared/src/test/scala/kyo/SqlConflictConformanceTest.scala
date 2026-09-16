@@ -51,10 +51,20 @@ class SqlConflictConformanceTest extends SqlBackendTest:
                 )
                 rows <- Sql.from[Child]("c").run
             yield
-                assert(
-                    outcome.isFailure,
-                    s"${backend.label}: a foreign-key violation under a conflict clause must fail, got $outcome"
-                )
+                // The engines split on whether the conflict clause suppresses the violation. Both sides are asserted rather than one
+                // being skipped, because the half that matters on EVERY engine is that the row does not land: an engine that swallows
+                // the failure and still wrote the child row would be corrupting a reference, which is a different thing entirely.
+                if backend.conflictClauseEnforcesForeignKeys then
+                    assert(
+                        outcome.isFailure,
+                        s"${backend.label}: a foreign-key violation under a conflict clause must fail, got $outcome"
+                    )
+                else
+                    assert(
+                        outcome.isSuccess,
+                        s"${backend.label} is declared to suppress the violation, so it must not fail, got $outcome"
+                    )
+                end if
                 assert(rows.isEmpty, s"${backend.label}: no child row should exist, got ${rows.map(_.id)}")
         }
     }

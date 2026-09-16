@@ -48,7 +48,7 @@ class SqlCollationConformanceTest extends SqlBackendTest:
       * collation the two spellings mean the same thing and the distinction the DSL offers is not real.
       */
     "a like pattern distinguishes case" - {
-        forEachBackend() { (backend, client, _) =>
+        forEachBackend(where = _.likeFollowsColumnCollation) { (backend, client, _) =>
             for
                 _    <- seed(backend, client)
                 rows <- Sql.from[Name]("n").where(_.n.v.like("alic%")).run
@@ -56,6 +56,30 @@ class SqlCollationConformanceTest extends SqlBackendTest:
                 rows.map(_.v) == Chunk("alice"),
                 s"${backend.label}: expected only the lower-case row, got ${rows.map(_.v)}"
             )
+        }
+    }
+
+    /** The other side, pinned rather than excused: an engine whose `LIKE` ignores collation folds ASCII case and nothing else, and the
+      * accented row is the half a caller is most likely to assume works.
+      */
+    "a like pattern folds ASCII case only, where it does not follow the column" - {
+        forEachBackend(where = !_.likeFollowsColumnCollation) { (backend, client, _) =>
+            for
+                _        <- seed(backend, client)
+                ascii    <- Sql.from[Name]("n").where(_.n.v.like("alic%")).run
+                accented <- Sql.from[Name]("n").where(_.n.v.like("RÉSUM%")).run
+            yield
+                assert(
+                    ascii.map(_.v).sorted == Chunk("ALICE", "Alice", "alice").sorted,
+                    s"${backend.label}: LIKE folds ASCII case here, so every spelling must match, got ${ascii.map(_.v)}"
+                )
+                // `résumé` is stored lower case and the pattern's E is accented and upper case, so an engine folding past ASCII would
+                // match it. The unaccented `resume` is deliberately not the probe: being pure ASCII it matches either way.
+                assert(
+                    accented.isEmpty,
+                    s"${backend.label}: the folding stops at ASCII, so an accented row must not match, got ${accented.map(_.v)}"
+                )
+            end for
         }
     }
 

@@ -53,7 +53,7 @@ class CancelExchangeTest extends SqlContainerTest:
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.Postgres) { ctx =>
                 withConn(ctx) { queryConn =>
                     withConn(ctx) { pollConn =>
-                        val address = SqlConfig.Address("postgres", ctx.host, ctx.port, ctx.database, Present(ctx.username))
+                        val address = SqlConfig.Address.Network("postgres", ctx.host, ctx.port, ctx.database, Present(ctx.username))
 
                         // Fire a slow query in a background fiber; wrap with Abort.run so the fiber type has no error effect.
                         Fiber.init(Abort.run[SqlException](queryConn.simpleQuery("SELECT pg_sleep(10)"))).flatMap {
@@ -95,7 +95,7 @@ class CancelExchangeTest extends SqlContainerTest:
         Scope.run {
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.Postgres) { ctx =>
                 withConn(ctx) { conn =>
-                    val address = SqlConfig.Address("postgres", ctx.host, ctx.port, ctx.database, Present(ctx.username))
+                    val address = SqlConfig.Address.Network("postgres", ctx.host, ctx.port, ctx.database, Present(ctx.username))
                     // Run a fast query to completion.
                     conn.simpleQuery("SELECT 1").andThen {
                         // Cancel should be silently ignored, the query already finished.
@@ -117,7 +117,7 @@ class CancelExchangeTest extends SqlContainerTest:
         Scope.run {
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.Postgres) { ctx =>
                 withConn(ctx) { conn =>
-                    val address = SqlConfig.Address("postgres", ctx.host, ctx.port, ctx.database, Present(ctx.username))
+                    val address = SqlConfig.Address.Network("postgres", ctx.host, ctx.port, ctx.database, Present(ctx.username))
                     // Send a cancel with a deliberately wrong secret key (wrong key, same PID); the server ignores it silently.
                     Abort.run[SqlException](CancelExchange.cancel(
                         address,

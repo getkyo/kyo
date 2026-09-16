@@ -21,6 +21,7 @@ import kyo.SqlRow
 import kyo.SqlSchema
 import kyo.SqlUnsupportedTypeOnBackendException
 import kyo.db.Idiom
+import kyo.internal.SqlJsonArray
 import kyo.internal.SqlPositionalRowReader
 import kyo.internal.mysql.types.MysqlEncoder
 import kyo.internal.mysql.types.MysqlTemporalDecoder
@@ -42,7 +43,7 @@ import kyo.internal.mysql.types.MysqlTemporalDecoder
   * `objectEnd`) walks the row in column order, and [[matchField]] decides which schema field the column at the cursor belongs to by name.
   *
   * MySQL has no native array type, so an array travels as a `TYPE_JSON` column holding a `[…]` document. Each array read consumes that one
-  * whole column and parses its text through [[MysqlJsonArray]].
+  * whole column and parses its text through [[SqlJsonArray]].
   *
   * @param row
   *   the SQL result row to read from
@@ -249,13 +250,13 @@ final class MysqlRowReader(row: SqlRow, format: Format, matchesFieldAt: Maybe[(I
     end nextCalendarInterval
 
     override def nextArrayOfInt(): Chunk[Int] =
-        MysqlJsonArray.decodeInts(readUtf8String(nextBytes()))(jsonFail)
+        SqlJsonArray.decodeInts(readUtf8String(nextBytes()))(jsonFail)
 
     override def nextArrayOfString(): Chunk[String] =
-        MysqlJsonArray.decodeStrings(readUtf8String(nextBytes()))(jsonFail)
+        SqlJsonArray.decodeStrings(readUtf8String(nextBytes()))(jsonFail)
 
     override def nextArrayOfJson(): Chunk[String] =
-        MysqlJsonArray.elements(readUtf8String(nextBytes()))(jsonFail)
+        SqlJsonArray.elements(readUtf8String(nextBytes()))(jsonFail)
 
     private def jsonFail(msg: String): Nothing =
         // The cause carries the same capped text: an uncapped cause would ride along in getMessage and defeat

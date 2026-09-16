@@ -64,7 +64,7 @@ class SqlDslConformanceTest extends SqlBackendTest:
       * it, since comparing rendered text never asks a server whether the text is executable.
       */
     "a window over a RANGE frame with an offset bound runs on every engine" - {
-        forEachBackend() { (backend, client, _) =>
+        forEachBackend(where = _.computesRangeOffsetFrames) { (backend, client, _) =>
             val window = Sql.WindowSpec(
                 Chunk.empty,
                 Chunk.empty,
@@ -89,11 +89,36 @@ class SqlDslConformanceTest extends SqlBackendTest:
         }
     }
 
+    /** The other side of the two leaves above: an engine that does not compute such a frame must REFUSE it, since the failure guarded
+      * against is a window quietly widening to the whole partition and returning plausible numbers.
+      */
+    "an engine that cannot compute a RANGE offset frame refuses to render one" - {
+        forEachBackend(where = b => !b.computesRangeOffsetFrames) { (backend, client, _) =>
+            val window = Sql.WindowSpec(
+                Chunk.empty,
+                Chunk.empty,
+                Maybe(Sql.WindowFrame(Sql.WindowFrame.Kind.Range, Sql.FrameBound.preceding(2), Maybe(Sql.FrameBound.CurrentRow)))
+            )
+            for
+                _ <- client.executeRaw(s"CREATE TABLE bound (v ${backend.columnType(ColumnType.Int)})")
+                outcome <- Abort.run[SqlException] {
+                    Sql.from[Bound]("b")
+                        .select(view => (view.b.v, view.b.v.sum.over(window.copy(orderBy = Chunk(view.b.v.asc)))))
+                        .run
+                }
+            yield assert(
+                outcome.failure.exists(_.isInstanceOf[SqlUnsupportedDialectFeatureException]),
+                s"${backend.label} cannot compute this frame, so rendering one must be refused, got $outcome"
+            )
+            end for
+        }
+    }
+
     /** `SUM` ignores absent values, so where the absent rows sort cannot change any present row's total. What differs is the absent row's OWN
       * frame, gated on [[SqlTestBackend.windowRangeOffsetHonoursAbsentPlacement]].
       */
     "a window over a mixed-bound RANGE frame agrees on every present key" - {
-        forEachBackend() { (backend, client, _) =>
+        forEachBackend(where = _.computesRangeOffsetFrames) { (backend, client, _) =>
             val window = Sql.WindowSpec(
                 Chunk.empty,
                 Chunk.empty,
@@ -227,7 +252,7 @@ class SqlDslConformanceTest extends SqlBackendTest:
     }
 
     "case folding reaches past ASCII" - {
-        forEachBackend() { (backend, client, _) =>
+        forEachBackend(where = _.caseFoldingReachesPastAscii) { (backend, client, _) =>
             for
                 _       <- client.executeRaw(s"CREATE TABLE word (label ${backend.textColumnType} NOT NULL)")
                 _       <- Sql.insert[Word].values(Word("éa")).run
@@ -238,6 +263,24 @@ class SqlDslConformanceTest extends SqlBackendTest:
             yield
                 assert(upper.head == "ÉA", s"${backend.label}: expected ÉA, got ${upper.head}")
                 assert(lowered.head == "éa", s"${backend.label}: expected éa, got ${lowered.head}")
+            end for
+        }
+    }
+
+    "case folding that stops at ASCII leaves the rest of the string untouched" - {
+        forEachBackend(where = !_.caseFoldingReachesPastAscii) { (backend, client, _) =>
+            // The complement: an ASCII-only fold must still fold the ASCII and leave everything else EXACTLY as stored. A fold that
+            // mangled, dropped, or substituted the accented character would be data corruption the leaf above cannot see.
+            for
+                _       <- client.executeRaw(s"CREATE TABLE word (label ${backend.textColumnType} NOT NULL)")
+                _       <- Sql.insert[Word].values(Word("éa")).run
+                upper   <- Sql.from[Word]("w").select(view => view.w.label.upper).run
+                _       <- client.executeRaw("DELETE FROM word")
+                _       <- Sql.insert[Word].values(Word("ÉA")).run
+                lowered <- Sql.from[Word]("w").select(view => view.w.label.lower).run
+            yield
+                assert(upper.head == "éA", s"${backend.label}: the ASCII must fold and the rest stay put, got ${upper.head}")
+                assert(lowered.head == "Éa", s"${backend.label}: the ASCII must fold and the rest stay put, got ${lowered.head}")
             end for
         }
     }

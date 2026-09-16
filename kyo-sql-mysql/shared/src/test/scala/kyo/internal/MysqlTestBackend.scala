@@ -96,6 +96,19 @@ final class MysqlTestBackend extends SqlTestBackend:
 
     def bytesLiteral(hexDigits: String): String = s"X'${hexDigits.toUpperCase}'"
 
+    /** The offset form, which this engine accepts into a TIMESTAMP and converts against the session zone. */
+    def instantLiteral(wallClockUtc: String): String = s"'$wallClockUtc+00:00'"
+
+    /** A `JSON` column keeps the key order the document was written in. */
+    def jsonPreservesKeyOrder: Boolean = true
+
+    def computesRangeOffsetFrames: Boolean = true
+
+    def defaultPreventsLostUpdate: Boolean = true
+
+    /** A violated reference fails whatever the conflict clause says, which is the correct behaviour. */
+    def conflictClauseEnforcesForeignKeys: Boolean = true
+
     /** No equivalent settings: this engine's simple protocol has no knob that respells a value it already stores. */
     def outputAffectingSettings: Chunk[String] = Chunk.empty
 
@@ -109,6 +122,16 @@ final class MysqlTestBackend extends SqlTestBackend:
 
     /** No array column type: a collection is carried inside a JSON document and reported as one. */
     def hasNativeArrayColumns: Boolean = false
+
+    def caseFoldingReachesPastAscii: Boolean = true
+
+    def likeFollowsColumnCollation: Boolean = true
+
+    def boundedTextColumn(name: String, maxChars: Int): String = s"$name VARCHAR($maxChars) NOT NULL"
+
+    def allowsConcurrentWriteTransactions: Boolean = true
+
+    def hasAdvisoryLocks: Boolean = true
 
     /** MySQL's `TIME` is a signed span from -838:59:59 to 838:59:59, so roughly half its range has no time-of-day reading. */
     def timeColumnIsSignedSpan: Boolean = true
@@ -144,7 +167,7 @@ final class MysqlTestBackend extends SqlTestBackend:
 
     def uniqueViolationSqlState: String = "23000"
 
-    def sessionIdSql: String = "CONNECTION_ID()"
+    def sessionIdSql: Maybe[String] = Present("CONNECTION_ID()")
 
     // Reads the level of the transaction actually in progress, which `@@transaction_isolation` does NOT report.
     // `SET TRANSACTION ISOLATION LEVEL` without a scope applies to the next transaction while the session variable
@@ -152,9 +175,20 @@ final class MysqlTestBackend extends SqlTestBackend:
     // except the one that happens to be the default. performance_schema is the only place the running
     // transaction's own level is visible, and the fixture already enables it. The thread lookup goes through
     // `performance_schema.threads` rather than `PS_CURRENT_THREAD_ID()`, which needs 8.0.16 or newer.
-    def isolationIntrospectionSql: String =
-        """SELECT ISOLATION_LEVEL FROM performance_schema.events_transactions_current
-          | WHERE THREAD_ID = (SELECT THREAD_ID FROM performance_schema.threads WHERE PROCESSLIST_ID = CONNECTION_ID())""".stripMargin
+    def sessionZoneStatements: Maybe[SqlTestBackend.SessionZone] =
+        Present(SqlTestBackend.SessionZone(west = "SET time_zone='-03:00'", utc = "SET time_zone='+00:00'"))
+
+    def isolationIntrospectionSql: Maybe[String] =
+        Present(
+            """SELECT ISOLATION_LEVEL FROM performance_schema.events_transactions_current
+              | WHERE THREAD_ID = (SELECT THREAD_ID FROM performance_schema.threads WHERE PROCESSLIST_ID = CONNECTION_ID())""".stripMargin
+        )
+
+    // All four, and MySQL's REPEATABLE READ is its own default rather than a substitution.
+    def honouredIsolationLevels: Set[SqlClient.IsolationLevel] = SqlClient.IsolationLevel.values.toSet
+
+    /** The driver pins it at connect, overriding this engine's own REPEATABLE READ default. */
+    def defaultIsolationLevel: SqlClient.IsolationLevel = SqlClient.IsolationLevel.ReadCommitted
 
     /** The MySQL fixture config, identical to the one [[SqlSharedContainers.withFreshMysqlSchema]] builds so both share one container per id.
       *
@@ -188,7 +222,7 @@ final class MysqlTestBackend extends SqlTestBackend:
                 "--performance-schema-events-transactions-history-long-size=0"
             )
 
-    def containerConfig: Container.Config = ContainerPredef.MySQL.buildContainerConfig(predefCfg)
+    def containerConfig: Maybe[Container.Config] = Present(ContainerPredef.MySQL.buildContainerConfig(predefCfg))
 
     private def freshSchemaName(using Frame): String < Sync =
         Random.nextLong.map(v => s"test_${(v & Long.MaxValue).toHexString}")
