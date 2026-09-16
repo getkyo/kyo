@@ -174,8 +174,15 @@ Native, or JS library primitive has no cross-platform Kyo wrapper.
   reflection, with a graceful `Handler.Noop` fallback when the class is absent
   (`jvm/src/main/scala/kyo/internal/OSSignalPlatformSpecific.scala:18-34`).
 - `IOPromisePlatformSpecific`: JVM-specific promise scheduling.
-- `StreamCompression`: deflate/inflate via `java.util.zip`, which has no equivalent
-  in Scala Native or JS standard libraries.
+- `Zip`: the compression primitives `StreamCompression` drives, passed through to
+  `java.util.zip`. The drivers themselves are in `shared/`, so this file is the whole
+  platform split for compression.
+
+**`js-native/`** (JS and Native share, the JVM diverges):
+- `Zip`: the same compression primitives, backed by `PortableZip` in `shared/`, a
+  DEFLATE codec in Scala. Neither host has `java.util.zip`, and neither needs a host
+  binding, so a page, a Node process and a native binary run the same codec and the
+  four methods keep the effect row they have on the JVM.
 
 **`native/`** (Scala Native only):
 - `OsSignalPlatformSpecific`: installs handlers via POSIX `signal()` using
@@ -186,7 +193,9 @@ Native, or JS library primitive has no cross-platform Kyo wrapper.
 - `AsyncPlatformSpecific`: empty trait; `CompletionStage` does not exist on JS.
 - `AsyncStubs.scala`: `LockSupport` stub that throws `UnsupportedOperationException`
   on any call; parking has no meaning on a single-threaded platform.
-- `OsSignalPlatformSpecific`: `Handler.Noop`; JS has no OS signals.
+- `OsSignalPlatformSpecific`: `process.on("SIG...")` on a Node-like host, so a
+  command-line application gets the same graceful shutdown the JVM does; `Handler.Noop`
+  in a page, which has no process to signal.
 - `hubsStubs.scala`: `CopyOnWriteArraySet` stub backed by `HashSet`.
 - `addersStubs.scala`, `timersSubs.scala`: stubs for absent JVM classes.
 - `VarHandle`, `JSServiceLoaderRegistry`, `ServiceLoader`: JS-specific
@@ -197,8 +206,10 @@ Native, or JS library primitive has no cross-platform Kyo wrapper.
 `OsSignal` (`shared/src/main/scala/kyo/internal/OSSignal.scala`) defines the
 abstract shape and the `Handler.Noop` fallback. Three platform leaves implement
 `OsSignalPlatformSpecific`: JVM uses `sun.misc.Signal` via reflection with a `Noop`
-fallback on missing classes, Native uses POSIX signals, JS-WASM is `Noop`. New OS
-capabilities should follow this same three-leaf pattern.
+fallback on missing classes, Native uses POSIX signals, and JS registers on the host's
+process where there is one and is `Noop` where there is not. New OS capabilities should
+follow the same pattern, and the JS leaf should split by host rather than assume the
+weaker of the two: a Node process and a page are not the same host.
 
 ### Rule for placing new code
 
