@@ -76,7 +76,8 @@ class CodexWireTest extends kyo.test.Test[Any]:
         )
     }
 
-    "threadStartParams carries only the LEADING system message in baseInstructions and registers the dynamic tools" in {
+    // Stages the thread's working directory on the file system, which a browser page has none of.
+    "threadStartParams carries only the LEADING system message in baseInstructions and registers the dynamic tools".notBrowser in {
         val ctx = Context.empty
             .systemMessage("AMBIENT PROMPT")
             .userMessage("question")

@@ -38,6 +38,15 @@ class FetchClientBackendTest extends kyo.test.Test[Any]:
             }
         }
 
+        "a request nothing answers fails rather than hanging" in {
+            // A closed port on the loopback host: the browser refuses it outright and the failure has to arrive as one,
+            // because a client that hangs here hangs every caller that retries on a transport failure.
+            Abort.run[HttpException](HttpClient.getText("http://127.0.0.1:1/")).map {
+                case Result.Failure(_: HttpConnectException) => assert(true, "the refusal arrived typed")
+                case other                                   => assert(false, s"the request ended as $other")
+            }
+        }
+
         "a path the server does not serve answers 404" in {
             HttpClient.getTextResponse("/there-is-no-such-file", failOnError = false).map { response =>
                 assert(response.status.code == 404, s"the status was ${response.status.code}")

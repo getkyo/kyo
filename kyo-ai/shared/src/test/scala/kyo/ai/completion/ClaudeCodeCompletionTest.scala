@@ -5,7 +5,8 @@ import kyo.ai.Config
 
 class ClaudeCodeCompletionTest extends kyo.test.Test[Any]:
 
-    "mcpConfigFile writes the exact config to a scoped JSON file" in Scope.run {
+    // Writes the config to a temp file for a CLI to read, and a browser page has neither.
+    "mcpConfigFile writes the exact config to a scoped JSON file".notBrowser in Scope.run {
         val config = """{"mcpServers":{"kyo":{"type":"ws","url":"ws://127.0.0.1:1234/mcp"}}}"""
         ClaudeCodeCompletion.mcpConfigFile(config).map { path =>
             Path.runReadOnly(path.read).map { contents =>

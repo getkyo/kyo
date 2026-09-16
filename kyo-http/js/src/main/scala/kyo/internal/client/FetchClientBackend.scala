@@ -80,7 +80,7 @@ final private[kyo] class FetchClientBackend extends PolicyClientBackend:
                         Abort.fail(HttpUnsupportedOnHostException(s"The $name header, which the browser sets itself,"))
                     case Absent =>
                         val url = requestUrl(request.url, path)
-                        fetch(url, request.method.name, headers, body).map { response =>
+                        fetch(request.url, url, request.method.name, headers, body).map { response =>
                             val code = status(response)
                             // A streaming route whose response is an error reads buffered, the same as over a socket: a service that
                             // answers a stream-typed endpoint with a small JSON error would otherwise leave that body trapped in a
@@ -90,12 +90,12 @@ final private[kyo] class FetchClientBackend extends PolicyClientBackend:
                                     route,
                                     HttpStatus(code),
                                     responseHeaders(response),
-                                    bodyStream(response),
+                                    bodyStream(response, request.url),
                                     route.method.name,
                                     request.url
                                 )(f)
                             else
-                                readBody(response).map { bytes =>
+                                readBody(response, request.url).map { bytes =>
                                     // The cap the caller configured still holds in a page: the browser has the bytes, and this is
                                     // where a buffered body would otherwise be handed on past the size it agreed to take.
                                     if bytes.size > maxResponseLength then
@@ -123,7 +123,7 @@ final private[kyo] class FetchClientBackend extends PolicyClientBackend:
                 s"$scheme://$authority$path"
             case _ => path
 
-    private def fetch(url: String, method: String, headers: HttpHeaders, body: Maybe[Span[Byte]])(using
+    private def fetch(target: HttpUrl, url: String, method: String, headers: HttpHeaders, body: Maybe[Span[Byte]])(using
         Frame
     ): js.Dynamic < (Async & Abort[HttpException]) =
         Sync.defer {
@@ -133,15 +133,21 @@ final private[kyo] class FetchClientBackend extends PolicyClientBackend:
             init.updateDynamic("headers")(jsHeaders)
             body.foreach(span => init.updateDynamic("body")(new Uint8Array(span.toArray.toTypedArray.buffer)))
             js.Dynamic.global.fetch(url, init).asInstanceOf[js.Promise[js.Dynamic]]
-        }.map { promise =>
-            Abort.run[Throwable](Async.fromFuture(promise.toFuture)).map {
-                case Result.Success(response) => response
-                // A fetch rejects with a TypeError that names no cause: a refused connection, a DNS failure, a CORS
-                // rejection and a certificate the browser will not trust all arrive the same way, by design, so the
-                // failure says what kyo knows rather than inventing a distinction.
-                case Result.Failure(t) => Abort.fail(HttpConnectException("", 0, t))
-                case Result.Panic(t)   => Abort.panic(t)
-            }
+        }.map(promise => awaited(promise, target))
+
+    /** Awaits a browser promise, with a rejection as this client's typed connect failure.
+      *
+      * A fetch rejects with a `TypeError` that names no cause: a refused connection, a DNS failure, a CORS rejection and a certificate the
+      * browser will not trust all arrive the same way, by design, so the failure says what kyo knows rather than inventing a distinction.
+      * The rejection reaches kyo as a panic, because a `Future` carries no typed failure for `Async.fromFuture` to keep, and it is turned
+      * back into one here. A panic that is not the browser's rejection stays a panic: that would be a fault in this file.
+      */
+    private def awaited[A](promise: js.Promise[A], target: HttpUrl)(using Frame): A < (Async & Abort[HttpException]) =
+        Abort.run[Throwable](Async.fromFuture(promise.toFuture)).map {
+            case Result.Success(value)                   => value
+            case Result.Failure(t)                       => Abort.fail(HttpConnectException(target.host, target.port, t))
+            case Result.Panic(t: js.JavaScriptException) => Abort.fail(HttpConnectException(target.host, target.port, t))
+            case Result.Panic(t)                         => Abort.panic(t)
         }
 
     /** The response body as it arrives, read through the `ReadableStream` the fetch specification gives it.
@@ -149,7 +155,7 @@ final private[kyo] class FetchClientBackend extends PolicyClientBackend:
       * A body the browser reports as absent (a 204, a `HEAD`, a response the page was handed from cache without one) has no reader to open,
       * and reads as an empty stream rather than a failure.
       */
-    private def bodyStream(response: js.Dynamic)(using Frame): Stream[Span[Byte], Async] =
+    private def bodyStream(response: js.Dynamic, target: HttpUrl)(using Frame): Stream[Span[Byte], Async] =
         Stream[Span[Byte], Async] {
             val open: Maybe[js.Dynamic] < Sync =
                 Sync.defer(if js.isUndefined(response.body) || response.body == null then Absent else Present(response.body.getReader()))
@@ -157,7 +163,7 @@ final private[kyo] class FetchClientBackend extends PolicyClientBackend:
                 case Absent => Kyo.unit
                 case Present(reader) =>
                     Loop.foreach {
-                        readChunk(reader).map {
+                        readChunk(reader, target).map {
                             case Present(span) => Emit.valueWith(Chunk(span))(Loop.continue)
                             case Absent        => Loop.done
                         }
@@ -170,9 +176,9 @@ final private[kyo] class FetchClientBackend extends PolicyClientBackend:
       * A stream carries no typed failure, so a body that stops mid-transfer arrives as a panic. That is louder than the alternative, which
       * is to end the stream and hand the caller a body it cannot tell from a complete one.
       */
-    private def readChunk(reader: js.Dynamic)(using Frame): Maybe[Span[Byte]] < Async =
+    private def readChunk(reader: js.Dynamic, target: HttpUrl)(using Frame): Maybe[Span[Byte]] < Async =
         Sync.defer(reader.read().asInstanceOf[js.Promise[js.Dynamic]]).map { promise =>
-            Abort.run[Throwable](Async.fromFuture(promise.toFuture)).map {
+            Abort.run[HttpException](awaited(promise, target)).map {
                 case Result.Success(chunk) =>
                     if chunk.done.asInstanceOf[Boolean] then Absent
                     else
@@ -180,19 +186,15 @@ final private[kyo] class FetchClientBackend extends PolicyClientBackend:
                         // The chunk is a view over a buffer the browser owns and may reuse, and it rarely starts at its beginning, so the
                         // bytes are copied out of the view's own window rather than read from the buffer's start.
                         Present(Span.from(new Int8Array(bytes.buffer, bytes.byteOffset, bytes.length).toArray))
-                case Result.Failure(t) => Abort.panic(HttpConnectException("", 0, t))
+                case Result.Failure(e) => Abort.panic(e)
                 case Result.Panic(t)   => Abort.panic(t)
             }
         }
 
-    private def readBody(response: js.Dynamic)(using Frame): Span[Byte] < (Async & Abort[HttpException]) =
-        Sync.defer(response.arrayBuffer().asInstanceOf[js.Promise[ArrayBuffer]]).map { promise =>
-            Abort.run[Throwable](Async.fromFuture(promise.toFuture)).map {
-                case Result.Success(buffer) => Span.from(new Int8Array(buffer).toArray)
-                case Result.Failure(t)      => Abort.fail(HttpConnectException("", 0, t))
-                case Result.Panic(t)        => Abort.panic(t)
-            }
-        }
+    private def readBody(response: js.Dynamic, target: HttpUrl)(using Frame): Span[Byte] < (Async & Abort[HttpException]) =
+        Sync.defer(response.arrayBuffer().asInstanceOf[js.Promise[ArrayBuffer]])
+            .map(promise => awaited(promise, target))
+            .map(buffer => Span.from(new Int8Array(buffer).toArray))
 
     /** Opens the page's own `WebSocket` and runs the session over it.
       *
@@ -446,11 +448,18 @@ private[kyo] object FetchClientBackend:
         end if
     end socketUrl
 
-    /** The frame a message event carries, or `Absent` when it is larger than the session allows. */
+    /** The frame a message event carries, or `Absent` when it is larger than the session allows.
+      *
+      * The limit counts bytes, and a text frame's characters are not its bytes: one character encodes to at most three of them, so a
+      * message short enough that even the worst case fits is taken without encoding it, and only the rest is measured exactly.
+      */
     private[client] def payload(data: Any, maxFrameSize: Int): Maybe[HttpWebSocket.Payload] =
         data match
             case text: String =>
-                if text.length > maxFrameSize then Absent else Present(HttpWebSocket.Payload.Text(text))
+                val fits =
+                    if text.length <= maxFrameSize / 3 then true
+                    else text.getBytes("UTF-8").length <= maxFrameSize
+                if fits then Present(HttpWebSocket.Payload.Text(text)) else Absent
             case other =>
                 val buffer = other.asInstanceOf[ArrayBuffer]
                 if buffer.byteLength > maxFrameSize then Absent

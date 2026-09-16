@@ -105,7 +105,8 @@ class CompletionTest extends kyo.test.Test[Any]:
         assert(ex.isInstanceOf[AITransientException], "a transport failure retries")
     }
 
-    "the streaming error path types an HTTP failure identically to gen (routed through classifyHttp, not blanket AITransportException)" in {
+    // Stands up the failing endpoint itself rather than scripting one, so the provider-server gate does not cover it.
+    "the streaming error path types an HTTP failure identically to gen (routed through classifyHttp, not blanket AITransportException)".notBrowser in {
         val route = HttpRoute.postRaw("unauthorized").request(_.bodyText).handler { _ => HttpResponse.unauthorized }
         HttpServer.initWith(HttpServerConfig.default)(route) { server =>
             val request = Completion.StreamRequest(s"http://127.0.0.1:${server.port}/unauthorized", Seq.empty, "{}")

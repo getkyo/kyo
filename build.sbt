@@ -2136,9 +2136,7 @@ lazy val `kyo-ai` =
         .jvmSettings(mimaCheck(false))
         .jsSettings(
             `js-settings`,
-            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
-            // Provider transports are kyo-http over sockets, which a page has not. No browser row.
-            kyoBrowserRow := false
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
         )
         .nativeSettings(
             `native-settings`,
@@ -2192,7 +2190,8 @@ lazy val `kyo-jsonrpc-http` =
         .jsSettings(
             `js-settings`,
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
-            // Its transport is kyo-http over sockets, which a page has not. No browser row.
+            // Every leaf stands up an HttpServer and talks to it, and a page cannot bind a port. A page's client is
+            // fetch, which kyo-http's own browser row covers. No browser row.
             kyoBrowserRow := false
         )
 

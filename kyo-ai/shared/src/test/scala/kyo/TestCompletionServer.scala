@@ -119,6 +119,15 @@ object TestCompletionServer:
     private def bind[A, S](streaming: Boolean)(f: TestCompletionServer => A < S)(using
         Frame
     ): A < (S & Async & Scope & Abort[HttpBindException]) =
+        // Every leaf that scripts a provider needs a provider to script, which is a server on a port. A browser page has
+        // no port to bind, so the leaf has nothing to run rather than something to fail.
+        if kyo.internal.Platform.isBrowser then
+            Sync.defer(throw new kyo.test.TestCancelled("this test scripts a provider server, and this host is a browser page"))
+        else bindHere(streaming)(f)
+
+    private def bindHere[A, S](streaming: Boolean)(f: TestCompletionServer => A < S)(using
+        Frame
+    ): A < (S & Async & Scope & Abort[HttpBindException]) =
         for
             scripts  <- AtomicRef.init(Chunk.empty[Scripted])
             received <- AtomicRef.init(Chunk.empty[Captured])
