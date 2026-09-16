@@ -306,10 +306,12 @@ class WebsiteMainTest extends WebsiteTest:
             Abort.run[WebsiteException](WebsiteMain.parseBundleDir(Chunk.empty[String], repoRoot.toString))
 
         def assertNotFound(result: Result[WebsiteException, String], repoRoot: java.nio.file.Path): Unit =
-            val expected = repoRoot.resolve("kyo-website-bundle/js/target").toString
+            val expected = repoRoot.resolve("kyo-website-bundle").resolve("js").resolve("target")
             result match
                 case Result.Failure(WebsiteBundleNotFoundException(searched)) =>
-                    assert(searched.toString == expected, s"must name the searched target directory, got: $searched")
+                    // Compared as paths, not as strings: `searched` is a kyo Path, which renders with `/` everywhere, while a
+                    // java.nio path renders with the platform separator, so the strings differ on Windows for the same directory.
+                    assert(searched.toJava.equals(expected), s"must name the searched target directory $expected, got: $searched")
                 case other =>
                     assert(false, s"expected WebsiteBundleNotFoundException for $expected, got: $other")
             end match
