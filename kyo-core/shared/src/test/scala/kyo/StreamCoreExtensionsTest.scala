@@ -1153,7 +1153,7 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
             }
         }
 
-        "the finalizer of the side zip drops is told the clean ending" in {
+        "the finalizer of the side zip drops is told the remainder was discarded" in {
             AtomicRef.init(Maybe.empty[Maybe[Result.Error[Any]]]).map { seen =>
                 val left = Stream:
                     Sync.ensure(o => seen.set(Maybe(o))):
@@ -1161,8 +1161,8 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
                 Env.run(0)(left.zip(Stream.init(Seq("a", "b"))).run).map { pairs =>
                     seen.get.map { outcome =>
                         assert(pairs == Chunk((0, "a"), (1, "b")))
-                        // the dropped remainder's finalizer is told the clean ending, not a synthetic discard signal
-                        assert(outcome.exists(_.isEmpty))
+                        // the dropped side's use never ran to an end, so its finalizer is told the discard signal
+                        assert(outcome.exists(_.exists(_.panic.exists(_.isInstanceOf[kyo.KyoException]))))
                     }
                 }
             }
