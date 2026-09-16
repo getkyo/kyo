@@ -13,7 +13,7 @@ import kyo.ffi.Ffi
   * Each test creates a `TaggedResource` with known values, passes it to a C function that reads the relevant field, and verifies the
   * result.
   */
-class ItStructPtrTest extends ItTestBase:
+class ItStructPtrTest extends Test:
 
     "kyo_it_struct_read_handle" - {
         "struct with opaque field: C reads handle and returns stored int value" in {

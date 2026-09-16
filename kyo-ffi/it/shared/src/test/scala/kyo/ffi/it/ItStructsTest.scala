@@ -17,7 +17,7 @@ import kyo.ffi.Ffi
   *
   * Multi-input rows against the bindings, each row crosses the FFI boundary at least once.
   */
-class ItStructsTest extends ItTestBase:
+class ItStructsTest extends Test:
 
     private val pi = 3.141592653589793
 

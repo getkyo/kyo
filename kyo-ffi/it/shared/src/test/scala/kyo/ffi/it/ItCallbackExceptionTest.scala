@@ -14,7 +14,7 @@ import kyo.ffi.Ffi
   * C call stack. These tests capture stderr and assert the diagnostic is present; they also assert the FFI call completes rather than
   * crashing the process.
   */
-class ItCallbackExceptionTest extends ItTestBase:
+class ItCallbackExceptionTest extends Test:
 
     // Touches process-global state (global stderr/system property, or the shared CallbackRegistry pool/hooks) and so
     // must run alone: under the default parallel leaf execution a sibling leaf observes or mutates the same global.

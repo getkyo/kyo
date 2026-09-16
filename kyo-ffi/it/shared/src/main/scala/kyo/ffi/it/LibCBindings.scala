@@ -10,9 +10,9 @@ import kyo.ffi.Ffi
   * name from the companion's `Ffi.Config`. The library literal must be a compile-time string constant, the codegen rejects runtime
   * references.
   *
-  * A bare "c" works on JVM (Foreign Linker's default `dlopen`) and Native (Scala Native auto-links libc). On Scala.js macOS needs a path
-  * override; see `SystemLibraryInit` / `SystemLibraryInitImpl` for the JS-side env-var priming that lets the same "c" literal resolve via
-  * koffi.
+  * A bare "c" works on JVM (Foreign Linker's default `dlopen`) and Native (Scala Native auto-links libc). On Scala.js the loader resolves
+  * it, as it does for any application, to the symbols already loaded into the Node process (koffi's process scope), which include libc on
+  * every POSIX host, so no path is involved.
   */
 trait LibCBindings extends Ffi:
     def strlen(s: String)(using AllowUnsafe): Long

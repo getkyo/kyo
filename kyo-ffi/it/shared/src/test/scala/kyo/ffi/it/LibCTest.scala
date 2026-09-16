@@ -8,12 +8,9 @@ import kyo.ffi.Ffi
   *
   * Lives under `shared/src/test/` so it runs on JVM, Native, and JS.
   *
-  * `SystemLibraryInit.force()` (run from `ItTestBase` at suite instantiation) ensures the JS-side `KYO_FFI_*_PATH` env vars are set before
-  * the first `Ffi.load`. It is a no-op on JVM and Native.
-  *
   * Table-driven density, each row invokes a binding method at least once so every row crosses the FFI boundary.
   */
-class LibCTest extends ItTestBase:
+class LibCTest extends Test:
 
     "strlen" - {
         "empty string returns 0" in {

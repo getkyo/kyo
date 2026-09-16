@@ -15,7 +15,7 @@ import kyo.ffi.Ffi
   *
   * All tests skip with `cancel` on non-macOS/BSD hosts where kqueue is unavailable.
   */
-class KqueueTest extends ItTestBase:
+class KqueueTest extends Test:
 
     // `kyo.internal.Platform.isMacOrBsd` reads `os.name` on JVM and `process.platform` on JS/Wasm (and a
     // link-time constant on Native), so this test runs the real koffi `kevent` on Node too, not just JVM/Native.

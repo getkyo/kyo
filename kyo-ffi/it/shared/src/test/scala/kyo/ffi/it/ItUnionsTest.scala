@@ -13,7 +13,7 @@ import kyo.ffi.Ffi
   * If the reinterpretation works on every platform, the union's shared-bytes semantics are confirmed: the same 4 bytes can be seen as
   * either an int or a float and the bit pattern is preserved across the FFI boundary.
   */
-class ItUnionsTest extends ItTestBase:
+class ItUnionsTest extends Test:
 
     // IEEE-754 single-precision encoding of 42.0f is 0x42280000. Written as Int, read as Float should yield 42.0f.
     private val IntBitsOf42f: Int = 0x42280000

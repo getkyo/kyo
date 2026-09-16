@@ -3,7 +3,7 @@ package kyo.ffi.it
 import kyo.*
 import kyo.ffi.*
 
-class ItOpaqueTest extends ItTestBase:
+class ItOpaqueTest extends Test:
 
     private lazy val bindings = Ffi.load[ItOpaqueBindings]
 

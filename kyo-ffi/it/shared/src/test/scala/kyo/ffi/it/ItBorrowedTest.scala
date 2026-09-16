@@ -10,7 +10,7 @@ import kyo.ffi.Ffi
   * The intentional leak in `kyo_it_malloc_chunk` is the right call for this test: we are validating borrowed-buffer semantics (wrap + size
   * + read), not memory management. The test process's lifetime bounds the leak.
   */
-class ItBorrowedTest extends ItTestBase:
+class ItBorrowedTest extends Test:
 
     "kyoItMallocChunk" - {
         "returns a borrowed Buffer[Byte] filled with 0xAB at every byte" in {

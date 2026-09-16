@@ -14,7 +14,7 @@ import kyo.ffi.Ffi
   *
   * All tests skip with `cancel` on non-Linux hosts where epoll is unavailable.
   */
-class EpollTest extends ItTestBase:
+class EpollTest extends Test:
 
     // `kyo.internal.Platform.isLinux` reads `os.name` on JVM and `process.platform` on JS/Wasm (and a link-time
     // constant on Native), so this test runs the real koffi `epoll_wait` on Node too, not just JVM/Native.

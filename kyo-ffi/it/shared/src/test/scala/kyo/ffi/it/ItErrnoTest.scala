@@ -13,7 +13,7 @@ import kyo.ffi.FfiErrno
   *
   * `EINVAL` is numerically 22 on Linux, macOS, and Windows.
   */
-class ItErrnoTest extends ItTestBase:
+class ItErrnoTest extends Test:
 
     // errno capture across the foreign boundary requires both sides to read the same CRT's
     // errno. The MinGW-built test library and the JVM's Panama capture share the UCRT, but

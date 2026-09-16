@@ -2,7 +2,7 @@ package kyo.ffi.it
 
 import kyo.ffi.*
 
-class ItEnumTest extends ItTestBase:
+class ItEnumTest extends Test:
 
     private lazy val bindings = Ffi.load[ItEnumBindings]
 

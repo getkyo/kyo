@@ -20,12 +20,10 @@ through the same code paths a downstream consumer would hit.
 
 ```
 kyo-ffi-it/
-  shared/src/main/scala/  # binding traits + shared SystemLibraryInit (common to all 3)
+  shared/src/main/scala/  # binding traits (common to all 3)
   shared/src/main/c/      # bundled C sources
   shared/src/test/scala/  # cross-platform tests (run on all 3 platforms)
-  jvm/src/main/scala/     # JVM-side SystemLibraryInitImpl (no-op)
-  native/src/main/scala/  # Native-side SystemLibraryInitImpl (no-op)
-  js/src/main/scala/      # JS-side SystemLibraryInitImpl (koffi env-var priming)
+  js/src/test/scala/      # JS-only tests, including how libc and libm resolve there
   jvm-native/src/test/    # tests needing POSIX, runs on JVM + Native, excluded from JS
 ```
 
@@ -58,31 +56,31 @@ The `-Dplatform=` flag selects the root aggregate (see `build.sbt`
 
 `LibCBindings.Ffi.Config.library = "c"` resolves at runtime through the
 JVM's Foreign Linker, which uses `SymbolLookup.libraryLookup` →
-`dlopen(3)`. Works on macOS and Linux out of the box. `SystemLibraryInit`
-is a no-op on JVM.
+`dlopen(3)`. Works on macOS and Linux out of the box.
 
 ### Native, implicit libc linking
 
 Scala Native auto-links libc for any `@extern` declaration. The codegen
 emits `@link("c")` redundantly; Scala Native silently folds it into the
 default libc link, no warning observed in 0.5.x on macOS.
-`SystemLibraryInit` is a no-op on Native.
 
-### JS, koffi library path injection
+### JS, system libraries through the process scope
 
-`koffi` (Node.js FFI library) loads shared libraries by absolute path.
-A bare `"c"` fails on macOS (libc is folded into `libSystem`). The
-JS-side `SystemLibraryInitImpl` detects `process.platform` and primes
-`process.env.KYO_FFI_C_PATH` / `KYO_FFI_M_PATH` with the correct path
-(`/usr/lib/libSystem.B.dylib` on darwin, `libc.so.6` on linux) at module
-init. `NativeLoader.jsResolve` consults these env vars before falling
-through to npm-package resolution or the bare library name. Tests
-**must** call `SystemLibraryInit.force()` in `beforeAll` so the init
-block fires before the first `Ffi.load[_]`.
+A bare `"c"` is not a loadable file on every host (on macOS libc is
+folded into `libSystem`, and on glibc Linux `libc.so` is a linker
+script), so `NativeLoader.jsResolve` maps the system libraries (`c`,
+`m`, `pthread`, `dl`, `rt`) to koffi's process scope: the symbols
+already loaded into the Node process, which carry libc and libm on every
+POSIX host. The tests resolve them exactly as an application does, with
+no `KYO_FFI_C_PATH` or `KYO_FFI_M_PATH` set; `LibCBindingsJsTest` and
+`LibMBindingsJsTest` hold the row to that.
 
-The Scala.js linker is configured to emit a CommonJS module
-(`ModuleKind.CommonJSModule`) so Node's `require('koffi')` resolves at
-runtime. `build.sbt` auto-installs `koffi` into
+The bundled library is staged beside the linked test program by the
+plugin's `ffiWithJsNatives`, where the loader finds it the same way.
+The Scala.js linker emits a CommonJS module
+(`ModuleKind.CommonJSModule`) for this row, so koffi resolves through
+the CommonJS branch of `PlatformJs.moduleRequire`, which the ES module
+rows of kyo-ffi do not take. `build.sbt` auto-installs `koffi` into
 `kyo-ffi/it/js/target/node_modules` the first time `kyo-ffi-itJS/test`
 runs; subsequent runs are idempotent.
 

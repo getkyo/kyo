@@ -13,7 +13,7 @@ import kyo.ffi.Ffi
   *
   * Lives under `jvm/src/test/` because `java.util.concurrent` threading is JVM-specific and the JS runtime is single-threaded by design.
   */
-class ItConcurrentCallsTest extends ItTestBase:
+class ItConcurrentCallsTest extends Test:
 
     private val threads        = 8
     private val callsPerThread = 1000

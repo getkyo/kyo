@@ -19,7 +19,7 @@ import kyo.ffi.Ffi
   * Multi-input transient + retained rows. Each row invokes a binding, transient sort rows cross the FFI boundary via `kyoItSortInts`;
   * retained rows via `kyoItRegisterListener` + `kyoItFireListener`.
   */
-class ItCallbacksTest extends ItTestBase:
+class ItCallbacksTest extends Test:
 
     // Transient and retained callbacks claim slots from the process-global CallbackRegistry; run this suite's leaves
     // sequentially so concurrent leaves do not collide on registry slots (which corrupts the comparator/listener a C

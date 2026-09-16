@@ -12,7 +12,7 @@ import kyo.ffi.internal.BlockingMeter
   * burst throws at ~the 257th call (koffi's default 256 pool); with the meter every call is admitted-or-queued and none throws, and the
   * observed peak in-flight count stays at or below the configured bound -- proving it is the meter, not merely a raised pool, that holds.
   */
-class BlockingMeterTest extends ItTestBase:
+class BlockingMeterTest extends Test:
 
     "@Ffi.blocking dispatch meter" - {
         "a single-macrotask burst far beyond koffi's pool is metered, not thrown" in {

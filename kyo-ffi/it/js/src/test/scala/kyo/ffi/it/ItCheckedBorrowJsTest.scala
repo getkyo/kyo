@@ -11,7 +11,7 @@ import scala.scalajs.js as sjs
   * A checked borrow is tied to the current borrow owner, so rotating the owner revokes it; an unchecked one is not. Both leaves call the same
   * generated binding and differ only in the seed.
   */
-class ItCheckedBorrowJsTest extends ItTestBase:
+class ItCheckedBorrowJsTest extends Test:
 
     // Rotates the process-wide borrow owner and installs a process-wide seed.
     override def config = super.config.sequential

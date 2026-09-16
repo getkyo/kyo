@@ -9,7 +9,7 @@ import kyo.ffi.Ffi
   * platforms exercise the non-variadic path; JVM and JS additionally run the variadic surface in their platform-specific specs
   * ([[kyo.ffi.it.ItVarargsSpec]] lives under `{jvm,js}/src/test`).
   */
-class ItSumFixedTest extends ItTestBase:
+class ItSumFixedTest extends Test:
 
     "kyoItSumFixed3" - {
         "1 + 2 + 3 = 6" in {

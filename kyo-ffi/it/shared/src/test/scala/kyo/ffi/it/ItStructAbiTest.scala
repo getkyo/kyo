@@ -16,7 +16,7 @@ import kyo.ffi.internal.StructAbiCheck
   *      look like when a user misconfigures `packedStructs`" scenario. Synthetic because every emitter path derives both sides from the
   *      same Scala case-class layout; a real cross-platform disagreement requires hand-editing generated output.
   */
-class ItStructAbiTest extends ItTestBase:
+class ItStructAbiTest extends Test:
 
     "end-to-end struct ABI self-check" - {
         "ItStructsBindings impl loads successfully, transitively asserting StructAbiCheck passes for every struct" in {

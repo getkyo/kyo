@@ -10,7 +10,7 @@ import kyo.ffi.Ffi
   * Adds invariant-style rows (`sin² + cos² = 1`, `sqrt(x)² ≈ x`, …) and table-driven inputs. Each row invokes a binding method at least
   * once so every assertion crosses the FFI boundary.
   */
-class LibMTest extends ItTestBase:
+class LibMTest extends Test:
 
     // absolute tolerance for inexact IEEE-754 results; libm functions are
     // correctly rounded to last ULP on common platforms, but chaining two

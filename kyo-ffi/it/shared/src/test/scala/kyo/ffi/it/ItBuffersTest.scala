@@ -12,7 +12,7 @@ import kyo.ffi.Ffi
   *
   * Buffer-length + fill-value rows. Each row invokes the binding at least once.
   */
-class ItBuffersTest extends ItTestBase:
+class ItBuffersTest extends Test:
 
     "kyoItSumInts" - {
         "sum of 1..5 is 15" in {

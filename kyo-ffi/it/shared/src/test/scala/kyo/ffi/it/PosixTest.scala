@@ -12,7 +12,7 @@ import kyo.internal.Platform
   * bracketed against the JVM wall clock), and `getenv` (borrowed-String return round-tripped against `java.lang.System.getenv`), extending the
   * stability and cross-call invariants over longer iteration counts.
   */
-class PosixTest extends ItTestBase:
+class PosixTest extends Test:
 
     private def assumePosixSymbols(): Unit =
         if Platform.isWindows then

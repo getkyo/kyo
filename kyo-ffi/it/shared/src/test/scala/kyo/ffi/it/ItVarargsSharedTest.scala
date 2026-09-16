@@ -10,7 +10,7 @@ import kyo.ffi.Ffi
   * Native does not extend this spec because Scala Native's `@extern` cannot express variadic function pointers; Native uses the fixed-arity
   * workaround instead (see [[ItSumFixedSpec]]).
   */
-abstract class ItVarargsSharedTest extends ItTestBase:
+abstract class ItVarargsSharedTest extends Test:
 
     "kyoItSumVarargs" - {
         "empty varargs sums to zero when count = 0" in {
