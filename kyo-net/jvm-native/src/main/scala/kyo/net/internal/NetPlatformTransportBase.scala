@@ -1,6 +1,7 @@
 package kyo.net.internal
 
 import kyo.*
+import kyo.net.NetException
 import kyo.net.Transport
 import kyo.net.internal.backend.IoBackendPlatform
 
@@ -16,4 +17,8 @@ private[kyo] trait NetPlatformTransportBase:
       */
     def configuredProcessLifetime()(using AllowUnsafe, Frame): Transport =
         ProcessSharedTransport.whileBuilding(IoBackendPlatform.transport())
+
+    /** `transport` once its backend is loaded. The JVM and Native select the backend when the transport is built, so it already is. */
+    def loaded(transport: Transport)(using AllowUnsafe, Frame): Fiber.Unsafe[Transport, Abort[NetException]] =
+        Fiber.Unsafe.fromResult(Result.succeed(transport))
 end NetPlatformTransportBase

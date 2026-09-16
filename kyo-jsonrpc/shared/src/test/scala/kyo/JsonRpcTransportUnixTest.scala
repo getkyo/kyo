@@ -8,7 +8,8 @@ import kyo.test.HostFilter
   * `TransportUnixSocketTest`.
   *
   * Every leaf gates on `Transport.supportsUnixSockets` and cancels where the transport cannot bind AF_UNIX paths (Node on Windows maps the
-  * local domain to named pipes, so a filesystem listen path fails EACCES there), mirroring `TransportUnixSocketTest`.
+  * local domain to named pipes, so a filesystem listen path fails EACCES there), mirroring `TransportUnixSocketTest`. The gate reads it through
+  * `NetPlatform.loadedTransport`, because on Scala.js the backend, and so the answer, exists only once the transport has loaded it.
   */
 class JsonRpcTransportUnixTest extends JsonRpcTest:
 
@@ -17,8 +18,10 @@ class JsonRpcTransportUnixTest extends JsonRpcTest:
 
     import AllowUnsafe.embrace.danger
 
-    private def assumeUnixSockets()(using Frame): Unit =
-        if !NetPlatform.transport.supportsUnixSockets then cancel("AF_UNIX sockets unsupported on this platform")
+    private def assumeUnixSockets()(using Frame): Unit < (Async & Abort[kyo.net.NetException]) =
+        NetPlatform.loadedTransport.map { transport =>
+            if !transport.supportsUnixSockets then cancel("AF_UNIX sockets unsupported on this platform")
+        }
 
     /** Connect a client to `sock`, send `payload`, and close. kyo-net flushes the queued outbound bytes before releasing the socket, so the
       * server receives the frame even though the client closes immediately after the put.
@@ -29,74 +32,78 @@ class JsonRpcTransportUnixTest extends JsonRpcTest:
         }
 
     "unixDomain binds and accepts a connection" in {
-        assumeUnixSockets()
-        Path.run(Path.tempDir("kyo-jsonrpc-uds-").map { tempDir =>
-            val sock = Path(tempDir, "test.sock")
-            Scope.run {
-                JsonRpcTransport.unixDomain(sock).map { _ =>
-                    sock.exists.map(exists => assert(exists)).andThen {
-                        NetPlatform.transport.connectUnix(sock.toString).safe.get.map { client =>
-                            Sync.defer {
-                                val open = client.isOpen
-                                client.close()
-                                assert(open)
+        assumeUnixSockets().andThen {
+            Path.run(Path.tempDir("kyo-jsonrpc-uds-").map { tempDir =>
+                val sock = Path(tempDir, "test.sock")
+                Scope.run {
+                    JsonRpcTransport.unixDomain(sock).map { _ =>
+                        sock.exists.map(exists => assert(exists)).andThen {
+                            NetPlatform.transport.connectUnix(sock.toString).safe.get.map { client =>
+                                Sync.defer {
+                                    val open = client.isOpen
+                                    client.close()
+                                    assert(open)
+                                }
                             }
                         }
                     }
                 }
-            }
-        })
+            })
+        }
     }
 
     "unixDomain round-trips one envelope" in {
-        assumeUnixSockets()
-        Path.run(Path.tempDir("kyo-jsonrpc-uds-").map { tempDir =>
-            val sock = Path(tempDir, "test.sock")
-            Scope.run {
-                JsonRpcTransport.unixDomain(sock).map { t =>
-                    clientSend(sock, """{"jsonrpc":"2.0","method":"ping"}""" + "\n").andThen {
-                        t.incoming.take(1).run.map { frames =>
-                            assert(frames.size == 1)
-                            frames.head match
-                                case JsonRpcNotification("ping", _, _) => succeed
-                                case other                             => fail(s"unexpected $other")
+        assumeUnixSockets().andThen {
+            Path.run(Path.tempDir("kyo-jsonrpc-uds-").map { tempDir =>
+                val sock = Path(tempDir, "test.sock")
+                Scope.run {
+                    JsonRpcTransport.unixDomain(sock).map { t =>
+                        clientSend(sock, """{"jsonrpc":"2.0","method":"ping"}""" + "\n").andThen {
+                            t.incoming.take(1).run.map { frames =>
+                                assert(frames.size == 1)
+                                frames.head match
+                                    case JsonRpcNotification("ping", _, _) => succeed
+                                    case other                             => fail(s"unexpected $other")
+                            }
                         }
                     }
                 }
-            }
-        })
+            })
+        }
     }
 
     "unixDomain Scope cleanup deletes socket file" in {
-        assumeUnixSockets()
-        Path.run(Path.tempDir("kyo-jsonrpc-uds-").map { tempDir =>
-            val sock = Path(tempDir, "test.sock")
-            Scope.run {
-                JsonRpcTransport.unixDomain(sock).map(_ => ())
-            }.andThen {
-                sock.exists.map(exists => assert(!exists))
-            }
-        })
+        assumeUnixSockets().andThen {
+            Path.run(Path.tempDir("kyo-jsonrpc-uds-").map { tempDir =>
+                val sock = Path(tempDir, "test.sock")
+                Scope.run {
+                    JsonRpcTransport.unixDomain(sock).map(_ => ())
+                }.andThen {
+                    sock.exists.map(exists => assert(!exists))
+                }
+            })
+        }
     }
 
     "unixDomain framer override changes wire shape" in {
-        assumeUnixSockets()
-        Path.run(Path.tempDir("kyo-jsonrpc-uds-").map { tempDir =>
-            val sock = Path(tempDir, "test.sock")
-            Scope.run {
-                JsonRpcTransport.unixDomain(sock, framer = JsonRpcFramer.contentLength).map { t =>
-                    val body = """{"jsonrpc":"2.0","method":"p"}"""
-                    clientSend(sock, s"Content-Length: ${body.length}\r\n\r\n$body").andThen {
-                        t.incoming.take(1).run.map { frames =>
-                            assert(frames.size == 1)
-                            frames.head match
-                                case JsonRpcNotification("p", _, _) => succeed
-                                case other                          => fail(s"unexpected $other")
+        assumeUnixSockets().andThen {
+            Path.run(Path.tempDir("kyo-jsonrpc-uds-").map { tempDir =>
+                val sock = Path(tempDir, "test.sock")
+                Scope.run {
+                    JsonRpcTransport.unixDomain(sock, framer = JsonRpcFramer.contentLength).map { t =>
+                        val body = """{"jsonrpc":"2.0","method":"p"}"""
+                        clientSend(sock, s"Content-Length: ${body.length}\r\n\r\n$body").andThen {
+                            t.incoming.take(1).run.map { frames =>
+                                assert(frames.size == 1)
+                                frames.head match
+                                    case JsonRpcNotification("p", _, _) => succeed
+                                    case other                          => fail(s"unexpected $other")
+                            }
                         }
                     }
                 }
-            }
-        })
+            })
+        }
     }
 
 end JsonRpcTransportUnixTest

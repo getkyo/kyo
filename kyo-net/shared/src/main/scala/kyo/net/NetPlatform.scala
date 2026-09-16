@@ -8,10 +8,12 @@ import kyo.*
   *   - JVM: the posix transport (io_uring/epoll on Linux, kqueue on macOS/BSD) over Panama FFI, falling back to the pure-JDK NIO Selector floor
   *     when no posix syscall is available or `-Dkyo.net.backend=nio` forces it
   *   - Native: io_uring/epoll (Linux) or kqueue (macOS/BSD)
-  *   - JS: Node.js net module
+  *   - JS: on a Node-like host, the posix transport over koffi or Node's own net module; in a page, none, and every operation fails with
+  *     [[NetBackendUnavailableException]]
   *
   * The transport is lazily initialized and shared for the lifetime of the process. The selected backend honors `-Dkyo.net.backend`
-  * (io_uring/epoll/kqueue/nio on the JVM); see `IoBackendPlatform`.
+  * (io_uring/epoll/kqueue/nio on the JVM); see `IoBackendPlatform`. On Scala.js the backend is selected when the first operation runs, and its
+  * code is a module the host fetches then, so a page that links kyo-net never fetches the backends it cannot run.
   */
 object NetPlatform:
     /** The transport for the current platform, built once and shared for the lifetime of the process.
@@ -32,5 +34,14 @@ object NetPlatform:
         given Frame = Frame.internal
         kyo.net.internal.NetPlatformTransport.configuredProcessLifetime()
     end transport
+
+    /** [[transport]], once its backend is selected and loaded.
+      *
+      * On the JVM and Native that is at once. On Scala.js the backend is selected when the first operation runs, so a caller that reads what the
+      * transport can do (its TLS providers, whether it binds Unix sockets) before running any operation waits here first: until the backend
+      * exists, which one selection picks is not known.
+      */
+    private[kyo] def loadedTransport(using Frame): Transport < (Async & Abort[NetException]) =
+        Sync.Unsafe.defer(kyo.net.internal.NetPlatformTransport.loaded(transport).safe.get)
 
 end NetPlatform

@@ -71,13 +71,14 @@ object LinkCheck {
         Program("UiMin", "kyo-link-check-ui", "linkcheck.UiMin", """Div\(Attrs\(.*\),Chunk\.Indexed\(\)\)""".r),
         // A host with no file system answers on the channel `Path` declares, so the page row is a typed failure, not a panic.
         Program("SystemPath", "kyo-link-check-system", "linkcheck.SystemPath", "kyo".r, "failure FileSystemUnsupportedOnHostException".r),
-        // NetPlatform.transport is a plain lazy val, so a host with no usable backend gets its NetBackendUnavailableException as a throw.
+        // A host with no usable backend gets NetBackendUnavailableException from its first operation, on the Abort channel the
+        // operation declares, without fetching any backend.
         Program(
             "NetEcho",
             "kyo-link-check-net",
             "linkcheck.NetEcho",
             "echo kyo".r,
-            "panic NetBackendUnavailableException".r,
+            "failure NetBackendUnavailableException".r,
             hostChunks = true
         ),
         // Names one HTTP provider and reads its completion. kyo-ai's two CLI harnesses spawn a process, which reaches

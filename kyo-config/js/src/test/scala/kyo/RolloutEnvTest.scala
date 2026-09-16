@@ -22,7 +22,10 @@ class RolloutEnvTest extends AnyFreeSpec {
 
     "Rollout on Node" - {
         "reads the topology path from process.env" in {
-            assume(Platform.isNodeLike, "reads KYO_ROLLOUT_PATH, which the build sets in the Node test process's environment; a page has none")
+            assume(
+                Platform.isNodeLike,
+                "reads KYO_ROLLOUT_PATH, which the build sets in the Node test process's environment; a page has none"
+            )
             // The stdlib read is the control: it returns null on Node even though the variable is set.
             assert(java.lang.System.getenv("KYO_ROLLOUT_PATH") eq null)
             assert(Rollout.path.mkString("/") == "prod/us-east-1")
