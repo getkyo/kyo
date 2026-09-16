@@ -548,7 +548,7 @@ class KernelTest extends AnyFreeSpec:
             assert(completed)
         }
 
-        /* PORTED FROM robustness; commented out: needs ContextEffect.handle's done hook (this branch has release)
+        /* Disabled: needs ContextEffect.handle's done hook, which this kernel does not provide (it has release instead).
         "the done hook is accepted at the handle site" in {
             var completed = false
             val r = ContextEffect.handle(

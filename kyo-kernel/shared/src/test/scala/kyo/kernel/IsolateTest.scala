@@ -733,7 +733,7 @@ class IsolateTest extends Test:
         }
     }
 
-    "ported crossings" - {
+    "crossing helpers" - {
         def crossing[A, S](v: A < S)(using Frame): (A < S) < Any =
             Isolate.internal.Contextual(v)(Kyo.lift[A < S, Any](_))
 

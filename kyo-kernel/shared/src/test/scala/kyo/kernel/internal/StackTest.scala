@@ -466,7 +466,7 @@ class StackTest extends AnyFreeSpec:
             Stack.release(b)
         }
 
-        /* PORTED FROM robustness; commented out: these test robustness's Stack internals (release/oweAll/oweBelow/hide/Gap/all/completing), replaced by this branch's Stack rewrite
+        /* Disabled: these test the prior Stack internals (release/oweAll/oweBelow/hide/Gap/all/completing), which this Stack implementation does not expose.
         "clear empties the stack and forgets what it held" in {
             val log   = ListBuffer[String]()
             val stack = new Stack

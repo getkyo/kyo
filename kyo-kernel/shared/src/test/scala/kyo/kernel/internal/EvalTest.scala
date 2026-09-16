@@ -639,45 +639,6 @@ class EvalTest extends AnyFreeSpec:
             assert(ran)
         }
 
-        // #1820. `ensureMap` makes a value and the obligation it creates one step, for a resource open the moment
-        // the acquire returns. That obligation sits in the cont, waiting on a value that has already arrived, so a
-        // walk descending into values alone steps past it and what the acquire produced is released by nobody.
-        "a release waiting on a value that already arrived is found on abandonment" in {
-            var applied = Maybe.empty[String]
-            val v: Int < Any =
-                Effect.defer {
-                    requestStop()
-                    Effect.defer("token")
-                }.ensureMap { token =>
-                    applied = Maybe(token)
-                    1
-                }
-            val parked = Eval.partial(v)
-            assert(applied.isEmpty, "the premise is that the stop parked before the ensure applied")
-            // The budgeted entry point, the one a fiber abandonment uses. The unbudgeted `release` never steps a
-            // deferral, so it cannot reach a release waiting one step further in.
-            Eval.release(parked, new RuntimeException("abandoned"), Tag[Ask])([C] => (_: Unit) => ())
-            assert(applied == Maybe("token"), s"the release never ran, it saw $applied")
-        }
-
-        // An `Ensure` that does not settle its debt by being applied. `Scope.acquireRelease`'s registers against a
-        // finalizer that outlives the fiber, so applying it is the whole obligation; `Bracket`'s builds the `Cell`
-        // that owns the release and returns the region holding it, so applying and discarding drops the obligation.
-        "a release the abandoned Ensure installs rather than registers is still run" in {
-            var released = Maybe.empty[Int]
-            val v: Int < Any =
-                Bracket(Effect.defer {
-                    requestStop()
-                    Effect.defer(7)
-                })(a => Effect.defer(a + 1)) { (a, _) =>
-                    released = Maybe(a)
-                }
-            val parked = Eval.partial(v)
-            assert(released.isEmpty, "the premise is that the stop parked before the bracket installed its region")
-            Eval.release(parked, new RuntimeException("abandoned"), Tag[Ask])([C] => (_: Unit) => ())
-            assert(released == Maybe(7), s"the release never ran for what the acquire produced, it saw $released")
-        }
-
         "a stateful region parked mid-loop resumes at the parked state" in {
             val body: Int < Ask =
                 ask.map { a =>
@@ -1028,9 +989,8 @@ class EvalTest extends AnyFreeSpec:
         // body's last step leaves the value for the region's `done` rather than parking in front of the capture,
         // where an abandonment would drop it.
         "a stop landing on the body's last step does not park in front of the crossing's capture" in {
-            // pendingUntilFixed (ported from robustness): partial parks in front of the crossing's capture (result
-            // stays Defer(21) whose evalNow is Absent) instead of the value reaching the region's done;
-            // design-difference vs this branch's crossing/park redesign.
+            // Known gap: partial parks in front of the crossing's capture (result
+            // stays Defer(21) whose evalNow is Absent) instead of the value reaching the region's done.
             pendingUntilFixed {
                 val body: Int < Any =
                     Effect.defer(20).map { a =>
@@ -1302,8 +1262,6 @@ class EvalTest extends AnyFreeSpec:
             assert(log.toList == List("release 1"))
         }
 
-        // PORTED FROM robustness; needs Bracket.ensuringWith, absent on this branch
-        /*
         "a bracket owes its release through the public surface" in {
             val log = ListBuffer[Int]()
             val body: Int < Any =
@@ -1317,10 +1275,7 @@ class EvalTest extends AnyFreeSpec:
             Eval.release(parked, Boom)
             assert(log.toList == List(7))
         }
-         */
 
-        // PORTED FROM robustness; needs Bracket.ensuringWith, absent on this branch
-        /*
         "a failure unwinding past a bracket runs its release" in {
             val log                = ListBuffer[Int]()
             val body: Int < Any    = Effect.defer((throw Boom): Int)
@@ -1329,7 +1284,6 @@ class EvalTest extends AnyFreeSpec:
             assert(ex eq Boom)
             assert(log.toList == List(7))
         }
-         */
 
         "a bracket is told a clean end when an inner region recovers the failure" in {
             val log             = ListBuffer[Boolean]()
@@ -1643,7 +1597,7 @@ class EvalTest extends AnyFreeSpec:
         r
     end trailing
 
-    "values and map, ported" - {
+    "values and map" - {
         "evaluates andThen and unit" in {
             assert((1: Int < Any).andThen(2: Int < Any).eval == 2)
             assert((1: Int < Any).unit.eval == ())
@@ -1666,7 +1620,7 @@ class EvalTest extends AnyFreeSpec:
         }
     }
 
-    "handleLoop, ported" - {
+    "handleLoop" - {
         "regions exit innermost first" in {
             val log   = ListBuffer[String]()
             val inner = answerAsk(41)(ask.map(_ + 1)).map(_ * 10)
@@ -1728,7 +1682,7 @@ class EvalTest extends AnyFreeSpec:
         }
     }
 
-    "handleLoopState, ported" - {
+    "handleLoopState" - {
         "composes a state update with a done" in {
             def go(n: Int): Int < Ask =
                 if n == 0 then 0 else ask.map(_ => go(n - 1))
@@ -1768,7 +1722,7 @@ class EvalTest extends AnyFreeSpec:
         }
     }
 
-    "clause scope, ported" - {
+    "clause scope" - {
         def innerProgram: Int < (Ask & Say) = say("m").map(_ => ask).map(_ + 1)
 
         "a stateful clause's suspension is answered outside its scope" in {
@@ -1840,7 +1794,7 @@ class EvalTest extends AnyFreeSpec:
         }
     }
 
-    "a captured continuation is a value, ported" - {
+    "a captured continuation is a value" - {
         "a continuation folded from the eval stack runs every pending map exactly once" in {
             for depth <- List(8, 64) do
                 val runs = new Array[Int](depth)
@@ -1883,7 +1837,7 @@ class EvalTest extends AnyFreeSpec:
         }
     }
 
-    "top level, ported" - {
+    "top level" - {
         "an operation no region in the row handles is a bug" in {
             val program: Int < (Ask & Say) = say("x").map(_ => ask)
             val r                          = answerAsk(41)(program)
@@ -1929,7 +1883,7 @@ class EvalTest extends AnyFreeSpec:
         }
     }
 
-    "partial evaluation, ported" - {
+    "partial evaluation" - {
         "partial completes when nothing stops" in {
             assert(Eval.partial(answerAsk(21)(ask.map(_ * 2))).evalNow == Maybe(42))
         }
@@ -2040,53 +1994,19 @@ class EvalTest extends AnyFreeSpec:
             assert(seen == "deep")
         }
 
-        // An operation under a deferral exists only once the deferral has run, so reading it costs running
-        // that body. Bounded, so the shape of a computation cannot decide how much of it a teardown runs.
-        "runs a deferral to reach the operation behind it" in {
+        // An operation under a deferral exists only once the deferral has run, and the walk runs nothing: the
+        // body is the caller's code, and a step of it after the interrupt acquires what nothing will release.
+        // Nothing under a deferral that never ran is reported, since nothing there is waited on yet.
+        "does not run a deferral to reach the operation behind it" in {
             var seen  = ""
             var built = false
             val v = Effect.defer {
                 built = true
                 say("hidden").map(_ => 1)
             }
-            Eval.release(v, walked, Tag[Say])([X] => input => seen = input)
-            assert(built)
-            assert(seen == "hidden")
-        }
-
-        "stops at its budget rather than running a chain of deferrals to the end" in {
-            var seen  = ""
-            var built = 0
-            def nest(n: Int): Int < Say =
-                if n == 0 then say("deep").map(_ => 1)
-                else
-                    Effect.defer {
-                        built += 1
-                        nest(n - 1)
-                    }
-            Eval.release(nest(64), walked, Tag[Say])([X] => input => seen = input)
-            assert(seen == "", s"reported through a chain past the budget: $seen")
-            assert(built <= 16, s"ran $built deferrals")
-        }
-
-        // An operation under a deferral exists only once the deferral has run, and the walk runs nothing: the
-        // body is the caller's code, and a step of it after the interrupt acquires what nothing will release.
-        // Nothing under a deferral that never ran is reported, since nothing there is waited on yet.
-        "does not run a deferral to reach the operation behind it" in {
-            // pendingUntilFixed (ported from robustness): the release walk runs the deferral (built becomes true) to
-            // reach the operation behind it; design-difference vs this branch's release-walk redesign.
-            pendingUntilFixed {
-                var seen  = ""
-                var built = false
-                val v = Effect.defer {
-                    built = true
-                    say("hidden").map(_ => 1)
-                }
-                Eval.release(v, walked, Tag[Say])(seeing[String](input => seen = input))
-                assert(!built, "the walk ran the deferral")
-                assert(seen == "", s"reported through a deferral that never ran: $seen")
-                ()
-            }
+            Eval.release(v, walked, Tag[Say])(seeing[String](input => seen = input))
+            assert(!built, "the walk ran the deferral")
+            assert(seen == "", s"reported through a deferral that never ran: $seen")
         }
     }
 

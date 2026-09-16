@@ -529,7 +529,7 @@ class ContextEffectTest extends AnyFreeSpec:
             assert(log.toList == List("clause", "done cfg 1"))
         }
 
-        /* PORTED FROM robustness; commented out: needs ContextEffect.handle's done hook + the completing helper (this branch has release instead)
+        /* Disabled: needs ContextEffect.handle's done hook plus a completing helper, which this kernel does not provide (it has release instead).
         "done runs when the extent ends" in {
             var completed = Maybe.empty[Int]
             val v         = completing(42, i => completed = Maybe(i))(count.map(_ + 1))
@@ -538,7 +538,7 @@ class ContextEffectTest extends AnyFreeSpec:
         }
          */
 
-        /* PORTED FROM robustness; commented out: needs ContextEffect.handle's done hook + the completing helper (this branch has release instead)
+        /* Disabled: needs ContextEffect.handle's done hook plus a completing helper, which this kernel does not provide (it has release instead).
         "done runs before what follows the extent" in {
             var order = List.empty[String]
             val v = completing(1, _ => order = order :+ "done")(count.map(_ => order = order :+ "body"))
@@ -548,7 +548,7 @@ class ContextEffectTest extends AnyFreeSpec:
         }
          */
 
-        /* PORTED FROM robustness; commented out: needs ContextEffect.handle's done hook + the completing helper (this branch has release instead)
+        /* Disabled: needs ContextEffect.handle's done hook plus a completing helper, which this kernel does not provide (it has release instead).
         // A binding owns nothing to release: what a throw or a discarded continuation leaves behind is a bracket's
         // to release, and a binding's done runs only at a normal end.
         "done does not run when the computation throws, and the failure still leaves" in {
@@ -561,7 +561,7 @@ class ContextEffectTest extends AnyFreeSpec:
         }
          */
 
-        /* PORTED FROM robustness; commented out: needs ContextEffect.handle's done hook + the completing helper (this branch has release instead)
+        /* Disabled: needs ContextEffect.handle's done hook plus a completing helper, which this kernel does not provide (it has release instead).
         "done does not run when a clause discards the continuation" in {
             var completed    = false
             val v: Int < Ask = completing(1, _ => completed = true)(ask.map(a => count.map(_ + a)))
@@ -571,7 +571,7 @@ class ContextEffectTest extends AnyFreeSpec:
         }
          */
 
-        /* PORTED FROM robustness; commented out: needs ContextEffect.handle's done hook + the completing helper (this branch has release instead)
+        /* Disabled: needs ContextEffect.handle's done hook plus a completing helper, which this kernel does not provide (it has release instead).
         "done runs once when the extent ends and the eval then drains" in {
             var count0 = 0
             val v      = completing(1, _ => count0 += 1)(count.map(_ + 1))
@@ -581,7 +581,7 @@ class ContextEffectTest extends AnyFreeSpec:
          */
 
         "each shot of a crossing completes the bindings it re-installs" in {
-            // pendingUntilFixed (ported from robustness): a crossing shot does not complete the bindings it re-installs; design-difference vs this branch's crossing/binding semantics (same family as the discard-signal gaps)
+            // Known gap: a crossing shot does not complete the bindings it re-installs (same family as the discard-signal gaps).
             pendingUntilFixed {
                 val log = ListBuffer[String]()
                 val body: Int < (Ask & Say) =
@@ -597,7 +597,7 @@ class ContextEffectTest extends AnyFreeSpec:
             }
         }
 
-        /* PORTED FROM robustness; commented out: needs ContextEffect.handle's done hook + the completing helper (this branch has release instead)
+        /* Disabled: needs ContextEffect.handle's done hook plus a completing helper, which this kernel does not provide (it has release instead).
         "a throwing done unwinds through the regions around the binding" in {
             val log  = ListBuffer[String]()
             val boom = new RuntimeException("boom")

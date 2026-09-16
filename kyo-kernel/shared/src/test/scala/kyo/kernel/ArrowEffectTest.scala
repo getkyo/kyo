@@ -1977,7 +1977,7 @@ class ArrowEffectTest extends Test:
     sealed trait AskBoxed extends ArrowEffect[Const[Unit], [X] =>> Int < Say]
     def askBoxed: (Int < Say) < AskBoxed = ArrowEffect.suspend[Any](Tag[AskBoxed], ())
 
-    "handleLoopState, ported" - {
+    "handleLoopState" - {
         "deep state transitions under a suspending clause are stack safe" in {
             def loop(i: Int): Int < Ask =
                 if i == 0 then 0 else ask.map(a => loop(i - a))
@@ -2109,7 +2109,7 @@ class ArrowEffectTest extends Test:
         }
     }
 
-    "handleFirst, ported" - {
+    "handleFirst" - {
         def handleFirst[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](effectTag: Tag[E], v: A < (E & S))(
             handle: [X] => (I[X], O[X] => A < (E & S)) => B < (S & S2),
             done: A => B < (S & S2)
@@ -2302,7 +2302,7 @@ class ArrowEffectTest extends Test:
         }
     }
 
-    "recover, ported" - {
+    "recover" - {
         "answers operations when nothing fails" in {
             val v = ask.map(a => ask.map(b => a + b))
             val r = ArrowEffect.handleCont(Tag[Ask], v)([X] => (_, cont) => cont(21), a => a, _ => Maybe(-1))
@@ -2731,7 +2731,7 @@ class ArrowEffectTest extends Test:
         }
     }
 
-    "recover, ported from catching" - {
+    "recover, exception dispatch" - {
         "the recovery dispatches on the exception type" in {
             def recovered(ex: Throwable): String < Any =
                 recovering(Effect.defer((throw ex): String)) {
@@ -3526,7 +3526,7 @@ class ArrowEffectTest extends Test:
             assert(runMixedState(0)(v).eval == ((Wrapped(102), "mm")))
         }
 
-        /* PORTED FROM robustness; commented out: need ArrowEffect.handleContRepeated, absent on this branch
+        /* Disabled: needs ArrowEffect.handleContRepeated, which this kernel does not provide.
         // The continuation captured at the second occurrence must be the rest of the body only. Before the re-entry
         // it also carried the enclosing clause's pending second resumption, so every inner resumption re-triggered
         // it and the program never terminated.
