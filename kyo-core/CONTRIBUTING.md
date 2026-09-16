@@ -174,12 +174,14 @@ Native, or JS library primitive has no cross-platform Kyo wrapper.
   reflection, with a graceful `Handler.Noop` fallback when the class is absent
   (`jvm/src/main/scala/kyo/internal/OSSignalPlatformSpecific.scala:18-34`).
 - `IOPromisePlatformSpecific`: JVM-specific promise scheduling.
-- `Zip`: the compression primitives `StreamCompression` drives, passed through to
+- `ZipCodec`: the compression primitives `StreamCompression` drives, passed through to
   `java.util.zip`. The drivers themselves are in `shared/`, so this file is the whole
-  platform split for compression.
+  platform split for compression. Named `ZipCodec` rather than `Zip` because
+  `kyo.internal` is wildcard-imported alongside `kyo.Flow.internal`, which has a `Zip`
+  of its own, and two `Zip`s in scope make every reference ambiguous.
 
 **`js-native/`** (JS and Native share, the JVM diverges):
-- `Zip`: the same compression primitives, backed by `PortableZip` in `shared/`, a
+- `ZipCodec`: the same compression primitives, backed by `PortableZip` in `shared/`, a
   DEFLATE codec in Scala. Neither host has `java.util.zip`, and neither needs a host
   binding, so a page, a Node process and a native binary run the same codec and the
   four methods keep the effect row they have on the JVM.

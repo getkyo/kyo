@@ -5,7 +5,7 @@ package kyo.internal
   * The JVM ships zlib, so this is a thin pass-through. The one thing it adds is `remainingBytes`: `java.util.zip.Inflater` reports what it
   * did not consume as a count into the buffer last handed to it, and the drivers want the bytes.
   */
-private[kyo] object Zip:
+private[kyo] object ZipCodec:
 
     type DataFormatException = java.util.zip.DataFormatException
 
@@ -53,4 +53,4 @@ private[kyo] object Zip:
         def getValue: Long                   = under.getValue()
         def reset(): Unit                    = under.reset()
     end Crc32
-end Zip
+end ZipCodec

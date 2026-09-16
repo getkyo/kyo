@@ -36,7 +36,7 @@ class CivilJdkTest extends kyo.test.Test[Any]:
         val from = -2208988800L
         val to   = 4102444800L
         val step = 100003L
-        val bad  = report(Iterator.iterate(from)(_ + step).takeWhile(_ < to).toIterable)
+        val bad  = report(Iterator.iterate(from)(_ + step).takeWhile(_ < to).to(Iterable))
         assert(bad.isEmpty, bad.take(5).mkString("; "))
     }
 
