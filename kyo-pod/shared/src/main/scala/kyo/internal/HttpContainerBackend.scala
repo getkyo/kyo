@@ -2002,17 +2002,18 @@ final private[kyo] class HttpContainerBackend(
 
     /** Ask the daemon which runtime it is, and record the answer for [[runtimeName]].
       *
-      * The libpod API is podman's own and docker does not serve it, so a `/libpod/_ping` that answers `OK` identifies
-      * a podman daemon whatever the socket is called, and anything else (a 404 body, a refusal) identifies a daemon
-      * that has no libpod endpoints to offer. Asked once, at detect time, so no later call pays for it.
+      * The libpod API is podman's own and docker does not serve it, so a `/libpod/_ping` answering `OK` is a podman
+      * daemon whatever the socket is called, and a daemon that answers something else (a 404 body, most often) is one
+      * with no libpod endpoints to offer. A request that does not complete at all answers neither question, so it
+      * leaves the reading unset and the path heuristic standing rather than asserting "docker" on no evidence. Asked
+      * once, at detect time, so no later call pays for it.
       */
     private def probeRuntime()(using Frame): Unit < Async =
-        Abort.run[HttpException](HttpClient.getText(libpodUrl("/_ping"))).map { result =>
-            val runtime =
-                result match
-                    case Result.Success(response) if response.trim == "OK" => "podman"
-                    case _                                                 => "docker"
-            Sync.defer(probedRuntime = Present(runtime))
+        Abort.run[HttpException](HttpClient.getText(libpodUrl("/_ping"))).map {
+            case Result.Success(response) =>
+                val runtime = if response.trim == "OK" then "podman" else "docker"
+                Sync.defer { probedRuntime = Present(runtime) }
+            case _ => Kyo.unit
         }
 
     /** Probe THIS backend's configured socket via `_ping`. Used by [[HttpContainerBackend.detect]] (companion) during candidate
