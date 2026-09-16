@@ -114,6 +114,24 @@ class FetchClientBackendTest extends kyo.test.Test[Any]:
         }
     }
 
+    "a page's client has a lifetime" - {
+
+        "a closed client sends nothing more" in {
+            Scope.run {
+                HttpClient.init().map { client =>
+                    HttpClient.let(client) {
+                        HttpClient.getText("/").andThen(HttpClient.closeNow(client)).andThen {
+                            Abort.run[HttpException](HttpClient.getText("/")).map {
+                                case Result.Failure(_: HttpConnectionClosedException) => assert(true, "the closed client refused")
+                                case other                                            => assert(false, s"the request ended as $other")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     "a page says what it cannot do" - {
 
         "a header the browser reserves for itself fails rather than being dropped" in {

@@ -34,6 +34,9 @@ final private[kyo] class FetchClientBackend extends PolicyClientBackend:
     )(using Frame): A < (Async & Abort[HttpException]) =
         refusedConfig(config) match
             case Present(ex) => Abort.fail(ex)
+            // A closed client sends nothing more, as it does over a socket, where closing shuts the pool and closes every
+            // connection a later request would open.
+            case Absent if closedFlag => Abort.fail(HttpConnectionClosedException())
             case Absent =>
                 RouteUtil.multipartBoundaryForRequest(route, request).map { boundary =>
                     RouteUtil.encodeRequestWithBoundary(route, request, boundary)(
