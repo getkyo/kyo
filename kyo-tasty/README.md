@@ -68,6 +68,8 @@ val report: Chunk[String] < Sync =
 
 `Tasty.Pickle(uuid, version, bytes)` packages one `.tasty` file's bytes. A `Chunk[Pickle]` is enough to drive `withPickles`, which decodes the bytes directly without touching the file system. Tests use this to assemble a classpath from fixtures.
 
+A fourth argument, `classfile`, carries the `.class` compiled beside that pickle. The classfile is where a symbol's `javaMetadata` comes from, and the file-reading path finds it by looking for a sibling name in the same directory; in memory there is no directory to look in, so a pickle that wants the merged result states its own companion. Omit it, and the pickle decodes alone. This is what lets a browser, which reads no files at all, build the same symbols a disk-backed classpath does.
+
 ```scala
 val pickles: Chunk[Tasty.Pickle] = Chunk.empty
 val test: Unit < (Async & Abort[TastyError]) =
