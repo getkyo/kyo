@@ -208,6 +208,24 @@ object HttpStatusException:
         new HttpStatusException(status, method, HttpException.stripQuery(url), Present(body))
 end HttpStatusException
 
+/** The host cannot carry out what the request asks.
+  *
+  * A browser page reaches a server through `fetch` and `WebSocket`, where the browser owns the connection, its reuse, TLS and the framing.
+  * That leaves a part of kyo-http's surface with no counterpart there: a unix socket, a raw connection, a trust store of kyo's own, and the
+  * header names the fetch specification reserves for the browser (Host, Connection, Content-Length, Cookie, Origin, and the `Sec-` and
+  * `Proxy-` prefixes), which a browser drops from a request without saying so.
+  *
+  * Dropping them silently is what this failure exists to prevent: a program that sets one of those headers and gets a request on the wire
+  * that is not the one it wrote has no way to notice. The operation names what was asked for, so a caller reads what to change rather than
+  * which internal call refused.
+  */
+case class HttpUnsupportedOnHostException private (operation: String, host: String)(using Frame)
+    extends HttpRequestException(s"$operation is not available on this host; this host is $host.")
+object HttpUnsupportedOnHostException:
+    def apply(operation: String)(using Frame): HttpUnsupportedOnHostException =
+        new HttpUnsupportedOnHostException(operation, kyo.internal.Platform.host.toString)
+end HttpUnsupportedOnHostException
+
 // --- Server (server-side operational failures) ---
 
 /** Server-side operational failures.
