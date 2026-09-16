@@ -5,7 +5,9 @@ import scala.scalajs.js
 
 private[kyo] trait UnixSocketTestHelperImpl extends UnixSocketTestHelper:
 
-    override def unixSocketsSupported: Boolean = !Platform.isWindows
+    // A browser page has no file system to stage a socket on and no socket to stage there, which is the same answer
+    // Windows gives for its own reason: unsupported, so every socket-binding leaf cancels through `tempSocketPath`.
+    override def unixSocketsSupported: Boolean = !Platform.isWindows && !Platform.isBrowser
 
     // Reached through process.getBuiltinModule at the call, so linking the test bundle adds no static node: import.
     private def builtin(id: String): js.Dynamic =

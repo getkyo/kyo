@@ -10,7 +10,8 @@ class HttpServerTest extends BaseHttpTest:
     case class User(id: Int, name: String) derives Schema, CanEqual
     case class LoginForm(username: String, password: String) derives HttpFormCodec, CanEqual
 
-    val client = internal.HttpTestPlatformBackend.client
+    // Lazy so a host without a socket client cancels the leaf that reaches for it, not the suite\'s construction.
+    lazy val client = internal.HttpTestPlatformBackend.client
 
     /** Registers "plain" and "tls" sub-tests. Caller uses: "name" - { runServer(handler) { url => ... } } */
     def runServer(handlers: HttpHandler[?, ?, ?]*)(

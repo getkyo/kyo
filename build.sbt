@@ -2102,10 +2102,7 @@ lazy val `kyo-http` =
         )
         .jsSettings(
             `js-settings`,
-            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
-            // Sockets: a page has no listener and no client socket, so every suite that serves or connects reports
-            // kyo-net's NetBackendUnavailableException. No browser row.
-            kyoBrowserRow := false
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
         )
         .nativeSettings(
             `native-settings`,

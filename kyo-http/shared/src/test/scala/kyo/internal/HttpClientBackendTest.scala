@@ -18,7 +18,8 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
 
     import AllowUnsafe.embrace.danger
 
-    val client = HttpTestPlatformBackend.client
+    // Lazy so a host without a socket client cancels the leaf that reaches for it, not the suite\'s construction.
+    lazy val client = HttpTestPlatformBackend.client
 
     final private class FixedUUIDGenerator(value: UUID) extends UUIDGenerator:
         var calls = 0

@@ -37,8 +37,9 @@ final private[kyo] class FetchClientBackend extends PolicyClientBackend:
             case Absent =>
                 RouteUtil.multipartBoundaryForRequest(route, request).map { boundary =>
                     RouteUtil.encodeRequestWithBoundary(route, request, boundary)(
-                        onEmpty = (path, headers) => send(route, request, path, headers, Absent)(f),
-                        onBuffered = (path, headers, body) => send(route, request, path, headers, Present(body))(f),
+                        onEmpty = (path, headers) => send(route, request, path, headers, Absent, config.maxResponseLength)(f),
+                        onBuffered =
+                            (path, headers, body) => send(route, request, path, headers, Present(body), config.maxResponseLength)(f),
                         onStreaming = (path, headers, _) =>
                             // A page can stream a request body only where `duplex: "half"` is available, and only over HTTP/2 in some
                             // browsers. Until that is probed and mapped, refusing says so rather than buffering a stream the caller
@@ -47,9 +48,18 @@ final private[kyo] class FetchClientBackend extends PolicyClientBackend:
                     )
                 }
 
-    /** The parts of a request's configuration a page cannot honor. */
+    /** The parts of a request's configuration a page cannot honor.
+      *
+      * The redirect settings are here because `fetch` offers no way to keep them. `redirect: "manual"` answers a redirect with an opaque
+      * response carrying neither the status nor the `Location`, so a program that turned redirects off to read the 3xx itself would be
+      * handed nothing to read, and the chain length is the browser's own rather than the one the config names.
+      */
     private def refusedConfig(config: HttpClientConfig)(using Frame): Maybe[HttpException] =
         if config.tls != HttpTlsConfig.default then Present(HttpUnsupportedOnHostException("A TLS configuration of its own"))
+        else if !config.followRedirects then
+            Present(HttpUnsupportedOnHostException("Leaving a redirect for the program, which the browser follows itself,"))
+        else if config.maxRedirects != defaultMaxRedirects then
+            Present(HttpUnsupportedOnHostException("A redirect limit of its own, which the browser keeps for itself,"))
         else Absent
 
     private def send[In, Out, A](
@@ -57,7 +67,8 @@ final private[kyo] class FetchClientBackend extends PolicyClientBackend:
         request: HttpRequest[In],
         path: String,
         headers: HttpHeaders,
-        body: Maybe[Span[Byte]]
+        body: Maybe[Span[Byte]],
+        maxResponseLength: Int
     )(
         f: HttpResponse[Out] => A < (Async & Abort[HttpException])
     )(using Frame): A < (Async & Abort[HttpException]) =
@@ -85,14 +96,19 @@ final private[kyo] class FetchClientBackend extends PolicyClientBackend:
                                 )(f)
                             else
                                 readBody(response).map { bytes =>
-                                    RouteUtil.decodeBufferedResponseWith(
-                                        route,
-                                        HttpStatus(code),
-                                        responseHeaders(response),
-                                        bytes,
-                                        route.method.name,
-                                        request.url
-                                    )(f)
+                                    // The cap the caller configured still holds in a page: the browser has the bytes, and this is
+                                    // where a buffered body would otherwise be handed on past the size it agreed to take.
+                                    if bytes.size > maxResponseLength then
+                                        Abort.fail(HttpPayloadTooLargeException(bytes.size, maxResponseLength))
+                                    else
+                                        RouteUtil.decodeBufferedResponseWith(
+                                            route,
+                                            HttpStatus(code),
+                                            responseHeaders(response),
+                                            bytes,
+                                            route.method.name,
+                                            request.url
+                                        )(f)
                                 }
                             end if
                         }
@@ -403,6 +419,9 @@ private[kyo] object FetchClientBackend:
     end reservedHeader
 
     private[client] def status(response: js.Dynamic): Int = response.status.asInstanceOf[Int]
+
+    /** The redirect limit a caller who set none is carrying, which is the one the browser's own chain stands in for. */
+    private val defaultMaxRedirects = HttpClientConfig().maxRedirects
 
     /** What a browser reports when a WebSocket fails: that it failed. The event carries no code, status or reason. */
     private[client] val WebSocketFailed = new RuntimeException("the browser reported a WebSocket failure and no reason for it")

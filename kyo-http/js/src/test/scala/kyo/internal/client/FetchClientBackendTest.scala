@@ -68,6 +68,16 @@ class FetchClientBackendTest extends kyo.test.Test[Any]:
             }
         }
 
+        "a response past the configured size is refused, not handed on" in {
+            HttpClient.withConfig(_.maxResponseLength(8)) {
+                Abort.run[HttpException](HttpClient.getText("/")).map {
+                    case Result.Failure(e: HttpPayloadTooLargeException) =>
+                        assert(e.maxSize == 8, s"the cap it reported was ${e.maxSize}")
+                    case other => assert(false, s"the request ended as $other")
+                }
+            }
+        }
+
         "a status the server chooses arrives as that status" in {
             HttpClient.getTextResponse("/__kyo_test__/status?code=503", failOnError = false).map { response =>
                 assert(response.status.code == 503, s"the status was ${response.status.code}")
@@ -118,6 +128,26 @@ class FetchClientBackendTest extends kyo.test.Test[Any]:
                 Abort.run[HttpException](HttpClient.getText("/")).map {
                     case Result.Failure(e: HttpUnsupportedOnHostException) =>
                         assert(e.operation == "A TLS configuration of its own", s"the failure named ${e.operation}")
+                    case other => assert(false, s"the request ended as $other")
+                }
+            }
+        }
+
+        "keeping a redirect for the program fails, because the browser follows it first" in {
+            HttpClient.withConfig(_.followRedirects(false)) {
+                Abort.run[HttpException](HttpClient.getText("/")).map {
+                    case Result.Failure(e: HttpUnsupportedOnHostException) =>
+                        assert(e.operation.startsWith("Leaving a redirect for the program"), s"the failure named ${e.operation}")
+                    case other => assert(false, s"the request ended as $other")
+                }
+            }
+        }
+
+        "a redirect limit of the program's own fails" in {
+            HttpClient.withConfig(_.maxRedirects(2)) {
+                Abort.run[HttpException](HttpClient.getText("/")).map {
+                    case Result.Failure(e: HttpUnsupportedOnHostException) =>
+                        assert(e.operation.startsWith("A redirect limit of its own"), s"the failure named ${e.operation}")
                     case other => assert(false, s"the request ended as $other")
                 }
             }

@@ -2,7 +2,8 @@ package kyo
 
 class HttpTransportConfigTest extends BaseHttpTest:
 
-    val client = internal.HttpTestPlatformBackend.client
+    // Lazy so a host without a socket client cancels the leaf that reaches for it, not the suite\'s construction.
+    lazy val client = internal.HttpTestPlatformBackend.client
 
     def send[In, Out](
         url: HttpUrl,
