@@ -2,7 +2,7 @@ package kyo
 
 import kyo.*
 import kyo.internal.client.ClientBackend
-import kyo.internal.client.HttpClientBackend
+import kyo.internal.client.ClientPlatform
 import kyo.internal.transport.NetConfigTranslation
 
 /** HTTP client with connection pooling, retries, redirects, and typed request/response handling.
@@ -52,9 +52,8 @@ object HttpClient:
     // the whole process. Closing a client never closes that transport (see closeFiber), so this client's lifetime is irrelevant to it.
     private lazy val defaultClient: HttpClient =
         import AllowUnsafe.embrace.danger
-        given Frame   = Frame.internal
-        val transport = kyo.net.NetPlatform.transport
-        initUnsafe(transport, kyo.http.client.defaultMaxConnectionsPerHost(), kyo.http.client.defaultIdleTimeout())
+        given Frame = Frame.internal
+        initUnsafe(kyo.http.client.defaultMaxConnectionsPerHost(), kyo.http.client.defaultIdleTimeout())
     end defaultClient
 
     private val local: Local[(HttpClient, HttpClientConfig)] =
@@ -195,10 +194,7 @@ object HttpClient:
     )(using frame: Frame): HttpClient < Sync =
         require(maxConnectionsPerHost > 0, s"maxConnectionsPerHost must be positive: $maxConnectionsPerHost")
         require(idleConnectionTimeout > Duration.Zero, s"idleConnectionTimeout must be positive: $idleConnectionTimeout")
-        Sync.Unsafe.defer {
-            val transport = kyo.net.NetPlatform.transport
-            initUnsafe(transport, maxConnectionsPerHost, idleConnectionTimeout, defaultTlsConfig, transportConfig)
-        }
+        Sync.Unsafe.defer(initUnsafe(maxConnectionsPerHost, idleConnectionTimeout, defaultTlsConfig, transportConfig))
     end initUnscoped
 
     // ==================== JSON methods ====================
@@ -946,13 +942,14 @@ object HttpClient:
 
     // --- Private implementation ---
 
+    // Which backend a client gets is the platform's answer, not this file's: a host with sockets pools connections and speaks HTTP/1
+    // itself, and a browser page hands the request to its own fetch. The pool settings reach the one that pools.
     private def initUnsafe(
-        transport: kyo.net.Transport,
         maxConnectionsPerHost: Int,
         idleConnectionTimeout: Duration,
         defaultTlsConfig: kyo.HttpTlsConfig = kyo.HttpTlsConfig.default,
         transportConfig: HttpTransportConfig = HttpTransportConfig.default
-    )(using AllowUnsafe, Frame): HttpClientBackend =
-        HttpClientBackend.init(transport, maxConnectionsPerHost, idleConnectionTimeout, defaultTlsConfig, transportConfig)
+    )(using AllowUnsafe, Frame): ClientBackend =
+        ClientPlatform.backend(maxConnectionsPerHost, idleConnectionTimeout, defaultTlsConfig, transportConfig)
 
 end HttpClient
