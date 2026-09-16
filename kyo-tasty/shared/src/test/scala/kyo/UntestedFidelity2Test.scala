@@ -45,16 +45,17 @@ class UntestedFidelity2Test extends Fidelity2TestBase:
         }
     }
 
-    // Java-defined (Flag.JavaDefined) classfile decode coverage now available on JS and Native via
-    // EmbeddedJavaFixtures.javaSimpleFixtureClassfile registered as a standalone root in TestClasspaths.
+    // Names the class it depends on rather than counting Java-defined symbols. `Flag.JavaDefined` is also set from
+    // the TASTy side, where the STATIC modifier tag maps to it (internal/tasty/symbol/Flags.scala:37), so a count
+    // above zero is satisfied by a classpath with no classfile in it at all and says nothing about the decode path
+    // this leaf is named for. Finding the class the message already named is what pins that path.
     "Java classfile decoding path active in standard classpath (AP structural guard)" in {
-        TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
-            val javaCount = classpath.symbols.count(_.isJava)
-            assert(
-                javaCount > 0,
-                s"Expected > 0 Java-decoded symbols (from JavaSimpleFixture.class embedded in EmbeddedJavaFixtures) in standard classpath; found $javaCount"
-            )
-            succeed
+        TestClasspaths.withClasspath()(Tasty.findClass("kyo.fixtures.JavaSimpleFixture")).map {
+            case Maybe.Present(c) =>
+                assert(c.isJava, "JavaSimpleFixture must have isJava, which only ClassfileUnpickler sets on it")
+                succeed
+            case Maybe.Absent =>
+                fail("kyo.fixtures.JavaSimpleFixture not found; its standalone .class root was not decoded")
         }
     }
 

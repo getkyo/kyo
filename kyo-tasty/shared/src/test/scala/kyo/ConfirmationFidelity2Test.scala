@@ -96,14 +96,16 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
         }
     }
 
+    // Names the class rather than counting Java-defined symbols: `Flag.JavaDefined` is also set from the TASTy side,
+    // where the STATIC modifier tag maps to it (internal/tasty/symbol/Flags.scala:37), so a count above zero holds on
+    // a classpath carrying no classfile at all and does not guard the interop this leaf is named for.
     "Java-defined symbols present in standard classpath (java interop guard)" in {
-        TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
-            val javaCount = classpath.symbols.count(_.isJava)
-            assert(
-                javaCount > 0,
-                s"Expected > 0 Java-defined symbols in standard classpath (from JavaSimpleFixture.class embedded in EmbeddedJavaFixtures); found $javaCount"
-            )
-            succeed
+        TestClasspaths.withClasspath()(Tasty.findClass("kyo.fixtures.JavaSimpleFixture")).map {
+            case Maybe.Present(c) =>
+                assert(c.isJava, "JavaSimpleFixture must have isJava, which only ClassfileUnpickler sets on it")
+                succeed
+            case Maybe.Absent =>
+                fail("kyo.fixtures.JavaSimpleFixture not found; its standalone .class root was not decoded")
         }
     }
 

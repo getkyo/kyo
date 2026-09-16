@@ -94,6 +94,36 @@ class WithClasspathTest extends kyo.test.Test[Any]:
         }
     }
 
+    "withPickles(pickles, classfiles) decodes a Java class that has no pickle" in {
+        val classfile = Tasty.Classfile(
+            name = "JavaSimpleFixture",
+            bytes = Span.from(kyo.fixtures.EmbeddedJavaFixtures.javaSimpleFixtureClassfile)
+        )
+        Tasty.withPickles(Chunk.empty, Chunk(classfile)) {
+            Tasty.findClass("kyo.fixtures.JavaSimpleFixture").map {
+                case Maybe.Present(c) =>
+                    assert(c.isJava, "a class introduced by its classfile alone must carry isJava")
+                    succeed
+                case Maybe.Absent =>
+                    fail("kyo.fixtures.JavaSimpleFixture must be found from its classfile with no pickle present")
+            }
+        }
+    }
+
+    "withPickles names a standalone class from its bytecode, not from the label given" in {
+        // The label is only what a decode failure is reported against, so a wrong one must not hide the class.
+        val classfile = Tasty.Classfile(
+            name = "a-label-that-is-not-the-class-name",
+            bytes = Span.from(kyo.fixtures.EmbeddedJavaFixtures.javaSimpleFixtureClassfile)
+        )
+        Tasty.withPickles(Chunk.empty, Chunk(classfile)) {
+            Tasty.findClass("kyo.fixtures.JavaSimpleFixture").map { found =>
+                assert(found.isDefined, "the class must be found under its own name whatever it was filed as")
+                succeed
+            }
+        }
+    }
+
     "Classpath.init is not on the public surface" in {
         val errCount = compiletime.testing.typeCheckErrors("kyo.Tasty.Classpath.init(Seq(\"x\"))").length
         assert(errCount > 0, "Classpath.init must not be on the surface; expected a compile error")

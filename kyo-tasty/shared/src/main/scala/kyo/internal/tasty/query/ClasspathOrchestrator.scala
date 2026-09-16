@@ -2945,24 +2945,33 @@ object ClasspathOrchestrator:
       * when the pickle bytes are still in memory.
       */
     private[kyo] def loadPickles(
-        pickles: Chunk[Tasty.Pickle]
+        pickles: Chunk[Tasty.Pickle],
+        classfiles: Chunk[Tasty.Classfile]
     )(using Frame): Binding < (Sync & Async & Scope & Abort[TastyError]) =
-        if pickles.isEmpty then
+        if pickles.isEmpty && classfiles.isEmpty then
             Sync.defer(Binding(Tasty.Classpath.empty, Maybe.Present(DecodeContext.fresh())))
         else
             val indexed: Seq[(String, Array[Byte])] =
                 pickles.toSeq.zipWithIndex.map { (p, i) =>
                     (s"pickle://${p.uuid.replace(':', '_')}/$i.tasty", p.bytes.toArray)
                 }
-            val roots = indexed.map(_._1)
-            // A classfile enters the map under its pickle's own path with the extension swapped, which is the
+            val pickleRoots = indexed.map(_._1)
+            // A companion enters the map under its pickle's own path with the extension swapped, which is the
             // sibling name the companion lookup derives on a file system. It is not a root: the decode of the
             // pickle reaches for it, and decoding it on its own would make a second, half-built symbol.
             val companions: Seq[(String, Array[Byte])] =
                 pickles.toSeq.zipWithIndex.flatMap { (p, i) =>
-                    p.classfile.map(bytes => (companionClassPath(roots(i)), bytes.toArray)).toList
+                    p.classfile.map(bytes => (companionClassPath(pickleRoots(i)), bytes.toArray)).toList
                 }
-            val bytesMap: Map[String, Array[Byte]] = (indexed ++ companions).toMap
+            // A standalone classfile IS a root: it has no pickle to be a companion to, so it is the only thing that
+            // will introduce its class. The name is the caller's label, used to report an error against; the class's
+            // own name comes out of its bytecode.
+            val standalone: Seq[(String, Array[Byte])] =
+                classfiles.toSeq.zipWithIndex.map { (c, i) =>
+                    (s"classfile://${c.name.replace(':', '_')}/$i.class", c.bytes.toArray)
+                }
+            val roots                              = pickleRoots ++ standalone.map(_._1)
+            val bytesMap: Map[String, Array[Byte]] = (indexed ++ companions ++ standalone).toMap
             initWithBodiesFromBytesMap(roots, bytesMap).map {
                 (classpath, bodyStore, positionsStore, declarationRangeStore, parentOccurrenceStore) =>
                     Binding(
@@ -3056,9 +3065,10 @@ object ClasspathOrchestrator:
                                 // arrivals and shift ids run to run. In-memory reads are instant, so ordering the
                                 // puts costs no parallelism (the decoder is already single).
                                 val producerStage = Async.foreach(Chunk.from(roots), 1) { root =>
-                                    // In-memory: all roots are .tasty "files" in the map.
-                                    val entry = root
-                                    Abort.run[Closed](entryCh.put((entry, ".tasty"))).unit
+                                    // A root is a pickle unless it names a classfile, which a caller supplies for a
+                                    // Java class that has no pickle to be a companion to.
+                                    val kind = if root.endsWith(".class") then ".class" else ".tasty"
+                                    Abort.run[Closed](entryCh.put((root, kind))).unit
                                 }
 
                                 val decoderStage = Async.foreach(Chunk.fill(decodeConcurrency)(()), decodeConcurrency) { _ =>
@@ -3116,15 +3126,17 @@ object ClasspathOrchestrator:
             bytesMap.get(entryPath) match
                 case Some(b) => Sync.defer(b)
                 case None    => Abort.fail(TastyError.FileNotFound(entryPath))
-        Abort.run[TastyError](
-            readBytes.map { bytes =>
-                Sync.Unsafe.defer {
-                    TastyPerfStats.entryReads.inc()
-                    TastyPerfStats.bytesRead.add(bytes.length.toLong)
-                    Abort.get(decodeTastyBytes(entryPath, bytes, Maybe(nextGlobalId)))
+        if kind == ".class" then decodeStandaloneClassfileFromBytesMap(entryPath, readBytes, nextGlobalId)
+        else
+            Abort.run[TastyError](
+                readBytes.map { bytes =>
+                    Sync.Unsafe.defer {
+                        TastyPerfStats.entryReads.inc()
+                        TastyPerfStats.bytesRead.add(bytes.length.toLong)
+                        Abort.get(decodeTastyBytes(entryPath, bytes, Maybe(nextGlobalId)))
+                    }
                 }
-            }
-        ).map {
+            ).map {
             case Result.Success(fr) =>
                 mergeCompanionFromBytesMap(entryPath, fr, bytesMap, nextGlobalId).map(FileResultCase(_))
             case Result.Failure(err: TastyError) => FileResultCase(emptyFileResultWithError(entryPath, err))
@@ -3171,5 +3183,45 @@ object ClasspathOrchestrator:
                 }
         end match
     end mergeCompanionFromBytesMap
+
+    /** Decode a standalone classfile from the map, for a Java class that has no pickle to be a companion to.
+      *
+      * The in-memory twin of the `.class` root the file-reading pipeline decodes. The class's own name comes from the
+      * bytecode's constant pool rather than from the path, so a caller supplying bytes does not have to name them
+      * correctly for the class to be found; the path it was filed under is only what an error reports.
+      */
+    private def decodeStandaloneClassfileFromBytesMap(
+        entryPath: String,
+        readBytes: Array[Byte] < (Sync & Abort[TastyError]),
+        nextGlobalId: () => Int
+    )(using Frame): DecodeResult < (Sync & Async & Abort[TastyError]) =
+        Abort.run[TastyError](
+            readBytes.map { bytes =>
+                // Unsafe: ClassfileUnpickler reads an immutable byte array and needs no suspension, the same boundary
+                // the file-reading decode of a `.class` root crosses.
+                Sync.Unsafe.defer {
+                    TastyPerfStats.entryReads.inc()
+                    TastyPerfStats.bytesRead.add(bytes.length.toLong)
+                    val arena = kyo.internal.tasty.type_.TypeArena.canonical()
+                    Abort.get(ClassfileUnpickler.read(bytes, arena, Maybe(nextGlobalId)))
+                }
+            }
+        ).map {
+            case Result.Success(cfResult) =>
+                val fullName =
+                    if cfResult.binaryName.nonEmpty then cfResult.binaryName.replace('/', '.')
+                    else classfilePathToFullName(entryPath)
+                if fullName.isEmpty then
+                    FileResultCase(emptyFileResultWithError(
+                        entryPath,
+                        TastyError.ClassfileFormatError(entryPath, "fully-qualified name empty; skipping", 0)
+                    ))
+                else JavaClassfileCase(fullName, cfResult)
+                end if
+            case Result.Failure(err: TastyError) => FileResultCase(emptyFileResultWithError(entryPath, err))
+            case Result.Panic(t) =>
+                FileResultCase(emptyFileResultWithError(entryPath, TastyError.CorruptedFile(entryPath, 0L, t.getMessage)))
+        }
+    end decodeStandaloneClassfileFromBytesMap
 
 end ClasspathOrchestrator

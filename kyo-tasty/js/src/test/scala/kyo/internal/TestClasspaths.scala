@@ -121,8 +121,8 @@ private[kyo] object TestClasspaths:
       * hands the same bytes to `Tasty.withPickles` and runs the same assertions. A pickle whose classfile is staged
       * beside it on the other hosts carries that classfile here, so the symbols a page reads carry the same
       * `javaMetadata` the staged ones do; the sibling lookup that finds it on a file system has nothing to walk in
-      * memory, so the pairing is stated rather than discovered. What a page does not get is the Java classfile with no
-      * pickle at all, so the two suites that read `JavaSimpleFixture` find no such class and say so themselves.
+      * memory, so the pairing is stated rather than discovered. `JavaSimpleFixture` is a classfile with no pickle to
+      * ride along with, so it is passed on its own, which is the shape a page's own Java class would arrive in.
       */
     private def withPickledClasspath[A, S](f: => A < S)(using Frame): A < (Async & Abort[TastyError] & S) =
         val classfiles: Map[String, Array[Byte]] =
@@ -138,7 +138,10 @@ private[kyo] object TestClasspaths:
                     Span.from(kyo.fixtures.Embedded.portedBug71InnerMarkerTasty)
                 )
             )
-        Tasty.withPickles(pickles)(f)
+        val javaClassfiles = Chunk(
+            Tasty.Classfile("JavaSimpleFixture", Span.from(kyo.fixtures.EmbeddedJavaFixtures.javaSimpleFixtureClassfile))
+        )
+        Tasty.withPickles(pickles, javaClassfiles)(f)
     end withPickledClasspath
 
     private def withStagedClasspath[A, S](f: => A < S)(using Frame): A < (Async & Abort[TastyError] & S) =

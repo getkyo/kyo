@@ -102,10 +102,17 @@ object Tasty:
       * Decodes the pickles sequentially from the in-memory bytes map; no file system access. The binding
       * carries a fresh `DecodeContext` so `Tasty.bodyTree` can decode body bytes on demand. Every `Tasty.*`
       * query called inside `f` is pure.
+      *
+      * `classfiles` carries Java classes, which have no pickle to arrive with. A Scala class's own classfile is not
+      * passed here: it belongs to its pickle, as `Pickle.classfile`, so the two are merged into one symbol rather
+      * than decoded into two. On a file system both are found by walking a directory; in memory there is nothing to
+      * walk, which is why each is stated.
       */
-    def withPickles[A, S](pickles: Chunk[Pickle])(f: => A < S)(using Frame): A < (Async & Abort[TastyError] & S) =
+    def withPickles[A, S](pickles: Chunk[Pickle], classfiles: Chunk[Classfile] = Chunk.empty)(f: => A < S)(using
+        Frame
+    ): A < (Async & Abort[TastyError] & S) =
         Scope.run {
-            ClasspathOrchestrator.loadPickles(pickles).map { binding =>
+            ClasspathOrchestrator.loadPickles(pickles, classfiles).map { binding =>
                 bindingLocal.let(Maybe.Present(binding))(f)
             }
         }
@@ -3371,6 +3378,21 @@ object Tasty:
         /** Human-readable summary: `Pickle(<uuid> v<version> <n>B)`. */
         def show: String = s"Pickle($uuid v${version.show} ${bytes.size}B)"
     end Pickle
+
+    /** One compiled `.class` with no pickle beside it, which is what a Java class is.
+      *
+      * A Scala class reaches a classpath as a pickle, optionally carrying its own classfile for the JVM-side detail
+      * (`Pickle.classfile`). A Java class has no pickle at all, so its classfile is the only thing that can introduce
+      * it, and it is passed on its own.
+      *
+      * `name` is the caller's label for these bytes, used to report a decode failure against. It does not have to be
+      * the class's name and nothing is looked up by it: the fully-qualified name comes out of the bytecode's own
+      * constant pool, so a class arrives under its real name whatever it is filed as here.
+      */
+    final case class Classfile(name: String, bytes: Span[Byte]) derives Schema, CanEqual:
+        /** Human-readable summary: `Classfile(<name> <n>B)`. */
+        def show: String = s"Classfile($name ${bytes.size}B)"
+    end Classfile
 
     // ── Classpath ───────────────────────────────────────────────────────────
 
