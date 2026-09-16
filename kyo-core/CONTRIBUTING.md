@@ -180,13 +180,9 @@ Native, or JS library primitive has no cross-platform Kyo wrapper.
   `kyo.internal` is wildcard-imported alongside `kyo.Flow.internal`, which has a `Zip`
   of its own, and two `Zip`s in scope make every reference ambiguous.
 
-**`js-native/`** (JS and Native share, the JVM diverges):
-- `ZipCodec`: the same compression primitives, backed by `PortableZip` in `shared/`, a
-  DEFLATE codec in Scala. Neither host has `java.util.zip`, and neither needs a host
-  binding, so a page, a Node process and a native binary run the same codec and the
-  four methods keep the effect row they have on the JVM.
-
 **`native/`** (Scala Native only):
+- `ZipCodec`: the same compression primitives, backed by `PortableZip` in `shared/`, a
+  DEFLATE codec in Scala, with no host binding.
 - `OsSignalPlatformSpecific`: installs handlers via POSIX `signal()` using
   `scala.scalanative.posix.signal`.
 - `hubsStubs.scala`: stub for `CopyOnWriteArraySet`, a Java class absent on Native.
@@ -198,6 +194,23 @@ Native, or JS library primitive has no cross-platform Kyo wrapper.
 - `OsSignalPlatformSpecific`: `process.on("SIG...")` on a Node-like host, so a
   command-line application gets the same graceful shutdown the JVM does; `Handler.Noop`
   in a page, which has no process to signal.
+- `ZipCodec`: compression through Node's zlib on a Node-like host, and `PortableZip`
+  for everything else: decompression on every host, and compression in a page. The rule
+  that decides it is the effect row. `StreamCompression` is `Sync` on the JVM and stays
+  `Sync` everywhere, so only a host's synchronous entry points can serve it. Node's zlib
+  compresses a whole buffer synchronously (`deflateRawSync`), so `NodeDeflater` writes a
+  stream as sync-flushed 128 KB segments, which concatenate into one raw DEFLATE stream;
+  its streams are asynchronous and no synchronous call resumes a decode in the middle of a
+  block, so decompression stays portable. A page's `CompressionStream` is asynchronous in
+  both directions and has no level or strategy, so a page runs `PortableZip` both ways.
+  `NodeZlib.select` checks a host's zlib writes the sync flush the segments rely on
+  before using it (Bun and Deno implement `node:zlib` themselves). Measured on Node 24
+  from a release link, 8 MB of JSON-like text at the default level: zlib compresses at 62
+  MB/s to 1.55 MB, `PortableZip` at 16 MB/s to 2.22 MB and inflates at 123 MB/s (zlib:
+  880 MB/s). Before `PortableZip` decoded through a lookup table with `Int` bit state,
+  it inflated at 57 MB/s, and at 9.5 MB/s on incompressible input, because a `Long` is
+  emulated on Scala.js; and it wrote such input 5% larger, before it learned to store a
+  block the fixed codes would grow (`PortableZipTest` pins the bound).
 - `hubsStubs.scala`: `CopyOnWriteArraySet` stub backed by `HashSet`.
 - `addersStubs.scala`, `timersSubs.scala`: stubs for absent JVM classes.
 - `VarHandle`, `JSServiceLoaderRegistry`, `ServiceLoader`: JS-specific
@@ -268,10 +281,12 @@ post-close behavior and must observe that the channel is still open after the bl
 ### Where JVM-only tests may live
 
 A test may go in `jvm/src/test/scala/kyo/` only when it tests genuinely JVM-only
-behavior. Current examples: `StreamCompressionTest.scala` (tests `StreamCompression`
-which wraps `java.util.zip`) and `GateJvmTest.scala` (JVM-specific scheduler
-behavior). Every other test belongs in `shared/src/test/scala/kyo/` and must pass
-on JVM, Scala.js, and Scala Native.
+behavior. Current examples: `PortableZipTest.scala` and `StreamCompressionJdkTest.scala`
+(they hold the portable codec to the JDK's zlib, the one other implementation a platform
+has) and `GateJvmTest.scala` (JVM-specific scheduler behavior). `StreamCompressionTest`
+itself is shared, and `js/`'s `ZipCodecTest` holds the Scala.js compressor to Node's zlib.
+Every other test belongs in `shared/src/test/scala/kyo/` and must pass on JVM, Scala.js,
+and Scala Native.
 
 ---
 

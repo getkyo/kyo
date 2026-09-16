@@ -14,8 +14,13 @@ package kyo.internal
   * each. `PortableZipTest` pins both. Whatever the size, it reads back on anything that reads DEFLATE, and the decompressor here reads
   * every block type, dynamic tables included, since it has to read what other compressors produce.
   *
+  * A block the fixed codes would make larger than its input, which is what input that repays no match comes to, is stored as it is
+  * instead, so incompressible input grows by the stored framing only, as it does under zlib.
+  *
   * The decompressor is resumable. Every symbol is decoded from a mark, and input that runs out mid-symbol rewinds to that mark rather than
-  * leaving half a symbol behind, so a stream arriving one byte at a time decodes exactly as one arriving whole.
+  * leaving half a symbol behind, so a stream arriving one byte at a time decodes exactly as one arriving whole. It decodes a symbol with one
+  * table lookup and keeps its bit state in `Int`s: a `Long` is emulated on Scala.js, and a decoder that walked a code a bit at a time
+  * through one ran at a few megabytes a second there.
   *
   * This is mutable, unsynchronized state with a bit-level hot loop, the case where mutability is the implementation: it is confined to one
   * instance, and every instance is owned by the `Scope` that made it.
@@ -146,8 +151,11 @@ private[kyo] object PortableZip:
 
     private val FixedDistLengths: Array[Int] = Array.fill(32)(5)
 
-    /** A canonical Huffman decoding table in the shape puff.c uses: how many codes have each length, and the symbols in code order. */
-    final private class Decoder(val counts: Array[Int], val symbols: Array[Int])
+    /** A canonical Huffman code as a lookup table over its longest code's length in bits, `bits`: the entry at the next `bits` input bits,
+      * read least significant first, is `symbol << 4 | length` for the code those bits start with, and `0` where no code does. A code
+      * shorter than `bits` fills every entry its bits prefix, so one read decodes any symbol.
+      */
+    final private class Decoder(val table: Array[Int], val bits: Int)
 
     private def decoder(lengths: Array[Int], n: Int): Decoder =
         val counts = new Array[Int](MaxCodeBits + 1)
@@ -157,7 +165,7 @@ private[kyo] object PortableZip:
             i += 1
         counts(0) = 0
         // A set of lengths that claims more codes than a tree of this depth has is not a code, and a stream carrying
-        // one is corrupt. Saying so here is what keeps the decode loop's index inside the symbol table.
+        // one is corrupt. Saying so here is what keeps two codes from claiming the same table entries.
         var left = 1
         var len  = 1
         while len <= MaxCodeBits do
@@ -166,20 +174,25 @@ private[kyo] object PortableZip:
             if left < 0 then throw new DataFormatException("A code table in the stream claims more codes than it can hold")
             len += 1
         end while
-        val offsets = new Array[Int](MaxCodeBits + 2)
-        len = 1
-        while len <= MaxCodeBits do
-            offsets(len + 1) = offsets(len) + counts(len)
-            len += 1
-        val symbols = new Array[Int](n)
+        var bits = MaxCodeBits
+        while bits > 0 && counts(bits) == 0 do bits -= 1
+        // An incomplete table, which RFC 1951 allows, leaves entries empty, and a stream that reads one is corrupt.
+        val table = new Array[Int](1 << bits)
+        val codes = canonicalCodes(java.util.Arrays.copyOf(lengths, n))
         i = 0
         while i < n do
-            if lengths(i) != 0 then
-                symbols(offsets(lengths(i))) = i
-                offsets(lengths(i)) += 1
+            val length = lengths(i)
+            if length != 0 then
+                val entry = (i << 4) | length
+                var index = reverseBits(codes(i), length)
+                while index < table.length do
+                    table(index) = entry
+                    index += 1 << length
+                end while
+            end if
             i += 1
         end while
-        new Decoder(counts, symbols)
+        new Decoder(table, bits)
     end decoder
 
     private val FixedLitDecoder  = decoder(FixedLitLengths, LitLenCodes)
@@ -212,8 +225,18 @@ private[kyo] object PortableZip:
         codes
     end canonicalCodes
 
-    private val FixedLitCodes  = canonicalCodes(FixedLitLengths)
-    private val FixedDistCodes = canonicalCodes(FixedDistLengths)
+    /** The fixed codes as the bit writer takes them, reversed once here rather than at every symbol. */
+    private val FixedLitCodes  = reversedCodes(FixedLitLengths)
+    private val FixedDistCodes = reversedCodes(FixedDistLengths)
+
+    private def reversedCodes(lengths: Array[Int]): Array[Int] =
+        val codes = canonicalCodes(lengths)
+        var i     = 0
+        while i < codes.length do
+            codes(i) = reverseBits(codes(i), lengths(i))
+            i += 1
+        codes
+    end reversedCodes
 
     /** A Huffman code is written most significant bit first into a stream that is read least significant bit first. */
     private def reverseBits(value: Int, count: Int): Int =
@@ -278,7 +301,8 @@ private[kyo] object PortableZip:
 
         def committed: Int = length
 
-        def writeCode(code: Int, count: Int): Unit = writeBits(reverseBits(code, count), count)
+        /** Bits written after the last whole byte, which a stored block's alignment pads out. */
+        def pendingBits: Int = accBits
 
         def alignToByte(): Unit =
             if accBits > 0 then writeBits(0, 8 - accBits)
@@ -310,6 +334,8 @@ private[kyo] object PortableZip:
         private val adler          = new Adler32
         private val head           = new Array[Int](1 << 15)
         private val prev           = new Array[Int](BlockLimit)
+        private val tokens         = new Array[Int](BlockLimit)
+        private var tokenCount     = 0
         private var input          = new Array[Byte](BlockLimit * 2)
         private var inputLength    = 0
         private var strategy       = 0
@@ -394,10 +420,20 @@ private[kyo] object PortableZip:
             else if effectiveLevel < 6 then 1
             else 2
 
-        /** Writes one block of the first `count` bytes of the pending input and drops them from it. */
+        /** Writes one block of the first `count` bytes of the pending input and drops them from it.
+          *
+          * The block is stored as it is when that is smaller than its fixed-code form, which is what input that repays no match comes to:
+          * under the fixed codes every byte from 144 up costs nine bits. A stored block costs its three-bit header, the padding to the next
+          * byte, and 32 bits of length, so the choice is made on the exact bit count of both.
+          */
         private def emitBlock(count: Int, last: Boolean): Unit =
             if effectiveLevel == 0 then storedBlock(count, last)
-            else fixedBlock(count, last)
+            else
+                val fixedBits  = 3 + tokenize(count) + FixedLitLengths(EndOfBlock)
+                val storedBits = 3 + ((8 - ((out.pendingBits + 3) & 7)) & 7) + 32 + count * 8
+                if storedBits < fixedBits then storedBlock(count, last)
+                else fixedBlock(last)
+            end if
             if count < inputLength then Array.copy(input, count, input, 0, inputLength - count)
             inputLength -= count
         end emitBlock
@@ -412,14 +448,21 @@ private[kyo] object PortableZip:
             out.writeBytes(input, 0, count)
         end storedBlock
 
-        private def fixedBlock(count: Int, last: Boolean): Unit =
-            out.writeBits(if last then 1 else 0, 1)
-            out.writeBits(1, 2)
+        /** Finds the literals and matches of the first `count` bytes of the pending input, into `tokens`, and answers what writing them
+          * with the fixed codes costs in bits. A literal is its byte value, `0` to `255`; a match is `-(length << 16 | distance)`.
+          */
+        private def tokenize(count: Int): Int =
+            tokenCount = 0
+            var bits = 0
             if strategy == HuffmanOnly then
                 var i = 0
                 while i < count do
-                    literal(input(i))
+                    val symbol = input(i) & 0xff
+                    tokens(i) = symbol
+                    bits += FixedLitLengths(symbol)
                     i += 1
+                end while
+                tokenCount = count
             else
                 val chainLimit = maxChain
                 java.util.Arrays.fill(head, -1)
@@ -457,30 +500,46 @@ private[kyo] object PortableZip:
                             end if
                             covered += 1
                         end while
-                        matchPair(bestLength, bestDistance)
+                        tokens(tokenCount) = -((bestLength << 16) | bestDistance)
+                        tokenCount += 1
+                        val lc = lengthCode(bestLength)
+                        val dc = distanceCode(bestDistance)
+                        bits += FixedLitLengths(257 + lc) + LengthExtra(lc) + FixedDistLengths(dc) + DistanceExtra(dc)
                         position += bestLength
                     else
-                        literal(input(position))
+                        val symbol = input(position) & 0xff
+                        tokens(tokenCount) = symbol
+                        tokenCount += 1
+                        bits += FixedLitLengths(symbol)
                         position += 1
                     end if
                 end while
             end if
-            out.writeCode(FixedLitCodes(EndOfBlock), FixedLitLengths(EndOfBlock))
+            bits
+        end tokenize
+
+        /** Writes the tokens `tokenize` found as one block of fixed codes. */
+        private def fixedBlock(last: Boolean): Unit =
+            out.writeBits(if last then 1 else 0, 1)
+            out.writeBits(1, 2)
+            var i = 0
+            while i < tokenCount do
+                val token = tokens(i)
+                if token >= 0 then out.writeBits(FixedLitCodes(token), FixedLitLengths(token))
+                else
+                    val length   = (-token) >>> 16
+                    val distance = (-token) & 0xffff
+                    val lc       = lengthCode(length)
+                    out.writeBits(FixedLitCodes(257 + lc), FixedLitLengths(257 + lc))
+                    out.writeBits(length - LengthBase(lc), LengthExtra(lc))
+                    val dc = distanceCode(distance)
+                    out.writeBits(FixedDistCodes(dc), FixedDistLengths(dc))
+                    out.writeBits(distance - DistanceBase(dc), DistanceExtra(dc))
+                end if
+                i += 1
+            end while
+            out.writeBits(FixedLitCodes(EndOfBlock), FixedLitLengths(EndOfBlock))
         end fixedBlock
-
-        private def literal(byte: Byte): Unit =
-            val symbol = byte & 0xff
-            out.writeCode(FixedLitCodes(symbol), FixedLitLengths(symbol))
-        end literal
-
-        private def matchPair(length: Int, distance: Int): Unit =
-            val lc = lengthCode(length)
-            out.writeCode(FixedLitCodes(257 + lc), FixedLitLengths(257 + lc))
-            out.writeBits(length - LengthBase(lc), LengthExtra(lc))
-            val dc = distanceCode(distance)
-            out.writeCode(FixedDistCodes(dc), FixedDistLengths(dc))
-            out.writeBits(distance - DistanceBase(dc), DistanceExtra(dc))
-        end matchPair
 
         private def hash(at: Int): Int =
             (((input(at) & 0xff) << 10) ^ ((input(at + 1) & 0xff) << 5) ^ (input(at + 2) & 0xff)) & 0x7fff
@@ -499,13 +558,24 @@ private[kyo] object PortableZip:
                 case _ => 4096
     end Deflater
 
-    /** The decompressing half. `noWrap` reads raw DEFLATE instead of the ZLIB frame. */
+    /** The decompressing half. `noWrap` reads raw DEFLATE instead of the ZLIB frame.
+      *
+      * Bits are taken from the input into an `Int` a byte at a time, least significant first: `position` is the next byte to take and
+      * `bitCount` how many taken bits are not consumed yet. Nothing here reads more than 16 bits at once, so the buffer never holds more than
+      * 23. A symbol is decoded with one lookup in its code's table ([[Decoder]]) and a mark of all three taken before it, so input that
+      * runs out part way restores them and leaves nothing half read.
+      */
     final class Inflater(noWrap: Boolean):
         import Inflater.*
 
         private var state       = if noWrap then BlockStart else ZlibHeader
         private var input       = Array.empty[Byte]
-        private var bitPosition = 0L
+        private var position    = 0
+        private var bitBuffer   = 0
+        private var bitCount    = 0
+        private var markAt      = 0
+        private var markBuffer  = 0
+        private var markCount   = 0
         private var starved     = true
         private var lastBlock   = false
         private var storedLeft  = 0
@@ -545,9 +615,11 @@ private[kyo] object PortableZip:
 
         def end(): Unit = ()
 
-        /** The input bytes the stream did not reach: what follows a finished stream, and nothing while one is still running. */
+        /** The input bytes the stream did not reach: what follows a finished stream, and nothing while one is still running. A byte the
+          * stream read any bit of is reached.
+          */
         def remainingBytes: Array[Byte] =
-            val consumed = ((bitPosition + 7) >> 3).toInt
+            val consumed = position - (bitCount >> 3)
             if consumed >= input.length then Array.empty
             else java.util.Arrays.copyOfRange(input, consumed, input.length)
         end remainingBytes
@@ -581,29 +653,63 @@ private[kyo] object PortableZip:
                 windowStart = WindowSize
         end makeRoom
 
+        /** Drops the input bytes already consumed. Whole bytes taken into the bit buffer and not consumed go back to the input first. */
         private def dropConsumedInput(): Unit =
-            val whole = (bitPosition >> 3).toInt
-            if whole > 0 then
-                val kept = new Array[Byte](input.length - whole)
-                Array.copy(input, whole, kept, 0, kept.length)
+            untake()
+            if position > 0 then
+                val kept = new Array[Byte](input.length - position)
+                Array.copy(input, position, kept, 0, kept.length)
                 input = kept
-                bitPosition -= whole.toLong << 3
+                position = 0
             end if
         end dropConsumedInput
 
-        private def availableBits: Long = (input.length.toLong << 3) - bitPosition
+        /** Returns the whole bytes in the bit buffer to the input, keeping the bits of a byte partly consumed. */
+        private def untake(): Unit =
+            val whole = bitCount >> 3
+            if whole > 0 then
+                position -= whole
+                bitCount -= whole << 3
+                bitBuffer &= (1 << bitCount) - 1
+            end if
+        end untake
 
-        private def readBits(count: Int): Int =
-            var result = 0
-            var i      = 0
-            while i < count do
-                val byte = input((bitPosition >> 3).toInt) & 0xff
-                result |= ((byte >>> (bitPosition & 7).toInt) & 1) << i
-                bitPosition += 1
-                i += 1
+        /** Takes input bytes until the bit buffer holds `count` bits, at most 16, and says whether the input had them. */
+        private def fill(count: Int): Boolean =
+            while bitCount < count && position < input.length do
+                bitBuffer |= (input(position) & 0xff) << bitCount
+                position += 1
+                bitCount += 8
             end while
-            result
-        end readBits
+            bitCount >= count
+        end fill
+
+        /** Consumes `count` bits the buffer holds, `fill` having said it does. */
+        private def take(count: Int): Int =
+            val value = bitBuffer & ((1 << count) - 1)
+            bitBuffer >>>= count
+            bitCount -= count
+            value
+        end take
+
+        /** Consumes the bits up to the next byte boundary. */
+        private def alignToByte(): Unit =
+            val _ = take(bitCount & 7)
+
+        private def mark(): Unit =
+            markAt = position
+            markBuffer = bitBuffer
+            markCount = bitCount
+        end mark
+
+        /** Rewinds to the mark, so the next call decodes whole what the input ran out in the middle of. */
+        private def starve(): Boolean =
+            position = markAt
+            bitBuffer = markBuffer
+            bitCount = markCount
+            starved = true
+            false
+        end starve
 
         private def emit(byte: Byte): Unit =
             window(windowEnd) = byte
@@ -628,43 +734,20 @@ private[kyo] object PortableZip:
             ((adlerB.toLong << 16) | adlerA.toLong) & 0xffffffffL
         end adlerValue
 
-        /** Walks the code lengths as puff.c does, one bit per length, and answers -1 when the input runs out mid-code. */
+        /** The next symbol of `table`'s code, or `Starved` when the input ends before its code does. */
         private def decodeSymbol(table: Decoder): Int =
-            var code   = 0
-            var first  = 0
-            var index  = 0
-            var len    = 1
-            var symbol = Undecided
-            while symbol == Undecided && len <= MaxCodeBits do
-                if availableBits < 1 then symbol = Starved
-                else
-                    code |= readBits(1)
-                    val count = table.counts(len)
-                    if code - first < count then
-                        // A table can be incomplete, which RFC 1951 allows, and then a code can land past the symbols
-                        // it has. That is corrupt input, not a table to index with.
-                        val at = index + (code - first)
-                        if at >= table.symbols.length then
-                            throw new DataFormatException("A Huffman code in the stream points past its own table")
-                        symbol = table.symbols(at)
-                    else
-                        index += count
-                        first = (first + count) << 1
-                        code <<= 1
-                        len += 1
-                    end if
-                end if
-            end while
-            if symbol == Undecided then throw new DataFormatException("A Huffman code in the stream matches no symbol")
-            symbol
+            if table.bits == 0 then throw new DataFormatException("A Huffman code in the stream matches no symbol")
+            val whole  = fill(table.bits)
+            val entry  = table.table(bitBuffer & ((1 << table.bits) - 1))
+            val length = entry & 15
+            if length != 0 && length <= bitCount then
+                bitBuffer >>>= length
+                bitCount -= length
+                entry >>> 4
+            else if whole then throw new DataFormatException("A Huffman code in the stream matches no symbol")
+            else Starved
+            end if
         end decodeSymbol
-
-        /** Rewinds to where the thing being decoded started, so the next call decodes it whole. */
-        private def starve(mark: Long): Boolean =
-            bitPosition = mark
-            starved = true
-            false
-        end starve
 
         private def decodeStep(): Boolean =
             state match
@@ -676,11 +759,11 @@ private[kyo] object PortableZip:
                 case _           => false
 
         private def readZlibHeader(): Boolean =
-            val mark = bitPosition
-            if availableBits < 16 then starve(mark)
+            mark()
+            if !fill(16) then starve()
             else
-                val cmf = readBits(8)
-                val flg = readBits(8)
+                val cmf = take(8)
+                val flg = take(8)
                 if (cmf & 0x0f) != 8 then
                     throw new DataFormatException(s"Only deflate (8) compression method is supported, present: ${cmf & 0x0f}")
                 else if ((cmf << 8) | flg) % 31 != 0 then throw new DataFormatException("The ZLIB header check bits do not match")
@@ -693,24 +776,26 @@ private[kyo] object PortableZip:
         end readZlibHeader
 
         private def readBlockHeader(): Boolean =
-            val mark = bitPosition
-            if availableBits < 3 then starve(mark)
+            mark()
+            if !fill(3) then starve()
             else
-                lastBlock = readBits(1) == 1
-                readBits(2) match
+                lastBlock = take(1) == 1
+                take(2) match
                     case 0 =>
                         // A stored block starts on a byte boundary and carries its length twice, the second time inverted.
-                        val aligned = (bitPosition + 7) & ~7L
-                        if (input.length.toLong << 3) - aligned < 32 then starve(mark)
+                        alignToByte()
+                        if !fill(16) then starve()
                         else
-                            bitPosition = aligned
-                            val length  = readBits(16)
-                            val inverse = readBits(16)
-                            if length != (inverse ^ 0xffff) then
-                                throw new DataFormatException("A stored block's length and its complement do not agree")
-                            storedLeft = length
-                            state = StoredBytes
-                            true
+                            val length = take(16)
+                            if !fill(16) then starve()
+                            else
+                                val inverse = take(16)
+                                if length != (inverse ^ 0xffff) then
+                                    throw new DataFormatException("A stored block's length and its complement do not agree")
+                                storedLeft = length
+                                state = StoredBytes
+                                true
+                            end if
                         end if
                     case 1 =>
                         litDecoder = FixedLitDecoder
@@ -718,31 +803,36 @@ private[kyo] object PortableZip:
                         state = Symbols
                         true
                     case 2 =>
-                        readDynamicTables(mark)
+                        readDynamicTables()
                     case _ =>
                         throw new DataFormatException("A block in the stream declares the reserved type 3")
                 end match
             end if
         end readBlockHeader
 
-        /** Reads the two code tables of a dynamic block. On short input it rewinds to the block header and reads them again later. */
-        private def readDynamicTables(blockMark: Long): Boolean =
-            if availableBits < 14 then starve(blockMark)
+        /** Reads the two code tables of a dynamic block. On short input it rewinds to the block header, marked by the caller, and reads
+          * them again later.
+          */
+        private def readDynamicTables(): Boolean =
+            if !fill(14) then starve()
             else
-                val litCount  = readBits(5) + 257
-                val distCount = readBits(5) + 1
-                val codeCount = readBits(4) + 4
-                if availableBits < codeCount.toLong * 3 then starve(blockMark)
-                else
-                    val codeLengths = new Array[Int](19)
-                    var i           = 0
-                    while i < codeCount do
-                        codeLengths(CodeLengthOrder(i)) = readBits(3)
+                val litCount    = take(5) + 257
+                val distCount   = take(5) + 1
+                val codeCount   = take(4) + 4
+                val codeLengths = new Array[Int](19)
+                var i           = 0
+                var short       = false
+                while !short && i < codeCount do
+                    if !fill(3) then short = true
+                    else
+                        codeLengths(CodeLengthOrder(i)) = take(3)
                         i += 1
+                end while
+                if short then starve()
+                else
                     val codeDecoder = decoder(codeLengths, 19)
                     val lengths     = new Array[Int](litCount + distCount)
                     var filled      = 0
-                    var short       = false
                     while !short && filled < lengths.length do
                         val symbol = decodeSymbol(codeDecoder)
                         if symbol == Starved then short = true
@@ -753,9 +843,9 @@ private[kyo] object PortableZip:
                             val extraBits = if symbol == 16 then 2 else if symbol == 17 then 3 else 7
                             if symbol == 16 && filled == 0 then
                                 throw new DataFormatException("A code length repeats before any length is given")
-                            if availableBits < extraBits then short = true
+                            if !fill(extraBits) then short = true
                             else
-                                val repeat = readBits(extraBits) + (if symbol == 18 then 11 else 3)
+                                val repeat = take(extraBits) + (if symbol == 18 then 11 else 3)
                                 val value  = if symbol == 16 then lengths(filled - 1) else 0
                                 if filled + repeat > lengths.length then
                                     throw new DataFormatException("The code lengths in the stream run past the alphabet they describe")
@@ -768,7 +858,7 @@ private[kyo] object PortableZip:
                             end if
                         end if
                     end while
-                    if short then starve(blockMark)
+                    if short then starve()
                     else
                         val litLengths  = new Array[Int](litCount)
                         val distLengths = new Array[Int](distCount)
@@ -783,22 +873,42 @@ private[kyo] object PortableZip:
             end if
         end readDynamicTables
 
+        /** Copies a stored block's bytes to the window, as many as the input, the window and the block all have. */
         private def readStored(): Boolean =
             if storedLeft == 0 then endBlock()
-            else if availableBits < 8 then
-                starved = true
-                false
             else
-                var room = window.length - windowEnd
-                if room > storedLeft then room = storedLeft
-                val have = (availableBits >> 3).toInt
-                if room > have then room = have
-                var i = 0
-                while i < room do
-                    emit(readBits(8).toByte)
-                    i += 1
-                storedLeft -= room
-                true
+                // The block starts on a byte boundary, so the bit buffer holds whole bytes only, and those go back to the input.
+                untake()
+                val available = input.length - position
+                if available == 0 then
+                    starved = true
+                    false
+                else
+                    var count = window.length - windowEnd
+                    if count > storedLeft then count = storedLeft
+                    if count > available then count = available
+                    Array.copy(input, position, window, windowEnd, count)
+                    if !noWrap then
+                        var i     = windowEnd
+                        val until = windowEnd + count
+                        while i < until do
+                            adlerA += window(i) & 0xff
+                            adlerB += adlerA
+                            adlerCount += 1
+                            if adlerCount == AdlerRun then
+                                adlerA %= 65521
+                                adlerB %= 65521
+                                adlerCount = 0
+                            end if
+                            i += 1
+                        end while
+                    end if
+                    windowEnd += count
+                    written += count
+                    position += count
+                    storedLeft -= count
+                    true
+                end if
             end if
         end readStored
 
@@ -809,10 +919,10 @@ private[kyo] object PortableZip:
             while running do
                 if windowEnd + MaxMatch > window.length then running = false
                 else
-                    val mark   = bitPosition
+                    mark()
                     val symbol = decodeSymbol(litDecoder)
                     if symbol == Starved then
-                        result = starve(mark)
+                        result = starve()
                         running = false
                     else if symbol < EndOfBlock then emit(symbol.toByte)
                     else if symbol == EndOfBlock then
@@ -821,22 +931,22 @@ private[kyo] object PortableZip:
                     else
                         val code = symbol - 257
                         if code >= LengthBase.length then throw new DataFormatException(s"A length code past the alphabet: $symbol")
-                        if availableBits < LengthExtra(code) then
-                            result = starve(mark)
+                        if !fill(LengthExtra(code)) then
+                            result = starve()
                             running = false
                         else
-                            val length   = LengthBase(code) + readBits(LengthExtra(code))
+                            val length   = LengthBase(code) + take(LengthExtra(code))
                             val distance = decodeSymbol(distDecoder)
                             if distance == Starved then
-                                result = starve(mark)
+                                result = starve()
                                 running = false
                             else if distance >= DistanceBase.length then
                                 throw new DataFormatException(s"A distance code past the alphabet: $distance")
-                            else if availableBits < DistanceExtra(distance) then
-                                result = starve(mark)
+                            else if !fill(DistanceExtra(distance)) then
+                                result = starve()
                                 running = false
                             else
-                                val back = DistanceBase(distance) + readBits(DistanceExtra(distance))
+                                val back = DistanceBase(distance) + take(DistanceExtra(distance))
                                 if back > windowEnd then
                                     throw new DataFormatException("A back-reference reaches past the start of the output")
                                 var from = windowEnd - back
@@ -856,7 +966,7 @@ private[kyo] object PortableZip:
 
         private def endBlock(): Boolean =
             if lastBlock then
-                bitPosition = (bitPosition + 7) & ~7L
+                alignToByte()
                 if noWrap then
                     state = Finished
                     false
@@ -870,17 +980,23 @@ private[kyo] object PortableZip:
         end endBlock
 
         private def readTrailer(): Boolean =
-            val mark = bitPosition
-            if availableBits < 32 then starve(mark)
+            mark()
+            if !fill(16) then starve()
             else
-                val b0       = readBits(8).toLong
-                val b1       = readBits(8).toLong
-                val b2       = readBits(8).toLong
-                val b3       = readBits(8).toLong
-                val expected = ((b0 << 24) | (b1 << 16) | (b2 << 8) | b3) & 0xffffffffL
-                if adlerValue != expected then throw new DataFormatException("The ZLIB checksum does not match the data")
-                state = Finished
-                false
+                val high = take(16)
+                if !fill(16) then starve()
+                else
+                    val low = take(16)
+                    // Read least significant bit first, each 16 bits hold two bytes in stream order, the first in the low eight.
+                    val b0       = (high & 0xff).toLong
+                    val b1       = ((high >>> 8) & 0xff).toLong
+                    val b2       = (low & 0xff).toLong
+                    val b3       = ((low >>> 8) & 0xff).toLong
+                    val expected = ((b0 << 24) | (b1 << 16) | (b2 << 8) | b3) & 0xffffffffL
+                    if adlerValue != expected then throw new DataFormatException("The ZLIB checksum does not match the data")
+                    state = Finished
+                    false
+                end if
             end if
         end readTrailer
     end Inflater
@@ -893,8 +1009,7 @@ private[kyo] object PortableZip:
         private val ZlibTrailer = 4
         private val Finished    = 5
 
-        /** Answers from `decodeSymbol` that are not a symbol: the input ran out, or no code has matched yet. */
-        private val Starved   = -1
-        private val Undecided = -2
+        /** The answer from `decodeSymbol` that is not a symbol: the input ran out before the code did. */
+        private val Starved = -1
     end Inflater
 end PortableZip
