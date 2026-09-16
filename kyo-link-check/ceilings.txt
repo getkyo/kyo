@@ -5,8 +5,7 @@
 # `main.mjs` and what it imports statically. The two differ once a link splits into chunks a host loads on demand; a
 # WasmGC link is one module, so it has no separate initial ceiling.
 #
-# The JS-initial lines start at the JS total ceilings, because every program is one module until the network stack
-# splits by host (#1836, linking rule 2). The split lowers them to about 10% over what it measures.
+# A program that links no network stack is one module, so its JS-initial line equals its JS line.
 #
 # Each ceiling is about 10% above the size measured when it was set, so ordinary growth passes and a step like
 # the one in issue #1878 (the tz and locale data doubling a minimal program) fails. When a program grows for a
@@ -31,6 +30,16 @@
 # The Wasm row is the same programs through the WasmGC linker, and lands near 41% of the JS size on every one.
 # Every program also lost weight here: CoreMin 914,678 to 879,915, CoreApp 1,772,186 to 1,759,327, NetEcho
 # 3,304,836 to 3,284,716. The locale database is what left.
+#
+# Measured at the change that split the network stack by host (#1836, linking rule 2):
+#   JS total    NetEcho 4,204,249   HttpGet 7,032,301   AiHttp 9,139,989
+#   JS initial  NetEcho 2,448,495   HttpGet 2,956,975   AiHttp 6,001,117
+# A page's initial load lost every Node backend: HttpGet 5,388,998 to 2,956,975, AiHttp 7,226,062 to 6,001,117. The
+# totals grew by the names the linker gives references between modules, not by code: every such reference is
+# spelled `$j_internal$002d<40 hex digits>.` and every module exports its members by full name. Removing those two
+# from the output gives back NetEcho 3,284,013, HttpGet 5,418,151 and AiHttp 7,255,534: the single-module sizes
+# above, plus the two classes that defer the load. Gzipped, the names cost NetEcho 537,102 against 475,703,
+# HttpGet 868,466 against 769,498, AiHttp 1,090,002 against 982,979. A minifying bundler renames them.
 
 JS   CoreMin 1,010,000
 JS   CoreLog 1,175,000
@@ -41,12 +50,12 @@ Wasm UiMin     300,000
 JS   CoreApp      1,950,000
 JS   CoreReadLine 1,980,000
 JS   SystemPath   2,415,000
-JS   NetEcho      3,640,000
+JS   NetEcho      4,625,000
 Wasm CoreReadLine   990,000
 Wasm SystemPath   1,195,000
 Wasm NetEcho      1,620,000
-JS   HttpGet      5,930,000
-JS   AiHttp       7,950,000
+JS   HttpGet      7,735,000
+JS   AiHttp      10,055,000
 JS   MachineStats 2,515,000
 Wasm CoreApp        965,000
 Wasm HttpGet      2,455,000
@@ -58,7 +67,7 @@ JS-initial UiMin          600,000
 JS-initial CoreApp      1,950,000
 JS-initial CoreReadLine 1,980,000
 JS-initial SystemPath   2,415,000
-JS-initial NetEcho      3,640,000
-JS-initial HttpGet      5,930,000
-JS-initial AiHttp       7,950,000
+JS-initial NetEcho      2,695,000
+JS-initial HttpGet      3,255,000
+JS-initial AiHttp       6,600,000
 JS-initial MachineStats 2,515,000
