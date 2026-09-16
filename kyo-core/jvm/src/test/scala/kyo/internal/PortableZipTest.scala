@@ -299,6 +299,7 @@ class PortableZipTest extends kyo.test.Test[Any]:
                     catch
                         case _: PortableZip.DataFormatException => None
                         case other: Throwable                   => Some(s"byte $at: ${other.getClass.getName}")
+                    end try
                 }
             assert(leaked.isEmpty, leaked.take(5).mkString(", "))
         }
