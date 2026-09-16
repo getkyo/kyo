@@ -106,21 +106,37 @@ final private[kyo] class DeferredClientBackend(
                 promise.asInstanceOf[Fiber.Unsafe[ClientBackend, Abort[HttpException]]].safe.get
             }
 
-    /** Starts the load if none is loaded or in flight, and returns the one in flight. */
+    /** Starts the load if none is loaded or in flight, and returns the one in flight.
+      *
+      * Each backend is constructed in the `js.dynamicImport` body itself. The linker places code a class at a time, so a body that called a
+      * method of this class to build the backend would leave that construction, and every class it names, in the module that loads this one.
+      */
     private def load(): js.Promise[ClientBackend] =
         if loading == null then
             val started: js.Promise[ClientBackend] =
                 if Platform.isNodeLike then
                     Platform.linkTimeIf(Platform.canSplitModules) {
-                        js.dynamicImport(socketBackend())
+                        js.dynamicImport[ClientBackend](HttpClientBackend.init(
+                            kyo.net.NetPlatform.transport,
+                            maxConnectionsPerHost,
+                            idleConnectionTimeout,
+                            defaultTlsConfig,
+                            transportConfig
+                        ))
                     } {
-                        attempt(socketBackend())
+                        attempt(HttpClientBackend.init(
+                            kyo.net.NetPlatform.transport,
+                            maxConnectionsPerHost,
+                            idleConnectionTimeout,
+                            defaultTlsConfig,
+                            transportConfig
+                        ))
                     }
                 else
                     Platform.linkTimeIf(Platform.canSplitModules) {
-                        js.dynamicImport(fetchBackend())
+                        js.dynamicImport[ClientBackend](new FetchClientBackend)
                     } {
-                        attempt(fetchBackend())
+                        attempt(new FetchClientBackend)
                     }
             loading = started.`then`[ClientBackend](
                 { (arrived: ClientBackend) =>
@@ -136,17 +152,6 @@ final private[kyo] class DeferredClientBackend(
         end if
         loading
     end load
-
-    private def socketBackend(): ClientBackend =
-        HttpClientBackend.init(
-            kyo.net.NetPlatform.transport,
-            maxConnectionsPerHost,
-            idleConnectionTimeout,
-            defaultTlsConfig,
-            transportConfig
-        )
-
-    private def fetchBackend(): ClientBackend = new FetchClientBackend
 
     private def attempt(build: => ClientBackend): js.Promise[ClientBackend] =
         try js.Promise.resolve[ClientBackend](build)

@@ -92,9 +92,9 @@ abstract private[kyo] class PolicyClientBackend extends ClientBackend:
                                                 // an https to http Location additionally puts them on the wire in cleartext. Credentials
                                                 // are therefore scoped to the origin that received them (RFC 6454 section 4: the scheme,
                                                 // host and port triple) and dropped whenever a hop leaves it.
-                                                val crossOrigin = !HttpClientBackend.sameOrigin(req.url, resolved)
+                                                val crossOrigin = !PolicyClientBackend.sameOrigin(req.url, resolved)
                                                 val nextHeaders =
-                                                    if crossOrigin then HttpClientBackend.stripCredentials(req.headers)
+                                                    if crossOrigin then PolicyClientBackend.stripCredentials(req.headers)
                                                     else req.headers
                                                 // RFC 9110 section 15.4.4: 303 See Other requires changing method to GET
                                                 val nextReq =
@@ -167,7 +167,41 @@ abstract private[kyo] class PolicyClientBackend extends ClientBackend:
     end filteringWith
 end PolicyClientBackend
 
+/** The policy's own helpers.
+  *
+  * They live here rather than beside a backend because every backend's policy calls them. On Scala.js each backend is a module one kind of
+  * host loads on demand, and the linker assigns code to modules a class at a time, so a helper on a backend's companion would put that whole
+  * backend in the module every host loads.
+  */
 private[kyo] object PolicyClientBackend:
+
+    /** Header fields carrying a caller's credentials, dropped when a redirect leaves the origin they were sent to.
+      *
+      * `Cookie` belongs here with the two authorization fields: a cookie is bound to the origin that set it, and forwarding one to a
+      * different authority is the same disclosure as forwarding an `Authorization` value.
+      */
+    private val CredentialHeaders = List("Authorization", "Proxy-Authorization", "Cookie")
+
+    /** Drops every credential-bearing field from `headers`. */
+    private[client] def stripCredentials(headers: HttpHeaders): HttpHeaders =
+        CredentialHeaders.foldLeft(headers)((acc, name) => acc.remove(name))
+
+    /** Whether two URLs share an origin: the same scheme, host and port (RFC 6454 section 4).
+      *
+      * Host is compared case-insensitively because a DNS name is case-insensitive. Port needs no default-filling here because `HttpUrl.parse`
+      * already resolves an absent port to the scheme's default, so `https://h` and `https://h:443` arrive equal.
+      */
+    private[client] def sameOrigin(a: HttpUrl, b: HttpUrl): Boolean =
+        // Scheme and host are both compared case-insensitively (RFC 3986 sections 3.1 and 3.2.2 make both case-insensitive, and `HttpUrl`
+        // stores the scheme as written rather than normalized). Comparing the scheme exactly would read "HTTPS://host" redirecting to
+        // "https://host" as a change of origin and silently strip credentials from a hop that never left it.
+        val schemeMatches =
+            (a.scheme, b.scheme) match
+                case (Present(x), Present(y)) => x.equalsIgnoreCase(y)
+                case (Absent, Absent)         => true
+                case _                        => false
+        schemeMatches && a.host.equalsIgnoreCase(b.host) && a.port == b.port
+    end sameOrigin
 
     /** `request` resolved against the configured base URL: a request with no scheme of its own takes the base's scheme, host and port. */
     def resolved[In](request: HttpRequest[In], config: HttpClientConfig): HttpRequest[In] =

@@ -1130,34 +1130,6 @@ end HttpClientBackend
 
 private[kyo] object HttpClientBackend:
 
-    /** Header fields carrying a caller's credentials, dropped when a redirect leaves the origin they were sent to.
-      *
-      * `Cookie` belongs here with the two authorization fields: a cookie is bound to the origin that set it, and forwarding one to a
-      * different authority is the same disclosure as forwarding an `Authorization` value.
-      */
-    private val CredentialHeaders = List("Authorization", "Proxy-Authorization", "Cookie")
-
-    /** Drops every credential-bearing field from `headers`. */
-    private[client] def stripCredentials(headers: HttpHeaders): HttpHeaders =
-        CredentialHeaders.foldLeft(headers)((acc, name) => acc.remove(name))
-
-    /** Whether two URLs share an origin: the same scheme, host and port (RFC 6454 section 4).
-      *
-      * Host is compared case-insensitively because a DNS name is case-insensitive. Port needs no default-filling here because `HttpUrl.parse`
-      * already resolves an absent port to the scheme's default, so `https://h` and `https://h:443` arrive equal.
-      */
-    private[client] def sameOrigin(a: HttpUrl, b: HttpUrl): Boolean =
-        // Scheme and host are both compared case-insensitively (RFC 3986 sections 3.1 and 3.2.2 make both case-insensitive, and `HttpUrl`
-        // stores the scheme as written rather than normalized). Comparing the scheme exactly would read "HTTPS://host" redirecting to
-        // "https://host" as a change of origin and silently strip credentials from a hop that never left it.
-        val schemeMatches =
-            (a.scheme, b.scheme) match
-                case (Present(x), Present(y)) => x.equalsIgnoreCase(y)
-                case (Absent, Absent)         => true
-                case _                        => false
-        schemeMatches && a.host.equalsIgnoreCase(b.host) && a.port == b.port
-    end sameOrigin
-
     /** Create a fully pooled backend for production use.
       *
       * `transportConfig` carries this client's byte-transport and HTTP-parser tuning (notably `maxHeaderSize`, the HTTP header limit the
