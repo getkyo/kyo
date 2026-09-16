@@ -1236,9 +1236,9 @@ class PathTest extends kyo.test.Test[Any]:
             for
                 dir <- Path.tempDir("kyo-path-write-then-walk")
                 sub = dir / "nested"
-                _ <- sub.mkDir
-                _ <- Kyo.foreach(0 until perDir)(i => (dir / s"top-$i.bin").writeBytes(Span.from(Array[Byte](i.toByte))))
-                _ <- Kyo.foreach(0 until perDir)(i => (sub / s"deep-$i.bin").writeBytes(Span.from(Array[Byte](i.toByte))))
+                _     <- sub.mkDir
+                _     <- Kyo.foreach(0 until perDir)(i => (dir / s"top-$i.bin").writeBytes(Span.from(Array[Byte](i.toByte))))
+                _     <- Kyo.foreach(0 until perDir)(i => (sub / s"deep-$i.bin").writeBytes(Span.from(Array[Byte](i.toByte))))
                 paths <- Scope.run(dir.walk.run)
                 _     <- dir.removeAll
             yield
