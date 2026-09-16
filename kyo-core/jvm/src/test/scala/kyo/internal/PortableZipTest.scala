@@ -192,6 +192,25 @@ class PortableZipTest extends kyo.test.Test[Any]:
         }
     }
 
+    "what the fixed tables cost" - {
+
+        // The codec writes fixed Huffman codes where zlib builds a table per block, so its output is larger. These
+        // two say by how much, in the two shapes that differ most: prose, where a table of its own saves zlib
+        // little, and a long repeat, where that table makes every length code cheap and this one pays full price
+        // for each.
+
+        "prose stays close to what the JDK writes" in {
+            val portable = portableDeflate(prose).length
+            val jdk      = jdkDeflate(prose).length
+            assert(portable <= jdk * 3 / 2, s"portable $portable against the JDK's $jdk")
+        }
+
+        "a long repeat still compresses to a small fraction of itself" in {
+            val portable = portableDeflate(longText).length
+            assert(portable * 20 < longText.length, s"portable $portable of ${longText.length}")
+        }
+    }
+
     "the checksums agree with the JDK's" - {
 
         "CRC-32 over one array" in {

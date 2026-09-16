@@ -9,9 +9,10 @@ package kyo.internal
   *
   * The compressor emits one block per 32 KB of input, with matches found inside that block only. Dropping the window that spans blocks
   * costs a little ratio at each boundary and removes the bookkeeping that carries a match across one. Blocks use the fixed Huffman codes
-  * of RFC 1951 3.2.6, so a run of bytes that would repay a custom code table pays the fixed table instead: output is a few percent larger
-  * than zlib's for text, and reads back on anything that reads DEFLATE. The decompressor reads every block type, including the dynamic
-  * tables this compressor does not write, since it has to read what other compressors produce.
+  * of RFC 1951 3.2.6, where zlib builds a table per block, so the output is larger: by little on prose, where a table of its own saves
+  * zlib little, and by more on input with long repeats, where that table makes every length code cheap and this one pays full price for
+  * each. `PortableZipTest` pins both. Whatever the size, it reads back on anything that reads DEFLATE, and the decompressor here reads
+  * every block type, dynamic tables included, since it has to read what other compressors produce.
   *
   * The decompressor is resumable. Every symbol is decoded from a mark, and input that runs out mid-symbol rewinds to that mark rather than
   * leaving half a symbol behind, so a stream arriving one byte at a time decodes exactly as one arriving whole.
