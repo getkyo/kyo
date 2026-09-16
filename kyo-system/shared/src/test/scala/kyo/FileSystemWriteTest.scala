@@ -1,7 +1,12 @@
 package kyo
 
+import kyo.test.HostFilter
+
 /** Reusable behavioral contract for mutable filesystem backends. */
 abstract class FileSystemWriteTest extends kyo.test.Test[Any]:
+
+    // Writes through the host file system, which a browser has not.
+    override protected def hostFilters = Chunk(HostFilter.NotBrowser)
 
     protected def createFileSystem(using
         Frame

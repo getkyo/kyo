@@ -15,15 +15,21 @@ class SystemPlatformSpecificJsWasmTest extends kyo.test.Test[Any]:
     /** Runs `f` with `process` deleted from the global object, so it is an undeclared identifier: the state a
       * browser is in, and the one where a bare read throws while `typeof process` still answers "undefined".
       * Restored in a `finally` because the test runner talks over `process.stdout`.
+      *
+      * In a browser the host is in that state already, so `f` runs as it is: reading the global to save it would
+      * throw the very ReferenceError these leaves are about.
       */
     private def withoutProcessGlobal[A](f: => A): A =
         // `globalThis`, not `sjs.Dynamic.global`, which Scala.js allows only left of a `.`-selection.
         val global = sjs.Dynamic.global.globalThis
-        val saved  = sjs.Dynamic.global.process
-        sjs.special.delete(global, "process")
-        try f
-        finally global.updateDynamic("process")(saved)
-        end try
+        if sjs.typeOf(sjs.Dynamic.global.selectDynamic("process")) == "undefined" then f
+        else
+            val saved = sjs.Dynamic.global.process
+            sjs.special.delete(global, "process")
+            try f
+            finally global.updateDynamic("process")(saved)
+            end try
+        end if
     end withoutProcessGlobal
 
     private def withSeed[A](seed: sjs.Any)(f: => A): A =
@@ -48,7 +54,8 @@ class SystemPlatformSpecificJsWasmTest extends kyo.test.Test[Any]:
     private def live = System.live.unsafe
 
     "env" - {
-        "resolves a variable set in process.env" in {
+        // Writes into `process.env`, which only a Node-like host has.
+        "resolves a variable set in process.env".notBrowser in {
             sjs.Dynamic.global.process.env.updateDynamic("KYO_SYSTEMPLATFORM_PROBE")("enabled")
             assert(live.env("KYO_SYSTEMPLATFORM_PROBE") == Present("enabled"))
         }
@@ -61,7 +68,8 @@ class SystemPlatformSpecificJsWasmTest extends kyo.test.Test[Any]:
             assert(withoutProcessGlobal(live.env("PATH")) == Absent)
         }
 
-        "is Absent when every process.env read throws, instead of throwing" in {
+        // Replaces `process.env` with a throwing proxy, which needs a `process` global to replace it on.
+        "is Absent when every process.env read throws, instead of throwing".notBrowser in {
             assert(withEnvThatThrows(live.env("PATH")) == Absent)
         }
 
@@ -79,7 +87,7 @@ class SystemPlatformSpecificJsWasmTest extends kyo.test.Test[Any]:
     }
 
     "userName" - {
-        "is the OS user on Node" in {
+        "is the OS user on Node".notBrowser in {
             val expected = sjs.Dynamic.global.process.getBuiltinModule("node:os").userInfo().username.asInstanceOf[String]
             assert(live.userName() == expected)
         }

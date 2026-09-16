@@ -1,7 +1,12 @@
 package kyo
 
+import kyo.test.HostFilter
+
 /** Shared behavioral contract for [[FileSystem.Read]] lock implementations. */
 abstract class FileSystemLockTest extends kyo.test.Test[Any]:
+
+    // Takes host file locks, which a browser has not.
+    override protected def hostFilters = Chunk(HostFilter.NotBrowser)
 
     protected def withFileSystem(
         use: (FileSystem.Read[Sync], Path) => Unit < (Async & Sync & Scope & Abort[FileSystemException])

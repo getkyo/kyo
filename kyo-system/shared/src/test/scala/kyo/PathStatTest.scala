@@ -1,6 +1,11 @@
 package kyo
 
+import kyo.test.HostFilter
+
 class PathStatTest extends kyo.test.Test[Any]:
+
+    // Stats host files, which a browser has not.
+    override protected def hostFilters = Chunk(HostFilter.NotBrowser)
 
     "stat returns size matching written bytes" in {
         Scope.run(Path.run {

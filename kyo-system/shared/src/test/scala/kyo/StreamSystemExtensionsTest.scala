@@ -1,8 +1,12 @@
 package kyo
 
 import java.nio.charset.StandardCharsets
+import kyo.test.HostFilter
 
 class StreamSystemExtensionsTest extends kyo.test.Test[Any]:
+
+    // Streams file and process output, neither of which a browser has.
+    override protected def hostFilters = Chunk(HostFilter.NotBrowser)
 
     // =========================================================================
     // Content

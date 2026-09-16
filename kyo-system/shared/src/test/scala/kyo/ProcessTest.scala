@@ -1,8 +1,13 @@
 package kyo
 
+import kyo.test.HostFilter
+
 // TODO: Process tests use Unix commands (sleep, sh -c, kill) extensively.
 // Needs cross-platform process helpers for Windows support.
 class ProcessTest extends kyo.test.Test[Any]:
+
+    // Spawns processes through node:child_process, which a browser has not.
+    override protected def hostFilters = Chunk(HostFilter.NotBrowser)
 
     // ProcessTest exercises Unix commands (sleep, sh -c, kill); each leaf cancels (not fails) on Windows.
     // Called as the first statement of every leaf body (the ScalaTest version skipped all via a `run` override).

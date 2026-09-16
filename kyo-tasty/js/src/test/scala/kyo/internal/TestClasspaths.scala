@@ -8,6 +8,9 @@ import kyo.*
   * temporary directory, writes the embedded fixture bytes to it, then delegates to `Tasty.withClasspath` so the same
   * shared test pipeline runs against a real filesystem path.
   *
+  * A browser page has no file system, so there the staging cancels the test instead: the subject is the decoder, which a
+  * page runs, and the temp directory is only how the fixtures reach it.
+  *
   * The `roots` parameter is ignored; embedded fixtures are always loaded.
   */
 private[kyo] object TestClasspaths:
@@ -16,6 +19,16 @@ private[kyo] object TestClasspaths:
     val kyoTastyFixtures: Seq[String] = Seq.empty
 
     def withClasspath[A, S](roots: Seq[String] = Seq.empty)(f: => A < S)(using Frame): A < (Async & Abort[TastyError] & S) =
+        if kyo.internal.Platform.isBrowser then
+            // The fixtures reach the loader through a temp directory, and a page has no file system. Cancel the test
+            // rather than failing it: what it covers is the decoder, which a page runs, not the staging around it.
+            Sync.defer(
+                throw new kyo.test.TestCancelled("kyo-tasty stages its fixtures in a temp directory, and this host has no file system")
+            )
+        else
+            withStagedClasspath(f)
+
+    private def withStagedClasspath[A, S](f: => A < S)(using Frame): A < (Async & Abort[TastyError] & S) =
         Scope.run {
             Abort.recover[FileSystemException] { e => Abort.fail(TastyError.SnapshotIoError(e.getMessage)) } {
                 Path.run(Path.tempDir("kyo-test-fixtures")).map { dir =>
@@ -143,6 +156,6 @@ private[kyo] object TestClasspaths:
                 }
             }
         }
-    end withClasspath
+    end withStagedClasspath
 
 end TestClasspaths

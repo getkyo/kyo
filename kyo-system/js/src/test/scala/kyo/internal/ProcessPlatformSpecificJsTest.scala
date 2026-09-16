@@ -1,6 +1,7 @@
 package kyo.internal
 
 import kyo.*
+import kyo.test.HostFilter
 import scala.scalajs.js as sjs
 
 /** The Node child-process backend on a host without Node's `child_process` module: a browser page, which has no `process` global at all,
@@ -10,6 +11,9 @@ import scala.scalajs.js as sjs
   * cannot spawn, and every case it has (a missing program, a denied permission) would misreport one.
   */
 class ProcessPlatformSpecificJsTest extends kyo.test.Test[Any]:
+
+    // Exercises the node:child_process backend, which a browser has not.
+    override protected def hostFilters = Chunk(HostFilter.NotBrowser)
 
     import AllowUnsafe.embrace.danger
 

@@ -2,8 +2,12 @@ package kyo
 
 import java.nio.charset.StandardCharsets
 import kyo.internal.Platform
+import kyo.test.HostFilter
 
 class PathTest extends kyo.test.Test[Any]:
+
+    // Reads and writes files through node:fs, which a browser has not.
+    override protected def hostFilters = Chunk(HostFilter.NotBrowser)
 
     // =========================================================================
     // Construction

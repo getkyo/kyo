@@ -285,7 +285,8 @@ class JsonlTest extends kyo.test.Test[Any]:
         }
     }
 
-    "read" - {
+    // Reads jsonl files through Path, which a browser has not.
+    "read".notBrowser - {
 
         "reads a jsonl file into values" in {
             Path.run {
@@ -560,7 +561,8 @@ class JsonlTest extends kyo.test.Test[Any]:
         }
     }
 
-    "watch" - {
+    // Watches jsonl files through Path, which a browser has not.
+    "watch".notBrowser - {
 
         val pollDelay = 50.millis
 
@@ -1146,7 +1148,8 @@ class JsonlTest extends kyo.test.Test[Any]:
         }
     }
 
-    "write" - {
+    // Writes jsonl files through Path, which a browser has not.
+    "write".notBrowser - {
 
         "writes a stream of values as jsonl" in {
             Path.run {
@@ -1349,7 +1352,8 @@ class JsonlTest extends kyo.test.Test[Any]:
         }
     }
 
-    "append" - {
+    // Appends to jsonl files through Path, which a browser has not.
+    "append".notBrowser - {
 
         "adds to an existing file without truncating it" in {
             Path.run {

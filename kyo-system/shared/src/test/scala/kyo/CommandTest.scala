@@ -2,8 +2,12 @@ package kyo
 
 import java.io.ByteArrayInputStream
 import java.nio.charset.StandardCharsets
+import kyo.test.HostFilter
 
 class CommandTest extends kyo.test.Test[Any]:
+
+    // Spawns processes through node:child_process, which a browser has not.
+    override protected def hostFilters = Chunk(HostFilter.NotBrowser)
 
     // Sequential leaves: these spawn and pipe between OS processes; concurrent leaves race the multi-process pipe (notably on Node).
     override def config = super.config.sequential

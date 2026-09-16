@@ -2,9 +2,13 @@ package kyo
 
 import kyo.Path.Change as PathChange
 import kyo.Path.WatchOptions
+import kyo.test.HostFilter
 
 /** Cross-platform behavioral assertions represented by the stable filesystem snapshots. */
 class FileSystemSnapshotTest extends kyo.test.Test[Any]:
+
+    // Snapshots host directory trees, which a browser has not.
+    override protected def hostFilters = Chunk(HostFilter.NotBrowser)
 
     private given Frame = Frame.internal
 

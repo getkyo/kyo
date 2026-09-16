@@ -1,11 +1,16 @@
 package kyo
 
+import kyo.test.HostFilter
+
 /** Reusable behavioral contract for readable filesystem backends.
   *
   * Implementations provide a fresh backend, a populated file, and its expected UTF-8 value for
   * each assertion.
   */
 abstract class FileSystemReadTest extends kyo.test.Test[Any]:
+
+    // Reads through the host file system, which a browser has not.
+    override protected def hostFilters = Chunk(HostFilter.NotBrowser)
 
     protected def createFileSystem(using
         Frame

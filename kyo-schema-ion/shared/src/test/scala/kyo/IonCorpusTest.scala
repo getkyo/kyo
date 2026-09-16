@@ -1,8 +1,12 @@
 package kyo
 
 import java.nio.charset.StandardCharsets
+import kyo.test.HostFilter
 
 class IonCorpusTest extends kyo.test.Test[Any]:
+
+    // Reads the vendored ion-tests corpus from disk, which a browser has not.
+    override protected def hostFilters = Chunk(HostFilter.NotBrowser)
 
     given CanEqual[Any, Any] = CanEqual.derived
 

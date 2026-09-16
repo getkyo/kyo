@@ -1043,7 +1043,10 @@ lazy val `kyo-ffi` =
             // CommonJS module Node keeps `require` module-scoped, which the browser-gate reads (and its
             // BrowserDetectionTest simulation) cannot observe, whereas ESModule has no `require` and the gate
             // behaves identically to the wasm axis.
-            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.ESModule) }
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.ESModule) },
+            // koffi needs a Node-like `process` global to load a native library, which no page has: the module's
+            // own gate answers every call in a browser with FfiLoadError.Unsupported. No browser row.
+            kyoBrowserRow := false
         )
 
 // Declared at top level so the key resolves in the crossProject's native sub-project scope.
@@ -1126,7 +1129,9 @@ lazy val `kyo-ffi-it` =
             // koffi bootstrap (idempotent npm install, hooked on Test / compile) via the kyo-ffi plugin.
             ffiKoffiJsBootstrap("kyo-ffi-it-js-test"),
             // A JVM-and-JS fixture for kyo-ffi's own tests; it has no Wasm row.
-            kyoWasmRow := false
+            kyoWasmRow := false,
+            // Loads its bundled library through koffi, which needs a Node-like `process` global. No browser row.
+            kyoBrowserRow := false
         )
 
 lazy val `kyo-ffi-codegen` =
@@ -1908,7 +1913,10 @@ lazy val `kyo-net` =
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
             // Point the Node runtime at the plugin-compiled koffi natives and bootstrap koffi into node_modules before tests run.
             kyoNodeEnv := kyoNetFfiEnvMap(target.value),
-            Test / compile := (Test / compile).dependsOn(kyoNetKoffiInstall).value
+            Test / compile := (Test / compile).dependsOn(kyoNetKoffiInstall).value,
+            // Sockets: the backend probe selects no candidate in a page (node, epoll, kqueue and io_uring all need a
+            // host), so every transport suite would report the same NetBackendUnavailableException. No browser row.
+            kyoBrowserRow := false
         )
 
 lazy val `kyo-aeron` =
@@ -2041,7 +2049,10 @@ lazy val `kyo-aeron` =
                     ).!
                     if (rc != 0) sys.error(s"npm install koffi failed (exit $rc)")
                 }
-            }).value
+            }).value,
+            // The Aeron media driver runs over UDP and shared-memory IPC, neither of which a page has, and the JS
+            // bindings load through koffi, which needs a Node-like `process` global. No browser row.
+            kyoBrowserRow := false
         )
 
 lazy val `kyo-compiler` =
@@ -2077,7 +2088,10 @@ lazy val `kyo-http` =
         )
         .jsSettings(
             `js-settings`,
-            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
+            // Sockets: a page has no listener and no client socket, so every suite that serves or connects reports
+            // kyo-net's NetBackendUnavailableException. No browser row.
+            kyoBrowserRow := false
         )
         .nativeSettings(
             `native-settings`,
@@ -2111,7 +2125,9 @@ lazy val `kyo-ai` =
         .jvmSettings(mimaCheck(false))
         .jsSettings(
             `js-settings`,
-            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
+            // Provider transports are kyo-http over sockets, which a page has not. No browser row.
+            kyoBrowserRow := false
         )
         .nativeSettings(
             `native-settings`,
@@ -2164,7 +2180,9 @@ lazy val `kyo-jsonrpc-http` =
         .nativeSettings(`native-settings`, `openssl-native-settings`)
         .jsSettings(
             `js-settings`,
-            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
+            // Its transport is kyo-http over sockets, which a page has not. No browser row.
+            kyoBrowserRow := false
         )
 
 lazy val `kyo-mcp` =
@@ -2456,7 +2474,12 @@ lazy val `kyo-case-app` =
             `kyo-settings`,
             libraryDependencies += "com.github.alexarchambault" %%% "case-app" % "2.1.0"
         )
-        .jsSettings(`js-settings`)
+        .jsSettings(
+            `js-settings`,
+            // case-app's PlatformUtil reads `require("process")` at first use, which no page resolves, and a page has
+            // no argv to parse. No browser row.
+            kyoBrowserRow := false
+        )
         .nativeSettings(`native-settings`)
         .jvmSettings(mimaCheck(false))
 
@@ -2643,7 +2666,10 @@ lazy val `kyo-browser` =
         )
         .jsSettings(
             `js-settings`,
-            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
+            // Launches Chrome from the host and drives it over CDP, so it runs beside a page, never inside one.
+            // No browser row.
+            kyoBrowserRow := false
         )
 
 lazy val `kyo-slack` =
@@ -2660,7 +2686,9 @@ lazy val `kyo-slack` =
         )
         .jsSettings(
             `js-settings`,
-            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
+            // Its web and socket-mode transports are kyo-net sockets, which a page has not. No browser row.
+            kyoBrowserRow := false
         )
         .nativeSettings(
             `native-settings`,

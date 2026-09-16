@@ -1,12 +1,16 @@
 package kyo
 
 import java.nio.charset.Charset
+import kyo.test.HostFilter
 import scala.compiletime.testing.typeCheckErrors
 
 /** Tests for the top-level [[FileSystem]] surface: installation through [[Path.runWith]] and the
   * negative-capability rejection of a write program at a read-only runner.
   */
 class FileSystemTest extends kyo.test.Test[Any]:
+
+    // Selects and runs host file-system services, which a browser has not.
+    override protected def hostFilters = Chunk(HostFilter.NotBrowser)
 
     private val selectedPath = Path("selected.txt")
 

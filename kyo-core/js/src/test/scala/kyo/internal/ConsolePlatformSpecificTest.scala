@@ -17,23 +17,30 @@ class ConsolePlatformSpecificTest extends kyo.test.Test[Any]:
     override def config = super.config.sequential
 
     /** Runs `f` with `process` deleted from the global object, the state of a browser page. Restored in a `finally` because the test runner
-      * talks over `process.stdout`.
+      * talks over `process.stdout`. A page is in that state already, and reading the global there to save it would throw the
+      * ReferenceError the leaf is about, so `f` runs as it is.
       */
     private def withoutProcessGlobal[A](f: => A): A =
-        val global = sjs.Dynamic.global.globalThis
-        val saved  = sjs.Dynamic.global.process
-        discard(sjs.special.delete(global, "process"))
-        try f
-        finally global.updateDynamic("process")(saved)
+        if sjs.typeOf(sjs.Dynamic.global.selectDynamic("process")) == "undefined" then f
+        else
+            val global = sjs.Dynamic.global.globalThis
+            val saved  = sjs.Dynamic.global.process
+            discard(sjs.special.delete(global, "process"))
+            try f
+            finally global.updateDynamic("process")(saved)
     end withoutProcessGlobal
 
-    /** Runs `f` with `process.getBuiltinModule` removed, the state of a Node that predates it. */
+    /** Runs `f` with `process.getBuiltinModule` removed, the state of a Node that predates it. A host with no `process` at all
+      * reaches the same read path, so there is nothing to remove there.
+      */
     private def withoutGetBuiltinModule[A](f: => A): A =
-        val process = sjs.Dynamic.global.process
-        val saved   = process.getBuiltinModule
-        discard(sjs.special.delete(process, "getBuiltinModule"))
-        try f
-        finally process.updateDynamic("getBuiltinModule")(saved)
+        if sjs.typeOf(sjs.Dynamic.global.selectDynamic("process")) == "undefined" then f
+        else
+            val process = sjs.Dynamic.global.process
+            val saved   = process.getBuiltinModule
+            discard(sjs.special.delete(process, "getBuiltinModule"))
+            try f
+            finally process.updateDynamic("getBuiltinModule")(saved)
     end withoutGetBuiltinModule
 
     /** The failure's exact class and message, so a leaf pins both: an `EOFException` is also an `IOException`, and would mean the read ran. */

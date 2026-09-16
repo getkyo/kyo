@@ -1,8 +1,12 @@
 package kyo
 
 import kyo.internal.NodeModules
+import kyo.test.HostFilter
 
 class PathNodeTest extends kyo.test.Test[Any]:
+
+    // Exercises the node:fs backend, which a browser has not.
+    override protected def hostFilters = Chunk(HostFilter.NotBrowser)
 
     private def bytes(ints: Int*): Span[Byte] = Span.from(ints.map(_.toByte).toArray)
 

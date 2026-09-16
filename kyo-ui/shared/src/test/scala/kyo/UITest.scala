@@ -1,6 +1,11 @@
 package kyo
 
+import kyo.test.HostFilter
+
 abstract class UITest extends kyo.test.Test[Any]:
+
+    // Drives a real Chrome from the host over CDP, so it runs beside a page, never inside one.
+    override protected def hostFilters = Chunk(HostFilter.NotBrowser)
 
     override def timeout = 60.seconds
 

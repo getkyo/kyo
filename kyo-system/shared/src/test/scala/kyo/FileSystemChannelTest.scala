@@ -1,7 +1,12 @@
 package kyo
 
+import kyo.test.HostFilter
+
 /** Reusable contract for typed positioned channels on mutable backends. */
 abstract class FileSystemChannelTest extends kyo.test.Test[Any]:
+
+    // Opens host file channels, which a browser has not.
+    override protected def hostFilters = Chunk(HostFilter.NotBrowser)
 
     protected def createFileSystem(using
         Frame

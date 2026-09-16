@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.net.NetPlatform
+import kyo.test.HostFilter
 
 /** Unix-domain-socket transport tests, over kyo-net's cross-platform `connectUnix`/`listenUnix`. Runs identically on every platform kyo-net
   * targets (JVM, JS, Native, Wasm); the client side uses a kyo-net `Connection` rather than a raw JVM `SocketChannel`, mirroring kyo-net's own
@@ -10,6 +11,9 @@ import kyo.net.NetPlatform
   * local domain to named pipes, so a filesystem listen path fails EACCES there), mirroring `TransportUnixSocketTest`.
   */
 class JsonRpcTransportUnixTest extends JsonRpcTest:
+
+    // Binds a unix domain socket, which a browser has not.
+    override protected def hostFilters = Chunk(HostFilter.NotBrowser)
 
     import AllowUnsafe.embrace.danger
 

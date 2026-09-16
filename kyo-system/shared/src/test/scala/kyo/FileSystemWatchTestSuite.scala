@@ -3,9 +3,13 @@ package kyo
 import kyo.Path.Change as PathChange
 import kyo.Path.WatchDepth
 import kyo.Path.WatchOptions
+import kyo.test.HostFilter
 
 /** Shared watch contract for mutable filesystem backends. */
 abstract class FileSystemWatchTestSuite extends kyo.test.Test[Any]:
+
+    // Watches host directories, which a browser has not.
+    override protected def hostFilters = Chunk(HostFilter.NotBrowser)
 
     private given Frame = Frame.internal
 

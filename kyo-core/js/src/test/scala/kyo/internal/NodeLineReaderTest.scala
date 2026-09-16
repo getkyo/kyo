@@ -1,6 +1,7 @@
 package kyo.internal
 
 import kyo.*
+import kyo.test.HostFilter
 import scala.scalajs.js as sjs
 
 /** Drives [[NodeLineReader]] over a real Node descriptor.
@@ -18,6 +19,9 @@ import scala.scalajs.js as sjs
   * `scala.scalajs.js` is aliased because `kyo.test.Test` has its own `js` member, the platform selector for a JS-only leaf.
   */
 class NodeLineReaderTest extends kyo.test.Test[Any]:
+
+    // Stages descriptors through node:fs, which a browser has not.
+    override protected def hostFilters = Chunk(HostFilter.NotBrowser)
 
     private def builtin(id: String): sjs.Dynamic =
         PlatformJs.nodeBuiltin(id).getOrElse(throw new IllegalStateException(s"this suite needs $id, which the host does not provide"))

@@ -1,6 +1,11 @@
 package kyo
 
+import kyo.test.HostFilter
+
 class ProcessExitCodeTest extends kyo.test.Test[Any]:
+
+    // Spawns processes through node:child_process, which a browser has not.
+    override protected def hostFilters = Chunk(HostFilter.NotBrowser)
 
     "ExitCode(0) is ExitCode.Success" in {
         assert(ExitCode(0) == ExitCode.Success)

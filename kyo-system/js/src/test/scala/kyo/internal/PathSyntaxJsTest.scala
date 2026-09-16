@@ -22,16 +22,20 @@ class PathSyntaxJsTest extends kyo.test.Test[Any]:
 
     private def nodePosix: sjs.Dynamic = PlatformJs.nodeBuiltin("node:path").get.posix
 
-    /** Runs `f` with `process.getBuiltinModule` removed, the state of a host with no Node modules. */
+    /** Runs `f` with `process.getBuiltinModule` removed, the state of a host with no Node modules. A browser has no
+      * `process` global at all, which is that state already, so there is nothing to remove and nothing to restore.
+      */
     private def withoutGetBuiltinModule[A](f: => A): A =
-        val process = sjs.Dynamic.global.process
-        val saved   = process.getBuiltinModule
-        discard(sjs.special.delete(process, "getBuiltinModule"))
-        try f
-        finally process.updateDynamic("getBuiltinModule")(saved)
+        if sjs.typeOf(sjs.Dynamic.global.selectDynamic("process")) == "undefined" then f
+        else
+            val process = sjs.Dynamic.global.process
+            val saved   = process.getBuiltinModule
+            discard(sjs.special.delete(process, "getBuiltinModule"))
+            try f
+            finally process.updateDynamic("getBuiltinModule")(saved)
     end withoutGetBuiltinModule
 
-    "posixNormalize matches Node's path.posix.normalize on every input" in {
+    "posixNormalize matches Node's path.posix.normalize on every input".notBrowser in {
         val posix = nodePosix
         val mismatches =
             inputs(6).filter(input => PathSyntaxJs.posixNormalize(input) != posix.normalize(input).asInstanceOf[String]).take(5).toList
@@ -42,7 +46,7 @@ class PathSyntaxJsTest extends kyo.test.Test[Any]:
         assert(PathSyntaxJs.posixNormalize("") == ".")
     }
 
-    "posixIsAbsolute matches Node's path.posix.isAbsolute on every input" in {
+    "posixIsAbsolute matches Node's path.posix.isAbsolute on every input".notBrowser in {
         val posix = nodePosix
         val mismatches =
             ("" +: inputs(4).toList).filter(input => PathSyntaxJs.posixIsAbsolute(input) != posix.isAbsolute(input).asInstanceOf[Boolean])

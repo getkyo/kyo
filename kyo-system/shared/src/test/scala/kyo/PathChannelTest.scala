@@ -1,9 +1,13 @@
 package kyo
 
+import kyo.test.HostFilter
 import scala.compiletime.testing.typeCheckErrors
 
 /** Tests for typed, Scope-managed positioned file channels. */
 class PathChannelTest extends kyo.test.Test[Any]:
+
+    // Opens host file channels, which a browser has not.
+    override protected def hostFilters = Chunk(HostFilter.NotBrowser)
 
     private def bytes(ints: Int*): Span[Byte] = Span.from(ints.map(_.toByte).toArray)
 

@@ -1,8 +1,12 @@
 package kyo.internal
 
 import kyo.*
+import kyo.test.HostFilter
 
 class FlowApiTest extends kyo.test.Test[Any]:
+
+    // Serves the flow API over a kyo-http server, which a browser cannot bind.
+    override protected def hostFilters = Chunk(HostFilter.NotBrowser)
 
     // This suite is real-time by nature (a live HTTP server and client; Clock.withTimeControl does not reach it),
     // and in a full-module run it executes concurrently with sibling suites whose leaves each spin engines, workers

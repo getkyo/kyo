@@ -1,6 +1,11 @@
 package kyo
 
+import kyo.test.HostFilter
+
 class PathSizeTest extends kyo.test.Test[Any]:
+
+    // Reads host file sizes, which a browser has not.
+    override protected def hostFilters = Chunk(HostFilter.NotBrowser)
 
     "size of a freshly-written file equals the written byte count" in {
         Scope.run(Path.run {

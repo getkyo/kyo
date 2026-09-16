@@ -1,9 +1,13 @@
 package kyo.internal
 
 import kyo.*
+import kyo.test.HostFilter
 import scala.scalajs.js as sjs
 
 class PathPlatformSpecificJsTest extends kyo.test.Test[Any]:
+
+    // Exercises the node:fs backend, which a browser has not.
+    override protected def hostFilters = Chunk(HostFilter.NotBrowser)
 
     import AllowUnsafe.embrace.danger
 

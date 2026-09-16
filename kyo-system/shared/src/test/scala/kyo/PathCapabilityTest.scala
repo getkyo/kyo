@@ -1,9 +1,13 @@
 package kyo
 
 import java.nio.charset.StandardCharsets
+import kyo.test.HostFilter
 import scala.compiletime.testing.typeCheckErrors
 
 class PathCapabilityTest extends kyo.test.Test[Any]:
+
+    // Runs Path handlers over the host file system, which a browser has not.
+    override protected def hostFilters = Chunk(HostFilter.NotBrowser)
 
     val somePath  = Path("tmp", "cap-a.txt")
     val otherPath = Path("tmp", "cap-b.txt")

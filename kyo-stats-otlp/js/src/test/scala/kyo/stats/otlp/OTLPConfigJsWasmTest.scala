@@ -21,7 +21,8 @@ class OTLPConfigJsWasmTest extends kyo.test.Test[Any]:
     end withEnv
 
     "loadIfEnabled" - {
-        "enables export from OTEL_EXPORTER_OTLP_ENDPOINT set in process.env, and reads the other variables there" in {
+        // Sets the variables on `process.env`, which only a Node-like host has.
+        "enables export from OTEL_EXPORTER_OTLP_ENDPOINT set in process.env, and reads the other variables there".notBrowser in {
             val config = withEnv(
                 "OTEL_EXPORTER_OTLP_ENDPOINT" -> "http://collector:4318",
                 "OTEL_SERVICE_NAME"           -> "checkout",

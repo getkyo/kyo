@@ -31,7 +31,8 @@ class SecureRandomPlatformSpecificTest extends kyo.test.Test[Any]:
             }
         }
 
-        "resolves the crypto module too, so the fallback candidate is covered rather than assumed" in {
+        // The crypto module is Node's; a browser publishes Web Crypto as a global instead, which the leaves above cover.
+        "resolves the crypto module too, so the fallback candidate is covered rather than assumed".notBrowser in {
             Sync.defer {
                 val first  = new Array[Byte](32)
                 val second = new Array[Byte](32)
@@ -48,7 +49,8 @@ class SecureRandomPlatformSpecificTest extends kyo.test.Test[Any]:
         // The Node-below-18 shape, which is the condition the original defect crashed on: a host with no Web Crypto global. Both backends
         // reach the module candidate and keep working, so the whole `SecureRandom` surface survives a host the old code raised a TypeError
         // on. This leaf is what states that end to end.
-        "fillBytes still fills, because the crypto module candidate covers a host without the Web Crypto global" in {
+        // The fallback this pins is the Node crypto module, which a browser has not.
+        "fillBytes still fills, because the crypto module candidate covers a host without the Web Crypto global".notBrowser in {
             Sync.defer {
                 val out = new Array[Byte](32)
                 withoutCryptoGlobal {

@@ -1,9 +1,13 @@
 package kyo.internal
 
 import kyo.*
+import kyo.test.HostFilter
 import scala.scalajs.js as sjs
 
 class NodeProcessTest extends kyo.test.Test[Any]:
+
+    // Exercises the node:child_process backend, which a browser has not.
+    override protected def hostFilters = Chunk(HostFilter.NotBrowser)
 
     /** Runs `f` with `process` deleted from the global object, the state a browser is in. Restored in a `finally` because the test runner
       * talks over `process.stdout`.

@@ -40,7 +40,7 @@ class WebsiteBundleMainTest extends kyo.test.Test[Any]:
 
     // Case 1: a fake document whose getElementById returns a stub element.
     // After addChartDrawn runs, classList.add must have been called (node is present).
-    "addChartDrawn adds the chart-drawn class when the node is present" in {
+    "addChartDrawn adds the chart-drawn class when the node is present".notBrowser in {
         var classAdded = false
         val fakeEl = scala.scalajs.js.Dynamic.literal(
             classList = scala.scalajs.js.Dynamic.literal(
@@ -59,7 +59,7 @@ class WebsiteBundleMainTest extends kyo.test.Test[Any]:
     }
 
     // Case 1b: the same mechanism is generalized by id, so it also arms the platforms connector.
-    "addChartDrawn adds the chart-drawn class to the pf-connect node when present" in {
+    "addChartDrawn adds the chart-drawn class to the pf-connect node when present".notBrowser in {
         var classAdded = false
         val fakeEl = scala.scalajs.js.Dynamic.literal(
             classList = scala.scalajs.js.Dynamic.literal(
@@ -79,7 +79,7 @@ class WebsiteBundleMainTest extends kyo.test.Test[Any]:
 
     // Case 2: a fake document whose getElementById returns null (node absent).
     // addChartDrawn must complete without exception and must not call classList.add.
-    "addChartDrawn is a no-op and throws nothing when the node is absent" in {
+    "addChartDrawn is a no-op and throws nothing when the node is absent".notBrowser in {
         var classAdded = false
         val fakeDoc = scala.scalajs.js.Dynamic.literal(
             getElementById = (id: String) => null
@@ -87,6 +87,24 @@ class WebsiteBundleMainTest extends kyo.test.Test[Any]:
         withDocument(fakeDoc) {
             WebsiteBundleMain.addChartDrawn("gap-chart").map { _ =>
                 assert(!classAdded, "classList.add must NOT have been called when the element is absent")
+            }
+        }
+    }
+
+    // A page's `globalThis.document` has only a getter, so the fake cannot be installed there, and does not need to be:
+    // the helper runs against the real DOM, which also shows the class landing on the element rather than a stub call.
+    "addChartDrawn adds the chart-drawn class to an element of the page".onlyBrowser in {
+        val document = scala.scalajs.js.Dynamic.global.document
+        Sync.defer {
+            val element = document.createElement("div")
+            element.id = "gap-chart"
+            discard(document.body.appendChild(element))
+            element
+        }.map { element =>
+            WebsiteBundleMain.addChartDrawn("gap-chart").map { _ =>
+                val added = element.classList.contains("chart-drawn").asInstanceOf[Boolean]
+                discard(document.body.removeChild(element))
+                assert(added, "classList.add must have put chart-drawn on the element")
             }
         }
     }

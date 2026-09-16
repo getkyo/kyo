@@ -397,6 +397,14 @@ class DomBackendDelegationTest extends kyo.test.Test[Any]:
             _ <- assertEventually(Sync.defer(ready.installed && dom.document.getElementById("scroll-key-target") != null))
             prevented <- Sync.defer {
                 val target = dom.document.getElementById("scroll-key-target")
+                // A real browser gives every HTMLElement an isContentEditable, so the undefined read this leaf is
+                // about reaches it only through an SVG target. Define the member away instead, which puts the target
+                // in that shape on every host rather than only where the DOM implementation leaves it out.
+                discard(scalajs.Dynamic.global.Object.defineProperty(
+                    target.asInstanceOf[scalajs.Dynamic],
+                    "isContentEditable",
+                    scalajs.Dynamic.literal(value = scalajs.undefined, configurable = true)
+                ))
                 assert(scalajs.isUndefined(target.asInstanceOf[scalajs.Dynamic].isContentEditable))
                 val event = scalajs.Dynamic.newInstance(dom.window.asInstanceOf[scalajs.Dynamic].KeyboardEvent)(
                     "keydown",

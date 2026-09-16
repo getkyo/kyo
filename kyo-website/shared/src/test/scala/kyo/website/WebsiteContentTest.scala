@@ -99,7 +99,7 @@ class WebsiteContentTest extends WebsiteTest:
           || [kyo-data](kyo-data/README.md) | ✅ | ✅ | ✅ | Data types |
           |""".stripMargin
 
-    "fromRepo on a full tree parses groups" in {
+    "fromRepo on a full tree parses groups".notBrowser in {
         for
             result <- fromRepoResult(Seq(
                 "README.md"          -> fullTreeReadme,
@@ -119,7 +119,7 @@ class WebsiteContentTest extends WebsiteTest:
         end for
     }
 
-    "fromRepo degrades on no ## Modules" in {
+    "fromRepo degrades on no ## Modules".notBrowser in {
         for
             result <- fromRepoResult(Seq(
                 "README.md" -> "# Kyo\n\n## Introduction\n\nAn old-tag README with no module table.\n"
@@ -133,7 +133,7 @@ class WebsiteContentTest extends WebsiteTest:
         end for
     }
 
-    "fromRepo aborts Missing on absent referenced README" in {
+    "fromRepo aborts Missing on absent referenced README".notBrowser in {
         // README references kyo-x/README.md but only kyo-data/README.md exists.
         val readme =
             """# Kyo
@@ -154,7 +154,7 @@ class WebsiteContentTest extends WebsiteTest:
         end for
     }
 
-    "fromRepo aborts MalformedTable on a corrupt table" in {
+    "fromRepo aborts MalformedTable on a corrupt table".notBrowser in {
         // The module row has too few pipe cells (only 2), so it cannot be parsed.
         val readme =
             """# Kyo
@@ -175,7 +175,7 @@ class WebsiteContentTest extends WebsiteTest:
         end for
     }
 
-    "fromRepo aborts MalformedGroups on a group heading with no table" in {
+    "fromRepo aborts MalformedGroups on a group heading with no table".notBrowser in {
         // The `### Foundation` heading inside `## Modules` is followed by prose, not a GFM pipe table,
         // so buildGroup finds zero pipe rows and aborts MalformedGroups (distinct from MalformedTable,
         // which is a present-but-corrupt table row).
@@ -199,7 +199,7 @@ class WebsiteContentTest extends WebsiteTest:
         end for
     }
 
-    "fromRepo preserves README group order" in {
+    "fromRepo preserves README group order".notBrowser in {
         val readme =
             """# Kyo
               |
@@ -230,7 +230,7 @@ class WebsiteContentTest extends WebsiteTest:
         end for
     }
 
-    "fromRepo overview is the full root README, rendered with fidelity not sliced" in {
+    "fromRepo overview is the full root README, rendered with fidelity not sliced".notBrowser in {
         val readme =
             """# Kyo
               |
@@ -306,7 +306,7 @@ class WebsiteContentTest extends WebsiteTest:
           || [kyo-scheduler](kyo-scheduler/README.md)     | ✅   | ✅   | ✅      | ✅   | Adaptive work-stealing pool with automatic blocking detection and admission control                       |
           |""".stripMargin
 
-    "fromRepo parses the real README Core group: slugs are directories, WASM column is read" in {
+    "fromRepo parses the real README Core group: slugs are directories, WASM column is read".notBrowser in {
         for
             result <- fromRepoResult(Seq(
                 "README.md"               -> realCoreReadme,
@@ -369,7 +369,7 @@ class WebsiteContentTest extends WebsiteTest:
           || [kyo-legacy](kyo-legacy/README.md) | ✅ | ✅ | ✅ | Ships a ✅ inside the identity cell |
           |""".stripMargin
 
-    "fromRepo reads the WASM platform column and never misreads a legacy identity cell as WASM" in {
+    "fromRepo reads the WASM platform column and never misreads a legacy identity cell as WASM".notBrowser in {
         for
             result <- fromRepoResult(Seq(
                 "README.md"                -> wasmColumnReadme,
@@ -413,7 +413,7 @@ class WebsiteContentTest extends WebsiteTest:
           || [kyo-examples](kyo-examples) | ✅ | ❌ | ❌ | Two runnable programs |
           |""".stripMargin
 
-    "fromRepo degrades a bare-directory-link module with no README (kyo-examples), not aborts (deploy reality)" in {
+    "fromRepo degrades a bare-directory-link module with no README (kyo-examples), not aborts (deploy reality)".notBrowser in {
         // Only kyo-parse has a README; kyo-examples is a directory link with no kyo-examples/README.md,
         // mirroring the extracted v1.0.0-RC2 tree. This must NOT abort Missing: kyo-examples is dropped,
         // kyo-parse is parsed.
@@ -438,7 +438,7 @@ class WebsiteContentTest extends WebsiteTest:
         end for
     }
 
-    "fromRepo still aborts Missing when a `<slug>/README.md` link's README is genuinely absent (typo guard)" in {
+    "fromRepo still aborts Missing when a `<slug>/README.md` link's README is genuinely absent (typo guard)".notBrowser in {
         // A README-link (`[kyo-typo](kyo-typo/README.md)`) whose file is absent is a real breakage
         // (a typo or a forgotten file), distinct from a bare-directory link: it must still abort
         // Missing so the degrade does not swallow genuine errors.
