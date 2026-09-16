@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.*
+import kyo.internal.client.ClientBackend
 import kyo.internal.client.HttpClientBackend
 import kyo.internal.transport.NetConfigTranslation
 
@@ -42,7 +43,7 @@ import kyo.internal.transport.NetConfigTranslation
   * @see
   *   [[kyo.HttpWebSocket]] WebSocket connections opened via `HttpClient.webSocket`
   */
-opaque type HttpClient = HttpClientBackend
+opaque type HttpClient = ClientBackend
 
 object HttpClient:
 

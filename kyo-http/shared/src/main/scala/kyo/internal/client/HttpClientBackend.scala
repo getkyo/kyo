@@ -33,7 +33,7 @@ final private[kyo] class HttpClientBackend private (
     private val registry: kyo.internal.ConnectionRegistry[HttpConnection],
     val maxConnectionsPerHost: Int,
     val clientFrame: Frame
-):
+) extends ClientBackend:
     private val CrLf          = Span.fromUnsafe(Http1StreamContext.CRLF)
     private val TerminalChunk = Span.fromUnsafe(Http1StreamContext.LAST_CHUNK)
 
@@ -1283,7 +1283,7 @@ final private[kyo] class HttpClientBackend private (
             (sendBuffered(conn, route, request, maxResponseLength, multipartBoundary), Absent)
 
     /** True once `closeFiber` has closed the pool. For testing the Scope-based `init`'s release path only. */
-    private[kyo] def isPoolClosed(using AllowUnsafe): Boolean = pool.isClosed
+    def isPoolClosed(using AllowUnsafe): Boolean = pool.isClosed
 
     def closeFiber(gracePeriod: Duration)(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
         // Mark closing FIRST so any new connection gets closed immediately by trackConn.
