@@ -570,6 +570,24 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             assert(rfc9110Pattern.findFirstIn(date).isDefined, s"Date '$date' does not match RFC 9110 format")
         }
 
+        // The header is assembled rather than formatted, because a DateTimeFormatter resolves its day and month names
+        // through a locale provider, which on Scala.js puts the CLDR tables in every program that links this file.
+        // These are the values the formatter produced, so the assembly is pinned to them.
+        "Date header carries the IMF-fixdate of the second it names" in {
+            val cases = Seq(
+                0L          -> "Thu, 01 Jan 1970 00:00:00 GMT", // the epoch, a Thursday
+                784111777L  -> "Sun, 06 Nov 1994 08:49:37 GMT", // the example in RFC 9110 section 5.6.7
+                1705312245L -> "Mon, 15 Jan 2024 09:50:45 GMT",
+                951825600L  -> "Tue, 29 Feb 2000 12:00:00 GMT", // a leap day in a century that has one
+                1709208000L -> "Thu, 29 Feb 2024 12:00:00 GMT"  // and the next one
+            )
+            cases.foreach { (epochSecond, expected) =>
+                val got = UnsafeServerDispatch.imfFixdate(epochSecond)
+                assert(got == expected, s"epoch second $epochSecond read as '$got', expected '$expected'")
+            }
+            succeed
+        }
+
         "Content-Length exceeds max returns 413" in {
             val handler = HttpHandler.getText("hello")(_ => "world")
             val router  = HttpRouter(Seq(handler), Absent)
