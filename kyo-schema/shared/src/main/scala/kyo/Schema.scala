@@ -2676,9 +2676,15 @@ object Schema:
     /** Schema for java.time.Instant values, as a conversion of the instant primitive.
       *
       * A given with no parameters is a lazy val, so a program that never asks for this never links java.time.
+      *
+      * Reports its own type rather than the primitive's, which is what it reported before the primitive moved to
+      * kyo's Instant: the structure is what tooling reads to say which Scala type a field holds, and the wire shape
+      * it names is the one the codec writes, so the report and the wire still agree.
       */
     given instantSchema: Schema[java.time.Instant] =
-        kyoInstantSchema.transform[java.time.Instant](_.toJava)(kyo.Instant.fromJava)
+        kyoInstantSchema
+            .transform[java.time.Instant](_.toJava)(kyo.Instant.fromJava)
+            .withStructure(Structure.Type.Primitive(Structure.PrimitiveKind.Instant, Tag[java.time.Instant].asInstanceOf[Tag[Any]]))
 
     /** Schema for kyo.Duration values. */
     given kyoDurationSchema: Schema[kyo.Duration] =
