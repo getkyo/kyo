@@ -26,8 +26,9 @@ class HostConfigTest extends AnyFreeSpec {
         }
     }
 
-    private def assumeNodeEnv(): Unit =
-        assume(Platform.isNodeLike, "sets or replaces Node's process.env, which a page has not")
+    private def assumeNodeEnv(): Unit = {
+        val _ = assume(Platform.isNodeLike, "sets or replaces Node's process.env, which a page has not")
+    }
 
     private def withSeed[A](seed: js.Any)(f: => A): A = {
         val global = js.Dynamic.global.globalThis

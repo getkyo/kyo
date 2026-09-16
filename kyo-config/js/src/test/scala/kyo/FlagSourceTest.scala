@@ -51,8 +51,9 @@ class FlagSourceTest extends AnyFreeSpec {
         }
     }
 
-    private def assumeNodeEnv(): Unit =
-        assume(kyo.internal.Platform.isNodeLike, "sets or replaces Node's process.env, which a page has not")
+    private def assumeNodeEnv(): Unit = {
+        val _ = assume(kyo.internal.Platform.isNodeLike, "sets or replaces Node's process.env, which a page has not")
+    }
 
     "the KYO_CONFIG seed" - {
         "supplies a system property" in {
