@@ -14,6 +14,10 @@ class MachineRegistrationTest extends kyo.test.Test[Any]:
         // @JSExportTopLevel object gets from the module system at real page/script load.
         assert(MachineRegistration.init)
         val registered = JSServiceLoaderRegistry.get(classOf[ExporterFactory].getName)
+        // Registering constructs the factory, which starts the sampler, which reads the machine through Node's
+        // own modules. This row is a Node-like host, so the factory belongs here; a host with no machine to read
+        // gets none, which is what the MachineStats link-check program states.
+        assert(kyo.internal.Platform.isNodeLike, "this row runs on a Node-like host")
         assert(registered.exists(_.isInstanceOf[MachineStatFactory]))
     }
 

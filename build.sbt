@@ -2848,6 +2848,15 @@ lazy val `kyo-link-check-ai` =
         .settings(`kyo-settings`, `link-check-settings`)
         .jsSettings(`js-settings`)
 
+lazy val `kyo-link-check-machine` =
+    crossProject(JSPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-link-check/machine"))
+        .dependsOn(`kyo-stats-machine`)
+        .disablePlugins(MimaPlugin)
+        .settings(`kyo-settings`, `link-check-settings`)
+        .jsSettings(`js-settings`)
+
 // The website: shared apps + page wrapper + content model + cross-platform kyo-parse Markdown
 // transpiler (DocsMarkdown in shared/, no third-party Markdown dependency). JVM side carries the
 // SSG generator; JS side is the browser-mounted chrome. Native is not a target: the generator needs

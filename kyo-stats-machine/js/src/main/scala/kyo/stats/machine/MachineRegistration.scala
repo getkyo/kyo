@@ -13,7 +13,12 @@ import scala.scalajs.js.annotation.JSExportTopLevel
 object MachineRegistration:
     @JSExportTopLevel("__kyo_machine_init")
     val init: Boolean =
-        JSServiceLoaderRegistry.register(classOf[ExporterFactory], new MachineStatFactory())
+        // Registering is not a passive act here: `kyo.Stat`'s class init constructs every factory the registry holds, and
+        // this factory's constructor starts the sampler. The sampler reads the machine through Node's `os` and `fs`, so on
+        // a host that has neither, a browser page, registering would start a fiber that fails on its first read inside a
+        // program that never asked for machine statistics. Where there is no machine to read, there is no factory.
+        if kyo.internal.Platform.isNodeLike then
+            JSServiceLoaderRegistry.register(classOf[ExporterFactory], new MachineStatFactory())
         true
     end init
 end MachineRegistration

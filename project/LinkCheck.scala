@@ -68,7 +68,11 @@ object LinkCheck {
             "completion streams true".r,
             "completion streams true".r,
             absent = Seq("node:child_process")
-        )
+        ),
+        // The machine-stats factory registers itself at module load, and registering starts a sampler that reads the
+        // machine through Node's own modules. A host with no machine to read registers nothing, which is the difference
+        // between these two lines.
+        Program("MachineStats", "kyo-link-check-machine", "linkcheck.MachineStats", "machine exporter true".r, "machine exporter false".r)
     )
 
     /** A static import of a Node built-in in linked output: `import * as x from "node:fs"`, `import "node:fs"`. */

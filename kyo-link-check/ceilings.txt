@@ -12,6 +12,11 @@
 # Measured at the change that moved every Node built-in off static imports (#1836 W3):
 #   JS    CoreReadLine 1,799,710   SystemPath 2,191,164   NetEcho 3,304,836
 #   Wasm  CoreReadLine   895,871   SystemPath 1,084,527   NetEcho 1,470,427
+#
+# Measured at the change that put a bare KyoApp and an HTTP-provider AI program in (#1836 W5):
+#   JS    CoreApp 1,772,186
+# CoreApp against CoreReadLine's 1,799,710 says what the 735 KB over CoreLog buys: the application runtime is
+# 1.77 MB of it and reading a line is the remaining 27 KB.
 
 JS   CoreMin 1,010,000
 JS   CoreLog 1,175,000
@@ -19,6 +24,7 @@ JS   UiMin     600,000
 Wasm CoreMin   520,000
 Wasm CoreLog   590,000
 Wasm UiMin     300,000
+JS   CoreApp      1,950,000
 JS   CoreReadLine 1,980,000
 JS   SystemPath   2,415,000
 JS   NetEcho      3,640,000
