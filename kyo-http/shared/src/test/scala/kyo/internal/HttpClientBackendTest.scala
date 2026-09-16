@@ -705,11 +705,6 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
     // as Result.Panic and fail the match, which is exactly the state these leaves exist to catch.
     // ---------------------------------------------------------------------------
 
-    /** Runs a raw TCP peer that answers every accepted connection with `response` verbatim, and yields its bound port.
-      *
-      * A kyo server cannot produce these responses: its own serializer rejects a non-ASCII header value, so a peer writing
-      * canned bytes is the only way to drive the client with what a foreign server can legally send.
-      */
     /** A connect whose caller has already gone must not strand the connection it establishes.
       *
       * The handoff to the caller is at-most-once. When the caller settles first, through a request timeout or any other interrupt, the
@@ -740,6 +735,11 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
         }
     }
 
+    /** Runs a raw TCP peer that answers every accepted connection with `response` verbatim, and yields its bound port.
+      *
+      * A kyo server cannot produce these responses: its own serializer rejects a non-ASCII header value, so a peer writing
+      * canned bytes is the only way to drive the client with what a foreign server can legally send.
+      */
     private def withRawPeer[A](response: String)(
         test: Int => A < (Async & Abort[Any] & Scope)
     )(using Frame): A < (Async & Abort[Any] & Scope) =

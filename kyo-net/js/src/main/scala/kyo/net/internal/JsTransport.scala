@@ -89,10 +89,6 @@ final private[kyo] class JsTransport private (
             code.startsWith("UNABLE_TO_") || code.startsWith("SELF_SIGNED") || code.startsWith("DEPTH_ZERO") ||
             code == "ERR_TLS_CERT_ALTNAME_INVALID"
 
-    /** Map a Node connect-stage error to the matching [[NetException]] leaf: a name-resolution code to [[NetDnsResolutionException]], a TLS code
-      * to [[NetTlsHandshakeException]], a Unix target (`port < 0`) to [[NetUnixConnectException]], otherwise [[NetConnectException]]. The leaf
-      * carries Node's own message; the code only selects the leaf.
-      */
     /** Reject a socket buffer size Node cannot honor.
       *
       * Node's net API exposes no way to set `SO_RCVBUF` or `SO_SNDBUF` (`socket.bufferSize` is a read-only count of bytes queued for writing),
@@ -105,6 +101,10 @@ final private[kyo] class JsTransport private (
         else if config.soSndBuf.isDefined then Present(NetSocketOptionUnsupportedException("SO_SNDBUF"))
         else Absent
 
+    /** Map a Node connect-stage error to the matching [[NetException]] leaf: a name-resolution code to [[NetDnsResolutionException]], a TLS code
+      * to [[NetTlsHandshakeException]], a Unix target (`port < 0`) to [[NetUnixConnectException]], otherwise [[NetConnectException]]. The leaf
+      * carries Node's own message; the code only selects the leaf.
+      */
     private def connectError(err: js.Dynamic, host: String, port: Int)(using Frame): NetException =
         val code = errCode(err)
         val msg  = errMessage(err)
@@ -359,21 +359,6 @@ final private[kyo] class JsTransport private (
     // Prefixed to avoid clashing with any Node socket field.
     private val handshakeSettledProp = "__kyoHandshakeSettled"
 
-    /** Arm a `Clock`-driven handshake deadline on every connection a TLS [[server]] accepts. A `tls.Server` emits "connection" with the raw
-      * `net.Socket` on TCP accept (before the handshake), "secureConnection" with the wrapping `tls.TLSSocket` on a successful handshake, and
-      * "tlsClientError" with the `tls.TLSSocket` on a failed handshake; the `TLSSocket._parent` is the raw socket the "connection" event delivered.
-      *
-      *   - "connection": start `Clock.live.unsafe.sleep(handshakeTimeout)` (a timer fiber on the clock executor, never a blocked carrier). When
-      *     the deadline elapses, the timer's continuation claims the per-socket guard and, if it wins (the handshake has not resolved),
-      *     `socket.destroy()` reaps the stalled connection (closing the fd and releasing its buffers), the same teardown Node runs on any
-      *     destroyed socket.
-      *   - "secureConnection" / "tlsClientError": the handshake resolved, so claim the guard so the timer's later continuation is a no-op (it sees
-      *     the guard already set and does not destroy a healthy or already-failed connection).
-      *
-      * The guard is the single source of truth (rather than relying on interrupting the timer fiber): on JS the timer's continuation always runs
-      * on the macrotask scheduler, so a settled guard is what makes it skip the destroy. Called only on the TLS `listen` path and only when
-      * `tls.handshakeTimeout` is finite; `Duration.Infinity` arms nothing.
-      */
     /** Track every socket a TLS listener accepts until its handshake settles, and hand back the thunk that reclaims the stragglers.
       *
       * A socket whose TLS handshake never completed never becomes a connection this transport knows about, and Node's `server.close()` does not
@@ -413,6 +398,21 @@ final private[kyo] class JsTransport private (
         )
     end trackAcceptHandshakes
 
+    /** Arm a `Clock`-driven handshake deadline on every connection a TLS [[server]] accepts. A `tls.Server` emits "connection" with the raw
+      * `net.Socket` on TCP accept (before the handshake), "secureConnection" with the wrapping `tls.TLSSocket` on a successful handshake, and
+      * "tlsClientError" with the `tls.TLSSocket` on a failed handshake; the `TLSSocket._parent` is the raw socket the "connection" event delivered.
+      *
+      *   - "connection": start `Clock.live.unsafe.sleep(handshakeTimeout)` (a timer fiber on the clock executor, never a blocked carrier). When
+      *     the deadline elapses, the timer's continuation claims the per-socket guard and, if it wins (the handshake has not resolved),
+      *     `socket.destroy()` reaps the stalled connection (closing the fd and releasing its buffers), the same teardown Node runs on any
+      *     destroyed socket.
+      *   - "secureConnection" / "tlsClientError": the handshake resolved, so claim the guard so the timer's later continuation is a no-op (it sees
+      *     the guard already set and does not destroy a healthy or already-failed connection).
+      *
+      * The guard is the single source of truth (rather than relying on interrupting the timer fiber): on JS the timer's continuation always runs
+      * on the macrotask scheduler, so a settled guard is what makes it skip the destroy. Called only on the TLS `listen` path and only when
+      * `tls.handshakeTimeout` is finite; `Duration.Infinity` arms nothing.
+      */
     private def armServerHandshakeDeadlines(server: js.Dynamic, handshakeTimeout: Duration)(using AllowUnsafe, Frame): Unit =
         if handshakeTimeout.isFinite then
             // Claim the per-socket guard. Returns true the first time for a given socket, false thereafter, so exactly one of (deadline, handshake

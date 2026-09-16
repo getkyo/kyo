@@ -1,7 +1,7 @@
 package kyo.internal
 
 import kyo.*
-import scala.scalajs.js
+import scala.scalajs.js as sjs
 
 /** Signal handling on a Node-like host.
   *
@@ -22,7 +22,7 @@ class OsSignalJsTest extends kyo.test.Test[Any]:
         else
             var handled = false
             OsSignal.handle("USR2", () => handled = true)
-            val process = js.Dynamic.global.selectDynamic("process")
+            val process = sjs.Dynamic.global.selectDynamic("process")
             discard(process.applyDynamic("kill")(process.selectDynamic("pid"), "SIGUSR2"))
             // Node delivers a signal as an event, so it arrives on a later turn of the loop rather than inside the
             // call above. Waiting on the condition gives the loop those turns without pinning a duration.

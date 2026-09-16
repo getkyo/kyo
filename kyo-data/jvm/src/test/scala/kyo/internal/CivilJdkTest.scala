@@ -14,15 +14,15 @@ class CivilJdkTest extends kyo.test.Test[Any]:
 
     private def sameAsJava(second: Long): Maybe[String] =
         val civil = Civil.of(second)
-        val java  = java.time.Instant.ofEpochSecond(second).atZone(ZoneOffset.UTC)
-        if civil.year != java.getYear then Maybe(s"year ${civil.year} against ${java.getYear}")
-        else if civil.month != java.getMonthValue then Maybe(s"month ${civil.month} against ${java.getMonthValue}")
-        else if civil.day != java.getDayOfMonth then Maybe(s"day ${civil.day} against ${java.getDayOfMonth}")
-        else if civil.hour != java.getHour then Maybe(s"hour ${civil.hour} against ${java.getHour}")
-        else if civil.minute != java.getMinute then Maybe(s"minute ${civil.minute} against ${java.getMinute}")
-        else if civil.second != java.getSecond then Maybe(s"second ${civil.second} against ${java.getSecond}")
-        else if civil.dayOfWeek != java.getDayOfWeek.getValue % 7 then
-            Maybe(s"day of week ${civil.dayOfWeek} against ${java.getDayOfWeek.getValue % 7}")
+        val jdk   = java.time.Instant.ofEpochSecond(second).atZone(ZoneOffset.UTC)
+        if civil.year != jdk.getYear then Maybe(s"year ${civil.year} against ${jdk.getYear}")
+        else if civil.month != jdk.getMonthValue then Maybe(s"month ${civil.month} against ${jdk.getMonthValue}")
+        else if civil.day != jdk.getDayOfMonth then Maybe(s"day ${civil.day} against ${jdk.getDayOfMonth}")
+        else if civil.hour != jdk.getHour then Maybe(s"hour ${civil.hour} against ${jdk.getHour}")
+        else if civil.minute != jdk.getMinute then Maybe(s"minute ${civil.minute} against ${jdk.getMinute}")
+        else if civil.second != jdk.getSecond then Maybe(s"second ${civil.second} against ${jdk.getSecond}")
+        else if civil.dayOfWeek != jdk.getDayOfWeek.getValue % 7 then
+            Maybe(s"day of week ${civil.dayOfWeek} against ${jdk.getDayOfWeek.getValue % 7}")
         else Absent
         end if
     end sameAsJava

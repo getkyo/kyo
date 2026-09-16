@@ -1086,11 +1086,6 @@ final private[kyo] class HttpClientBackend private (
         }.asInstanceOf[A < (Async & Abort[HttpException])]
     end dispatchWith
 
-    /** Pool-based send with connection lifecycle management. Acquires connection from pool (unsafe), dispatches to backend (unsafe), then
-      * bridges to safe layer for `f` with connection release via Sync.ensure.
-      *
-      * When both client and route filters are noop (common case), skips the filter chain entirely to avoid a closure allocation.
-      */
     /** Dispatch to the appropriate unsafe backend method based on route type. */
     private def sendViaBackend[In, Out](
         conn: HttpConnection,

@@ -478,14 +478,6 @@ final private[kyo] class NodeCommandUnsafe(
         opts
     end buildOptions
 
-    /** Writes a Java InputStream into a child process's writable stream.
-      *
-      * A source with its bytes already in hand, which every `stdin` overload but `FromStream` builds, is written and
-      * ended in one pass. A source that answers 0, meaning it has none yet, is a stream filled by the event loop, most
-      * often another child's stdout: asking it again on this turn can only produce 0 again, because the turn is what
-      * keeps its data event from running. So the pump stops and resumes on the next turn, which is also what lets a
-      * feed that never ends stay out of the way of everything else this thread has to do.
-      */
     /** Runs `work` on the host's next turn, without the pending turn keeping the host alive on its own.
       *
       * A feed is only worth continuing while its child is running, and a running child holds the host open by itself.
@@ -497,6 +489,14 @@ final private[kyo] class NodeCommandUnsafe(
         if js.typeOf(dynamic.unref) == "function" then discard(dynamic.unref())
     end resumeNextTurn
 
+    /** Writes a Java InputStream into a child process's writable stream.
+      *
+      * A source with its bytes already in hand, which every `stdin` overload but `FromStream` builds, is written and
+      * ended in one pass. A source that answers 0, meaning it has none yet, is a stream filled by the event loop, most
+      * often another child's stdout: asking it again on this turn can only produce 0 again, because the turn is what
+      * keeps its data event from running. So the pump stops and resumes on the next turn, which is also what lets a
+      * feed that never ends stay out of the way of everything else this thread has to do.
+      */
     private def feedInputStream(is: InputStream, childStdin: NodeWritableStream)(using AllowUnsafe): Unit =
         val buf = new Array[Byte](8192)
         def pump(): Unit =
