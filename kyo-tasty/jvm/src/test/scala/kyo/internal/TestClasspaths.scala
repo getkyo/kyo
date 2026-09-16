@@ -111,8 +111,23 @@ private[kyo] object TestClasspaths:
             )
         }
 
+    /** Subset: the Java fixture's classfile, named as its own root.
+      *
+      * A directory root is walked for `.tasty` only (a plain `.class` beside one would decode the same class a
+      * second time), so a Java class, which has no `.tasty` at all, is reachable only by being named. JS and Native
+      * name it; without this the JVM's standard classpath was the one that did not carry it, and the two leaves that
+      * guard Java classfile decoding had no subject on this host.
+      */
+    lazy val javaFixtureClassfile: Seq[String] =
+        kyoTastyFixtures.flatMap { root =>
+            if root.endsWith(".jar") then Seq(s"$root!/kyo/fixtures/JavaSimpleFixture.class")
+            else
+                val candidate = new File(new File(root, "kyo/fixtures"), "JavaSimpleFixture.class")
+                if candidate.isFile then Seq(candidate.getPath) else Seq.empty
+        }
+
     /** A standard 3-root combo used by most fidelity tests: kyo-tasty + kyo-data + scala-library + internal fixtures. */
-    lazy val standard: Seq[String] = kyoTasty ++ kyoData ++ scalaLibrary ++ kyoTastyFixtures
+    lazy val standard: Seq[String] = kyoTasty ++ kyoData ++ scalaLibrary ++ kyoTastyFixtures ++ javaFixtureClassfile
 
     /** A broader combo that adds kyo-core to the standard set, enabling ContextFunctionN coverage. */
     lazy val standardWithKyoCore: Seq[String] = standard ++ kyoCore
