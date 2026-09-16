@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.internal.tasty.snapshot.DigestComputer
+import kyo.test.HostFilter
 
 /** Cross-platform digest equality test.
   *
@@ -13,6 +14,9 @@ import kyo.internal.tasty.snapshot.DigestComputer
   * shared DigestComputer code path on every platform.
   */
 class DigestEqualityTest extends kyo.test.Test[Any]:
+
+    // Stages snapshot and fixture files through Path, which a browser has not.
+    override protected def hostFilters = Chunk(HostFilter.NotBrowser)
 
     "compute on real files is deterministic across two calls" in {
         Scope.run {

@@ -282,7 +282,7 @@ class DomBackendReactiveRangesTest extends kyo.test.Test[Any]:
             _ <- fiber.interrupt
             _ <- fiber.getResult
         yield
-            assert(textState == (true, true, 1))
+            assert(textState == (true, true, 1), s"text input: (same node, still focused, caret) was $textState")
             assert(emailState == (true, true))
             assert(numberState == (true, true))
     }
@@ -356,7 +356,7 @@ class DomBackendReactiveRangesTest extends kyo.test.Test[Any]:
             _       <- fiber.getResult
         yield
             assert(focused == "raw")
-            assert(caret == 1)
+            assert(caret == 1, s"caret after the raw replacement was $caret")
     }
 
     "table range replacement restores raw focus relative to the reactive rows" in {
@@ -384,7 +384,7 @@ class DomBackendReactiveRangesTest extends kyo.test.Test[Any]:
             _       <- fiber.getResult
         yield
             assert(focused == "raw-table")
-            assert(caret == 1)
+            assert(caret == 1, s"caret after the table replacement was $caret")
     }
 
     "range focus restoration stays within its selector-targeted mount" in {

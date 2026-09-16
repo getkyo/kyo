@@ -897,7 +897,10 @@ lazy val `kyo-sql` =
         .jsSettings(
             `js-settings`,
             `tzdb-test-data`,
-            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
+            // A database connection is a socket, which a page has not, and the suites stage temp directories through
+            // node:os. No browser row.
+            kyoBrowserRow := false
         )
         // openssl-native-settings: kyo-net's Native C shims reference TLS symbols (TLS_client_method,
         // X509_free, ...), so a Native binary that reaches them must link libssl/libcrypto or nativeLink fails.
@@ -1481,7 +1484,9 @@ lazy val `kyo-stats-machine` =
             // koffi bootstrap (idempotent npm install, hooked on Test / compile) via the kyo-ffi plugin.
             // The CommonJS linker setting above stays in this .jsSettings block: the plugin is a Scala 2.12
             // sbt plugin with no sbt-scalajs dependency, so it cannot carry a scalaJSLinkerConfig setting.
-            ffiKoffiJsBootstrap("kyo-stats-machine-js-test")
+            ffiKoffiJsBootstrap("kyo-stats-machine-js-test"),
+            // Reads the machine through node:os and node:fs, which a page has not. No browser row.
+            kyoBrowserRow := false
         )
 
 lazy val `kyo-stats-otlp` =
@@ -2599,7 +2604,9 @@ lazy val `kyo-pod` =
         )
         .jsSettings(
             `js-settings`,
-            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
+            // Talks to a container daemon over its unix socket or CLI, neither of which a page has. No browser row.
+            kyoBrowserRow := false
         )
 
 lazy val `kyo-browser` =

@@ -4,6 +4,7 @@ import kyo.internal.TestClasspaths
 import kyo.internal.tasty.snapshot.DigestComputer
 import kyo.internal.tasty.snapshot.SnapshotReader
 import kyo.internal.tasty.snapshot.SnapshotWriter
+import kyo.test.HostFilter
 
 /** Verifies that the atomic-rename write strategy prevents partial-read observations.
   *
@@ -15,6 +16,9 @@ import kyo.internal.tasty.snapshot.SnapshotWriter
   * Runs on JVM, JS, and Native.
   */
 class ConcurrentSnapshotIoTest extends kyo.test.Test[Any]:
+
+    // Stages snapshot and fixture files through Path, which a browser has not.
+    override protected def hostFilters = Chunk(HostFilter.NotBrowser)
 
     "concurrent snapshot reader+writer: reader sees pre- or post-write, not corrupt" in {
         val digest = Array[Byte](0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57)

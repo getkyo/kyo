@@ -7,6 +7,7 @@ import kyo.internal.tasty.snapshot.SnapshotReader
 import kyo.internal.tasty.snapshot.SnapshotWriter
 import kyo.internal.tasty.symbol.FullNameNormalizer
 import kyo.internal.tasty.symbol.SymbolBody
+import kyo.test.HostFilter
 
 /** API surface tests: null safety on find/require, unresolvedTypeReferenceCount idempotency,
   * copyWithPreErrors, findClassByBinary canonicalization, Symbol equality,
@@ -15,6 +16,9 @@ import kyo.internal.tasty.symbol.SymbolBody
   * SymbolBody structural equality.
   */
 class DecoderFidelity5Phase04Test extends kyo.test.Test[Any]:
+
+    // Stages snapshot and fixture files through Path, which a browser has not.
+    override protected def hostFilters = Chunk(HostFilter.NotBrowser)
 
     import AllowUnsafe.embrace.danger
 

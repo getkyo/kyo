@@ -1,5 +1,7 @@
 package kyo
 
+import kyo.test.HostFilter
+
 /** Tasty.evictOlderThan.
   *
   * evictOlderThan deletes files older than cutoff, keeps recent files.
@@ -10,6 +12,9 @@ package kyo
   * Uses Path.tempDir and Path.setLastModified so the tests are deterministic and cross-platform.
   */
 class EvictOlderThanTest extends kyo.test.Test[Any]:
+
+    // Stages snapshot and fixture files through Path, which a browser has not.
+    override protected def hostFilters = Chunk(HostFilter.NotBrowser)
 
     // staleMs is a fixed timestamp in the past (2001-09-08 UTC).
     // Any positive maxAge will treat files with this mtime as stale.

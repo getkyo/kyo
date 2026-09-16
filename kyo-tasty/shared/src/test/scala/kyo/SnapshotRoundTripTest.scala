@@ -7,10 +7,14 @@ import kyo.internal.tasty.snapshot.DigestComputer
 import kyo.internal.tasty.snapshot.SnapshotFormat
 import kyo.internal.tasty.snapshot.SnapshotReader
 import kyo.internal.tasty.snapshot.SnapshotWriter
+import kyo.test.HostFilter
 
 /** Tests for KRFL snapshot round-trip, digest determinism, and openCached behavior.
   */
 class SnapshotRoundTripTest extends kyo.test.Test[Any]:
+
+    // Stages snapshot and fixture files through Path, which a browser has not.
+    override protected def hostFilters = Chunk(HostFilter.NotBrowser)
 
     import AllowUnsafe.embrace.danger
 

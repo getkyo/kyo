@@ -2,6 +2,7 @@ package kyo
 
 import kyo.internal.tasty.query.ClasspathOrchestrator
 import kyo.internal.tasty.symbol.SymbolKind
+import kyo.test.HostFilter
 
 /** Tests for the streaming pipeline via Channels using withPickles and real filesystem roots.
   *
@@ -9,6 +10,9 @@ import kyo.internal.tasty.symbol.SymbolKind
   * handling, channel backpressure with 100+ entries, ordering independence, and concurrency.
   */
 class ClasspathOrchestratorPipelineTest extends kyo.test.Test[Any]:
+
+    // Stages snapshot and fixture files through Path, which a browser has not.
+    override protected def hostFilters = Chunk(HostFilter.NotBrowser)
 
     import AllowUnsafe.embrace.danger
 

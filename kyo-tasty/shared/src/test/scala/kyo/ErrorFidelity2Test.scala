@@ -2,12 +2,16 @@ package kyo
 
 import kyo.internal.Fidelity2TestBase
 import kyo.internal.tasty.query.ClasspathOrchestrator
+import kyo.test.HostFilter
 
 /** Fidelity tests for TastyError channel correctness: SoftFail/FailFast FileNotFound,
   * MalformedSection, CorruptedFile, requireSymbol, and ClasspathBuilding. Uses withPickles
   * and ClasspathOrchestrator.init with real temp dirs; no JVM-only filesystem required.
   */
 class ErrorFidelity2Test extends Fidelity2TestBase:
+
+    // Stages snapshot and fixture files through Path, which a browser has not.
+    override protected def hostFilters = Chunk(HostFilter.NotBrowser)
 
     import AllowUnsafe.embrace.danger
 

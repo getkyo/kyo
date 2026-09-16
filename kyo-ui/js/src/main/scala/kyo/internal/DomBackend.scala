@@ -229,7 +229,15 @@ private[kyo] object DomBackend:
                 val fresh = newElements.head
                 if (active.tagName != "INPUT" && active.tagName != "TEXTAREA") || active.tagName != fresh.tagName then false
                 else
-                    var i = 0
+                    // Every step below can move the caret in a real browser: rewriting the `value` attribute of an
+                    // input the user has not typed into moves it to the start (the HTML spec's "move the text entry
+                    // cursor position to the beginning"), and assigning `value`, here or through a
+                    // `data-kyo-prop-value`, moves it to the end. jsdom does neither, which is why this needed a page
+                    // to show. Capture the selection before the first of them and put it back after the last, since
+                    // this element is the focused one by the check above and morphing in place exists to keep a
+                    // typing user where they were.
+                    val (selectionStart, selectionEnd) = readSelection(active)
+                    var i                              = 0
                     while i < fresh.attributes.length do
                         val attribute = fresh.attributes(i)
                         if active.getAttribute(attribute.name) != attribute.value then
@@ -248,6 +256,10 @@ private[kyo] object DomBackend:
                     val dynamic = active.asInstanceOf[scalajs.js.Dynamic]
                     if dynamic.value.asInstanceOf[String] != value then dynamic.value = value
                     applyJsPropsSync(active)
+                    (selectionStart, selectionEnd) match
+                        case (Present(start), Present(end)) => setSelection(active, start, end)
+                        case _                              => ()
+                    end match
                     true
                 end if
             end if

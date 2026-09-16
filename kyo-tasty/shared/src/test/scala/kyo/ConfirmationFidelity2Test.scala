@@ -4,11 +4,15 @@ import kyo.internal.Fidelity2TestBase
 import kyo.internal.TestClasspaths
 import kyo.internal.TestClasspaths2
 import kyo.internal.tasty.query.ClasspathOrchestrator
+import kyo.test.HostFilter
 
 /** Confirmation tests for decoder fidelity: empty classpath, truncated snapshot, bit-flipped
   * magic, mid-stream truncation, and Java symbols.
   */
 class ConfirmationFidelity2Test extends Fidelity2TestBase:
+
+    // Stages snapshot and fixture files through Path, which a browser has not.
+    override protected def hostFilters = Chunk(HostFilter.NotBrowser)
 
     import AllowUnsafe.embrace.danger
 

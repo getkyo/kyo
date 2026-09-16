@@ -1,5 +1,7 @@
 package kyo
 
+import kyo.test.HostFilter
+
 /** Behavioral enforcement: side effects only in named sites.
   *
   * Pure Tasty.* query methods perform zero IO. Every pure query returns its expected value.
@@ -13,6 +15,9 @@ package kyo
   * All tests pass on JVM, JS, and Native (cross-platform placement).
   */
 class Inv009BehavioralTest extends kyo.test.Test[Any]:
+
+    // Stages snapshot and fixture files through Path, which a browser has not.
+    override protected def hostFilters = Chunk(HostFilter.NotBrowser)
 
     // Two Package symbols: pkg (id=0, root) and child (id=1, owned by pkg).
     // Minimal classpath; pure query methods that return empty Chunk on absent kinds are

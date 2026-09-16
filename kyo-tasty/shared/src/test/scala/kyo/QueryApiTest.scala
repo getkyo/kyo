@@ -5,12 +5,16 @@ import kyo.internal.tasty.query.ClasspathOrchestrator
 import kyo.internal.tasty.symbol.LoadingSymbol
 import kyo.internal.tasty.symbol.SymbolKind
 import kyo.internal.tasty.type_.TypeArena
+import kyo.test.HostFilter
 
 /** Tests for the Query API, classpath lifecycle, and the A/B/C orchestration pipeline.
   *
   * Uses in-memory pickles for cross-platform compatibility.
   */
 class QueryApiTest extends kyo.test.Test[Any]:
+
+    // Stages snapshot and fixture files through Path, which a browser has not.
+    override protected def hostFilters = Chunk(HostFilter.NotBrowser)
 
     import AllowUnsafe.embrace.danger
 

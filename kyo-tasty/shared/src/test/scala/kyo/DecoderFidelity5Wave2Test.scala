@@ -4,6 +4,7 @@ import kyo.internal.TestClasspaths
 import kyo.internal.tasty.snapshot.SnapshotFormat
 import kyo.internal.tasty.snapshot.SnapshotReader
 import kyo.internal.tasty.snapshot.SnapshotWriter
+import kyo.test.HostFilter
 
 /** Decoder-fidelity deeper probe: boundary values, negative tests, resource exhaustion, races,
   * half-load state, TastyError variants, idempotency, equality/hash, real-world synthetics,
@@ -11,6 +12,9 @@ import kyo.internal.tasty.snapshot.SnapshotWriter
   * fixtures; no JVM filesystem required.
   */
 class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
+
+    // Stages snapshot and fixture files through Path, which a browser has not.
+    override protected def hostFilters = Chunk(HostFilter.NotBrowser)
 
     import AllowUnsafe.embrace.danger
 

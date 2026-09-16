@@ -4,6 +4,7 @@ import kyo.internal.Fidelity2TestBase
 import kyo.internal.tasty.query.ClasspathOrchestrator
 import kyo.internal.tasty.snapshot.SnapshotReader
 import kyo.internal.tasty.snapshot.SnapshotWriter
+import kyo.test.HostFilter
 
 /** Fidelity tests for same-fully-qualified name collision detection and FullNameCollision diagnostics.
   *
@@ -13,6 +14,9 @@ import kyo.internal.tasty.snapshot.SnapshotWriter
   * and collisionReport is non-empty under SoftFail.
   */
 class CollisionFidelity2Test extends Fidelity2TestBase:
+
+    // Stages snapshot and fixture files through Path, which a browser has not.
+    override protected def hostFilters = Chunk(HostFilter.NotBrowser)
 
     import AllowUnsafe.embrace.danger
 

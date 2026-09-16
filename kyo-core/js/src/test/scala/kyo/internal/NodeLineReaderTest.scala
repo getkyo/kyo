@@ -26,7 +26,9 @@ class NodeLineReaderTest extends kyo.test.Test[Any]:
     private def builtin(id: String): sjs.Dynamic =
         PlatformJs.nodeBuiltin(id).getOrElse(throw new IllegalStateException(s"this suite needs $id, which the host does not provide"))
 
-    private val fs =
+    // Lazy, so that a host without node:fs (a browser page, where the filter above cancels every leaf) reaches the
+    // cancel rather than this throw, which would run while the suite is still being constructed.
+    private lazy val fs =
         CoreNodeFs.module.getOrElse(throw new IllegalStateException("this suite needs node:fs, which the host does not provide"))
 
     /** Write `content` to a fresh temporary file and open it for reading, returning the descriptor. */

@@ -2,11 +2,15 @@ package kyo
 
 import kyo.internal.tasty.snapshot.DigestComputer
 import kyo.internal.tasty.snapshot.DigestComputer.JarDigestEntry
+import kyo.test.HostFilter
 
 /** Cross-platform DigestComputer xxh3 content-addressed digest behavior: digestForJar stability under entry reordering, crc32 sensitivity,
   * and content-bytes sensitivity.
   */
 class DigestComputerTest extends kyo.test.Test[Any]:
+
+    // Stages snapshot and fixture files through Path, which a browser has not.
+    override protected def hostFilters = Chunk(HostFilter.NotBrowser)
 
     // digestForJar is stable for identical entries in any insertion order.
     "digestForJar is stable for same-name same-crc entries in any order" in {
