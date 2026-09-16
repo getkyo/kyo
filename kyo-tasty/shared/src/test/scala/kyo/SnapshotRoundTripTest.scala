@@ -7,14 +7,12 @@ import kyo.internal.tasty.snapshot.DigestComputer
 import kyo.internal.tasty.snapshot.SnapshotFormat
 import kyo.internal.tasty.snapshot.SnapshotReader
 import kyo.internal.tasty.snapshot.SnapshotWriter
-import kyo.test.HostFilter
 
 /** Tests for KRFL snapshot round-trip, digest determinism, and openCached behavior.
   */
 class SnapshotRoundTripTest extends kyo.test.Test[Any]:
 
-    // Stages snapshot and fixture files through Path, which a browser has not.
-    override protected def hostFilters = Chunk(HostFilter.NotBrowser)
+    // The leaves that need a real file system carry their own gates; the rest of this suite runs anywhere.
 
     import AllowUnsafe.embrace.danger
 
@@ -112,7 +110,7 @@ class SnapshotRoundTripTest extends kyo.test.Test[Any]:
         }
     }
 
-    "writing snapshot to an unwritable path produces SnapshotIoError" in {
+    "writing snapshot to an unwritable path produces SnapshotIoError".notBrowser in {
         // Create a temp file and then try to use it as a cache directory.
         // Path.mkDir on a path where a file already exists fails with FileStructureException,
         // which SnapshotWriter wraps as SnapshotIoError.
@@ -142,7 +140,7 @@ class SnapshotRoundTripTest extends kyo.test.Test[Any]:
         }
     }
 
-    "two concurrent snapshot writers produce one valid snapshot file (atomic rename)" in {
+    "two concurrent snapshot writers produce one valid snapshot file (atomic rename)".notBrowser in {
         val digest = Array[Byte](0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11)
         val hex    = DigestComputer.toHexString(digest)
         Scope.run {
@@ -218,7 +216,7 @@ class SnapshotRoundTripTest extends kyo.test.Test[Any]:
         }
     }
 
-    "cold miss writes snapshot file to cache dir" in {
+    "cold miss writes snapshot file to cache dir".notBrowser in {
         val digest = Array[Byte](0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27)
         val hex    = DigestComputer.toHexString(digest)
         Scope.run {
@@ -251,7 +249,7 @@ class SnapshotRoundTripTest extends kyo.test.Test[Any]:
         }
     }
 
-    "evictOlderThan removes all snapshot files older than maxAgeMs" in {
+    "evictOlderThan removes all snapshot files older than maxAgeMs".notBrowser in {
         // All .krfl files are set to a fixed past mtime (2001-09-08 UTC), so any positive maxAge evicts them.
         // other.txt has no .krfl extension, so evictOlderThan leaves it untouched.
         val staleMs = 1_000_000_000_000L
@@ -294,7 +292,7 @@ class SnapshotRoundTripTest extends kyo.test.Test[Any]:
         }
     }
 
-    "DigestComputer.compute for the same roots is deterministic" in {
+    "DigestComputer.compute for the same roots is deterministic".notBrowser in {
         Scope.run {
             Path.run(Path.tempDir("kyo-srt-det")).map { dir =>
                 val file = dir / "PlainClass.tasty"
@@ -320,7 +318,7 @@ class SnapshotRoundTripTest extends kyo.test.Test[Any]:
         }
     }
 
-    "DigestComputer.compute for different file sets returns different digests" in {
+    "DigestComputer.compute for different file sets returns different digests".notBrowser in {
         Scope.run {
             Path.run(Path.tempDir("kyo-srt-diff")).map { dir =>
                 val file = dir / "PlainClass.tasty"
@@ -820,7 +818,7 @@ class SnapshotRoundTripTest extends kyo.test.Test[Any]:
         }
     }
 
-    "DigestComputer.compute on real root returns same digest for two successive calls" in {
+    "DigestComputer.compute on real root returns same digest for two successive calls".notBrowser in {
         Scope.run {
             Path.run(Path.tempDir("kyo-srt-det2")).map { dir =>
                 val fileA = dir / "A.tasty"
@@ -848,7 +846,7 @@ class SnapshotRoundTripTest extends kyo.test.Test[Any]:
         }
     }
 
-    "DigestComputer.compute detects additional file in root (different digest)" in {
+    "DigestComputer.compute detects additional file in root (different digest)".notBrowser in {
         Scope.run {
             Path.run(Path.tempDir("kyo-srt-add")).map { dir =>
                 val fileA = dir / "A.tasty"
@@ -876,7 +874,7 @@ class SnapshotRoundTripTest extends kyo.test.Test[Any]:
         }
     }
 
-    "DigestComputer.compute on two real roots is root-order independent" in {
+    "DigestComputer.compute on two real roots is root-order independent".notBrowser in {
         Scope.run {
             Path.run(Path.tempDir("kyo-srt-ord")).map { dir =>
                 val root1 = dir / "root1"
@@ -905,7 +903,7 @@ class SnapshotRoundTripTest extends kyo.test.Test[Any]:
         }
     }
 
-    "DigestComputer.compute on directory root returns same digest for two successive calls" in {
+    "DigestComputer.compute on directory root returns same digest for two successive calls".notBrowser in {
         Scope.run {
             Path.run(Path.tempDir("kyo-srt-dir")).map { dir =>
                 val file = dir / "PlainClass.tasty"

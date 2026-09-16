@@ -1,6 +1,5 @@
 package kyo
 
-import kyo.test.HostFilter
 
 /** Behavioral enforcement: side effects only in named sites.
   *
@@ -16,8 +15,7 @@ import kyo.test.HostFilter
   */
 class Inv009BehavioralTest extends kyo.test.Test[Any]:
 
-    // Stages snapshot and fixture files through Path, which a browser has not.
-    override protected def hostFilters = Chunk(HostFilter.NotBrowser)
+    // The leaves that need a real file system carry their own gates; the rest of this suite runs anywhere.
 
     // Two Package symbols: pkg (id=0, root) and child (id=1, owned by pkg).
     // Minimal classpath; pure query methods that return empty Chunk on absent kinds are
@@ -185,7 +183,7 @@ class Inv009BehavioralTest extends kyo.test.Test[Any]:
         }
     }
 
-    "evictOlderThan removes stale snapshots from cacheDir" in {
+    "evictOlderThan removes stale snapshots from cacheDir".notBrowser in {
         // maxAge is 60 seconds; the stale file is set to 2001-09-08 UTC (far in the past).
         val maxAge  = 60.seconds
         val staleMs = 1_000_000_000_000L // 2001-09-08 UTC
@@ -226,7 +224,7 @@ class Inv009BehavioralTest extends kyo.test.Test[Any]:
         }
     }
 
-    "withClasspath(roots) cold-load reads from the filesystem" in {
+    "withClasspath(roots) cold-load reads from the filesystem".notBrowser in {
         Scope.run {
             Path.run(Path.tempDir("inv009-cold")).map { tmpDir =>
                 val tastyFile = tmpDir / "PlainClass.tasty"

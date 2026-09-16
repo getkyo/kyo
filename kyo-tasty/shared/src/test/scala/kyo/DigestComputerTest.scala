@@ -2,15 +2,13 @@ package kyo
 
 import kyo.internal.tasty.snapshot.DigestComputer
 import kyo.internal.tasty.snapshot.DigestComputer.JarDigestEntry
-import kyo.test.HostFilter
 
 /** Cross-platform DigestComputer xxh3 content-addressed digest behavior: digestForJar stability under entry reordering, crc32 sensitivity,
   * and content-bytes sensitivity.
   */
 class DigestComputerTest extends kyo.test.Test[Any]:
 
-    // Stages snapshot and fixture files through Path, which a browser has not.
-    override protected def hostFilters = Chunk(HostFilter.NotBrowser)
+    // The leaves that need a real file system carry their own gates; the rest of this suite runs anywhere.
 
     // digestForJar is stable for identical entries in any insertion order.
     "digestForJar is stable for same-name same-crc entries in any order" in {
@@ -40,7 +38,7 @@ class DigestComputerTest extends kyo.test.Test[Any]:
     }
 
     // directory root compute is deterministic and sensitive to file-set changes.
-    "directory root compute is deterministic and detects added file" in {
+    "directory root compute is deterministic and detects added file".notBrowser in {
         Scope.run {
             Path.run(Path.tempDir("kyo-dct")).map { dir =>
                 val file = dir / "Foo.tasty"

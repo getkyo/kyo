@@ -5,7 +5,6 @@ import kyo.internal.tasty.query.ClasspathOrchestrator
 import kyo.internal.tasty.symbol.LoadingSymbol
 import kyo.internal.tasty.symbol.SymbolKind
 import kyo.internal.tasty.type_.TypeArena
-import kyo.test.HostFilter
 
 /** Tests for the Query API, classpath lifecycle, and the A/B/C orchestration pipeline.
   *
@@ -13,8 +12,7 @@ import kyo.test.HostFilter
   */
 class QueryApiTest extends kyo.test.Test[Any]:
 
-    // Stages snapshot and fixture files through Path, which a browser has not.
-    override protected def hostFilters = Chunk(HostFilter.NotBrowser)
+    // The leaves that need a real file system carry their own gates; the rest of this suite runs anywhere.
 
     import AllowUnsafe.embrace.danger
 
@@ -314,7 +312,7 @@ class QueryApiTest extends kyo.test.Test[Any]:
         }
     }
 
-    "strict mode fails with TastyError for corrupt TASTy" in {
+    "strict mode fails with TastyError for corrupt TASTy".notBrowser in {
         // FailFast mode: write a corrupt file to a temp dir and use ClasspathOrchestrator.init.
         Scope.run {
             Path.run(Path.tempDir("kyo-qa-failfast")).map { dir =>
@@ -356,7 +354,7 @@ class QueryApiTest extends kyo.test.Test[Any]:
     }
 
     // SoftFail with a real missing root produces FileNotFound in classpath.errors.
-    "missing root produces FileNotFound in classpath.errors" in {
+    "missing root produces FileNotFound in classpath.errors".notBrowser in {
         Scope.run {
             Path.run(Path.tempDir("kyo-qa-missing")).map { tmp =>
                 val missing = (tmp / "no-such-root").toString

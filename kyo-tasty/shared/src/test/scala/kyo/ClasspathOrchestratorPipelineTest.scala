@@ -2,7 +2,6 @@ package kyo
 
 import kyo.internal.tasty.query.ClasspathOrchestrator
 import kyo.internal.tasty.symbol.SymbolKind
-import kyo.test.HostFilter
 
 /** Tests for the streaming pipeline via Channels using withPickles and real filesystem roots.
   *
@@ -11,8 +10,7 @@ import kyo.test.HostFilter
   */
 class ClasspathOrchestratorPipelineTest extends kyo.test.Test[Any]:
 
-    // Stages snapshot and fixture files through Path, which a browser has not.
-    override protected def hostFilters = Chunk(HostFilter.NotBrowser)
+    // The leaves that need a real file system carry their own gates; the rest of this suite runs anywhere.
 
     import AllowUnsafe.embrace.danger
 
@@ -100,7 +98,7 @@ class ClasspathOrchestratorPipelineTest extends kyo.test.Test[Any]:
         }
     }
 
-    "strict mode raises Abort[TastyError] for corrupted tasty file without hanging" in {
+    "strict mode raises Abort[TastyError] for corrupted tasty file without hanging".notBrowser in {
         // FailFast mode requires real filesystem roots. Use a temp dir with a corrupt file.
         Scope.run {
             Path.run(Path.tempDir("kyo-pipe-failfast")).map { dir =>

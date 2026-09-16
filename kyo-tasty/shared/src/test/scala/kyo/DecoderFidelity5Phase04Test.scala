@@ -7,7 +7,6 @@ import kyo.internal.tasty.snapshot.SnapshotReader
 import kyo.internal.tasty.snapshot.SnapshotWriter
 import kyo.internal.tasty.symbol.FullNameNormalizer
 import kyo.internal.tasty.symbol.SymbolBody
-import kyo.test.HostFilter
 
 /** API surface tests: null safety on find/require, unresolvedTypeReferenceCount idempotency,
   * copyWithPreErrors, findClassByBinary canonicalization, Symbol equality,
@@ -17,8 +16,7 @@ import kyo.test.HostFilter
   */
 class DecoderFidelity5Phase04Test extends kyo.test.Test[Any]:
 
-    // Stages snapshot and fixture files through Path, which a browser has not.
-    override protected def hostFilters = Chunk(HostFilter.NotBrowser)
+    // The leaves that need a real file system carry their own gates; the rest of this suite runs anywhere.
 
     import AllowUnsafe.embrace.danger
 
@@ -383,7 +381,7 @@ class DecoderFidelity5Phase04Test extends kyo.test.Test[Any]:
             }
     }
 
-    "evictOlderThan on empty cache dir completes without error" in {
+    "evictOlderThan on empty cache dir completes without error".notBrowser in {
         Scope.run {
             Path.run(Path.tempDir("kyo-df5-evict-empty")).map { dir =>
                 Abort.run[TastyError](Tasty.evictOlderThan(dir.toString, 1.millis)).map {
@@ -413,7 +411,7 @@ class DecoderFidelity5Phase04Test extends kyo.test.Test[Any]:
             }
     }
 
-    "evictOlderThan Duration overload converts correctly" in {
+    "evictOlderThan Duration overload converts correctly".notBrowser in {
         val jDur = java.time.Duration.ofMillis(5000L)
         val d    = Duration.fromJava(jDur)
         assert(d.toMillis == 5000L, s"Duration.toMillis mismatch: ${d.toMillis}")

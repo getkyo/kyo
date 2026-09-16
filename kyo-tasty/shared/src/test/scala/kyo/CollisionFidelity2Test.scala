@@ -4,7 +4,6 @@ import kyo.internal.Fidelity2TestBase
 import kyo.internal.tasty.query.ClasspathOrchestrator
 import kyo.internal.tasty.snapshot.SnapshotReader
 import kyo.internal.tasty.snapshot.SnapshotWriter
-import kyo.test.HostFilter
 
 /** Fidelity tests for same-fully-qualified name collision detection and FullNameCollision diagnostics.
   *
@@ -15,8 +14,7 @@ import kyo.test.HostFilter
   */
 class CollisionFidelity2Test extends Fidelity2TestBase:
 
-    // Stages snapshot and fixture files through Path, which a browser has not.
-    override protected def hostFilters = Chunk(HostFilter.NotBrowser)
+    // The leaves that need a real file system carry their own gates; the rest of this suite runs anywhere.
 
     import AllowUnsafe.embrace.danger
 
@@ -120,7 +118,7 @@ class CollisionFidelity2Test extends Fidelity2TestBase:
         }
     }
 
-    "FailFast collision raises TastyError.FullNameCollisionError" in {
+    "FailFast collision raises TastyError.FullNameCollisionError".notBrowser in {
         // Write collision bytes to temp dirs: root1 and root2 each contain the same fixtures.
         Scope.run {
             Path.run(Path.tempDir("kyo-col-root1")).map { root1 =>
