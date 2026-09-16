@@ -140,7 +140,7 @@ object StreamCompression:
     ) =
 
         enum DeflateState derives CanEqual:
-            case Initialize                                                                   extends DeflateState
+            case Initialize                                                                        extends DeflateState
             case DeflateInput(delfater: ZipCodec.Deflater, emit: Unit < (Emit[Chunk[Byte]] & Ctx)) extends DeflateState
             case PullDeflater(
                 delfater: ZipCodec.Deflater,
@@ -222,7 +222,7 @@ object StreamCompression:
         _frame: Frame
     ): Stream[Byte, Scope & Sync & Ctx] =
         enum GZipState derives CanEqual:
-            case Initialize                                                                                     extends GZipState
+            case Initialize                                                                                               extends GZipState
             case SendHeader(delfater: ZipCodec.Deflater, crc32: ZipCodec.Crc32)                                           extends GZipState
             case DeflateInput(delfater: ZipCodec.Deflater, crc32: ZipCodec.Crc32, emit: Unit < (Emit[Chunk[Byte]] & Ctx)) extends GZipState
             case PullDeflater(
@@ -236,7 +236,7 @@ object StreamCompression:
                 crc32: ZipCodec.Crc32,
                 maybeEmitFn: Maybe[() => Unit < (Emit[Chunk[Byte]] & Ctx)],
                 chunk: Chunk[Byte]
-            )                                                          extends GZipState
+            )                                                                    extends GZipState
             case SendTrailer(delfater: ZipCodec.Deflater, crc32: ZipCodec.Crc32) extends GZipState
         end GZipState
 
@@ -355,7 +355,7 @@ object StreamCompression:
         val bufferIO = Sync.defer(new Array[Byte](bufferSize))
 
         enum InflateState derives CanEqual:
-            case Initialize                                                                                       extends InflateState
+            case Initialize                                                                                            extends InflateState
             case InflateInput(inflater: ZipCodec.Inflater, emit: Unit < (Emit[Chunk[Byte]] & Ctx))                     extends InflateState
             case PullInflater(inflater: ZipCodec.Inflater, maybeEmitFn: Maybe[() => Unit < (Emit[Chunk[Byte]] & Ctx)]) extends InflateState
         end InflateState
@@ -428,7 +428,7 @@ object StreamCompression:
     ) =
 
         enum GunzipState derives CanEqual:
-            case Initialize                                                                                      extends GunzipState
+            case Initialize                                                                                           extends GunzipState
             case ParseHeader(bytes: Chunk[Byte], headerCrc32: ZipCodec.Crc32, emit: Unit < (Emit[Chunk[Byte]] & Ctx)) extends GunzipState
             case ParseHeaderExtra(
                 bytes: Chunk[Byte],
