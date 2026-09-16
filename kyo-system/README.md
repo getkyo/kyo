@@ -453,7 +453,7 @@ val ownedByCaller: Path < (Sync & Abort[FileStructureException]) =
 
 On JVM and Scala Native, `path.toJava: java.nio.file.Path` converts to the standard library type without a cast. It is not available on Scala.js.
 
-On Scala.js, building a `Path` and reading its `parts` and `isAbsolute` work on every host, a browser included. File operations and `Command` reach Node's built-in modules through `process.getBuiltinModule`, which Node 20.16 and 22.3, Bun 1.2.6 and Deno 2.1 provide; on a host without them they fail with an `UnsupportedOperationException` that names the module and the host.
+On Scala.js, building a `Path` and reading its `parts` and `isAbsolute` work on every host, a browser included. File operations and `Command` reach Node's built-in modules through `process.getBuiltinModule`, which Node 20.16 and 22.3, Bun 1.2.6 and Deno 2.1 provide. A host without them, a browser page above all, has no file system and no process table, and says so on the channel the operation already declares: `FileSystemUnsupportedOnHostException` on `Abort[FileSystemException]` and `CommandUnsupportedOnHostException` on `Abort[CommandException]`, each naming the operation and the host. Neither is a panic, so the signature's promise holds on every host.
 
 ## Running commands
 

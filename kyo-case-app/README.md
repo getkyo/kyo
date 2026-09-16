@@ -16,6 +16,12 @@ case-app handles help, usage, and argument parsing. This module runs your effect
 
 Works on JVM, Scala.js, and Scala Native.
 
+## Where it runs
+
+JVM, Node, Bun, Deno and Scala Native, and not a browser page. A command line is what this module parses, and a
+page is not started with one; case-app's own platform layer also reads `require("process")` at first use, which no
+page resolves.
+
 ## Getting Started
 
 Add the dependency to your `build.sbt`:

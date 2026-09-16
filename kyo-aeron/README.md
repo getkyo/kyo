@@ -18,6 +18,12 @@ Topic.run {
 
 `derives Schema` wires the codec, `Topic.run` owns the embedded driver, and `Topic.publish` streams values onto the named URI.
 
+## Where it runs
+
+JVM, Node, Bun, Deno and Scala Native, and not a browser page. The media driver carries messages over UDP and
+shared memory, neither of which a page has, and the JavaScript bindings load the driver as a native library
+through koffi, which needs a Node-like `process`.
+
 ## Getting started
 
 The minimum useful program is a publisher and a subscriber on the same URI with the same exact message type. The subscriber runs on its own fiber so the publisher can run concurrently in the same handler.

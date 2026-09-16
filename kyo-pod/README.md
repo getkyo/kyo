@@ -19,6 +19,11 @@ val img: ContainerImage    = ContainerImage("alpine", "3.19")
 ```
 -->
 
+## Where it runs
+
+JVM, Node, Bun, Deno and Scala Native, and not a browser page. Every operation here reaches a container daemon
+over its unix socket or its command line, and a page has neither.
+
 ## Getting Started
 
 Add the dependency to your `build.sbt`:

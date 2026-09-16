@@ -29,6 +29,12 @@ Typed queries can be generated at compile time through ordinary Scala 3 inlining
 step, or return type annotation restrictions. The SQL string lands in the artifact as a constant avoiding runtime
 overhead.
 
+## Where it runs
+
+JVM, Node, Bun, Deno and Scala Native, and not a browser page. The AST and the typed DSL are pure values and link
+anywhere; what a page cannot supply is the connection, since every driver here speaks its wire protocol over a
+socket through kyo-net, and a page has no sockets.
+
 ## Getting started
 
 ```scala doctest:expect=skipped

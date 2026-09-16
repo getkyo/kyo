@@ -4,6 +4,13 @@ kyo-net is the low-level network transport under [kyo-http](../kyo-http/README.m
 
 Most applications should use kyo-http, not kyo-net directly. Reach for kyo-net when you are building a transport-level integration or a protocol that kyo-http does not cover, and you need raw sockets with the same backend selection, TLS, and lifecycle model kyo-http is built on.
 
+## Where it runs
+
+JVM, Node, Bun, Deno and Scala Native, and not a browser page. Every transport this module can select (io_uring,
+epoll, kqueue, and Node's own) needs a host that owns sockets, and a page owns none: the backend probe selects
+nothing there and reports `NetBackendUnavailableException` naming what it tried. A page's outbound HTTP goes
+through kyo-http, whose client there is the page's own `fetch`.
+
 ## The unsafe surface
 
 kyo-net is an unsafe-tier API. Every async operation returns a `Fiber.Unsafe`, every entry point requires an `AllowUnsafe`, and the caller owns the lifecycle of every connection and listener it opens. There is no safe-tier wrapper, because the module exists to be the unsafe floor others build on.

@@ -31,12 +31,13 @@ val handler2 = HttpHandler.getText("health2") { _ => "ok" }
 
 # kyo-http
 
-Kyo's HTTP/1.1 client and server module. Both client and server share a single API that compiles across JVM, JavaScript, and Scala Native, with platform-specific backends handling the actual I/O:
+Kyo's HTTP/1.1 client and server module. Both client and server share a single API that compiles across JVM, JavaScript, WebAssembly, and Scala Native, with platform-specific backends handling the actual I/O:
 
 | Platform | I/O backend |
 |----------|-------------|
 | JVM | Java NIO selectors |
-| JS | Node.js [`net`](https://nodejs.org/api/net.html) and [`tls`](https://nodejs.org/api/tls.html) |
+| JS on Node, Bun or Deno | Node.js [`net`](https://nodejs.org/api/net.html) and [`tls`](https://nodejs.org/api/tls.html) |
+| JS in a browser page | the page's own `fetch` and `WebSocket`, which own the connection; the server has no port to bind and says so at the bind. See [In a browser page](#in-a-browser-page) |
 | Native | Direct [`epoll`](https://man7.org/linux/man-pages/man7/epoll.7.html) (Linux) and [`kqueue`](https://www.freebsd.org/cgi/man.cgi?kqueue) (macOS) |
 
 > On the JVM the NIO row is the always-available floor. The accelerated native transport (io_uring/epoll/kqueue with BoringSSL TLS) ships in per-platform `kyo-net` classifier jars; add the classifiers for your host to opt in, and kyo-http degrades to the NIO floor when they are absent. See [kyo-net: Native transport distribution (JVM)](../kyo-net/README.md#native-transport-distribution-jvm).
