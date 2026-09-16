@@ -38,8 +38,11 @@ private[kyo] object Zip:
 
         def remainingBytes: Array[Byte] =
             val remaining = under.getRemaining
+            // Counted back from the end of the buffer last handed over, which is what the drivers did with the count
+            // before they asked for the bytes, and clamped the same way.
+            val from = math.max(0, last.length - remaining)
             if remaining <= 0 then Array.empty
-            else java.util.Arrays.copyOfRange(last, last.length - remaining, last.length)
+            else java.util.Arrays.copyOfRange(last, from, last.length)
         end remainingBytes
     end Inflater
 
