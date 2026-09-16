@@ -143,7 +143,7 @@ val m = Ffi.load[MathBindings] // same instance as `math` in the setup
 
 Two related entry points exist for the cache, both also `(using AllowUnsafe)`:
 
-- `Ffi.warmLoad[T]` pre-warms the cache at startup so the first real call does not pay the reflection cost. It is idempotent.
+- `Ffi.warmLoad[T]` pre-warms the cache at startup so the first real call does not pay the construction cost. It is idempotent.
 - `Ffi.unload[T]` evicts the cached impl so the next `Ffi.load[T]` re-instantiates. It is intended for test scenarios, not normal use.
 
 `Ffi.load[T]` throws subtypes of `FfiLoadError`: `LibraryNotFound` (the native is not resolvable, or a per-module native manifest shows it is not bundled for the current `<os>-<arch>`; the message names the platform), `AbiMismatch` (the generated-impl ABI, or the bundled native's version against the module's `minRuntime` floor, does not match the runtime), `Unsupported` (32-bit host, browser Scala.js), `ImplNotFound` (no generated impl on the classpath). The manifest is read before the generated impl's class initializer runs, so a native missing for this platform surfaces here as a catchable `LibraryNotFound` rather than an opaque symbol-lookup crash at the first call. Callers that want a single catch handler use `catch { case e: FfiLoadError => ... }`.
@@ -1146,7 +1146,7 @@ The generated code is on disk, navigable in IDEs, and shows up in stack traces.
 
 **3. C compilation and packaging.** The plugin compiles your C sources into a platform-native shared library (`.so` / `.dylib` / `.dll`) and packages it under `META-INF/native/{os}-{arch}/` inside the JAR. On Native, C sources route through `nativeCompileOptions` instead.
 
-**4. Runtime loading.** `Ffi.load[T]` extracts the shared library from the JAR to a temp directory, loads it via `System.loadLibrary` (JVM), linker (Native), or `koffi.load` (JS), and instantiates the generated impl via reflective construction. The impl is cached per trait; subsequent `Ffi.load` calls return the same instance.
+**4. Runtime loading.** `Ffi.load[T]` extracts the shared library from the JAR to a temp directory, loads it via `System.loadLibrary` (JVM), linker (Native), or `koffi.load` (JS), and instantiates the generated impl. The JVM and Native find the impl by name through reflection; on Scala.js the `Ffi.load[T]` call itself names the impl, so the linker keeps a binding only in the code that loads it, and a module that never loads it (a page served the same bundle as a Node program, say) does not carry it. The impl is cached per trait; subsequent `Ffi.load` calls return the same instance.
 
 **Plugin architecture.** The sbt plugin is a Scala 2.12 plugin (sbt's own compile target). The Scala 3 codegen is bundled as opaque resources inside the plugin JAR; at task-execution time the plugin extracts the bundled JARs to a cache directory and constructs a fresh classloader to invoke the codegen reflectively. There is no user-visible Scala 3 dependency beyond what `kyo-ffi` itself pulls in.
 
@@ -1159,7 +1159,7 @@ The generated code is on disk, navigable in IDEs, and shows up in stack traces.
 - Use `Buffer[T]` instead of `Array[T]` for `@Ffi.blocking` methods. Arrays are copied to scratch before blocking calls, while buffers are already off-heap.
 - Transient callbacks with stable references (a `val`, a method reference) are cached, so the upcall stub is reused across calls. New lambda instances each time disable caching.
 - The per-thread scratch arena auto-tunes: it starts at 64 KiB and doubles on demand up to 4 MiB. For workloads with known large allocations, set `-Dkyo.ffi.scratch.size=` or `Ffi.Config(scratchSize = Present(131072))` to avoid the initial growth.
-- `Ffi.warmLoad[T]` at startup amortizes the first-call reflection cost.
+- `Ffi.warmLoad[T]` at startup amortizes the first-call construction cost.
 
 ## Examples
 

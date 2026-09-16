@@ -4,6 +4,7 @@ import kyo.*
 import kyo.discard
 import kyo.ffi.FfiLoadError
 import kyo.ffi.Test
+import kyo.internal.PlatformJs
 import scala.scalajs.js as sjs
 
 /** Validates the JS-side resolver precedence, now that each branch is a REAL presence check (not a blind
@@ -128,6 +129,27 @@ class NativeLoaderJsTest extends Test:
             assert(NativeLoader.jsResolve("c") == existingPath)
         finally
             clearEnv(cEnvKey)
+        end try
+    }
+
+    "a native installed where the package route looks resolves with no env override, on a link with no require global" in {
+        // This module links as an ES module, which has no `require`, the case of every WasmGC link and any application linked as one.
+        // The package route reports the path it looks for; a native placed exactly there must be found.
+        val fs     = PlatformJs.nodeBuiltin("node:fs").get
+        val nodeOs = PlatformJs.nodeBuiltin("node:os").get
+        val path   = PlatformJs.nodeBuiltin("node:path").get
+        val root   = fs.mkdtempSync(path.join(nodeOs.tmpdir(), "kyo-ffi-package-")).asInstanceOf[String]
+        try
+            sys.props.update(prefixProp, root)
+            val lookedFor = intercept[FfiLoadError.LibraryNotFound](NativeLoader.jsResolve(libId)).candidates
+                .filter(_.startsWith("require.resolve "))
+                .map(_.stripPrefix("require.resolve "))
+            assert(lookedFor.size == 1)
+            val native = lookedFor.head
+            discard(fs.mkdirSync(path.dirname(native), sjs.Dynamic.literal(recursive = true)))
+            discard(fs.writeFileSync(native, ""))
+            assert(NativeLoader.jsResolve(libId) == native)
+        finally discard(fs.rmSync(root, sjs.Dynamic.literal(recursive = true, force = true)))
         end try
     }
 

@@ -36,7 +36,6 @@ object JsEmitter extends EmitterBase.Ops with PlatformTypes:
             """import scala.scalajs.js
               |import scala.scalajs.js.annotation.*
               |import scala.scalajs.js.typedarray.*
-              |import scala.scalajs.reflect.annotation.EnableReflectiveInstantiation
               |import kyo.ffi.*
               |import kyo.ffi.internal.{AbiCheck, JsRawSegment, KoffiFacade, KoffiFn, NativeLoader, StructAbiCheck}
               |""".stripMargin
@@ -49,9 +48,10 @@ object JsEmitter extends EmitterBase.Ops with PlatformTypes:
 
     private[codegen] def emitImplClass(spec: TraitSpec): String =
         val sb = new StringBuilder
-        // `@EnableReflectiveInstantiation` tells the Scala.js linker to retain the nullary constructor so
-        // `scala.reflect.Reflect.lookupInstantiatableClass` (used by `Ffi.load`) can instantiate it at runtime.
-        sb ++= s"@EnableReflectiveInstantiation final class ${spec.simpleName}Impl extends ${spec.simpleName}:\n"
+        // No `@EnableReflectiveInstantiation`: `Ffi.load[T]` names this class at its call site. The linker keeps a class registered for
+        // reflective instantiation in the module that starts the program whether or not anything loads it, which would put every binding
+        // and koffi in a page's initial load.
+        sb ++= s"final class ${spec.simpleName}Impl extends ${spec.simpleName}:\n"
         // Import `facade` and, when the trait declares callbacks, the per-callback proto handles
         // registered in the companion. Wildcard-select works because the companion exposes these as
         // private vals, which are still visible to nested references inside the class body.

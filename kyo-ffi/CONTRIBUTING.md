@@ -140,7 +140,9 @@ leaf is used only when a platform primitive has no cross-platform Kyo wrapper:
 
 - `jvm/`: Panama (`MemorySegment`, `Arena`), `java.lang.ref.Cleaner` leak
   detection, JVM reflection (`FfiReflect`).
-- `native/`: Scala Native pointers, the sweep-based `NativeLeakDetector`.
+- `native/`: Scala Native pointers, the sweep-based `NativeLeakDetector`, reflection
+  through `scalanative-reflect` (`FfiReflect`, which needs the emitter's
+  `@EnableReflectiveInstantiation`).
 - `js/`: koffi async dispatch, `Uint8Array` buffers, the `node:fs` mmap
   fallback; the no-op `GuardDrainSupport` (single-threaded, nothing to park). The
   same compiled classes serve the JS row and the WasmTest row, both linked as
@@ -150,10 +152,20 @@ leaf is used only when a platform primitive has no cross-platform Kyo wrapper:
   `process.getBuiltinModule` at the call (`NodeFs.module`), and koffi from the
   CommonJS `require` when one exists, else from `node:module`'s `createRequire`
   (`KoffiFacade`), so a bundle that links kyo-ffi still loads in a browser, where
-  `NativeLoader` rejects the load with a typed error.
+  `NativeLoader` rejects the load with a typed error. `Ffi.load` is a macro here
+  (`FfiLoad`, `FfiLoadMacro`) that constructs the generated `<T>Impl` at the call
+  site instead of looking it up by name. The Scala.js linker keeps every class
+  registered for reflective instantiation in the module that starts the program, so
+  a reflective load put every binding, koffi and `NativeLoader` in the initial load
+  of any program linking the module, a page included. Named at the call site, a
+  binding is linked where it is loaded, so kyo-net's split keeps it out of a
+  page's load. The JS emitter therefore emits no `@EnableReflectiveInstantiation`;
+  adding it back puts every binding in the initial load again, which
+  `linkCheck` reports as an eager marker.
 - `jvm-native/`: JVM and Native SHARE, JS diverges. `GuardDrainSupport`/
   `BlockingBridge` use `LockSupport.parkNanos` / carrier-thread parking, present on
-  JVM and Native but absent on JS. This is established kyo precedent (kyo-core,
+  JVM and Native but absent on JS. `FfiLoad` finds the impl by name through
+  `FfiReflect` on both. This is established kyo precedent (kyo-core,
   kyo-data, kyo-net, kyo-scheduler all use `jvm-native/`).
 
 ## Config is a compile-time TASTy literal

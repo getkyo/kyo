@@ -13,8 +13,7 @@ import scala.scalajs.js as sjs
   * outcome:
   *
   *   - [[NativeLoader.load]] throws [[FfiLoadError.Unsupported]] directly.
-  *   - [[FfiReflect.instantiate]] throws [[FfiLoadError.Unsupported]] before attempting any `scalajs-reflect` lookup, so `Ffi.load[T]` surfaces the
-  *     gate with the same exception type.
+  *   - `Ffi.load[T]` throws [[FfiLoadError.Unsupported]] before it constructs the impl, and before it reports a missing one.
   *
   * The test simulates a browser by temporarily deleting `process` and `require` from `sjs.Dynamic.global`, runs the checks, then restores
   * the originals so subsequent specs see a normal Node environment.
@@ -116,22 +115,21 @@ class BrowserDetectionTest extends Test:
         }
     }
 
-    "FfiReflect.instantiate" - {
-        "throws FfiLoadError.Unsupported in a simulated browser" in {
+    "Ffi.load" - {
+        "throws FfiLoadError.Unsupported in a simulated browser and never constructs the impl" in {
             deleteGlobal("process")
             deleteGlobal("require")
+            Ffi.unload[BrowserDetectionTest.ImplementedBinding]
+            val before = BrowserDetectionTest.constructed
             val ex = intercept[FfiLoadError.Unsupported] {
-                discard(FfiReflect.instantiate(
-                    "kyo.ffi.internal.BrowserDetectionTest$DoesNotExist",
-                    "kyo.ffi.internal.BrowserDetectionTest.DoesNotExist"
-                ))
+                discard(Ffi.load[BrowserDetectionTest.ImplementedBinding])
             }
             assert(ex.getMessage.contains("browser"))
+            // The impl's companion is where a generated binding loads koffi, so a page must be turned away before it is built.
+            assert(BrowserDetectionTest.constructed == before)
         }
-    }
 
-    "Ffi.load" - {
-        "throws FfiLoadError.Unsupported in a simulated browser before any reflection is attempted" in {
+        "throws FfiLoadError.Unsupported in a simulated browser for a binding with no impl, ahead of ImplNotFound" in {
             deleteGlobal("process")
             deleteGlobal("require")
             // Evict any stale cache entry so the load actually reaches instantiate.
@@ -145,9 +143,8 @@ class BrowserDetectionTest extends Test:
         "no longer throws FfiLoadError.Unsupported once process is restored" in {
             // First, ensure the cache is empty.
             Ffi.unload[BrowserDetectionTest.FakeBinding]
-            // With process+require present, the browser gate passes; we expect the scalajs-reflect lookup to then fail with
-            // FfiLoadError.ImplNotFound because `FakeBindingImpl` does not exist (and is not annotated). The key assertion is that the
-            // exception is NOT FfiLoadError.Unsupported.
+            // With process+require present, the browser gate passes; the load then fails with FfiLoadError.ImplNotFound because
+            // `FakeBindingImpl` does not exist. The key assertion is that the exception is NOT FfiLoadError.Unsupported.
             val ex = intercept[Exception] {
                 discard(Ffi.load[BrowserDetectionTest.FakeBinding])
             }
@@ -157,8 +154,17 @@ class BrowserDetectionTest extends Test:
 end BrowserDetectionTest
 
 object BrowserDetectionTest:
-    /** Fixture trait used to exercise `Ffi.load`, no impl class is provided, so the reflective lookup is expected to fail when the browser
-      * gate is disabled. The test only relies on the *type of exception* thrown before the lookup runs.
+    /** Fixture trait used to exercise `Ffi.load`, no impl class is provided, so the load is expected to fail with `ImplNotFound` when the
+      * browser gate is disabled. The test only relies on the *type of exception* thrown.
       */
     trait FakeBinding extends kyo.ffi.Ffi
+
+    /** How many times [[ImplementedBindingImpl]] has been constructed. */
+    var constructed: Int = 0
+
+    /** Fixture trait with an impl, named the way the generator names one, whose construction is counted. */
+    trait ImplementedBinding extends kyo.ffi.Ffi
+
+    final class ImplementedBindingImpl extends ImplementedBinding:
+        constructed += 1
 end BrowserDetectionTest

@@ -20,8 +20,8 @@ private[ffi] object FfiPlatformErrors:
         "kyo-ffi does not support browser runtimes or other JS hosts without a Node-like `process` global. " +
             "Supported Scala.js targets: Node.js, Bun, and Deno. Use the JVM or Scala Native targets for FFI outside Node-like environments."
 
-    /** Message for browser-runtime rejection in JS `FfiReflect.instantiate`. */
-    val BrowserUnsupportedReflect: String =
+    /** Message for browser-runtime rejection in JS `Ffi.load`. */
+    val BrowserUnsupportedLoad: String =
         "kyo-ffi does not support browser runtimes or other JS hosts without a Node-like `process` global. " +
             "Supported Scala.js targets: Node.js, Bun, and Deno."
 
@@ -56,10 +56,10 @@ private[ffi] object FfiPlatformErrors:
         s"Cannot instantiate generated FFI impl '$implName' for binding '$traitFqn' via scalanative-reflect. Did the kyo-ffi code generator run? " +
             "The generated class must carry @scala.scalanative.reflect.annotation.EnableReflectiveInstantiation."
 
-    /** Scala.js message for [[java.lang.IllegalStateException]] thrown when scalajs-reflect cannot find the impl class. */
+    /** Scala.js message for [[kyo.ffi.FfiLoadError.ImplNotFound]] when the `Ffi.load` call site sees no generated impl class. */
     def implClassNotFoundJs(implName: String, traitFqn: String): String =
-        s"Cannot instantiate generated FFI impl '$implName' for binding '$traitFqn' via scalajs-reflect. Did the kyo-ffi code generator run? " +
-            "The generated class must carry @scala.scalajs.reflect.annotation.EnableReflectiveInstantiation."
+        s"Cannot instantiate generated FFI impl '$implName' for binding '$traitFqn': no class of that name extending the binding was " +
+            "visible where Ffi.load was compiled. Did the kyo-ffi code generator run?"
 
     // --- NativeLoader ---
 

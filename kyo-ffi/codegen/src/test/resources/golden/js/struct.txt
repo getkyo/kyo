@@ -6,11 +6,10 @@ package kyo.example
 import scala.scalajs.js
 import scala.scalajs.js.annotation.*
 import scala.scalajs.js.typedarray.*
-import scala.scalajs.reflect.annotation.EnableReflectiveInstantiation
 import kyo.ffi.*
 import kyo.ffi.internal.{AbiCheck, JsRawSegment, KoffiFacade, KoffiFn, NativeLoader, StructAbiCheck}
 
-@EnableReflectiveInstantiation final class StructBindingsImpl extends StructBindings:
+final class StructBindingsImpl extends StructBindings:
     import StructBindingsImpl.*
 
     def move(p: kyo.example.golden.Point, dx: Int)(using kyo.AllowUnsafe): kyo.example.golden.Point =

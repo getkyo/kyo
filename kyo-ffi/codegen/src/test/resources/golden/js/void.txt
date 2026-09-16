@@ -6,11 +6,10 @@ package kyo.example
 import scala.scalajs.js
 import scala.scalajs.js.annotation.*
 import scala.scalajs.js.typedarray.*
-import scala.scalajs.reflect.annotation.EnableReflectiveInstantiation
 import kyo.ffi.*
 import kyo.ffi.internal.{AbiCheck, JsRawSegment, KoffiFacade, KoffiFn, NativeLoader, StructAbiCheck}
 
-@EnableReflectiveInstantiation final class VoidBindingsImpl extends VoidBindings:
+final class VoidBindingsImpl extends VoidBindings:
     import VoidBindingsImpl.*
 
     def noop()(using kyo.AllowUnsafe): Unit =

@@ -357,47 +357,17 @@ object Ffi:
       */
     // ConcreteTag rather than ClassTag: a binding trait is a plain class, so the tag summon inlines
     // to a classOf constant, where ClassTag.apply goes through the scala library's WeakReference
-    // cache and re-allocates the tag whenever a GC clears it. The instantiation function is a
-    // shared instance for the same reason: computeIfAbsent with a closure argument allocates the
-    // closure on every call, cache hit or not, and load sits on callers' hot paths.
+    // cache and re-allocates the tag whenever a GC clears it. The JVM and Native find the impl by
+    // name; Scala.js constructs it at this call, so the linker keeps a binding only where it is
+    // loaded (see `kyo.ffi.internal.FfiLoad` on each platform).
     inline def load[T <: Ffi](using ct: ConcreteTag[T], allow: AllowUnsafe): T =
-        cache.computeIfAbsent(ct.toClass, instantiateFn).asInstanceOf[T]
+        kyo.ffi.internal.FfiLoad.load[T](ct)
 
-    /** Pre-warm the [[load]] cache for `T`. Idempotent. Useful during startup to amortize first-call reflection cost. */
+    /** Pre-warm the [[load]] cache for `T`. Idempotent. Useful during startup to amortize the first load's construction cost. */
     inline def warmLoad[T <: Ffi](using ct: ConcreteTag[T], allow: AllowUnsafe): Unit =
         discard(load[T])
 
     /** Evict the cached impl for `T` so the next [[load]] call re-instantiates. Intended for test scenarios, not normal use. */
     def unload[T <: Ffi](using ct: ConcreteTag[T], allow: AllowUnsafe): Unit =
-        discard(cache.remove(ct.toClass))
-
-    // ---- internals ----
-
-    private val cache = new java.util.concurrent.ConcurrentHashMap[Class[?], AnyRef]()
-
-    // shared so `load`'s computeIfAbsent never allocates its mapping function; see the note on `load`
-    private val instantiateFn: java.util.function.Function[Class[?], AnyRef] = instantiate(_)
-
-    private def instantiate(cls: Class[?]): AnyRef =
-        val traitFqn = cls.getName
-        val implName = traitFqn + "Impl"
-        // Manifest-driven direct-load pre-check (reflection-free). Reading `cls.getName` does NOT initialize the
-        // generated `<T>Impl`, so mapping the binding trait FQN to its bundled library id via the native manifest
-        // and asserting the native is present happens BEFORE the impl companion's initializer runs. A missing
-        // bundled native therefore raises a precise, catchable `FfiLoadError.LibraryNotFound` (or `AbiMismatch` on
-        // a runtime-version shortfall) from `Ffi.load[T]`, instead of the generated `<clinit>` throwing and
-        // poisoning the class (`ExceptionInInitializerError`, then `NoClassDefFoundError` on every later touch).
-        // A trait with no manifest entry (an unmigrated module, a system library such as `c`, or a runtime with no
-        // manifests) skips the check and loads exactly as before.
-        kyo.ffi.internal.NativeManifest.libraryIdFor(traitFqn) match
-            case Present(id) =>
-                kyo.ffi.internal.NativeManifest.entryFor(id) match
-                    case Present(entry) =>
-                        kyo.ffi.internal.AbiCheck.verifyRuntimeFloor(traitFqn, entry.minRuntime)
-                        kyo.ffi.internal.NativeManifestPlatform.assertBundledPresent(id, entry.platforms)
-                    case Absent => ()
-            case Absent => ()
-        end match
-        kyo.ffi.internal.FfiReflect.instantiate(implName, traitFqn)
-    end instantiate
+        discard(kyo.ffi.internal.FfiLoadCore.cache.remove(ct.toClass))
 end Ffi

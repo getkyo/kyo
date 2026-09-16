@@ -6,11 +6,10 @@ package kyo.example
 import scala.scalajs.js
 import scala.scalajs.js.annotation.*
 import scala.scalajs.js.typedarray.*
-import scala.scalajs.reflect.annotation.EnableReflectiveInstantiation
 import kyo.ffi.*
 import kyo.ffi.internal.{AbiCheck, JsRawSegment, KoffiFacade, KoffiFn, NativeLoader, StructAbiCheck}
 
-@EnableReflectiveInstantiation final class WithErrorBindingsImpl extends WithErrorBindings:
+final class WithErrorBindingsImpl extends WithErrorBindings:
     import WithErrorBindingsImpl.*
 
     def failable(x: Int)(using kyo.AllowUnsafe): Ffi.Outcome[Int] =

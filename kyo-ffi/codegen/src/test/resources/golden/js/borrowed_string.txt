@@ -6,11 +6,10 @@ package kyo.example
 import scala.scalajs.js
 import scala.scalajs.js.annotation.*
 import scala.scalajs.js.typedarray.*
-import scala.scalajs.reflect.annotation.EnableReflectiveInstantiation
 import kyo.ffi.*
 import kyo.ffi.internal.{AbiCheck, JsRawSegment, KoffiFacade, KoffiFn, NativeLoader, StructAbiCheck}
 
-@EnableReflectiveInstantiation final class BorrowedStringBindingsImpl extends BorrowedStringBindings:
+final class BorrowedStringBindingsImpl extends BorrowedStringBindings:
     import BorrowedStringBindingsImpl.*
 
     def getenvLike(name: String)(using kyo.AllowUnsafe): Ffi.Borrowed[String] =

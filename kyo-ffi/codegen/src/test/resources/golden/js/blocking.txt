@@ -6,11 +6,10 @@ package kyo.example
 import scala.scalajs.js
 import scala.scalajs.js.annotation.*
 import scala.scalajs.js.typedarray.*
-import scala.scalajs.reflect.annotation.EnableReflectiveInstantiation
 import kyo.ffi.*
 import kyo.ffi.internal.{AbiCheck, JsRawSegment, KoffiFacade, KoffiFn, NativeLoader, StructAbiCheck}
 
-@EnableReflectiveInstantiation final class BlockingBindingsImpl extends BlockingBindings:
+final class BlockingBindingsImpl extends BlockingBindings:
     import BlockingBindingsImpl.*
 
     def recv(fd: Int, buf: Buffer[Byte], len: Int)(using kyo.AllowUnsafe): kyo.Fiber.Unsafe[Ffi.Outcome[Long], Any] =

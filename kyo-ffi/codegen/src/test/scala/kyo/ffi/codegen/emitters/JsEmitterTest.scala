@@ -21,21 +21,24 @@ class JsEmitterTest extends kyo.test.Test[Any]:
         assert(src.contains("import scala.scalajs.js"))
         assert(src.contains("import scala.scalajs.js.annotation.*"))
         assert(src.contains("import scala.scalajs.js.typedarray.*"))
-        assert(src.contains("import scala.scalajs.reflect.annotation.EnableReflectiveInstantiation"))
         assert(src.contains("import kyo.ffi.*"))
         assert(src.contains(
             "import kyo.ffi.internal.{AbiCheck, JsRawSegment, KoffiFacade, KoffiFn, NativeLoader, StructAbiCheck}"
         ))
     }
 
-    "impl class is annotated with @EnableReflectiveInstantiation so Ffi.load can reach it" in {
+    "impl class is a public sibling named <Trait>Impl with no reflective registration, which Ffi.load constructs at its call site" in {
         val spec = mkTrait(
             "Simple",
             "simple",
             List(mkMethod("noop", "noop", Nil, ReturnShape.Void))
         )
         val src = JsEmitter.emit(spec)
-        assert(src.contains("@EnableReflectiveInstantiation final class SimpleImpl extends Simple:"))
+        assert(src.linesIterator.contains("final class SimpleImpl extends Simple:"))
+        // A class registered for reflective instantiation is kept in the module that starts the program whether or not anything loads it,
+        // which would put every binding and koffi in a page's initial load.
+        assert(!src.contains("EnableReflectiveInstantiation"))
+        assert(!src.contains("scala.scalajs.reflect"))
     }
 
     "companion calls AbiCheck.verify and loads via NativeLoader.jsResolve" in {
