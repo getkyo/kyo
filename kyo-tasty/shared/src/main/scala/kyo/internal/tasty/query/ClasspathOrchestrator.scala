@@ -2954,8 +2954,15 @@ object ClasspathOrchestrator:
                 pickles.toSeq.zipWithIndex.map { (p, i) =>
                     (s"pickle://${p.uuid.replace(':', '_')}/$i.tasty", p.bytes.toArray)
                 }
-            val roots                              = indexed.map(_._1)
-            val bytesMap: Map[String, Array[Byte]] = indexed.toMap
+            val roots = indexed.map(_._1)
+            // A classfile enters the map under its pickle's own path with the extension swapped, which is the
+            // sibling name the companion lookup derives on a file system. It is not a root: the decode of the
+            // pickle reaches for it, and decoding it on its own would make a second, half-built symbol.
+            val companions: Seq[(String, Array[Byte])] =
+                pickles.toSeq.zipWithIndex.flatMap { (p, i) =>
+                    p.classfile.map(bytes => (companionClassPath(roots(i)), bytes.toArray)).toList
+                }
+            val bytesMap: Map[String, Array[Byte]] = (indexed ++ companions).toMap
             initWithBodiesFromBytesMap(roots, bytesMap).map {
                 (classpath, bodyStore, positionsStore, declarationRangeStore, parentOccurrenceStore) =>
                     Binding(
@@ -3118,11 +3125,51 @@ object ClasspathOrchestrator:
                 }
             }
         ).map {
-            case Result.Success(fr)              => FileResultCase(fr)
+            case Result.Success(fr) =>
+                mergeCompanionFromBytesMap(entryPath, fr, bytesMap, nextGlobalId).map(FileResultCase(_))
             case Result.Failure(err: TastyError) => FileResultCase(emptyFileResultWithError(entryPath, err))
             case Result.Panic(t) =>
                 FileResultCase(emptyFileResultWithError(entryPath, TastyError.CorruptedFile(entryPath, 0L, t.getMessage)))
         }
     end decodeOneEntryFromBytesMap
+
+    /** The name a pickle's classfile companion has, which is its own with the extension swapped. The file-reading
+      * path derives the same name from the path on disk; this is that rule, written once.
+      */
+    private def companionClassPath(tastyPath: String): String =
+        tastyPath.stripSuffix(".tasty") + ".class"
+
+    /** Merge a decoded pickle's classfile companion, when the map carries one, so its symbols get the
+      * `javaMetadata` the JVM side of the class describes.
+      *
+      * The same merge the file-reading path performs after reading a sibling `.class`, against a map rather than a
+      * directory. Best effort in the same way: a classfile that will not decode leaves the TASTy result as it was,
+      * because what it adds is extra detail about a symbol that is already complete without it.
+      */
+    private def mergeCompanionFromBytesMap(
+        entryPath: String,
+        fr: FileResult,
+        bytesMap: Map[String, Array[Byte]],
+        nextGlobalId: () => Int
+    )(using Frame): FileResult < Sync =
+        bytesMap.get(companionClassPath(entryPath)) match
+            case None             => fr
+            case Some(classBytes) =>
+                // Unsafe: ClassfileUnpickler reads an immutable byte array and needs no suspension, which is the
+                // same boundary the file-reading merge crosses for the same call.
+                Sync.Unsafe.defer {
+                    ClassfileUnpickler.read(classBytes, fr.arena, Maybe(nextGlobalId)) match
+                        case Result.Success(cfResult) =>
+                            cfResult.classSymbol.javaMetadata match
+                                case Maybe.Present(meta) =>
+                                    fr.fullNameSymbols.foreach(symbol => fr.companionJavaMeta(symbol.id.toLong) = meta)
+                                case Maybe.Absent => ()
+                            end match
+                        case _ => ()
+                    end match
+                    fr
+                }
+        end match
+    end mergeCompanionFromBytesMap
 
 end ClasspathOrchestrator

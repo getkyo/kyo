@@ -56,6 +56,44 @@ class WithClasspathTest extends kyo.test.Test[Any]:
         }
     }
 
+    // A pickle says what Scala knows about a class; its classfile companion says what the JVM knows, which is where
+    // `javaMetadata` comes from. On a file system the two are found as siblings by name. In memory there is nothing
+    // to walk, so the pickle carries its own companion, and these two leaves pin both halves of that: supplying it
+    // produces the metadata, and omitting it leaves the symbol without any, on every host.
+    "withPickles(pickles) merges a pickle's classfile companion into javaMetadata" in {
+        val pickle = Tasty.Pickle(
+            uuid = "plain-class-with-companion",
+            version = Tasty.Version(28, 3, 0),
+            bytes = Span.from(kyo.fixtures.Embedded.plainClassTasty),
+            classfile = Maybe(Span.from(kyo.fixtures.Embedded.plainClassClassfile))
+        )
+        Tasty.withPickles(Chunk(pickle)) {
+            Tasty.classpath.map { classpath =>
+                val withMeta = classpath.allClassLike.filter(_.javaMetadata.isDefined)
+                assert(
+                    withMeta.nonEmpty,
+                    s"a pickle carrying its classfile must produce javaMetadata; got ${classpath.allClassLike.size} classes, none with any"
+                )
+                succeed
+            }
+        }
+    }
+
+    "withPickles(pickles) without a classfile leaves javaMetadata Absent" in {
+        val pickle = Tasty.Pickle(
+            uuid = "plain-class-no-companion",
+            version = Tasty.Version(28, 3, 0),
+            bytes = Span.from(kyo.fixtures.Embedded.plainClassTasty)
+        )
+        Tasty.withPickles(Chunk(pickle)) {
+            Tasty.classpath.map { classpath =>
+                val withMeta = classpath.allClassLike.filter(_.javaMetadata.isDefined)
+                assert(withMeta.isEmpty, s"a pickle with no classfile must carry no javaMetadata; got ${withMeta.size}")
+                succeed
+            }
+        }
+    }
+
     "Classpath.init is not on the public surface" in {
         val errCount = compiletime.testing.typeCheckErrors("kyo.Tasty.Classpath.init(Seq(\"x\"))").length
         assert(errCount > 0, "Classpath.init must not be on the surface; expected a compile error")

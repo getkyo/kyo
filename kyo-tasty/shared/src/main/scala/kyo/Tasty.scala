@@ -3358,9 +3358,16 @@ object Tasty:
       * `bytes` is the unmodified `.tasty` payload (header included). `uuid` is the TASTy header UUID as a
       * hex string. `TastyError.InconsistentClasspath` reports UUID mismatches as `Tasty.Uuid` values.
       *
-      * Equality is structural over all three fields.
+      * `classfile` is the `.class` compiled beside this pickle, when there is one. A TASTy file carries what
+      * Scala knows about a class; its classfile companion carries what the JVM knows, which is where a
+      * symbol's `javaMetadata` comes from. Supplying it here is how a host with no file system gets the same
+      * merged symbols the file-reading path produces, since the two are found by name as siblings on disk and
+      * there are no siblings in memory. `Absent`, the default, decodes the pickle alone.
+      *
+      * Equality is structural over all four fields.
       */
-    final case class Pickle(uuid: String, version: Version, bytes: Span[Byte]) derives Schema, CanEqual:
+    final case class Pickle(uuid: String, version: Version, bytes: Span[Byte], classfile: Maybe[Span[Byte]] = Maybe.Absent)
+        derives Schema, CanEqual:
         /** Human-readable summary: `Pickle(<uuid> v<version> <n>B)`. */
         def show: String = s"Pickle($uuid v${version.show} ${bytes.size}B)"
     end Pickle

@@ -118,14 +118,19 @@ private[kyo] object TestClasspaths:
     /** Binds the same fixtures where there is no file system, by decoding them rather than staging them.
       *
       * A directory is how the bytes reach the decoder on a host that has one, not what the suites are about, so a page
-      * hands the same bytes to `Tasty.withPickles` and runs the same assertions. What a page does not get is the Java
-      * classfile: it carries no pickle, so the two suites that read `JavaSimpleFixture` find no such class. They say so
-      * themselves rather than being cancelled wholesale here.
+      * hands the same bytes to `Tasty.withPickles` and runs the same assertions. A pickle whose classfile is staged
+      * beside it on the other hosts carries that classfile here, so the symbols a page reads carry the same
+      * `javaMetadata` the staged ones do; the sibling lookup that finds it on a file system has nothing to walk in
+      * memory, so the pairing is stated rather than discovered. What a page does not get is the Java classfile with no
+      * pickle at all, so the two suites that read `JavaSimpleFixture` find no such class and say so themselves.
       */
     private def withPickledClasspath[A, S](f: => A < S)(using Frame): A < (Async & Abort[TastyError] & S) =
+        val classfiles: Map[String, Array[Byte]] =
+            tastyFixtures.filter((name, _) => name.endsWith(".class")).map((name, bytes) => name.stripSuffix(".class") -> bytes).toMap
         val pickles =
             tastyFixtures.filter((name, _) => name.endsWith(".tasty")).map { (name, bytes) =>
-                Tasty.Pickle(name.stripSuffix(".tasty"), Tasty.Version(28, 3, 0), Span.from(bytes))
+                val base = name.stripSuffix(".tasty")
+                Tasty.Pickle(base, Tasty.Version(28, 3, 0), Span.from(bytes), Maybe.fromOption(classfiles.get(base).map(Span.from)))
             }.append(
                 Tasty.Pickle(
                     "portedBug71InnerMarker",
