@@ -2,11 +2,15 @@ package kyo.internal
 
 import scala.scalajs.LinkingInfo
 
-/** The Scala 3 members of [[Platform]] on Scala.js.
+/** The Scala 3 members of [[Platform]] on Scala.js, for the Scala 3 Next line (the one kyo builds with by default).
   *
   * One published Scala.js artifact is linked as JS or as WasmGC by each application, so `isWasm` is not known when kyo is compiled: it is a
-  * link-time property. Both members are `transparent inline` so the call site sees `LinkingInfo` itself, which is the only form
+  * link-time property. These members are `transparent inline` so the call site sees `LinkingInfo` itself, which is the only form
   * `LinkingInfo.linkTimeIf` accepts in its condition; a plain `def` or `inline def` forwarder is rejected there.
+  *
+  * The Scala 3.3 LTS line has its own declaration (`scala-3-lts`), because its Scala.js backend does not resolve `LinkingInfo.linkTimeIf`:
+  * code it compiles emits a call to a method that does not exist, and the link fails with "Referring to non-existent method
+  * LinkingInfo$.linkTimeIf".
   */
 trait PlatformStatic:
 

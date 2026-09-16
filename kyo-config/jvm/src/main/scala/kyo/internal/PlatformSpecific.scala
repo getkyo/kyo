@@ -2,9 +2,9 @@ package kyo.internal
 
 /** The JVM facts behind [[Platform]]. The operating system and architecture are read at run time, since one jar runs on any machine. */
 abstract class PlatformSpecific extends PlatformStatic with PlatformOsFromValues {
-    final val isJVM      = true
-    final val isJS       = false
-    final val isNative   = false
+    final val isJVM           = true
+    final val isJS            = false
+    final val isNative        = false
     final val isWasm          = false
     final val canSplitModules = false
     final val isNodeLike      = false

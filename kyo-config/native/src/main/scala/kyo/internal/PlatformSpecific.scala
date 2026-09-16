@@ -13,14 +13,14 @@ import scala.scalanative.unsafe.resolvedAtLinktime
   * not allowed"), so a runtime test goes inside the branch: `if Platform.isWindows then segment.length == 2 else false`.
   */
 abstract class PlatformSpecific extends PlatformStatic {
-    final val isJVM          = false
-    final val isJS           = false
-    final val isNative       = true
+    final val isJVM           = false
+    final val isJS            = false
+    final val isNative        = true
     final val isWasm          = false
     final val canSplitModules = false
     final val isNodeLike      = false
-    final val isBrowser      = false
-    final val isDebugEnabled = false
+    final val isBrowser       = false
+    final val isDebugEnabled  = false
 
     val host: Platform.Host = Platform.Host.Native
 

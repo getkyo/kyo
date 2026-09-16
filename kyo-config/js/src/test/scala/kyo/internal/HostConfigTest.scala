@@ -6,22 +6,28 @@ import scala.scalajs.js
 /** Scala.js resolution: the host's sources, then the `globalThis.KYO_CONFIG` seed.
   *
   * `java.lang.System.getenv` always returns null under Scala.js, so only a real `process.env` read resolves a variable on Node. Node's
-  * `process.env` is mutable at run time (unlike the JVM's process environment), so these leaves set the variables they read.
+  * `process.env` is mutable at run time (unlike the JVM's process environment), so these leaves set the variables they read. A page has no
+  * `process`: the leaves that set or replace `process.env` cancel there, and the ones that remove `process` run as they are, in the state they
+  * otherwise simulate.
   */
 class HostConfigTest extends AnyFreeSpec {
 
     /** Runs `f` with `process` deleted from the global object, so it is an undeclared identifier: the state a browser is in, and the one where
       * a bare read throws while `typeof process` still answers "undefined". Restored in a `finally` because the test runner talks over
-      * `process.stdout`.
+      * `process.stdout`. On a host that has no `process` to begin with, a page, `f` runs as it is.
       */
     private def withoutProcessGlobal[A](f: => A): A = {
         // `globalThis`, not `js.Dynamic.global`, which Scala.js allows only left of a `.`-selection.
         val global = js.Dynamic.global.globalThis
-        val saved  = js.Dynamic.global.process
-        js.special.delete(global, "process")
-        try f
-        finally global.updateDynamic("process")(saved)
+        PlatformJs.jsGlobal("process").fold(f) { saved =>
+            js.special.delete(global, "process")
+            try f
+            finally global.updateDynamic("process")(saved)
+        }
     }
+
+    private def assumeNodeEnv(): Unit =
+        assume(Platform.isNodeLike, "sets or replaces Node's process.env, which a page has not")
 
     private def withSeed[A](seed: js.Any)(f: => A): A = {
         val global = js.Dynamic.global.globalThis
@@ -43,6 +49,7 @@ class HostConfigTest extends AnyFreeSpec {
 
     "env" - {
         "reads a variable set in Node process.env" in {
+            assumeNodeEnv()
             js.Dynamic.global.process.env.updateDynamic("KYO_HOSTCONFIG_PROBE")("enabled")
             // The stdlib read is the control: it returns null on Scala.js even though the variable is set, which is exactly the defect the
             // platform-specific resolver exists to fix.
@@ -55,11 +62,13 @@ class HostConfigTest extends AnyFreeSpec {
         }
 
         "returns null with no process global, instead of throwing ReferenceError" in {
-            js.Dynamic.global.process.env.updateDynamic("KYO_HOSTCONFIG_PROBE")("enabled")
+            // On Node the variable is set first, so a null proves the read left process.env alone rather than finding nothing there.
+            PlatformJs.jsGlobal("process").foreach(_.env.updateDynamic("KYO_HOSTCONFIG_PROBE")("enabled"))
             assert(withoutProcessGlobal(HostConfig.env("KYO_HOSTCONFIG_PROBE")) eq null)
         }
 
         "returns null when every process.env read throws" in {
+            assumeNodeEnv()
             assert(withEnvThatThrows(HostConfig.env("HOME")) eq null)
         }
 
@@ -71,6 +80,7 @@ class HostConfigTest extends AnyFreeSpec {
         }
 
         "prefers process.env to the seed" in {
+            assumeNodeEnv()
             js.Dynamic.global.process.env.updateDynamic("KYO_HOSTCONFIG_BOTH")("host")
             val value = withSeed(js.Dynamic.literal(env = js.Dynamic.literal(KYO_HOSTCONFIG_BOTH = "seeded"))) {
                 HostConfig.env("KYO_HOSTCONFIG_BOTH")
@@ -78,15 +88,21 @@ class HostConfigTest extends AnyFreeSpec {
             assert(value == "host")
         }
 
-        "takes the seed with no process global, and when process.env throws" in {
+        "takes the seed with no process global" in {
             val seed = js.Dynamic.literal(env = js.Dynamic.literal(HOME = "/seeded-home"))
             assert(withSeed(seed)(withoutProcessGlobal(HostConfig.env("HOME"))) == "/seeded-home")
+        }
+
+        "takes the seed when process.env throws" in {
+            assumeNodeEnv()
+            val seed = js.Dynamic.literal(env = js.Dynamic.literal(HOME = "/seeded-home"))
             assert(withSeed(seed)(withEnvThatThrows(HostConfig.env("HOME"))) == "/seeded-home")
         }
     }
 
     "envNames" - {
         "lists the names Node process.env carries" in {
+            assumeNodeEnv()
             js.Dynamic.global.process.env.updateDynamic("KYO_HOSTCONFIG_NAMES_PROBE")("1")
             assert(HostConfig.envNames.exists(_ == "KYO_HOSTCONFIG_NAMES_PROBE"))
         }
@@ -96,6 +112,7 @@ class HostConfigTest extends AnyFreeSpec {
         }
 
         "adds the seed's names once, and lists only them when process.env throws" in {
+            assumeNodeEnv()
             js.Dynamic.global.process.env.updateDynamic("KYO_HOSTCONFIG_NAMES_BOTH")("1")
             val seed  = js.Dynamic.literal(env = js.Dynamic.literal(KYO_HOSTCONFIG_NAMES_BOTH = "2", KYO_HOSTCONFIG_NAMES_SEEDED = "3"))
             val names = withSeed(seed)(HostConfig.envNames).toList

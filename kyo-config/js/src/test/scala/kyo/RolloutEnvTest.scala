@@ -1,5 +1,6 @@
 package kyo
 
+import kyo.internal.Platform
 import org.scalatest.freespec.AnyFreeSpec
 import scala.scalajs.js
 
@@ -21,12 +22,14 @@ class RolloutEnvTest extends AnyFreeSpec {
 
     "Rollout on Node" - {
         "reads the topology path from process.env" in {
+            assume(Platform.isNodeLike, "reads KYO_ROLLOUT_PATH, which the build sets in the Node test process's environment; a page has none")
             // The stdlib read is the control: it returns null on Node even though the variable is set.
             assert(java.lang.System.getenv("KYO_ROLLOUT_PATH") eq null)
             assert(Rollout.path.mkString("/") == "prod/us-east-1")
         }
 
         "a StaticFlag rollout expression selects the choice matching the process.env topology path" in {
+            assume(Platform.isNodeLike, "sets a variable in Node's process.env, which a page has not")
             js.Dynamic.global.process.env.updateDynamic("KYO_ROLLOUTENVTESTFLAGS_MODE")("rollout:on@prod;off")
 
             val flag = RolloutEnvTestFlags.mode

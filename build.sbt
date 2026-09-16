@@ -1422,6 +1422,17 @@ lazy val `kyo-config` =
         .nativeSettings(`native-settings`)
         .jsSettings(
             `js-settings`,
+            // Platform.linkTimeIf resolves through LinkingInfo.linkTimeIf, which the Scala.js backend of Scala 3.3 does not
+            // support (its link fails with "Referring to non-existent method LinkingInfo$.linkTimeIf"). The 3.3 LTS line gets a
+            // declaration that branches at run time instead; see scala-3-lts/.../PlatformStatic.scala.
+            Compile / unmanagedSourceDirectories ++= {
+                val main = baseDirectory.value / "src" / "main"
+                CrossVersion.partialVersion(scalaVersion.value) match {
+                    case Some((3, 3)) => Seq(main / "scala-3-lts")
+                    case Some((3, _)) => Seq(main / "scala-3-next")
+                    case _            => Nil
+                }
+            },
             // Rollout reads KYO_ROLLOUT_PATH once, when its object initializes, which can happen before any
             // test body runs. RolloutEnvTest asserts a StaticFlag rollout expression resolves against the
             // topology path Node reports, so the variable has to be in the test process environment from the

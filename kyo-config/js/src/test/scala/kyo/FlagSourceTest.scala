@@ -41,13 +41,18 @@ class FlagSourceTest extends AnyFreeSpec {
         finally process.updateDynamic("env")(saved)
     }
 
+    /** Runs `f` with `process` deleted from the global object. On a host that has no `process` to begin with, a page, `f` runs as it is. */
     private def withoutProcessGlobal[A](f: => A): A = {
         val global = js.Dynamic.global.globalThis
-        val saved  = js.Dynamic.global.process
-        js.special.delete(global, "process")
-        try f
-        finally global.updateDynamic("process")(saved)
+        kyo.internal.PlatformJs.jsGlobal("process").fold(f) { saved =>
+            js.special.delete(global, "process")
+            try f
+            finally global.updateDynamic("process")(saved)
+        }
     }
+
+    private def assumeNodeEnv(): Unit =
+        assume(kyo.internal.Platform.isNodeLike, "sets or replaces Node's process.env, which a page has not")
 
     "the KYO_CONFIG seed" - {
         "supplies a system property" in {
@@ -80,6 +85,7 @@ class FlagSourceTest extends AnyFreeSpec {
         }
 
         "yields to process.env" in {
+            assumeNodeEnv()
             js.Dynamic.global.process.env.updateDynamic("KYO_FLAGSOURCETEST_HOSTENV")("host")
             val value = withSeed(js.Dictionary("KYO_FLAGSOURCETEST_HOSTENV" -> "seeded"), js.Dictionary()) {
                 Flag("kyo.flagsourcetest.hostenv", "default")
@@ -103,16 +109,19 @@ class FlagSourceTest extends AnyFreeSpec {
 
     "a host whose process.env throws on every read (Deno without --allow-env)" - {
         "resolves a flag to its default instead of throwing" in {
+            assumeNodeEnv()
             assert(withEnvThatThrows(Flag("kyo.flagsourcetest.throwing", "default")) == "default")
         }
 
         "initializes a StaticFlag, whose registration lists the environment, instead of throwing" in {
+            assumeNodeEnv()
             val flag = withEnvThatThrows(FlagSourceTestFlags.underThrowingEnv)
             assert(flag.source == Flag.Source.Default)
             assert(flag() == "default")
         }
 
         "still reads the seed" in {
+            assumeNodeEnv()
             val value = withSeed(js.Dictionary("KYO_FLAGSOURCETEST_THROWINGSEED" -> "seeded"), js.Dictionary()) {
                 withEnvThatThrows(Flag("kyo.flagsourcetest.throwingseed", "default"))
             }

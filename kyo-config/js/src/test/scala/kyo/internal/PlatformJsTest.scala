@@ -9,14 +9,15 @@ class PlatformJsTest extends AnyFreeSpec {
     import Platform.Host
 
     /** Runs `f` with `process` deleted from the global object, the state of a browser or a WasmGC host without a Node shim. Restored in a
-      * `finally` because the test runner talks over `process.stdout`.
+      * `finally` because the test runner talks over `process.stdout`. On a host that has no `process` to begin with, a page, `f` runs as it is.
       */
     private def withoutProcessGlobal[A](f: => A): A = {
         val global = js.Dynamic.global.globalThis
-        val saved  = js.Dynamic.global.process
-        js.special.delete(global, "process")
-        try f
-        finally global.updateDynamic("process")(saved)
+        PlatformJs.jsGlobal("process").fold(f) { saved =>
+            js.special.delete(global, "process")
+            try f
+            finally global.updateDynamic("process")(saved)
+        }
     }
 
     private def node: js.Dynamic = js.Dynamic.literal(process = js.Dynamic.literal(versions = js.Dynamic.literal(node = "24.0.0")))
@@ -57,12 +58,7 @@ class PlatformJsTest extends AnyFreeSpec {
         }
     }
 
-    "on the Node test host" - {
-        "detects Node" in {
-            assert(Platform.host eq Host.Node)
-            assert(Platform.isNodeLike && !Platform.isBrowser)
-        }
-
+    "on any host" - {
         "resolves isWasm from the link, not from the compiled artifact" in {
             assert(Platform.isWasm == LinkingInfo.isWebAssembly)
         }
@@ -72,17 +68,36 @@ class PlatformJsTest extends AnyFreeSpec {
             assert(Platform.canSplitModules == expected)
             assert(!(Platform.canSplitModules && Platform.isWasm))
         }
+    }
+
+    "on a Node test host" - {
+        "detects Node" in {
+            assume(!Platform.isBrowser, "asserts the Node host, and this run is in a page")
+            assert(Platform.host eq Host.Node)
+            assert(Platform.isNodeLike && !Platform.isBrowser)
+        }
 
         "classifies process.platform and process.arch" in {
+            assume(Platform.isNodeLike, "reads process.platform and process.arch, which a page has not")
             assert(Platform.os eq Platform.Os.fromNodePlatform(js.Dynamic.global.process.platform.asInstanceOf[String]))
             assert(Platform.arch eq Platform.Arch.fromToken(js.Dynamic.global.process.arch.asInstanceOf[String]))
         }
 
         "reaches a Node built-in synchronously without a static import" in {
+            assume(Platform.isNodeLike, "loads node:os, which a page has not")
             val platformType = PlatformJs.nodeBuiltin("node:os").fold("undefined")(os => js.typeOf(os.platform))
             assert(platformType == "function")
             val missing = PlatformJs.nodeBuiltin("node:kyo-no-such-module").isEmpty
             assert(missing)
+        }
+    }
+
+    "on a browser test host" - {
+        "detects the page, and a page is not Node-like" in {
+            assume(Platform.isBrowser, "asserts the page host, and this run is under Node")
+            assert(Platform.host eq Host.BrowserMain)
+            assert(!Platform.isNodeLike)
+            assert(PlatformJs.jsGlobal("process").isEmpty)
         }
     }
 

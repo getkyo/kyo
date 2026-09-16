@@ -18,6 +18,7 @@ class DynamicFlagEnvTest extends AnyFreeSpec {
 
     "DynamicFlag on Node" - {
         "resolves its initial value from process.env and reloads a changed value" in {
+            assume(kyo.internal.Platform.isNodeLike, "sets a variable in Node's process.env, which a page has not")
             val envName = "KYO_DYNAMICFLAGENVTESTFLAGS_NODEENV"
             js.Dynamic.global.process.env.updateDynamic(envName)("enabled")
 
