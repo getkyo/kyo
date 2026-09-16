@@ -50,6 +50,26 @@ class FetchClientBackendTest extends kyo.test.Test[Any]:
         }
     }
 
+    "a page streams a response body" - {
+
+        "the byte stream carries the same page the buffered read returns" in {
+            for
+                buffered <- HttpClient.getText("/")
+                streamed <- HttpClient.getStreamBytes("/").run
+            yield
+                val joined = new String(streamed.flatMap(_.toArray).toArray, "UTF-8")
+                assert(joined == buffered, s"the streamed body was ${joined.length} bytes and the buffered one ${buffered.length}")
+        }
+
+        "a stream-typed route reading an error answers the status, not an undrained body" in {
+            Abort.run[HttpException](HttpClient.getStreamBytes("/there-is-no-such-file").run).map {
+                case Result.Failure(e: HttpStatusException) =>
+                    assert(e.status.code == 404, s"the status was ${e.status.code}")
+                case other => assert(false, s"the request ended as $other")
+            }
+        }
+    }
+
     "a page says what it cannot do" - {
 
         "a header the browser reserves for itself fails rather than being dropped" in {

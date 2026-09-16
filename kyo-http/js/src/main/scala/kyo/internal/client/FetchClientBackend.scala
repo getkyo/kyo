@@ -70,19 +70,31 @@ final private[kyo] class FetchClientBackend extends PolicyClientBackend:
                     case Absent =>
                         val url = requestUrl(request.url, path)
                         fetch(url, request.method.name, headers, body).map { response =>
-                            readBody(response).map { bytes =>
-                                RouteUtil.decodeBufferedResponse(
+                            val code = status(response)
+                            // A streaming route whose response is an error reads buffered, the same as over a socket: a service that
+                            // answers a stream-typed endpoint with a small JSON error would otherwise leave that body trapped in a
+                            // stream nobody drains, and it is the only diagnostic the caller has.
+                            if RouteUtil.isStreamingResponse(route) && code < 400 then
+                                RouteUtil.decodeStreamingResponseWith(
                                     route,
-                                    HttpStatus(status(response)),
+                                    HttpStatus(code),
                                     responseHeaders(response),
-                                    bytes,
+                                    bodyStream(response),
                                     route.method.name,
                                     request.url
-                                ) match
-                                    case Result.Success(decoded) => f(decoded)
-                                    case Result.Failure(e)       => Abort.fail(e)
-                                    case Result.Panic(t)         => Abort.panic(t)
-                            }
+                                )(f)
+                            else
+                                readBody(response).map { bytes =>
+                                    RouteUtil.decodeBufferedResponseWith(
+                                        route,
+                                        HttpStatus(code),
+                                        responseHeaders(response),
+                                        bytes,
+                                        route.method.name,
+                                        request.url
+                                    )(f)
+                                }
+                            end if
                         }
 
     /** The URL to fetch: the request's own when it names a host, and the page-relative path when it does not. */
@@ -112,6 +124,47 @@ final private[kyo] class FetchClientBackend extends PolicyClientBackend:
                 // rejection and a certificate the browser will not trust all arrive the same way, by design, so the
                 // failure says what kyo knows rather than inventing a distinction.
                 case Result.Failure(t) => Abort.fail(HttpConnectException("", 0, t))
+                case Result.Panic(t)   => Abort.panic(t)
+            }
+        }
+
+    /** The response body as it arrives, read through the `ReadableStream` the fetch specification gives it.
+      *
+      * A body the browser reports as absent (a 204, a `HEAD`, a response the page was handed from cache without one) has no reader to open,
+      * and reads as an empty stream rather than a failure.
+      */
+    private def bodyStream(response: js.Dynamic)(using Frame): Stream[Span[Byte], Async] =
+        Stream[Span[Byte], Async] {
+            val open: Maybe[js.Dynamic] < Sync =
+                Sync.defer(if js.isUndefined(response.body) || response.body == null then Absent else Present(response.body.getReader()))
+            open.map {
+                case Absent => Kyo.unit
+                case Present(reader) =>
+                    Loop.foreach {
+                        readChunk(reader).map {
+                            case Present(span) => Emit.valueWith(Chunk(span))(Loop.continue)
+                            case Absent        => Loop.done
+                        }
+                    }
+            }
+        }
+
+    /** One read from the body's reader: the bytes it produced, or `Absent` once the body is complete.
+      *
+      * A stream carries no typed failure, so a body that stops mid-transfer arrives as a panic. That is louder than the alternative, which
+      * is to end the stream and hand the caller a body it cannot tell from a complete one.
+      */
+    private def readChunk(reader: js.Dynamic)(using Frame): Maybe[Span[Byte]] < Async =
+        Sync.defer(reader.read().asInstanceOf[js.Promise[js.Dynamic]]).map { promise =>
+            Abort.run[Throwable](Async.fromFuture(promise.toFuture)).map {
+                case Result.Success(chunk) =>
+                    if chunk.done.asInstanceOf[Boolean] then Absent
+                    else
+                        val bytes = chunk.value.asInstanceOf[Uint8Array]
+                        // The chunk is a view over a buffer the browser owns and may reuse, and it rarely starts at its beginning, so the
+                        // bytes are copied out of the view's own window rather than read from the buffer's start.
+                        Present(Span.from(new Int8Array(bytes.buffer, bytes.byteOffset, bytes.length).toArray))
+                case Result.Failure(t) => Abort.panic(HttpConnectException("", 0, t))
                 case Result.Panic(t)   => Abort.panic(t)
             }
         }
