@@ -100,7 +100,7 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
     // where the STATIC modifier tag maps to it (internal/tasty/symbol/Flags.scala:37), so a count above zero holds on
     // a classpath carrying no classfile at all and does not guard the interop this leaf is named for.
     "Java-defined symbols present in standard classpath (java interop guard)" in {
-        TestClasspaths.withClasspath()(Tasty.findClass("kyo.fixtures.JavaSimpleFixture")).map {
+        TestClasspaths.withClasspath(TestClasspaths.standardWithJavaFixture)(Tasty.findClass("kyo.fixtures.JavaSimpleFixture")).map {
             case Maybe.Present(c) =>
                 assert(c.isJava, "JavaSimpleFixture must have isJava, which only ClassfileUnpickler sets on it")
                 succeed

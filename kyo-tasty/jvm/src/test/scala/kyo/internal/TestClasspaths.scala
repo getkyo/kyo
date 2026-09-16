@@ -115,8 +115,8 @@ private[kyo] object TestClasspaths:
       *
       * A directory root is walked for `.tasty` only (a plain `.class` beside one would decode the same class a
       * second time), so a Java class, which has no `.tasty` at all, is reachable only by being named. JS and Native
-      * name it; without this the JVM's standard classpath was the one that did not carry it, and the two leaves that
-      * guard Java classfile decoding had no subject on this host.
+      * name it; without this the JVM was the one host whose fixture classpath did not carry it, and the two leaves
+      * that guard Java classfile decoding had no subject here.
       */
     lazy val javaFixtureClassfile: Seq[String] =
         kyoTastyFixtures.flatMap { root =>
@@ -127,7 +127,16 @@ private[kyo] object TestClasspaths:
         }
 
     /** A standard 3-root combo used by most fidelity tests: kyo-tasty + kyo-data + scala-library + internal fixtures. */
-    lazy val standard: Seq[String] = kyoTasty ++ kyoData ++ scalaLibrary ++ kyoTastyFixtures ++ javaFixtureClassfile
+    lazy val standard: Seq[String] = kyoTasty ++ kyoData ++ scalaLibrary ++ kyoTastyFixtures
+
+    /** `standard` plus the Java fixture's classfile, for the leaves that are about Java classfile decoding.
+      *
+      * Kept apart from `standard` because a bare `.class` is not a conventional classpath entry and a consumer is
+      * entitled to reject one: `DifferentialTastyTest` hands `standard` to tasty-query for a differential comparison,
+      * and tasty-query answers `Illegal classpath entry` for a file that is not a directory or a jar. So `standard`
+      * stays what a classpath looks like, and the leaves that need a named classfile ask for it.
+      */
+    lazy val standardWithJavaFixture: Seq[String] = standard ++ javaFixtureClassfile
 
     /** A broader combo that adds kyo-core to the standard set, enabling ContextFunctionN coverage. */
     lazy val standardWithKyoCore: Seq[String] = standard ++ kyoCore

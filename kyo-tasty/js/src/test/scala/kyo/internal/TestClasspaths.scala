@@ -19,6 +19,12 @@ private[kyo] object TestClasspaths:
     /** On JS the `roots` parameter is ignored; embedded fixtures are always loaded. */
     val kyoTastyFixtures: Seq[String] = Seq.empty
 
+    /** Named so shared leaves can ask for the classpath that carries the Java fixture, as they must on the JVM where
+      * a classfile has to be named to be decoded. Here the embedded set always carries it, so this is the same empty
+      * `roots` every other call passes.
+      */
+    val standardWithJavaFixture: Seq[String] = Seq.empty
+
     /** Every TASTy and class fixture the shared suites read, as bytes compiled into this test binary.
       *
       * One list, read two ways: staged into a directory where there is a file system, and decoded directly where

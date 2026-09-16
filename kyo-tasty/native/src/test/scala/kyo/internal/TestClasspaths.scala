@@ -15,6 +15,12 @@ private[kyo] object TestClasspaths:
     /** On Native the `roots` parameter is ignored; embedded fixtures are always loaded. */
     val kyoTastyFixtures: Seq[String] = Seq.empty
 
+    /** Named so shared leaves can ask for the classpath that carries the Java fixture, as they must on the JVM where
+      * a classfile has to be named to be decoded. Here the staged set always carries it, so this is the same empty
+      * `roots` every other call passes.
+      */
+    val standardWithJavaFixture: Seq[String] = Seq.empty
+
     def withClasspath[A, S](roots: Seq[String] = Seq.empty)(f: => A < S)(using Frame): A < (Async & Abort[TastyError] & S) =
         Scope.run {
             Abort.recover[FileSystemException] { e => Abort.fail(TastyError.SnapshotIoError(e.getMessage)) } {

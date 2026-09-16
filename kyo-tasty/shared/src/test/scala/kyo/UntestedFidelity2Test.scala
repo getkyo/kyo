@@ -50,7 +50,7 @@ class UntestedFidelity2Test extends Fidelity2TestBase:
     // above zero is satisfied by a classpath with no classfile in it at all and says nothing about the decode path
     // this leaf is named for. Finding the class the message already named is what pins that path.
     "Java classfile decoding path active in standard classpath (AP structural guard)" in {
-        TestClasspaths.withClasspath()(Tasty.findClass("kyo.fixtures.JavaSimpleFixture")).map {
+        TestClasspaths.withClasspath(TestClasspaths.standardWithJavaFixture)(Tasty.findClass("kyo.fixtures.JavaSimpleFixture")).map {
             case Maybe.Present(c) =>
                 assert(c.isJava, "JavaSimpleFixture must have isJava, which only ClassfileUnpickler sets on it")
                 succeed
