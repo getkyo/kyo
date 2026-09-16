@@ -1124,6 +1124,26 @@ Platform gates restrict a leaf or group to one or more platforms. On a disabled 
 "jvm or js" .notNative in { ... }
 ```
 
+### Host gates
+
+A platform is what a test is compiled and linked for; a host is what it runs on, and JS has two that differ in what
+they can do. A browser page has no file system, no process table, no sockets, no port to bind and no argv, so a leaf
+that needs one of those is cancelled there rather than failed, with the reason it was cancelled:
+
+```scala
+"reads a file" .notBrowser in { ... }           // every host but a page
+"a page cannot serve" .onlyBrowser in { ... }   // only a page
+override protected def hostFilters = Chunk(HostFilter.NotBrowser)   // the whole suite
+```
+
+Unlike a platform gate, a host gate is a run-time decision: the same linked output runs under Node and in Chrome, so
+the body is compiled and linked either way. Cancelling rather than excluding is deliberate, because the run then
+says what a host could not do instead of silently having fewer tests.
+
+Reach for a host gate only for what the host genuinely cannot do. A leaf that a page could run, but whose fixtures
+happen to be staged through something a page lacks, is a fixture to fix: kyo-tasty's suites were cancelled for a
+temp directory that was only moving bytes from one part of the test binary to another.
+
 ### Decorators
 
 Decorators chain on a leaf name before `in`:
