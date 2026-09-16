@@ -73,14 +73,16 @@ private[net] enum CapabilityOutcome derives CanEqual:
                 if id == "koffi" then
                     "the koffi npm package is not installed or not resolvable; install it (npm i koffi) to use the native backends"
                 else
-                    s"native library '$id' is not staged for $platform; on Scala.js, set ${jsPathVariable(id)} to the library's absolute path"
+                    s"native library '$id' is not staged for $platform; on Scala.js, kyo-net's artifact carries it, and the kyo FFI plugin's " +
+                        s"ffiWithJsNatives copies it beside the linked program under kyo-ffi/native/$platform/, or set ${jsPathVariable(id)} " +
+                        "to the library's absolute path"
             else
                 s"native library '$id' is not on the classpath for $platform; on the JVM, add kyo-net's $platform classifier artifact, " +
                     s"""libraryDependencies += "io.getkyo" %% "kyo-net" % <version> classifier "$platform""""
         case VersionTooOld(have, need) => s"native version $have is below the required $need"
         case ProbeFailed(cause)        => s"probe failed (${NetException.show(cause)})"
 
-    /** The environment variable kyo-ffi's JS loader reads a native's path from before anything else (`NativeLoader.jsResolve`). */
+    /** The environment variable kyo-ffi's JS loader reads a native's path from before looking beside the program (`NativeLoader.jsResolve`). */
     private def jsPathVariable(id: String): String = s"KYO_FFI_${id.toUpperCase.replace('-', '_')}_PATH"
 
 end CapabilityOutcome

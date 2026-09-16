@@ -8,7 +8,8 @@ import kyo.internal.PlatformJs
 import scala.scalajs.js
 import scala.util.Try
 
-/** JS NativeLoader. Resolves native library path for koffi: env var override → npm package lookup → bare name fallback. Rejects browsers.
+/** JS NativeLoader. Resolves a native library path for koffi: the env var override, then the natives staged beside the linked program, then
+  * an npm package when `kyo.ffi.js.packagePrefix` names one, then system libraries and the bare name. Rejects browsers.
   */
 object NativeLoader:
 
@@ -46,19 +47,33 @@ object NativeLoader:
             if fileExists(env) then return env
         end if
 
-        // 2. Best-effort npm package lookup via require.resolve. `require.resolve` is itself a presence check (it
-        // throws when the file is absent), so a resolved path is genuinely present.
-        val packagePrefix = sys.props.getOrElse("kyo.ffi.js.packagePrefix", "@kyo/ffi-native")
-        val os            = detectOs()
-        val arch          = detectArch()
-        val ext           = osExt(os)
-        val resolvePath   = s"$packagePrefix/native/$os-$arch/lib$libraryId.$ext"
-        candidates += s"require.resolve $resolvePath"
-        requireResolve(resolvePath) match
+        val os       = detectOs()
+        val arch     = detectArch()
+        val fileName = s"${libPrefix(os)}$libraryId.${osExt(os)}"
+
+        // 2. Staged beside the linked program, where the kyo FFI plugin's `ffiWithJsNatives` copies the natives the
+        // classpath carries (`kyo-ffi/native/<os>-<arch>/`, the layout a Scala.js artifact files them under). Resolved
+        // against the program's own location, so it holds from any working directory. `require.resolve` is itself a
+        // presence check (it throws when the file is absent), so a resolved path is genuinely present.
+        val staged = s"./kyo-ffi/native/$os-$arch/$fileName"
+        candidates += s"beside the linked program $staged"
+        requireResolve(staged) match
             case Some(path) => return path
             case None       => ()
 
-        // 3. Known system libraries (libc, libm, ...) cannot be loaded by their bare name on every host:
+        // 3. An npm package carrying natives in the same per-platform layout, when `kyo.ffi.js.packagePrefix` names one.
+        val packagePrefix = sys.props.get(PackagePrefixProperty)
+        packagePrefix match
+            case Some(prefix) =>
+                val resolvePath = s"$prefix/native/$os-$arch/$fileName"
+                candidates += s"require.resolve $resolvePath"
+                requireResolve(resolvePath) match
+                    case Some(path) => return path
+                    case None       => ()
+            case None => ()
+        end match
+
+        // 4. Known system libraries (libc, libm, ...) cannot be loaded by their bare name on every host:
         // the bare name "c" is not a loadable object on Linux glibc (the SONAME is `libc.so.6`), and the
         // GNU ld linker script `libc.so` is rejected by dlopen. Resolve these to koffi's process-default
         // scope instead. See `resolveSystemLib`.
@@ -66,60 +81,56 @@ object NativeLoader:
             case Some(resolution) => return resolution
             case None             => ()
 
-        // 4. Bare library name, gated by an actual koffi.load probe: koffi resolves an installed system library
+        // 5. Bare library name, gated by an actual koffi.load probe: koffi resolves an installed system library
         // (by SONAME / default search path) here, so a name that loads is present. A name that does not load is
         // genuinely absent.
         candidates += s"""koffi.load("$libraryId")"""
         if tryKoffiLoad(libraryId) then return libraryId
 
-        // 5. Nothing resolved: the native is not present for this runtime.
+        // 6. Nothing resolved: the native is not present for this runtime.
+        val fromPackage = packagePrefix.fold("")(prefix => s"install the '$prefix' package for $os-$arch, ")
         throw new FfiLoadError.LibraryNotFound(
             libraryId,
             Chunk.from(candidates),
-            s"Native library '$libraryId' could not be resolved on this JS runtime. Set KYO_FFI_" +
-                s"${libraryId.toUpperCase.replace('-', '_')}_PATH to an absolute path, install the '$packagePrefix' " +
-                s"package for $os-$arch, or install the '$libraryId' system library. Tried, in order: " +
-                s"${candidates.mkString("; ")}.",
+            s"Native library '$libraryId' could not be resolved on this JS runtime. Stage it beside the linked program " +
+                s"under kyo-ffi/native/$os-$arch/ (the kyo FFI plugin's ffiWithJsNatives copies it there from the classpath), " +
+                s"set $envKey to an absolute path, ${fromPackage}or install the '$libraryId' system library. " +
+                s"Tried, in order: ${candidates.mkString("; ")}.",
             null
         )
     end jsResolve
+
+    /** The system property naming an npm package that carries natives under `native/<os>-<arch>/`. Unset by default. */
+    val PackagePrefixProperty: String = "kyo.ffi.js.packagePrefix"
 
     /** `true` when `path` exists on the filesystem (Node `fs.existsSync`); `false` on any error and on a host without `node:fs`. */
     private def fileExists(path: String): Boolean =
         try NodeFs.module.exists(_.existsSync(path))
         catch case _: Throwable => false
 
-    /** `require.resolve(resolvePath)` if `require` is available and the path resolves, else `None`. */
+    /** `require.resolve(resolvePath)` from the linked application ([[PlatformJs.moduleRequire]]) when the path resolves to a file that
+      * exists, else `None`. Node caches a resolution for the life of the process, so a path that resolved once keeps resolving after its
+      * file is gone; the existence check keeps this a presence check.
+      */
     private def requireResolve(resolvePath: String): Option[String] =
         Try {
-            val req = js.Dynamic.global.selectDynamic("require")
-            if js.isUndefined(req) || req == null then null
-            else
-                val r = req.applyDynamic("resolve")(resolvePath)
+            PlatformJs.moduleRequire.fold(null: String) { req =>
+                val r = req.resolve(resolvePath)
                 if js.isUndefined(r) || r == null then null
                 else r.asInstanceOf[String]
-            end if
-        }.toOption.flatMap(Option(_))
+            }
+        }.toOption.flatMap(Option(_)).filter(fileExists)
 
     /** Probe whether koffi can load `name` (an installed system library by SONAME / default search). `false` when
       * koffi is unavailable or the load fails. Used only as the last presence gate; the caller loads for real.
       *
-      * koffi is required DYNAMICALLY (`require("koffi")`), not through the static `@JSImport` facade, so this
-      * loader keeps no static dependency on the koffi package: a runtime with no koffi installed just makes the
-      * probe return `false` instead of failing to load this module.
+      * koffi comes from [[Koffi.dynamic]], the one place it is resolved, so a runtime with no koffi installed makes the
+      * probe return `false`, and a runtime with koffi has its async pool configured before this first `koffi.load` locks it.
       */
     private def tryKoffiLoad(name: String): Boolean =
         Try {
-            val req = js.Dynamic.global.selectDynamic("require")
-            if js.isUndefined(req) || req == null then false
-            else
-                val koffi = req.asInstanceOf[js.Function1[String, js.Dynamic]]("koffi")
-                if js.isUndefined(koffi) || koffi == null then false
-                else
-                    val lib = koffi.applyDynamic("load")(name)
-                    !js.isUndefined(lib) && lib != null
-                end if
-            end if
+            val lib = Koffi.dynamic.applyDynamic("load")(name)
+            !js.isUndefined(lib) && lib != null
         }.getOrElse(false)
 
     /** koffi-loadable resolution for known system libraries (libc, libm, pthread, dl, rt).
@@ -164,14 +175,20 @@ object NativeLoader:
 
     // --- Platform detection ---
 
-    /** The resource tag of the host operating system, the same tags the JVM loader and kyo-net's capability probe use. */
+    /** The resource tag of the host operating system, the same tags the JVM loader and the plugin's layout use: musl Linux is
+      * `linux-musl`, told apart from glibc Linux by its dynamic loader, because its natives are built against a different libc.
+      */
     private def detectOs(): String =
         Platform.os match
-            case Platform.Os.Linux   => "linux"
+            case Platform.Os.Linux =>
+                if fileExists("/lib/ld-musl-x86_64.so.1") || fileExists("/lib/ld-musl-aarch64.so.1") then "linux-musl" else "linux"
             case Platform.Os.MacOS   => "darwin"
             case Platform.Os.Windows => "windows"
             case Platform.Os.BSD     => "bsd"
             case _                   => "unknown"
+
+    /** Windows names a shared library without the `lib` prefix, as the plugin's artifacts do. */
+    private def libPrefix(os: String): String = if os == "windows" then "" else "lib"
 
     /** The resource tag of the host architecture; an architecture with no tag keeps Node's own name for the diagnostic. */
     private def detectArch(): String =

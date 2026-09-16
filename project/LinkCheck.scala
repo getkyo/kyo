@@ -322,7 +322,10 @@ object LinkCheck {
       *
       * Read from the linker's IR after optimization rather than from the emitted text: there a global read is a node of its own and
       * `typeof name` another, so neither a guard, nor a string, nor a local that happens to share the name is mistaken for a read. A
-      * facade declared with `@JSGlobal` on one of the names is a bare read too, wherever it is loaded.
+      * facade declared with `@JSGlobal` on one of the names is a bare read too, wherever it is loaded. A read inside the branch of an `if`
+      * whose condition compares `typeof name` with a string other than `"undefined"` is not counted: the name is declared there. That is
+      * the one form `require` keeps, in CommonJS and NoModule links only, where the module's own `require` is a wrapper parameter that no
+      * property of `globalThis` reaches.
       */
     private def bareHostGlobalReads(state: State, ref: ProjectReference): Seq[String] = {
         import org.scalajs.ir.Traversers.Traverser
@@ -390,13 +393,47 @@ object LinkCheck {
             case Trees.JSNativeLoadSpec.Global(global, _) if hostGlobals.contains(global) => global
         }
 
+        /** The names `cond` proves declared in each branch of an `if`, as (then, else): a comparison of `typeof name` with a string. A
+          * `typeof` that is not `"undefined"` means the name is declared, so a read there cannot throw.
+          */
+        def declaredBy(cond: Trees.Tree): (Set[String], Set[String]) = {
+            def compare(op: Int, lhs: Trees.Tree, rhs: Trees.Tree, eq: Int, ne: Int): (Set[String], Set[String]) =
+                (lhs, rhs) match {
+                    case (Trees.JSTypeOfGlobalRef(Trees.JSGlobalRef(name)), Trees.StringLiteral(value)) =>
+                        val declaredWhenEqual = value != "undefined"
+                        if (op == eq) { if (declaredWhenEqual) (Set(name), Set.empty) else (Set.empty, Set(name)) }
+                        else if (op == ne) { if (declaredWhenEqual) (Set.empty, Set(name)) else (Set(name), Set.empty) }
+                        else (Set.empty, Set.empty)
+                    case (Trees.StringLiteral(_), Trees.JSTypeOfGlobalRef(_)) => compare(op, rhs, lhs, eq, ne)
+                    case _                                                    => (Set.empty, Set.empty)
+                }
+            cond match {
+                case Trees.BinaryOp(op, lhs, rhs)   => compare(op, lhs, rhs, Trees.BinaryOp.===, Trees.BinaryOp.!==)
+                case Trees.JSBinaryOp(op, lhs, rhs) => compare(op, lhs, rhs, Trees.JSBinaryOp.===, Trees.JSBinaryOp.!==)
+                case _                              => (Set.empty, Set.empty)
+            }
+        }
+
         val reads = scala.collection.mutable.LinkedHashSet.empty[String]
         moduleSet.modules.flatMap(_.classDefs).foreach { cls =>
-            var member = ""
-            def record(global: String): Unit = reads += s"'$global' in ${cls.fullName}.$member"
+            var member   = ""
+            var declared = Set.empty[String]
+            def record(global: String): Unit = if (!declared.contains(global)) reads += s"'$global' in ${cls.fullName}.$member"
             val traverser = new Traverser {
+                private def within(names: Set[String], tree: Trees.Tree): Unit = {
+                    val outer = declared
+                    declared = outer ++ names
+                    try traverse(tree)
+                    finally declared = outer
+                }
                 override def traverse(tree: Trees.Tree): Unit = tree match {
-                    case _: Trees.JSTypeOfGlobalRef                               => ()
+                    case _: Trees.JSTypeOfGlobalRef => ()
+                    // A read under `typeof name === "function"` (the CommonJS wrapper's `require`, `PlatformJs.moduleRequire`) cannot throw.
+                    case Trees.If(cond, thenp, elsep) =>
+                        val (inThen, inElse) = declaredBy(cond)
+                        traverse(cond)
+                        within(inThen, thenp)
+                        within(inElse, elsep)
                     case Trees.JSGlobalRef(name) if hostGlobals.contains(name) => record(name)
                     case Trees.LoadJSModule(className) =>
                         hostGlobal(byName.get(className).flatMap(_.jsNativeLoadSpec)).foreach(record)

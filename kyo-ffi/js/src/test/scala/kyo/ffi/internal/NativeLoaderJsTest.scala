@@ -11,13 +11,14 @@ import scala.scalajs.js as sjs
   * candidate):
   *
   *   1. `process.env.KYO_FFI_<LIBID>_PATH` wins WHEN the file it names exists.
-  *   2. `require.resolve('<packagePrefix>/native/<os>-<arch>/lib<id>.<ext>')` (uses `kyo.ffi.js.packagePrefix`).
-  *   3. Known system libraries resolve to the process-default scope.
-  *   4. A `koffi.load` probe of the bare id (an installed system library resolves here).
-  *   5. None of the above: [[FfiLoadError.LibraryNotFound]].
+  *   2. `./kyo-ffi/native/<os>-<arch>/lib<id>.<ext>` beside the linked program, resolved against the program's location.
+  *   3. `require.resolve('<packagePrefix>/native/<os>-<arch>/lib<id>.<ext>')`, only when `kyo.ffi.js.packagePrefix` is set.
+  *   4. Known system libraries resolve to the process-default scope.
+  *   5. A `koffi.load` probe of the bare id (an installed system library resolves here).
+  *   6. None of the above: [[FfiLoadError.LibraryNotFound]].
   *
-  * The test environment has no installed `@kyo/ffi-native` package and no `koffi`, and the fixture ids name no
-  * installed library, so an unresolvable id raises `LibraryNotFound` rather than silently returning a bad name.
+  * The test environment stages no natives, installs no package and no `koffi`, and the fixture ids name no installed
+  * library, so an unresolvable id raises `LibraryNotFound` rather than silently returning a bad name.
   */
 class NativeLoaderJsTest extends Test:
 
@@ -29,6 +30,10 @@ class NativeLoaderJsTest extends Test:
     // A path that is guaranteed to exist on the Node host: the running node binary itself.
     private def existingPath: String =
         sjs.Dynamic.global.process.execPath.asInstanceOf[String]
+
+    // Every leaf reads process-wide state other leaves change (the env var, the package-prefix property, a native staged beside
+    // the program, the working directory), so a concurrent leaf would resolve through another leaf's state.
+    override def config = super.config.sequential
 
     // Each leaf mutates the resolver env var + package-prefix sys prop; clear/save before the body and restore after,
     // isolating leaves (the kyo-test equivalent of the old beforeEach/afterEach pair).
@@ -66,10 +71,45 @@ class NativeLoaderJsTest extends Test:
         assert(ex.libraryId == libId)
     }
 
-    "the default package prefix is also unresolvable in this test env and raises LibraryNotFound" in {
-        // No env, no override; default is `@kyo/ffi-native`, absent from node_modules for tests.
+    "with no package prefix set, no package is looked up, and the error names the staging and the variable" in {
         val ex = intercept[FfiLoadError.LibraryNotFound](NativeLoader.jsResolve(libId))
         assert(ex.libraryId == libId)
+        assert(!ex.candidates.exists(_.startsWith("require.resolve ")))
+        assert(ex.getMessage.contains("ffiWithJsNatives"))
+        assert(ex.getMessage.contains(envKey))
+    }
+
+    "a native staged beside the linked program resolves with no env override, from any working directory" in {
+        // Where the staging puts a native is the path the loader reports looking beside the program; a native placed exactly there
+        // must be found after the working directory moves away, which a lookup anchored at the working directory would miss.
+        val fs        = PlatformJs.nodeBuiltin("node:fs").get
+        val nodeOs    = PlatformJs.nodeBuiltin("node:os").get
+        val path      = PlatformJs.nodeBuiltin("node:path").get
+        val process   = sjs.Dynamic.global.process
+        val programAt = path.dirname(PlatformJs.nodeBuiltin("node:url").get.fileURLToPath(programUrl)).asInstanceOf[String]
+        val relative = intercept[FfiLoadError.LibraryNotFound](NativeLoader.jsResolve(libId)).candidates
+            .filter(_.startsWith("beside the linked program "))
+            .map(_.stripPrefix("beside the linked program "))
+        assert(relative.size == 1)
+        assert(relative.head.startsWith("./kyo-ffi/native/"))
+        val native    = path.resolve(programAt, relative.head).asInstanceOf[String]
+        val platform  = path.dirname(native)
+        val elsewhere = fs.mkdtempSync(path.join(nodeOs.tmpdir(), "kyo-ffi-cwd-")).asInstanceOf[String]
+        val cwd       = process.cwd().asInstanceOf[String]
+        // The staging tree sits in the linker's output directory, and the linker refuses to relink over a directory it did not
+        // write, so the tree this leaf creates goes away with it. This module's link stages nothing, so the tree is new here.
+        val stagingRoot = path.join(programAt, "kyo-ffi").asInstanceOf[String]
+        assert(!fs.existsSync(stagingRoot).asInstanceOf[Boolean])
+        try
+            discard(fs.mkdirSync(platform, sjs.Dynamic.literal(recursive = true)))
+            discard(fs.writeFileSync(native, ""))
+            discard(process.chdir(elsewhere))
+            assert(NativeLoader.jsResolve(libId) == native)
+        finally
+            discard(process.chdir(cwd))
+            discard(fs.rmSync(stagingRoot, sjs.Dynamic.literal(recursive = true, force = true)))
+            discard(fs.rmSync(elsewhere, sjs.Dynamic.literal(recursive = true, force = true)))
+        end try
     }
 
     "envKey computation uppercases and replaces hyphens with underscores" in {
@@ -148,7 +188,8 @@ class NativeLoaderJsTest extends Test:
             val native = lookedFor.head
             discard(fs.mkdirSync(path.dirname(native), sjs.Dynamic.literal(recursive = true)))
             discard(fs.writeFileSync(native, ""))
-            assert(NativeLoader.jsResolve(libId) == native)
+            // Node resolves a package path to the real file, and a temporary directory can sit behind a symlink (macOS's does).
+            assert(NativeLoader.jsResolve(libId) == fs.realpathSync(native).asInstanceOf[String])
         finally discard(fs.rmSync(root, sjs.Dynamic.literal(recursive = true, force = true)))
         end try
     }
@@ -160,6 +201,14 @@ class NativeLoaderJsTest extends Test:
     }
 
     // --- helpers ---
+
+    /** The URL of the linked test program: this module links as an ES module on both of its rows. */
+    private def programUrl: String =
+        kyo.internal.Platform.linkTimeIf(scala.scalajs.LinkingInfo.moduleKind == scala.scalajs.LinkingInfo.ModuleKind.ESModule) {
+            sjs.`import`.meta.url.asInstanceOf[String]
+        } {
+            throw new IllegalStateException("kyo-ffi's JS tests link as an ES module")
+        }
 
     /** `process.env` replaced by a proxy that throws from every trap, as Deno's does without `--allow-env`. */
     private def withEnvThatThrows[A](f: => A): A =

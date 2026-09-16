@@ -207,6 +207,36 @@ object KyoFfiPlugin extends AutoPlugin {
                     }
                 }).value
             )
+
+        /** A Scala.js link task that, once it has linked, stages the natives on `classpath` beside the linked output, under
+          * `kyo-ffi/native/<os>-<arch>/`, which is where the JS loader looks for a native no `KYO_FFI_<ID>_PATH` names. Apply it to each
+          * link a program runs from:
+          *
+          * {{{
+          * Compile / fastLinkJS := ffiWithJsNatives(Compile / fastLinkJS, Compile / fastLinkJS / scalaJSLinkerOutputDirectory, Runtime).value
+          * }}}
+          *
+          * The natives come from every classpath entry that carries them, dependency jars included, for every platform they were
+          * published for. Generic in the link's result because this plugin has no sbt-scalajs dependency, so the Scala.js keys stay with
+          * the consumer, as they do for `ffiKoffiJsBootstrap`.
+          *
+          * The staged tree is removed before the link runs and written again after it: the Scala.js linker deletes what it did not
+          * write from its output directory, and a directory there that still holds files fails the link.
+          */
+        def ffiWithJsNatives[A](
+            link: Def.Initialize[Task[A]],
+            outputDirectory: Def.Initialize[File],
+            classpath: Configuration
+        ): Def.Initialize[Task[A]] =
+            Def.taskDyn {
+                val out = outputDirectory.value
+                IO.delete(out / JsNativeStaging.Prefix.split('/').head)
+                Def.task {
+                    val linked = link.value
+                    val _      = JsNativeStaging.stage((classpath / fullClasspath).value.map(_.data), out, streams.value.log)
+                    linked
+                }
+            }
     }
 
     import autoImport._

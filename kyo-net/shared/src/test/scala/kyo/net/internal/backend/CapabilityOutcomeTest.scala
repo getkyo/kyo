@@ -28,9 +28,11 @@ class CapabilityOutcomeTest extends Test:
             assert(!described.contains("classifier"))
         }
 
-        "NotBundled on Scala.js names the variable that points the loader at a native, and no classifier".onlyJs in {
+        "NotBundled on Scala.js names the staging that puts a native beside the program, the variable that overrides it, and no classifier".onlyJs in {
             val described = CapabilityOutcome.NotBundled("kyonet_posix_uring", "linux-x86_64").describe
             assert(described.contains("kyonet_posix_uring"))
+            assert(described.contains("ffiWithJsNatives"))
+            assert(described.contains("kyo-ffi/native/linux-x86_64/"))
             assert(described.contains("KYO_FFI_KYONET_POSIX_URING_PATH"))
             assert(!described.contains("classifier"))
         }
