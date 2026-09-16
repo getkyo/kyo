@@ -136,34 +136,9 @@ private[kyo] object TestClasspaths:
                                             (javaClassDir / "JavaSimpleFixture.class").writeBytes(
                                                 Span.from(kyo.fixtures.EmbeddedJavaFixtures.javaSimpleFixtureClassfile)
                                             ).map { _ =>
-                                                // Directory-enumeration barrier on Native: list every just-written
-                                                // directory before launching the classpath walker so each directory's
-                                                // inode is refreshed and all entries are visible to the subsequent
-                                                // Path.walk inside Tasty.withClasspath. Without this barrier, the
-                                                // POSIX readdir cache in the Scala Native NIO compat sometimes misses
-                                                // the last few writes when the same fiber writes then walks the same
-                                                // directory within microseconds.
-                                                //
-                                                // Two levels, matching the two-level write pattern: writes land inside
-                                                // tastyDir (root/) and inside javaClassDir (kyo/fixtures/), both under
-                                                // the parent temp dir. Flushing tastyDir, javaClassDir, and dir ensures
-                                                // root and kyo/ are both settled in the parent's readdir snapshot before
-                                                // the walk begins.
-                                                Abort.recover[FileSystemException](_ => ()) {
-                                                    Path.runReadOnly(tastyDir.list.map(_ => ()))
-                                                }.flatMap { _ =>
-                                                    Abort.recover[FileSystemException](_ => ()) {
-                                                        Path.runReadOnly(javaClassDir.list.map(_ => ()))
-                                                    }
-                                                }.flatMap { _ =>
-                                                    Abort.recover[FileSystemException](_ => ()) {
-                                                        Path.runReadOnly(dir.list.map(_ => ()))
-                                                    }
-                                                }.map { _ =>
-                                                    Tasty.withClasspath(
-                                                        Seq(tastyDir.toString, (javaClassDir / "JavaSimpleFixture.class").toString)
-                                                    )(f)
-                                                }
+                                                Tasty.withClasspath(
+                                                    Seq(tastyDir.toString, (javaClassDir / "JavaSimpleFixture.class").toString)
+                                                )(f)
                                             }
                                         }
                                     }
