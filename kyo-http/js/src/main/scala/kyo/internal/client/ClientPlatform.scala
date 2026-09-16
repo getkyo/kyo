@@ -12,7 +12,9 @@ import kyo.*
   * `fetch`. Asking those for the socket transport reaches a `node:net` that is not there, and the backend probe's failure arrives as a panic
   * rather than as anything a caller can handle, so the rule is what the host has rather than what it is called.
   *
-  * The choice is read when the program runs, because one bundle is served to whatever loads it.
+  * The choice is read when the program runs, because one bundle is served to whatever loads it, and each backend is a module the host fetches
+  * only once it has chosen: a page never fetches the socket client, and a Node program never fetches the fetch client. See
+  * [[DeferredClientBackend]].
   */
 private[kyo] object ClientPlatform:
 
@@ -23,14 +25,6 @@ private[kyo] object ClientPlatform:
         defaultTlsConfig: HttpTlsConfig,
         transportConfig: HttpTransportConfig
     )(using AllowUnsafe, Frame): ClientBackend =
-        if kyo.internal.Platform.isNodeLike then
-            HttpClientBackend.init(
-                kyo.net.NetPlatform.transport,
-                maxConnectionsPerHost,
-                idleConnectionTimeout,
-                defaultTlsConfig,
-                transportConfig
-            )
-        else new FetchClientBackend
+        new DeferredClientBackend(maxConnectionsPerHost, idleConnectionTimeout, defaultTlsConfig, transportConfig)
 
 end ClientPlatform

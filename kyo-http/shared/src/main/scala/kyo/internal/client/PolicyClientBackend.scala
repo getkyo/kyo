@@ -30,12 +30,7 @@ abstract private[kyo] class PolicyClientBackend extends ClientBackend:
     )(
         f: HttpResponse[Out] => A < (Async & Abort[HttpException])
     )(using Frame): A < (Async & Abort[HttpException]) =
-        val resolved = config.baseUrl match
-            case Present(base) if request.url.scheme.isEmpty =>
-                request.copy(url = HttpUrl(base.scheme, base.host, base.port, request.url.path, request.url.rawQuery))
-            case _ => request
-        retryWith(route, resolved, config)(f)
-    end sendWithConfig
+        retryWith(route, PolicyClientBackend.resolved(request, config), config)(f)
 
     private def retryWith[In, Out, A](
         route: HttpRoute[In, Out, Any],
@@ -173,6 +168,13 @@ abstract private[kyo] class PolicyClientBackend extends ClientBackend:
 end PolicyClientBackend
 
 private[kyo] object PolicyClientBackend:
+
+    /** `request` resolved against the configured base URL: a request with no scheme of its own takes the base's scheme, host and port. */
+    def resolved[In](request: HttpRequest[In], config: HttpClientConfig): HttpRequest[In] =
+        config.baseUrl match
+            case Present(base) if request.url.scheme.isEmpty =>
+                request.copy(url = HttpUrl(base.scheme, base.host, base.port, request.url.path, request.url.rawQuery))
+            case _ => request
 
     /** The failure for the first request-line element or header field the serializer must refuse, or `Absent` when it can write them all.
       *
