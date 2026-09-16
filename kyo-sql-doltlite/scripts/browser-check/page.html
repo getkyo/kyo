@@ -1,0 +1,84 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>doltlite in a browser</title>
+<!--
+  Drives the published DoltLite WebAssembly build in a real browser, using the SAME call pattern
+  SqliteWasmFacade uses from Scala: the raw wasm.exports functions, with strings and buffers copied
+  through the module's heap.
+
+  Run it with ../browser-check.sh.
+-->
+<div id="out">PENDING</div>
+<script type="module">
+  const out = document.getElementById('out');
+  const lines = [];
+  try {
+    const initModule = (await import('./node_modules/@dolthub/doltlite-wasm/sqlite3.mjs')).default;
+    const sqlite3 = await initModule();
+    lines.push('LOADED version=' + sqlite3.version.libVersion);
+    lines.push('HAS_EXPORTS=' + (typeof sqlite3.wasm.exports === 'object'));
+
+    const wasm = sqlite3.wasm, X = wasm.exports;
+    const pName = wasm.allocCString(':memory:');
+    const ppDb = wasm.alloc(8);
+    X.sqlite3_open_v2(pName, ppDb, 0x02 | 0x04, 0);
+    const db = wasm.peekPtr(ppDb);
+    wasm.dealloc(ppDb); wasm.dealloc(pName);
+    lines.push('OPEN db=' + (db !== 0));
+
+    const exec = (sql) => {
+      const p = wasm.allocCString(sql);
+      const rc = X.sqlite3_exec(db, p, 0, 0, 0);
+      wasm.dealloc(p);
+      if (rc !== 0) throw new Error('exec rc=' + rc + ' for ' + sql);
+    };
+    // Reads one text value the way the facade does: a pointer plus sqlite3_column_bytes, never a C string,
+    // so a value holding a NUL is not truncated.
+    const one = (sql) => {
+      const pSql = wasm.allocCString(sql);
+      const ppStmt = wasm.alloc(8);
+      X.sqlite3_prepare_v2(db, pSql, -1, ppStmt, 0);
+      const s = wasm.peekPtr(ppStmt);
+      X.sqlite3_step(s);
+      const p = X.sqlite3_column_text(s, 0);
+      const n = X.sqlite3_column_bytes(s, 0);
+      const bytes = wasm.heap8u().slice(p, p + n);
+      X.sqlite3_finalize(s);
+      wasm.dealloc(ppStmt); wasm.dealloc(pSql);
+      return { text: new TextDecoder().decode(bytes), bytes: Array.from(bytes) };
+    };
+
+    exec("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)");
+    exec("INSERT INTO t VALUES (1, 'before')");
+    lines.push('COMMIT ' + one("SELECT dolt_commit('-Am','base')").text.slice(0, 12));
+    exec("SELECT dolt_branch('work')");
+    exec("SELECT dolt_checkout('work')");
+    exec("UPDATE t SET v = 'after' WHERE id = 1");
+    one("SELECT dolt_commit('-Am','edit')");
+    const onWork = one("SELECT v FROM t WHERE id = 1").text;
+    exec("SELECT dolt_checkout('main')");
+    const onMain = one("SELECT v FROM t WHERE id = 1").text;
+    lines.push('BRANCH work=' + onWork + ' main=' + onMain);
+    if (onWork !== 'after' || onMain !== 'before') throw new Error('branch isolation broken');
+
+    const diff = one("SELECT COUNT(*) FROM dolt_diff_t('main','work')").text;
+    lines.push('DIFF rows=' + diff);
+    if (diff !== '1') throw new Error('cross-branch diff returned ' + diff);
+
+    exec("CREATE TABLE n (v TEXT)");
+    exec("INSERT INTO n VALUES ('a' || char(0) || 'b')");
+    const nul = one("SELECT v FROM n");
+    lines.push('NUL bytes=' + nul.bytes.length + ' [' + nul.bytes + ']');
+    if (nul.bytes.join(',') !== '97,0,98') throw new Error('embedded NUL did not survive');
+
+    X.sqlite3_close_v2(db);
+    lines.push('RESULT OK');
+  } catch (e) {
+    lines.push('RESULT FAILED ' + (e && e.message ? e.message : String(e)));
+  }
+  const report = lines.join(' | ');
+  out.textContent = report;
+  // Reported to the SERVER, not just written into the DOM, because --dump-dom waits for a Chrome exit that a
+  // page holding a WebAssembly module never reaches.
+  try { await fetch('/done?report=' + encodeURIComponent(report)); } catch (e) { /* the log is the channel */ }
+</script>

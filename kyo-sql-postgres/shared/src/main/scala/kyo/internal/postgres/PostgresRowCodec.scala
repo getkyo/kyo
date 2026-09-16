@@ -42,7 +42,7 @@ final private[kyo] case class PostgresRowCodec(format: Format) extends SqlPositi
         PostgresRowCodec.nameOf(typeToken)
 
     /** A `float4` column is the narrower of the two widths this backend maps to one kind. */
-    override private[kyo] def isSingleWidthFloat(typeToken: Int): Boolean =
+    override def isSingleWidthFloat(typeToken: Int): Boolean =
         typeToken == PostgresRowCodec.float4Token
 
     /** Reads a column into the neutral value it holds, under BOTH wire formats.

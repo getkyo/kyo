@@ -67,6 +67,48 @@ class FfiLibraryTest extends AnyFunSuite with Matchers {
         FfiLibrary(id = "demo", cSources = Nil).unknownOsTargets shouldBe empty
     }
 
+    test("buildsOnTarget is true for every tag when nothing is declared") {
+        val l = FfiLibrary(id = "demo", cSources = Nil)
+        CCompiler.supportedOsArchTags.foreach(tag => l.buildsOnTarget(tag) shouldBe true)
+    }
+
+    // The case osArchTargets exists for: an engine published for one arch of an OS and not the other.
+    // osTargets cannot express it, since excluding "windows" would drop the working x64 native too.
+    test("osArchTargets excludes one arch of an OS while keeping the other") {
+        val l = FfiLibrary(id = "kyo_doltlite", cSources = Nil, osArchTargets = Seq("windows-x86_64", "darwin-aarch64"))
+        l.buildsOnTarget("windows-x86_64") shouldBe true
+        l.buildsOnTarget("windows-aarch64") shouldBe false
+        l.buildsOnTarget("darwin-aarch64") shouldBe true
+        l.buildsOnTarget("linux-x86_64") shouldBe false
+        // The OS-level predicate still answers for the OS, which is why both are consulted.
+        l.buildsOn("windows") shouldBe true
+    }
+
+    test("osTargets and osArchTargets both narrow") {
+        val l = FfiLibrary(
+            id = "demo",
+            cSources = Nil,
+            osTargets = Seq("linux"),
+            osArchTargets = Seq("linux-x86_64", "darwin-aarch64")
+        )
+        l.buildsOnTarget("linux-x86_64") shouldBe true
+        l.buildsOnTarget("linux-aarch64") shouldBe false
+        // Allowed by the arch list, excluded by the OS list. The plugin rejects this contradiction at
+        // resolution time; the predicate itself answers false rather than picking a winner.
+        l.buildsOnTarget("darwin-aarch64") shouldBe false
+    }
+
+    test("unknownOsArchTargets names entries that are not supported os-arch tags") {
+        FfiLibrary(id = "demo", cSources = Nil, osArchTargets = Seq("win-x64")).unknownOsArchTargets shouldBe Seq(
+            "win-x64"
+        )
+        FfiLibrary(id = "demo", cSources = Nil, osArchTargets = Seq("windows")).unknownOsArchTargets shouldBe Seq(
+            "windows"
+        )
+        FfiLibrary(id = "demo", cSources = Nil, osArchTargets = Seq("windows-x86_64")).unknownOsArchTargets shouldBe empty
+        FfiLibrary(id = "demo", cSources = Nil).unknownOsArchTargets shouldBe empty
+    }
+
     test("OS-specific lib is appended only on the matching OS") {
         val l = lib(byOs = Map("linux" -> Seq("uring")))
         l.resolvedLinkLibs("linux") shouldBe Seq("uring")

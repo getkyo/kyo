@@ -291,7 +291,7 @@ final class PostgresConnection(
       * @param tls
       *   the TLS settings to negotiate with, [[Absent]] when the caller configured none
       */
-    def cancel(address: SqlConfig.Address, tlsMode: TlsMode, tls: Maybe[NetTlsConfig])(using
+    def cancel(address: SqlConfig.Address.Network, tlsMode: TlsMode, tls: Maybe[NetTlsConfig])(using
         Frame
     ): Unit < (Async & Abort[SqlException]) =
         CancelExchange.cancel(address, tlsMode, tls, processId, secretKey)

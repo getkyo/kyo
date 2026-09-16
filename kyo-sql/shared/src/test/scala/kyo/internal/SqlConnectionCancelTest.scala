@@ -227,7 +227,7 @@ class SqlConnectionCancelTest extends kyo.Test:
 
     // --- harness ---
 
-    private val address = SqlConfig.Address("probe", "127.0.0.1", 1, "probe", Present("probe"))
+    private val address = SqlConfig.Address.Network("probe", "127.0.0.1", 1, "probe", Present("probe"))
 
     /** No connect bound and no statement bound, so the leaf's own interruption source is the only one in play. */
     private def baseConfig(scope: String): SqlConfig =

@@ -7,10 +7,10 @@ class FileSystemConformanceDeclarationTest extends kyo.test.Test[Any]:
 
     "all declared conformance suites are public shared types" in {
         val suites = Chunk(
-            classOf[FileSystemReadTest],
-            classOf[FileSystemWriteTest],
-            classOf[FileSystemChannelTest],
-            classOf[FileSystemLockTest],
+            classOf[FileSystemReadTest[Sync]],
+            classOf[FileSystemWriteTest[Sync]],
+            classOf[FileSystemChannelTest[Sync]],
+            classOf[FileSystemLockTest[Sync]],
             classOf[FileSystemWatchTestSuite]
         )
         assert(suites.size == 5)

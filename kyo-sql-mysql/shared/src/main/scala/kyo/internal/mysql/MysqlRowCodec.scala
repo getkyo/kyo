@@ -47,7 +47,7 @@ final private[kyo] case class MysqlRowCodec(format: Format) extends SqlPositiona
         else MysqlRowCodec.nameOf(MysqlColumnToken.columnType(typeToken))
 
     /** A `FLOAT` column is the narrower of the two widths this backend maps to one kind. */
-    override private[kyo] def isSingleWidthFloat(typeToken: Int): Boolean =
+    override def isSingleWidthFloat(typeToken: Int): Boolean =
         MysqlColumnToken.columnType(typeToken) == MysqlEncoder.TYPE_FLOAT
 
     /** Reads the kinds whose wire only this backend can interpret, under BOTH wire formats.
