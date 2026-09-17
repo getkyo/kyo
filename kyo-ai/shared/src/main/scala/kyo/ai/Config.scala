@@ -80,9 +80,19 @@ final case class Config private (
     // default applies, so an untouched config states nothing and never warns; a warning fires only on a
     // STATED amount the encoding cannot express. Held rather than dropped where it cannot ride, since
     // one config re-aims across providers, and held while reasoning is off.
-    reasoningAmount: Maybe[Config.Amount] = Absent
+    reasoningAmount: Maybe[Config.Amount] = Absent,
+    // Whether a later instruction may ride with system authority (see
+    // [[Config.MidConversationSystem]]). Defaulted so a positional construction elsewhere is unaffected.
+    midConversationSystem: Config.MidConversationSystem = Config.MidConversationSystem.Unsupported
 ):
-    def apiUrl(url: String): Config              = copy(apiUrl = url)
+    def apiUrl(url: String): Config = copy(apiUrl = url)
+
+    /** Declares whether this endpoint accepts a system instruction after the conversation has started
+      * (see [[Config.MidConversationSystem]]). Set it when `apiUrl` points at an endpoint whose contract
+      * differs from the provider's own.
+      */
+    def midConversationSystem(mode: Config.MidConversationSystem): Config =
+        copy(midConversationSystem = mode)
     def apiKey(key: String): Config              = copy(apiKey = Present(key))
     def apiOrg(org: String): Config              = copy(apiOrg = Present(org))
     def temperature(temperature: Double): Config = copy(temperature = Present(temperature.max(0).min(2)))
@@ -301,7 +311,8 @@ final case class Config private (
         reasoningOff: Maybe[Config.ReasoningOff] = Absent,
         forcedToolChoice: Maybe[Config.ForcedToolChoice] = Absent,
         systemInstructions: Maybe[Config.SystemMessages] = Absent,
-        invalidToolCalls: Maybe[Config.InvalidToolCalls] = Absent
+        invalidToolCalls: Maybe[Config.InvalidToolCalls] = Absent,
+        midConversationSystem: Maybe[Config.MidConversationSystem] = Absent
     ): Config =
         copy(
             provider = provider,
@@ -316,7 +327,8 @@ final case class Config private (
             reasoningOff = reasoningOff.getOrElse(provider.reasoningOff),
             forcedToolChoice = forcedToolChoice.getOrElse(provider.forcedToolChoice),
             systemInstructions = systemInstructions.getOrElse(provider.systemInstructions),
-            invalidToolCalls = invalidToolCalls.getOrElse(provider.invalidToolCalls)
+            invalidToolCalls = invalidToolCalls.getOrElse(provider.invalidToolCalls),
+            midConversationSystem = midConversationSystem.getOrElse(provider.midConversationSystem)
         )
 
     /** Re-declares which request field this config's endpoint reads the output ceiling from.
@@ -424,7 +436,8 @@ object Config:
         reasoningOff: Maybe[ReasoningOff] = Absent,
         forcedToolChoice: Maybe[ForcedToolChoice] = Absent,
         systemInstructions: Maybe[SystemMessages] = Absent,
-        invalidToolCalls: Maybe[InvalidToolCalls] = Absent
+        invalidToolCalls: Maybe[InvalidToolCalls] = Absent,
+        midConversationSystem: Maybe[MidConversationSystem] = Absent
     ): Config =
         Config(
             provider.baseUrl,
@@ -441,7 +454,8 @@ object Config:
             reasoningOff.getOrElse(provider.reasoningOff),
             forcedToolChoice.getOrElse(provider.forcedToolChoice),
             systemInstructions.getOrElse(provider.systemInstructions),
-            invalidToolCalls.getOrElse(provider.invalidToolCalls)
+            invalidToolCalls.getOrElse(provider.invalidToolCalls),
+            midConversationSystem = midConversationSystem.getOrElse(provider.midConversationSystem)
         )
 
     /** A model's maximum output tokens, and whether that number is known or stood in for.
@@ -578,6 +592,34 @@ object Config:
         case FirstOnly
     end SystemMessages
 
+    /** Whether an entry accepts a system instruction that arrives after the conversation has started,
+      * declared per provider and overridable per entry.
+      *
+      * On a one-slot wire a later instruction cannot ride with system authority, so it is converted to a
+      * user turn (see [[SystemMessages]]). Some endpoints do accept one, appended to the message history
+      * with the same authority as the out-of-band slot and without invalidating a cached prefix before it.
+      *
+      * Declared rather than derived from the model name, because the capability belongs to the ENDPOINT
+      * and not to the model: one gateway can serve the same model name under a contract that refuses it.
+      * A completion impl that inferred this from a name would be wrong on one of them.
+      *
+      * The first entry in the history can never be a system message on such a wire, so a leading
+      * instruction keeps taking the out-of-band slot regardless of what this declares.
+      */
+    enum MidConversationSystem derives CanEqual:
+        /** A later instruction is converted to a user turn, since a turn that arrives with the wrong role
+          * still arrives and one that is dropped never does.
+          */
+        case Unsupported
+
+        /** A later instruction rides as a system-role message in the history, and only after the history
+          * has opened with another role: it can never be the first entry. The placement belongs to the
+          * declared fact rather than to the impl, so an endpoint with a different rule states its own
+          * case here instead of the impl growing a positional branch of its own.
+          */
+        case AcceptedAfterOpeningTurn
+    end MidConversationSystem
+
     /** How an endpoint says "do not reason", declared per provider.
       *
       * A wire that reasons by default has to be told to stop, and endpoints disagree about how: one
@@ -662,7 +704,8 @@ object Config:
         val systemInstructions: SystemMessages = SystemMessages.AllDelivered,
         val invalidToolCalls: InvalidToolCalls = InvalidToolCalls.Returned,
         val forcedToolChoice: ForcedToolChoice = ForcedToolChoice.Honored,
-        val usesApiKey: Boolean = true
+        val usesApiKey: Boolean = true,
+        val midConversationSystem: MidConversationSystem = MidConversationSystem.Unsupported
     ):
         val orgKey: String = keyName + "_ORG"
         def default: Config
@@ -721,6 +764,8 @@ object Config:
         // Declared facts, with provenance. maxOutputTokens comes from the provider's own limit
         // response (a request above it is refused and names the maximum). The thinking kind and
         // temperature acceptance are this provider's documented per-generation contract.
+        // Documented as accepting a system-role message after the conversation has started, with the
+        // same authority as the out-of-band slot and without invalidating a cached prefix before it.
         val opus_4_8: Config = catalog(
             this,
             "claude-opus-4-8",
@@ -728,7 +773,8 @@ object Config:
             outputMaximum = OutputMaximum.Verified(128000),
             ReasoningEncoding.Adaptive,
             acceptsTemperature = false,
-            acceptsImages = true
+            acceptsImages = true,
+            midConversationSystem = Present(MidConversationSystem.AcceptedAfterOpeningTurn)
         )
         val sonnet_4_6: Config = catalog(
             this,
@@ -748,6 +794,7 @@ object Config:
             acceptsTemperature = true,
             acceptsImages = true
         )
+        // Documented alongside opus_4_8 as accepting a mid-conversation system message.
         val fable_5: Config = catalog(
             this,
             "claude-fable-5",
@@ -755,7 +802,8 @@ object Config:
             outputMaximum = OutputMaximum.Verified(128000),
             ReasoningEncoding.Adaptive,
             acceptsTemperature = false,
-            acceptsImages = true
+            acceptsImages = true,
+            midConversationSystem = Present(MidConversationSystem.AcceptedAfterOpeningTurn)
         )
         val sonnet_5: Config = catalog(
             this,

@@ -116,8 +116,16 @@ object Completion:
                     else if index > firstSystem && index <= leadingEnd then Chunk.empty
                     else
                         message match
-                            case SystemMessage(content) => Chunk(convert(content))
-                            case other                  => Chunk(other)
+                            // Converted only where the entry cannot carry a later instruction with system
+                            // authority. Where it can, the message survives with its role and the impl
+                            // emits it as such; the decision is the declared fact, never a provider name.
+                            case SystemMessage(content) =>
+                                config.midConversationSystem match
+                                    case Config.MidConversationSystem.AcceptedAfterOpeningTurn =>
+                                        Chunk(SystemMessage(content))
+                                    case Config.MidConversationSystem.Unsupported =>
+                                        Chunk(convert(content))
+                            case other => Chunk(other)
                 }
             end if
     end fitSystemMessages
