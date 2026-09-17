@@ -240,7 +240,7 @@ abstract private class Worker(
     def checkAvailability(nowMs: Long): Boolean = {
         val available = isAvailable(nowMs)
         if (!available) {
-            if (state.compareAndSet(State.Running, State.Stalled))
+            if ((state.get() eq State.Running) && state.compareAndSet(State.Running, State.Stalled))
                 drain()
             else if (blocked && !queue.isEmpty())
                 // Drain again for a worker that is ALREADY Stalled and still blocked. The transition drain above fires once,
