@@ -50,6 +50,14 @@ runs:
         bash scripts/apt-install.sh --if-missing cmake uuid-dev
         bash kyo-aeron/scripts/build-aeron.sh "${{ steps.osarch.outputs.value }}"
 
+    # The staged SQLite source is gitignored like the two above, and ffiCompileAll compiles this
+    # module's shim together with it. No os-arch argument, unlike them: SQLite is one
+    # architecture-independent .c that the FFI plugin compiles per platform, so one tree serves any
+    # runner this probe lands on.
+    - name: Prepare SQLite
+      shell: bash
+      run: bash kyo-sql-sqlite/scripts/build-sqlite.sh
+
     - uses: coursier/setup-action@v3.0.0
       with:
         jvm: corretto:25
