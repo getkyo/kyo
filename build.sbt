@@ -3176,13 +3176,13 @@ lazy val `js-settings` = Seq(
     // keeps them in every program that has them on the classpath, whatever it calls. An application that resolves
     // region zones adds scala-java-time-tzdb itself; `linkCheck` fails if a kyo module depends on one.
     libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.7.0",
-    // CI links every module's test binary in one sbt process; retaining each module's incremental
-    // linker state overflows the 12G sbt heap now that the schema family links per-format
-    // binaries. Batch mode drops that state after each link: incremental relink speed is
-    // irrelevant in CI, footprint is what matters.
+    // A session that links many modules' test binaries (CI, and testKyo over more than one JS project)
+    // would otherwise retain each module's incremental linker state and overflow the sbt heap. Batch
+    // mode drops that state after each link; see KyoJsRows.kyoJsBatchLink. Every row configuration
+    // derives its link from this one, so the rows inherit it.
     scalaJSLinkerConfig := {
         val c = scalaJSLinkerConfig.value
-        if (insideCI.value) c.withBatchMode(true) else c
+        if (kyoJsBatchLink.value) c.withBatchMode(true) else c
     }
 )
 

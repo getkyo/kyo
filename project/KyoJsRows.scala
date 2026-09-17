@@ -64,6 +64,17 @@ object KyoJsRows extends AutoPlugin {
 
         val kyoBrowserRow: SettingKey[Boolean] =
             settingKey[Boolean]("Whether testKyo's Browser rows run this project's BrowserTest and BrowserWasmTest configurations")
+
+        /** Whether every Scala.js link frees the linker's state when it finishes (the linker's batch mode), rather than keeping it for a
+          * faster next link of the same project and configuration.
+          *
+          * One sbt session keeps that state for every project and every row it has linked, so a session that tests many modules holds all
+          * of it at once, and a large WasmGC link then runs the driver out of heap: 56 modules into a local Wasm row, kyo-ui's WasmTest link
+          * did at 12 GB. Batch mode holds one link's state at a time. It is on in CI, and testKyo turns it on for any run that tests more
+          * than one JS project; a session iterating on one module keeps the incremental links.
+          */
+        val kyoJsBatchLink: SettingKey[Boolean] =
+            settingKey[Boolean]("Whether every Scala.js link frees the linker's state when it finishes (the linker's batch mode)")
     }
     import autoImport.*
 
@@ -84,7 +95,8 @@ object KyoJsRows extends AutoPlugin {
     // testKyo reads the row switches when it selects modules, so no task or setting refers to them and sbt's unused-key lint would flag
     // them on every load.
     override def globalSettings: Seq[Setting[?]] = KyoTestJsPlugin.browserGlobalSettings ++ Seq(
-        excludeLintKeys ++= Set[Def.KeyedInitialize[?]](kyoWasmRow, kyoBrowserRow)
+        excludeLintKeys ++= Set[Def.KeyedInitialize[?]](kyoWasmRow, kyoBrowserRow),
+        kyoJsBatchLink := insideCI.value
     )
 
     /** The chrome-headless-shell version the browser rows run, pinned so a Chrome release cannot change a run; CI's Chrome cache is keyed on

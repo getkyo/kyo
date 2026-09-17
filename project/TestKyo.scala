@@ -370,6 +370,13 @@ object TestKyo {
             log(s"restoring Scala $scala3 after the last pass")
             chain += s"++$scala3"
         }
+        // Each linked project keeps its linker state for the rest of the session unless the link runs in batch mode, and a run over
+        // many JS projects would hold all of it at once (KyoJsRows.kyoJsBatchLink). The setting stays in the session through `++`.
+        val jsTested = passes.flatMap(_._2).count(_.endsWith("JS"))
+        if (a.phase == "test" && jsTested > 1 && chain.nonEmpty) {
+            log(s"testing $jsTested JS projects: every link frees its state when it finishes")
+            chain.prepend("set Global / kyoJsBatchLink := true")
+        }
         if (chain.isEmpty || a.isDryRun) state
         else Command.process(chain.mkString("; "), state, msg => state.log.error(msg))
     }
