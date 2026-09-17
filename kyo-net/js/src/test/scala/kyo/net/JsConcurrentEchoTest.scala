@@ -1,6 +1,7 @@
 package kyo.net
 
 import kyo.*
+import kyo.net.internal.backend.NodeBackend
 import scala.scalajs.js as sjs
 
 /** Concurrent-connection / concurrent reader+writer coverage for the JS (Node.js) transport on the single event loop.
@@ -25,10 +26,16 @@ import scala.scalajs.js as sjs
   *
   * Both plaintext and TLS are covered (a Node TLS server is feasible in this harness, as `JsTransportTlsTest` shows), so the
   * concurrency is exercised on both the raw `net` path and the Node-owned `tls` path.
+  *
+  * The transport is built through `NodeBackend.build` rather than taken from `NetPlatform.transport`, which selects the koffi posix transport
+  * on a host with its native: that path owns no Node `tls` layer, so it is not the one this suite covers.
   */
 class JsConcurrentEchoTest extends Test:
 
     import AllowUnsafe.embrace.danger
+
+    /** The Node transport, whatever the host would select. */
+    private lazy val transport: Transport = NodeBackend.build()
 
     // Self-signed certificate for CN=localhost with SAN=DNS:localhost,IP:127.0.0.1 (the canonical TlsTestCertShared fixture).
     private val localhostCertPem: String = TlsTestCertShared.certPem
@@ -97,7 +104,6 @@ class JsConcurrentEchoTest extends Test:
     end driveConnection
 
     private def runEcho(tls: Boolean)(using Frame): Boolean < (Async & Abort[NetException | Closed] & Scope) =
-        val transport = NetPlatform.transport
         val serverHandler: Connection => Unit = serverConn =>
             // Echo loop using the Unsafe API: take a span from inbound, offer it back to outbound, repeat. Each connection's echo runs as its
             // own onComplete chain on the single event loop, interleaved with every other connection's by Node.
