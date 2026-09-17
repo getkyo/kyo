@@ -82,4 +82,16 @@ class PathPlatformSpecificJvmTest extends kyo.test.Test[Any]:
         assertPanic(catchStructure(exception), exception)
     }
 
+    "walk iteration preserves wrapped interruption as a panic" in {
+        Sync.Unsafe.defer {
+            val primary = new InterruptedIOException("walk interrupted")
+            val iterator = new java.util.Iterator[java.nio.file.Path]:
+                def hasNext: Boolean           = throw new java.io.UncheckedIOException(primary)
+                def next(): java.nio.file.Path = java.nio.file.Path.of("unused")
+            val handle = new NioWalkHandle(Path("walk-root"), iterator, java.util.stream.Stream.empty[java.nio.file.Path]())
+            try assertPanic(handle.next(), primary)
+            finally handle.close()
+        }
+    }
+
 end PathPlatformSpecificJvmTest

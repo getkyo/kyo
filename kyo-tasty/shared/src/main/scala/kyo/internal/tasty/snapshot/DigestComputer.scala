@@ -236,41 +236,48 @@ object DigestComputer:
             }
         }
 
-    /** Collect all .tasty file paths from directory roots via a recursive walk.
+    /** Collect all .tasty file paths from directory roots via the selected filesystem backend.
       *
-      * Uses kyo.Path.exists (no Abort) and a synchronous walk via Path.Unsafe.openWalk, which avoids introducing Scope into the
-      * effect row. The walk handle is released in a finally block before returning. FileStructureException from the walk is converted to
-      * TastyError.SnapshotIoError.
-      *
-      * Unsafe: the openWalk call is synchronous I/O via AllowUnsafe; the handle is closed in a finally block; no resource leak.
+      * The synchronous walker is closed on success, typed failure, and panic without adding Scope
+      * to the effect row. Missing roots contribute no files; access and traversal failures become
+      * TastyError.SnapshotIoError instead of producing a digest of a partial file set.
       */
     private def collectFiles(
         roots: Seq[String]
     )(using Frame): Seq[String] < (Sync & Abort[TastyError]) =
         Kyo.foreach(roots) { root =>
-            Abort.recover[FileSystemException](_ => false)(Path.runReadOnly(Path(root).exists)).map { ex =>
-                if !ex then Sync.defer(Seq.empty[String])
-                else
-                    Sync.Unsafe.defer {
-                        // Unsafe: synchronous directory walk; handle closed in finally; AllowUnsafe scoped to this block.
-                        Path(root).unsafe.openWalk(Int.MaxValue, followLinks = false) match
-                            case Result.Failure(e) =>
-                                Abort.fail(TastyError.SnapshotIoError(s"walk $root: ${e.getMessage}"))
-                            case Result.Success(handle) =>
+            Abort.recover[FileSystemException](error => Abort.fail(TastyError.SnapshotIoError(s"walk $root: ${error.getMessage}"))) {
+                Path.runReadOnly(Path(root).exists).map { exists =>
+                    if !exists then Seq.empty[String]
+                    else
+                        Path.runReadOnly(
+                            kyo.kernel.ArrowEffect.suspend(Tag[PathRead], Path.Op.OpenWalk(Path(root), Int.MaxValue, false))
+                        ).map { handle =>
+                            // Unsafe: synchronous traversal; close completes before the Result becomes an Abort.
+                            Sync.Unsafe.defer {
                                 try
-                                    val results = scala.collection.mutable.ArrayBuffer.empty[String]
-                                    var running = true
+                                    val paths = scala.collection.mutable.ArrayBuffer.empty[String]
+                                    var result: Result[FileReadException | FileStructureException, Seq[String]] = Result.succeed(Seq.empty)
+                                    var running                                                                 = true
                                     while running do
                                         handle.next() match
-                                            case Maybe.Absent => running = false
-                                            case Maybe.Present(p) =>
-                                                if p.name.exists(_.endsWith(".tasty")) then
-                                                    results += p.toString
+                                            case Result.Success(Present(path)) =>
+                                                if path.name.exists(_.endsWith(".tasty")) then paths += path.toString
+                                            case Result.Success(Absent) =>
+                                                result = Result.succeed(paths.toSeq)
+                                                running = false
+                                            case Result.Failure(error) =>
+                                                result = Result.fail(error)
+                                                running = false
+                                            case Result.Panic(error) =>
+                                                result = Result.panic(error)
+                                                running = false
                                     end while
-                                    results.toSeq
-                                finally
-                                    handle.close()
-                    }
+                                    result
+                                finally handle.close()
+                            }.map(Abort.get(_))
+                        }
+                }
             }
         }.map(_.flatten.toSeq)
 

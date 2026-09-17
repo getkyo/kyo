@@ -344,7 +344,7 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
         catchFs(FileSystemOperation.Walk) {
             val jstream  = Files.walk(jpath, maxDepth, followOpts*)
             val iterator = jstream.iterator()
-            new NioWalkHandle(iterator, jstream)
+            new NioWalkHandle(safe, iterator, jstream)
         }
     end openWalk
 
@@ -1004,13 +1004,19 @@ end NioLineReadHandle
 
 /** Concrete directory walk handle backed by a `java.util.stream.Stream[java.nio.file.Path]`. */
 final private[kyo] class NioWalkHandle(
+    root: Path,
     iterator: java.util.Iterator[java.nio.file.Path],
     jstream: java.util.stream.Stream[java.nio.file.Path]
 ) extends Path.WalkHandle:
 
-    def next()(using AllowUnsafe): Maybe[Path] =
-        if iterator.hasNext then Present(new NioPathUnsafe(iterator.next()).safe)
-        else Absent
+    def next()(using AllowUnsafe, Frame): Result[FileReadException | FileStructureException, Maybe[Path]] =
+        try Result.succeed(if iterator.hasNext then Present(new NioPathUnsafe(iterator.next()).safe) else Absent)
+        catch
+            case e: java.io.UncheckedIOException if NioExceptionBoundary.isInterrupted(e.getCause) => Result.panic(e.getCause)
+            case e: java.io.UncheckedIOException => Result.fail(FileIOException(root, FileSystemOperation.Walk, e.getCause))
+            case e: IOException if NioExceptionBoundary.isInterrupted(e) => Result.panic(e)
+            case e: IOException                                          => Result.fail(FileIOException(root, FileSystemOperation.Walk, e))
+            case e: Throwable                                            => Result.panic(e)
 
     def close()(using AllowUnsafe): Unit =
         jstream.close()
@@ -1086,6 +1092,35 @@ abstract private[kyo] class PathPlatformSpecific extends PathDirectories:
                         Result.fail(FileIOException(make(Chunk(prefix)), FileSystemOperation.Create, e))
             )
         )
+
+    private[kyo] def tempUnscoped(parent: Path, prefix: String, suffix: String)(using
+        Frame
+    ): Path < (Sync & Abort[FileStructureException]) =
+        // Unsafe: atomically creates a fresh temporary in the validated parent directory.
+        Sync.Unsafe.defer {
+            Abort.get {
+                try
+                    Result.succeed(new NioPathUnsafe(Files.createTempFile(
+                        java.nio.file.Paths.get(parent.unsafe.show),
+                        prefix,
+                        suffix
+                    )).safe)
+                catch
+                    case e: IOException if NioExceptionBoundary.isInterrupted(e) => Result.panic(e)
+                    case e: IOException => Result.fail(FileIOException(parent, FileSystemOperation.Create, e))
+            }
+        }
+
+    private[kyo] def tempDirUnscoped(parent: Path, prefix: String)(using Frame): Path < (Sync & Abort[FileStructureException]) =
+        // Unsafe: atomically creates a fresh directory in the validated parent directory.
+        Sync.Unsafe.defer {
+            Abort.get {
+                try Result.succeed(new NioPathUnsafe(Files.createTempDirectory(java.nio.file.Paths.get(parent.unsafe.show), prefix)).safe)
+                catch
+                    case e: IOException if NioExceptionBoundary.isInterrupted(e) => Result.panic(e)
+                    case e: IOException => Result.fail(FileIOException(parent, FileSystemOperation.Create, e))
+            }
+        }
 
     private[kyo] def make(parts: Chunk[String]): Path =
         val isAbsolute = parts.headOption.contains("")

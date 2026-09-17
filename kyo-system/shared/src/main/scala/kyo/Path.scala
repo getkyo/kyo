@@ -351,7 +351,7 @@ object Path extends PathPlatformSpecific:
       * Residual: `Sync & Abort[FileSystemException] & S` (the caller's tail `S` rides through).
       *
       * @see
-      *   [[runWith]] to install a custom [[FileSystem]]
+      *   [[runWith]] to install a custom [[FileSystem]] (root-confined host)
       */
     def run[A, S](program: A < (PathWrite & S))(using Frame): A < (Sync & Abort[FileSystemException] & S) =
         FileSystem.useErased(service => runWith(service)(program))
@@ -373,7 +373,8 @@ object Path extends PathPlatformSpecific:
     /** Runs `program` against an explicit `fileSystem`, discharging write and read; the backend's own
       * effect `FS` rides the residual (the Journal `Backend[S]` mapping).
       *
-      * The selected service determines when writes become durable relative to the enclosing run.
+      * Install [[FileSystem.host]](root) for root-confined host I/O. The selected service
+      * determines when writes become durable relative to the enclosing run.
       */
     def runWith[A, S, FS](fileSystem: FileSystem.Write[FS])(program: A < (PathWrite & S))(using
         Frame
@@ -616,7 +617,8 @@ object Path extends PathPlatformSpecific:
       * the enclosing `Scope`. The removal runs through the service that created the directory, so a
       * temp dir made by one service is never deleted by another service's `removeAll`. There is no
       * unscoped public temp-directory primitive. The location of the created directory is
-      * service-defined; the host service uses the OS temporary directory.
+      * service-defined: unconfined host services use the OS temporary directory; root-confined host
+      * services create the directory inside their root.
       */
     def tempDir(prefix: String = "kyo")(using Frame): Path < (PathWrite & Sync & Scope) =
         Scope.acquireRelease(
@@ -1231,10 +1233,12 @@ object Path extends PathPlatformSpecific:
                         // Unsafe: bridges vended walk-handle iteration into the Sync tier.
                         Sync.Unsafe.defer {
                             handle.next() match
-                                case Absent => Loop.done
-                                case Present(path) =>
+                                case Result.Success(Absent) => Loop.done
+                                case Result.Success(Present(path)) =>
                                     if matches(path) then Emit.valueWith(Chunk(path))(Loop.continue)
                                     else Loop.continue
+                                case Result.Failure(error) => raiseRead(Result.Failure(error))
+                                case Result.Panic(error)   => raiseRead(Result.Panic(error))
                         }
                     }
                 }
@@ -1864,7 +1868,7 @@ object Path extends PathPlatformSpecific:
     /** An open directory walker returned by `Path.Unsafe.openWalk`. Platform implementations provide the concrete class. */
     abstract private[kyo] class WalkHandle:
         /** Returns the next path in the walk, or `Absent` when exhausted. */
-        def next()(using AllowUnsafe): Maybe[Path]
+        def next()(using AllowUnsafe, Frame): Result[FileReadException | FileStructureException, Maybe[Path]]
 
         /** Closes the walker, releasing all OS resources. */
         def close()(using AllowUnsafe): Unit

@@ -77,7 +77,9 @@ private[kyo] object ChromeDownloader:
             root     <- cacheRoot
             versionDir = root / s"${artifactName(build)}-$v-$platform"
             exec       = executablePath(versionDir, platform, build)
-            cached <- Abort.recover[FileSystemException](_ => false)(Path.runReadOnly(exec.exists))
+            cached <- Abort.recover[FileSystemException] { ex =>
+                Abort.fail[BrowserSetupException](BrowserSetupFailedException(s"failed to inspect cached Chrome executable $exec", ex))
+            }(Path.runReadOnly(exec.exists))
             _ <-
                 if cached then Kyo.unit
                 else download(build, v, platform, versionDir)
