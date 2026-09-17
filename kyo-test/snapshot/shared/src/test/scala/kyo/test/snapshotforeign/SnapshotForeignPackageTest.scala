@@ -5,6 +5,7 @@ import kyo.Maybe
 import kyo.Result
 import kyo.Schema
 import kyo.Yaml
+import kyo.internal.Platform
 import kyo.test.AssertScope
 import kyo.test.internal.TestContext
 import kyo.test.prop.Gen
@@ -25,7 +26,9 @@ class SnapshotForeignPackageTest extends AnyFunSuite with NonImplicitAssertions:
 
     private given AssertScope = new AssertScope(Chunk.empty)
 
+    /** A fresh directory for the store, which a page has not: a leaf that asks for one cancels on the browser rows. */
     private def tmpDir(): String =
+        assume(!Platform.isBrowser, "reads and writes snapshot files through the file system, which a page has not")
         s"target/snap-foreign-test-${java.lang.System.nanoTime()}"
 
     private def installContexts(): Unit =

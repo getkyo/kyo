@@ -3,6 +3,7 @@ package kyo.test.snapshot
 import java.io.IOException
 import kyo.Maybe
 import kyo.Span
+import kyo.internal.Platform
 import kyo.test.snapshot.internal.SnapshotStore
 import org.scalatest.NonImplicitAssertions
 import org.scalatest.funsuite.AnyFunSuite
@@ -14,8 +15,11 @@ import org.scalatest.funsuite.AnyFunSuite
   */
 class SnapshotStoreFailureTest extends AnyFunSuite with NonImplicitAssertions:
 
-    /** A fresh directory holding one regular file, whose path is returned. */
+    /** A fresh directory holding one regular file, whose path is returned. A page has no file system, so a leaf that asks for one cancels
+      * on the browser rows.
+      */
     private def regularFile(): String =
+        assume(!Platform.isBrowser, "reads and writes snapshot files through the file system, which a page has not")
         val path = s"target/snap-store-test-${java.lang.System.nanoTime()}/file.txt"
         SnapshotStore.write(path, "content")
         path

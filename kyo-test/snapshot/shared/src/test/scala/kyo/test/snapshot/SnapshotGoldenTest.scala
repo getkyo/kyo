@@ -9,6 +9,7 @@ import kyo.Result
 import kyo.Schema
 import kyo.Span
 import kyo.Yaml
+import kyo.internal.Platform
 import kyo.test.AssertionFailed
 import kyo.test.AssertScope
 import kyo.test.RunConfig
@@ -56,7 +57,9 @@ class SnapshotGoldenTest extends AsyncFreeSpec with NonImplicitAssertions:
     // satisfy the assert family's using-clause; the golden throws fire on the synchronous path.
     private given AssertScope = new AssertScope(Chunk.empty)
 
+    /** A fresh directory for the store, which a page has not: a leaf that asks for one cancels on the browser rows. */
     private def tmpDir(): String =
+        assume(!Platform.isBrowser, "reads and writes snapshot files through the file system, which a page has not")
         s"target/snap-golden-test-${java.lang.System.nanoTime()}"
 
     private def installContexts(): Unit =
@@ -142,6 +145,7 @@ class SnapshotGoldenTest extends AsyncFreeSpec with NonImplicitAssertions:
     }
 
     "a golden-only leaf records an assertion and does not trip the no-assertion guard" in {
+        assume(!Platform.isBrowser, "reads and writes snapshot files through the file system, which a page has not")
         TestRunner.runToFuture(classOf[GoldenOnlyLeafSuite], RunConfig.default).map { report =>
             assert(
                 report.passed == 1 && report.failed == 0,

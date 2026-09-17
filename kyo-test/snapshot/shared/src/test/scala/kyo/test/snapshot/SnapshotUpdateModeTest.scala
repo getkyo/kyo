@@ -2,6 +2,7 @@ package kyo.test.snapshot
 
 import kyo.Chunk
 import kyo.Render
+import kyo.internal.Platform
 import kyo.test.AssertionFailed
 import kyo.test.AssertScope
 import kyo.test.internal.TestContext
@@ -28,8 +29,14 @@ class SnapshotUpdateModeTest extends AnyFunSuite with NonImplicitAssertions:
     // satisfy the assert family's using-clause; the snapshot throws fire on the synchronous path.
     private given AssertScope = new AssertScope(Chunk.empty)
 
-    private def tmpDir(): String =
+    /** A fresh directory path that nothing is written to. */
+    private def dirName(): String =
         s"target/snap-update-mode-test-${java.lang.System.nanoTime()}"
+
+    /** A fresh directory for a leaf that reads or writes the store, which a page has not: such a leaf cancels on the browser rows. */
+    private def tmpDir(): String =
+        assume(!Platform.isBrowser, "reads and writes snapshot files through the file system, which a page has not")
+        dirName()
 
     private def installContexts(): Unit =
         TestContext.setForInstantiation(new TestContext(Chunk.empty))
@@ -96,7 +103,7 @@ class SnapshotUpdateModeTest extends AnyFunSuite with NonImplicitAssertions:
     }
 
     test("property-based override reflects KYO_TEST_SNAPSHOT_PROP system property") {
-        val dir     = tmpDir()
+        val dir     = dirName()
         val propKey = "KYO_TEST_SNAPSHOT_PROP"
         java.lang.System.clearProperty(propKey): Unit
         installContexts()

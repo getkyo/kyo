@@ -3,6 +3,7 @@ package kyo.test.snapshot
 import kyo.Base64
 import kyo.Maybe
 import kyo.Span
+import kyo.internal.Platform
 import kyo.test.snapshot.internal.SnapshotStore
 import org.scalatest.NonImplicitAssertions
 import org.scalatest.funsuite.AnyFunSuite
@@ -19,7 +20,9 @@ import org.scalatest.funsuite.AnyFunSuite
   */
 class SnapshotStoreBytesTest extends AnyFunSuite with NonImplicitAssertions:
 
+    /** A fresh directory for the store, which a page has not: a leaf that asks for one cancels on the browser rows. */
     private def tmpDir(): String =
+        assume(!Platform.isBrowser, "reads and writes snapshot files through the file system, which a page has not")
         s"target/snap-bytes-test-${java.lang.System.nanoTime()}"
 
     test("raw-bytes round-trip is byte-identical including 0x00, 0xFF, and a newline byte") {

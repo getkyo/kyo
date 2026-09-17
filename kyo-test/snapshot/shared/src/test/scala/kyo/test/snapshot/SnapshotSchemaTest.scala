@@ -11,6 +11,7 @@ import kyo.Result
 import kyo.Schema
 import kyo.Span
 import kyo.Yaml
+import kyo.internal.Platform
 import kyo.test.AssertionFailed
 import kyo.test.AssertScope
 import kyo.test.internal.TestContext
@@ -34,8 +35,14 @@ class SnapshotSchemaTest extends AnyFunSuite with NonImplicitAssertions:
     // satisfy the assert family's using-clause; the snapshot throws fire on the synchronous path.
     private given AssertScope = new AssertScope(Chunk.empty)
 
-    private def tmpDir(): String =
+    /** A fresh directory path that nothing is written to. */
+    private def dirName(): String =
         s"target/snap-schema-test-${java.lang.System.nanoTime()}"
+
+    /** A fresh directory for a leaf that reads or writes the store, which a page has not: such a leaf cancels on the browser rows. */
+    private def tmpDir(): String =
+        assume(!Platform.isBrowser, "reads and writes snapshot files through the file system, which a page has not")
+        dirName()
 
     private def installContexts(): Unit =
         TestContext.setForInstantiation(new TestContext(Chunk.empty))
@@ -220,7 +227,7 @@ class SnapshotSchemaTest extends AnyFunSuite with NonImplicitAssertions:
     test("name validation rejects a path separator, empty, dot, dot-dot, and an embedded space") {
         val invalidNames = List("a/b", "", ".", "..", "a b")
         invalidNames.foreach { invalidName =>
-            val dir = tmpDir()
+            val dir = dirName()
             installContexts()
             val fixture = new SchemaFixture(dir, update = true)
             intercept[IllegalArgumentException] {
@@ -303,7 +310,7 @@ class SnapshotSchemaTest extends AnyFunSuite with NonImplicitAssertions:
     test("assertSnapshot rejects a path separator, empty, dot, dot-dot, and an embedded space, same as assertSchemaSnapshot") {
         val invalidNames = List("a/b", "", ".", "..", "a b")
         invalidNames.foreach { invalidName =>
-            val dir = tmpDir()
+            val dir = dirName()
             installContexts()
             val fixture = new SchemaFixture(dir, update = true)
             intercept[IllegalArgumentException] {
