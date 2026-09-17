@@ -746,48 +746,63 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
         }
 
         "interrupts a blocked worker above the shrunken currentWorkers bound" in {
-            // The regulator can shrink the admitted worker count while workers above the bound
-            // still hold mounted tasks; the monitor must keep scanning those slots, or a blocked
-            // worker there is never flagged, never compensated for, and never interrupted.
+            // The regulator can shrink the admitted count while workers above the bound still hold mounted tasks.
             val started     = new CountDownLatch(1)
+            val release     = new CountDownLatch(1)
             val interrupted = new AtomicBoolean(false)
-            // The monitor samples CPU time by the id a worker publishes at mount, which on Scala Native is the pthread
-            // handle, not Thread.getId; the sleeper must publish it from inside itself or the slot never reads blocked.
-            val sleeperId = new AtomicLong(0L)
+            val sleeperId   = new AtomicLong(0L)
             val sleeper = new Thread((() => {
                 sleeperId.set(ThreadUserTime.currentThreadId())
                 started.countDown()
                 try Thread.sleep(60000)
                 catch { case _: InterruptedException => interrupted.set(true) }
+                // The synthetic worker still publishes this thread's native handle. Keep it alive until the monitor
+                // has stopped, matching Worker.run's rule that published mount fields are cleared before owner exit.
+                while (release.getCount() > 0)
+                    try release.await()
+                    catch { case _: InterruptedException => () }
             }): Runnable)
             sleeper.setDaemon(true)
             sleeper.start()
-            assert(started.await(5, TimeUnit.SECONDS))
-
-            val clock = InternalClock(TestExecutors.cached)
-            val worker = new Worker(2, TestExecutors.cached, (_, _) => (), _ => null, clock, 10) {
-                def currentInterruptEpoch(): Long = 0L
-                def shouldStop()                  = false
-            }
-            val task = TestTask()
-            task.interrupted = true
-            worker.mount = sleeper
-            worker.mountId = sleeperId.get()
-            worker.currentTask = task
-
-            val workers = new Array[Worker](4)
-            workers(2) = worker
-
-            val monitor = new BlockingMonitor(workers, () => 2, 4, TestExecutors.cached)
-            try
-                eventually(timeout(scaled(Span(10, Seconds)))) {
-                    assert(interrupted.get(), "a mounted worker above currentWorkers must still be scanned and interrupted")
+            try {
+                assert(started.await(5, TimeUnit.SECONDS))
+                val executor = java.util.concurrent.Executors.newFixedThreadPool(2, kyo.scheduler.util.Threads("test-monitor-lifetime"))
+                val clock    = InternalClock(executor)
+                val worker = new Worker(2, TestExecutors.cached, (_, _) => (), _ => null, clock, 10) {
+                    def currentInterruptEpoch(): Long = 0L
+                    def shouldStop()                  = false
                 }
-            finally {
-                monitor.stop()
-                clock.stop()
+                val task = TestTask()
+                task.interrupted = true
+                worker.mount = sleeper
+                worker.mountId = sleeperId.get()
+                worker.currentTask = task
+
+                val workers = new Array[Worker](4)
+                workers(2) = worker
+                val monitor = new BlockingMonitor(workers, () => 2, 4, executor)
+                try {
+                    eventually(timeout(scaled(Span(10, Seconds)))) {
+                        assert(interrupted.get(), "a mounted worker above currentWorkers must still be scanned and interrupted")
+                    }
+                    assert(sleeper.isAlive(), "the published native thread handle must remain live while the monitor can sample it")
+                } finally {
+                    monitor.stop()
+                    clock.stop()
+                    executor.shutdown()
+                    val _ = assert(executor.awaitTermination(5, TimeUnit.SECONDS), "monitor and clock must finish before the sleeper exits")
+                    worker.mountId = -1L
+                    worker.currentTask = null
+                    worker.mount = null
+                }
+            } finally {
+                release.countDown()
+                sleeper.interrupt()
+                sleeper.join(5000)
+                val _ = assert(!sleeper.isAlive(), "the synthetic worker's thread must finish during cleanup")
             }
         }
+
     }
 
     // ── interrupt storms ────────────────────────────────────────────────

@@ -298,7 +298,7 @@ final class Scheduler(
         var worker: Worker = null
         if (submitter eq null) {
             worker = Worker.current()
-            if ((worker ne null) && ((worker eq submitter) || !worker.checkAvailability(nowMs)))
+            if ((worker ne null) && ((worker eq submitter) || !worker.isAvailable(nowMs)))
                 worker = null
         }
         if (worker eq null) {
@@ -311,7 +311,7 @@ final class Scheduler(
                 if (
                     (candidate ne null) &&
                     (candidate ne submitter) &&
-                    candidate.checkAvailability(nowMs)
+                    candidate.isAvailable(nowMs)
                 ) {
                     val l = candidate.load()
                     if (l < minLoad) {

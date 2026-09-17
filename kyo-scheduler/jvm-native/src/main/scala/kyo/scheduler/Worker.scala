@@ -212,14 +212,15 @@ abstract private class Worker(
         }
     }
 
-    /** Checks if this worker can accept new tasks by verifying:
-      *   - Not stalled on a long-running task
-      *   - Not in Stalled state
-      *   - Thread not blocked on I/O or synchronization
+    /** Reports whether this worker can accept new tasks without migrating queued work.
       *
-      * If checks fail while Running, transitions to Stalled and drains queue. Used by scheduler to skip workers that can't make progress.
+      * Placement calls this while choosing a destination, including when another worker is draining its queue. Draining here would recurse
+      * through other blocked workers and repeatedly move the same tasks while every destination remains unavailable.
+      *
+      * Long-running CPU tasks still receive a preemption request. The maintenance cycle separately calls checkAvailability to transition
+      * unavailable workers to Stalled and migrate their queued tasks.
       */
-    def checkAvailability(nowMs: Long): Boolean = {
+    def isAvailable(nowMs: Long): Boolean = {
         val st = this.state.get()
         // Evaluate checkStalling for any non-blocked worker, not just a Running one: a worker already in Stalled
         // state but pinned on a long-running, preemptible CPU-bound task must still receive doPreempt once work
@@ -228,10 +229,18 @@ abstract private class Worker(
         // deadlocks the scheduler under CPU-bound load. Blocked workers are excluded: their task is parked on I/O,
         // not burning a time slice, so it is the BlockingMonitor's Thread.interrupt (not a time-slice doPreempt)
         // that frees them. Issuing doPreempt against a blocked task is pointless and, on Native, unsafe.
-        val stalling  = !blocked && checkStalling(nowMs)
-        val available = (st ne State.Stalled) && !blocked && !stalling
+        val stalling = !blocked && checkStalling(nowMs)
+        (st ne State.Stalled) && !blocked && !stalling
+    }
+
+    /** Checks availability and migrates work away from an unavailable worker.
+      *
+      * Used by the maintenance cycle. Placement uses isAvailable so draining a queue cannot recursively drain destination queues.
+      */
+    def checkAvailability(nowMs: Long): Boolean = {
+        val available = isAvailable(nowMs)
         if (!available) {
-            if ((st eq State.Running) && state.compareAndSet(State.Running, State.Stalled))
+            if (state.compareAndSet(State.Running, State.Stalled))
                 drain()
             else if (blocked && !queue.isEmpty())
                 // Drain again for a worker that is ALREADY Stalled and still blocked. The transition drain above fires once,
@@ -448,8 +457,7 @@ abstract private class Worker(
 
 private object Worker {
 
-    // Created without inheriting the creator's thread-locals (the final `false` is `inheritThreadLocals`): a worker spawned by a busy parent would
-    // otherwise share the parent's Scala Native `StackTrace` unwind-cursor `Context`, and two threads driving one cursor corrupt it into a native SIGSEGV.
+    // A worker can serve unrelated callers, so it must not inherit the creating caller's thread-local state.
     final class WorkerThread(init: Runnable)
         extends Thread(null, init, "kyo-scheduler-worker", 0L, false) {
         var currentWorker: Worker = null
