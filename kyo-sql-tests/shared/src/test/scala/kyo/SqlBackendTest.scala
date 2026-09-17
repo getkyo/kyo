@@ -94,7 +94,18 @@ abstract class SqlBackendTest extends SqlContainerTest:
     )(
         f: (SqlTestBackend, SqlClient, SqlTestBackend.Schema) => String < (Async & Abort[SqlException] & Scope & DB)
     )(using Frame, kyo.test.AssertScope): Unit < (Async & Abort[SqlException | ContainerException] & Scope) =
-        val backends = SqlTestBackends.available.filter(where)
+        val reachable = SqlTestBackends.available
+        val backends  = reachable.filter(where)
+        // Two different empties, and only one of them is a defect. A `where` that matches none of the backends that
+        // ARE here is the ordinary shape of a complementary pair: every backend is claimed by exactly one side, so on
+        // a platform reaching a single engine one side is necessarily empty. Cancelled rather than passed, so the
+        // report says the leaf did not run and why; passing it silently would hide a filter that matches nothing
+        // because it is wrong. No backend AT ALL is the defect, and it stays red below.
+        if reachable.nonEmpty && backends.isEmpty then
+            assume(
+                false,
+                "no reachable backend matches this leaf's filter, so its complement claims them all"
+            )
         // Vacuity depends on `expected`. An UNPINNED leaf over one backend verifies nothing, since every answer agrees
         // with itself; a PINNED one still asserts that this engine answers this exact string. Guarding both alike would
         // switch off real coverage wherever only one engine is reachable.
