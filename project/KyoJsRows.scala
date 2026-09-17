@@ -75,8 +75,71 @@ object KyoJsRows extends AutoPlugin {
           */
         val kyoJsBatchLink: SettingKey[Boolean] =
             settingKey[Boolean]("Whether every Scala.js link frees the linker's state when it finishes (the linker's batch mode)")
+
+        /** kyo-test-browser's runtime classpath as the session built it before a `++` switch, which the browser rows run while the switch
+          * keeps the tool from building.
+          *
+          * The tool is a Scala 3 JVM program, and some of its dependencies (kyo-config among them) also build for Scala 2.13, so
+          * `++2.13.18` moves them and the tool no longer compiles against them. testKyo sets this with [[pinBrowserToolCommand]] before a
+          * browser pass leaves the primary Scala version and clears it with [[unpinBrowserToolCommand]] after. The rows use it only while a
+          * dependency of the tool is on another Scala version than the tool, so a pin left by a run that stopped short cannot stand in
+          * for a tool the session can build.
+          */
+        val kyoBrowserToolPin: SettingKey[Option[Seq[File]]] =
+            settingKey[Option[Seq[File]]]("kyo-test-browser's classpath from before a ++ switch, run while the switch keeps it from building")
     }
     import autoImport.*
+
+    /** The project that builds kyo-test-browser, the JVM program the browser rows run. */
+    private val browserToolProject = "kyo-test-browserJVM"
+
+    val pinBrowserToolName: String = "kyoPinBrowserTool"
+
+    /** Builds kyo-test-browser at the session's current Scala versions and records its runtime classpath in
+      * [[autoImport.kyoBrowserToolPin]], as a session setting, so it stays through a later `++`.
+      */
+    def pinBrowserToolCommand: Command = Command.command(pinBrowserToolName) { state =>
+        val extracted         = Project.extract(state)
+        val (next, classpath) = extracted.runTask(LocalProject(browserToolProject) / Runtime / fullClasspath, state)
+        val session           = extracted.session
+        val pin               = Global / kyoBrowserToolPin := Some(classpath.files)
+        BuiltinCommands.reapply(session.copy(rawAppend = withoutPin(session.rawAppend) :+ pin), extracted.structure, next)
+    }
+
+    val unpinBrowserToolName: String = "kyoUnpinBrowserTool"
+
+    /** Removes the classpath [[pinBrowserToolCommand]] recorded, so the browser rows build kyo-test-browser again. */
+    def unpinBrowserToolCommand: Command = Command.command(unpinBrowserToolName) { state =>
+        val extracted = Project.extract(state)
+        val session   = extracted.session
+        BuiltinCommands.reapply(session.copy(rawAppend = withoutPin(session.rawAppend)), extracted.structure, state)
+    }
+
+    private def withoutPin(settings: Seq[Setting[?]]): Seq[Setting[?]] =
+        settings.filterNot(_.key.key == kyoBrowserToolPin.key)
+
+    /** kyo-test-browser's runtime classpath: built from its project, or the pinned one while a `++` has moved one of the tool's dependencies
+      * to another Scala version, which the tool cannot compile against.
+      */
+    private def browserToolClasspath: Def.Initialize[Task[Seq[File]]] = Def.taskDyn {
+        val tool    = ProjectRef(thisProjectRef.value.build, browserToolProject)
+        val data    = settingsData.value
+        val version = (tool / scalaVersion).get(data)
+        val moved   = buildDependencies.value.classpathTransitiveRefs(tool).filter(dep => (dep / scalaVersion).get(data) != version)
+        val pin     = kyoBrowserToolPin.value
+        if (moved.isEmpty) Def.task[Seq[File]]((tool / Runtime / fullClasspath).value.files)
+        else if (pin.isDefined) Def.task[Seq[File]](pin.get)
+        else {
+            val names = moved.map(dep => s"${dep.project} (Scala ${(dep / scalaVersion).get(data).getOrElse("unset")})").mkString(", ")
+            Def.task[Seq[File]](
+                sys.error(
+                    s"kyo-test-browser builds on Scala ${version.getOrElse("unset")}, and a ++ switch moved its dependencies $names, so it " +
+                        s"cannot compile. testKyo runs a cross version's browser rows with the tool the primary version built; by hand, run " +
+                        s"$pinBrowserToolName before the ++."
+                )
+            )
+        }
+    }
 
     /** The flag Node needs to load a WasmGC module that uses exception handling. */
     val wasmExceptionFlag: String = "--experimental-wasm-exnref"
@@ -96,7 +159,8 @@ object KyoJsRows extends AutoPlugin {
     // them on every load.
     override def globalSettings: Seq[Setting[?]] = KyoTestJsPlugin.browserGlobalSettings ++ Seq(
         excludeLintKeys ++= Set[Def.KeyedInitialize[?]](kyoWasmRow, kyoBrowserRow),
-        kyoJsBatchLink := insideCI.value
+        kyoJsBatchLink    := insideCI.value,
+        kyoBrowserToolPin := None
     )
 
     /** The chrome-headless-shell version the browser rows run, pinned so a Chrome release cannot change a run; CI's Chrome cache is keyed on
@@ -144,7 +208,7 @@ object KyoJsRows extends AutoPlugin {
         ) ++
             row(WasmTest, wasmLinkerConfig, Def.task(nodeEnv(kyoNodeArgs.value :+ wasmExceptionFlag, kyoNodeEnv.value))) ++
             KyoTestJsPlugin.browserSettings ++ Seq(
-                kyoTestBrowserClasspath := (LocalProject("kyo-test-browserJVM") / Runtime / fullClasspath).value.files,
+                kyoTestBrowserClasspath := browserToolClasspath.value,
                 kyoTestChromeVersion    := Some(chromeVersion((LocalRootProject / baseDirectory).value))
             ) ++
             // A page loads an ES module or a classic script, never CommonJS, so the JS browser row links an ES module whatever Test links.

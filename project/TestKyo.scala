@@ -353,14 +353,20 @@ object TestKyo {
     private def execute(state: State, a: Args, scala3: String, passes: Seq[(String, Seq[String])]): State = {
         val chain   = collection.mutable.ListBuffer.empty[String]
         var current = scala3
+        // The browser rows run kyo-test-browser, a Scala 3 JVM program whose dependencies a `++` to a Scala 2 version moves off Scala 3,
+        // so a browser pass at a cross version runs the tool as the primary version built it (KyoJsRows.kyoBrowserToolPin).
+        val runsBrowserTool = a.phase == "test" && a.platform.exists(p => p == "Browser" || p == "BrowserWasm")
+        var pinned          = false
         passes.foreach { case (version, modules) =>
             if (modules.isEmpty) {
                 log(s"Scala $version: no modules selected")
                 log("completed")
             } else {
+                val pin    = if (runsBrowserTool && !pinned && version != scala3) Seq(KyoJsRows.pinBrowserToolName) else Nil
                 val switch = if (version == current) Nil else Seq(s"++$version")
-                val parts  = (switch ++ modules.map(taskFor(a.phase, _, a.isQuick, a.platform))) :+ doneCommandName
+                val parts  = (pin ++ switch ++ modules.map(taskFor(a.phase, _, a.isQuick, a.platform))) :+ doneCommandName
                 current = version
+                pinned = pinned || pin.nonEmpty
                 log(s"Scala $version, ${phaseLabel(a.phase)} ${modules.size} modules: ${modules.mkString(", ")}")
                 log(s"pass: ${parts.mkString("; ")}")
                 chain ++= parts
@@ -370,6 +376,7 @@ object TestKyo {
             log(s"restoring Scala $scala3 after the last pass")
             chain += s"++$scala3"
         }
+        if (pinned) chain += KyoJsRows.unpinBrowserToolName
         // Each linked project keeps its linker state for the rest of the session unless the link runs in batch mode, and a run over
         // many JS projects would hold all of it at once (KyoJsRows.kyoJsBatchLink). The setting stays in the session through `++`.
         val jsTested = passes.flatMap(_._2).count(_.endsWith("JS"))
