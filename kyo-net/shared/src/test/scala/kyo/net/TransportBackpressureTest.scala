@@ -16,6 +16,10 @@ import kyo.*
   */
 class TransportBackpressureTest extends Test:
 
+    // Drives a socket through NetPlatform.transport rather than through the per-backend fan-out, and a page has no backend to select:
+    // the probe reports none and the call fails with NetBackendUnavailableException.
+    override protected def hostFilters = kyo.Chunk(kyo.test.HostFilter.NotBrowser)
+
     import AllowUnsafe.embrace.danger
 
     /** A loopback listener that echoes every inbound chunk back to its sender, looping until the connection closes. */

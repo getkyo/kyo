@@ -18,17 +18,22 @@ class IoBackendPlatformJsTest extends Test:
 
     override def config = super.config.sequential
 
-    /** Runs `f` with `process` deleted from the global object. Restored in a `finally` because the test runner talks over `process.stdout`. */
+    /** Runs `f` with `process` deleted from the global object. Restored in a `finally` because the test runner talks over `process.stdout`.
+      *
+      * Both the read and the restore go through `globalThis`: a bare `process` is a ReferenceError where none is declared, and a page has
+      * none to stash, so it starts in the state this helper fabricates on Node and the leaf below asserts the real thing there.
+      */
     private def withoutProcessGlobal[A](f: => A): A =
         val global = sjs.Dynamic.global.globalThis
-        val saved  = sjs.Dynamic.global.process
+        val saved  = global.selectDynamic("process")
+        val had    = !sjs.isUndefined(saved)
         discard(sjs.special.delete(global, "process"))
         try f
-        finally global.updateDynamic("process")(saved)
+        finally if had then global.updateDynamic("process")(saved)
         end try
     end withoutProcessGlobal
 
-    "on Node, the node backend probes available" in {
+    "on Node, the node backend probes available".notBrowser in {
         assert(NodeBackend.doProbe == CapabilityOutcome.Available)
     }
 

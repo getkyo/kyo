@@ -196,7 +196,7 @@ class SslLibProviderOwnershipTest extends Test:
       * released when it is freed, or released by construction itself. There is no third outcome, and a failure that produces one is a leak
       * whether or not anyone predicted the path.
       */
-    "every fallible call in engine construction leaves nothing outstanding" in {
+    "every fallible call in engine construction leaves nothing outstanding".notBrowser in {
         Scope.run(Path.run(Path.tempDir("kyo-tls-ownership").map { dir =>
             val material = dir / "material.pem"
             // The stub never parses it; the file only has to be readable, because readPem fails closed on a path it cannot read and that

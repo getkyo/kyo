@@ -28,7 +28,7 @@ class NodeNetModulesTest extends Test:
         settled.asInstanceOf[Fiber.Unsafe[Unit, Any]].safe.get
     end loadSettled
 
-    "an operation started before the first load runs with the loaded modules" in {
+    "an operation started before the first load runs with the loaded modules".notBrowser in {
         NodeNetModules.forgetForTesting()
         val fiber = NodeNetModules.afterLoad { modules =>
             Fiber.Unsafe.fromResult(Result.succeed(sjs.typeOf(modules.net.createServer) + " " + sjs.typeOf(modules.tls.connect)))
@@ -52,7 +52,7 @@ class NodeNetModulesTest extends Test:
         }
     }
 
-    "an operation that throws while starting fails its fiber with the throw" in {
+    "an operation that throws while starting fails its fiber with the throw".notBrowser in {
         NodeNetModules.forgetForTesting()
         val boom  = new IllegalStateException("thrown while starting")
         val fiber = NodeNetModules.afterLoad[Unit](_ => throw boom)
@@ -61,7 +61,7 @@ class NodeNetModulesTest extends Test:
         }
     }
 
-    "once loaded, an operation runs immediately" in {
+    "once loaded, an operation runs immediately".notBrowser in {
         loadSettled().andThen {
             var ran = false
             discard(NodeNetModules.afterLoad { _ =>

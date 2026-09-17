@@ -17,6 +17,9 @@ import kyo.*
   */
 class ConnectDeadlineStrandTest extends Test:
 
+    // Asserts that a finite connect deadline strands nothing, which needs connects a page cannot make.
+    override protected def hostFilters = kyo.Chunk(kyo.test.HostFilter.NotBrowser)
+
     import AllowUnsafe.embrace.danger
 
     "sequential connects under a finite connect deadline never spuriously time out" in {

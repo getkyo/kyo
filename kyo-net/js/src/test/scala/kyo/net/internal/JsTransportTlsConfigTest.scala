@@ -26,11 +26,17 @@ import scala.scalajs.js as sjs
   */
 class JsTransportTlsConfigTest extends Test:
 
+    // Configures TLS on Node's own transport, with certificates written to a temp directory. A page has neither.
+    override protected def hostFilters = kyo.Chunk(kyo.test.HostFilter.NotBrowser)
+
     import AllowUnsafe.embrace.danger
 
-    private val fs       = sjs.Dynamic.global.require("fs")
-    private val os       = sjs.Dynamic.global.require("os")
-    private val nodePath = sjs.Dynamic.global.require("path")
+    // Lazy, not eager: `require` is a bare identifier read with no binding in a page, and a field initialized in the class body runs
+    // when the suite is constructed, which is before any host filter can cancel a leaf. Forced only from a leaf body, the filter below
+    // means a page never reaches them.
+    private lazy val fs       = sjs.Dynamic.global.require("fs")
+    private lazy val os       = sjs.Dynamic.global.require("os")
+    private lazy val nodePath = sjs.Dynamic.global.require("path")
 
     /** An absolute path that does not exist, so any read of it fails deterministically. */
     private def unreadablePath(): String =

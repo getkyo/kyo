@@ -12,7 +12,7 @@ class ConnectionTest extends Test:
     import AllowUnsafe.embrace.danger
 
     "Connection echo loopback" - {
-        "write and read back via echo server on loopback TCP" in {
+        "write and read back via echo server on loopback TCP".notBrowser in {
             val transport = NetPlatform.transport
             for
                 portRef <- AtomicRef.init[Int](0)
@@ -136,7 +136,7 @@ class ConnectionTest extends Test:
     }
 
     "Connection.write propagates Closed abort" - {
-        "write to closed connection raises Abort[Closed] or succeeds" in {
+        "write to closed connection raises Abort[Closed] or succeeds".notBrowser in {
             val transport = NetPlatform.transport
             for
                 listener <- transport.listen("127.0.0.1", 0, 128)(_ => ()).safe.get

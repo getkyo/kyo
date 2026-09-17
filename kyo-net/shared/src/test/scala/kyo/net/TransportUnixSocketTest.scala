@@ -19,6 +19,9 @@ import kyo.*
   */
 class TransportUnixSocketTest extends Test:
 
+    // Unix sockets are a file system path and a backend, neither of which a page has.
+    override protected def hostFilters = kyo.Chunk(kyo.test.HostFilter.NotBrowser)
+
     import AllowUnsafe.embrace.danger
 
     private def assumeUnixSockets(transport: Transport)(using Frame): Unit =

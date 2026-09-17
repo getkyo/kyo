@@ -16,6 +16,9 @@ import kyo.net.internal.backend.NodeBackend
   */
 class JsTransportSocketOptionsTest extends Test:
 
+    // Socket buffer options are refused or honored by Node's transport, which a page does not have.
+    override protected def hostFilters = kyo.Chunk(kyo.test.HostFilter.NotBrowser)
+
     import AllowUnsafe.embrace.danger
 
     private val bufferSize = 65536

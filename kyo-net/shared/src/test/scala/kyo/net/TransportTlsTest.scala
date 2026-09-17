@@ -92,7 +92,7 @@ class TransportTlsTest extends Test:
         }
     }
 
-    "pem fixture paths are unique under concurrent writes" in {
+    "pem fixture paths are unique under concurrent writes".notBrowser in {
         // pins TlsTestCertShared.uniquePathTag: nanoTime alone can tie across concurrent callers
         // (its granularity is about 40ns on an aarch64 VM, and a suite start fans the whole cell
         // matrix out at once), and a tied path means one cell truncate-rewrites the very pem

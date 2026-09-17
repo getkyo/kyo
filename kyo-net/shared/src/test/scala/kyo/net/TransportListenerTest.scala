@@ -8,6 +8,9 @@ import kyo.*
   */
 class TransportListenerTest extends Test:
 
+    // Binding a port needs a backend, and a page has none.
+    override protected def hostFilters = kyo.Chunk(kyo.test.HostFilter.NotBrowser)
+
     import AllowUnsafe.embrace.danger
 
     "Transport listener lifecycle (every backend via NetPlatform.transport)" - {

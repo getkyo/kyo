@@ -32,6 +32,9 @@ import scala.scalajs.js as sjs
   */
 class JsConcurrentEchoTest extends Test:
 
+    // Echoes over Node's own transport, with TLS fixtures staged on disk. A page has neither.
+    override protected def hostFilters = kyo.Chunk(kyo.test.HostFilter.NotBrowser)
+
     import AllowUnsafe.embrace.danger
 
     /** The Node transport, whatever the host would select. */
@@ -42,9 +45,12 @@ class JsConcurrentEchoTest extends Test:
 
     private val localhostKeyPem: String = TlsTestCertShared.keyPem
 
-    private val fs       = sjs.Dynamic.global.require("fs")
-    private val os       = sjs.Dynamic.global.require("os")
-    private val nodePath = sjs.Dynamic.global.require("path")
+    // Lazy, not eager: `require` is a bare identifier read with no binding in a page, and a field initialized in the class body runs
+    // when the suite is constructed, which is before any host filter can cancel a leaf. Forced only from a leaf body, the filter below
+    // means a page never reaches them.
+    private lazy val fs       = sjs.Dynamic.global.require("fs")
+    private lazy val os       = sjs.Dynamic.global.require("os")
+    private lazy val nodePath = sjs.Dynamic.global.require("path")
 
     private def writeTempPem(content: String, name: String): String =
         val dir  = os.tmpdir().asInstanceOf[String]

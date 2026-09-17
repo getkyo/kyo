@@ -10,6 +10,9 @@ import kyo.*
   */
 class ConnectBurstTest extends Test:
 
+    // Connects through NetPlatform.transport, which a page cannot: no backend is available there.
+    override protected def hostFilters = kyo.Chunk(kyo.test.HostFilter.NotBrowser)
+
     import AllowUnsafe.embrace.danger
 
     private def echoListener(transport: Transport)(using Frame): Listener < (Async & Abort[NetException]) =

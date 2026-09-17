@@ -17,6 +17,9 @@ import scala.scalajs.js as sjs
   */
 class JsIoDriverAwaitWritableFailureTest extends Test:
 
+    // The mock socket is a Node EventEmitter, reached through require, and the subject is Node's driver.
+    override protected def hostFilters = kyo.Chunk(kyo.test.HostFilter.NotBrowser)
+
     import AllowUnsafe.embrace.danger
     given Frame = Frame.internal
 

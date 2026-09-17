@@ -22,6 +22,9 @@ import kyo.*
   */
 class TransportConnectTimeoutProducedTest extends Test:
 
+    // A connect deadline is only observable once a connect can be attempted, and a page has no backend to attempt one with.
+    override protected def hostFilters = kyo.Chunk(kyo.test.HostFilter.NotBrowser)
+
     import AllowUnsafe.embrace.danger
 
     // 192.0.2.1 is in 192.0.2.0/24, RFC 5737 TEST-NET-1: a reserved, routable-but-unanswered address, so a TCP connect parks in SYN_SENT until

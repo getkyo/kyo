@@ -15,6 +15,9 @@ import kyo.*
   */
 class TransportConcurrentEchoTest extends Test:
 
+    // Stands up an echo listener and connects to it through NetPlatform.transport, neither of which a page can do.
+    override protected def hostFilters = kyo.Chunk(kyo.test.HostFilter.NotBrowser)
+
     import AllowUnsafe.embrace.danger
 
     private val connections = 12

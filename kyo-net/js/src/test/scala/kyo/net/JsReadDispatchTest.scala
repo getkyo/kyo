@@ -24,6 +24,9 @@ import kyo.*
   */
 class JsReadDispatchTest extends Test:
 
+    // Drives a multi-megabyte stream over the real Node transport, which a page has not.
+    override protected def hostFilters = kyo.Chunk(kyo.test.HostFilter.NotBrowser)
+
     import AllowUnsafe.embrace.danger
 
     // A few MB so Node fragments the write into many "data" chunks: each chunk drives one real read-pump re-entry cycle (awaitRead -> resume ->

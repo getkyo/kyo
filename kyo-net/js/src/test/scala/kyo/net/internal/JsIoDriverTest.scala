@@ -11,6 +11,9 @@ import scala.scalajs.js as sjs
   */
 class JsIoDriverTest extends kyo.net.Test:
 
+    // The driver under test is Node's: its sockets come from node:net, which a page cannot import.
+    override protected def hostFilters = kyo.Chunk(kyo.test.HostFilter.NotBrowser)
+
     import AllowUnsafe.embrace.danger
 
     // `process.getBuiltinModule` rather than `sjs.Dynamic.global.require("net")`: this suite is shared with the Wasm backend, which links

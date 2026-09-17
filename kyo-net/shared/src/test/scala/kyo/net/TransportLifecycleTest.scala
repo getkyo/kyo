@@ -14,6 +14,9 @@ import kyo.*
   */
 class TransportLifecycleTest extends Test:
 
+    // Every leaf opens a connection through NetPlatform.transport and asserts on how it ends; a page never opens one.
+    override protected def hostFilters = kyo.Chunk(kyo.test.HostFilter.NotBrowser)
+
     import AllowUnsafe.embrace.danger
 
     "Transport lifecycle (every backend via NetPlatform.transport)" - {

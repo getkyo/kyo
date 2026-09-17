@@ -17,6 +17,9 @@ import kyo.net.internal.TlsProviderPlatform
   */
 class TransportPerOperationConfigTest extends Test:
 
+    // Per-operation config is observed on real connections and listeners, which a page has no backend to create.
+    override protected def hostFilters = kyo.Chunk(kyo.test.HostFilter.NotBrowser)
+
     import AllowUnsafe.embrace.danger
 
     private def assumeTls(): Unit =

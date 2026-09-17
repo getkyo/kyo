@@ -14,7 +14,7 @@ class TransportUnsafeTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
-    "echo round-trip via unsafe API" in {
+    "echo round-trip via unsafe API".notBrowser in {
         val transport = NetPlatform.transport
         for
             listener <- transport.listen("127.0.0.1", 0, 128) { serverConn =>
@@ -50,7 +50,7 @@ class TransportUnsafeTest extends Test:
         }
     }
 
-    "listen handler fires once per accepted connection" in {
+    "listen handler fires once per accepted connection".notBrowser in {
         val transport = NetPlatform.transport
         val count     = new java.util.concurrent.atomic.AtomicInteger(0)
         for
@@ -79,7 +79,7 @@ class TransportUnsafeTest extends Test:
         end for
     }
 
-    "write n bytes and read n echoes verifies no corruption" in {
+    "write n bytes and read n echoes verifies no corruption".notBrowser in {
         // Drives a sequence of n echo round-trips on one connection.
         // Uses the same simple onComplete-chain pattern as the echo test, but repeated n times sequentially.
         val transport = NetPlatform.transport
@@ -115,7 +115,7 @@ class TransportUnsafeTest extends Test:
         end for
     }
 
-    "a fiber parked on inbound can be interrupted" in {
+    "a fiber parked on inbound can be interrupted".notBrowser in {
         val transport = NetPlatform.transport
         for
             listener <- transport.listen("127.0.0.1", 0, 128)(_ => ()).safe.get

@@ -14,6 +14,10 @@ import scala.scalajs.js as sjs
   */
 class JsTransportStdioTest extends Test:
 
+    // The subject is JsTransport.stdio, which is Node's stdio over Node's transport. A page has neither, so its "no process global"
+    // case is not this suite's case: it never gets as far as having a transport to ask.
+    override protected def hostFilters = kyo.Chunk(kyo.test.HostFilter.NotBrowser)
+
     import AllowUnsafe.embrace.danger
 
     private def withoutProcessGlobal[A](f: => A): A =

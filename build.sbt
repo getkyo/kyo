@@ -1917,10 +1917,11 @@ lazy val `kyo-net` =
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
             // Stage the plugin-compiled koffi natives beside the linked test programs and bootstrap koffi into node_modules before tests run.
             kyoJsTestNatives,
-            Test / compile := (Test / compile).dependsOn(kyoNetKoffiInstall).value,
-            // Sockets: the backend probe selects no candidate in a page (node, epoll, kqueue and io_uring all need a
-            // host), so every transport suite would report the same NetBackendUnavailableException. No browser row.
-            kyoBrowserRow := false
+            // The browser row runs here. The backend probe selects no candidate in a page (node, epoll, kqueue and
+            // io_uring all need a host), which is what NetPlatform's scaladoc promises, and kyo.net.Test already
+            // registers a leaf per backend and cancels the unavailable ones with a reason naming the host. The
+            // suites that reach NetPlatform.transport without going through that fan-out carry their own filter.
+            Test / compile := (Test / compile).dependsOn(kyoNetKoffiInstall).value
         )
 
 lazy val `kyo-aeron` =
