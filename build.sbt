@@ -1089,6 +1089,12 @@ lazy val `kyo-sql-sqlite` =
                     FfiLibrary(
                         id = "kyo_sqlite",
                         cSources = (sharedBase / "src" / "main" / "c" ** "*.c").get ++ stagedSources,
+                        // Scala Native copies the declared C beside its own generated sources and compiles it
+                        // THERE, so includeDirs does not reach it: every header the sources include has to be
+                        // bundled too. Omitting sqlite3.h still built on macOS, whose SDK ships one that silently
+                        // satisfied the include while the vendored sqlite3.c was linked, and failed on Linux,
+                        // which has no system copy.
+                        cHeaders = (sharedBase / "src" / "main" / "c" ** "*.h").get ++ (sqliteStaged * "*.h").get,
                         // The staged directory carries sqlite3.h, which the shim includes.
                         includeDirs = Seq(sharedBase / "src" / "main" / "c", sqliteStaged),
                         // THREADSAFE=1 because connections in a pool are handed between carrier threads.
