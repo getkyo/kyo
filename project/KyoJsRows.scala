@@ -82,8 +82,8 @@ object KyoJsRows extends AutoPlugin {
           * The tool is a Scala 3 JVM program, and some of its dependencies (kyo-config among them) also build for Scala 2.13, so
           * `++2.13.18` moves them and the tool no longer compiles against them. testKyo sets this with [[pinBrowserToolCommand]] before a
           * browser pass leaves the primary Scala version and clears it with [[unpinBrowserToolCommand]] after. The rows use it only while a
-          * dependency of the tool is on another Scala version than the tool, so a pin left by a run that stopped short cannot stand in
-          * for a tool the session can build.
+          * dependency of the tool is on a Scala version the tool cannot compile against, so a pin left by a run that stopped short cannot
+          * stand in for a tool the session can build. The 3.3 LTS line kyo-config returns to after the switch back is not such a version.
           */
         val kyoBrowserToolPin: SettingKey[Option[Seq[File]]] =
             settingKey[Option[Seq[File]]]("kyo-test-browser's classpath from before a ++ switch, run while the switch keeps it from building")
@@ -118,23 +118,35 @@ object KyoJsRows extends AutoPlugin {
     private def withoutPin(settings: Seq[Setting[?]]): Seq[Setting[?]] =
         settings.filterNot(_.key.key == kyoBrowserToolPin.key)
 
+    /** Whether code compiled by Scala `compiler` can depend on code compiled by Scala `built`: the same Scala 2 line, or for Scala 3 a
+      * minor no newer than the compiler's, since a Scala 3 compiler reads the TASTy of its own minor and older ones.
+      */
+    private def compilesAgainst(compiler: String, built: String): Boolean =
+        (CrossVersion.partialVersion(compiler), CrossVersion.partialVersion(built)) match {
+            case (Some((3, compilerMinor)), Some((3, builtMinor))) => builtMinor <= compilerMinor
+            case (Some(compilerLine), Some(builtLine))             => compilerLine == builtLine
+            case _                                                 => false
+        }
+
     /** kyo-test-browser's runtime classpath: built from its project, or the pinned one while a `++` has moved one of the tool's dependencies
-      * to another Scala version, which the tool cannot compile against.
+      * to a Scala version the tool cannot compile against.
       */
     private def browserToolClasspath: Def.Initialize[Task[Seq[File]]] = Def.taskDyn {
         val tool    = ProjectRef(thisProjectRef.value.build, browserToolProject)
         val data    = settingsData.value
-        val version = (tool / scalaVersion).get(data)
-        val moved   = buildDependencies.value.classpathTransitiveRefs(tool).filter(dep => (dep / scalaVersion).get(data) != version)
-        val pin     = kyoBrowserToolPin.value
+        val version = (tool / scalaVersion).get(data).getOrElse("unset")
+        val moved = buildDependencies.value.classpathTransitiveRefs(tool).filterNot { dep =>
+            (dep / scalaVersion).get(data).exists(compilesAgainst(version, _))
+        }
+        val pin = kyoBrowserToolPin.value
         if (moved.isEmpty) Def.task[Seq[File]]((tool / Runtime / fullClasspath).value.files)
         else if (pin.isDefined) Def.task[Seq[File]](pin.get)
         else {
             val names = moved.map(dep => s"${dep.project} (Scala ${(dep / scalaVersion).get(data).getOrElse("unset")})").mkString(", ")
             Def.task[Seq[File]](
                 sys.error(
-                    s"kyo-test-browser builds on Scala ${version.getOrElse("unset")}, and a ++ switch moved its dependencies $names, so it " +
-                        s"cannot compile. testKyo runs a cross version's browser rows with the tool the primary version built; by hand, run " +
+                    s"kyo-test-browser builds on Scala $version, and a ++ switch moved its dependencies $names, which it cannot compile " +
+                        s"against. testKyo runs a cross version's browser rows with the tool the primary version built; by hand, run " +
                         s"$pinBrowserToolName before the ++."
                 )
             )
