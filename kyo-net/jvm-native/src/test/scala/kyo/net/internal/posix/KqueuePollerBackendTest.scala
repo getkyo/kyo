@@ -49,6 +49,46 @@ class KqueuePollerBackendTest extends Test:
             }
         }
 
+        Seq(false, true).foreach { fdClosing =>
+            val state = if fdClosing then "closed" else "live"
+            s"deregistering a $state fd cancels its staged interests and preserves another fd's interest" in {
+                assumeKqueue()
+                val backend  = PollerBackend.default()
+                val pollerFd = backend.create()
+                assert(pollerFd >= 0, s"kqueue create failed: $pollerFd")
+                val scratch = backend.newPollScratch()
+                Scope.ensure(Sync.defer {
+                    scratch.close()
+                    backend.close(pollerFd)
+                }).andThen {
+                    PosixTestSockets.loopbackPair().map { case (client, accepted) =>
+                        Scope.ensure(Sync.defer {
+                            discard(sock.close(client))
+                            if !fdClosing then discard(sock.close(accepted))
+                        }).andThen {
+                            // Both filters for accepted are still staged. The intervening client entry must remain armed when they are removed.
+                            discard(backend.registerRead(pollerFd, accepted, accepted.toLong, scratch))
+                            discard(backend.registerWrite(pollerFd, client, client.toLong, scratch))
+                            discard(backend.registerWrite(pollerFd, accepted, accepted.toLong, scratch))
+                            // Closing deregistration must not issue kernel deletes against a possibly recycled fd number. Live deregistration
+                            // deletes existing filters immediately, but must also prevent this pending batch from adding them afterward.
+                            val closeAccepted =
+                                if fdClosing then sock.close(accepted).safe.get.map(rc => assert(rc == 0)) else Sync.defer(())
+                            closeAccepted.andThen {
+                                backend.deregister(pollerFd, accepted, fdClosing, scratch)
+                                val kq = scratch.kqueueData.get
+                                backend.poll(pollerFd, 0, kq.changelistBuf, kq.nChanges, scratch).safe.get.map { n =>
+                                    val events = (0 until n).map(i => (scratch.fds(i), scratch.ids(i))).toList
+                                    assert(events == List((client, client.toLong)), s"unexpected events after deregistration: $events")
+                                    assert((scratch.flags(0) & PollFlags.Write) != 0)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         "a change batch larger than the changelist capacity flushes instead of overrunning the buffer" in {
             assumeKqueue()
             val backend  = PollerBackend.default()

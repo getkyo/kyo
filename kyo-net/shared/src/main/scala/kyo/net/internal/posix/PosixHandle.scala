@@ -528,7 +528,8 @@ final private[net] class PosixHandle private (
       * [[requestClose]] caller (e.g. a racing STARTTLS-upgrade-failure teardown) would see zero active holders and free the resources
       * immediately, before the driver ever installs the real close credit ([[fdCloseSink]]) -- permanently stranding it (the credit sits
       * unconsumed and the real `close(fd)` never runs, a `CLOSE_WAIT` leak). Returns `true` when the hold was taken (MUST pair with
-      * [[endDeferredClose]]); `false` when a close was already requested by someone else, in which case the caller has nothing left to
+      * [[endDeferredClose]]). Poller registration also uses this hold until the kernel has consumed its borrowed fd or the registration is canceled,
+      * including a staged kqueue change waiting for the next poll. Returns `false` when a close was already requested by someone else, in which case the caller has nothing left to
       * protect (that other closer's own release already ran, or will run, without ever waiting on the driver's deferred bookkeeping).
       */
     private[posix] def beginDeferredClose()(using AllowUnsafe): Boolean = guard.acquireRead()

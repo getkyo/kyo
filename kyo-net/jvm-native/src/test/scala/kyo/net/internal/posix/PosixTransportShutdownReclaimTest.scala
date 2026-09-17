@@ -36,15 +36,19 @@ class PosixTransportShutdownReclaimTest extends Test:
 
     private def assumeTlsReady(): Unit =
         PosixTestSockets.assumePoller()
-        try discard(TlsProviderPlatform.engine(serverTls, "localhost", isServer = true))
-        catch case _: Throwable => cancel("no TLS provider staged for this host")
+        val engine =
+            try TlsProviderPlatform.engine(serverTls, "localhost", isServer = true)
+            catch case _: Throwable => cancel("no TLS provider staged for this host")
+        engine.free()
     end assumeTlsReady
 
     /** Connect a raw client socket to `port` without accepting or exchanging any application/handshake bytes; returns the client fd. */
-    private def connectRaw(port: Int)(using Frame, kyo.test.AssertScope): Int < Async =
-        val client   = sock.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
-        val (ca, cl) = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", port).getOrElse(fail("encode failed"))
-        Sync.ensure(Sync.defer(ca.close()))(sock.connect(client, ca, cl).safe.get.map(r => assert(r.value == 0))).map(_ => client)
+    private def connectRaw(port: Int)(using Frame, kyo.test.AssertScope): Int < (Async & Scope) =
+        val client = sock.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
+        Scope.ensure(Sync.defer(discard(sock.close(client)))).andThen {
+            val (ca, cl) = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", port).getOrElse(fail("encode failed"))
+            Sync.ensure(Sync.defer(ca.close()))(sock.connect(client, ca, cl).safe.get.map(r => assert(r.value == 0))).map(_ => client)
+        }
     end connectRaw
 
     "PosixTransport registerHandshake races its OWNING LISTENER's close sweep" - {
@@ -64,61 +68,66 @@ class PosixTransportShutdownReclaimTest extends Test:
             // Captured BEFORE close(), per closeWake's documented contract: it notifies whatever promise is installed at the moment it runs,
             // so installing one after close() races the driver's terminal exit and can never be notified.
             val closeWakeDone = backend.closeWakeDone()
-            PosixTestSockets.loopbackPair().map { case (client, accepted) =>
-                // A listener that is ALREADY closed, standing in for one that closed inside handleAccepted's window: the accept-side
-                // registration happens on the driver carrier at the end of handleAccepted, and dischargeListenerHandshakes runs on the
-                // closing carrier, so a close anywhere in that window sweeps an empty map and this registration arrives afterwards.
-                val closedListener =
-                    new PosixListener(
-                        serverFd = -1,
-                        port = 0,
-                        host = "127.0.0.1",
-                        address = kyo.net.NetAddress.Tcp("127.0.0.1", 0),
-                        createdAt = Frame.internal,
-                        sockets = spy,
-                        registry = java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap[
-                            PosixListener,
-                            java.lang.Boolean
-                        ]()),
-                        closedFlag = AtomicBoolean.Unsafe.init(true)
+            Scope.ensure(Sync.defer(driver.close()).andThen(closeWakeDone.safe.get)).andThen {
+                PosixTestSockets.loopbackPair().map { case (client, accepted) =>
+                    // A listener that is ALREADY closed, standing in for one that closed inside handleAccepted's window: the accept-side
+                    // registration happens on the driver carrier at the end of handleAccepted, and dischargeListenerHandshakes runs on the
+                    // closing carrier, so a close anywhere in that window sweeps an empty map and this registration arrives afterwards.
+                    val closedListener =
+                        new PosixListener(
+                            serverFd = -1,
+                            port = 0,
+                            host = "127.0.0.1",
+                            address = kyo.net.NetAddress.Tcp("127.0.0.1", 0),
+                            createdAt = Frame.internal,
+                            sockets = spy,
+                            registry = java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap[
+                                PosixListener,
+                                java.lang.Boolean
+                            ]()),
+                            closedFlag = AtomicBoolean.Unsafe.init(true)
+                        )
+                    val handle    = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                    val rawEngine = TlsRealEngines.singleEngine(isServer = true)
+                    val engine    = new RecordingTlsEngine(rawEngine)
+                    val reaped    = AtomicBoolean.Unsafe.init(false)
+                    val settled   = AtomicBoolean.Unsafe.init(false)
+                    // Mirrors handleAccepted's own teardown shape: reap through the driver, then the raw fd shutdown and engine free.
+                    def teardown(): Unit =
+                        reaped.set(true)
+                        driver.closeHandle(handle)
+                        if handle.claimFdClose() then discard(spy.shutdown(accepted, PosixConstants.SHUT_RDWR))
+                        engine.free()
+                    end teardown
+                    // The accept path's exactly-once gate, the same one armHandshakeDeadline builds.
+                    def disarm(): Boolean = settled.compareAndSet(false, true)
+                    // Without the insertion recheck this entry sits in pendingHandshakes with nothing that would ever discharge it: the
+                    // listener's sweep has passed, a second close is a CAS no-op, and the transport-wide sweep never runs on a shared transport.
+                    discard(transport.registerHandshake(Present(closedListener), () => disarm(), () => teardown()))
+                    discard(spy.close(client))
+                    assert(
+                        reaped.get(),
+                        "a handshake registered after its listener's sweep must be discharged by the insertion recheck, or its fd and engine leak for the process lifetime"
                     )
-                val handle    = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
-                val rawEngine = TlsRealEngines.singleEngine(isServer = true)
-                val engine    = new RecordingTlsEngine(rawEngine)
-                val reaped    = AtomicBoolean.Unsafe.init(false)
-                val settled   = AtomicBoolean.Unsafe.init(false)
-                // Mirrors handleAccepted's own teardown shape: reap through the driver, then the raw fd shutdown and engine free.
-                def teardown(): Unit =
-                    reaped.set(true)
-                    driver.closeHandle(handle)
-                    if handle.claimFdClose() then discard(spy.shutdown(accepted, PosixConstants.SHUT_RDWR))
-                    engine.free()
-                end teardown
-                // The accept path's exactly-once gate, the same one armHandshakeDeadline builds.
-                def disarm(): Boolean = settled.compareAndSet(false, true)
-                // Without the insertion recheck this entry sits in pendingHandshakes with nothing that would ever discharge it: the
-                // listener's sweep has passed, a second close is a CAS no-op, and the transport-wide sweep never runs on a shared transport.
-                discard(transport.registerHandshake(Present(closedListener), () => disarm(), () => teardown()))
-                discard(spy.close(client))
-                assert(
-                    reaped.get(),
-                    "a handshake registered after its listener's sweep must be discharged by the insertion recheck, or its fd and engine leak for the process lifetime"
-                )
-                // Exactly once: the gate is spent, so the handshake's own outcome callback finds it lost and does not tear down twice.
-                assert(!disarm(), "the discharge must have won the exactly-once gate, leaving nothing for a later outcome to double-free")
-                assert(engine.freeCount.get() == 1, s"the engine must be freed exactly once, got ${engine.freeCount.get()}")
-                // The FD half of the same obligation. The discharge exists to reclaim the fd AND the engine, but only the engine was
-                // pinned above, so an accepted fd that is shut down (or never touched) but never closed passed this leaf while leaking
-                // the descriptor for the process lifetime. Assert the close syscall itself, through the spy that records it.
-                assert(
-                    spy.closeCounts.getOrDefault(accepted, 0) == 1,
-                    s"the discharge must close the accepted fd exactly once, got ${spy.closeCounts.getOrDefault(accepted, 0)} " +
-                        s"(closeCounts=${spy.closeCounts})"
-                )
-                driver.close()
-                // Await the driver's terminal teardown before the leaf ends, or its poll carrier is still parked in kevent when the
-                // end-of-run leak check samples the scheduler.
-                closeWakeDone.safe.get.map(_ => succeed)
+                    // Exactly once: the gate is spent, so the handshake's own outcome callback finds it lost and does not tear down twice.
+                    assert(
+                        !disarm(),
+                        "the discharge must have won the exactly-once gate, leaving nothing for a later outcome to double-free"
+                    )
+                    assert(engine.freeCount.get() == 1, s"the engine must be freed exactly once, got ${engine.freeCount.get()}")
+                    // The FD half of the same obligation. The discharge exists to reclaim the fd AND the engine, but only the engine was
+                    // pinned above, so an accepted fd that is shut down (or never touched) but never closed passed this leaf while leaking
+                    // the descriptor for the process lifetime. Assert the close syscall itself, through the spy that records it.
+                    assert(
+                        spy.closeCounts.getOrDefault(accepted, 0) == 1,
+                        s"the discharge must close the accepted fd exactly once, got ${spy.closeCounts.getOrDefault(accepted, 0)} " +
+                            s"(closeCounts=${spy.closeCounts})"
+                    )
+                    driver.close()
+                    // Await the driver's terminal teardown before the leaf ends, or its poll carrier is still parked in kevent when the
+                    // end-of-run leak check samples the scheduler.
+                    closeWakeDone.safe.get.map(_ => succeed)
+                }
             }
         }
     }
@@ -197,12 +206,14 @@ class PosixTransportShutdownReclaimTest extends Test:
         "a stalled accept handshake with no deadline is released when its listener closes" in {
             PosixTestSockets.assumePoller()
             assumeTlsReady()
-            val spy      = RecordingSocketBindings(Ffi.load[SocketBindings])
-            val real     = PollerBackend.default()
-            val pollerFd = real.create()
-            val backend  = RecordingPollerBackend(real)
-            val driver   = TestDrivers.forBackend(backend, pollerFd, spy)
-            val captured = new AtomicReference[RecordingTlsEngine]()
+            val spy          = RecordingSocketBindings(Ffi.load[SocketBindings])
+            val real         = PollerBackend.default()
+            val pollerFd     = real.create()
+            val backend      = RecordingPollerBackend(real)
+            val driver       = TestDrivers.forBackend(backend, pollerFd, spy)
+            val captured     = new AtomicReference[RecordingTlsEngine]()
+            val acceptedRead = Promise.Unsafe.init[Int, Any]()
+            spy.onRecvEagain = fd => acceptedRead.completeDiscard(Result.succeed(fd))
             val transport = TestTransports.forTesting(
                 driver,
                 spy,
@@ -212,35 +223,68 @@ class PosixTransportShutdownReclaimTest extends Test:
                     captured.set(e)
                     e
             )
+            // Hold the initial poll through listen/connect, then hold the next poll after the listener's read registration. This forces
+            // the gap where the old count-based handshake precondition passed even though no connection had been accepted.
+            val initialPoll    = Promise.Unsafe.init[Int, Any]()
+            val initialEntered = Promise.Unsafe.init[Unit, Any]()
+            val acceptPoll     = Promise.Unsafe.init[Int, Any]()
+            val acceptEntered  = Promise.Unsafe.init[Unit, Any]()
+            val closeWakeDone  = backend.closeWakeDone()
+            backend.setPrePollHold(initialPoll)
+            backend.setPrePollLatch(initialEntered)
             discard(driver.start())
             val unbounded = serverTls.copy(handshakeTimeout = Duration.Infinity)
-            transport.listenTls("127.0.0.1", 0, 4, unbounded)(_ => ()).safe.get.map { listener =>
-                // Guards the listener even on a path that fails before the explicit close()/driver.close() below run (e.g. connectRaw or
-                // an assertEventually failing). Idempotent, so it is a harmless no-op after the explicit listener.close() on the success path.
-                Scope.ensure(Sync.defer(listener.close())).andThen {
-                    val baseline = backend.registerReadCount.get()
-                    // A raw, non-TLS client: the server's handshake starts and then parks on a read for a ClientHello that never arrives. No
-                    // Connection exists for an in-flight handshake, so nothing else tracks this fd.
-                    connectRaw(listener.port).map { clientFd =>
-                        // Same guard for the raw client fd: closed explicitly below on success, but reclaimed here on any earlier failure.
-                        Scope.ensure(Sync.defer(discard(sock.close(clientFd)))).andThen {
-                            assertEventually(Sync.defer(backend.registerReadCount.get() > baseline)).map { _ =>
-                                // Close ONLY the listener. The transport stays open, exactly as the process-shared transport does.
-                                //
-                                // The client fd stays OPEN and silent across the assertion below, and that is what makes this discriminating. Closing
-                                // it here would end the stalled handshake by itself: the server's parked read fails, its onFailed teardown runs, and
-                                // the engine is freed whether or not the listener discharged anything. Verified by removing the discharge and watching
-                                // an earlier version of this leaf still pass. With the peer held open there is no other route to engine.free().
-                                listener.close()
-                                assertEventually(Sync.defer(captured.get() != null && captured.get().freeCount.get() == 1)).map { _ =>
-                                    val engine = captured.get()
-                                    assert(
-                                        engine.freeCount.get() == 1,
-                                        s"the stalled handshake's engine must be freed exactly once by the listener close, was ${engine.freeCount.get()}"
-                                    )
-                                    discard(sock.close(clientFd))
-                                    driver.close()
-                                    succeed
+            // Unsafe: this leaf owns the driver. Release controlled polls and await terminal teardown on every exit path.
+            Scope.ensure(Sync.defer {
+                driver.close()
+                initialPoll.completeDiscard(Result.succeed(0))
+                acceptPoll.completeDiscard(Result.succeed(0))
+            }.andThen(closeWakeDone.safe.get)).andThen(initialEntered.safe.get).andThen {
+                transport.listenTls("127.0.0.1", 0, 4, unbounded)(_ => ()).safe.get.map { listener =>
+                    Scope.ensure(Sync.defer(listener.close())).andThen {
+                        val baseline = backend.registerReadCount.get()
+                        // The raw peer stays open and silent through reclamation. No ClientHello, peer EOF, or handshake deadline can
+                        // release the server engine, so only the listener's discharge can satisfy the assertions.
+                        connectRaw(listener.port).map { _ =>
+                            backend.setPrePollHold(acceptPoll)
+                            backend.setPrePollLatch(acceptEntered)
+                            initialPoll.completeDiscard(Result.succeed(0))
+                            acceptEntered.safe.get.andThen {
+                                assert(
+                                    backend.registerReadCount.get() == baseline + 1,
+                                    "the listener read must register in the controlled gap"
+                                )
+                                assert(captured.get() == null, "the held accept poll must prevent handshake creation")
+                                acceptPoll.completeDiscard(Result.succeed(0))
+                                // A real TLS recv returning EAGAIN identifies the accepted socket. Await that fd's own registration,
+                                // not an aggregate count that also includes the listener. The handshake is now parked on a silent peer.
+                                acceptedRead.safe.get.map { acceptedFd =>
+                                    backend.registeredRead(acceptedFd).safe.get.andThen {
+                                        val engine = captured.get()
+                                        assert(
+                                            engine != null && engine.handshakeCalls.get() >= 1,
+                                            "the accepted TLS handshake must have started"
+                                        )
+                                        assert(
+                                            engine.freeCount.get() == 0,
+                                            "the silent peer's engine must still be live before listener close"
+                                        )
+                                        val reclaimed = Promise.Unsafe.init[Unit, Any]()
+                                        listener.close()
+                                        // The listener enqueues teardown on the engine FIFO. A following marker observes its completed
+                                        // effects without closing the driver or peer, and makes missing reclaim fail immediately.
+                                        driver.submitEngineOp(() => reclaimed.completeDiscard(Result.succeed(())))
+                                        reclaimed.safe.get.map { _ =>
+                                            assert(
+                                                engine.freeCount.get() == 1,
+                                                s"the stalled handshake's engine must be freed exactly once by the listener close, was ${engine.freeCount.get()}"
+                                            )
+                                            assert(
+                                                spy.closeCounts.getOrDefault(acceptedFd, 0) == 1,
+                                                s"the stalled handshake's fd must be closed exactly once, got ${spy.closeCounts}"
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }

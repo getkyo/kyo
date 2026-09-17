@@ -13,6 +13,13 @@ class JsIoDriverTest extends kyo.net.Test:
 
     import AllowUnsafe.embrace.danger
 
+    // Select Node directly: the process default can select a koffi posix backend on this host.
+    private def mkTransport()(using Frame): JsTransport < (Sync & Scope) =
+        Sync.defer(JsTransport.init(poolSize = 1)).map { transport =>
+            // Unsafe: this fixture owns the single Node driver and closes it after its connections and listeners.
+            Scope.ensure(Sync.defer(transport.pool.next().close())).andThen(transport)
+        }
+
     // `NodeNet` rather than `sjs.Dynamic.global.require("net")`: this suite is shared with the Wasm backend, which links as an ES
     // module, where `require` is not defined.
     private def net: sjs.Dynamic = NodeNet.asInstanceOf[sjs.Dynamic]
@@ -109,20 +116,22 @@ class JsIoDriverTest extends kyo.net.Test:
     }
 
     "an abandoned backpressured connection is reclaimed after the peer FIN within the grace window" in {
-        given Frame   = Frame.internal
-        val transport = kyo.net.NetPlatform.transport
+        given Frame = Frame.internal
         // Small inbound channel so two chunks overflow it. Short grace so the reclaim completes well inside the leaf's poll budget.
         val config = kyo.net.NetConfig(channelCapacity = 1, readChunkSize = 64, peerCloseGrace = 200.millis)
         // Capture the accepted (server) connection: with its ReadPump parked on the full cap-1 channel the client FIN is observable only through the
         // peer-close grace poll, so the captured connection's isOpen is the portable reclaim oracle, validating that the transport threads the grace.
         val acceptedP = new IOPromise[Closed, kyo.net.Connection]
         for
+            transport <- mkTransport()
             listener <- transport.listen("127.0.0.1", 0, 128, config) { conn =>
                 acceptedP.completeDiscard(Result.succeed(conn))
             }.safe.get
             _        <- Scope.ensure(Sync.defer(listener.close()))
             client   <- transport.connect("127.0.0.1", listener.port, config = config).safe.get
+            _        <- Scope.ensure(Sync.defer(client.close()))
             accepted <- acceptedP.asInstanceOf[Fiber.Unsafe[kyo.net.Connection, Abort[Closed]]].safe.get
+            _        <- Scope.ensure(Sync.defer(accepted.close()))
             // Two writes, the second sent only once the first has landed in the accepted side's inbound channel, so Node emits them as two
             // separate 'data' events: one fills the cap-1 channel, the other overflows it and parks the pump.
             _      <- Abort.run[Closed](client.outbound.safe.put(Span.fromUnsafe(Array.fill[Byte](64)(1))))

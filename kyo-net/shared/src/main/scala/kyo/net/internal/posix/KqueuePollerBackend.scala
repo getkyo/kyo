@@ -71,9 +71,34 @@ private[net] object KqueuePollerBackend extends PollerBackend:
         )
 
     def deregister(pollerFd: Int, fd: Int, fdClosing: Boolean, scratch: PollScratch)(using AllowUnsafe, Frame): Unit =
+        // A delete only removes filters already submitted to the kernel. Drop this fd's staged changes too, otherwise the next poll would
+        // add them again after a live withdrawal, or apply them to a closed (possibly recycled) fd. Preserve the other entries in order.
+        scratch.kqueueData.foreach { data =>
+            val changes = data.changelistBuf
+            var read    = 0
+            var write   = 0
+            while read < data.nChanges do
+                val registeredFd = KEvent.ident(changes, read).toInt
+                if registeredFd != fd then
+                    if write != read then
+                        KEvent.encodeChange(
+                            changes,
+                            write,
+                            registeredFd,
+                            KEvent.filter(changes, read),
+                            KEvent.flags(changes, read),
+                            KEvent.udata(changes, read)
+                        )
+                    end if
+                    write += 1
+                end if
+                read += 1
+            end while
+            data.nChanges = write
+        }
         if fdClosing then
-            // The fd is already closed. The OS auto-removes all kqueue filters on close; issuing EV_DELETE on the fd number would target a
-            // recycled fd and must be skipped.
+            // Closing the fd removes all its kqueue filters. Physical close may be deferred behind a registration hold or may already have
+            // recycled the fd number, so issuing EV_DELETE here must be skipped.
             ()
         else
             // Immediate delete: deregister must remove filters from the kernel BEFORE the next poll so that stale events from this fd are not

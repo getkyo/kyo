@@ -1,14 +1,15 @@
 package kyo.net
 
 import kyo.*
+import kyo.net.internal.JsTransport
 import scala.scalajs.js as sjs
 
 /** Concurrent-connection / concurrent reader+writer coverage for the JS (Node.js) transport on the single event loop.
   *
   * The JVM/Native concurrent-echo guard ([[kyo.net.internal.posix.PosixTransportTlsConcurrentEchoTest]]) stresses the per-connection TLS
-  * engine read-vs-write race over the posix driver's engine FIFO. That exact hazard does NOT apply to JS: Node owns TLS (the TLS engine and
-  * the engine FIFO are never instantiated on JS; `NodeTlsProvider.createEngine` throws), and JS is single-threaded so there is no two-carrier
-  * engine overlap to serialize. Porting the engine-FIFO test to JS would be vacuous.
+  * engine read-vs-write race over the posix driver's engine FIFO. This suite explicitly selects the Node transport, where Node owns TLS and
+  * the in-process TLS engine and engine FIFO are never instantiated. Its callbacks run on one event loop, with no two-carrier engine overlap
+  * to serialize.
   *
   * What IS a real JS concurrency hazard is many connections, each with a concurrent reader fiber and writer fiber, all multiplexed over ONE
   * libuv event loop and ONE [[kyo.net.internal.JsIoDriver]] (pool size 1 on JS). Every connection's read pump re-arms its socket via
@@ -29,6 +30,13 @@ import scala.scalajs.js as sjs
 class JsConcurrentEchoTest extends Test:
 
     import AllowUnsafe.embrace.danger
+
+    // Select Node directly: the process default can select a koffi posix backend on this host.
+    private def mkTransport()(using Frame): JsTransport < (Sync & Scope) =
+        Sync.defer(JsTransport.init(poolSize = 1)).map { transport =>
+            // Unsafe: this fixture owns the single Node driver and closes it after its connections and listeners.
+            Scope.ensure(Sync.defer(transport.pool.next().close())).andThen(transport)
+        }
 
     // Self-signed certificate for CN=localhost with SAN=DNS:localhost,IP:127.0.0.1 (the canonical TlsTestCertShared fixture).
     private val localhostCertPem: String = TlsTestCertShared.certPem
@@ -97,7 +105,6 @@ class JsConcurrentEchoTest extends Test:
     end driveConnection
 
     private def runEcho(tls: Boolean)(using Frame): Boolean < (Async & Abort[NetException | Closed] & Scope) =
-        val transport = NetPlatform.transport
         val serverHandler: Connection => Unit = serverConn =>
             // Echo loop using the Unsafe API: take a span from inbound, offer it back to outbound, repeat. Each connection's echo runs as its
             // own onComplete chain on the single event loop, interleaved with every other connection's by Node.
@@ -109,11 +116,11 @@ class JsConcurrentEchoTest extends Test:
                     case _ => () // connection closed or error
                 }
             loopEcho()
-        val listenFiber =
-            if tls then transport.listenTls("127.0.0.1", 0, 128, serverTls)(serverHandler)
-            else transport.listen("127.0.0.1", 0, 128)(serverHandler)
         for
-            listener <- listenFiber.safe.get
+            transport <- mkTransport()
+            listener <- (if tls then transport.listenTls("127.0.0.1", 0, 128, serverTls)(serverHandler)
+                         else transport.listen("127.0.0.1", 0, 128)(serverHandler)).safe.get
+            _ <- Scope.ensure(Sync.defer(listener.close()))
             port = listener.port
             results <- Async.fillIndexed(connections, connections) { connId =>
                 val connectFiber =
@@ -121,14 +128,14 @@ class JsConcurrentEchoTest extends Test:
                     else transport.connect("127.0.0.1", port)
                 val perConnection: Boolean < (Async & Abort[NetException | Closed] & Scope) =
                     connectFiber.safe.get.map { conn =>
-                        Channel.init[Unit](window).map { permits =>
+                        Scope.ensure(Sync.defer(conn.close())).andThen(Channel.init[Unit](window).map { permits =>
                             Kyo.foreach(0 until window)(_ => permits.put(())).andThen {
                                 driveConnection(conn, connId, permits).map { ok =>
                                     conn.close()
                                     ok
                                 }
                             }
-                        }
+                        })
                     }
                 perConnection
             }
@@ -141,9 +148,8 @@ class JsConcurrentEchoTest extends Test:
     "JS concurrent echo over one event loop" - {
 
         // The plaintext concurrent-echo guarantee is backend-agnostic and now lives in the shared TransportConcurrentEchoTest (which runs on JS
-        // too via NetPlatform.transport). This file keeps only the TLS variant: Node owns the TLS layer, so the JS TLS concurrent-echo path
-        // exercises Node's own tls multiplexing over the single event loop, which the shared test cannot cover (the shared TLS-concurrent variant
-        // is held out because the Native TLS-engine-under-contention path is not yet covered).
+        // too via NetPlatform.transport). This file pins the Node TLS transport so its own TLS multiplexing is covered even when the
+        // platform default selects a koffi posix backend.
         "many TLS connections each echo concurrently and every response matches its request" in {
             runEcho(tls = true).map(ok =>
                 assert(ok, "a TLS connection's echo did not match byte for byte under concurrency on the single event loop")

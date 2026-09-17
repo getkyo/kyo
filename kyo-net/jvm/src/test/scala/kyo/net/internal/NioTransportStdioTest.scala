@@ -16,9 +16,12 @@ class NioTransportStdioTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
-    /** Create a transport using the standard factory. Starts its own event loop driver. Process-lifetime: never closed. */
-    def mkTransport()(using Frame): NioTransport =
-        NioTransport.init()
+    /** Build the inline NIO transport under the test scope so its selector and event loop close on every exit path. */
+    def mkTransport()(using Frame): NioTransport < (Sync & Scope) =
+        Sync.defer(NioTransport.init()).map { transport =>
+            // Unsafe: this fixture owns the single NIO driver and releases it after its connections and listeners.
+            Scope.ensure(Sync.defer(transport.pool.next().close())).andThen(transport)
+        }
 
     /** Returns whether `pattern` occurs as a contiguous slice of `haystack`. */
     private def containsSlice(haystack: Array[Byte], pattern: Array[Byte]): Boolean =
@@ -47,58 +50,59 @@ class NioTransportStdioTest extends Test:
     end PatternOutputStream
 
     "stdio round-trips bytes over swapped streams, rejects a second claim, and closes on stdin EOF" in {
-        given Frame         = Frame.internal
-        val inboundMessage  = "ping-via-nio-stdio-in".getBytes(java.nio.charset.StandardCharsets.UTF_8)
-        val outboundMessage = "pong-via-nio-stdio-out".getBytes(java.nio.charset.StandardCharsets.UTF_8)
+        given Frame = Frame.internal
+        mkTransport().map { transport =>
+            val inboundMessage  = "ping-via-nio-stdio-in".getBytes(java.nio.charset.StandardCharsets.UTF_8)
+            val outboundMessage = "pong-via-nio-stdio-out".getBytes(java.nio.charset.StandardCharsets.UTF_8)
 
-        // Swap the process streams BEFORE stdio(): the connection captures System.in/System.out at open time.
-        val stdinWriter = new PipedOutputStream()
-        val stdinPipe   = new PipedInputStream(stdinWriter)
-        val stdoutSeen  = Promise.Unsafe.init[Array[Byte], Any]()
-        val savedIn     = java.lang.System.in
-        val savedOut    = java.lang.System.out
-        java.lang.System.setIn(stdinPipe)
-        java.lang.System.setOut(new PrintStream(new PatternOutputStream(outboundMessage, stdoutSeen), true))
-        val transport = mkTransport()
+            // Swap the process streams BEFORE stdio(): the connection captures System.in/System.out at open time.
+            val stdinWriter = new PipedOutputStream()
+            val stdinPipe   = new PipedInputStream(stdinWriter)
+            val stdoutSeen  = Promise.Unsafe.init[Array[Byte], Any]()
+            val savedIn     = java.lang.System.in
+            val savedOut    = java.lang.System.out
+            java.lang.System.setIn(stdinPipe)
+            java.lang.System.setOut(new PrintStream(new PatternOutputStream(outboundMessage, stdoutSeen), true))
 
-        def restore(): Unit =
-            // Unpark a read pump still blocked in stdinPipe.read (EOF closes the connection and exits the pump), then put the real
-            // streams back. Runs on every exit path, so a failed assertion never leaves the process streams swapped.
-            try stdinWriter.close()
-            catch case _: java.io.IOException => ()
-            java.lang.System.setIn(savedIn)
-            java.lang.System.setOut(savedOut)
-        end restore
+            def restore(): Unit =
+                // Unpark a read pump still blocked in stdinPipe.read (EOF closes the connection and exits the pump), then put the real
+                // streams back. Runs on every exit path, so a failed assertion never leaves the process streams swapped.
+                try stdinWriter.close()
+                catch case _: java.io.IOException => ()
+                java.lang.System.setIn(savedIn)
+                java.lang.System.setOut(savedOut)
+            end restore
 
-        // Take from the connection's inbound channel until `target` bytes accumulated (a pipe read may split the message across reads).
-        def collect(conn: kyo.net.Connection, target: Int): Array[Byte] < (Async & Abort[Closed]) =
-            Loop(Array.emptyByteArray) { acc =>
-                if acc.length >= target then Loop.done(acc)
-                else conn.inbound.safe.take.map(chunk => Loop.continue(acc ++ chunk.toArray))
-            }
+            // Take from the connection's inbound channel until `target` bytes accumulated (a pipe read may split the message across reads).
+            def collect(conn: kyo.net.Connection, target: Int): Array[Byte] < (Async & Abort[Closed]) =
+                Loop(Array.emptyByteArray) { acc =>
+                    if acc.length >= target then Loop.done(acc)
+                    else conn.inbound.safe.take.map(chunk => Loop.continue(acc ++ chunk.toArray))
+                }
 
-        Sync.ensure(Sync.defer(restore())) {
-            transport.stdio().safe.get.map { conn =>
-                // Inbound: bytes written to the swapped stdin come out of the connection's inbound channel.
-                Sync.defer {
-                    stdinWriter.write(inboundMessage)
-                    stdinWriter.flush()
-                }.andThen(collect(conn, inboundMessage.length)).map { received =>
-                    assert(received.sameElements(inboundMessage), s"stdin round-trip mismatch: got ${received.toList}")
-                    // Outbound: a span put on the connection's outbound channel is written + flushed to the swapped stdout.
-                    conn.outbound.safe.put(Span.fromUnsafe(outboundMessage)).andThen {
-                        stdoutSeen.safe.get.map { written =>
-                            assert(containsSlice(written, outboundMessage), s"stdout round-trip mismatch: got ${written.toList}")
-                            // A second stdio() while the first is open loses the claim CAS.
-                            Abort.run[NetException | Closed](transport.stdio().safe.get).map { second =>
-                                second match
-                                    case Result.Failure(_: NetStdioAlreadyOpenException) => ()
-                                    case other => fail(s"expected NetStdioAlreadyOpenException, got $other")
-                                // EOF on stdin closes the connection: close the write end, then await the connection's close signal.
-                                Sync.defer(stdinWriter.close()).andThen {
-                                    conn.onClosing.safe.get.map { _ =>
-                                        assert(!conn.isOpen, "connection must report closed after stdin EOF")
-                                        succeed
+            Sync.ensure(Sync.defer(restore())) {
+                transport.stdio().safe.get.map { conn =>
+                    // Inbound: bytes written to the swapped stdin come out of the connection's inbound channel.
+                    Sync.defer {
+                        stdinWriter.write(inboundMessage)
+                        stdinWriter.flush()
+                    }.andThen(collect(conn, inboundMessage.length)).map { received =>
+                        assert(received.sameElements(inboundMessage), s"stdin round-trip mismatch: got ${received.toList}")
+                        // Outbound: a span put on the connection's outbound channel is written + flushed to the swapped stdout.
+                        conn.outbound.safe.put(Span.fromUnsafe(outboundMessage)).andThen {
+                            stdoutSeen.safe.get.map { written =>
+                                assert(containsSlice(written, outboundMessage), s"stdout round-trip mismatch: got ${written.toList}")
+                                // A second stdio() while the first is open loses the claim CAS.
+                                Abort.run[NetException | Closed](transport.stdio().safe.get).map { second =>
+                                    second match
+                                        case Result.Failure(_: NetStdioAlreadyOpenException) => ()
+                                        case other => fail(s"expected NetStdioAlreadyOpenException, got $other")
+                                    // EOF on stdin closes the connection: close the write end, then await the connection's close signal.
+                                    Sync.defer(stdinWriter.close()).andThen {
+                                        conn.onClosing.safe.get.map { _ =>
+                                            assert(!conn.isOpen, "connection must report closed after stdin EOF")
+                                            succeed
+                                        }
                                     }
                                 }
                             }

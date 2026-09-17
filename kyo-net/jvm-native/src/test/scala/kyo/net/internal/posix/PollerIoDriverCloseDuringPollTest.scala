@@ -68,6 +68,62 @@ class PollerIoDriverCloseDuringPollTest extends Test:
             }
         }
 
+        "listener close cannot free its fd before a staged accept registration reaches the kernel" in {
+            if !PosixConstants.isMacOrBsd then cancel("kqueue is macOS/BSD-only")
+            val spy       = RecordingSocketBindings(Ffi.load[SocketBindings])
+            val real      = PollerBackend.default()
+            val pollerFd  = real.create()
+            val backend   = RecordingPollerBackend(real)
+            val driver    = TestDrivers.forBackend(backend, pollerFd, spy)
+            val transport = TestTransports.forTesting(driver, spy, backendIsEpoll = false)
+            val entered   = Promise.Unsafe.init[Unit, Any]()
+            val heldPoll  = Promise.Unsafe.init[Int, Any]()
+            backend.setPrePollLatch(entered)
+            backend.setPrePollHold(heldPoll)
+            Scope.ensure(Sync.defer(driver.close())).andThen {
+                // Listen before starting the driver so its first held poll owns the real accept registration.
+                transport.listen("127.0.0.1", 0, 4)(_ => ()).safe.get.map { listener =>
+                    val stopped = driver.start()
+                    Scope.ensure {
+                        Sync.defer {
+                            listener.close()
+                            driver.close()
+                            heldPoll.completeDiscard(Result.succeed(0))
+                        }.andThen(stopped.safe.get)
+                    }.andThen {
+                        entered.safe.get.map { _ =>
+                            val scratch = backend.lastScratch
+                            val kq      = scratch.kqueueData.get
+                            assert(kq.nChanges == 1, s"expected one staged accept registration, got ${kq.nChanges}")
+                            val listenerFd = KEvent.ident(kq.changelistBuf, 0).toInt
+                            val ownerId    = KEvent.udata(kq.changelistBuf, 0)
+                            assert(KEvent.filter(kq.changelistBuf, 0) == PosixConstants.EVFILT_READ)
+                            // Exercise the actual listener callback, which owns shutdown/close through driver.closeListener. The poll
+                            // remains suspended, so no queued cancellation can run before this carrier submits the staged changelist.
+                            listener.close()
+                            real.poll(pollerFd, 0, kq.changelistBuf, kq.nChanges, scratch).safe.get.map { n =>
+                                val errors = (0 until n).filter(i =>
+                                    scratch.ids(i) == ownerId && (scratch.flags(i) & PollFlags.Error) != 0
+                                ).map(i => KEvent.data(kq.eventsBuffer, i)).toList
+                                heldPoll.completeDiscard(Result.succeed(n))
+                                assert(
+                                    errors == List.empty[Long],
+                                    s"poll submitted accept interest after its listener fd was freed: errno=$errors"
+                                )
+                                driver.close()
+                                stopped.safe.get.map { _ =>
+                                    assert(
+                                        spy.closeCounts.getOrDefault(listenerFd, 0) == 1,
+                                        s"the listener fd must close exactly once, got ${spy.closeCounts}"
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         "a driver created but never started frees the poll scratch on close (no leak)" in {
             // The poll loop never runs, so the poll-loop-owned free never fires. close() must free the scratch directly in that case, since no
             // loop is using it. The freeScratchOnce CAS ensures this never double-frees with the loop's terminal free.

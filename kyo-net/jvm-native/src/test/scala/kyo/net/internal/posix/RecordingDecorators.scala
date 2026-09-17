@@ -78,6 +78,10 @@ final class RecordingSocketBindings(real: SocketBindings) extends SocketBindings
     // null means no hook set; CAS to null before firing so it fires exactly once.
     @volatile var onRecvNow: Int => Unit = null
 
+    // One-shot hooks around the real non-blocking accept, used to close a listener inside a deterministic syscall lifetime window.
+    @volatile var onAcceptNow: Int => Unit                        = null
+    @volatile var afterAcceptNow: (Int, Ffi.Outcome[Int]) => Unit = null
+
     // One-shot hook fired from inside shutdown BEFORE delegating to real, for release-ordering races (a shutdown sits between a release
     // path's fd claim and whatever it does next, so a hook here can hold the releasing carrier inside that exact window).
     // null means no hook set; CAS to null before firing so it fires exactly once.
@@ -221,7 +225,17 @@ final class RecordingSocketBindings(real: SocketBindings) extends SocketBindings
     end recvNow
 
     def acceptNow(fd: Int, addr: Buffer[Byte], addrlen: Buffer[Int])(using AllowUnsafe): Ffi.Outcome[Int] =
-        real.acceptNow(fd, addr, addrlen)
+        val before = onAcceptNow
+        if before != null && onAcceptNow.eq(before) then
+            onAcceptNow = null
+            before(fd)
+        val result = real.acceptNow(fd, addr, addrlen)
+        val after  = afterAcceptNow
+        if after != null && afterAcceptNow.eq(after) then
+            afterAcceptNow = null
+            after(fd, result)
+        result
+    end acceptNow
 
     def connectNow(fd: Int, addr: Buffer[Byte], addrlen: Int)(using AllowUnsafe): Ffi.Outcome[Int] =
         real.connectNow(fd, addr, addrlen)

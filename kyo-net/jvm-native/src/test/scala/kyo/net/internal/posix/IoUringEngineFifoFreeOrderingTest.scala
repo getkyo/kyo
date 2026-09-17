@@ -48,6 +48,7 @@ class IoUringEngineFifoFreeOrderingTest extends Test:
         Frame,
         kyo.test.AssertScope
     ): (IoUringDriver, PosixHandle, RecordingTlsEngine, TlsEngine, Buffer[Byte], () => Unit) =
+        TlsRealEngines.assumeBoringSslReady()
         val depth     = math.max(256, kyo.net.ioPoolSize() * 64)
         val realUring = Ffi.load[IoUringBindings]
         val realRing  = Buffer.alloc[Byte](realUring.kyo_uring_sizeof().toInt)

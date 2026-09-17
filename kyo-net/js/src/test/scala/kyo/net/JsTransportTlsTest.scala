@@ -21,6 +21,13 @@ class JsTransportTlsTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
+    // Select Node directly: the process default can select a koffi posix backend on this host.
+    private def mkTransport()(using Frame): JsTransport < (Sync & Scope) =
+        Sync.defer(JsTransport.init(poolSize = 1)).map { transport =>
+            // Unsafe: this fixture owns the single Node driver and closes it after its connections and listeners.
+            Scope.ensure(Sync.defer(transport.pool.next().close())).andThen(transport)
+        }
+
     // Self-signed certificate for CN=localhost with SAN=DNS:localhost,IP:127.0.0.1 (the canonical TlsTestCertShared fixture).
     private val localhostCertPem: String = TlsTestCertShared.certPem
 
@@ -45,7 +52,7 @@ class JsTransportTlsTest extends Test:
       * connection, echoes the first chunk back, then closes. Returns the bound port through a `Promise` completed from the Node `listening`
       * callback so the test stays gated on callbacks rather than a sleep.
       */
-    private def startPinnedTlsServer(version: String)(using Frame): (sjs.Dynamic, Int) < Async =
+    private def startPinnedTlsServer(version: String)(using Frame): (sjs.Dynamic, Int) < (Async & Scope) =
         Promise.init[Int, Any].map { portPromise =>
             Sync.Unsafe.defer {
                 val opts = sjs.Dynamic.literal(
@@ -77,15 +84,15 @@ class JsTransportTlsTest extends Test:
                     }: sjs.Function0[Unit]
                 ))
                 server
-            }.map(server => portPromise.get.map(port => (server, port)))
+            }.map { server =>
+                Scope.ensure(Sync.defer(discard(server.close()))).andThen(portPromise.get.map(port => (server, port)))
+            }
         }
     end startPinnedTlsServer
 
-    /** Drive a real Node `tls` client with the given version floor against `port`, completing the returned `Promise` with `true` on
-      * `secureConnect` and `false` on `error`. The kyo TLS server under test sits on the other end. Gated entirely on the Node callbacks.
-      */
-    private def pinnedTlsClientConnects(port: Int, minVersion: String)(using Frame): Boolean < Async =
-        Promise.init[Boolean, Any].map { result =>
+    /** Drive a real Node TLS client against the kyo server, preserving its error code so only protocol-version rejection satisfies the test. */
+    private def pinnedTlsClientResult(port: Int, minVersion: String)(using Frame): Result[String, Unit] < (Async & Scope) =
+        Promise.init[Result[String, Unit], Any].map { result =>
             Sync.Unsafe.defer {
                 val opts = sjs.Dynamic.literal(
                     host = "127.0.0.1",
@@ -98,21 +105,23 @@ class JsTransportTlsTest extends Test:
                     "secureConnect",
                     { () =>
                         discard(socket.destroy())
-                        result.unsafe.completeDiscard(Result.succeed(true))
+                        result.unsafe.completeDiscard(Result.succeed(Result.unit))
                     }: sjs.Function0[Unit]
                 ))
                 discard(socket.once(
                     "error",
-                    { (_: sjs.Any) =>
-                        result.unsafe.completeDiscard(Result.succeed(false))
-                    }: sjs.Function1[sjs.Any, Unit]
+                    { (error: sjs.Dynamic) =>
+                        result.unsafe.completeDiscard(Result.succeed(Result.fail(error.code.asInstanceOf[String])))
+                    }: sjs.Function1[sjs.Dynamic, Unit]
                 ))
-            }.andThen(result.get)
+                socket
+            }.map { socket =>
+                Scope.ensure(Sync.defer(discard(socket.destroy()))).andThen(result.get)
+            }
         }
-    end pinnedTlsClientConnects
+    end pinnedTlsClientResult
 
     "client minVersion is enforced against a TLS1.2-pinned server (rejects the silent downgrade)" in {
-        val transport = NetPlatform.transport
         // Client demands TLS1.3 only; the real Node server can speak only TLS1.2. With minVersion mapped onto Node's tls options there is no
         // common version, so the handshake must be rejected. If the client minVersion were dropped, Node would negotiate TLS1.2, and the
         // connection would silently succeed (CWE-326).
@@ -123,17 +132,22 @@ class JsTransportTlsTest extends Test:
             maxVersion = NetTlsConfig.Version.TLS13
         )
         for
+            transport     <- mkTransport()
             serverAndPort <- startPinnedTlsServer("TLSv1.2")
             (server, port) = serverAndPort
             result <- Abort.run[NetException](transport.connectTls("127.0.0.1", port, clientTls13).safe.get)
         yield
             discard(server.close())
-            assert(result.isFailure, s"a TLS1.3-only client must be rejected by a TLS1.2-only server, got: $result")
+            result match
+                case Result.Failure(error: NetTlsHandshakeException) =>
+                    assert(error.host == "127.0.0.1")
+                    assert(error.port == port)
+                case other => fail(s"expected a TLS version handshake rejection, got: $other")
+            end match
         end for
     }
 
     "client minVersion permits the handshake when the pinned server matches" in {
-        val transport = NetPlatform.transport
         // Control arm: same TLS1.3 floor, but the server speaks TLS1.3, so the version constraint is satisfiable and the handshake succeeds.
         // This proves the rejection above is the version mismatch, not minVersion mapping breaking every handshake.
         val clientTls13 = NetTlsConfig(
@@ -143,6 +157,7 @@ class JsTransportTlsTest extends Test:
             maxVersion = NetTlsConfig.Version.TLS13
         )
         for
+            transport     <- mkTransport()
             serverAndPort <- startPinnedTlsServer("TLSv1.3")
             (server, port) = serverAndPort
             result <- Abort.run[NetException](transport.connectTls("127.0.0.1", port, clientTls13).safe.get)
@@ -156,7 +171,6 @@ class JsTransportTlsTest extends Test:
     }
 
     "server maxVersion is enforced against a TLS1.3-demanding client" in {
-        val transport = NetPlatform.transport
         // kyo TLS server capped at TLS1.2; a real Node client demanding a TLS1.3 floor must be rejected once maxVersion is mapped onto the
         // server's tls options. If the server maxVersion were dropped, the server would allow TLS1.3 and the client would succeed.
         val serverTls12 = NetTlsConfig(
@@ -166,6 +180,7 @@ class JsTransportTlsTest extends Test:
             maxVersion = NetTlsConfig.Version.TLS12
         )
         for
+            transport <- mkTransport()
             listener <- transport.listenTls("127.0.0.1", 0, 128, serverTls12) { serverConn =>
                 // Drain so a successful handshake does not leave the socket hanging; ignore failures.
                 discard(Sync.Unsafe.evalOrThrow {
@@ -174,16 +189,16 @@ class JsTransportTlsTest extends Test:
                     }
                 })
             }.safe.get
+            _ <- Scope.ensure(Sync.defer(listener.close()))
             port = listener.port
-            connected <- pinnedTlsClientConnects(port, "TLSv1.3")
+            result <- pinnedTlsClientResult(port, "TLSv1.3")
         yield
             listener.close()
-            assert(!connected, "a TLS1.3-demanding client must be rejected by a TLS1.2-capped server")
+            assert(result == Result.fail("ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION"))
         end for
     }
 
     "verifying client with an empty host fails closed before connecting" in {
-        val transport = NetPlatform.transport
         // Verifying client (hostnameVerification = true, trustAll = false) with an empty host has no reference identity to check the server
         // certificate against. It must fail closed, matching SslEngineProvider/BoringSslProvider/SystemOpenSslProvider. Passing the
         // empty host to Node as the servername would let identity fall back to Node's default checkServerIdentity (RFC 9525 6.1 gap).
@@ -197,6 +212,7 @@ class JsTransportTlsTest extends Test:
             trustAll = false
         )
         for
+            transport <- mkTransport()
             listener <- transport.listenTls("127.0.0.1", 0, 128, serverTls) { serverConn =>
                 discard(Sync.Unsafe.evalOrThrow {
                     Fiber.initUnscoped {
@@ -204,16 +220,22 @@ class JsTransportTlsTest extends Test:
                     }
                 })
             }.safe.get
+            _ <- Scope.ensure(Sync.defer(listener.close()))
             port = listener.port
             result <- Abort.run[NetException](transport.connectTls("", port, verifyingClient).safe.get)
         yield
             listener.close()
-            assert(result.isFailure, s"a verifying client with an empty host must fail closed, got: $result")
+            result match
+                case Result.Failure(error: NetTlsHandshakeException) =>
+                    assert(error.host == "")
+                    assert(error.port == port)
+                    assert(error.getMessage.contains("verifying client has no reference identity"))
+                case other => fail(s"expected rejection of the missing reference identity, got: $other")
+            end match
         end for
     }
 
     "verifying client with a matching host still connects" in {
-        val transport = NetPlatform.transport
         // Control arm for the empty-host fail-closed: the same verifying client with a real reference identity must still connect, proving the
         // fail-closed is scoped to the missing-identity case and not a blanket rejection of verifying clients.
         val serverTls = NetTlsConfig(
@@ -227,6 +249,7 @@ class JsTransportTlsTest extends Test:
             sniHostname = Present("localhost")
         )
         for
+            transport <- mkTransport()
             // Bind and connect on the 127.0.0.1 literal so both sides pin IPv4 with no DNS lookup: localhost can resolve ::1-first and a
             // split family would miss the server's ephemeral port. Verification checks sniHostname "localhost" against the cert SAN, not the connect host.
             listener <- transport.listenTls("127.0.0.1", 0, 128, serverTls) { serverConn =>
@@ -236,6 +259,7 @@ class JsTransportTlsTest extends Test:
                     }
                 })
             }.safe.get
+            _ <- Scope.ensure(Sync.defer(listener.close()))
             port = listener.port
             result <- Abort.run[NetException](transport.connectTls("127.0.0.1", port, verifyingClient).safe.get)
         yield
@@ -281,12 +305,13 @@ class JsTransportTlsTest extends Test:
         // the deterministic latch (no sleep waits for the timeout). Without a deadline the socket would linger and "close"
         // would never fire, hanging the test (the symptom of the unreaped stall).
         import AllowUnsafe.embrace.danger
-        val transport =
-            JsTransport.init(poolSize = 1)
         for
+            transport <- mkTransport()
             listener <- transport.listenTls("127.0.0.1", 0, 128, serverTlsMaterial.copy(handshakeTimeout = 150.millis)) { _ => () }.safe.get
+            _        <- Scope.ensure(Sync.defer(listener.close()))
             port                    = listener.port
             (reaped, destroyClient) = stalledRawClient(port)
+            _         <- Scope.ensure(Sync.defer(destroyClient()))
             wasReaped <- reaped.get
         yield
             destroyClient()
@@ -301,10 +326,9 @@ class JsTransportTlsTest extends Test:
         // is 30s, large enough that JS single-thread CI load cannot push the real handshake past it and reap the healthy connection this arm
         // is asserting survives; the correctness signal is the round-trip, not the deadline's length.
         import AllowUnsafe.embrace.danger
-        val transport =
-            JsTransport.init(poolSize = 1)
         val clientTls = NetTlsConfig(trustAll = true, sniHostname = Present("localhost"))
         for
+            transport <- mkTransport()
             listener <- transport.listenTls("127.0.0.1", 0, 128, serverTlsMaterial.copy(handshakeTimeout = 30.seconds)) { serverConn =>
                 discard(Sync.Unsafe.evalOrThrow {
                     Fiber.initUnscoped {
@@ -312,8 +336,10 @@ class JsTransportTlsTest extends Test:
                     }
                 })
             }.safe.get
+            _ <- Scope.ensure(Sync.defer(listener.close()))
             port = listener.port
             client <- transport.connectTls("127.0.0.1", port, clientTls).safe.get
+            _      <- Scope.ensure(Sync.defer(client.close()))
             _      <- client.outbound.safe.put(Span.from("ping".getBytes("UTF-8")))
             // Awaiting the take IS the barrier: a healthy round-trip delivers the echo in microseconds. A lost echo hangs until the suite's
             // per-leaf cap, which is the hang guard.
@@ -337,17 +363,20 @@ class JsTransportTlsTest extends Test:
         // With handshakeTimeout = Infinity the server arms no deadline timer, so a stalled handshake parks forever. A second stalled client (the
         // pacer) on a finite-deadline listener of the SAME transport, accepted AFTER the subject, settles on its own reap: proves the machinery is alive, not an empty window.
         import AllowUnsafe.embrace.danger
-        val transport =
-            JsTransport.init(poolSize = 1)
         for
+            transport <- mkTransport()
             listener <- transport.listenTls("127.0.0.1", 0, 128, serverTlsMaterial.copy(handshakeTimeout = Duration.Infinity)) { _ =>
                 ()
             }.safe.get
+            _ <- Scope.ensure(Sync.defer(listener.close()))
             (subjectClosed, destroySubject) = stalledRawClient(listener.port)
+            _ <- Scope.ensure(Sync.defer(destroySubject()))
             pacerListener <- transport.listenTls("127.0.0.1", 0, 128, serverTlsMaterial.copy(handshakeTimeout = pacerDeadline)) { _ =>
                 ()
             }.safe.get
+            _ <- Scope.ensure(Sync.defer(pacerListener.close()))
             (pacerClosed, destroyPacer) = stalledRawClient(pacerListener.port)
+            _     <- Scope.ensure(Sync.defer(destroyPacer()))
             pacer <- Abort.run[Timeout](Async.timeout(10.seconds)(pacerClosed.get))
         yield
             // Read before the teardown below, which closes the subject's socket itself and would complete its promise for a reason of our own.
@@ -372,11 +401,13 @@ class JsTransportTlsTest extends Test:
     // Pinned with handshakeTimeout = Infinity so no deadline can do the reclaiming instead, and the peer is held open across the assertion,
     // since closing it would end the handshake by itself and the leaf would stop testing the discharge.
     "closing a listener releases accepted sockets whose handshake never settled" in {
-        val transport = JsTransport.init(poolSize = 1)
         val unbounded = serverTlsMaterial.copy(handshakeTimeout = Duration.Infinity)
         for
-            listener <- transport.listenTls("127.0.0.1", 0, 128, unbounded) { _ => () }.safe.get
-            client   <- transport.connect("127.0.0.1", listener.port).safe.get
+            transport <- mkTransport()
+            listener  <- transport.listenTls("127.0.0.1", 0, 128, unbounded) { _ => () }.safe.get
+            _         <- Scope.ensure(Sync.defer(listener.close()))
+            client    <- transport.connect("127.0.0.1", listener.port).safe.get
+            _         <- Scope.ensure(Sync.defer(client.close()))
             // Barrier: the client's connect resolving proves only that IT saw the TCP handshake. Node's server-side "connection" event can
             // fire afterwards, in the same libuv turn, so closing here without waiting could sweep an empty list and let the leaf pass on
             // server.close() dropping a backlogged connection instead, whether or not the reclaim works at all.

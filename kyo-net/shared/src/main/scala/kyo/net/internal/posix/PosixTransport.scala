@@ -1035,8 +1035,8 @@ final private[net] class PosixTransport private[posix] (
         val handle = PosixHandle.socket(listener.serverFd, config.readChunkSize, connectTarget = Absent, createdAt = listener.createdAt)
 
         // Tear down this listener's accept interest AND its fd through the driver when the listener closes, so the two are sequenced safely
-        // for the driver's model. On the readiness drivers `closeListener` cancels synchronously (clearing the fd-keyed pendingAccepts /
-        // activeFds entries while the fd is still open, so a recycled fd number never trips over stale accept state) and then closes the fd.
+        // for the driver's model. The POSIX poller cancels the accept and retains the fd through any pending registration submission with
+        // the handle guard; its last holder runs the shutdown/close callback. This prevents a staged interest from targeting a recycled fd.
         // On io_uring the whole teardown runs on the reap carrier BEHIND any accept arm still queued on the engine FIFO: closing the fd on
         // this carrier first would let the fd number recycle (typically to the very next listener) before the queued arm preps its SQE, and
         // that ghost arm would then accept on the NEW socket with THIS listener's promise and handler, stealing one connection per close.
@@ -1098,41 +1098,50 @@ final private[net] class PosixTransport private[posix] (
             Clock.live.unsafe.sleep(acceptResourceBackoff).onComplete(_ => scheduleNextAccept())
 
         def acceptAll()(using AllowUnsafe, Frame): AcceptDrain =
-            val noAddr = Buffer.alloc[Byte](SockAddr.inet6Size)
-            val noLen  = Buffer.alloc[Int](1)
-            noLen.set(0, SockAddr.inet6Size)
-            try
-                @scala.annotation.tailrec
-                def drain(transientRetries: Int): AcceptDrain =
-                    val r  = sockets.acceptNow(listener.serverFd, noAddr, noLen)
-                    val fd = r.value
-                    if fd >= 0 then
-                        handleAccepted(fd, handler, tls, config, listener)
-                        drain(transientRetries)
-                    else if isWouldBlock(r.errorCode) then
-                        // Backlog drained: re-arm read interest normally.
-                        AcceptDrain.Drained
-                    else if r.errorCode == PosixConstants.EMFILE || r.errorCode == PosixConstants.ENFILE then
-                        // Resource exhaustion: the connection stays in the backlog. Stop draining and signal a backoff re-arm.
-                        AcceptDrain.ResourceExhausted
-                    else if (r.errorCode == PosixConstants.EINTR || r.errorCode == PosixConstants.ECONNABORTED)
-                        && transientRetries < maxTransientAcceptRetries
-                    then
-                        // EINTR (interrupted) / ECONNABORTED (peer aborted before accept returned) are transient: accept(2) says treat them
-                        // like EAGAIN by retrying. Retry the accept (do NOT drop the connection), bounded so a persistent transient error
-                        // cannot itself spin this cycle; past the bound, fall through to a normal re-arm.
-                        drain(transientRetries + 1)
-                    else
-                        // Listener closed mid-drain, the transient-retry budget is spent, or an unclassified errno: re-arm normally (the next
-                        // readiness event, or scheduleNextAccept's isClosed check, drives the loop forward as before).
-                        AcceptDrain.Drained
-                    end if
-                end drain
-                drain(0)
-            finally
-                noAddr.close()
-                noLen.close()
-            end try
+            // A readiness completion can race listener.close before or between accept syscalls. Keep the fd owned throughout the drain,
+            // and stop once close is visible so a continuous backlog cannot retain the guard after the listener has been closed.
+            if !handle.beginDispatch() then AcceptDrain.Drained
+            else
+                try
+                    val noAddr = Buffer.alloc[Byte](SockAddr.inet6Size)
+                    val noLen  = Buffer.alloc[Int](1)
+                    noLen.set(0, SockAddr.inet6Size)
+                    try
+                        @scala.annotation.tailrec
+                        def drain(transientRetries: Int): AcceptDrain =
+                            if listener.isClosed then AcceptDrain.Drained
+                            else
+                                val r  = sockets.acceptNow(listener.serverFd, noAddr, noLen)
+                                val fd = r.value
+                                if fd >= 0 then
+                                    handleAccepted(fd, handler, tls, config, listener)
+                                    drain(transientRetries)
+                                else if isWouldBlock(r.errorCode) then
+                                    // Backlog drained: re-arm read interest normally.
+                                    AcceptDrain.Drained
+                                else if r.errorCode == PosixConstants.EMFILE || r.errorCode == PosixConstants.ENFILE then
+                                    // Resource exhaustion: the connection stays in the backlog. Stop draining and signal a backoff re-arm.
+                                    AcceptDrain.ResourceExhausted
+                                else if (r.errorCode == PosixConstants.EINTR || r.errorCode == PosixConstants.ECONNABORTED)
+                                    && transientRetries < maxTransientAcceptRetries
+                                then
+                                    // EINTR (interrupted) / ECONNABORTED (peer aborted before accept returned) are transient: accept(2) says treat them
+                                    // like EAGAIN by retrying. Retry the accept (do NOT drop the connection), bounded so a persistent transient error
+                                    // cannot itself spin this cycle; past the bound, fall through to a normal re-arm.
+                                    drain(transientRetries + 1)
+                                else
+                                    // Listener closed mid-drain, the transient-retry budget is spent, or an unclassified errno: re-arm normally (the next
+                                    // readiness event, or scheduleNextAccept's isClosed check, drives the loop forward as before).
+                                    AcceptDrain.Drained
+                                end if
+                        end drain
+                        drain(0)
+                    finally
+                        noAddr.close()
+                        noLen.close()
+                    end try
+                finally discard(handle.endDispatch())
+                end try
         end acceptAll
 
         scheduleNextAccept()
