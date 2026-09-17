@@ -1,24 +1,38 @@
 package kyo
 
+import kyo.internal.PlatformJs
 import scala.scalajs.js
-import scala.scalajs.js.annotation.*
 
 /** Node built-in facades for kyo-pod's container-runtime test helper.
   *
-  * Declared (typed) members rather than `js.Dynamic.global.require`: `@JSImport` compiles to
-  * require under CommonJS and to import under ESModule (the kind the WASM backend mandates),
-  * and a declared member access is what makes the Scala.js linker emit the import. Names are
+  * Declared (typed) members rather than `js.Dynamic`, and resolved at the call through `process.getBuiltinModule` rather than a static
+  * `@JSImport`: a static import is hoisted and resolved when the module graph loads, so a page that merely links these tests would fail to
+  * load before any test ran. `require` is not the alternative, since it is absent under the ESModule the Wasm backend mandates. Names are
   * Pod-prefixed so they do not clash with the `kyo.*` namespace.
   */
 @js.native
-@JSImport("node:child_process", JSImport.Namespace)
-private[kyo] object PodNodeChildProcess extends js.Object:
+private[kyo] trait PodNodeChildProcess extends js.Object:
     def execSync(command: String): js.Dynamic                  = js.native
     def execSync(command: String, options: js.Any): js.Dynamic = js.native
 end PodNodeChildProcess
 
+private[kyo] object PodNodeChildProcess:
+
+    /** `node:child_process` on a host that provides it, and [[Absent]] on one that does not, such as a browser page. */
+    def module: Maybe[PodNodeChildProcess] =
+        PlatformJs.nodeBuiltin("node:child_process").fold(Absent: Maybe[PodNodeChildProcess]) { childProcess =>
+            Present(childProcess.asInstanceOf[PodNodeChildProcess])
+        }
+end PodNodeChildProcess
+
 @js.native
-@JSImport("node:os", JSImport.Namespace)
-private[kyo] object PodNodeOs extends js.Object:
+private[kyo] trait PodNodeOs extends js.Object:
     def homedir(): String = js.native
+end PodNodeOs
+
+private[kyo] object PodNodeOs:
+
+    /** `node:os` on a host that provides it, and [[Absent]] on one that does not, such as a browser page. */
+    def module: Maybe[PodNodeOs] =
+        PlatformJs.nodeBuiltin("node:os").fold(Absent: Maybe[PodNodeOs])(os => Present(os.asInstanceOf[PodNodeOs]))
 end PodNodeOs
