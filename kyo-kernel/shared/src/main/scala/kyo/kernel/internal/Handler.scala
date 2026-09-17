@@ -32,8 +32,8 @@ sealed abstract private[kernel] class Handler[E <: Effect, A, -S]:
 @publicInBinary private[kernel] object Handler:
 
     sealed abstract class ArrowHandler[State, E <: Effect, A, B, -S] extends Handler[E, B, S]:
-        def done(state: State, v: A): B < S
-        def recover(state: State, ex: Throwable): Maybe[B < S] = Absent
+        def onDone(state: State, v: A): B < S
+        def onRecover(state: State, ex: Throwable): Maybe[B < S] = Absent
 
     abstract class ContHandler[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends ArrowHandler[Unit, E, A, B, S]:
         def run[X](input: I[X], cont: Arrow[O[X], A, E & S]): A < (E & S)

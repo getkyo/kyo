@@ -29,10 +29,12 @@ class ArrowEffectBytecodeTest extends AnyFreeSpec:
         assert(sizes == Map("test" -> 14), sizes.toString)
     }
 
-    // Region.NoEscape is a type, so the handling method carries no bytecode for it.
+    // Region.NoEscape is a type, so the handling method carries no bytecode for it. The `done` clause expands at both of its use
+    // sites (the region's hook and the settled fast path) rather than through a local method, so the caller carries the clause's
+    // body inline and no nested method is emitted for it.
     "handleCont" in {
         val sizes = methodBytecodeSize[TestHandleCont]
-        assert(sizes == Map("test" -> 48), sizes.toString)
+        assert(sizes == Map("test" -> 54), sizes.toString)
     }
 
     private def methodBytecodeSize[A](using ct: ClassTag[A]): Map[String, Int] =

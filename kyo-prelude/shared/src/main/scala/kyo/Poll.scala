@@ -172,7 +172,7 @@ object Poll:
                     (input, cont) =>
                         // Effect found, return the input and continuation
                         Right(cont),
-                onDone = r =>
+                done = r =>
                     // Effect not found, return empty input and a placeholder continuation
                     // that returns the result of the computation
                     Left(r)
@@ -225,12 +225,12 @@ object Poll:
                                             // 3. Recursively continue the cycle
                                             Loop.continue(emitCont(()), pollCont(Maybe(emitted))),
                                     // Poll.run(emitCont(ack))(pollCont(Maybe(emitted))),
-                                    onDone = b =>
+                                    done = b =>
                                         // Poller completed: the emitter's cont is dropped rather than run, so an unbounded emitter ends
                                         // here having produced no value, which Absent reports.
                                         Loop.done((Maybe.empty[A], b))
                             ),
-                        onDone = a =>
+                        done = a =>
                             // Emitter completed (no more values to emit)
                             // Run remaining poll operations with empty chunk to signal completion
                             Poll.run[V](Chunk.empty)(poll).map(b => Loop.done((Present(a), b)))

@@ -176,7 +176,7 @@ object Emit:
         reduce:
             ArrowEffect.handleLoop(tag, v)(
                 [C] => input => f(input).map(c => if c then Loop.continue(()) else Loop.done(Absent)),
-                onDone = a => Present(a)
+                done = a => Present(a)
             )
 
     /** Runs an Emit effect, capturing only the first emitted value and returning a continuation.
@@ -201,7 +201,7 @@ object Emit:
                     (input, cont) =>
                         // Effect found, return the input and continuation
                         (Maybe(input), cont),
-                onDone = r =>
+                done = r =>
                     // Effect not found, return empty input and a placeholder continuation
                     // that returns the result of the computation
                     (Maybe.empty[V], Arrow(_ => r: A < (Emit[V] & S)))

@@ -52,19 +52,19 @@ sealed abstract class Sink[-V, +A, -S] extends Serializable:
                                             val nextB = contB(polledValue)
                                             Loop.continue(nextA, nextB)
                                     ,
-                                    onDone = b =>
+                                    done = b =>
                                         nextA.map: a =>
                                             Loop.done((a, b))
                             )
                     ,
-                    onDone = a =>
+                    done = a =>
                         ArrowEffect.handleFirst(tag, pollB)(
                             handle = [C] =>
                                 (_, contB) =>
                                     Poll.andMap[Chunk[VV]]: polledValue =>
                                         contB(polledValue).map: b =>
                                             Loop.done((a, b)),
-                            onDone = b =>
+                            done = b =>
                                 Loop.done((a, b))
                         )
                 )
@@ -197,9 +197,9 @@ sealed abstract class Sink[-V, +A, -S] extends Serializable:
                             handle = [C2] =>
                                 (emitted, emitCont) =>
                                     Loop.continue(emitCont(()), pollCont(Maybe(emitted))),
-                            onDone = _ => Loop.continue((), pollCont(Absent))
+                            done = _ => Loop.continue((), pollCont(Absent))
                     ),
-                onDone = a =>
+                done = a =>
                     Loop.done(a)
             )
         }

@@ -24,27 +24,27 @@ class StackTest extends AnyFreeSpec:
 
     def askHandler: Handler.LoopHandler[Const[Unit], Const[Int], Ask, Int, Int, Any] =
         new Handler.LoopHandler[Const[Unit], Const[Int], Ask, Int, Int, Any]:
-            def tag                       = Tag[Ask]
-            def run[X](input: Unit)       = Loop.continue(1)
-            def done(state: Unit, v: Int) = v
+            def tag                         = Tag[Ask]
+            def run[X](input: Unit)         = Loop.continue(1)
+            def onDone(state: Unit, v: Int) = v
 
     def askSubHandler: Handler.LoopHandler[Const[Unit], Const[Int], AskSub, Int, Int, Any] =
         new Handler.LoopHandler[Const[Unit], Const[Int], AskSub, Int, Int, Any]:
-            def tag                       = Tag[AskSub]
-            def run[X](input: Unit)       = Loop.continue(1)
-            def done(state: Unit, v: Int) = v
+            def tag                         = Tag[AskSub]
+            def run[X](input: Unit)         = Loop.continue(1)
+            def onDone(state: Unit, v: Int) = v
 
     def sayHandler: Handler.LoopHandler[Const[String], Const[Unit], Say, Int, Int, Any] =
         new Handler.LoopHandler[Const[String], Const[Unit], Say, Int, Int, Any]:
-            def tag                       = Tag[Say]
-            def run[X](input: String)     = Loop.continue(())
-            def done(state: Unit, v: Int) = v
+            def tag                         = Tag[Say]
+            def run[X](input: String)       = Loop.continue(())
+            def onDone(state: Unit, v: Int) = v
 
     def statefulHandler: Handler.LoopStateHandler[Int, Const[Unit], Const[Int], Ask, Int, Int, Any] =
         new Handler.LoopStateHandler[Int, Const[Unit], Const[Int], Ask, Int, Int, Any]:
             def tag                             = Tag[Ask]
             def run[X](state: Int, input: Unit) = Loop.continue(state + 1, 1)
-            def done(state: Int, v: Int)        = v + state
+            def onDone(state: Int, v: Int)      = v + state
 
     def envHandler: Handler.ContextHandler[Int, Env, Int, Any] =
         new Handler.ContextHandler[Int, Env, Int, Any]:

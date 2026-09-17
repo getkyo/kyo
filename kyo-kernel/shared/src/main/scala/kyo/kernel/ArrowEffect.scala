@@ -104,7 +104,7 @@ object ArrowEffect:
         v: A < (E & S)
     )(
         inline handle: [C] => (I[C], Arrow[O[C], A, E & S & S2 & Region.NoEscape]) => A < (E & S & S2 & Region.NoEscape),
-        inline onDone: A => B < (S & S2)
+        inline done: A => B < (S & S2)
     )(using inline _frame: Frame): B < (S & S2) =
         v match
             case _: Pending[?, ?] =>
@@ -113,7 +113,7 @@ object ArrowEffect:
                         def tag = effectTag
                         def run[X](input: I[X], next: Arrow[O[X], A, E & S & S2]) =
                             Region.discharge(handle[X](input, next))
-                        def done(state: Unit, v0: A) = onDone(v0)
+                        def onDone(state: Unit, v0: A) = done(v0)
 
                 new Pending.HandleArrow[Unit, E, A, B, B, S & S2]:
                     override def frame = _frame
@@ -122,7 +122,7 @@ object ArrowEffect:
                     def state          = ()
                     def cont           = Arrow.id
                 end new
-            case _ => onDone(Nested.unnest(v))
+            case _ => done(Nested.unnest(v))
         end match
     end handleCont
 
@@ -135,8 +135,8 @@ object ArrowEffect:
         inline v: => A < (E & S)
     )(
         inline handle: [C] => (I[C], Arrow[O[C], A, E & S & S2 & Region.NoEscape]) => A < (E & S & S2 & Region.NoEscape),
-        inline onDone: A => B < (S & S2),
-        inline onRecover: Throwable => Maybe[B < (S & S2)]
+        inline done: A => B < (S & S2),
+        inline recover: Throwable => Maybe[B < (S & S2)]
     )(using inline _frame: Frame): B < (S & S2) =
         // The input is forced under the recovery clause: a throw while building it is the region's to answer.
         try
@@ -148,8 +148,8 @@ object ArrowEffect:
                             def tag = effectTag
                             def run[X](input: I[X], next: Arrow[O[X], A, E & S & S2]) =
                                 Region.discharge(handle[X](input, next))
-                            def done(state: Unit, v0: A)                     = onDone(v0)
-                            override def recover(state: Unit, ex: Throwable) = onRecover(ex)
+                            def onDone(state: Unit, v0: A)                     = done(v0)
+                            override def onRecover(state: Unit, ex: Throwable) = recover(ex)
 
                     new Pending.HandleArrow[Unit, E, A, B, B, S & S2]:
                         override def frame = _frame
@@ -159,10 +159,10 @@ object ArrowEffect:
                         def cont           = Arrow.id
                     end new
                 case _ =>
-                    onDone(Nested.unnest(v0))
+                    done(Nested.unnest(v0))
             end match
         catch
-            case ex if !IsFatal(ex) => onRecover(ex).getOrElse(throw ex)
+            case ex if !IsFatal(ex) => recover(ex).getOrElse(throw ex)
         end try
     end handleCont
 
@@ -191,7 +191,7 @@ object ArrowEffect:
         v: A < (E & S)
     )(
         inline handle: [C] => I[C] => Loop.Outcome[O[C] < (E & S & S2), B < (S & S2)] < (S & S2),
-        inline onDone: A => B < (S & S2)
+        inline done: A => B < (S & S2)
     )(using inline _frame: Frame): B < (S & S2) =
         v match
             case _: Pending[?, ?] =>
@@ -216,7 +216,7 @@ object ArrowEffect:
                                 armed,
                                 slot
                             )
-                        def done(state: Unit, v0: A) = onDone(v0)
+                        def onDone(state: Unit, v0: A) = done(v0)
 
                 new Pending.HandleArrow[Unit, E, A, B, B, S & S2]:
                     override def frame = _frame
@@ -225,7 +225,7 @@ object ArrowEffect:
                     def state          = ()
                     def cont           = Arrow.id
                 end new
-            case _ => onDone(Nested.unnest(v))
+            case _ => done(Nested.unnest(v))
         end match
     end handleLoop
 
@@ -238,8 +238,8 @@ object ArrowEffect:
         inline v: => A < (E & S)
     )(
         inline handle: [C] => I[C] => Loop.Outcome[O[C] < (E & S & S2), B < (S & S2)] < (S & S2),
-        inline onDone: A => B < (S & S2),
-        inline onRecover: Throwable => Maybe[B < (S & S2)]
+        inline done: A => B < (S & S2),
+        inline recover: Throwable => Maybe[B < (S & S2)]
     )(using inline _frame: Frame): B < (S & S2) =
         // the input is forced under the recovery clause, as in the recovering handleCont
         try
@@ -267,8 +267,8 @@ object ArrowEffect:
                                     armed,
                                     slot
                                 )
-                            def done(state: Unit, v0: A)                     = onDone(v0)
-                            override def recover(state: Unit, ex: Throwable) = onRecover(ex)
+                            def onDone(state: Unit, v0: A)                     = done(v0)
+                            override def onRecover(state: Unit, ex: Throwable) = recover(ex)
 
                     new Pending.HandleArrow[Unit, E, A, B, B, S & S2]:
                         override def frame = _frame
@@ -278,10 +278,10 @@ object ArrowEffect:
                         def cont           = Arrow.id
                     end new
                 case _ =>
-                    onDone(Nested.unnest(v0))
+                    done(Nested.unnest(v0))
             end match
         catch
-            case ex if !IsFatal(ex) => onRecover(ex).getOrElse(throw ex)
+            case ex if !IsFatal(ex) => recover(ex).getOrElse(throw ex)
         end try
     end handleLoop
 
@@ -309,7 +309,7 @@ object ArrowEffect:
         v: A < (E & S)
     )(
         inline handle: [C] => (State, I[C]) => Loop.Outcome2[State, O[C] < (E & S & S2), B < (S & S2)] < (S & S2),
-        inline onDone: (State, A) => B < (S & S2)
+        inline done: (State, A) => B < (S & S2)
     )(using inline _frame: Frame): B < (S & S2) =
         v match
             case _: Pending[?, ?] =>
@@ -336,7 +336,7 @@ object ArrowEffect:
                                 armed,
                                 slot
                             )
-                        def done(st: State, v0: A) = onDone(st, v0)
+                        def onDone(st: State, v0: A) = done(st, v0)
                 val state0 = state
 
                 new Pending.HandleArrow[State, E, A, B, B, S & S2]:
@@ -346,7 +346,7 @@ object ArrowEffect:
                     def state          = state0
                     def cont           = Arrow.id
                 end new
-            case _ => onDone(state, Nested.unnest(v))
+            case _ => done(state, Nested.unnest(v))
         end match
     end handleLoopState
 
@@ -360,8 +360,8 @@ object ArrowEffect:
         inline v: => A < (E & S)
     )(
         inline handle: [C] => (State, I[C]) => Loop.Outcome2[State, O[C] < (E & S & S2), B < (S & S2)] < (S & S2),
-        inline onDone: (State, A) => B < (S & S2),
-        inline onRecover: (State, Throwable) => Maybe[B < (S & S2)]
+        inline done: (State, A) => B < (S & S2),
+        inline recover: (State, Throwable) => Maybe[B < (S & S2)]
     )(using inline _frame: Frame): B < (S & S2) =
         // the input is forced under the recovery clause, as in the recovering handleCont; a throw there
         // sees the initial state, the only one the region has had
@@ -392,8 +392,8 @@ object ArrowEffect:
                                     armed,
                                     slot
                                 )
-                            def done(st: State, v0: A)                     = onDone(st, v0)
-                            override def recover(st: State, ex: Throwable) = onRecover(st, ex)
+                            def onDone(st: State, v0: A)                     = done(st, v0)
+                            override def onRecover(st: State, ex: Throwable) = recover(st, ex)
                     val state0 = state
 
                     new Pending.HandleArrow[State, E, A, B, B, S & S2]:
@@ -404,10 +404,10 @@ object ArrowEffect:
                         def cont           = Arrow.id
                     end new
                 case _ =>
-                    onDone(state, Nested.unnest(v0))
+                    done(state, Nested.unnest(v0))
             end match
         catch
-            case ex if !IsFatal(ex) => onRecover(state, ex).getOrElse(throw ex)
+            case ex if !IsFatal(ex) => recover(state, ex).getOrElse(throw ex)
         end try
     end handleLoopState
 
@@ -423,7 +423,7 @@ object ArrowEffect:
         v: A < (E & S)
     )(
         inline handle: [X] => (I[X], Arrow[O[X], A, E & S & S2 & Region.NoEscape]) => A < (E & S & S2 & Region.NoEscape),
-        inline onDone: A => B < (S & S2)
+        inline done: A => B < (S & S2)
     )[C, S3](
         inline f: B => C < S3
     ): C < (S & S2 & S3) =
@@ -435,7 +435,7 @@ object ArrowEffect:
                         def tag = effectTag
                         def run[X](input: I[X], next: Arrow[O[X], A, E & S & S2]) =
                             Region.discharge(handle[X](input, next))
-                        def done(state: Unit, v0: A) = onDone(v0)
+                        def onDone(state: Unit, v0: A) = done(v0)
 
                 new Pending.HandleArrowWith[Unit, E, A, B, C, S & S2 & S3]:
                     override def frame = _frame
@@ -448,7 +448,7 @@ object ArrowEffect:
                             case kyo: Pending[B, S4] @unchecked => Effect.defer(kyo, this, cont2)
                             case _                              => cont2(onF(Nested.unnest[B](b)), Arrow.id)
                 end new
-            case _ => onDone(Nested.unnest(v)).map(onF)
+            case _ => done(Nested.unnest(v)).map(onF)
         end match
     end handleContWith
 
@@ -461,7 +461,7 @@ object ArrowEffect:
         v: A < (E & S)
     )(
         inline handle: [X] => I[X] => Loop.Outcome[O[X] < (E & S & S2), B < (S & S2)] < (S & S2),
-        inline onDone: A => B < (S & S2)
+        inline done: A => B < (S & S2)
     )[C, S3](
         inline f: B => C < S3
     ): C < (S & S2 & S3) =
@@ -489,7 +489,7 @@ object ArrowEffect:
                                 armed,
                                 slot
                             )
-                        def done(state: Unit, v0: A) = onDone(v0)
+                        def onDone(state: Unit, v0: A) = done(v0)
 
                 new Pending.HandleArrowWith[Unit, E, A, B, C, S & S2 & S3]:
                     override def frame = _frame
@@ -502,7 +502,7 @@ object ArrowEffect:
                             case kyo: Pending[B, S4] @unchecked => Effect.defer(kyo, this, cont2)
                             case _                              => cont2(onF(Nested.unnest[B](b)), Arrow.id)
                 end new
-            case _ => onDone(Nested.unnest(v)).map(onF)
+            case _ => done(Nested.unnest(v)).map(onF)
         end match
     end handleLoopWith
 
@@ -516,7 +516,7 @@ object ArrowEffect:
         v: A < (E & S)
     )(
         inline handle: [X] => (State, I[X]) => Loop.Outcome2[State, O[X] < (E & S & S2), B < (S & S2)] < (S & S2),
-        inline onDone: (State, A) => B < (S & S2)
+        inline done: (State, A) => B < (S & S2)
     )[C, S3](
         inline f: B => C < S3
     ): C < (S & S2 & S3) =
@@ -546,7 +546,7 @@ object ArrowEffect:
                                 armed,
                                 slot
                             )
-                        def done(st: State, v0: A) = onDone(st, v0)
+                        def onDone(st: State, v0: A) = done(st, v0)
 
                 new Pending.HandleArrowWith[State, E, A, B, C, S & S2 & S3]:
                     override def frame = _frame
@@ -559,7 +559,7 @@ object ArrowEffect:
                             case kyo: Pending[B, S4] @unchecked => Effect.defer(kyo, this, cont2)
                             case _                              => cont2(onF(Nested.unnest[B](b)), Arrow.id)
                 end new
-            case _ => onDone(state0, Nested.unnest(v)).map(onF)
+            case _ => done(state0, Nested.unnest(v)).map(onF)
         end match
     end handleLoopStateWith
 
@@ -622,7 +622,7 @@ object ArrowEffect:
     @nowarn("msg=anonymous")
     private[kyo] inline def handleFirst[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](inline effectTag: Tag[E], v: A < (E & S))(
         inline handle: [C] => (I[C], Arrow[O[C], A, E & S]) => B < (S & S2),
-        inline onDone: A => B < (S & S2)
+        inline done: A => B < (S & S2)
     )(using inline _frame: Frame): B < (S & S2) =
         v match
             case _: Pending[?, ?] =>
@@ -631,7 +631,7 @@ object ArrowEffect:
                         def tag = effectTag
                         def run[X](input: I[X], cont: Arrow[O[X], A, E & S & S2]) =
                             handle[X](input, cont.asInstanceOf[Arrow[O[X], A, E & S]])
-                        def done(state: Unit, a: A) = onDone(a)
+                        def onDone(state: Unit, a: A) = done(a)
 
                 new Pending.HandleArrow[Unit, E, A, B, B, S & S2]:
                     override def frame = _frame
@@ -640,7 +640,7 @@ object ArrowEffect:
                     def state          = ()
                     def cont           = Arrow.id
                 end new
-            case _ => onDone(Nested.unnest(v))
+            case _ => done(Nested.unnest(v))
         end match
     end handleFirst
 
@@ -651,7 +651,7 @@ object ArrowEffect:
     @nowarn("msg=anonymous")
     private[kyo] inline def handleFirstRepeated[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](inline effectTag: Tag[E], v: A < (E & S))(
         inline handle: [C] => (I[C], Arrow[O[C], A, E & S]) => B < (S & S2),
-        inline onDone: A => B < (S & S2)
+        inline done: A => B < (S & S2)
     )(using inline _frame: Frame): B < (S & S2) =
         v match
             case _: Pending[?, ?] =>
@@ -661,7 +661,7 @@ object ArrowEffect:
                         override def repeated = true
                         def run[X](input: I[X], cont: Arrow[O[X], A, E & S & S2]) =
                             handle[X](input, cont.asInstanceOf[Arrow[O[X], A, E & S]])
-                        def done(state: Unit, a: A) = onDone(a)
+                        def onDone(state: Unit, a: A) = done(a)
 
                 new Pending.HandleArrow[Unit, E, A, B, B, S & S2]:
                     override def frame = _frame
@@ -670,7 +670,7 @@ object ArrowEffect:
                     def state          = ()
                     def cont           = Arrow.id
                 end new
-            case _ => onDone(Nested.unnest(v))
+            case _ => done(Nested.unnest(v))
         end match
     end handleFirstRepeated
 
@@ -694,7 +694,7 @@ object ArrowEffect:
         v: A < (E & S)
     )(
         inline handle: [X] => (X < E, Arrow[X, A, E & S & S2 & Region.NoEscape]) => A < (E & S & S2 & Region.NoEscape),
-        inline onDone: A => B < (S & S2)
+        inline done: A => B < (S & S2)
     )(using inline _frame: Frame): B < (S & S2) =
         v match
             case _: Pending[?, ?] =>
@@ -703,7 +703,7 @@ object ArrowEffect:
                         def tag = effectTag
                         def run[X](operation: X < E, next: Arrow[X, A, E & S & S2]) =
                             Region.discharge(handle[X](operation, next))
-                        def done(state: Unit, v0: A) = onDone(v0)
+                        def onDone(state: Unit, v0: A) = done(v0)
 
                 new Pending.HandleArrow[Unit, E, A, B, B, S & S2]:
                     override def frame = _frame
@@ -712,7 +712,7 @@ object ArrowEffect:
                     def state          = ()
                     def cont           = Arrow.id
                 end new
-            case _ => onDone(Nested.unnest(v))
+            case _ => done(Nested.unnest(v))
         end match
     end handleMasking
 

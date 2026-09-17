@@ -308,7 +308,7 @@ class ArrowEffectTest extends Test:
             val result = ArrowEffect.handleCont(Tag[TestEffect1], effect)(
                 [C] => (input, cont) => throw new RuntimeException("Test exception"),
                 a => a,
-                onRecover = {
+                recover = {
                     case _: RuntimeException => Maybe("recovered")
                 }
             )
@@ -320,7 +320,7 @@ class ArrowEffectTest extends Test:
             val result = ArrowEffect.handleCont(Tag[TestEffect1], effect)(
                 [C] => (input, cont) => cont(input.toString),
                 a => a,
-                onRecover = {
+                recover = {
                     case _: RuntimeException => Maybe("recovered")
                 }
             )
@@ -563,7 +563,7 @@ class ArrowEffectTest extends Test:
                 ArrowEffect.handleCont(nestedTag, v)(
                     [C] => (input, cont) => cont(input * 10),
                     a => Kyo.lift(a),
-                    onRecover = e => throw e
+                    recover = e => throw e
                 )
 
             "unwraps Nested and handles inner suspension" in {
@@ -2116,7 +2116,7 @@ class ArrowEffectTest extends Test:
         ): B < (S & S2) =
             ArrowEffect.handleFirst[I, O, E, A, B, S, S2](effectTag, v)(
                 handle = [X] => (input, cont) => handle[X](input, o => cont(o)),
-                onDone = done
+                done = done
             )
 
         "the handler stays installed until the operation arrives after a foreign crossing" in {
@@ -2153,7 +2153,7 @@ class ArrowEffectTest extends Test:
                     v
                 )(
                     handle = [X] => (_, cont) => Right(cont),
-                    onDone = a => Left(a)
+                    done = a => Left(a)
                 )
             val sayHandled = ArrowEffect.handleCont(Tag[Say], first)([X] => (_, cont) => cont(()), a => a)
             sayHandled.eval match
@@ -2187,7 +2187,7 @@ class ArrowEffectTest extends Test:
                     Any
                 ](Tag[Pick[Int]], v)(
                     handle = [X] => (_, cont) => Right(cont),
-                    onDone = a => Left(a)
+                    done = a => Left(a)
                 )
             val outer = ArrowEffect.handleCont(Tag[Pick[String]], first)([X] => (_, cont) => cont("a"), a => a)
             outer.eval match
@@ -2748,7 +2748,7 @@ class ArrowEffectTest extends Test:
             val region: String < TestEffect1 =
                 ArrowEffect.handleFirst(Tag[TestEffect1], testEffect1(1).map(a => testEffect1(2).map(b => a + b)))(
                     handle = [C] => (input, cont) => cont(input.toString),
-                    onDone = a => a
+                    done = a => a
                 )
             val effect: String < TestEffect1 =
                 recovering(region.map(s => if s.nonEmpty then throw new RuntimeException("Test exception") else s))(_ => "caught")

@@ -151,7 +151,7 @@ object Pending:
                     def cont    = Arrow.id
                 end new
             case _ =>
-                handler.done(state, Nested.unnest[A](v))
+                handler.onDone(state, Nested.unnest[A](v))
 
     /** A region entry: a computation together with the handler installed over it.
       *

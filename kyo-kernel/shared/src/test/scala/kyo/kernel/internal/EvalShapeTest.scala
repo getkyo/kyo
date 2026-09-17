@@ -37,6 +37,13 @@ class EvalShapeTest extends Test:
     def prog(n: Int): Int < Ask =
         if n == 0 then 0 else ask.map(a => prog(n - 1).map(_ + a))
 
+    /** The same program with a value-preserving map directly after each occurrence's own map. The deferral over the suspension then
+      * carries a real continuation on each side, the shape the fused answering walk has to chain rather than hand back to the evaluator,
+      * and the law says the value must not change.
+      */
+    def progTrailing(n: Int): Int < Ask =
+        if n == 0 then 0 else ask.map(a => progTrailing(n - 1).map(_ + a)).map(x => x)
+
     def cfgAbove[A, S](v: A < S): A < S  = ContextEffect.handleInheritable(Tag[Cfg], 0)(v)
     def idleAbove[A, S](v: A < S): A < S = ArrowEffect.handleCont(Tag[Idle], v)([C] => (_, k) => k(()))
 
@@ -194,6 +201,16 @@ class EvalShapeTest extends Test:
 
                     "base" in {
                         assert(record(s.run(prog(n))).eval == ((Nil, s.expected(n))))
+                    }
+
+                    // fusion law over a trailing map: the answering walk chains the deferral's continuation onto the suspension's
+                    // instead of leaving the region, and the value is the law's either way
+                    "base, with a trailing map after each occurrence" in {
+                        assert(record(s.run(progTrailing(n))).eval == ((Nil, s.expected(n))))
+                    }
+
+                    "the clause suspends first, with a trailing map after each occurrence" in {
+                        assert(record(s.suspending(progTrailing(n))).eval == ((List.fill(s.says(n))("s"), s.expected(n))))
                     }
 
                     // at-top law: an inert region above the handler changes nothing, whichever kind it is

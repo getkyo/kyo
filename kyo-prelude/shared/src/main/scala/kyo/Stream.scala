@@ -713,12 +713,12 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
         def step1(source: Unit < (Emit[Chunk[VV]] & S)): Maybe[(Chunk[VV], Unit < (Emit[Chunk[VV]] & S))] < S =
             ArrowEffect.handleFirst(t1, source)(
                 handle = [C] => (vals, cont) => Maybe((vals, cont(()))),
-                onDone = _ => Maybe.empty
+                done = _ => Maybe.empty
             )
         def step2(source: Unit < (Emit[Chunk[V2]] & S2)): Maybe[(Chunk[V2], Unit < (Emit[Chunk[V2]] & S2))] < S2 =
             ArrowEffect.handleFirst(t2, source)(
                 handle = [C] => (vals, cont) => Maybe((vals, cont(()))),
-                onDone = _ => Maybe.empty
+                done = _ => Maybe.empty
             )
         Stream:
             Loop(emit: Unit < (Emit[Chunk[VV]] & S), Chunk.empty[VV], other.emit, Chunk.empty[V2]):

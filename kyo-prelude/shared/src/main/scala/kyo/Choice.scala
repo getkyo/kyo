@@ -126,7 +126,7 @@ object Choice:
                                 // is shared across every branch and released once, after all of them
                                 ArrowEffect.handleFirstRepeated(Tag[Choice], v)(
                                     handle = [C] => (input, cont) => Chunk.from(input).map(cont(_)),
-                                    onDone = r => Chunk(r: A < (Choice & S))
+                                    done = r => Chunk(r: A < (Choice & S))
                                 )
                             }.map(r => Loop.continue(r.flattenChunk))
                     }

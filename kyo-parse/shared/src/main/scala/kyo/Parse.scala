@@ -959,7 +959,7 @@ object Parse:
                                         case Absent       => Loop.done((finalState, ParseResult.failure(finalState.failures)))
                                         case Present(out) => Loop.continue(finalState, Kyo.lift(out.asInstanceOf[C]))
                                 ),
-            onDone = (s, r) => f(r).map(out => (s, ParseResult.success(s.failures, out)))
+            done = (s, r) => f(r).map(out => (s, ParseResult.success(s.failures, out)))
         )
     end runWith
 

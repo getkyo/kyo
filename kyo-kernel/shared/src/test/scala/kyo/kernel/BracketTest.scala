@@ -1466,7 +1466,7 @@ class BracketTest extends AnyFreeSpec:
                             closedAtClause = outcome.nonEmpty
                         0
                     ,
-                    onDone = a => a
+                    done = a => a
                 )
             val r = answerAsk(0)(dropped.map { a =>
                 closedAfter = outcome.nonEmpty
@@ -1490,7 +1490,7 @@ class BracketTest extends AnyFreeSpec:
                                 requestStop()
                                 Effect.defer(cont(10))
                         },
-                    onDone = a => a
+                    done = a => a
                 )
             val parked = Eval.partial(answerAsk(0)(first))
             assert(parked.isInstanceOf[Pending.Park[?, ?]])
@@ -1510,7 +1510,7 @@ class BracketTest extends AnyFreeSpec:
                                 requestStop()
                                 Effect.defer(cont(10))
                         },
-                    onDone = a => a
+                    done = a => a
                 )
             val parked = Eval.partial(answerAsk(0)(first))
             assert(parked.isInstanceOf[Pending.Park[?, ?]])
@@ -1527,7 +1527,7 @@ class BracketTest extends AnyFreeSpec:
             val inner: Maybe[Arrow[Int, Int, Ask]] < Any =
                 ArrowEffect.handleFirst[Const[Unit], Const[Int], Ask, Int, Maybe[Arrow[Int, Int, Ask]], Any, Any](Tag[Ask], body)(
                     handle = [C] => (_, cont) => Maybe(cont),
-                    onDone = _ => Maybe.empty
+                    done = _ => Maybe.empty
                 )
             val outerBody: Int < (Str & Ask) = inner.map(k => str(1).map(_ => k.get(10)))
             val outer: Maybe[Arrow[String, Int, Str & Ask]] < Ask =
@@ -1536,7 +1536,7 @@ class BracketTest extends AnyFreeSpec:
                     outerBody
                 )(
                     handle = [C] => (_, cont) => Maybe(cont),
-                    onDone = _ => Maybe.empty
+                    done = _ => Maybe.empty
                 )
             val r: Int < Any =
                 answerAsk(0) {
@@ -1555,7 +1555,7 @@ class BracketTest extends AnyFreeSpec:
             val inner: Maybe[Arrow[Int, Int, Ask]] < Any =
                 ArrowEffect.handleFirst[Const[Unit], Const[Int], Ask, Int, Maybe[Arrow[Int, Int, Ask]], Any, Any](Tag[Ask], body)(
                     handle = [C] => (_, cont) => Maybe(cont),
-                    onDone = _ => Maybe.empty
+                    done = _ => Maybe.empty
                 )
             val outerBody: Int < (Str & Ask) = inner.map(k => str(1).map(_ => k.get(10)))
             val outer: Maybe[Arrow[String, Int, Str & Ask]] < Ask =
@@ -1564,7 +1564,7 @@ class BracketTest extends AnyFreeSpec:
                     outerBody
                 )(
                     handle = [C] => (_, cont) => Maybe(cont),
-                    onDone = _ => Maybe.empty
+                    done = _ => Maybe.empty
                 )
             var openAfterDrop = false
             val r: Int < Any =
@@ -1763,7 +1763,7 @@ class BracketTest extends AnyFreeSpec:
                             closedAtClause = closed
                             cont(10).map(a => cont(20).map(b => a + b))
                     ,
-                    onDone = a => a
+                    done = a => a
                 )
             discard(intercept[kyo.Closed](answerAsk(0)(branches).eval))
             assert(!closedAtClause)
@@ -1778,7 +1778,7 @@ class BracketTest extends AnyFreeSpec:
             val first: Int < Ask =
                 ArrowEffect.handleFirst(Tag[Ask], v)(
                     handle = [C] => (_, cont) => cont(10),
-                    onDone = a => a
+                    done = a => a
                 )
             val r = answerAsk(0)(first.map { a =>
                 closedAfter = outcome.isDefined

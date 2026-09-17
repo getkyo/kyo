@@ -387,7 +387,7 @@ import scala.annotation.tailrec
                                     loop(res.asInstanceOf[Y < Any], next, Arrow.id)
                                 case handler0 =>
                                     val handler = handler0.asInstanceOf[Handler.ArrowHandler[VX, EX, AX, Y, Any]]
-                                    val result  = handler.done(stack.state(top).asInstanceOf[VX], Nested.unnest[AX](res))
+                                    val result  = handler.onDone(stack.state(top).asInstanceOf[VX], Nested.unnest[AX](res))
                                     Debugger.onRegionExit(handler, result)
                                     arrowExit(handler, top)
                                     loop(result, next, Arrow.id)
@@ -563,7 +563,7 @@ import scala.annotation.tailrec
                             drainFailed(stack.takeReleases(top), ex)
                             drainRemainders(stack.takeOwedRemainders(top), Maybe(ex))
                         val outcome =
-                            try if IsFatal(ex) then Absent else handler.recover(state.asInstanceOf[VX], ex)
+                            try if IsFatal(ex) then Absent else handler.onRecover(state.asInstanceOf[VX], ex)
                             catch
                                 case ex2 if !IsFatal(ex2) =>
                                     Debugger.onRegionExit(handler, ex2)
