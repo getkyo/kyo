@@ -125,7 +125,7 @@ class PathChannelTest extends kyo.test.Test[Any]:
         }
     }
 
-    "CreateNew admits exactly one concurrent creator on in-memory and zip rewrite" in {
+    "CreateNew admits exactly one concurrent creator on in-memory, overlay, and zip rewrite" in {
         def contend(fs: FileSystem.Write[Sync], path: Path)(using Frame): Int < (Sync & Async & Scope) =
             for
                 gate <- Latch.init(1)
@@ -145,6 +145,10 @@ class PathChannelTest extends kyo.test.Test[Any]:
         Scope.run {
             FileSystem.inMemory.map { inMemory =>
                 contend(inMemory, Path("create-new-race.bin")).map(count => assert(count == 1)).andThen {
+                    FileSystem.overlay(inMemory).map { overlay =>
+                        contend(overlay, Path("overlay-create-new-race.bin")).map(count => assert(count == 1))
+                    }
+                }.andThen {
                     hostTempDir("kyo-zip-create-new-race").map { dir =>
                         FileSystem.zip(dir / "race.zip").map { zip =>
                             contend(zip, Path("entry.bin")).map(count => assert(count == 1))
@@ -246,4 +250,87 @@ class PathChannelTest extends kyo.test.Test[Any]:
             }
         }
     }
+
+    "overlay channel closes at nested Scope exit without mutating staged or lower content" in {
+        Scope.run {
+            FileSystem.inMemory.map { lower =>
+                val path = Path("overlay-closed.bin")
+                lower.writeBytes(path, bytes(1, 2), Path.WriteOptions()).andThen {
+                    FileSystem.overlay(lower).map { overlay =>
+                        AtomicRef.init[Maybe[Path.ReadWriteChannel[Sync]]](Absent).map { captured =>
+                            Scope.run {
+                                overlay.openReadWriteChannel(path, FileSystem.WriteOpen.Existing).map(channel =>
+                                    captured.set(Present(channel))
+                                )
+                            }.andThen {
+                                captured.get.map {
+                                    case Present(channel) =>
+                                        Abort.run[FileSystemException](channel.writeAt(0L, bytes(9, 9))).map {
+                                            case Result.Failure(_: FileIOException) => assert(true)
+                                            case other => assert(false, s"expected closed overlay channel failure, got $other")
+                                        }
+                                    case Absent => fail("channel was not captured")
+                                }.andThen {
+                                    overlay.readBytes(path).map(staged => assert(staged.is(bytes(1, 2)))).andThen {
+                                        lower.readBytes(path).map(base => assert(base.is(bytes(1, 2))))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "overlay channel reports read bounds as Read and write bounds as Write without mutation" in {
+        Scope.run {
+            FileSystem.inMemory.map { lower =>
+                val path = Path("overlay-negative-bounds.bin")
+                lower.writeBytes(path, bytes(1, 2), Path.WriteOptions()).andThen {
+                    FileSystem.overlay(lower).map { overlay =>
+                        overlay.openReadWriteChannel(path, FileSystem.WriteOpen.Existing).map { channel =>
+                            val reads = Seq(
+                                Abort.run[FileSystemException](channel.readAt(-1L, 1)),
+                                Abort.run[FileSystemException](channel.readAt(0L, -1))
+                            )
+                            Kyo.collectAll(reads).map(_.foreach {
+                                case Result.Failure(e: FileIOException) => assert(e.operation == FileSystemOperation.Read)
+                                case other                              => assert(false, s"expected typed read-bound failure, got $other")
+                            }).andThen {
+                                Abort.run[FileSystemException](channel.writeAt(-1L, bytes(9))).map {
+                                    case Result.Failure(e: FileIOException) => assert(e.operation == FileSystemOperation.Write)
+                                    case other => assert(false, s"expected typed write-bound failure, got $other")
+                                }
+                            }.andThen {
+                                overlay.readBytes(path).map(staged => assert(staged.is(bytes(1, 2)))).andThen {
+                                    lower.readBytes(path).map(base => assert(base.is(bytes(1, 2))))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "overlay channels retain staged isolation until commit" in {
+        Scope.run {
+            FileSystem.inMemory.map { lower =>
+                val path = Path("overlay.bin")
+                lower.writeBytes(path, bytes(1, 1), Path.WriteOptions()).andThen {
+                    FileSystem.overlay(lower).map { overlay =>
+                        overlay.openReadWriteChannel(path, FileSystem.WriteOpen.Existing).map { channel =>
+                            channel.writeAt(0L, bytes(9, 9)).andThen {
+                                lower.readBytes(path).map(before => assert(before.is(bytes(1, 1)))).andThen {
+                                    overlay.commit.andThen(lower.readBytes(path).map(after => assert(after.is(bytes(9, 9)))))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
 end PathChannelTest

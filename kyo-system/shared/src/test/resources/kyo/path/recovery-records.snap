@@ -1,0 +1,4 @@
+write(root/a.txt,a)
+mkdir(root/nested)
+write(root/nested/b.txt,b)
+remove(root/old.txt)

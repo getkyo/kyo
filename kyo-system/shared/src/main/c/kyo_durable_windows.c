@@ -456,6 +456,237 @@ static DWORD kyo_windows_discard(HANDLE file) {
     return error;
 }
 
+static DWORD kyo_windows_current_user(TOKEN_USER **result) {
+    HANDLE token;
+    TOKEN_USER *user = NULL;
+    DWORD size = 0, error;
+    *result = NULL;
+    if (!OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, TRUE, &token)) {
+        error = GetLastError();
+        if (error != ERROR_NO_TOKEN)
+            return error;
+        if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token))
+            return GetLastError();
+    }
+    if (GetTokenInformation(token, TokenUser, NULL, 0, &size)) {
+        error = ERROR_INVALID_DATA;
+        goto done;
+    }
+    error = GetLastError();
+    if (error != ERROR_INSUFFICIENT_BUFFER)
+        goto done;
+    user = (TOKEN_USER *)malloc(size);
+    if (user == NULL) {
+        error = ERROR_NOT_ENOUGH_MEMORY;
+        goto done;
+    }
+    if (!GetTokenInformation(token, TokenUser, user, size, &size)) {
+        error = GetLastError();
+        goto done;
+    }
+    error = IsValidSid(user->User.Sid) ? ERROR_SUCCESS : ERROR_INVALID_SID;
+done:
+    if (!CloseHandle(token) && error == ERROR_SUCCESS)
+        error = GetLastError();
+    if (error == ERROR_SUCCESS)
+        *result = user;
+    else
+        free(user);
+    return error;
+}
+
+static DWORD kyo_windows_private_directory_acl(PSID owner, PACL *result) {
+    DWORD size = sizeof(ACL) + sizeof(ACCESS_ALLOWED_ACE) - sizeof(DWORD) +
+                 GetLengthSid(owner);
+    PACL acl = (PACL)malloc(size);
+    *result = NULL;
+    if (acl == NULL)
+        return ERROR_NOT_ENOUGH_MEMORY;
+    /* Windows normally bypasses directory traversal checks. Inherit the same
+       private grant into children so a known child name cannot bypass privacy. */
+    if (!InitializeAcl(acl, size, ACL_REVISION) ||
+        !AddAccessAllowedAceEx(acl, ACL_REVISION,
+                              OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE,
+                              FILE_ALL_ACCESS, owner)) {
+        DWORD error = GetLastError();
+        free(acl);
+        return error;
+    }
+    *result = acl;
+    return ERROR_SUCCESS;
+}
+
+static DWORD kyo_windows_verify_directory(HANDLE directory, PSID owner,
+                                           PACL expected_acl) {
+    BY_HANDLE_FILE_INFORMATION metadata;
+    kyo_windows_security actual = {0};
+    DWORD error, flags;
+    if (!GetFileInformationByHandle(directory, &metadata))
+        return GetLastError();
+    if (!(metadata.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY))
+        return ERROR_DIRECTORY;
+    if (metadata.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)
+        return ERROR_NOT_SUPPORTED;
+    if (!GetVolumeInformationByHandleW(directory, NULL, 0, NULL, NULL,
+                                       &flags, NULL, 0))
+        return GetLastError();
+    if (!(flags & FILE_PERSISTENT_ACLS))
+        return ERROR_NOT_SUPPORTED;
+    error = kyo_windows_security_read(directory, &actual);
+    if (error == ERROR_SUCCESS &&
+        (!EqualSid(actual.owner, owner) ||
+         (actual.control & (SE_DACL_PRESENT | SE_DACL_PROTECTED)) !=
+             (SE_DACL_PRESENT | SE_DACL_PROTECTED) ||
+         !kyo_windows_acl_equal(actual.dacl, expected_acl)))
+        error = ERROR_NOT_SUPPORTED;
+    kyo_windows_security_free(&actual);
+    return error;
+}
+
+KYO_DURABLE_EXPORT int32_t kyo_durable_verify_directory(const char *path,
+                                                        int32_t *result_error) {
+    WCHAR *directory_path = NULL;
+    TOKEN_USER *user = NULL;
+    PACL acl = NULL;
+    HANDLE directory = INVALID_HANDLE_VALUE;
+    DWORD error;
+    if (result_error == NULL)
+        return -1;
+    result_error[0] = result_error[1] = 0;
+    error = kyo_windows_path(path, &directory_path);
+    if (error != ERROR_SUCCESS)
+        goto done;
+    error = kyo_windows_current_user(&user);
+    if (error != ERROR_SUCCESS)
+        goto done;
+    error = kyo_windows_private_directory_acl(user->User.Sid, &acl);
+    if (error != ERROR_SUCCESS)
+        goto done;
+    /* Query the named entry itself and retain its identity during verification.
+       No mutation or deletion rights are requested, including on failure. */
+    directory = CreateFileW(directory_path, READ_CONTROL | FILE_READ_ATTRIBUTES,
+                             FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+                             OPEN_EXISTING,
+                             FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+                             NULL);
+    if (directory == INVALID_HANDLE_VALUE) {
+        error = GetLastError();
+        goto done;
+    }
+    error = kyo_windows_verify_directory(directory, user->User.Sid, acl);
+done:
+    if (directory != INVALID_HANDLE_VALUE && !CloseHandle(directory) &&
+        error == ERROR_SUCCESS)
+        error = GetLastError();
+    free(acl);
+    free(user);
+    free(directory_path);
+    if (error != ERROR_SUCCESS) {
+        result_error[0] = kyo_windows_error_kind(error);
+        result_error[1] = (int32_t)error;
+        return -1;
+    }
+    return 0;
+}
+
+KYO_DURABLE_EXPORT int32_t kyo_durable_mkdir(const char *path,
+                                           int32_t *result_error) {
+    WCHAR *directory_path = NULL;
+    TOKEN_USER *user = NULL;
+    PACL acl = NULL;
+    HANDLE directory = INVALID_HANDLE_VALUE;
+    SECURITY_DESCRIPTOR descriptor;
+    UNICODE_STRING object_name;
+    OBJECT_ATTRIBUTES attributes;
+    IO_STATUS_BLOCK io_status;
+    NTSTATUS status;
+    DWORD error;
+    size_t path_size;
+    BOOL created = FALSE;
+    if (result_error == NULL)
+        return -1;
+    result_error[0] = result_error[1] = 0;
+    error = kyo_windows_path(path, &directory_path);
+    if (error != ERROR_SUCCESS)
+        goto done;
+    error = kyo_windows_current_user(&user);
+    if (error != ERROR_SUCCESS)
+        goto done;
+    error = kyo_windows_private_directory_acl(user->User.Sid, &acl);
+    if (error != ERROR_SUCCESS)
+        goto done;
+    if (!InitializeSecurityDescriptor(&descriptor,
+                                        SECURITY_DESCRIPTOR_REVISION) ||
+        !SetSecurityDescriptorOwner(&descriptor, user->User.Sid, FALSE) ||
+        !SetSecurityDescriptorDacl(&descriptor, TRUE, acl, FALSE) ||
+        !SetSecurityDescriptorControl(&descriptor, SE_DACL_PROTECTED,
+                                        SE_DACL_PROTECTED)) {
+        error = GetLastError();
+        goto done;
+    }
+    /* The path helper produces the Win32 device namespace (\\\\?\\ or \\\\.\\).
+       Its NT equivalent is \\??\\, including \\??\\UNC\\ for network paths. */
+    path_size = wcslen(directory_path) * sizeof(WCHAR);
+    if (path_size > UINT16_MAX - sizeof(WCHAR)) {
+        error = ERROR_FILENAME_EXCED_RANGE;
+        goto done;
+    }
+    directory_path[1] = directory_path[2] = L'?';
+    object_name.Buffer = directory_path;
+    object_name.Length = (USHORT)path_size;
+    object_name.MaximumLength = (USHORT)(path_size + sizeof(WCHAR));
+    InitializeObjectAttributes(&attributes, &object_name, OBJ_CASE_INSENSITIVE,
+                               NULL, &descriptor);
+    /* Creation must return the handle atomically: reopening a created path can
+       select a substituted object. Excluding delete sharing prevents replacement
+       while the exact created directory is being verified. */
+    memset(&io_status, 0, sizeof(io_status));
+    status = NtCreateFile(&directory,
+                           READ_CONTROL | FILE_READ_ATTRIBUTES | DELETE | SYNCHRONIZE,
+                           &attributes, &io_status, NULL, FILE_ATTRIBUTE_NORMAL,
+                           FILE_SHARE_READ | FILE_SHARE_WRITE, FILE_CREATE,
+                           FILE_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT | FILE_OPEN_REPARSE_POINT,
+                           NULL, 0);
+    if (status < 0) {
+        directory = INVALID_HANDLE_VALUE;
+        error = RtlNtStatusToDosError(status);
+        goto done;
+    }
+    if (io_status.Information != FILE_CREATED) {
+        error = ERROR_NOT_SUPPORTED;
+        goto done;
+    }
+    created = TRUE;
+    error = kyo_windows_verify_directory(directory, user->User.Sid, acl);
+    if (error != ERROR_SUCCESS)
+        goto done;
+    if (!CloseHandle(directory)) {
+        error = GetLastError();
+        goto done;
+    }
+    directory = INVALID_HANDLE_VALUE;
+    created = FALSE;
+done:
+    if (directory != INVALID_HANDLE_VALUE) {
+        /* Handle-based deletion cannot follow a substituted pathname. It also
+           fails for nonempty directories instead of deleting their contents. */
+        DWORD cleanup_error = created ? kyo_windows_discard(directory)
+                                      : (CloseHandle(directory) ? ERROR_SUCCESS
+                                                                : GetLastError());
+        if (error == ERROR_SUCCESS)
+            error = cleanup_error;
+    }
+    free(acl);
+    free(user);
+    free(directory_path);
+    if (error != ERROR_SUCCESS) {
+        result_error[0] = kyo_windows_error_kind(error);
+        result_error[1] = (int32_t)error;
+        return -1;
+    }
+    return 0;
+}
+
 /* DELETE_CHILD on the named parent permits replacement even when the target's
    DACL grants no DELETE access. Open the directory without backup intent so
    enabled backup/restore privileges cannot stand in for ordinary authorization. */

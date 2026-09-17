@@ -7,8 +7,8 @@ import kyo.internal.ZipArchive
 /** [[FileSystem.zip]]'s staged-write implementor whose reads fall through to
   * `archive`'s baseline entries (parsed once, lazily, on first touch, from the archive's own bytes
   * read through the cross-platform [[Path.Unsafe.readBytes]] surface) when a path is not staged,
-  * whose writes always land in an in-memory upper (`FileSystem.inMemory`), and whose commit
-  * serializes the whole archive from
+  * whose writes always land in an in-memory upper (`FileSystem.inMemory`, the same staging primitive
+  * [[FileSystem.overlay]] itself is built from), and whose commit serializes the whole archive from
   * the merged (baseline minus tombstoned minus shadowed, plus upper) view via
   * [[kyo.internal.ZipArchive.write]] (a uniform pure-Scala STORED writer, no `java.util.zip`
   * anywhere), atomically moved into place via [[FileSystem.host]]. There is no in-place
@@ -355,6 +355,12 @@ final private[kyo] class ZipRewriteFileSystem(
         remove(path).map(existed => if existed then () else Abort.fail(FileNotFoundException(path)))
     def removeAll(path: Path)(using Frame): Unit < (Sync & Abort[FileReadException | FileStructureException]) =
         upper.removeAll(path).andThen(tombstone(name(path)))
+    private[kyo] def privateTempDir(prefix: String)(using Frame): Path.TempDirHandle < (Sync & Abort[FileStructureException]) =
+        tempDir(prefix)
+
+    private[kyo] def privateMkDir(path: Path)(using Frame): Unit < (Sync & Abort[FileReadException | FileStructureException]) =
+        mkDir(path)
+
     def tempDir(prefix: String)(using Frame): Path.TempDirHandle < (Sync & Abort[FileStructureException]) = upper.tempDir(prefix)
     def temp(prefix: String, suffix: String)(using Frame): Path.TempFileHandle < (Sync & Abort[FileStructureException]) =
         upper.temp(prefix, suffix)
@@ -472,6 +478,12 @@ final private[kyo] class ZipRewriteFileSystem(
     ): Unit < (Sync & Abort[FileReadException | FileWriteException | FileStructureException]) =
         FileSystem.durableReplace[Sync](this, target, bytes)
 
+    private[kyo] def replacementNeedsDefaultPermissions(path: Path)(using Frame): Boolean < (Sync & Abort[FileReadException]) = false
+
+    private[kyo] def durableReplacePreserving(target: Path, bytes: Span[Byte], permissionSource: Path)(using
+        Frame
+    ): Unit < (Sync & Abort[FileReadException | FileWriteException | FileStructureException]) =
+        FileSystem.durableReplace[Sync](this, target, bytes, Present(permissionSource))
     def tryLock(path: Path, mode: Path.LockMode, sentinelSuffix: String)(using
         Frame
     ): Maybe[Path.Lock] < (Sync & Async & Scope & Abort[FileReadException | FileLockException]) =
@@ -535,9 +547,9 @@ final private[kyo] class ZipRewriteFileSystem(
             }
         }
 
-    // Injection hooks marking the three points at which a commit can be cut short. Defaults are
-    // no-ops; a test replaces one with a function that throws. Single-writer semantics: only one
-    // test sets and clears a hook at a time.
+    // Injection hooks marking the three points at which a commit can be cut short, mirroring the
+    // set OverlayFileSystem carries. Defaults are no-ops; a test replaces one with a function that
+    // throws. Single-writer semantics: only one test sets and clears a hook at a time.
     // private[kyo] so tests (same package) can reach them.
     //
     // The points are chosen by what survives at each. After the temporary directory exists but

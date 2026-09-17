@@ -341,8 +341,8 @@ final private[kyo] class InMemoryFileSystem(state: AtomicRef[InMemoryFileSystem.
     // An existing directory is left exactly as it stands, and an existing regular file is a conflict.
     // Routing through upsert unconditionally would replace the node instead, which discards a
     // populated directory's children and hands the directory a fresh identity. Files.createDirectories
-    // does neither, and this service is the staging upper FileSystem.zip writes into, so a mkDir that
-    // empties a directory would drop staged entries before the archive is written.
+    // does neither, and this service is the lower that overlay commits replay onto, so a mkDir that
+    // empties a directory conceals any replay defect whose symptom is a surviving child.
     def mkDir(path: Path)(using Frame): Unit < (Sync & Abort[FileStructureException]) =
         now.map { t =>
             modify { s =>
@@ -421,6 +421,12 @@ final private[kyo] class InMemoryFileSystem(state: AtomicRef[InMemoryFileSystem.
     def writeString(handle: Path.WriteHandle, value: String, charset: Charset)(using Frame): Unit < (Sync & Abort[FileWriteException]) =
         // Unsafe: delegates to the in-memory write handle's buffer accumulator
         Sync.Unsafe.defer(Abort.get[FileWriteException](handle.writeString(value, charset)))
+    private[kyo] def privateTempDir(prefix: String)(using Frame): Path.TempDirHandle < (Sync & Abort[FileStructureException]) =
+        tempDir(prefix)
+
+    private[kyo] def privateMkDir(path: Path)(using Frame): Unit < (Sync & Abort[FileStructureException]) =
+        mkDir(path)
+
     def tempDir(prefix: String)(using Frame): Path.TempDirHandle < (Sync & Abort[FileStructureException]) =
         now.map { t =>
             val dir = Path(prefix + "-" + java.lang.Long.toHexString(t) + "-" + nextTempId.getAndIncrement().toHexString)
@@ -608,6 +614,13 @@ final private[kyo] class InMemoryFileSystem(state: AtomicRef[InMemoryFileSystem.
         Frame
     ): Unit < (Sync & Abort[FileReadException | FileWriteException | FileStructureException]) =
         FileSystem.durableReplace[Sync](this, target, bytes)
+
+    private[kyo] def replacementNeedsDefaultPermissions(path: Path)(using Frame): Boolean < (Sync & Abort[FileReadException]) = false
+
+    private[kyo] def durableReplacePreserving(target: Path, bytes: Span[Byte], permissionSource: Path)(using
+        Frame
+    ): Unit < (Sync & Abort[FileReadException | FileWriteException | FileStructureException]) =
+        FileSystem.durableReplace[Sync](this, target, bytes, Present(permissionSource))
 
     // --- Advisory lock (in-process CAS lock table; deterministic within a single process,
     // matching the design's "inMemory: in-process AtomicRef lock table" placement) ---

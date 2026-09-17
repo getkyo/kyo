@@ -234,6 +234,16 @@ private[kyo] object HostFileSystem:
         def removeAll(path: Path)(using Frame): Unit < (Sync & Abort[FileStructureException]) =
             // Unsafe: bridges Path.Unsafe.removeAll into the safe tier
             Sync.Unsafe.defer(Abort.get(path.unsafe.removeAll()))
+        private[kyo] def privateTempDir(prefix: String)(using Frame): Path.TempDirHandle < (Sync & Abort[FileStructureException]) =
+            Sync.defer(Path.platformBasePaths.tmp).map(kyo.internal.DurableDirectory.create(_, prefix))
+
+        private[kyo] def privateMkDir(path: Path)(using Frame): Unit < (Sync & Abort[FileStructureException]) =
+            kyo.internal.DurableFileChannel.nativePath(path).andThen {
+                val parent                                                       = path.parent.getOrElse(Path())
+                val prepareParent: Unit < (Sync & Abort[FileStructureException]) = if parent.parts.isEmpty then () else mkDir(parent)
+                prepareParent.andThen(kyo.internal.DurableDirectory.ensure(path))
+            }
+
         def tempDir(prefix: String)(using Frame): Path.TempDirHandle < (Sync & Abort[FileStructureException]) =
             Path.tempDirUnscoped(prefix).map { dir =>
                 new Path.TempDirHandle:
@@ -368,6 +378,14 @@ private[kyo] object HostFileSystem:
             Frame
         ): Unit < (Sync & Abort[FileReadException | FileWriteException | FileStructureException]) =
             FileSystem.durableReplace[Sync](this, target, bytes)
+
+        private[kyo] def replacementNeedsDefaultPermissions(path: Path)(using Frame): Boolean < (Sync & Abort[FileReadException]) =
+            exists(path, followLinks = false).map(found => !found)
+
+        private[kyo] def durableReplacePreserving(target: Path, bytes: Span[Byte], permissionSource: Path)(using
+            Frame
+        ): Unit < (Sync & Abort[FileReadException | FileWriteException | FileStructureException]) =
+            FileSystem.durableReplace[Sync](this, target, bytes, Present(permissionSource))
 
         private[kyo] def lockFrom(path: Path, raw: Path.RawLock, grantedMode: Path.LockMode, state: AtomicInt): Path.Lock =
             val owner = Path.LockOwnership.fresh()
@@ -713,6 +731,12 @@ private[kyo] object HostFileSystem:
                 Abort.fail(FileInvalidPathException(value, FileSystemOperation.Create))
             else ()
 
+        private[kyo] def privateTempDir(prefix: String)(using Frame): Path.TempDirHandle < (Sync & Abort[FileStructureException]) =
+            validateTemporaryName(prefix).andThen(kyo.internal.DurableDirectory.create(rootReal, prefix))
+
+        private[kyo] def privateMkDir(path: Path)(using Frame): Unit < (Sync & Abort[FileStructureException]) =
+            confined(path, FileSystemOperation.Create).andThen(host.privateMkDir(path))
+
         def tempDir(prefix: String)(using Frame): Path.TempDirHandle < (Sync & Abort[FileStructureException]) =
             validateTemporaryName(prefix).andThen(Path.tempDirUnscoped(rootReal, prefix)).map { dir =>
                 new Path.TempDirHandle:
@@ -771,6 +795,13 @@ private[kyo] object HostFileSystem:
         ): Unit < (Sync & Abort[FileReadException | FileWriteException | FileStructureException]) =
             FileSystem.durableReplace[Sync](this, target, bytes)
 
+        private[kyo] def replacementNeedsDefaultPermissions(path: Path)(using Frame): Boolean < (Sync & Abort[FileReadException]) =
+            confined(path, FileSystemOperation.Inspect).andThen(host.replacementNeedsDefaultPermissions(path))
+
+        private[kyo] def durableReplacePreserving(target: Path, bytes: Span[Byte], permissionSource: Path)(using
+            Frame
+        ): Unit < (Sync & Abort[FileReadException | FileWriteException | FileStructureException]) =
+            FileSystem.durableReplace[Sync](this, target, bytes, Present(permissionSource))
         def tryLock(path: Path, mode: Path.LockMode, sentinelSuffix: String)(using
             Frame
         ): Maybe[Path.Lock] < (Sync & Async & Scope & Abort[FileReadException | FileLockException]) =

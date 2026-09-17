@@ -12,6 +12,8 @@ import kyo.ffi.Ffi
   * another runtime's descriptor table.
   */
 private[kyo] trait DurableFileBindings extends Ffi:
+    def kyo_durable_mkdir(path: String, error: Buffer[Int])(using AllowUnsafe): Int
+    def kyo_durable_verify_directory(path: String, error: Buffer[Int])(using AllowUnsafe): Int
     def kyo_durable_open(target: String, temporary: String, error: Buffer[Int])(using AllowUnsafe): Long
     def kyo_durable_write(handle: Long, position: Long, bytes: Buffer[Byte], length: Int)(using AllowUnsafe): Int
     def kyo_durable_truncate(handle: Long, size: Long)(using AllowUnsafe): Int

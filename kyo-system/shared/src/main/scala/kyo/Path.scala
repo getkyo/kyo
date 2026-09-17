@@ -65,11 +65,14 @@ sealed trait PathRead extends ArrowEffect[[A] =>> Path.Op[A], Id]
   * context also satisfies read operations, a mixed read plus write program's row collapses to
   * `PathWrite`, and [[Path.runReadOnly]] rejects a program containing a write at the call site.
   *
-  * Discharge with [[Path.run]] or [[Path.runWith]]; only these runners can satisfy `PathWrite`
+  * Discharge with [[Path.run]] or [[Path.runWith]]; only these runners and the staged-write
+  * combinators, which install a temporary overlay, can satisfy `PathWrite`
   * in a program's row.
   *
   * @see
   *   [[PathRead]] for the read capability this extends
+  * @see
+  *   [[Path.stageWrites]], [[Path.commitWritesOnSuccess]], [[Path.discardWrites]] for staged writes
   */
 sealed trait PathWrite extends PathRead
 
@@ -311,34 +314,39 @@ object Path extends PathPlatformSpecific:
         case CurrentReadService()                                                           extends Op[FileSystem.Read[Any]]
         case Raise(error: Result.Error[FileSystemException])                                extends Op[Nothing]
         // write-group (suspend under Tag[PathWrite])
-        case Write(path: Path, value: String, options: WriteOptions)                extends Op[Unit]
-        case WriteBytes(path: Path, value: Span[Byte], options: WriteOptions)       extends Op[Unit]
-        case WriteLines(path: Path, value: Chunk[String], options: WriteOptions)    extends Op[Unit]
-        case Append(path: Path, value: String, options: WriteOptions)               extends Op[Unit]
-        case AppendBytes(path: Path, value: Span[Byte], options: WriteOptions)      extends Op[Unit]
-        case AppendLines(path: Path, value: Chunk[String], options: WriteOptions)   extends Op[Unit]
-        case Truncate(path: Path, size: Long)                                       extends Op[Unit]
-        case SetLastModified(path: Path, epochMs: Long)                             extends Op[Unit]
-        case MkDir(path: Path)                                                      extends Op[Unit]
-        case MkFile(path: Path)                                                     extends Op[Unit]
-        case Move(from: Path, to: Path, options: MoveOptions)                       extends Op[Unit]
-        case Copy(from: Path, to: Path, options: CopyOptions)                       extends Op[Unit]
-        case Remove(path: Path)                                                     extends Op[Boolean]
-        case RemoveExisting(path: Path)                                             extends Op[Unit]
-        case RemoveAll(path: Path)                                                  extends Op[Unit]
-        case SyncDirectory(path: Path)                                              extends Op[Unit]
-        case SiblingTemporary(path: Path, onAcquire: TempFileHandle => Unit)        extends Op[Path.TempFileHandle]
-        case DurableReplace(path: Path, bytes: Span[Byte])                          extends Op[Unit]
-        case OpenWrite(path: Path, append: Boolean, options: WriteOptions)          extends Op[Path.WriteHandle]
-        case TempDir(prefix: String)                                                extends Op[Path.TempDirHandle]
-        case Temp(prefix: String, suffix: String)                                   extends Op[Path.TempFileHandle]
-        case WriteChunk(handle: Path.WriteHandle, chunk: Chunk[Byte])               extends Op[Unit]
-        case WriteString(handle: Path.WriteHandle, value: String, charset: Charset) extends Op[Unit]
+        case Write(path: Path, value: String, options: WriteOptions)                         extends Op[Unit]
+        case WriteBytes(path: Path, value: Span[Byte], options: WriteOptions)                extends Op[Unit]
+        case WriteLines(path: Path, value: Chunk[String], options: WriteOptions)             extends Op[Unit]
+        case Append(path: Path, value: String, options: WriteOptions)                        extends Op[Unit]
+        case AppendBytes(path: Path, value: Span[Byte], options: WriteOptions)               extends Op[Unit]
+        case AppendLines(path: Path, value: Chunk[String], options: WriteOptions)            extends Op[Unit]
+        case Truncate(path: Path, size: Long)                                                extends Op[Unit]
+        case SetLastModified(path: Path, epochMs: Long)                                      extends Op[Unit]
+        case MkDir(path: Path)                                                               extends Op[Unit]
+        case MkFile(path: Path)                                                              extends Op[Unit]
+        case Move(from: Path, to: Path, options: MoveOptions)                                extends Op[Unit]
+        case Copy(from: Path, to: Path, options: CopyOptions)                                extends Op[Unit]
+        case Remove(path: Path)                                                              extends Op[Boolean]
+        case RemoveExisting(path: Path)                                                      extends Op[Unit]
+        case RemoveAll(path: Path)                                                           extends Op[Unit]
+        case SyncDirectory(path: Path)                                                       extends Op[Unit]
+        case SiblingTemporary(path: Path, onAcquire: TempFileHandle => Unit)                 extends Op[Path.TempFileHandle]
+        case DurableReplace(path: Path, bytes: Span[Byte])                                   extends Op[Unit]
+        case DurableReplacePreserving(path: Path, bytes: Span[Byte], permissionSource: Path) extends Op[Unit]
+        case PrivateTempDir(prefix: String)                                                  extends Op[Path.TempDirHandle]
+        case ReplacementNeedsDefaultPermissions(path: Path)                                  extends Op[Boolean]
+        case PrivateMkDir(path: Path)                                                        extends Op[Unit]
+        case OpenWrite(path: Path, append: Boolean, options: WriteOptions)                   extends Op[Path.WriteHandle]
+        case TempDir(prefix: String)                                                         extends Op[Path.TempDirHandle]
+        case Temp(prefix: String, suffix: String)                                            extends Op[Path.TempFileHandle]
+        case WriteChunk(handle: Path.WriteHandle, chunk: Chunk[Byte])                        extends Op[Unit]
+        case WriteString(handle: Path.WriteHandle, value: String, charset: Charset)          extends Op[Unit]
     end Op
 
     private[kyo] enum WatchOp[A]:
-        case Open(path: Path, options: WatchOptions)        extends WatchOp[Watcher]
-        case Raise(error: Result.Error[FileWatchException]) extends WatchOp[Nothing]
+        case Open(path: Path, options: WatchOptions)                                   extends WatchOp[Watcher]
+        case OpenWith(fileSystem: FileSystem.Watch, path: Path, options: WatchOptions) extends WatchOp[Watcher]
+        case Raise(error: Result.Error[FileWatchException])                            extends WatchOp[Nothing]
     end WatchOp
 
     // --- Runners ---
@@ -351,7 +359,7 @@ object Path extends PathPlatformSpecific:
       * Residual: `Sync & Abort[FileSystemException] & S` (the caller's tail `S` rides through).
       *
       * @see
-      *   [[runWith]] to install a custom [[FileSystem]] (in-memory, zip, root-confined host)
+      *   [[runWith]] to install a custom [[FileSystem]] (in-memory, overlay, root-confined host)
       */
     def run[A, S](program: A < (PathWrite & S))(using Frame): A < (Sync & Abort[FileSystemException] & S) =
         FileSystem.useErased(service => runWith(service)(program))
@@ -373,8 +381,8 @@ object Path extends PathPlatformSpecific:
     /** Runs `program` against an explicit `fileSystem`, discharging write and read; the backend's own
       * effect `FS` rides the residual (the Journal `Backend[S]` mapping).
       *
-      * Install [[FileSystem.inMemory]] for hermetic tests, [[FileSystem.zip]] (wrapped in `Scope`)
-      * for whole-archive rewrites, or [[FileSystem.host]](root) for root-confined host I/O. The
+      * Install [[FileSystem.inMemory]] for hermetic tests, [[FileSystem.overlay]] (wrapped in `Scope`)
+      * for copy-on-write staging, or [[FileSystem.host]](root) for root-confined host I/O. The
       * selected service determines when writes become durable relative to the enclosing run.
       */
     def runWith[A, S, FS](fileSystem: FileSystem.Write[FS])(program: A < (PathWrite & S))(using
@@ -412,8 +420,9 @@ object Path extends PathPlatformSpecific:
             [C] =>
                 (op, cont) =>
                     op match
-                        case WatchOp.Open(path, options) => fileSystem.openWatcher(path, options).map(cont)
-                        case WatchOp.Raise(error)        => Abort.error(error)
+                        case WatchOp.Open(path, options)               => fileSystem.openWatcher(path, options).map(cont)
+                        case WatchOp.OpenWith(selected, path, options) => selected.openWatcher(path, options).map(cont)
+                        case WatchOp.Raise(error)                      => Abort.error(error)
         )
 
     /** Runs `program`, discharging [[PathWatch]] against the Local-selected watch backend. */
@@ -429,7 +438,8 @@ object Path extends PathPlatformSpecific:
                     op match
                         case WatchOp.Open(path, options) =>
                             FileSystem.useWatchErased(_.openWatcher(path, options)).map(cont)
-                        case WatchOp.Raise(error) => Abort.error(error)
+                        case WatchOp.OpenWith(fileSystem, path, options) => fileSystem.openWatcher(path, options).map(cont)
+                        case WatchOp.Raise(error)                        => Abort.error(error)
         )
 
     /** Stateless isolation for read operations. Each child captures the Local-selected backend and
@@ -497,53 +507,152 @@ object Path extends PathPlatformSpecific:
             }
     end isolateWatch
 
+    /** Shared overlay bootstrap for explicit staged-write scopes.
+      *
+      * Overlay construction uses `Sync.Unsafe.defer` inside the `handleLoop` handler (lazy first
+      * dispatch, or at `done` when the program raised no PathWrite ops). Sync is cast off the
+      * residual the same way `exists`/`read` hide Sync behind suspend/dispatch, so combinator
+      * return rows stay locked without `Sync`.
+      */
+    private def bootstrapOverlay(using Frame): WatchableOverlayFileSystem[PathWrite, PathWrite] < PathWrite =
+        // Unsafe: create overlay without Scope; lifecycle managed by finish callback.
+        // Cast hides Sync (runs at dispatch/done time; outer runner folds Sync).
+        Sync.Unsafe.defer(
+            new WatchableOverlayFileSystem(
+                new ForwardingLowerFileSystem,
+                AtomicRef.Unsafe.init(OverlayFileSystem.OverlayState.empty).safe,
+                AtomicLong.Unsafe.init(0L).safe,
+                summon[Isolate[PathWrite, Sync, PathWrite]]
+            )
+        ).asInstanceOf[WatchableOverlayFileSystem[PathWrite, PathWrite] < PathWrite]
+    end bootstrapOverlay
+
+    private def handleEphemeralOverlay[A, B, S2](
+        overlay: WatchableOverlayFileSystem[PathWrite, PathWrite],
+        program: A < (PathWrite & S2),
+        finish: (A, OverlayFileSystem[PathWrite]) => B < (PathWrite & S2)
+    )(using Frame): B < (PathWrite & S2) =
+        FileSystem.useErased { lower =>
+            val bound = new FileSystem.Watch:
+                def openWatcher(boundPath: Path, boundOptions: WatchOptions)(using
+                    Frame
+                ): Watcher < (Any & Async & Scope & Abort[FileWatchException]) =
+                    Abort.run[FileSystemException](runWith(lower)(overlay.openWatcher(boundPath, boundOptions))).map {
+                        case Result.Success(watcher)                   => watcher
+                        case Result.Failure(error: FileWatchException) => Abort.fail(error)
+                        case Result.Failure(error) =>
+                            Abort.fail(FileIOException(boundPath, FileSystemOperation.Watch, error))
+                        case Result.Panic(error) => Abort.panic(error)
+                    }
+            FileSystem.letStagedWatchErased(bound) {
+                ArrowEffect.handleLoop(Tag[PathWrite], overlay, program)(
+                    [C] =>
+                        (op, state, cont) =>
+                            // Unsafe: dispatch's Abort[FileSystemException] is never raised here at runtime;
+                            // ForwardingLowerFileSystem re-suspends I/O ops as PathWrite so FileSystemExceptions
+                            // propagate through the outer PathWrite handler, not inside this handler body
+                            dispatch(state, op).asInstanceOf[C < PathWrite].map(result =>
+                                Loop.continue(state, cont(result))
+                        ),
+                    done = (state, result) => finish(result, state)
+                )
+            }
+        }
+    end handleEphemeralOverlay
+
+    private def scopedOverlay[A, B, S2](
+        program: A < (PathWrite & S2),
+        finish: (A, OverlayFileSystem[PathWrite]) => B < (PathWrite & S2)
+    )(using Frame): B < (PathWrite & Scope & S2) =
+        Scope.acquireRelease(bootstrapOverlay) { overlay =>
+            overlay.discardOnScopeExit
+        }.map(overlay => handleEphemeralOverlay(overlay, program, finish))
+            .asInstanceOf[B < (PathWrite & Scope & S2)]
+    end scopedOverlay
+
+    /** Runs `program` against isolated staged writes and commits them when it succeeds. */
+    def commitWritesOnSuccess[A, S](program: A < (PathWrite & S))(using
+        Frame
+    ): A < (PathWrite & Scope & Abort[CommitConflict] & S) =
+        scopedOverlay(
+            program,
+            (result, overlay) =>
+                val commit = overlay.commit.asInstanceOf[Unit < (PathWrite & Abort[CommitConflict])]
+                commit.andThen(result)
+        )
+    end commitWritesOnSuccess
+
+    /** Runs `program` against isolated staged writes and always discards them. */
+    def discardWrites[A, S](program: A < (PathWrite & S))(using Frame): A < (PathWrite & Scope & S) =
+        scopedOverlay(
+            program,
+            (result, overlay) =>
+                overlay.discard.asInstanceOf[Unit < PathWrite].andThen(result)
+        )
+    end discardWrites
+
+    /** Runs `program` against isolated staged writes and returns their one-shot lifecycle handle. */
+    def stageWrites[A, S](program: A < (PathWrite & S))(using
+        Frame
+    ): (A, FileSystem.StagedChanges[Sync]) < (PathWrite & Scope & S) =
+        scopedOverlay(
+            program,
+            (result, overlay) =>
+                (result, overlay.asInstanceOf[FileSystem.StagedChanges[Sync]])
+        )
+    end stageWrites
+
     private def dispatch[S, C](service: FileSystem.Write[S], op: Op[C])(using Frame): C < (S & Abort[FileSystemException]) =
         op match
-            case Op.Exists(p)                      => service.exists(p)
-            case Op.ExistsFollow(p, f)             => service.exists(p, f)
-            case Op.IsDirectory(p)                 => service.isDirectory(p)
-            case Op.IsRegularFile(p)               => service.isRegularFile(p)
-            case Op.IsSymbolicLink(p)              => service.isSymbolicLink(p)
-            case Op.RealPath(p)                    => service.realPath(p)
-            case Op.RealPathPrefix(p)              => service.realPathPrefix(p)
-            case Op.Read(p)                        => service.read(p)
-            case Op.ReadCharset(p, c)              => service.read(p, c)
-            case Op.ReadBytes(p)                   => service.readBytes(p)
-            case Op.ReadLines(p)                   => service.readLines(p)
-            case Op.ReadLinesCharset(p, c)         => service.readLines(p, c)
-            case Op.Size(p)                        => service.size(p)
-            case Op.Stat(p)                        => service.stat(p)
-            case Op.ListDir(p)                     => service.list(p)
-            case Op.ListGlob(p, g, c)              => c.fold(service.list(p, g))(service.list(p, g, _))
-            case Op.DefaultCaseSensitivity()       => service.defaultCaseSensitivity
-            case Op.OpenRead(p)                    => service.openRead(p)
-            case Op.OpenReadLines(p, c)            => service.openReadLines(p, c)
-            case Op.OpenWalk(p, d, f)              => service.openWalk(p, d, f)
-            case Op.CurrentReadService()           => FileSystem.useReadErased(selected => selected)
-            case Op.Raise(error)                   => Abort.error(error)
-            case Op.Write(p, v, cf)                => service.write(p, v, cf)
-            case Op.WriteBytes(p, v, options)      => service.writeBytes(p, v, options)
-            case Op.WriteLines(p, v, cf)           => service.writeLines(p, v, cf)
-            case Op.Append(p, v, cf)               => service.append(p, v, cf)
-            case Op.AppendBytes(p, v, cf)          => service.appendBytes(p, v, cf)
-            case Op.AppendLines(p, v, cf)          => service.appendLines(p, v, cf)
-            case Op.Truncate(p, s)                 => service.truncate(p, s)
-            case Op.SetLastModified(p, e)          => service.setLastModified(p, e)
-            case Op.MkDir(p)                       => service.mkDir(p)
-            case Op.MkFile(p)                      => service.mkFile(p)
-            case Op.Move(f, t, options)            => service.move(f, t, options)
-            case Op.Copy(f, t, options)            => service.copy(f, t, options)
-            case Op.Remove(p)                      => service.remove(p)
-            case Op.RemoveExisting(p)              => service.removeExisting(p)
-            case Op.RemoveAll(p)                   => service.removeAll(p)
-            case Op.SyncDirectory(p)               => service.syncDirectory(p)
-            case Op.SiblingTemporary(p, onAcquire) => service.siblingTemporary(p, onAcquire)
-            case Op.DurableReplace(p, bytes)       => service.durableReplace(p, bytes)
-            case Op.OpenWrite(p, a, cf)            => service.openWrite(p, a, cf)
-            case Op.TempDir(prefix)                => service.tempDir(prefix)
-            case Op.Temp(prefix, suffix)           => service.temp(prefix, suffix)
-            case Op.WriteChunk(h, ch)              => service.writeChunk(h, ch)
-            case Op.WriteString(h, s, c)           => service.writeString(h, s, c)
+            case Op.Exists(p)                                  => service.exists(p)
+            case Op.ExistsFollow(p, f)                         => service.exists(p, f)
+            case Op.IsDirectory(p)                             => service.isDirectory(p)
+            case Op.IsRegularFile(p)                           => service.isRegularFile(p)
+            case Op.IsSymbolicLink(p)                          => service.isSymbolicLink(p)
+            case Op.RealPath(p)                                => service.realPath(p)
+            case Op.RealPathPrefix(p)                          => service.realPathPrefix(p)
+            case Op.Read(p)                                    => service.read(p)
+            case Op.ReadCharset(p, c)                          => service.read(p, c)
+            case Op.ReadBytes(p)                               => service.readBytes(p)
+            case Op.ReadLines(p)                               => service.readLines(p)
+            case Op.ReadLinesCharset(p, c)                     => service.readLines(p, c)
+            case Op.Size(p)                                    => service.size(p)
+            case Op.Stat(p)                                    => service.stat(p)
+            case Op.ListDir(p)                                 => service.list(p)
+            case Op.ListGlob(p, g, c)                          => c.fold(service.list(p, g))(service.list(p, g, _))
+            case Op.DefaultCaseSensitivity()                   => service.defaultCaseSensitivity
+            case Op.OpenRead(p)                                => service.openRead(p)
+            case Op.OpenReadLines(p, c)                        => service.openReadLines(p, c)
+            case Op.OpenWalk(p, d, f)                          => service.openWalk(p, d, f)
+            case Op.CurrentReadService()                       => FileSystem.useReadErased(selected => selected)
+            case Op.Raise(error)                               => Abort.error(error)
+            case Op.Write(p, v, cf)                            => service.write(p, v, cf)
+            case Op.WriteBytes(p, v, options)                  => service.writeBytes(p, v, options)
+            case Op.WriteLines(p, v, cf)                       => service.writeLines(p, v, cf)
+            case Op.Append(p, v, cf)                           => service.append(p, v, cf)
+            case Op.AppendBytes(p, v, cf)                      => service.appendBytes(p, v, cf)
+            case Op.AppendLines(p, v, cf)                      => service.appendLines(p, v, cf)
+            case Op.Truncate(p, s)                             => service.truncate(p, s)
+            case Op.SetLastModified(p, e)                      => service.setLastModified(p, e)
+            case Op.MkDir(p)                                   => service.mkDir(p)
+            case Op.MkFile(p)                                  => service.mkFile(p)
+            case Op.Move(f, t, options)                        => service.move(f, t, options)
+            case Op.Copy(f, t, options)                        => service.copy(f, t, options)
+            case Op.Remove(p)                                  => service.remove(p)
+            case Op.RemoveExisting(p)                          => service.removeExisting(p)
+            case Op.RemoveAll(p)                               => service.removeAll(p)
+            case Op.SyncDirectory(p)                           => service.syncDirectory(p)
+            case Op.SiblingTemporary(p, onAcquire)             => service.siblingTemporary(p, onAcquire)
+            case Op.DurableReplace(p, bytes)                   => service.durableReplace(p, bytes)
+            case Op.DurableReplacePreserving(p, bytes, source) => service.durableReplacePreserving(p, bytes, source)
+            case Op.PrivateTempDir(prefix)                     => service.privateTempDir(prefix)
+            case Op.ReplacementNeedsDefaultPermissions(path)   => service.replacementNeedsDefaultPermissions(path)
+            case Op.PrivateMkDir(path)                         => service.privateMkDir(path)
+            case Op.OpenWrite(p, a, cf)                        => service.openWrite(p, a, cf)
+            case Op.TempDir(prefix)                            => service.tempDir(prefix)
+            case Op.Temp(prefix, suffix)                       => service.temp(prefix, suffix)
+            case Op.WriteChunk(h, ch)                          => service.writeChunk(h, ch)
+            case Op.WriteString(h, s, c)                       => service.writeString(h, s, c)
     end dispatch
 
     private def dispatchRead[S, C](service: FileSystem.Read[S], op: Op[C])(using Frame): C < (S & Abort[FileSystemException]) =
@@ -616,7 +725,7 @@ object Path extends PathPlatformSpecific:
 
     /** Creates a temporary directory in the active service and registers its recursive removal with
       * the enclosing `Scope`. The removal runs through the service that created the directory (host:
-      * real recursive delete; in-memory: map-subtree removal; zip: upper-entry discard), so a temp
+      * real recursive delete; in-memory: map-subtree removal; overlay: upper-entry discard), so a temp
       * dir made by a staged service is never deleted by a host-tier `removeAll`. There is no unscoped
       * public temp-directory primitive. The location of the created directory is service-defined:
       * unconfined host services use the OS temporary directory; root-confined host services create the
@@ -650,7 +759,7 @@ object Path extends PathPlatformSpecific:
     end ChannelCloseHandle
 
     /** A committed filesystem entry surfaced at commit time by [[Conflict]] (the live lower view and
-      * the staged view) and accepted as input by [[Resolution.Write]] (a caller-supplied
+      * the staged overlay view) and accepted as input by [[Resolution.Write]] (a caller-supplied
       * replacement entry for the conflicting path).
       *
       * Two cases: `File(bytes, stat)` carries the full byte content and stat metadata for a regular
@@ -665,14 +774,14 @@ object Path extends PathPlatformSpecific:
         case File(bytes: Span[Byte], stat: Path.PathStat)
         case Directory(stat: Path.PathStat)
 
-    /** The base observation a staging backend records for a lower entry at first sight, and the value
+    /** The base observation the overlay records for a lower entry at first sight, and the value
       * carried by [[Conflict.ancestor]]. It is exactly what the read-set stores so that a commit
       * can surface it without re-reading the lower: the observed entry kind, the size for a regular
       * file, the last-modified time where available, and a content hash only when the backend can
       * supply one cheaply.
       *
       * No bytes are retained. A `Stamp` is cheaper than a [[Path.Entry]] because it omits file
-      * content; the read-set records one stamp per observed path, not the bytes, keeping staging
+      * content; the read-set records one stamp per observed path, not the bytes, keeping overlay
       * memory cost proportional to the number of distinct paths touched rather than their content
       * size. A stamp is also the unit of divergence detection at commit: the commit compares each
       * stamped path against the live lower to decide whether a conflict exists.
@@ -688,7 +797,7 @@ object Path extends PathPlatformSpecific:
     ) derives CanEqual
 
     object Stamp:
-        /** The entry kind recorded by a [[Path.Stamp]] at the time a staging backend first observed a
+        /** The entry kind recorded by a [[Path.Stamp]] at the time the overlay first observed a
           * lower-layer path.
           *
           * Three cases: `File` means the path existed as a regular file when observed; `Directory`
@@ -696,7 +805,7 @@ object Path extends PathPlatformSpecific:
           *
           * Note the distinction between `Kind.Absent` and a `Maybe.Absent` [[Conflict.ancestor]]:
           * `Kind.Absent` stamps a path that WAS observed but happened to not exist at that moment;
-          * `Maybe.Absent` ancestor means the path was NEVER read through the staging backend at all, so no
+          * `Maybe.Absent` ancestor means the path was NEVER read through the overlay at all, so no
           * stamp was ever recorded for it. Both can appear on a [[Conflict]], but their semantics
           * differ: `Kind.Absent` is a confirmed observation of absence; `Maybe.Absent` is a gap in
           * the read-set.
@@ -958,6 +1067,8 @@ object Path extends PathPlatformSpecific:
           *     backends) resolve a path to itself, so the check reduces to a parts-prefix comparison
           *     and an absent path does not fail. Those backends have no symlinks, so resolution has
           *     nothing to defend against.
+          *   - A staged-write overlay defers to its lower for any path it has not staged, and returns
+          *     a path it has already staged unchanged. See [[FileSystem.overlay]].
           */
         def confinedTo(root: Path)(using Frame): Path < (PathRead & Abort[FileSystemException]) =
             ArrowEffect.suspend(Tag[PathRead], Path.Op.RealPath(root)).map { rootReal =>
@@ -1375,7 +1486,10 @@ object Path extends PathPlatformSpecific:
 
         /** Acquires a watcher after its backend registration is active. */
         def openWatcher(options: WatchOptions = WatchOptions())(using Frame): Watcher < PathWatch =
-            ArrowEffect.suspend(Tag[PathWatch], Path.WatchOp.Open(self, options))
+            FileSystem.useStagedWatchErased {
+                case Present(fileSystem) => ArrowEffect.suspend(Tag[PathWatch], Path.WatchOp.OpenWith(fileSystem, self, options))
+                case Absent              => ArrowEffect.suspend(Tag[PathWatch], Path.WatchOp.Open(self, options))
+            }
 
         /** Returns the underlying `Unsafe` implementation for direct use in unsafe code. */
         def unsafe: Path.Unsafe = self
