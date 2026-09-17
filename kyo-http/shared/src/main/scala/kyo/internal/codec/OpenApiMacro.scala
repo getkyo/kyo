@@ -1,8 +1,18 @@
 package kyo.internal.codec
 
 import kyo.*
+import scala.annotation.publicInBinary
 import scala.quoted.*
 
+/** Builds typed HTTP routes from an OpenAPI document at compile time.
+  *
+  * The public inline factories accept either a JSON literal or a document path.
+  * This helper reads and validates the document before generating the route definitions.
+  * Invalid documents produce diagnostics at the factory's call site.
+  *
+  * Public binary visibility supports inline callers while Scala access remains restricted to kyo.
+  */
+@publicInBinary
 private[kyo] object OpenApiMacro:
 
     def deriveFromStringImpl(spec: Expr[String])(using Quotes): Expr[Any] =
