@@ -1051,9 +1051,9 @@ lazy val `kyo-ffi` =
         )
         .jsSettings(
             `js-settings`,
-            // The node:fs mmap facade is an @JSImport module (koffi itself is resolved dynamically, not via
-            // @JSImport), so the JS backend needs a module kind (the default NoModule cannot link an @JSImport).
-            // Use ESModule to match the wasm backend: under a
+            // Nothing here is a static @JSImport: koffi is resolved dynamically and node:fs comes from
+            // process.getBuiltinModule (NodeFs.scala), so a page that links kyo-ffi still loads. ESModule is
+            // chosen to match the wasm backend: under a
             // CommonJS module Node keeps `require` module-scoped, which the browser-gate reads (and its
             // BrowserDetectionTest simulation) cannot observe, whereas ESModule has no `require` and the gate
             // behaves identically to the wasm axis.
