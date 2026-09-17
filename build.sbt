@@ -1101,7 +1101,13 @@ lazy val `kyo-sql-sqlite` =
                         // Column metadata is deliberately NOT enabled: sqlite3_column_decltype, which the
                         // codec dispatches on, needs no flag, and only sqlite3_column_origin_name would,
                         // which nothing here uses.
-                        cFlags = Seq("-DSQLITE_THREADSAFE=1", "-DSQLITE_ENABLE_MATH_FUNCTIONS=1"),
+                        //
+                        // SQLITE_API on Windows because most bindings call a sqlite3_* symbol directly, and
+                        // MSVC, which compiles this on windows-arm64, exports only what is declared: without
+                        // it the DLL loads and koffi then finds none of them. The shim's own entry points
+                        // carry KYO_SQLITE_API for the same reason. MinGW auto-exports and is unharmed.
+                        cFlags = Seq("-DSQLITE_THREADSAFE=1", "-DSQLITE_ENABLE_MATH_FUNCTIONS=1") ++
+                            (if (ffiHostOsArch.startsWith("windows")) Seq("-DSQLITE_API=__declspec(dllexport)") else Nil),
                         staticLink = false
                     )
                 )

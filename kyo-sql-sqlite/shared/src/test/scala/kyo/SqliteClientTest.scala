@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.*
+import kyo.internal.SqliteVfsDefault
 
 /** The backend reached the way a caller reaches it: a `sqlite://` URL through `SqlClient.init`.
   *
@@ -57,12 +58,15 @@ class SqliteClientTest extends Test:
     "a named VFS reaches the engine, and an unknown one is refused" in {
         // A name the engine does not know must FAIL the open: falling back to the default silently would let a
         // browser page that asked for persistent storage appear to work and lose everything at the next reload. The
-        // VFS that matters there is an OPFS one, which exists only in a browser, and `unix` is the same code path.
+        // VFS that matters there is an OPFS one, which exists only in a browser, and the default is the same code
+        // path. Its NAME is the operating system's rather than this platform's, so it is read rather than written
+        // here: hard-coding `unix` fails on Windows, where SQLite calls the same VFS `win32`.
+        val default = SqliteVfsDefault.name
         withMemoryDb { url =>
-            val named   = SqlConfig(maxConnections = 1).extension(SqliteVfs("unix"))
+            val named   = SqlConfig(maxConnections = 1).extension(SqliteVfs(default))
             val unknown = SqlConfig(maxConnections = 1).extension(SqliteVfs("no-such-vfs"))
             // A lookup that missed would send the default VFS and make the refusal below untestable.
-            assert(named.extensionFor[SqliteVfs] == Present(SqliteVfs("unix")), s"${named.extensionFor[SqliteVfs]}")
+            assert(named.extensionFor[SqliteVfs] == Present(SqliteVfs(default)), s"${named.extensionFor[SqliteVfs]}")
             Scope.run(SqlClient.init(url, named).map(c => DB.run(c)(c.query("SELECT 1")))).map { rows =>
                 assert(rows.size == 1, s"the named VFS did not open: $rows")
                 Abort.run[SqlException](Scope.run(SqlClient.init(url, unknown).map(c => DB.run(c)(c.query("SELECT 1")))))

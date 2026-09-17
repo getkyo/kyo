@@ -14,6 +14,20 @@
 #ifndef KYO_SQLITE_HEADER
 #define KYO_SQLITE_HEADER "sqlite3.h"
 #endif
+
+/* MSVC exports only what is declared, and it is what compiles this library on windows-arm64: an
+** undeclared symbol leaves the DLL loadable but empty, and koffi then reports that it cannot find
+** the function. MinGW's ld auto-exports and needs no attribute. Every entry point below carries
+** KYO_SQLITE_API, as kyo_net_api.h and kyo_aeron.h do for the same reason.
+**
+** sqlite3.c's own entry points are covered by -DSQLITE_API, set on Windows in build.sbt: the
+** bindings call most sqlite3_* symbols directly rather than through a wrapper here.
+*/
+#if defined(_WIN32)
+#define KYO_SQLITE_API __declspec(dllexport)
+#else
+#define KYO_SQLITE_API
+#endif
 #include KYO_SQLITE_HEADER
 
 /*
@@ -22,7 +36,7 @@
 ** can fail and records the failure on it, so sqlite3_extended_errcode on the returned handle carries
 ** the code. NULL means it could not be allocated at all, and closing it is the caller's job either way.
 */
-sqlite3 *kyo_sqlite3_open_v2(const char *filename, int flags, const char *zVfs) {
+KYO_SQLITE_API sqlite3 *kyo_sqlite3_open_v2(const char *filename, int flags, const char *zVfs) {
   sqlite3 *db = 0;
   /* An EMPTY zVfs means the default VFS. A String argument is marshalled by reading its bytes, so a
   ** null one throws on the Scala side before the call, and absent is spelled "" at this boundary. */
@@ -44,7 +58,7 @@ sqlite3 *kyo_sqlite3_open_v2(const char *filename, int flags, const char *zVfs) 
 **
 ** Trailing whitespace and a trailing semicolon are not a statement.
 */
-sqlite3_stmt *kyo_sqlite3_prepare_one(sqlite3 *db, const char *zSql, int nByte) {
+KYO_SQLITE_API sqlite3_stmt *kyo_sqlite3_prepare_one(sqlite3 *db, const char *zSql, int nByte) {
   sqlite3_stmt *stmt = 0;
   const char *tail = 0;
   int rc = sqlite3_prepare_v2(db, zSql, nByte, &stmt, &tail);
@@ -61,7 +75,7 @@ sqlite3_stmt *kyo_sqlite3_prepare_one(sqlite3 *db, const char *zSql, int nByte) 
 
 /* The int-valued sqlite3_db_config operations, fixed at two arguments. NULL for the out-pointer is
 ** legal, and is what the call sites want since the value being set is already known. */
-int kyo_sqlite3_db_config_int(sqlite3 *db, int op, int value) {
+KYO_SQLITE_API int kyo_sqlite3_db_config_int(sqlite3 *db, int op, int value) {
   return sqlite3_db_config(db, op, value, (int *)0);
 }
 
@@ -75,11 +89,11 @@ int kyo_sqlite3_db_config_int(sqlite3 *db, int op, int value) {
 ** koffi/Node transport where the JVM passes a valid pointer to a zero-length one. A genuine NULL
 ** never reaches here, the driver calling sqlite3_bind_null for that, so NULL can only mean empty.
 */
-int kyo_sqlite3_bind_text_copy(sqlite3_stmt *stmt, int idx, const char *value, int nBytes) {
+KYO_SQLITE_API int kyo_sqlite3_bind_text_copy(sqlite3_stmt *stmt, int idx, const char *value, int nBytes) {
   return sqlite3_bind_text(stmt, idx, value ? value : "", nBytes, SQLITE_TRANSIENT);
 }
 
-int kyo_sqlite3_bind_blob_copy(sqlite3_stmt *stmt, int idx, const void *value, int nBytes) {
+KYO_SQLITE_API int kyo_sqlite3_bind_blob_copy(sqlite3_stmt *stmt, int idx, const void *value, int nBytes) {
   return sqlite3_bind_blob(stmt, idx, value ? value : "", nBytes, SQLITE_TRANSIENT);
 }
 
@@ -94,14 +108,14 @@ int kyo_sqlite3_bind_blob_copy(sqlite3_stmt *stmt, int idx, const void *value, i
 ** representation was last requested, so it must be read through the accessor that produced the
 ** pointer.
 */
-int kyo_sqlite3_column_text_bytes(sqlite3_stmt *stmt, int iCol, void *dst, int cap) {
+KYO_SQLITE_API int kyo_sqlite3_column_text_bytes(sqlite3_stmt *stmt, int iCol, void *dst, int cap) {
   const void *src = (const void *)sqlite3_column_text(stmt, iCol);
   int n = sqlite3_column_bytes(stmt, iCol);
   if (src && dst && cap > 0) memcpy(dst, src, n < cap ? (size_t)n : (size_t)cap);
   return n;
 }
 
-int kyo_sqlite3_column_blob_bytes(sqlite3_stmt *stmt, int iCol, void *dst, int cap) {
+KYO_SQLITE_API int kyo_sqlite3_column_blob_bytes(sqlite3_stmt *stmt, int iCol, void *dst, int cap) {
   const void *src = sqlite3_column_blob(stmt, iCol);
   int n = sqlite3_column_bytes(stmt, iCol);
   if (src && dst && cap > 0) memcpy(dst, src, n < cap ? (size_t)n : (size_t)cap);
@@ -114,7 +128,7 @@ int kyo_sqlite3_column_blob_bytes(sqlite3_stmt *stmt, int iCol, void *dst, int c
 ** string, so a plain string return would collapse the two. Answers -1 for no declared type, otherwise
 ** the length in bytes, following kyo_sqlite3_column_text_bytes for `cap`.
 */
-int kyo_sqlite3_column_decltype_bytes(sqlite3_stmt *stmt, int iCol, void *dst, int cap) {
+KYO_SQLITE_API int kyo_sqlite3_column_decltype_bytes(sqlite3_stmt *stmt, int iCol, void *dst, int cap) {
   const char *decl = sqlite3_column_decltype(stmt, iCol);
   size_t n;
   if (!decl) return -1;
@@ -125,7 +139,7 @@ int kyo_sqlite3_column_decltype_bytes(sqlite3_stmt *stmt, int iCol, void *dst, i
 
 /* sqlite3_exec without its callback. The error message is not returned: sqlite3_errmsg carries the
 ** same text and needs no freeing, where sqlite3_exec's out-parameter must be released. */
-int kyo_sqlite3_exec_simple(sqlite3 *db, const char *sql) {
+KYO_SQLITE_API int kyo_sqlite3_exec_simple(sqlite3 *db, const char *sql) {
   return sqlite3_exec(db, sql, 0, 0, 0);
 }
 
@@ -138,7 +152,7 @@ int kyo_sqlite3_exec_simple(sqlite3 *db, const char *sql) {
 ** connection and can fail with SQLITE_BUSY against a live reader, so it belongs on the open path
 ** where that outcome can be retried.
 */
-int kyo_sqlite3_configure_connection(sqlite3 *db, int busyTimeoutMillis) {
+KYO_SQLITE_API int kyo_sqlite3_configure_connection(sqlite3 *db, int busyTimeoutMillis) {
   int rc;
 
   /* Without this a quoted identifier that does not resolve becomes a string literal, so a renamed
