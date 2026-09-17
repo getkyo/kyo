@@ -1385,11 +1385,10 @@ class AeronTransportTest extends Test:
         }
     }
 
-    // The add is the bracket's acquire in Topic.publish, and the Done poll is the acquire's last step, so the
-    // publication it produced is owned as that step ends and the interrupt taken in it closes the publication on
-    // abandonment. A bind between the add and its finalizer is where the interrupt would park instead, with the
-    // publication in front of it and nothing owning it: an abandonment runs nothing of a remainder, so the
-    // publication would never be closed.
+    // The add completes by producing the publication, and Topic.publish registers its closer with `ensureMap` in
+    // that same step, so an interrupt taken as the publication arrives finds the closer installed and closes the
+    // publication on abandonment. A plain `map` would make the registration a step of its own, with the interrupt
+    // parking in front of it and the publication left open.
     "an interrupt on a completed add closes the publication the add produced" in {
         val transport = new InterruptOnDoneTransport
         Latch.initWith(1) { gate =>
@@ -1427,7 +1426,7 @@ class AeronTransportTest extends Test:
         }
     }
 
-    // The same window on Topic.stream's subscription add.
+    // The same window on Topic.stream's subscription add, closed the same way by `ensureMap`.
     "an interrupt on a completed add closes the subscription the add produced" in {
         val transport = new InterruptOnDoneTransport
         Latch.initWith(1) { gate =>

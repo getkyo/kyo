@@ -250,7 +250,10 @@ object Topic:
         ): Unit < (Topic & S & Abort[TopicBackpressureException | TopicPublishException | TopicTransportException] & Async) =
             Env.use[AeronTransport] { transport =>
                 val resolvedStreamId = streamId.getOrElse(tag.hash.abs)
-                addPublicationDeadline(transport, aeronUri, resolvedStreamId, defaultAddTimeout).map {
+                // `ensureMap`, not `map`: the add completes by producing the publication, and its closer must be
+                // registered in that same step. `map` polls first, so an interrupt taken as the publication arrives
+                // parks before the `Sync.ensure` installs, leaving the publication open with nothing to close it.
+                addPublicationDeadline(transport, aeronUri, resolvedStreamId, defaultAddTimeout).ensureMap {
                     case Absent =>
                         Abort.fail(TopicPublicationClosedException(aeronUri, resolvedStreamId))
                     case Present(publication) =>
@@ -333,7 +336,10 @@ object Topic:
         Stream {
             Env.use[AeronTransport] { transport =>
                 val resolvedStreamId = streamId.getOrElse(tag.hash.abs)
-                addSubscriptionDeadline(transport, aeronUri, resolvedStreamId, defaultAddTimeout).map {
+                // `ensureMap`, not `map`: the add completes by producing the subscription, and its closer must be
+                // registered in that same step. `map` polls first, so an interrupt taken as the subscription arrives
+                // parks before the `Sync.ensure` installs, leaving the subscription open with nothing to close it.
+                addSubscriptionDeadline(transport, aeronUri, resolvedStreamId, defaultAddTimeout).ensureMap {
                     case Absent =>
                         // Closed client: reported as backpressure so the retry schedule absorbs it. A driver
                         // rejection already aborted terminally inside addSubscriptionDeadline.
@@ -413,17 +419,31 @@ object Topic:
                         // Token free-ownership: on Done, pollAddPublication's _get frees the token; on
                         // Failed the C layer does not, so each Failed arm frees it and clears tokOwned
                         // to keep the finalizer from double-freeing. The var is confined to one fiber.
-                        var tokOwned = true
-                        Sync.ensure(Sync.Unsafe.defer(if tokOwned then transport.freeAsyncPub(tok) else ())) {
+                        var tokOwned           = true
+                        var opened: Maybe[Pub] = Absent
+                        // Before Done the guard owns the token (frees it on any exit that did not hand it to the
+                        // driver); on Done the driver takes the token and returns the publication, which the guard
+                        // then owns until the use's own finalizer takes over. A clean end is that hand-off, so the
+                        // guard closes nothing; an abnormal end after Done (the publication produced but the hand-off
+                        // not reached, as an interrupt taken in the Done step is) closes it here rather than leaking it.
+                        Sync.ensure { outcome =>
+                            Sync.Unsafe.defer {
+                                if tokOwned then transport.freeAsyncPub(tok)
+                                else if outcome.isDefined then opened.foreach(transport.closePublication)
+                            }
+                        } {
                             Loop.foreach[Maybe[Pub], Async & Abort[TopicTransportException]] {
                                 Sync.Unsafe.defer {
                                     val poll = transport.pollAddPublication(tok)
-                                    // The transport's `_get` takes the token on a Done poll, so ownership is cleared in
-                                    // the same step as the poll: an interrupt landing between the poll and the clear
-                                    // would otherwise let the finalizer free a token the transport already took.
+                                    // The transport's `_get` takes the token on a Done poll, so ownership passes to the
+                                    // publication in the same step as the poll: an interrupt landing between the poll
+                                    // and the clear would otherwise let the finalizer free a token the driver already took.
                                     poll match
-                                        case _: AeronTransport.AddPoll.Done[?] => tokOwned = false
-                                        case _                                 => ()
+                                        case AeronTransport.AddPoll.Done(publication) =>
+                                            tokOwned = false
+                                            opened = Present(publication)
+                                        case _ => ()
+                                    end match
                                     poll
                                 }.map {
                                     poll =>
@@ -498,17 +518,30 @@ object Topic:
                     case Absent =>
                         (Absent: Maybe[Sub])
                     case Present(tok) =>
-                        var tokOwned = true
-                        Sync.ensure(Sync.Unsafe.defer(if tokOwned then transport.freeAsyncSub(tok) else ())) {
+                        var tokOwned           = true
+                        var opened: Maybe[Sub] = Absent
+                        // Symmetric to addPublicationDeadline: before Done the guard owns the token; on Done the
+                        // driver takes it and returns the subscription, which the guard owns until the use's own
+                        // finalizer takes over on a clean hand-off. An abnormal end after Done closes the subscription
+                        // here rather than leaking it; a clean end hands off, so the guard closes nothing.
+                        Sync.ensure { outcome =>
+                            Sync.Unsafe.defer {
+                                if tokOwned then transport.freeAsyncSub(tok)
+                                else if outcome.isDefined then opened.foreach(transport.closeSubscription)
+                            }
+                        } {
                             Loop.foreach[Maybe[Sub], Async & Abort[TopicTransportException]] {
                                 Sync.Unsafe.defer {
                                     val poll = transport.pollAddSubscription(tok)
-                                    // The transport's `_get` takes the token on a Done poll, so ownership is cleared in
-                                    // the same step as the poll: an interrupt landing between the poll and the clear
-                                    // would otherwise let the finalizer free a token the transport already took.
+                                    // The transport's `_get` takes the token on a Done poll, so ownership passes to the
+                                    // subscription in the same step as the poll: an interrupt landing between the poll
+                                    // and the clear would otherwise let the finalizer free a token the driver already took.
                                     poll match
-                                        case _: AeronTransport.AddPoll.Done[?] => tokOwned = false
-                                        case _                                 => ()
+                                        case AeronTransport.AddPoll.Done(subscription) =>
+                                            tokOwned = false
+                                            opened = Present(subscription)
+                                        case _ => ()
+                                    end match
                                     poll
                                 }.map {
                                     poll =>

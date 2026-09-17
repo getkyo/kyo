@@ -67,10 +67,15 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
             end for
         }
 
-        // The acquire runs under a Sync.ensure of its own, interrupted as its value arrives. That value parks in front of the
-        // outer bracket's un-applied release, which abandonment recovers, so the bracket releases every acquired value (rel == acq)
-        // alongside each ensure's own finalizer (fin == acq), on every platform.
-        "an acquire stopped under its own Sync.ensure runs that finalizer and the bracket releases each value" in {
+        // The acquire runs under a Sync.ensure of its own and interrupts itself as its inner value arrives. The
+        // inner Sync.ensure is a region from the start, so its finalizer always runs (fin == acq) on every platform.
+        // Whether the interrupt stops the acquire before its value reaches the outer bracket is a race, and the
+        // outcome differs by platform and by run: the JVM and Native preempt finely, so the value usually stops
+        // short and the bracket owns nothing (rel near 0); JS usually lets the acquire complete, so the bracket
+        // takes it and releases it (rel near acq), and a run may land anywhere between. All of these are the
+        // contract, so the only cross-platform invariant here is that the bracket never releases more than were
+        // produced (rel <= acq). The deterministic owns-nothing case is guarded in the kernel BracketTest.
+        "an acquire under its own Sync.ensure runs that finalizer, and the bracket never over-releases" in {
             val rounds = 200
             for
                 acquired <- AtomicInt.init(0)
@@ -94,7 +99,7 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
                 rel <- released.get
                 fin <- ended.get
             yield assert(
-                acq == fin && rel == acq && acq > 0,
+                acq == fin && rel <= acq && acq > 0,
                 s"$acq acquires ran to their end, $fin of their own regions released and $rel bracket releases ran"
             )
             end for

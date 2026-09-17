@@ -91,44 +91,22 @@ class BracketTest extends AnyFreeSpec:
             assert(seen.exists(_.exists(_ eq Boom)))
         }
 
-        // A polling `map` between the acquire's settled value and the outer bracket parks the interrupt in the gap, leaving the bracket's
-        // `Ensure` un-applied in the inner region's continuation. Abandonment applies it with the settled resource (42), not a dummy.
-        "abandonment releases a bracket stranded by a polling map after the acquire settled" in {
-            var released     = 0
-            var ended        = 0
-            var seenResource = Maybe.empty[Any]
+        // A bracket owes a release only once its acquire has finished, so that the release is owed the value the
+        // acquire returned. An interrupt inside the acquire, before that value reaches the bracket, parks with the
+        // acquire's own inner region still owing its release but the outer bracket having acquired nothing: the outer
+        // release does not run. Here a polling `map` under the acquire's `ensuring` holds the interrupt in that gap.
+        "a bracket whose acquire is interrupted before it finishes owns nothing" in {
+            var released = 0
+            var ended    = 0
             val v =
                 Bracket(
                     Bracket.ensuring(_ => discard(ended += 1)) {
                         Effect.defer { requestStop(); 42 }.map(x => x)
                     }
-                )(a => Effect.defer(a)) { (a, _) =>
-                    seenResource = Maybe(a)
-                    released += 1
-                }
-            val parked = Eval.partial(v)
-            assert(parked.isInstanceOf[Pending.Park[?, ?]])
-            Eval.release(parked, Boom)
-            assert(released == 1 && ended == 1, s"released=$released ended=$ended (0 released = the leak)")
-            assert(seenResource.exists(_.toString == "42"), s"release ran with the wrong resource: $seenResource")
-        }
-
-        // Soundness boundary: a value-changing `map` sits between the stranded `Ensure` and the value the remainder parked with, so the
-        // `Ensure` would receive the transformed value ("wrapped-42"), which the walk cannot reconstruct without running the transform.
-        // It declines (the bracket leaks) rather than release with the pre-transform value: never a wrong resource. The leak itself is
-        // the crossing family's gap, closed by installing the region as the value arrives.
-        "abandonment declines a stranded release rather than hand it a pre-transform resource" in {
-            var seen = Maybe.empty[Any]
-            val v =
-                Bracket(
-                    Bracket.ensuring(_ => ()) {
-                        Effect.defer { requestStop(); 42 }.map(x => x)
-                    }.map(r => s"wrapped-$r")
-                )(a => Effect.defer(a))((a, _) => seen = Maybe(a))
-            val parked = Eval.partial(v)
-            assert(parked.isInstanceOf[Pending.Park[?, ?]])
-            Eval.release(parked, Boom)
-            assert(!seen.exists(_.toString == "42"), s"release got the pre-transform resource: $seen")
+                )(a => Effect.defer(a))((a, _) => discard(released += 1))
+            Eval.release(Eval.partial(v), Boom)
+            assert(released == 0, s"the acquire never finished, so the outer bracket owns nothing, but released=$released")
+            assert(ended == 1, s"the acquire's own region, installed from the start, releases: ended=$ended")
         }
 
         "a resumed parked bracket completes and releases with Absent" in {
@@ -1488,7 +1466,7 @@ class BracketTest extends AnyFreeSpec:
                             closedAtClause = outcome.nonEmpty
                         0
                     ,
-                    done = a => a
+                    onDone = a => a
                 )
             val r = answerAsk(0)(dropped.map { a =>
                 closedAfter = outcome.nonEmpty
@@ -1512,7 +1490,7 @@ class BracketTest extends AnyFreeSpec:
                                 requestStop()
                                 Effect.defer(cont(10))
                         },
-                    done = a => a
+                    onDone = a => a
                 )
             val parked = Eval.partial(answerAsk(0)(first))
             assert(parked.isInstanceOf[Pending.Park[?, ?]])
@@ -1532,7 +1510,7 @@ class BracketTest extends AnyFreeSpec:
                                 requestStop()
                                 Effect.defer(cont(10))
                         },
-                    done = a => a
+                    onDone = a => a
                 )
             val parked = Eval.partial(answerAsk(0)(first))
             assert(parked.isInstanceOf[Pending.Park[?, ?]])
@@ -1549,7 +1527,7 @@ class BracketTest extends AnyFreeSpec:
             val inner: Maybe[Arrow[Int, Int, Ask]] < Any =
                 ArrowEffect.handleFirst[Const[Unit], Const[Int], Ask, Int, Maybe[Arrow[Int, Int, Ask]], Any, Any](Tag[Ask], body)(
                     handle = [C] => (_, cont) => Maybe(cont),
-                    done = _ => Maybe.empty
+                    onDone = _ => Maybe.empty
                 )
             val outerBody: Int < (Str & Ask) = inner.map(k => str(1).map(_ => k.get(10)))
             val outer: Maybe[Arrow[String, Int, Str & Ask]] < Ask =
@@ -1558,7 +1536,7 @@ class BracketTest extends AnyFreeSpec:
                     outerBody
                 )(
                     handle = [C] => (_, cont) => Maybe(cont),
-                    done = _ => Maybe.empty
+                    onDone = _ => Maybe.empty
                 )
             val r: Int < Any =
                 answerAsk(0) {
@@ -1577,7 +1555,7 @@ class BracketTest extends AnyFreeSpec:
             val inner: Maybe[Arrow[Int, Int, Ask]] < Any =
                 ArrowEffect.handleFirst[Const[Unit], Const[Int], Ask, Int, Maybe[Arrow[Int, Int, Ask]], Any, Any](Tag[Ask], body)(
                     handle = [C] => (_, cont) => Maybe(cont),
-                    done = _ => Maybe.empty
+                    onDone = _ => Maybe.empty
                 )
             val outerBody: Int < (Str & Ask) = inner.map(k => str(1).map(_ => k.get(10)))
             val outer: Maybe[Arrow[String, Int, Str & Ask]] < Ask =
@@ -1586,7 +1564,7 @@ class BracketTest extends AnyFreeSpec:
                     outerBody
                 )(
                     handle = [C] => (_, cont) => Maybe(cont),
-                    done = _ => Maybe.empty
+                    onDone = _ => Maybe.empty
                 )
             var openAfterDrop = false
             val r: Int < Any =
@@ -1785,7 +1763,7 @@ class BracketTest extends AnyFreeSpec:
                             closedAtClause = closed
                             cont(10).map(a => cont(20).map(b => a + b))
                     ,
-                    done = a => a
+                    onDone = a => a
                 )
             discard(intercept[kyo.Closed](answerAsk(0)(branches).eval))
             assert(!closedAtClause)
@@ -1800,7 +1778,7 @@ class BracketTest extends AnyFreeSpec:
             val first: Int < Ask =
                 ArrowEffect.handleFirst(Tag[Ask], v)(
                     handle = [C] => (_, cont) => cont(10),
-                    done = a => a
+                    onDone = a => a
                 )
             val r = answerAsk(0)(first.map { a =>
                 closedAfter = outcome.isDefined

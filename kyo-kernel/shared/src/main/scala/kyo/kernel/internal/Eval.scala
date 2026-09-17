@@ -674,66 +674,22 @@ import scala.annotation.tailrec
             val h = hc.asInstanceOf[Handler.ContextHandler[Any, ContextEffect[Any], Any, Any]]
             collected = collected.add(failure => h.release(state, failure))
 
-        // An `Arrow.Ensure` waiting on an already-settled value is a release nobody will run, so the cont is carried
-        // down and offered the value when one is reached. Only an `Ensure` may run here. A chain's head is its left
-        // arrow (a chain when built onto another), so walking `head` down finds the step that would have received it.
-        @tailrec def leftmost(cont: Arrow[Any, Any, Any]): Arrow[Any, Any, Any] =
-            val h = cont.head
-            // Erasure-forced: the type joining a chain's links is existential from out here.
-            if h eq cont then cont else leftmost(h.asInstanceOf[Arrow[Any, Any, Any]])
-        end leftmost
-
-        // Applying the `Ensure` is not always the whole debt. One that registers its release elsewhere, as
-        // `Scope.acquireRelease` does, is done once applied; one that installs a region to own it, as
-        // `Bracket` does, has only just created what owes it. So the result is walked too, at no budget.
-        def ensuring(v: Any, cont: Arrow[Any, Any, Any]): Unit =
-            leftmost(cont) match
-                case step: Arrow.Ensure[Any, Any, Any] @unchecked => collect(step(v), Arrow.id)
-                case _                                            => ()
-
-        // The resource a parked remainder settled to, walking its deferrals without running them; Absent while it still holds a computation.
-        @tailrec def settledResource(v: Any): Maybe[Any] =
-            v match
-                case d: Pending.Defer[?, ?, ?, ?] @unchecked => settledResource(d.value)
-                case _: Pending[?, ?]                        => Maybe.empty
-                case s                                       => Present(s)
-
-        // The first arrow the value meets, skipping value-preserving `Id`s; Absent when the continuation is all `Id`.
-        def firstStep(cont: Arrow[Any, Any, Any]): Maybe[Arrow[Any, Any, Any]] =
-            cont match
-                case c: Arrow.Chain[Any, Any, Any, Any] @unchecked =>
-                    firstStep(c.a.asInstanceOf[Arrow[Any, Any, Any]]) match
-                        case p @ Present(_) => p
-                        case Absent         => firstStep(c.b.asInstanceOf[Arrow[Any, Any, Any]])
-                case _: Arrow.Id[?] => Absent
-                case other          => Present(other)
-
-        // A bracket whose acquire settles under an inner region leaves its `Ensure` un-applied in an entry's continuation, missed by both
-        // `entries.releases` and the leftmost walk above. Only the step the value flows into directly may take `resource`: the bracket's own
-        // `Ensure`, reached through value-preserving `Id`s. A real transform before it would change the value the `Ensure` receives, which the
-        // walk cannot reconstruct, so it stops there rather than hand over a wrong resource. Applying the `Ensure` installs the region the
-        // abandonment then releases; it is never run.
-        def ensuringInCont(cont: Arrow[Any, Any, Any], resource: Any): Unit =
-            firstStep(cont) match
-                case Present(step: Arrow.Ensure[Any, Any, Any] @unchecked) => collect(step(resource), Arrow.id)
-                case _                                                     => ()
-
         @tailrec def collect(v: Any, cont: Arrow[Any, Any, Any]): Unit =
             v match
                 case p: Pending[?, ?] =>
                     p match
                         // A deferral is walked, not run. When its value is still a computation the walk descends into it;
-                        // when its value is settled the body under the deferral is not reached, since running it here would
-                        // be the caller's code, which after an interrupt would acquire what nothing then releases, and an
-                        // operation under a deferral that never ran is not waited on yet. Only an `Ensure` already waiting
-                        // on this settled value runs.
+                        // when its value is settled the body under the deferral is not reached: running it here would be
+                        // the caller's code, which after an interrupt would acquire what nothing then releases, and an
+                        // operation under a deferral that never ran is not waited on yet. A settled value owns no region,
+                        // so the walk stops there.
                         case kyo: Pending.Defer[a, b, c, s] @unchecked =>
                             // Erasure-forced: the types joining a chain's links are existential from out here.
                             val after = kyo.contB.chain(cont).asInstanceOf[Arrow[Any, Any, Any]]
                             val below = kyo.contA.chain(after).asInstanceOf[Arrow[Any, Any, Any]]
                             kyo.value match
                                 case _: Pending[?, ?] => collect(kyo.value, below)
-                                case _                => ensuring(kyo.value, below)
+                                case _                => ()
                             end match
                         case kyo: Pending.HandleContext[VX, CX, ?, ?] @unchecked =>
                             val hc = kyo.handler
@@ -766,28 +722,18 @@ import scala.annotation.tailrec
                                 if i < entryOwed.size then collectOwed(entryOwed(i))
                                 i += 1
                             end while
-                            // install a bracket `Ensure` left un-applied in an entry's continuation, so its release is collected
-                            settledResource(kyo.value) match
-                                case Present(resource) =>
-                                    var k = 0
-                                    while k < entries.regions do
-                                        ensuringInCont(entries.continuation(k).asInstanceOf[Arrow[Any, Any, Any]], resource)
-                                        k += 1
-                                    end while
-                                case Absent => ()
-                            end match
                             collectOwed(kyo.owedRemainders)
                             collect(kyo.value, cont)
                         case kyo: Pending.SuspendArrow[?, ?, ?, ?, ?, ?] @unchecked =>
                             effectTag.foreach(t => if t <:< kyo.tag.erased then f(kyo.input))
                         case _: Pending.Suspend[?, ?, ?, ?] => ()
                         case _: Pending.Snapshot[?, ?]      => ()
-                case settled => ensuring(settled, cont)
-        // The tagged walk (a fiber abandonment) runs on the just-interrupted fiber's stopped Safepoint. Applying a
-        // region's `Ensure` here rebuilds the region and hands it the settled value, and reaching the value across
-        // a stopped Safepoint needs a live state, so the walk takes its own and restores the caller's after. Without
-        // it the abandoned regions are not reached and their releases are lost (#1735, and #1928's drain never ends).
-        // The untagged walk (releasing a refused cont) runs where nothing is stopped, so it uses the caller's state.
+                case _ => ()
+        // The tagged walk (a fiber abandonment) runs on the just-interrupted fiber's stopped Safepoint. Reaching the
+        // abandoned regions across a stopped Safepoint needs a live state, so the walk takes its own and restores the
+        // caller's after; without it the abandoned regions are not reached and their releases are lost (#1735, and
+        // #1928's drain never ends). The untagged walk (releasing a refused cont) runs where nothing is stopped, so
+        // it uses the caller's state.
         if effectTag.isDefined then
             val slot  = Safepoint.get()
             val saved = Safepoint.save(slot)

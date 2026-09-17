@@ -251,9 +251,9 @@ sealed abstract class Pipe[-A, +B, -S] extends Serializable:
                                 handle = [C2] =>
                                     (emitted, emitCont) =>
                                         Loop.continue(emitCont(()), pollCont(Maybe(emitted))),
-                                done = _ => Loop.continue((), pollCont(Absent))
+                                onDone = _ => Loop.continue((), pollCont(Absent))
                         ),
-                    done = _ => Loop.done(())
+                    onDone = _ => Loop.done(())
                 )
             }
 

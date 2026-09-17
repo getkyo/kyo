@@ -523,7 +523,7 @@ class ContextEffectTest extends AnyFreeSpec:
                         log += "clause"
                         cont(41)
                 ,
-                done = a => a
+                onDone = a => a
             )
             assert(answerAsk(0)(first).eval == 42)
             assert(log.toList == List("clause", "done cfg 1"))
@@ -608,7 +608,7 @@ class ContextEffectTest extends AnyFreeSpec:
                         derive = (_: Maybe[Int]) => 7,
                         fork = (p: Int) => p,
                         join = (p: Int, _: Int, _: Int) => p,
-                        done = (_: Int) => throw boom
+                        onDone = (_: Int) => throw boom
                     )(count)
                 }
             assert(intercept[RuntimeException](r.eval) eq boom)

@@ -104,9 +104,8 @@ object ArrowEffect:
         v: A < (E & S)
     )(
         inline handle: [C] => (I[C], Arrow[O[C], A, E & S & S2 & Region.NoEscape]) => A < (E & S & S2 & Region.NoEscape),
-        inline done: A => B < (S & S2)
+        inline onDone: A => B < (S & S2)
     )(using inline _frame: Frame): B < (S & S2) =
-        def onDone(v0: A): B < (S & S2) = done(v0)
         v match
             case _: Pending[?, ?] =>
                 val h =
@@ -136,11 +135,9 @@ object ArrowEffect:
         inline v: => A < (E & S)
     )(
         inline handle: [C] => (I[C], Arrow[O[C], A, E & S & S2 & Region.NoEscape]) => A < (E & S & S2 & Region.NoEscape),
-        inline done: A => B < (S & S2),
-        inline recover: Throwable => Maybe[B < (S & S2)]
+        inline onDone: A => B < (S & S2),
+        inline onRecover: Throwable => Maybe[B < (S & S2)]
     )(using inline _frame: Frame): B < (S & S2) =
-        def onDone(v0: A): B < (S & S2)                   = done(v0)
-        def onRecover(ex: Throwable): Maybe[B < (S & S2)] = recover(ex)
         // The input is forced under the recovery clause: a throw while building it is the region's to answer.
         try
             val v0 = v
@@ -194,9 +191,8 @@ object ArrowEffect:
         v: A < (E & S)
     )(
         inline handle: [C] => I[C] => Loop.Outcome[O[C] < (E & S & S2), B < (S & S2)] < (S & S2),
-        inline done: A => B < (S & S2)
+        inline onDone: A => B < (S & S2)
     )(using inline _frame: Frame): B < (S & S2) =
-        def onDone(v0: A): B < (S & S2) = done(v0)
         v match
             case _: Pending[?, ?] =>
                 val h =
@@ -242,11 +238,9 @@ object ArrowEffect:
         inline v: => A < (E & S)
     )(
         inline handle: [C] => I[C] => Loop.Outcome[O[C] < (E & S & S2), B < (S & S2)] < (S & S2),
-        inline done: A => B < (S & S2),
-        inline recover: Throwable => Maybe[B < (S & S2)]
+        inline onDone: A => B < (S & S2),
+        inline onRecover: Throwable => Maybe[B < (S & S2)]
     )(using inline _frame: Frame): B < (S & S2) =
-        def onDone(v0: A): B < (S & S2)                   = done(v0)
-        def onRecover(ex: Throwable): Maybe[B < (S & S2)] = recover(ex)
         // the input is forced under the recovery clause, as in the recovering handleCont
         try
             val v0 = v
@@ -315,9 +309,8 @@ object ArrowEffect:
         v: A < (E & S)
     )(
         inline handle: [C] => (State, I[C]) => Loop.Outcome2[State, O[C] < (E & S & S2), B < (S & S2)] < (S & S2),
-        inline done: (State, A) => B < (S & S2)
+        inline onDone: (State, A) => B < (S & S2)
     )(using inline _frame: Frame): B < (S & S2) =
-        def onDone(st: State, v0: A): B < (S & S2) = done(st, v0)
         v match
             case _: Pending[?, ?] =>
                 val h =
@@ -367,11 +360,9 @@ object ArrowEffect:
         inline v: => A < (E & S)
     )(
         inline handle: [C] => (State, I[C]) => Loop.Outcome2[State, O[C] < (E & S & S2), B < (S & S2)] < (S & S2),
-        inline done: (State, A) => B < (S & S2),
-        inline recover: (State, Throwable) => Maybe[B < (S & S2)]
+        inline onDone: (State, A) => B < (S & S2),
+        inline onRecover: (State, Throwable) => Maybe[B < (S & S2)]
     )(using inline _frame: Frame): B < (S & S2) =
-        def onDone(st: State, v0: A): B < (S & S2)                   = done(st, v0)
-        def onRecover(st: State, ex: Throwable): Maybe[B < (S & S2)] = recover(st, ex)
         // the input is forced under the recovery clause, as in the recovering handleCont; a throw there
         // sees the initial state, the only one the region has had
         try
@@ -432,12 +423,11 @@ object ArrowEffect:
         v: A < (E & S)
     )(
         inline handle: [X] => (I[X], Arrow[O[X], A, E & S & S2 & Region.NoEscape]) => A < (E & S & S2 & Region.NoEscape),
-        inline done: A => B < (S & S2)
+        inline onDone: A => B < (S & S2)
     )[C, S3](
         inline f: B => C < S3
     ): C < (S & S2 & S3) =
-        def onDone(v0: A): B < (S & S2) = done(v0)
-        def onF(v0: B): C < S3          = f(v0)
+        def onF(v0: B): C < S3 = f(v0)
         v match
             case _: Pending[?, ?] =>
                 val h =
@@ -471,12 +461,11 @@ object ArrowEffect:
         v: A < (E & S)
     )(
         inline handle: [X] => I[X] => Loop.Outcome[O[X] < (E & S & S2), B < (S & S2)] < (S & S2),
-        inline done: A => B < (S & S2)
+        inline onDone: A => B < (S & S2)
     )[C, S3](
         inline f: B => C < S3
     ): C < (S & S2 & S3) =
-        def onDone(v0: A): B < (S & S2) = done(v0)
-        def onF(v0: B): C < S3          = f(v0)
+        def onF(v0: B): C < S3 = f(v0)
         v match
             case _: Pending[?, ?] =>
                 val h =
@@ -527,12 +516,11 @@ object ArrowEffect:
         v: A < (E & S)
     )(
         inline handle: [X] => (State, I[X]) => Loop.Outcome2[State, O[X] < (E & S & S2), B < (S & S2)] < (S & S2),
-        inline done: (State, A) => B < (S & S2)
+        inline onDone: (State, A) => B < (S & S2)
     )[C, S3](
         inline f: B => C < S3
     ): C < (S & S2 & S3) =
-        def onDone(st: State, v0: A): B < (S & S2) = done(st, v0)
-        def onF(v0: B): C < S3                     = f(v0)
+        def onF(v0: B): C < S3 = f(v0)
         v match
             case _: Pending[?, ?] =>
                 val h =
@@ -634,9 +622,8 @@ object ArrowEffect:
     @nowarn("msg=anonymous")
     private[kyo] inline def handleFirst[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](inline effectTag: Tag[E], v: A < (E & S))(
         inline handle: [C] => (I[C], Arrow[O[C], A, E & S]) => B < (S & S2),
-        inline done: A => B < (S & S2)
+        inline onDone: A => B < (S & S2)
     )(using inline _frame: Frame): B < (S & S2) =
-        def onDone(a: A): B < (S & S2) = done(a)
         v match
             case _: Pending[?, ?] =>
                 val h =
@@ -664,9 +651,8 @@ object ArrowEffect:
     @nowarn("msg=anonymous")
     private[kyo] inline def handleFirstRepeated[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](inline effectTag: Tag[E], v: A < (E & S))(
         inline handle: [C] => (I[C], Arrow[O[C], A, E & S]) => B < (S & S2),
-        inline done: A => B < (S & S2)
+        inline onDone: A => B < (S & S2)
     )(using inline _frame: Frame): B < (S & S2) =
-        def onDone(a: A): B < (S & S2) = done(a)
         v match
             case _: Pending[?, ?] =>
                 val h =
@@ -708,9 +694,8 @@ object ArrowEffect:
         v: A < (E & S)
     )(
         inline handle: [X] => (X < E, Arrow[X, A, E & S & S2 & Region.NoEscape]) => A < (E & S & S2 & Region.NoEscape),
-        inline done: A => B < (S & S2)
+        inline onDone: A => B < (S & S2)
     )(using inline _frame: Frame): B < (S & S2) =
-        def onDone(v0: A): B < (S & S2) = done(v0)
         v match
             case _: Pending[?, ?] =>
                 val h =

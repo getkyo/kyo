@@ -155,7 +155,7 @@ object Var:
                             Loop.continue(nst, nst)
                         case input: V @unchecked =>
                             Loop.continue(input, state),
-            done = f
+            onDone = f
         )
 
     /** Handles the effect and discards the 'Var' state.

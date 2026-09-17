@@ -142,7 +142,7 @@ object Batch:
                             case Eval(v) =>
                                 ToExpand(v, cont.asInstanceOf[ContEval[A, S]]): Item
                 ,
-                done = (a: Item) => a
+                onDone = (a: Item) => a
             )
 
         // Expands any `Batch.eval` calls, capturing items for each element in the sequence.

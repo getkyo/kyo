@@ -150,8 +150,8 @@ class KernelBench:
     def suspensionBaseline: Int =
         def loop(i: Int): Int < Ask =
             if i > Depth then i
-            else ask.map(a => loop(i + a))
-        run(ArrowEffect.handleCont(Tag[Ask], loop(seed - 1))([C] => (_, cont) => cont(1), a => a))
+            else ArrowEffect.suspend[Any](Tag[Ask], ()).map(a => loop(i + a))
+        ArrowEffect.handleCont(Tag[Ask], loop(seed - 1))([C] => (_, cont) => cont(1), a => a).eval
     end suspensionBaseline
 
     @Benchmark
