@@ -22,6 +22,10 @@ import scala.scalajs.js as sjs
   */
 class NativeLoaderJsTest extends Test:
 
+    // Resolution is a sequence of real presence checks against a host: it reads process.env, writes candidate files through node:fs, and
+    // locates the running program through import.meta.url. A page has none of those, so there is nothing here for it to run.
+    override protected def hostFilters = Chunk(kyo.test.HostFilter.NotBrowser)
+
     private val libId       = "kyo_test_loader"
     private val envKey      = s"KYO_FFI_${libId.toUpperCase.replace('-', '_')}_PATH"
     private val prefixProp  = "kyo.ffi.js.packagePrefix"

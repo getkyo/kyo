@@ -15,8 +15,13 @@ import scala.scalajs.js as sjs
   *   - [[NativeLoader.load]] throws [[FfiLoadError.Unsupported]] directly.
   *   - `Ffi.load[T]` throws [[FfiLoadError.Unsupported]] before it constructs the impl, and before it reports a missing one.
   *
-  * The test simulates a browser by temporarily deleting `process` and `require` from `sjs.Dynamic.global`, runs the checks, then restores
-  * the originals so subsequent specs see a normal Node environment.
+  * On the Node row the test simulates a browser by temporarily deleting `process` and `require` from `sjs.Dynamic.global`, runs the checks,
+  * then restores the originals so subsequent specs see a normal Node environment. The leaves that assert the Node side of the gate carry
+  * `.notBrowser`, since a page cannot restore what it never had.
+  *
+  * The `.onlyBrowser` group at the end asserts the same gate on the browser row with nothing deleted, so its subject is the page rather
+  * than a fabricated global. That is the only place the claim about the impl's companion can be made honestly: what a deleted `process`
+  * does to a companion initializer is not what a page does to it.
   */
 class BrowserDetectionTest extends Test:
 
@@ -47,9 +52,11 @@ class BrowserDetectionTest extends Test:
     // the body and restore them after, isolating leaves (the kyo-test equivalent of the old beforeEach/afterEach pair).
     override def aroundLeaf[A](body: A < (Async & Abort[Any] & Scope))(using Frame): A < (Async & Abort[Any] & Scope) =
         Sync.defer {
-            val p = sjs.Dynamic.global.selectDynamic("process")
+            // Read off `globalThis`, not off the global scope: a bare `process` is a ReferenceError on a host that does not declare one,
+            // thrown before `isUndefined` can answer, which would fail every leaf in a page including the ones that delete nothing.
+            val p = globalThis.selectDynamic("process")
             if !sjs.isUndefined(p) then saved.updateDynamic("process")(p)
-            val r = sjs.Dynamic.global.selectDynamic("require")
+            val r = globalThis.selectDynamic("require")
             if !sjs.isUndefined(r) then saved.updateDynamic("require")(r)
             Scope.ensure {
                 val sp = saved.selectDynamic("process")
@@ -64,7 +71,7 @@ class BrowserDetectionTest extends Test:
         }
 
     "detectBrowser" - {
-        "returns false under Node (process + require are defined)" in {
+        "returns false under Node (process + require are defined)".notBrowser in {
             // The Node test runner always has `process` defined, so the host is Node-like whether or not `require` is.
             assert(NativeLoader.detectBrowser() == false)
         }
@@ -75,7 +82,7 @@ class BrowserDetectionTest extends Test:
             assert(NativeLoader.detectBrowser() == true)
         }
 
-        "returns false when process is defined but require is not" in {
+        "returns false when process is defined but require is not".notBrowser in {
             deleteGlobal("require")
             assert(NativeLoader.detectBrowser() == false)
         }
@@ -105,7 +112,7 @@ class BrowserDetectionTest extends Test:
             })
         }
 
-        "does not raise the browser gate in Node (process defined)" in {
+        "does not raise the browser gate in Node (process defined)".notBrowser in {
             // In Node the browser gate is off, so load does not raise the browser FfiLoadError.Unsupported. An arbitrary
             // unresolvable id still fails with LibraryNotFound (real path resolution is covered by NativeLoaderJsSpec); that
             // is expected and tolerated here, the point is only that the browser gate does not trigger.
@@ -140,7 +147,7 @@ class BrowserDetectionTest extends Test:
             assert(ex.getMessage.contains("browser"))
         }
 
-        "no longer throws FfiLoadError.Unsupported once process is restored" in {
+        "no longer throws FfiLoadError.Unsupported once process is restored".notBrowser in {
             // First, ensure the cache is empty.
             Ffi.unload[BrowserDetectionTest.FakeBinding]
             // With process+require present, the browser gate passes; the load then fails with FfiLoadError.ImplNotFound because
@@ -149,6 +156,42 @@ class BrowserDetectionTest extends Test:
                 discard(Ffi.load[BrowserDetectionTest.FakeBinding])
             }
             assert(ex.isInstanceOf[FfiLoadError.ImplNotFound])
+        }
+    }
+
+    // The groups above fabricate a browser by deleting globals from a host that has them. These assert the same gate with nothing deleted:
+    // `aroundLeaf` stashes nothing and restores nothing here, because neither global is there to begin with. The messages are compared in
+    // full rather than by substring, since nothing in them depends on the host.
+    "in a page".onlyBrowser - {
+        "detectBrowser answers true with no global removed" in {
+            assert(NativeLoader.detectBrowser() == true)
+        }
+
+        "NativeLoader.load fails with the loader's browser message" in {
+            val ex = intercept[FfiLoadError.Unsupported] {
+                discard(NativeLoader.load("any_lib"))
+            }
+            assert(ex.getMessage == FfiPlatformErrors.BrowserUnsupportedLoader)
+        }
+
+        "Ffi.load fails with the load's browser message and never constructs the impl" in {
+            Ffi.unload[BrowserDetectionTest.ImplementedBinding]
+            val before = BrowserDetectionTest.constructed
+            val ex = intercept[FfiLoadError.Unsupported] {
+                discard(Ffi.load[BrowserDetectionTest.ImplementedBinding])
+            }
+            assert(ex.getMessage == FfiPlatformErrors.BrowserUnsupportedLoad)
+            // The impl's companion is where a generated binding loads koffi. A page has to be turned away before it is built, and only a
+            // page can say so: deleting `process` on Node leaves the companion loadable, while here it genuinely is not.
+            assert(BrowserDetectionTest.constructed == before)
+        }
+
+        "Ffi.load reports the browser ahead of a missing impl" in {
+            Ffi.unload[BrowserDetectionTest.FakeBinding]
+            val ex = intercept[FfiLoadError.Unsupported] {
+                discard(Ffi.load[BrowserDetectionTest.FakeBinding])
+            }
+            assert(ex.getMessage == FfiPlatformErrors.BrowserUnsupportedLoad)
         }
     }
 end BrowserDetectionTest

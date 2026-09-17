@@ -12,6 +12,10 @@ import kyo.ffi.Test
   */
 class FfiLoadTest extends Test:
 
+    // Every leaf calls Ffi.load, which a page answers with FfiLoadError.Unsupported before it reaches an impl. That gate is the subject of
+    // BrowserDetectionTest's own browser group; here it would only mask what these leaves are about.
+    override protected def hostFilters = kyo.Chunk(kyo.test.HostFilter.NotBrowser)
+
     // The load cache and the construction count are process-global; the leaves run one at a time.
     override def config = super.config.sequential
 

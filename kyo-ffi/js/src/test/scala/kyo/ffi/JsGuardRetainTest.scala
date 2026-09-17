@@ -12,6 +12,9 @@ import scala.scalajs.js as sjs
   */
 class JsGuardRetainTest extends Test:
 
+    // The handles a guard retains are koffi callback registrations, which a page cannot make: KoffiFacade.load is unreachable there.
+    override protected def hostFilters = kyo.Chunk(kyo.test.HostFilter.NotBrowser)
+
     // Touches process-global state (global stderr/system property, or the shared CallbackRegistry pool/hooks) and so
     // must run alone: under the default parallel leaf execution a sibling leaf observes or mutates the same global.
     override def config = super.config.sequential

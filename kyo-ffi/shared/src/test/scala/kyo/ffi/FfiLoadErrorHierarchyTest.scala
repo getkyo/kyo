@@ -12,14 +12,16 @@ import kyo.Chunk
   */
 class FfiLoadErrorHierarchyTest extends Test:
 
-    "Ffi.load on a trait with no generated impl throws FfiLoadError.ImplNotFound with the binding's FQCN" in {
+    // The two leaves that go through a real `Ffi.load` assert what the load reports once the host admits it. A page is turned away at the
+    // browser gate with FfiLoadError.Unsupported before a missing impl can be reported, which BrowserDetectionTest's browser group asserts.
+    "Ffi.load on a trait with no generated impl throws FfiLoadError.ImplNotFound with the binding's FQCN".notBrowser in {
         val ex = intercept[FfiLoadError.ImplNotFound](Ffi.load[FfiLoadErrorHierarchyTest.BogusBindings])
         // The FQCN format for nested traits uses `$` as the inner-class separator on the JVM classpath,
         // and the same string is what FfiReflect computes from `cls.getName`.
         assert(ex.traitFqcn == "kyo.ffi.FfiLoadErrorHierarchyTest$BogusBindings")
     }
 
-    "FfiLoadError.ImplNotFound is a subtype of FfiLoadError so one catch handles all load failures" in {
+    "FfiLoadError.ImplNotFound is a subtype of FfiLoadError so one catch handles all load failures".notBrowser in {
         val ex = intercept[FfiLoadError](Ffi.load[FfiLoadErrorHierarchyTest.BogusBindings])
         assert(ex.isInstanceOf[FfiLoadError.ImplNotFound])
     }

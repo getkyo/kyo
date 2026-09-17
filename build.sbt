@@ -1057,10 +1057,11 @@ lazy val `kyo-ffi` =
             // CommonJS module Node keeps `require` module-scoped, which the browser-gate reads (and its
             // BrowserDetectionTest simulation) cannot observe, whereas ESModule has no `require` and the gate
             // behaves identically to the wasm axis.
-            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.ESModule) },
-            // koffi needs a Node-like `process` global to load a native library, which no page has: the module's
-            // own gate answers every call in a browser with FfiLoadError.Unsupported. No browser row.
-            kyoBrowserRow := false
+            // The browser row runs here. koffi needs a Node-like `process` global to load a native library, which no
+            // page has, and the module's own gate answers every call in a browser with FfiLoadError.Unsupported:
+            // BrowserDetectionTest asserts that in a page rather than against a deleted global, and the four suites
+            // that need a host to read carry their own NotBrowser filter.
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.ESModule) }
         )
 
 // Declared at top level so the key resolves in the crossProject's native sub-project scope.

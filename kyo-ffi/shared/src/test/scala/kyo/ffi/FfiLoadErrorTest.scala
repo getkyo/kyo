@@ -8,10 +8,11 @@ package kyo.ffi
   */
 class FfiLoadErrorTest extends Test:
 
-    "Ffi.load failure message names both the binding trait and the impl class" in {
+    // In a page the load is turned away at the browser gate with FfiLoadError.Unsupported, whose message names no binding because no
+    // binding was ever looked up. That path is asserted in BrowserDetectionTest's browser group; this leaf is about the other one.
+    "Ffi.load failure message names both the binding trait and the impl class".notBrowser in {
         val ex = intercept[Throwable](Ffi.load[FfiLoadErrorTest.MissingBindings])
-        // The exception type differs slightly per platform (IllegalStateException everywhere; on JS in browsers
-        // it'd be FfiLoadError.Unsupported but tests don't run in browsers). What matters: the binding trait FQN appears.
+        // The exception type differs slightly per platform (IllegalStateException everywhere). What matters: the binding trait FQN appears.
         val msg = ex.getMessage
         assert(msg != null)
         // The fix introduces an explicit `for binding ...` (or equivalent) phrase that names the trait's

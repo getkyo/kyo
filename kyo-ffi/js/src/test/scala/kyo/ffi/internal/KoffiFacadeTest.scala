@@ -97,11 +97,14 @@ class KoffiFacadeTest extends Test:
             // last real resolution failure rather than the leg's own ReferenceError.
             KoffiAbiProbe.resetForTest()
             val global = sjs.Dynamic.global.globalThis
-            val saved  = sjs.Dynamic.global.process
+            // Read and restore through `globalThis`: a bare `process` is a ReferenceError where none is declared, and a page has none to
+            // stash, so it takes this leaf's premise as its starting state rather than having to fabricate it.
+            val saved = global.selectDynamic("process")
+            val had   = !sjs.isUndefined(saved)
             sjs.special.delete(global, "process")
             val ex =
                 try intercept[FfiLoadError.LibraryNotFound](KoffiFacade.load(null, Seq.empty[KoffiFn]))
-                finally global.updateDynamic("process")(saved)
+                finally if had then global.updateDynamic("process")(saved)
             val referenceError = ex.getCause match
                 case e: sjs.JavaScriptException => sjs.special.instanceof(e.exception, sjs.Dynamic.global.ReferenceError)
                 case _                          => false

@@ -17,6 +17,9 @@ import scala.scalajs.js as sjs
   */
 class JsBufferMmapTest extends Test:
 
+    // The fallback reads a file through node:fs and the suite stages one through node:os and node:path, none of which a page has.
+    override protected def hostFilters = kyo.Chunk(kyo.test.HostFilter.NotBrowser)
+
     override def config = super.config.sequential
 
     private def builtin(id: String): sjs.Dynamic =
