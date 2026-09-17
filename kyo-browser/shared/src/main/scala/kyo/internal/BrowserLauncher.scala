@@ -188,7 +188,9 @@ private[kyo] object BrowserLauncher:
             case _                      => true
         }
 
-    private val userDataDirArg = "--user-data-dir=(.*?)(?=\\s+--|\\s*$)".r
+    // The directory ends where the next flag starts or the argv ends. A non-capturing group rather than a lookahead: Scala Native's regex
+    // engine has no lookaround, and the object would fail to initialize there.
+    private val userDataDirArg = "--user-data-dir=(.*?)(?:\\s+--|\\s*$)".r
     private val ownedDirName   = s"^${java.util.regex.Pattern.quote(userDataDirPrefix)}(\\d+)-".r
 
     /** The owning process id named by the `--user-data-dir` in a process argv, or `Absent` when the argv has no such flag or its directory
