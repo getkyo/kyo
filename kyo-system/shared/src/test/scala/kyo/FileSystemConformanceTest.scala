@@ -2,6 +2,18 @@ package kyo
 
 private object FileSystemConformanceFixtures:
 
+    def inMemory(using Frame): (FileSystem.Write[Sync], Path) < (Sync & Abort[FileSystemException]) =
+        FileSystem.inMemory.map { fileSystem =>
+            val root = Path("conformance")
+            fileSystem.mkDir(root).map(_ => (fileSystem, root))
+        }
+
+    def inMemoryRead(using Frame): (FileSystem.Read[Sync], Path, String) < (Sync & Scope & Abort[FileSystemException]) =
+        inMemory.map { (fileSystem, root) =>
+            val file = root / "read.txt"
+            fileSystem.write(file, "read-value", Path.WriteOptions()).map(_ => (fileSystem, file, "read-value"))
+        }
+
     def host(prefix: String)(using
         Frame
     ): (FileSystem.Write[Sync] & FileSystem.Watch, Path) < (Sync & Scope & Abort[FileSystemException]) =
@@ -16,6 +28,34 @@ private object FileSystemConformanceFixtures:
         }
 
 end FileSystemConformanceFixtures
+
+class InMemoryFileSystemReadConformanceTest extends FileSystemReadTest:
+    protected def createFileSystem(using
+        Frame
+    ): (FileSystem.Read[Sync], Path, String) < (Sync & Scope & Abort[FileSystemException]) =
+        FileSystemConformanceFixtures.inMemoryRead
+end InMemoryFileSystemReadConformanceTest
+
+class InMemoryFileSystemWriteConformanceTest extends FileSystemWriteTest:
+    protected def createFileSystem(using
+        Frame
+    ): (FileSystem.Write[Sync], Path) < (Sync & Scope & Abort[FileSystemException]) =
+        FileSystemConformanceFixtures.inMemory
+end InMemoryFileSystemWriteConformanceTest
+
+class InMemoryFileSystemChannelConformanceTest extends FileSystemChannelTest:
+    protected def createFileSystem(using
+        Frame
+    ): (FileSystem.Write[Sync], Path) < (Sync & Scope & Abort[FileSystemException]) =
+        FileSystemConformanceFixtures.inMemory
+end InMemoryFileSystemChannelConformanceTest
+
+class InMemoryFileSystemDurabilityConformanceTest extends FileSystemDurabilityTest:
+    private[kyo] def createFileSystem(using
+        Frame
+    ): (FileSystem.Write[Sync], Path) < (Sync & Scope & Abort[FileSystemException]) =
+        FileSystemConformanceFixtures.inMemory
+end InMemoryFileSystemDurabilityConformanceTest
 
 class HostFileSystemReadConformanceTest extends FileSystemReadTest:
     override protected def realPathRequiresExistence: Boolean = true

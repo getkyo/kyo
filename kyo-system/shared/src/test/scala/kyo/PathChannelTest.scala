@@ -58,7 +58,7 @@ class PathChannelTest extends kyo.test.Test[Any]:
         assert(writePositive.isEmpty)
     }
 
-    "host read-write channels perform positioned short reads and sparse writes" in {
+    "host and in-memory read-write channels perform positioned short reads and sparse writes" in {
         def exercise[S](fs: FileSystem.Write[S], path: Path)(using Frame): Unit < (S & Scope & Abort[FileSystemException]) =
             fs.openReadWriteChannel(path, FileSystem.WriteOpen.Create).map { channel =>
                 channel.writeAt(3L, bytes(7)).andThen {
@@ -67,14 +67,15 @@ class PathChannelTest extends kyo.test.Test[Any]:
             }
         Scope.run {
             hostTempDir("kyo-typed-channel").map(dir => exercise(FileSystem.host, dir / "host.bin"))
+        }.andThen {
+            Scope.run(FileSystem.inMemory.map(fs => exercise(fs, Path("memory.bin"))))
         }
     }
 
     "truncate, size, and both sync policies preserve content" in {
         Scope.run {
-            hostTempDir("kyo-channel-truncate").map { dir =>
-                val fs = FileSystem.host
-                fs.openReadWriteChannel(dir / "size.bin", FileSystem.WriteOpen.Create).map { channel =>
+            FileSystem.inMemory.map { fs =>
+                fs.openReadWriteChannel(Path("size.bin"), FileSystem.WriteOpen.Create).map { channel =>
                     channel.writeAt(0L, bytes(1, 2, 3, 4)).andThen(channel.sync(metadata = false)).andThen {
                         channel.truncate(2L).andThen(channel.sync(metadata = true)).andThen {
                             channel.size.map(size => assert(size == 2L)).andThen {
@@ -89,9 +90,8 @@ class PathChannelTest extends kyo.test.Test[Any]:
 
     "open policies distinguish existing, create, and create-new" in {
         Scope.run {
-            hostTempDir("kyo-channel-open-policy").map { dir =>
-                val fs   = FileSystem.host
-                val path = dir / "policy.bin"
+            FileSystem.inMemory.map { fs =>
+                val path = Path("policy.bin")
                 val missing = Seq(
                     Abort.run[FileSystemException](fs.openReadChannel(path)),
                     Abort.run[FileSystemException](fs.openWriteChannel(path, FileSystem.WriteOpen.Existing)),
@@ -125,7 +125,7 @@ class PathChannelTest extends kyo.test.Test[Any]:
         }
     }
 
-    "CreateNew admits exactly one concurrent creator" in {
+    "CreateNew admits exactly one concurrent creator on in-memory" in {
         def contend(fs: FileSystem.Write[Sync], path: Path)(using Frame): Int < (Sync & Async & Scope) =
             for
                 gate <- Latch.init(1)
@@ -143,17 +143,16 @@ class PathChannelTest extends kyo.test.Test[Any]:
         end contend
 
         Scope.run {
-            hostTempDir("kyo-channel-create-new-race").map { dir =>
-                contend(FileSystem.host, dir / "create-new-race.bin").map(count => assert(count == 1))
+            FileSystem.inMemory.map { inMemory =>
+                contend(inMemory, Path("create-new-race.bin")).map(count => assert(count == 1))
             }
         }
     }
 
     "invalid positions, lengths, and truncation bounds fail in typed channels" in {
         Scope.run {
-            hostTempDir("kyo-channel-bounds").map { dir =>
-                val fs = FileSystem.host
-                fs.openReadWriteChannel(dir / "bounds.bin", FileSystem.WriteOpen.Create).map { channel =>
+            FileSystem.inMemory.map { fs =>
+                fs.openReadWriteChannel(Path("bounds.bin"), FileSystem.WriteOpen.Create).map { channel =>
                     val failures = Seq(
                         Abort.run[FileSystemException](channel.readAt(-1L, 1)),
                         Abort.run[FileSystemException](channel.readAt(0L, -1)),
@@ -169,15 +168,27 @@ class PathChannelTest extends kyo.test.Test[Any]:
         }
     }
 
-    "scope release closes host channels" in {
-        Scope.run {
-            hostTempDir("kyo-channel-close").map { dir =>
-                val path = dir / "closed.bin"
-                FileSystem.host.openReadWriteChannelUnscoped(path, FileSystem.WriteOpen.Create).map { case (channel, release) =>
-                    release().andThen {
-                        Abort.run[FileSystemException](channel.writeAt(0L, bytes(1))).map {
-                            case Result.Failure(_: FileIOException) => assert(true)
-                            case other                              => assert(false, s"expected closed host failure, got $other")
+    "scope release closes in-memory and host channels" in {
+        FileSystem.inMemory.map { fs =>
+            val path = Path("closed.bin")
+            fs.openReadWriteChannelUnscoped(path, FileSystem.WriteOpen.Create).map { case (channel, release) =>
+                release().andThen {
+                    Abort.run[FileSystemException](channel.writeAt(0L, bytes(1))).map {
+                        case Result.Failure(_: FileIOException) => assert(true)
+                        case other                              => assert(false, s"expected closed failure, got $other")
+                    }
+                }
+            }
+        }.andThen {
+            Scope.run {
+                hostTempDir("kyo-channel-close").map { dir =>
+                    val path = dir / "closed.bin"
+                    FileSystem.host.openReadWriteChannelUnscoped(path, FileSystem.WriteOpen.Create).map { case (channel, release) =>
+                        release().andThen {
+                            Abort.run[FileSystemException](channel.writeAt(0L, bytes(1))).map {
+                                case Result.Failure(_: FileIOException) => assert(true)
+                                case other                              => assert(false, s"expected closed host failure, got $other")
+                            }
                         }
                     }
                 }
@@ -202,9 +213,8 @@ class PathChannelTest extends kyo.test.Test[Any]:
     }
 
     "interrupting channel use releases the handle exactly once" in {
-        hostTempDir("kyo-channel-interrupt").map { dir =>
-            val fs   = FileSystem.host
-            val path = dir / "interrupted.bin"
+        FileSystem.inMemory.map { fs =>
+            val path = Path("interrupted.bin")
             fs.mkFile(path).andThen {
                 for
                     ready  <- Latch.init(1)

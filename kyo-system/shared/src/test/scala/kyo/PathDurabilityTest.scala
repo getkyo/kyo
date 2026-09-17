@@ -2,19 +2,29 @@ package kyo
 
 class PathDurabilityTest extends kyo.test.Test[Any]:
 
-    private def hostFileSystem(prefix: String)(using Frame): (FileSystem.Write[Sync], Path) < (Sync & Scope & Abort[FileSystemException]) =
+    private[kyo] def supportsDirectorySync: Boolean = !kyo.internal.Platform.isWindows
+
+    private[kyo] def hostFileSystem(prefix: String)(using
+        Frame
+    ): (FileSystem.Write[Sync], Path) < (Sync & Scope & Abort[FileSystemException]) =
         Scope.acquireRelease(FileSystem.host.tempDir(prefix))(h => Sync.Unsafe.defer(h.remove())).map(handle =>
             (FileSystem.host, handle.path)
         )
 
-    private def replaceOnHost(fs: FileSystem.Write[Sync], target: Path, bytes: Span[Byte])(using
+    private def replaceOnHost(
+        fs: FileSystem.Write[Sync],
+        target: Path,
+        bytes: Span[Byte],
+        directorySyncSupported: Boolean = supportsDirectorySync
+    )(using
         Frame,
         kyo.test.AssertScope
     ): Unit < (Sync & Abort[FileSystemException]) =
         Abort.run[FileSystemException](fs.durableReplace(target, bytes)).map { result =>
+            if directorySyncSupported then assert(result == Result.unit, s"Durable replacement result: $result")
             fs.readBytes(target).map { actual =>
                 assert(actual.is(bytes))
-                if kyo.internal.Platform.isWindows then
+                if !directorySyncSupported then
                     val parent = target.parent.getOrElse(Path())
                     result match
                         case Result.Failure(FileAccessDeniedException(path))                             => assert(path == parent)
@@ -863,7 +873,7 @@ class PathDurabilityTest extends kyo.test.Test[Any]:
             val cleanup = Sync.Unsafe.defer(discard(target.unsafe.remove()))
             cleanup.andThen {
                 Sync.ensure(cleanup) {
-                    replaceOnHost(FileSystem.host, target, bytes)
+                    replaceOnHost(FileSystem.host, target, bytes, directorySyncSupported = !kyo.internal.Platform.isWindows)
                         .andThen(FileSystem.host.readBytes(target))
                         .map(actual => assert(actual.is(bytes)))
                 }
