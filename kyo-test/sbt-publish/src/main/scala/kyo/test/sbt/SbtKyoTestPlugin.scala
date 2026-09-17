@@ -16,14 +16,14 @@ import sbt.Keys._
   *   .enablePlugins(SbtKyoTestPlugin)
   * }}}
   *
-  * `SbtKyoTestPlugin` extends [[KyoTestPlugin]] and additionally injects the matching `kyo-test-runner` into
+  * `SbtKyoTestPlugin` extends `KyoTestPlugin` and additionally injects the matching `kyo-test-runner` into
   * `libraryDependencies`, so external consumers need no manual `dependsOn` or explicit runner dep.
   *
   * The dependency is re-crossed through `platformDepsCrossVersion` so each platform resolves its own artifact. A plain `%%` yields the JVM
   * jar everywhere; on JS and Native that still compiles, since the jar carries `.tasty`, but the framework class never reaches the linked
   * test binary and the run reports zero tests and exits successfully.
   *
-  * Keep this injection here rather than in [[KyoTestJsPlugin]] / [[KyoTestNativePlugin]]: those auto-trigger on
+  * Keep this injection here rather than in `KyoTestJsPlugin` / `KyoTestNativePlugin`: those auto-trigger on
   * `KyoTestPlugin && Scala{JS,Native}Plugin`, and `kyo-test-runner` enables `KyoTestPlugin` itself, so it would gain a dependency on its
   * own published artifact.
   *
