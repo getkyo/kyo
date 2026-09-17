@@ -1127,7 +1127,7 @@ lazy val `kyo-sql-sqlite` =
             Test / jsEnv := new NodeJSEnv(
                 NodeJSEnv.Config()
                     .withArgs(List("--max_old_space_size=5120"))
-                    .withEnv(kyoSqliteFfiEnvMap(target.value))
+                    .withEnv(kyoSqliteFfiEnvMap(target.value, target.value))
             ),
             Test / compile := (Test / compile).dependsOn(kyoSqliteKoffiInstall).value
         )
@@ -1142,7 +1142,7 @@ lazy val `kyo-sql-sqlite` =
             Test / jsEnv := new NodeJSEnv(
                 NodeJSEnv.Config()
                     .withArgs(List("--max_old_space_size=5120", "--experimental-wasm-exnref"))
-                    .withEnv(kyoSqliteFfiEnvMap(target.value))
+                    .withEnv(kyoSqliteFfiEnvMap(target.value, target.value))
             ),
             Test / compile := (Test / compile).dependsOn(kyoSqliteKoffiInstall).value
         )
@@ -1165,7 +1165,16 @@ lazy val `kyo-sql-tests` =
         .jvmConfigure(_.settings(doctestSources := Seq.empty))
         .jsSettings(
             `js-settings`,
-            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
+            // The battery registers SQLite as a backend, so this module's Node runtime has to reach the engine:
+            // the library out of kyo-sql-sqlite's target, koffi out of this one. Without them every SQLite leaf
+            // panics on a null facade instead of reporting an engine it could not load.
+            Test / jsEnv := new NodeJSEnv(
+                NodeJSEnv.Config()
+                    .withArgs(List("--max_old_space_size=5120"))
+                    .withEnv(kyoSqliteFfiEnvMap((`kyo-sql-sqlite`.js / target).value, target.value))
+            ),
+            Test / compile := (Test / compile).dependsOn(kyoSqliteKoffiInstall).value
         )
         .nativeSettings(
             `native-settings`,
@@ -1178,7 +1187,16 @@ lazy val `kyo-sql-tests` =
                 "kyo.internal.sqlite.SqliteBackendFactory"
             ))))
         )
-        .wasmSettings(`wasm-settings`)
+        .wasmSettings(
+            `wasm-settings`,
+            // Same reason as the js leg above; the Wasm runtime reaches the engine through koffi as well.
+            Test / jsEnv := new NodeJSEnv(
+                NodeJSEnv.Config()
+                    .withArgs(List("--max_old_space_size=5120", "--experimental-wasm-exnref"))
+                    .withEnv(kyoSqliteFfiEnvMap((`kyo-sql-sqlite`.wasm / target).value, target.value))
+            ),
+            Test / compile := (Test / compile).dependsOn(kyoSqliteKoffiInstall).value
+        )
 
 lazy val `kyo-core` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
@@ -2009,13 +2027,13 @@ val kyoSqliteKoffiInstall: Def.Initialize[Task[Unit]] = Def.task {
 
 // Points the Node/Wasm test runtime at the plugin-compiled SQLite library. The plugin owns the artifact-naming convention and the host
 // os/arch, so re-deriving them here is what makes the path right on every host rather than only the obvious one.
-def kyoSqliteFfiEnvMap(targetDir: File): Map[String, String] = {
-    val ffiOut = targetDir / "ffi"
+def kyoSqliteFfiEnvMap(libraryTarget: File, koffiTarget: File): Map[String, String] = {
+    val ffiOut = libraryTarget / "ffi"
     Map(
         "KYO_FFI_KYO_SQLITE_PATH" -> (ffiOut / ffiArtifactName("kyo_sqlite", ffiHostOsArch)).getAbsolutePath,
         // The Wasm (ESModule) leg has no `require` global, so koffi resolves through node:module.createRequire,
         // which searches NODE_PATH. Harmless on the CommonJS (js) leg.
-        "NODE_PATH" -> (targetDir / "node_modules").getAbsolutePath
+        "NODE_PATH" -> (koffiTarget / "node_modules").getAbsolutePath
     )
 }
 
