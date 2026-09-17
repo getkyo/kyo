@@ -1023,7 +1023,6 @@ lazy val `kyo-sql-mysql` =
         .nativeSettings(`native-settings`, `openssl-native-settings`)
         .wasmSettings(`wasm-settings`)
 
-
 // The SQLite DRIVER: connection, pool plumbing, codecs, row reader, dialect and URL parsing, plus the binding
 // trait as DECLARATIONS ONLY. No C, no FFI plugin, no engine.
 //
@@ -1046,7 +1045,6 @@ lazy val `kyo-sql-sqlite-driver` =
         )
         .nativeSettings(`native-settings`, `openssl-native-settings`)
         .wasmSettings(`wasm-settings`)
-
 
 // The embedded engine: the dialect, row codec and type mapping of the other two backends with none of their
 // wire machinery, over a vendored C library, which is why this is the only kyo-sql module enabling KyoFfiPlugin.
@@ -1152,7 +1150,6 @@ lazy val `kyo-sql-sqlite` =
             ),
             Test / compile := (Test / compile).dependsOn(kyoSqliteKoffiInstall).value
         )
-
 
 // base and mocks plus each engine's fixtures; `publish / skip` keeps the shipped artifact count at three.
 lazy val `kyo-sql-tests` =
@@ -2030,7 +2027,6 @@ val kyoSqliteKoffiInstall: Def.Initialize[Task[Unit]] = Def.task {
     }
 }
 
-
 // Points the Node/Wasm test runtime at the plugin-compiled SQLite library. The plugin owns the artifact-naming convention and the host
 // os/arch, so re-deriving them here is what makes the path right on every host rather than only the obvious one.
 def kyoSqliteFfiEnvMap(libraryTarget: File, koffiTarget: File): Map[String, String] = {
@@ -2100,7 +2096,6 @@ def ffiClassifierArtifacts(base: String, resources: Seq[File], version: String, 
 val kyoSqlSqliteClassifierArtifacts = taskKey[Map[Artifact, File]](
     "Per-os-arch native classifier jars for the vendored SQLite build, plus the `all-natives` aggregator."
 )
-
 
 val kyoNetClassifierArtifacts = taskKey[Map[Artifact, File]](
     "Per-os-arch native classifier jars (transport-native `<os-arch>`, vendored-BoringSSL `<os-arch>-boringssl`) + the `all-natives` aggregator."

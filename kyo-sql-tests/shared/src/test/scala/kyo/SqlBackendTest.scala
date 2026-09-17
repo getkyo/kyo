@@ -106,6 +106,7 @@ abstract class SqlBackendTest extends SqlContainerTest:
                 false,
                 "no reachable backend matches this leaf's filter, so its complement claims them all"
             )
+        end if
         // Vacuity depends on `expected`. An UNPINNED leaf over one backend verifies nothing, since every answer agrees
         // with itself; a PINNED one still asserts that this engine answers this exact string. Guarding both alike would
         // switch off real coverage wherever only one engine is reachable.
