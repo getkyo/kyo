@@ -326,6 +326,9 @@ object Path extends PathPlatformSpecific:
         case Remove(path: Path)                                                     extends Op[Boolean]
         case RemoveExisting(path: Path)                                             extends Op[Unit]
         case RemoveAll(path: Path)                                                  extends Op[Unit]
+        case SyncDirectory(path: Path)                                              extends Op[Unit]
+        case SiblingTemporary(path: Path, onAcquire: TempFileHandle => Unit)        extends Op[Path.TempFileHandle]
+        case DurableReplace(path: Path, bytes: Span[Byte])                          extends Op[Unit]
         case OpenWrite(path: Path, append: Boolean, options: WriteOptions)          extends Op[Path.WriteHandle]
         case TempDir(prefix: String)                                                extends Op[Path.TempDirHandle]
         case Temp(prefix: String, suffix: String)                                   extends Op[Path.TempFileHandle]
@@ -494,48 +497,51 @@ object Path extends PathPlatformSpecific:
 
     private def dispatch[S, C](service: FileSystem.Write[S], op: Op[C])(using Frame): C < (S & Abort[FileSystemException]) =
         op match
-            case Op.Exists(p)                 => service.exists(p)
-            case Op.ExistsFollow(p, f)        => service.exists(p, f)
-            case Op.IsDirectory(p)            => service.isDirectory(p)
-            case Op.IsRegularFile(p)          => service.isRegularFile(p)
-            case Op.IsSymbolicLink(p)         => service.isSymbolicLink(p)
-            case Op.RealPath(p)               => service.realPath(p)
-            case Op.RealPathPrefix(p)         => service.realPathPrefix(p)
-            case Op.Read(p)                   => service.read(p)
-            case Op.ReadCharset(p, c)         => service.read(p, c)
-            case Op.ReadBytes(p)              => service.readBytes(p)
-            case Op.ReadLines(p)              => service.readLines(p)
-            case Op.ReadLinesCharset(p, c)    => service.readLines(p, c)
-            case Op.Size(p)                   => service.size(p)
-            case Op.Stat(p)                   => service.stat(p)
-            case Op.ListDir(p)                => service.list(p)
-            case Op.ListGlob(p, g, c)         => c.fold(service.list(p, g))(service.list(p, g, _))
-            case Op.DefaultCaseSensitivity()  => service.defaultCaseSensitivity
-            case Op.OpenRead(p)               => service.openRead(p)
-            case Op.OpenReadLines(p, c)       => service.openReadLines(p, c)
-            case Op.OpenWalk(p, d, f)         => service.openWalk(p, d, f)
-            case Op.CurrentReadService()      => FileSystem.useReadErased(selected => selected)
-            case Op.Raise(error)              => Abort.error(error)
-            case Op.Write(p, v, cf)           => service.write(p, v, cf)
-            case Op.WriteBytes(p, v, options) => service.writeBytes(p, v, options)
-            case Op.WriteLines(p, v, cf)      => service.writeLines(p, v, cf)
-            case Op.Append(p, v, cf)          => service.append(p, v, cf)
-            case Op.AppendBytes(p, v, cf)     => service.appendBytes(p, v, cf)
-            case Op.AppendLines(p, v, cf)     => service.appendLines(p, v, cf)
-            case Op.Truncate(p, s)            => service.truncate(p, s)
-            case Op.SetLastModified(p, e)     => service.setLastModified(p, e)
-            case Op.MkDir(p)                  => service.mkDir(p)
-            case Op.MkFile(p)                 => service.mkFile(p)
-            case Op.Move(f, t, options)       => service.move(f, t, options)
-            case Op.Copy(f, t, options)       => service.copy(f, t, options)
-            case Op.Remove(p)                 => service.remove(p)
-            case Op.RemoveExisting(p)         => service.removeExisting(p)
-            case Op.RemoveAll(p)              => service.removeAll(p)
-            case Op.OpenWrite(p, a, cf)       => service.openWrite(p, a, cf)
-            case Op.TempDir(prefix)           => service.tempDir(prefix)
-            case Op.Temp(prefix, suffix)      => service.temp(prefix, suffix)
-            case Op.WriteChunk(h, ch)         => service.writeChunk(h, ch)
-            case Op.WriteString(h, s, c)      => service.writeString(h, s, c)
+            case Op.Exists(p)                      => service.exists(p)
+            case Op.ExistsFollow(p, f)             => service.exists(p, f)
+            case Op.IsDirectory(p)                 => service.isDirectory(p)
+            case Op.IsRegularFile(p)               => service.isRegularFile(p)
+            case Op.IsSymbolicLink(p)              => service.isSymbolicLink(p)
+            case Op.RealPath(p)                    => service.realPath(p)
+            case Op.RealPathPrefix(p)              => service.realPathPrefix(p)
+            case Op.Read(p)                        => service.read(p)
+            case Op.ReadCharset(p, c)              => service.read(p, c)
+            case Op.ReadBytes(p)                   => service.readBytes(p)
+            case Op.ReadLines(p)                   => service.readLines(p)
+            case Op.ReadLinesCharset(p, c)         => service.readLines(p, c)
+            case Op.Size(p)                        => service.size(p)
+            case Op.Stat(p)                        => service.stat(p)
+            case Op.ListDir(p)                     => service.list(p)
+            case Op.ListGlob(p, g, c)              => c.fold(service.list(p, g))(service.list(p, g, _))
+            case Op.DefaultCaseSensitivity()       => service.defaultCaseSensitivity
+            case Op.OpenRead(p)                    => service.openRead(p)
+            case Op.OpenReadLines(p, c)            => service.openReadLines(p, c)
+            case Op.OpenWalk(p, d, f)              => service.openWalk(p, d, f)
+            case Op.CurrentReadService()           => FileSystem.useReadErased(selected => selected)
+            case Op.Raise(error)                   => Abort.error(error)
+            case Op.Write(p, v, cf)                => service.write(p, v, cf)
+            case Op.WriteBytes(p, v, options)      => service.writeBytes(p, v, options)
+            case Op.WriteLines(p, v, cf)           => service.writeLines(p, v, cf)
+            case Op.Append(p, v, cf)               => service.append(p, v, cf)
+            case Op.AppendBytes(p, v, cf)          => service.appendBytes(p, v, cf)
+            case Op.AppendLines(p, v, cf)          => service.appendLines(p, v, cf)
+            case Op.Truncate(p, s)                 => service.truncate(p, s)
+            case Op.SetLastModified(p, e)          => service.setLastModified(p, e)
+            case Op.MkDir(p)                       => service.mkDir(p)
+            case Op.MkFile(p)                      => service.mkFile(p)
+            case Op.Move(f, t, options)            => service.move(f, t, options)
+            case Op.Copy(f, t, options)            => service.copy(f, t, options)
+            case Op.Remove(p)                      => service.remove(p)
+            case Op.RemoveExisting(p)              => service.removeExisting(p)
+            case Op.RemoveAll(p)                   => service.removeAll(p)
+            case Op.SyncDirectory(p)               => service.syncDirectory(p)
+            case Op.SiblingTemporary(p, onAcquire) => service.siblingTemporary(p, onAcquire)
+            case Op.DurableReplace(p, bytes)       => service.durableReplace(p, bytes)
+            case Op.OpenWrite(p, a, cf)            => service.openWrite(p, a, cf)
+            case Op.TempDir(prefix)                => service.tempDir(prefix)
+            case Op.Temp(prefix, suffix)           => service.temp(prefix, suffix)
+            case Op.WriteChunk(h, ch)              => service.writeChunk(h, ch)
+            case Op.WriteString(h, s, c)           => service.writeString(h, s, c)
     end dispatch
 
     private def dispatchRead[S, C](service: FileSystem.Read[S], op: Op[C])(using Frame): C < (S & Abort[FileSystemException]) =
@@ -633,6 +639,11 @@ object Path extends PathPlatformSpecific:
         def path: Path
         def remove()(using AllowUnsafe): Unit
     end TempFileHandle
+
+    /** Service-owned idempotent close handle used by cancellation finalizers. Internal. */
+    abstract private[kyo] class ChannelCloseHandle:
+        def close()(using AllowUnsafe): Unit
+    end ChannelCloseHandle
 
     /** A Scope-managed positioned read capability into an open file.
       *
@@ -1257,6 +1268,44 @@ object Path extends PathPlatformSpecific:
         inline def removeAll(using inline frame: Frame): Unit < PathWrite =
             ArrowEffect.suspend(Tag[PathWrite], Path.Op.RemoveAll(self))
 
+        /** Synchronizes this directory's entry state. */
+        inline def syncDirectory(using inline frame: Frame): Unit < PathWrite =
+            ArrowEffect.suspend(Tag[PathWrite], Path.Op.SyncDirectory(self))
+
+        /** Reserves a create-new temporary file beside this target. */
+        def siblingTemporary(using Frame): Path < (PathWrite & Scope & Sync) =
+            // Unsafe: the atomic slot transfers service cleanup to the enclosing scope without an
+            // interruptible continuation. Closed scopes immediately remove late acquisitions.
+            Sync.Unsafe.defer {
+                enum State:
+                    case Empty, Closed
+                    case Owned(handle: TempFileHandle)
+                val state = new java.util.concurrent.atomic.AtomicReference[State](State.Empty)
+                Scope.ensure {
+                    Sync.Unsafe.defer {
+                        state.getAndSet(State.Closed) match
+                            case State.Owned(handle) => handle.remove()
+                            case _                   => ()
+                    }
+                }.andThen {
+                    ArrowEffect.suspend(
+                        Tag[PathWrite],
+                        Path.Op.SiblingTemporary(
+                            self,
+                            handle =>
+                                if !state.compareAndSet(State.Empty, State.Owned(handle)) then handle.remove()
+                        )
+                    ).map(_.path)
+                }
+            }
+
+        /** Durably replaces this path with `bytes`, preserving an existing host file's ownership,
+          * permission mode, and access ACLs. Permission capture or restoration failure leaves the
+          * target unchanged. See [[FileSystem.Write.durableReplace]] for the replacement protocol.
+          */
+        inline def durableReplace(bytes: Span[Byte])(using inline frame: Frame): Unit < PathWrite =
+            ArrowEffect.suspend(Tag[PathWrite], Path.Op.DurableReplace(self, bytes))
+
         /** Acquires a watcher after its backend registration is active. */
         def openWatcher(options: WatchOptions = WatchOptions())(using Frame): Watcher < PathWatch =
             ArrowEffect.suspend(Tag[PathWatch], Path.WatchOp.Open(self, options))
@@ -1547,8 +1596,17 @@ object Path extends PathPlatformSpecific:
         /** Human-readable string representation of this path. */
         def show: String
 
+        /** Exact host path when native calls and shared path reconstruction address the same file. */
+        private[kyo] def hostPath: Maybe[String]
+
         /** Returns `true` if this path is absolute (begins at a filesystem root). */
         def isAbsolute: Boolean
+
+        /** Synchronizes the directory itself so newly-created or renamed children have their
+          * directory entries flushed to stable storage. Unsupported platforms return a precise
+          * write failure rather than claiming durability.
+          */
+        private[kyo] def syncDirectory()(using Frame, AllowUnsafe): Result[FileWriteException, Unit]
 
         /** Returns the human-readable representation; delegates to `show` so Path values display correctly. */
         override def toString: String = show

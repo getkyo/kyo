@@ -50,7 +50,7 @@ val scalaFiles =
     }
 ```
 
-### Typed channels
+### Typed channels and durable replacement
 
 Positioned channels are acquired directly from a backend and owned by `Scope`. Read, write, and
 read-write channels expose only their corresponding capabilities. `WriteOpen` makes file existence
@@ -65,6 +65,29 @@ val positioned =
             channel.writeAt(0L, Span.from(Array[Byte](1, 2, 3))).andThen(channel.readAt(0L, 3))
         }
     }
+```
+
+Use `durableReplace` when the target must be replaced through a sibling temporary file, a synced
+write channel, a required atomic move, and a parent-directory sync. Unsupported atomic replacement
+fails instead of silently falling back. Newly created parent entries are synced through the first
+existing ancestor. Directory sync failures are reported even when replacement has already occurred;
+platforms that cannot sync directories, including Windows, cannot promise durable replacement.
+
+Host replacement preserves the existing regular file's owner, group, permission bits, and access
+ACLs. For an existing file, the temporary starts with restrictive access; permissions are restored
+and verified before sync and replacement. Missing targets use normal new-file permissions.
+Unsupported access controls fail before replacing the target. Permission
+changes made concurrently by another process are not serialized. Host durable operations use the
+bundled native helper through `kyo-ffi`. Node.js and Wasm hosts require `koffi` and a native helper
+for their OS and architecture, selected with `KYO_FFI_KYO_SYSTEM_DURABLE_PATH` or the
+[`kyo-ffi` native loader](../kyo-ffi/README.md).
+
+```scala
+import kyo.*
+
+val durable = Path.run {
+    Path("state.bin").durableReplace(Span.from(Array[Byte](1, 2, 3)))
+}
 ```
 
 ### Locks and watchers
