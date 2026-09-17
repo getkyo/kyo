@@ -699,11 +699,11 @@ Scala.js tests run on Node by default. To run them in Chrome instead, point the 
 
 ```scala doctest:expect=skipped
 lazy val myProject = project
-  .enablePlugins(ScalaJSPlugin, SbtKyoTestPlugin)
-  .settings(
-    scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.ESModule) },
-    Test / jsEnv := kyoTestBrowserEnv.value
-  )
+    .enablePlugins(ScalaJSPlugin, SbtKyoTestPlugin)
+    .settings(
+        scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.ESModule) },
+        Test / jsEnv := kyoTestBrowserEnv.value
+    )
 ```
 
 Each run starts `kyo-test-browser`, a small JVM program that serves the linked output on a loopback port, opens it in a Chrome of its own, and carries the test framework's messages between sbt and the page. `SbtKyoTestPlugin` fetches the program the first time the environment is used, and the first launch downloads chrome-headless-shell from Chrome for Testing into `kyo-browser` under the user cache directory (`KYO_BROWSER_CACHE` overrides it). Suites, filters, and reporters behave as they do on Node.
@@ -726,9 +726,9 @@ A page can only reach its own origin unless the other side agrees to be reached,
 
 ```scala doctest:expect=skipped
 "a page posts and reads back".onlyBrowser in {
-  HttpClient.postText("/__kyo_test__/echo", "round trip").map { echoed =>
-    assert(echoed == "round trip")
-  }
+    HttpClient.postText("/__kyo_test__/echo", "round trip").map { echoed =>
+        assert(echoed == "round trip")
+    }
 }
 ```
 
