@@ -15,10 +15,9 @@ inputs:
 runs:
   using: composite
   steps:
-    # JVM is in this list for the kyo-test-sbt-publish scripted suite: it runs in the 2.12 pass of
-    # the JVM target and its js-plugin sub-build links and runs a real Scala.js test binary.
+    # Every target runs the pinned Coursier setup bundle under Node 24. JVM also needs Node for
+    # the kyo-test-sbt-publish scripted suite's real Scala.js test binary.
     - uses: actions/setup-node@v6.4.0
-      if: ${{ inputs.target == 'JS' || inputs.target == 'Wasm' || inputs.target == 'JVM' }}
       with:
         node-version: '24'
 
@@ -287,11 +286,9 @@ runs:
           *) echo "cl targets '$target' on a ${{ inputs.os }} runner." >&2; exit 1 ;;
         esac
 
-    # coursier/setup-action is fetched from codeload like any `uses:`, and the runner retries that
-    # download only a few times with a short backoff, which a transient GitHub 429 (a rate-limit window
-    # of tens of seconds) outlasts, failing setup before any test runs. nick-fields/retry wraps `run:`
-    # commands, not a `uses:` action, so retry the action through wretry: it re-runs coursier/setup-action
-    # up to attempt_limit times with attempt_delay ms between attempts, riding out a throttled download.
+    # Fetch the pinned coursier/setup-action bundle at step execution time so both download and
+    # setup failures get four attempts with 30-second backoffs. Runner-level `uses:` downloads
+    # have shorter retries that a GitHub rate-limit window can outlast.
     # Amazon ships no Corretto for Windows on ARM: its platform list is Linux x64/aarch64, Windows
     # x64 ONLY, macOS x64/aarch64 and Alpine x64/aarch64, and coursier's JVM index agrees (corretto
     # is absent from windows/arm64 entirely). Temurin is in that index for windows/arm64 but tops out
@@ -312,16 +309,15 @@ runs:
         distribution: microsoft
         java-version: '25'
 
+    - name: Verify Coursier setup retries
+      if: ${{ inputs.os != 'windows-arm64' }}
+      shell: bash
+      run: bash scripts/setup-coursier-test.sh
+
     - name: Set up JDK + sbt (coursier)
       if: ${{ inputs.os != 'windows-arm64' }}
-      uses: Wandalen/wretry.action@v3.8.0
-      with:
-        action: coursier/setup-action@v3.0.0
-        with: |
-          jvm: corretto:25
-          apps: sbt
-        attempt_limit: 4
-        attempt_delay: 30000
+      shell: bash
+      run: bash scripts/setup-coursier.sh
 
     - name: Verify sbt resolves in bash (Windows)
       if: ${{ contains(inputs.os, 'windows') }}
