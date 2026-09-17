@@ -1491,9 +1491,10 @@ lazy val `kyo-stats-machine` =
             // koffi bootstrap (idempotent npm install, hooked on Test / compile) via the kyo-ffi plugin.
             // The CommonJS linker setting above stays in this .jsSettings block: the plugin is a Scala 2.12
             // sbt plugin with no sbt-scalajs dependency, so it cannot carry a scalaJSLinkerConfig setting.
-            ffiKoffiJsBootstrap("kyo-stats-machine-js-test"),
-            // Reads the machine through node:os and node:fs, which a page has not. No browser row.
-            kyoBrowserRow := false
+            // The browser row runs here. Reading the machine needs node:os and node:fs, which a page has not, but
+            // that is the subject of two leaves, not of the module: the decoders the rest of the suites exercise
+            // take their /proc and sysctl text as fixtures. The two leaves carry their own NotBrowser filter.
+            ffiKoffiJsBootstrap("kyo-stats-machine-js-test")
         )
 
 lazy val `kyo-stats-otlp` =

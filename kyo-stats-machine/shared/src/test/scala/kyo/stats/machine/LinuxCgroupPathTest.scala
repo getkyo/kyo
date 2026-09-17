@@ -13,7 +13,9 @@ class LinuxCgroupPathTest extends kyo.test.Test[Any]:
 
     "LinuxCgroup.limit" - {
 
-        "the v1 unlimited-memory marker routes to AbsentLong through the production LinuxCgroup.limit" in {
+        // Driving the production read means asking the file system whether the path is there, which a page answers with
+        // FileSystemUnsupportedOnHostException. The decode this leaf is about is covered by the fixture-fed leaves around it.
+        "the v1 unlimited-memory marker routes to AbsentLong through the production LinuxCgroup.limit".notBrowser in {
             for
                 handles <- MachineHandles.init
                 sampler = new MachineSampler(handles)

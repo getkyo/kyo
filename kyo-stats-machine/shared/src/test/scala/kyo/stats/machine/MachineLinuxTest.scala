@@ -108,7 +108,9 @@ class MachineLinuxTest extends kyo.test.Test[Any]:
 
     "cgroup v2 cpu.max" - {
 
-        "decodes quota and period from a single read" in {
+        // The leaves that stage a file through Path.tempDir and read it back through the production path need a file system, which a page
+        // has not. The decoders themselves are covered by the fixture-fed leaves in this suite, which do run in a page.
+        "decodes quota and period from a single read".notBrowser in {
             var callCount = 0
             // cgCpuQuota/cgCpuPeriod are LongGaugeCells: StatsRegistry keeps only the first-ever-registered
             // cell for a path canonical for the process lifetime, so polling this fixture's own values back
@@ -150,7 +152,7 @@ class MachineLinuxTest extends kyo.test.Test[Any]:
 
     "meminfo decode" - {
 
-        "read exactly once per tick populates both memory and swap rows" in {
+        "read exactly once per tick populates both memory and swap rows".notBrowser in {
             var callCount = 0
             val fixture =
                 "MemTotal:       16384 kB\nMemAvailable:    8192 kB\nMemFree:  4096 kB\nSwapTotal:  2048 kB\nSwapFree: 1024 kB\n"
@@ -191,7 +193,7 @@ class MachineLinuxTest extends kyo.test.Test[Any]:
             })
         }
 
-        "a meminfo line missing MemAvailable and missing the swap lines routes those cells to Absent, never a fabricated 0" in {
+        "a meminfo line missing MemAvailable and missing the swap lines routes those cells to Absent, never a fabricated 0".notBrowser in {
             val fixture                    = "MemTotal:  1048576 kB\nMemFree:  204800 kB\n"
             val (fixtureBytes, fixtureLen) = span(fixture)
             // See the meminfo-decode leaf above: a uniquely-scoped MachineHandles keeps this fixture's

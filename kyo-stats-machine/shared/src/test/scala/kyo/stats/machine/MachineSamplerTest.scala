@@ -14,7 +14,8 @@ class MachineSamplerTest extends kyo.test.Test[Any]:
 
     "readInto" - {
 
-        "passes the SAME retained Decode instance every tick (one Decode per proc file, identity stable)" in {
+        // Both readInto leaves stage a real file through Path.tempDir and read it back through the production path, which a page has not.
+        "passes the SAME retained Decode instance every tick (one Decode per proc file, identity stable)".notBrowser in {
             val identities = collection.mutable.ArrayBuffer.empty[Int]
             val decode = new MachineSampler.Decode:
                 def apply(bytes: Span[Byte], len: Int)(using AllowUnsafe): Unit =
@@ -39,7 +40,7 @@ class MachineSamplerTest extends kyo.test.Test[Any]:
             })
         }
 
-        "binds fill length before taking the span so a file larger than the initial 8192 buffer decodes in full" in {
+        "binds fill length before taking the span so a file larger than the initial 8192 buffer decodes in full".notBrowser in {
             var decodedLen  = 0
             var decodedText = ""
             val decode = new MachineSampler.Decode:
