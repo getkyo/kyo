@@ -57,10 +57,14 @@ class SnapshotGoldenTest extends AsyncFreeSpec with NonImplicitAssertions:
     // satisfy the assert family's using-clause; the golden throws fire on the synchronous path.
     private given AssertScope = new AssertScope(Chunk.empty)
 
-    /** A fresh directory for the store, which a page has not: a leaf that asks for one cancels on the browser rows. */
+    /** A fresh directory path that nothing is written to. */
+    private def dirName(): String =
+        s"target/snap-golden-test-${java.lang.System.nanoTime()}"
+
+    /** A fresh directory for a leaf that reads or writes the store, which a page has not: such a leaf cancels on the browser rows. */
     private def tmpDir(): String =
         assume(!Platform.isBrowser, "reads and writes snapshot files through the file system, which a page has not")
-        s"target/snap-golden-test-${java.lang.System.nanoTime()}"
+        dirName()
 
     private def installContexts(): Unit =
         TestContext.setForInstantiation(new TestContext(Chunk.empty))
@@ -316,7 +320,7 @@ class SnapshotGoldenTest extends AsyncFreeSpec with NonImplicitAssertions:
     }
 
     "a non-positive sampleCount raises IllegalArgumentException at the boundary" in {
-        val dir = tmpDir()
+        val dir = dirName()
         installContexts()
         val fixture = new GoldenFixture(dir, update = false)
         val ex = intercept[IllegalArgumentException] {
