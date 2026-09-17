@@ -371,10 +371,41 @@ class LeakCheckTest extends AnyFunSuite with NonImplicitAssertions:
         assert(drained, "after stop the scheduler should report no busy workers")
     }
 
+    test("an allowlisted worker does not hide another worker's leak") {
+        val stop = new AtomicBoolean(false)
+        def allowlistedBusyLoop(): Unit =
+            while !stop.get() do Thread.onSpinWait()
+        def unaccountedBusyLoop(): Unit =
+            while !stop.get() do Thread.onSpinWait()
+
+        Scheduler.get.asExecutor.execute(() => allowlistedBusyLoop())
+        Scheduler.get.asExecutor.execute(() => unaccountedBusyLoop())
+        try
+            // Deviation: this probes real worker stacks outside the effect system. The deadline only guards a hang;
+            // both named workers must be observed before the leak probe runs, regardless of their startup order.
+            assert(
+                awaitTrue(60000) {
+                    val stacks = Scheduler.get.busyFiberTraces().map(w => LeakCheck.stackOfThread(w.mount).getOrElse(""))
+                    stacks.exists(_.contains("allowlistedBusyLoop")) && stacks.exists(_.contains("unaccountedBusyLoop"))
+                },
+                "both probe workers must be running"
+            )
+            val report = detectFiberReport(Chunk("allowlistedBusyLoop")).getOrElse("")
+            assert(report.contains("fiber leak:"), s"an unaccounted worker must still be reported; got:\n$report")
+            assert(report.contains("unaccountedBusyLoop"), s"the report must identify the unaccounted worker; got:\n$report")
+        finally
+            stop.set(true)
+            val _ = assert(awaitTrue(60000)(Scheduler.get.busyFiberTraces().isEmpty), "both probe workers must drain after cleanup")
+        end try
+    }
+
     test("allowlist match covers a kyo-trace-only frame") {
         import kyo.AllowUnsafe.embrace.danger
-        val stop = new AtomicBoolean(false)
-        def kyoBusyLoop(n: Long): Unit < Sync =
+        val stop  = new AtomicBoolean(false)
+        val pause = new AtomicBoolean(false)
+        // Unsafe: this raw runner test drives the fiber from outside the effect system.
+        val resume = Sync.Unsafe.evalOrThrow(Fiber.Promise.init[Unit, Any])
+        def kyoBusyLoop(n: Long): Unit < Async =
             Sync.defer {
                 var x = n
                 var i = 0
@@ -382,61 +413,71 @@ class LeakCheckTest extends AnyFunSuite with NonImplicitAssertions:
                     x += 1
                     i += 1
                 x
-            }.map(m => if stop.get() then () else kyoBusyLoop(m))
+            }.map { m =>
+                if stop.get() then ()
+                else if pause.compareAndSet(true, false) then resume.get.andThen(kyoBusyLoop(m))
+                else kyoBusyLoop(m)
+            }
         val fiber = Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(kyoBusyLoop(0L)))
-        // Wait for the PERSISTENT recursion frame (the `.map` call site, `LeakCheckTest.kyoBusyLoop(...)`), not merely any
-        // non-empty trace: a transient startup frame is the newest line early on but does not survive once the 16-slot
-        // ring fills with the steady-state recursion frame, so a token taken from it would not match a later detect render.
-        // The token is derived inside the wait, not after it. busyFiberTraces is a live sample of whichever workers are busy at the
-        // instant it is called, so a frame present in one call can be absent from the next: awaiting the frame and then re-sampling to
-        // extract it leaves the extraction racing the sampler, and a miss yields an empty token rather than a retry.
-        var steadyLine = ""
-        val observed = awaitTrue(2000) {
-            steadyLine = Scheduler.get.busyFiberTraces().iterator
-                .flatMap(_.fiberTrace.linesIterator)
-                .find(_.contains("LeakCheckTest.kyoBusyLoop("))
-                .getOrElse("")
-            steadyLine.nonEmpty
-        }
-        // Reproduce the Busy branch's allowlist match text against the REAL busy fiber: per worker, its rendered kyo
-        // trace joined with its JVM stack. The token is the ` @ <class>.<caller>(File:line)` fragment of the recursion
-        // frame: a JVM StackTraceElement carries no ` @ ` separator, so the token appears ONLY in the kyo trace, never in
-        // the JVM stack. The padded snippet (before ` @ `) and the trailing ` (xN)` repeat-count suffix are dropped (the
-        // count grows as the ring fills, so a count-bearing token would not match a later render).
-        val busy      = Scheduler.get.busyFiberTraces()
-        val jvmStacks = busy.map(w => LeakCheck.stackOfThread(w.mount).getOrElse("")).mkString("\n")
-        val matchText = busy.map(w => w.fiberTrace + "\n" + LeakCheck.stackOfThread(w.mount).getOrElse("")).mkString("\n")
-        val atIdx     = steadyLine.indexOf(" @ ")
-        val afterAt   = if atIdx >= 0 then steadyLine.substring(atIdx) else steadyLine
-        val xIdx      = afterAt.indexOf(" (x")
-        val kyoOnly   = if xIdx >= 0 then afterAt.substring(0, xIdx) else afterAt
-        // End-to-end: ONE detect with the kyo-trace token suppresses the finding (a single Busy probe, as reliable as
-        // the kyo-trace-frame arm above; a second back-to-back probe races the first probe's System.gc() and is avoided).
-        val suppressed = detectFiberReport(Chunk(kyoOnly))
-        // Tear the loop down BEFORE asserting so a failed assertion never leaves the fiber pegging a worker.
-        stop.set(true)
-        val _       = Sync.Unsafe.evalOrThrow(fiber.interrupt)
-        val drained = awaitTrue(2000)(Scheduler.get.busyFiberTraces().isEmpty)
+        try
+            // The trace token and the text checked against it must come from the same immutable snapshot.
+            // The fiber can yield between samples, so a later sample need not contain the observed frame.
+            var busy       = Seq.empty[kyo.scheduler.top.BusyWorker]
+            var steadyLine = ""
+            // Deviation: real scheduler introspection needs a live worker. This ceiling only guards a hang;
+            // each observation is accepted by its contents, not by elapsed time.
+            assert(
+                awaitTrue(60000) {
+                    busy = Scheduler.get.busyFiberTraces()
+                    steadyLine = busy.iterator.flatMap(_.fiberTrace.linesIterator)
+                        .find(_.contains("LeakCheckTest.kyoBusyLoop("))
+                        .getOrElse("")
+                    steadyLine.nonEmpty
+                },
+                "the busy fiber must expose its recurring user frame"
+            )
 
-        assert(observed, "an effectful busy IOTask fiber should surface a non-empty fiberTrace within 2s")
-        assert(kyoOnly.nonEmpty && kyoOnly.contains(" @ "), s"the token should be a kyo-trace frame fragment; got '$kyoOnly'")
-        assert(!jvmStacks.contains(kyoOnly), s"the chosen token must be kyo-trace-only (absent from the JVM stacks); token '$kyoOnly'")
-        // Deterministic widening proof against the exact Busy-branch match expression on the real fiber's match text:
-        // absent the token no default pattern matches (so the finding would fire), and adding the kyo-trace token makes
-        // the match succeed (so the finding is suppressed) via the kyo trace, not the JVM stack.
-        assert(
-            !LeakCheck.defaultAllowlist.exists(matchText.contains),
-            "absent the token, no default pattern matches the busy fiber, so the finding would fire"
-        )
-        assert(
-            (LeakCheck.defaultAllowlist ++ Chunk(kyoOnly)).exists(matchText.contains),
-            s"the kyo-trace-only token must match via the Busy-branch match expression; token '$kyoOnly'"
-        )
-        assert(
-            !suppressed.getOrElse("").contains("fiber leak:"),
-            s"the kyo-trace-only allowlist token must suppress the detect fiber-leak finding; token=[$kyoOnly]"
-        )
-        assert(drained, "after teardown the scheduler should report no busy workers")
+            // Force the interval that made the CI assertion race: the captured fiber is still unfinished,
+            // but it is off its worker when the assertion examines the earlier observation.
+            pause.set(true)
+            assert(
+                awaitTrue(60000) {
+                    Sync.Unsafe.evalOrThrow(resume.waiters) > 0 && Scheduler.get.busyFiberTraces().isEmpty
+                },
+                "the probe fiber must leave its worker while waiting for resume"
+            )
+
+            val jvmStacks = busy.map(w => LeakCheck.stackOfThread(w.mount).getOrElse("")).mkString("\n")
+            val matchText = busy.map(w => w.fiberTrace + "\n" + LeakCheck.stackOfThread(w.mount).getOrElse("")).mkString("\n")
+            // JVM frames have no " @ " separator. Remove the trace's source snippet and changing repeat count.
+            val atIdx   = steadyLine.indexOf(" @ ")
+            val afterAt = if atIdx >= 0 then steadyLine.substring(atIdx) else steadyLine
+            val xIdx    = afterAt.indexOf(" (x")
+            val kyoOnly = if xIdx >= 0 then afterAt.substring(0, xIdx) else afterAt
+            assert(kyoOnly.nonEmpty && kyoOnly.contains(" @ "), s"expected a kyo-trace frame fragment, got '$kyoOnly'")
+            assert(!jvmStacks.contains(kyoOnly), s"the token must be absent from JVM stacks: '$kyoOnly'")
+            assert(!LeakCheck.defaultAllowlist.exists(matchText.contains), "the default allowlist must not excuse the probe fiber")
+            assert(
+                (LeakCheck.defaultAllowlist ++ Chunk(kyoOnly)).exists(matchText.contains),
+                s"the kyo-trace-only token must match its captured worker: '$kyoOnly'"
+            )
+
+            Sync.Unsafe.evalOrThrow(resume.completeUnitDiscard)
+            assert(
+                awaitTrue(60000)(LeakCheck.busyWorkAllAccounted(Chunk(kyoOnly))),
+                "the resumed busy fiber must be accounted for through its kyo trace"
+            )
+            val suppressed = detectFiberReport(Chunk(kyoOnly))
+            assert(
+                !suppressed.getOrElse("").contains("fiber leak:"),
+                s"the kyo-trace-only token must suppress the fiber-leak finding: '$kyoOnly'"
+            )
+        finally
+            stop.set(true)
+            Sync.Unsafe.evalOrThrow(resume.completeUnitDiscard)
+            val _ = Sync.Unsafe.evalOrThrow(fiber.interrupt)
+            val _ = assert(awaitTrue(60000)(Scheduler.get.busyFiberTraces().isEmpty), "the probe fiber must drain after cleanup")
+        end try
     }
 
     test("allowlist match excuses a default JVM-stack pattern") {
