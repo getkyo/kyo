@@ -151,12 +151,14 @@ object LinkCheck {
     /** Classes only a host without sockets runs: the fetch client. */
     val pageBackend: Seq[String] = Seq("kyo.internal.client.FetchClientBackend")
 
-    /** Globals some JS host does not declare: Node's (`require`, `process`, `Buffer`), a page's (`location`, `window`, `document`), and the
-      * two an embedded engine or an older runtime can lack (`fetch`, `WebSocket`). A bare read of one throws a `ReferenceError` on such a
-      * host before any guard around it can run, so every read goes through a property of `globalThis` (`PlatformJs.jsGlobal`), which reads
-      * as `undefined` there instead. `typeof name` is the one bare form that cannot throw.
+    /** Globals some JS host does not declare: Node's (`require`, `process`, `Buffer`), a page's (`location`, `window`, `document`), the two
+      * an embedded engine or an older runtime can lack (`fetch`, `WebSocket`), and the parking pair a page gets only when it is
+      * cross-origin isolated (`SharedArrayBuffer`, `Atomics`). A bare read of one throws a `ReferenceError` on such a host before any guard
+      * around it can run, so every read goes through a property of `globalThis` (`PlatformJs.jsGlobal`), which reads as `undefined` there
+      * instead. `typeof name` is the one bare form that cannot throw.
       */
-    val hostGlobals: Set[String] = Set("require", "process", "Buffer", "location", "window", "document", "fetch", "WebSocket")
+    val hostGlobals: Set[String] =
+        Set("require", "process", "Buffer", "location", "window", "document", "fetch", "WebSocket", "SharedArrayBuffer", "Atomics")
 
     /** Strings only the data artifacts put into a link: a zone ID and the tzdb module name, and the CLDR data package. */
     val dataMarkers: Seq[String] = Seq("Africa/Abidjan", "zonedb.java.tzdb", "locales.cldr.data")

@@ -123,12 +123,19 @@ private[kyo] object NodeLineReader:
 
     /** A cell nothing else can reach, so a wait on it ends only by timing out. `null` where the host provides no
       * `SharedArrayBuffer`, which is the one thing `Atomics.wait` needs.
+      *
+      * The globals are read as properties of `globalThis` through [[PlatformJs.jsGlobal]]. A bare `SharedArrayBuffer` is a `ReferenceError`
+      * on a page that is not cross-origin isolated, thrown before the check for it can run; as a property it reads `undefined`, which is
+      * the answer this wants. The `catch` covers the construction, which a host can still refuse.
       */
     private lazy val parkCell: js.Dynamic =
         try
-            val shared = js.Dynamic.global.selectDynamic("SharedArrayBuffer")
-            if js.isUndefined(shared) then null
-            else js.Dynamic.newInstance(js.Dynamic.global.selectDynamic("Int32Array"))(js.Dynamic.newInstance(shared)(4))
+            val cell: js.UndefOr[js.Dynamic] =
+                for
+                    shared <- PlatformJs.jsGlobal("SharedArrayBuffer")
+                    int32  <- PlatformJs.jsGlobal("Int32Array")
+                yield js.Dynamic.newInstance(int32)(js.Dynamic.newInstance(shared)(4))
+            cell.getOrElse(null)
         catch case _: Throwable => null
 
     /** Waits a moment before the read is attempted again, without spending the wait.
@@ -139,9 +146,8 @@ private[kyo] object NodeLineReader:
       */
     private[internal] def pause(): Unit =
         try
-            val atomics = js.Dynamic.global.selectDynamic("Atomics")
-            if !js.isUndefined(atomics) && parkCell != null then
-                discard(atomics.applyDynamic("wait")(parkCell, 0, 0, PauseMillis))
+            if parkCell != null then
+                PlatformJs.jsGlobal("Atomics").foreach(atomics => discard(atomics.applyDynamic("wait")(parkCell, 0, 0, PauseMillis)))
         catch case _: Throwable => ()
     end pause
 
