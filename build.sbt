@@ -1075,14 +1075,15 @@ lazy val `kyo-sql-sqlite` =
                 // baseDirectory is the per-platform dir for a cross-project, so the shim and the staged SQLite
                 // source are one level up. The shim is ours and lives in the repo; SQLite's own source is staged
                 // by scripts/build-sqlite.sh. Both compile into one shared library.
-                val sharedBase    = baseDirectory.value / ".." / "shared"
-                val sqliteStaged  = baseDirectory.value / ".." / "build" / "sqlite" / "staged"
-                val stagedSources = (sqliteStaged * "*.c").get
-                if (stagedSources.isEmpty)
-                    sys.error(
-                        "kyo-sql-sqlite: SQLite source is not staged. Run kyo-sql-sqlite/scripts/build-sqlite.sh " +
-                            s"once for this checkout; it fetches the pinned version into $sqliteStaged."
-                    )
+                val sharedBase   = baseDirectory.value / ".." / "shared"
+                val sqliteStaged = baseDirectory.value / ".." / "build" / "sqlite" / "staged"
+                // Named unconditionally rather than guarded by a staged check. ffiLibraries is a SETTING, so
+                // erroring here fails project LOAD for every sbt invocation, and the build has to load for
+                // scalafmt, the README doctests and the release probe, none of which compile this C. An unstaged
+                // tree therefore surfaces at ffiCompile, where cc names the file it cannot find, which is where
+                // kyo-aeron's staged archive reports the same thing.
+                val foundSources  = (sqliteStaged * "*.c").get
+                val stagedSources = if (foundSources.nonEmpty) foundSources else Seq(sqliteStaged / "sqlite3.c")
                 Seq(
                     FfiLibrary(
                         id = "kyo_sqlite",
