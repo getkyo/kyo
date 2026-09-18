@@ -7,6 +7,27 @@ import kyo.kernel.internal.*
 
 class IOTaskTest extends kyo.test.Test[Any]:
 
+    "current task" - {
+
+        // A spawning fiber reads the task running on its thread to link its children before they are scheduled, so a parent
+        // interrupted while they launch reaches them. The task is a ThreadLocal entry, and on Scala Native a class of kyo's own
+        // once shadowed the javalib's java.lang.ref.WeakReference, which ThreadLocal keys its table with: every entry was lost
+        // when the table grew. The slice below grows the table, then asks for its own task.
+        "the current task survives the thread's ThreadLocal table growing within the slice" in {
+            Fiber.initUnscoped {
+                Sync.defer {
+                    var i = 0
+                    while i < 64 do
+                        val local = new ThreadLocal[AnyRef]
+                        local.set(local)
+                        i += 1
+                    end while
+                    IOTask.currentTask().isDefined
+                }
+            }.map(_.get).map(present => assert(present, "the fiber's own task was not found on its thread"))
+        }
+    }
+
     "fiberTrace" - {
 
         "renders the live user frame of a blocked effectful fiber" in {

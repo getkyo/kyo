@@ -21,11 +21,9 @@ private[ffi] case class PoolStats(used: Int, total: Int, utilizationPercent: Dou
   *
   * This registry works around both limitations:
   *
-  *   - **Transient path**: the generated method body pushes the user `FunctionN` onto the calling thread's per-shape deque before the FFI
-  *     call and pops it after. The top-level trampoline reads `peekTransient()` to recover it. A deque (not a slot) is used so re-entrant
-  *     FFI calls, callback A firing back into another FFI call of the same shape, stack naturally. The deques live in a frame owned by the
-  *     thread and found by the thread's identity (a `ConcurrentHashMap` keyed by the `Thread`); a `ThreadLocal` only caches that lookup
-  *     and is validated by owner identity, because on Scala Native a `ThreadLocal` entry can vanish between two reads on the same thread.
+  *   - **Transient path**: the generated method body pushes the user `FunctionN` onto a per-thread stack before the FFI call and pops it
+  *     after. The top-level trampoline reads `peekTransient()` to recover it. A stack (not a slot) is used so re-entrant FFI calls,
+  *     callback A fires back into another FFI call whose comparator is callback B, nest cleanly.
   *   - **Retained path**: a fixed-size slot pool holds the user `FunctionN` for the lifetime of the `Ffi.Guard`. The generated method body
   *     calls `claimRetainedSlot_XXX` to obtain `(slotIdx, ptr)`, the `ptr` is a `CFuncPtr` pre-built at class-init time whose trampoline
   *     reads from that specific slot index. Because each trampoline is a per-slot top-level `def`, `fromScalaFunction` always sees a
@@ -41,7 +39,7 @@ private[ffi] case class PoolStats(used: Int, total: Int, utilizationPercent: Dou
   * `-Dkyo.ffi.native.retainedCallbackPoolWarnPercent=`. The `poolUsage(shapeId)` method provides a simple `(used, total)` tuple for runtime
   * monitoring.
   *
-  * Thread-safety: the transient frame is the calling thread's own (safe under Scala Native's "C synchronously invokes the trampoline on the same OS
+  * Thread-safety: transient stack is a `ThreadLocal` (safe under Scala Native's "C synchronously invokes the trampoline on the same OS
   * thread that made the downcall" contract). Retained-pool slot tracking uses a CAS-based `AtomicLongArray` bitset, lock-free and safe for
   * the roadmap's multi-thread pivot.
   *

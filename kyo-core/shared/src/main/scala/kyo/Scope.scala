@@ -291,46 +291,45 @@ object Scope:
                             "This finalizer is already closed. This may happen if a background fiber escapes the scope of a 'Scope.run' call."
                         )
 
+                    /** The claim on the queue's backlog and the drain of it are one detached fiber, spawned as this close's only
+                      * step. Claiming here and draining in a continuation would leave a window between the two steps: an interrupt
+                      * honored there abandons the continuation with the backlog already claimed, and the close that runs from the
+                      * abandonment finds it claimed and rightly leaves it alone, so the finalizers in it never run (#1928). Inside
+                      * the fiber the handover is awaited rather than continued, because an `ensure` that began before this close may
+                      * still be committing its task. The drain that wins the claim completes `promise` once it has released; one that
+                      * loses owns nothing and completes nothing. Spawning keeps this `Sync`, which both of `run`'s close paths need.
+                      */
                     def close(ex: Maybe[Error[Any]])(using Frame): Unit < Sync =
-                        Sync.Unsafe.defer {
-                            // The handover is asynchronous because an `ensure` that began before this close may still be
-                            // committing its task. A continuation rather than a wait keeps this `Sync`, which both of
-                            // `run`'s close paths need.
-                            queue.close().safe.onComplete { backlog =>
-                                backlog.foldError(
-                                    _.map {
-                                        case Absent         => Kyo.unit
-                                        case Present(tasks) =>
-                                            // Children close and are waited for before this scope's own releases run;
-                                            // closing, not just waiting, frees a child whose computation is blocked (see `addChild`).
-                                            val nested =
-                                                Sync.Unsafe.defer(children.close()).map(_.safe.get).map {
-                                                    case Present(cs) =>
-                                                        Async.foreachDiscard(cs) { child =>
-                                                            child.close(ex).andThen(child.await)
-                                                        }
-                                                    case Absent => Kyo.unit
+                        Fiber.initUnscoped[Nothing, Unit, Any, Any] {
+                            Sync.Unsafe.defer(queue.close().safe.get).map {
+                                case Absent         => Kyo.unit
+                                case Present(tasks) =>
+                                    // Children close and are waited for before this scope's own releases run;
+                                    // closing, not just waiting, frees a child whose computation is blocked (see `addChild`).
+                                    val nested =
+                                        Sync.Unsafe.defer(children.close()).map(_.safe.get).map {
+                                            case Present(cs) =>
+                                                Async.foreachDiscard(cs) { child =>
+                                                    child.close(ex).andThen(child.await)
                                                 }
-                                            val own =
-                                                if tasks.isEmpty then Kyo.unit
-                                                else
-                                                    Async.foreachDiscard(tasks.reverse, parallelism) { task =>
-                                                        Abort.run[Throwable](task(ex))
-                                                            .map(_.foldError(
-                                                                _ => (),
-                                                                ex => Log.error("Scope finalizer failed", ex.exception)
-                                                            ))
-                                                    }
-                                            nested.andThen(own)
-                                                .handle(Fiber.initUnscoped[Nothing, Unit, Any, Any])
-                                                .map(promise.becomeDiscard)
-                                    },
-                                    // The backlog handover is completed with a success by whoever wins the drain, so this is
-                                    // unreachable; leaving `promise` alone lets `await` surface the real failure.
-                                    _ => Kyo.unit
-                                )
+                                            case Absent => Kyo.unit
+                                        }
+                                    val own =
+                                        if tasks.isEmpty then Kyo.unit
+                                        else
+                                            Async.foreachDiscard(tasks.reverse, parallelism) { task =>
+                                                Abort.run[Throwable](task(ex))
+                                                    .map(_.foldError(
+                                                        _ => (),
+                                                        ex => Log.error("Scope finalizer failed", ex.exception)
+                                                    ))
+                                            }
+                                    // Completed whatever the drain met, so a waiter is never left at a scope that has finished releasing.
+                                    Abort.run[Throwable](nested.andThen(own))
+                                        .map(_.foldError(_ => (), ex => Log.error("Scope close failed", ex.exception)))
+                                        .andThen(promise.completeUnitDiscard)
                             }
-                        }
+                        }.unit
 
                     def await(using Frame): Unit < Async = promise.get
             end init

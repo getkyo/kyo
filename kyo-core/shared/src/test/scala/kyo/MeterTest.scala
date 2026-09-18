@@ -615,10 +615,13 @@ class MeterTest extends kyo.test.Test[Any]:
             // of firings pushes availablePermits past it: it refills to exactly `rate`. Excluded on JS: manual-time periodic loops need interleaving the single thread lacks.
             Clock.withTimeControl { control =>
                 for
-                    meter     <- Meter.initRateLimiter(5, 5.millis)
-                    _         <- Loop.repeat(5)(meter.run(()))
-                    drained   <- meter.availablePermits
-                    _         <- Loop.repeat(20)(control.advance(5.millis))
+                    meter   <- Meter.initRateLimiter(5, 5.millis)
+                    _       <- Loop.repeat(5)(meter.run(()))
+                    drained <- meter.availablePermits
+                    // The timer fiber re-arms its next sleep only after its replenish ran. Fencing on the re-arm makes each advance
+                    // fire exactly one replenish, whatever the runner's load; the default wall-clock allowance alone is not a fence.
+                    _         <- control.awaitPendingSleepers(1)
+                    _         <- Loop.repeat(20)(control.advance(5.millis).andThen(control.awaitPendingSleepers(1)))
                     available <- meter.availablePermits
                 yield assert(drained == 0 && available == 5)
             }

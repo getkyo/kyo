@@ -214,7 +214,11 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
                     Scope.acquireRelease(inner.get)(_ => released.incrementAndGet.unit).andThen(Async.never)
                 }
             }
-            _   <- assertEventually(inner.waiters.map(_ >= 1))
+            // `inner` is a fiber parked on `child`, and a fiber's own join link counts as a waiter on its promise, so one
+            // waiter is there before the parent parks. The interrupt callback has to be registered after the parent's
+            // wakeup: completion callbacks run newest first, and one registered before the wakeup would let the parent
+            // resume with the value and register its release before the interrupt lands.
+            _   <- assertEventually(inner.waiters.map(_ >= 2))
             _   <- inner.onComplete(_ => parent.interrupt.unit)
             _   <- child.complete(Result.succeed(42))
             res <- parent.getResult

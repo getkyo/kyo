@@ -149,6 +149,66 @@ class ChannelTest extends kyo.test.Test[Any]:
                 r <- Abort.run[Closed](c.takeWith(_ * 2))
             yield assert(r.isFailure)
         }
+
+        // A taker parked on an empty channel is a promise in the channel's take queue. Its fiber may be interrupted while parked, and
+        // the kernel then abandons the fiber without resuming it (see IOTask.abandon): a value delivered into that promise as the
+        // interrupt lands has to go back to the channel, and a delivery after the interrupt has to be refused.
+        "parked take under interruption" - {
+            "a take interrupted while parked leaves a later value in the channel" in {
+                for
+                    c <- Channel.init[Int](2)
+                    f <- Fiber.initUnscoped(c.take)
+                    _ <- assertEventually(c.pendingTakes.map(_ == 1))
+                    _ <- f.interrupt
+                    // the fiber settles only after its abandonment ran
+                    _    <- f.getResult
+                    _    <- c.put(1)
+                    size <- c.size
+                    v    <- c.poll
+                yield assert(size == 1 && v == Present(1))
+            }
+
+            // The loss is a scheduling race, so rounds repeat until a regression is a reliable failure. Capacity one with a producer
+            // parked on the full ring: every value leaves the ring through a parked taker, and the ring is full again by the time a
+            // stranded value is handed back, so the hand-back has to hold it as a put rather than drop it.
+            "nothing is lost when parked takers are interrupted under a producer parked on a full ring" in {
+                import scala.jdk.CollectionConverters.*
+                val items = 512
+                // Recorded inside the take, with no suspension between the take and the record, so a taker interrupted right after
+                // taking never drops a value on the test's side.
+                val received = new java.util.concurrent.ConcurrentLinkedQueue[Int]()
+                for
+                    c        <- Channel.init[Int](1)
+                    producer <- Fiber.initUnscoped(Kyo.foreachDiscard(1 to items)(c.put))
+                    _ <- Loop.foreach {
+                        producer.done.map { done =>
+                            if done then Loop.done
+                            else
+                                Latch.init(1).map { gate =>
+                                    val takers: Seq[Unit < (Async & Abort[Closed])] =
+                                        Seq.fill(8)(c.takeWith { v =>
+                                            discard(received.add(v)); v
+                                        }.andThen(gate.release).andThen(Async.never))
+                                    Async.race(gate.await +: takers).andThen(Loop.continue)
+                                }
+                        }
+                    }
+                    // a value held as a put moves into the ring only when a flush sees room: a take is one
+                    drained <- Loop(Chunk.empty[Int]) { acc =>
+                        c.drain.map { chunk =>
+                            val acc2 = acc.concat(chunk)
+                            c.pendingPuts.map { held =>
+                                if held == 0 then Loop.done(acc2)
+                                else c.take.map(v => Loop.continue(acc2.append(v)))
+                            }
+                        }
+                    }
+                yield
+                    val found = (received.asScala.toSeq ++ drained).sorted
+                    assert(found == (1 to items), s"lost: ${(1 to items).diff(found)}, extra: ${found.diff(1 to items)}")
+                end for
+            }
+        }
     }
     "putBatch" - {
         "non-nested" - {
