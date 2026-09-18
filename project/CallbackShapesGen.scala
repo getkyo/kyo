@@ -255,12 +255,29 @@ object CallbackShapesGen {
         sb.append("        else if backpressureEnabled then waitForSlot(shape, bits, q)\n")
         sb.append("        else exhausted(shape)\n")
         sb.append("    end claimOrBlock\n\n")
-        sb.append("    private def newTransientStack(): ThreadLocal[java.util.ArrayDeque[AnyRef]] =\n")
-        sb.append("        new ThreadLocal[java.util.ArrayDeque[AnyRef]]:\n")
-        sb.append("            override def initialValue(): java.util.ArrayDeque[AnyRef] =\n")
-        sb.append("                new java.util.ArrayDeque[AnyRef]()\n\n")
-        sb.append("    private def mustPeek(stack: ThreadLocal[java.util.ArrayDeque[AnyRef]], shape: String): AnyRef =\n")
-        sb.append("        val v = stack.get().nn.peek()\n")
+        // Transient frames: one LIFO deque per shape, owned by the calling thread and found by the thread's identity
+        // (ThreadOwned). A java.lang.ThreadLocal alone is not enough on Scala Native, where an entry can vanish between
+        // two reads on one thread; with one ThreadLocal per shape the pop after an FFI call read a fresh, empty deque.
+        sb.append("    private val ShapeCount: Int = " + shapes.size + "\n\n")
+        sb.append("    /** This thread's transient deques, one slot per shape, each created on first use. */\n")
+        sb.append("    private val transientFrames: ThreadOwned[Array[java.util.ArrayDeque[AnyRef] | Null]] =\n")
+        sb.append("        new ThreadOwned(_ => new Array[java.util.ArrayDeque[AnyRef] | Null](ShapeCount))\n\n")
+        sb.append("    private[internal] def transientStack(shape: Int): java.util.ArrayDeque[AnyRef] =\n")
+        sb.append("        val stacks = transientFrames.get()\n")
+        sb.append("        val d      = stacks(shape)\n")
+        sb.append("        if d == null then\n")
+        sb.append("            val fresh = new java.util.ArrayDeque[AnyRef]()\n")
+        sb.append("            stacks(shape) = fresh\n")
+        sb.append("            fresh\n")
+        sb.append("        else d\n")
+        sb.append("        end if\n")
+        sb.append("    end transientStack\n\n")
+        sb.append("    /** Test seam: drops this thread's cached frame lookup, so the next access resolves it by thread identity again. */\n")
+        sb.append("    private[internal] def transientCacheEvictForTest(): Unit = transientFrames.evictCacheForTest()\n\n")
+        sb.append("    /** Test seam: the number of threads holding a transient frame. */\n")
+        sb.append("    private[internal] def transientFrameCountForTest: Int = transientFrames.sizeForTest\n\n")
+        sb.append("    private def mustPeek(stack: java.util.ArrayDeque[AnyRef], shape: String): AnyRef =\n")
+        sb.append("        val v = stack.peek()\n")
         sb.append("        if v == null then\n")
         sb.append("            throw new IllegalStateException(\n")
         sb.append(
@@ -322,10 +339,10 @@ object CallbackShapesGen {
         sb.append("    // before the zero default is returned, see README 'Callback exception handling'.\n\n")
 
         // Transient per-shape
-        sb.append("    // Transient: per-shape ThreadLocal LIFO stack + push/pop/peek + top-level trampoline def.\n")
-        sb.append("    // The stack stores a `TaggedCallback` pair so the trampoline can name the binding + method when the user\n")
+        sb.append("    // Transient: per-shape push/pop/peek on the thread's frame + top-level trampoline def.\n")
+        sb.append("    // The deque stores a `TaggedCallback` pair so the trampoline can name the binding + method when the user\n")
         sb.append("    // callback throws.\n")
-        shapes.foreach { s =>
+        shapes.zipWithIndex.foreach { case (s, shapeIndex) =>
             val n = s.name
             val applyCall =
                 if (s.params.isEmpty) s"tagged.fn.asInstanceOf[${s.userFnType}].apply()"
@@ -337,16 +354,15 @@ object CallbackShapesGen {
                 case CType.D => "0.0"
                 case CType.P => "null"
             }
-            sb.append(s"    private[internal] val transientStack_$n: ThreadLocal[java.util.ArrayDeque[AnyRef]] = newTransientStack()\n")
             sb.append(s"    def pushTransient_$n(bindingFqn: String, methodName: String, f: ${s.userFnType}): Unit =\n")
             sb.append(
-                s"""        transientStack_$n.get().nn.push(new TaggedCallback(bindingFqn, methodName, "transient", f.asInstanceOf[AnyRef]))"""
+                s"""        transientStack($shapeIndex).push(new TaggedCallback(bindingFqn, methodName, "transient", f.asInstanceOf[AnyRef]))"""
             )
             sb.append("\n")
             sb.append(s"    def popTransient_$n(): Unit =\n")
-            sb.append(s"        val _ = transientStack_$n.get().nn.pop()\n")
+            sb.append(s"        val _ = transientStack($shapeIndex).pop()\n")
             sb.append(
-                "    private def peekTransient_" + n + "(): TaggedCallback = mustPeek(transientStack_" + n + ", \"" + n + "\").asInstanceOf[TaggedCallback]\n"
+                "    private def peekTransient_" + n + "(): TaggedCallback = mustPeek(transientStack(" + shapeIndex + "), \"" + n + "\").asInstanceOf[TaggedCallback]\n"
             )
             sb.append(s"    def trampolineT_$n(${s.paramListDecl}): ${s.result.scala} =\n")
             sb.append(s"        val tagged = peekTransient_$n()\n")
