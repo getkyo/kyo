@@ -80,12 +80,18 @@ final case class Config private (
     // default applies, so an untouched config states nothing and never warns; a warning fires only on a
     // STATED amount the encoding cannot express. Held rather than dropped where it cannot ride, since
     // one config re-aims across providers, and held while reasoning is off.
-    reasoningAmount: Maybe[Config.Amount] = Absent
+    reasoningAmount: Maybe[Config.Amount] = Absent,
+    // A dedicated decision provider for Decider questions. Absent (the default): this config's own
+    // completion provider answers them by structured output; Present: that provider's model answers them
+    // with calibrated probabilities.
+    decider: Maybe[DeciderConfig] = Absent
 ):
-    def apiUrl(url: String): Config              = copy(apiUrl = url)
-    def apiKey(key: String): Config              = copy(apiKey = Present(key))
-    def apiOrg(org: String): Config              = copy(apiOrg = Present(org))
-    def temperature(temperature: Double): Config = copy(temperature = Present(temperature.max(0).min(2)))
+    def apiUrl(url: String): Config                   = copy(apiUrl = url)
+    def apiKey(key: String): Config                   = copy(apiKey = Present(key))
+    def apiOrg(org: String): Config                   = copy(apiOrg = Present(org))
+    def decider(config: DeciderConfig): Config        = copy(decider = Present(config))
+    def decider(config: Maybe[DeciderConfig]): Config = copy(decider = config)
+    def temperature(temperature: Double): Config      = copy(temperature = Present(temperature.max(0).min(2)))
 
     /** The output-token ceiling this request asks for, clamped to the model's declared maximum.
       *
@@ -360,20 +366,28 @@ object Config:
     /** Resolves the default config by probing provider flags and API keys (sys props first, then env), via
       * `kyo.System`. The static `kyo.ai.provider` flag can force a provider by name. Without an explicit
       * provider, command harnesses are selected only when their marker variables are present, then API
-      * providers are selected by key presence.
+      * providers are selected by key presence. The decider is selected the same way: the first decision
+      * provider in `DeciderConfig.Provider.all` whose key is present becomes the `decider`, so a
+      * `TYPESAFE_API_KEY` in the environment routes decisions to Jev; without one the completion
+      * provider decides.
       */
     def default(using Frame): Config < Sync =
         val selected = provider().trim
-        providerByName(selected.toLowerCase) match
-            case Present(p) =>
-                credentialed(p.default)
-            case Absent if selected.nonEmpty =>
-                throw IllegalArgumentException(s"Unsupported kyo.ai provider '$selected'.")
-            case Absent =>
-                Kyo.foreach(Provider.defaultCandidates)(p => read(p.keyName).map(_.isDefined -> p)).map { probes =>
-                    probes.collectFirst { case (true, p) => p }.getOrElse(Anthropic)
-                }.map(p => credentialed(p.default))
-        end match
+        val completion: Config < Sync =
+            providerByName(selected.toLowerCase) match
+                case Present(p) =>
+                    p.default
+                case Absent if selected.nonEmpty =>
+                    throw IllegalArgumentException(s"Unsupported kyo.ai provider '$selected'.")
+                case Absent =>
+                    Kyo.foreach(Provider.defaultCandidates)(p => read(p.keyName).map(_.isDefined -> p)).map { probes =>
+                        probes.collectFirst { case (true, p) => p }.getOrElse(Anthropic).default
+                    }
+        completion.map { config =>
+            Kyo.foreach(DeciderConfig.Provider.all)(p => read(p.keyName).map(_.isDefined -> p)).map { probes =>
+                probes.collectFirst { case (true, p) => p }.fold(config)(p => config.decider(p.default))
+            }.map(credentialed)
+        }
     end default
 
     def init(
@@ -400,15 +414,26 @@ object Config:
         ))
 
     /** Attaches the provider's credentials to an already-declared config, so a catalog entry's facts
-      * travel with it instead of being re-listed at every call site.
+      * travel with it instead of being re-listed at every call site. A credential already set on the
+      * config is kept; only an absent one is read from the provider's variables.
       */
     private[kyo] def credentialed(config: Config)(using Frame): Config < Sync =
-        if config.provider.usesApiKey then
-            for
-                key <- read(config.provider.keyName)
-                org <- read(config.provider.orgKey)
-            yield config.copy(apiKey = key, apiOrg = org)
-        else config
+        val provider: Config < Sync =
+            if config.provider.usesApiKey then
+                for
+                    key <- read(config.provider.keyName)
+                    org <- read(config.provider.orgKey)
+                yield config.copy(apiKey = config.apiKey.orElse(key), apiOrg = config.apiOrg.orElse(org))
+            else config
+        // The decider's key rides the same resolution, so a catalog entry stays pure and one call fills
+        // every credential the config needs.
+        provider.map { c =>
+            c.decider match
+                case Present(decider) if decider.apiKey.isEmpty =>
+                    read(decider.provider.keyName).map(key => c.copy(decider = Present(decider.credentialed(key))))
+                case _ => c
+        }
+    end credentialed
 
     /** A purely-constructed config for a provider's catalog entry (key/org left absent; filled at use via
       * the provider default path). The catalog values use this so a model literal is pure.

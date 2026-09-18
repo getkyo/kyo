@@ -89,7 +89,7 @@ private[completion] object AnthropicCompletion extends Completion:
     private def fetch(config: Config, req: Request)(using Frame): Response < (LLM & Async & Abort[HttpException | AIGenException]) =
         config.apiKey match
             case Absent =>
-                Abort.fail(AIMissingApiKeyException(config.modelName))
+                Abort.fail(AIMissingApiKeyException(config.modelName, config.provider.keyName))
             case Present(key) =>
                 // Interleaved thinking whenever the request enables thinking, the same beta the Claude Code
                 // backend sends. Without it the model self-limits below its budget (measured: 7407 of a 12000
@@ -101,7 +101,7 @@ private[completion] object AnthropicCompletion extends Completion:
                 ) ++ (if req.thinking.isDefined then Seq("anthropic-beta" -> "interleaved-thinking-2025-05-14") else Seq.empty)
                 val url = s"${config.apiUrl.stripSuffix("/")}/messages"
                 HttpClient.withConfig(_.timeout(config.timeout)) {
-                    HttpClient.postText(url, Json.encode(req), headers)
+                    Completion.post(config, url, Json.encode(req), headers)
                         .map(body =>
                             Abort.get(Json.decode[Response](body).mapFailure(e => HttpJsonDecodeException(e.getMessage, "POST", url)))
                         )
@@ -135,7 +135,7 @@ private[completion] object AnthropicCompletion extends Completion:
             case Absent =>
                 // Fail typed like `fetch`: a missing key sends no HTTP request and surfaces as the typed
                 // missing-key failure.
-                Abort.fail(AIMissingApiKeyException(config.modelName))
+                Abort.fail(AIMissingApiKeyException(config.modelName, config.provider.keyName))
             case Present(key) =>
                 val req = Request(context, config, resultTool, Present(resultSchema)).copy(stream = Present(true))
                 // The same interleaved-thinking beta `fetch` sends, so the streaming path spends the
