@@ -5,6 +5,7 @@ import kyo.ffi.Ffi
 import kyo.net.NetConfig
 import kyo.net.Test
 import kyo.net.internal.posix.SocketBindings
+import kyo.net.internal.transport.TransportImpl
 
 /** Cross-backend consistency guard for stale-errno init: every I/O backend must build a working transport even when a PRIOR syscall on the
   * calling thread has left a non-zero `errno`.
@@ -50,13 +51,9 @@ class IoBackendStaleErrnoTest extends Test:
                         dirty.value < 0 && dirty.errorCode != 0,
                         s"precondition: socket(-1,-1,-1) must fail and set errno, got value=${dirty.value} errorCode=${dirty.errorCode}"
                     )
-                    // Built inside ProcessSharedTransport.whileBuilding: this leaf builds a fresh, ad-hoc transport per available backend (the
-                    // stale-errno precondition demands a brand new driver each time), never through NetPlatform's own single shared instance,
-                    // so nothing else ever closes it. Marking its driver's cycle the same way NetPlatform.transport's construction does keeps it
-                    // correctly excused from the end-of-run leak check, exactly like the one real process-shared transport, rather than tripping
-                    // a false leaked-owned-transport report for a transport this test never had a way to close (transports have no close()).
+                    // The stale-errno precondition requires a fresh driver pool owned by this leaf.
                     val transport =
-                        try kyo.net.internal.ProcessSharedTransport.whileBuilding(entry.build())
+                        try entry.build()
                         catch
                             case c: Closed =>
                                 fail(
@@ -65,7 +62,13 @@ class IoBackendStaleErrnoTest extends Test:
                                         s"errno: ${c.getMessage}"
                                 )
                     // The transport built. Prove the backend actually works after the stale errno: bind an ephemeral port and connect to it.
-                    Sync.defer(()).andThen {
+                    val cleanup = Sync.defer {
+                        transport match
+                            case impl: TransportImpl[?] =>
+                                (0 until impl.pool.size).foreach(_ => impl.pool.next().close())
+                            case _ => fail(s"${entry.name}: expected a transport with an owned driver pool")
+                    }
+                    Scope.ensure(cleanup).andThen {
                         for
                             listener <- transport.listen("127.0.0.1", 0, 128)(_ => ()).safe.get
                             // Registered before the connect: if the connect below aborts with a NetException instead of returning a Result

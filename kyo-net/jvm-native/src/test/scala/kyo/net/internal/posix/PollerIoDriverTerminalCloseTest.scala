@@ -24,69 +24,69 @@ class PollerIoDriverTerminalCloseTest extends Test:
 
         "closeHandle on a live TLS handle after the driver has gone terminal self-closes: fd closed and engine freed exactly once" in {
             PosixTestSockets.assumePoller()
+            // Cancel before allocating the driver or sockets when the required TLS engine is absent.
+            TlsRealEngines.assumeBoringSslReady()
             val spy      = RecordingSocketBindings(Ffi.load[SocketBindings])
             val real     = PollerBackend.default()
             val pollerFd = real.create()
             val backend  = RecordingPollerBackend(real)
             val driver   = TestDrivers.forBackend(backend, pollerFd, spy)
             discard(driver.start())
-            // Gate BEFORE any socket exists. TlsRealEngines.singleEngine below requires BoringSSL and cancels without it; cancelling from
-            // there would leave the loopback pair already open and unreclaimed, one leaked pair per leaf, visible only on a host that
-            // stages OpenSSL but not BoringSSL.
-            TlsRealEngines.assumeBoringSslReady()
-            PosixTestSockets.loopbackPair().map { case (client, accepted) =>
-                val handle    = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
-                val rawEngine = TlsRealEngines.singleEngine(isServer = true)
-                val engine    = new RecordingTlsEngine(rawEngine)
-                handle.tls = Present(engine)
-                val closeWakeDone = backend.closeWakeDone()
-                driver.close()
-                closeWakeDone.safe.get.map { _ =>
-                    // The driver is now provably terminal (closeWake ran at the tail of the terminal exit). closeHandle's TLS branch must take
-                    // the post-terminal self-close fallback: the queued engine op it also submits will never run (the executor is dead), so the
-                    // fd/engine must be reclaimed synchronously here instead of stranding.
-                    driver.closeHandle(handle)
-                    discard(sock.close(client))
-                    assert(
-                        spy.closeCounts.getOrDefault(accepted, 0) == 1,
-                        s"the fd must be closed exactly once by the post-terminal self-close, counts=${spy.closeCounts}"
-                    )
-                    assert(engine.freeCount.get() == 1, s"the engine must be freed exactly once, was ${engine.freeCount.get()}")
+            Scope.ensure(Sync.defer(driver.close())).andThen {
+                PosixTestSockets.loopbackPair().map { case (client, accepted) =>
+                    val handle    = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                    val rawEngine = TlsRealEngines.singleEngine(isServer = true)
+                    val engine    = new RecordingTlsEngine(rawEngine)
+                    handle.tls = Present(engine)
+                    val closeWakeDone = backend.closeWakeDone()
+                    driver.close()
+                    closeWakeDone.safe.get.map { _ =>
+                        // The driver is now provably terminal (closeWake ran at the tail of the terminal exit). closeHandle's TLS branch must take
+                        // the post-terminal self-close fallback: the queued engine op it also submits will never run (the executor is dead), so the
+                        // fd/engine must be reclaimed synchronously here instead of stranding.
+                        driver.closeHandle(handle)
+                        discard(sock.close(client))
+                        assert(
+                            spy.closeCounts.getOrDefault(accepted, 0) == 1,
+                            s"the fd must be closed exactly once by the post-terminal self-close, counts=${spy.closeCounts}"
+                        )
+                        assert(engine.freeCount.get() == 1, s"the engine must be freed exactly once, was ${engine.freeCount.get()}")
+                    }
                 }
             }
         }
 
         "an op enqueued before the driver goes terminal is discharged exactly once (sweep or drain, never stranded)" in {
             PosixTestSockets.assumePoller()
+            // Cancel before allocating the driver or sockets when the required TLS engine is absent.
+            TlsRealEngines.assumeBoringSslReady()
             val spy      = RecordingSocketBindings(Ffi.load[SocketBindings])
             val real     = PollerBackend.default()
             val pollerFd = real.create()
             val backend  = RecordingPollerBackend(real)
             val driver   = TestDrivers.forBackend(backend, pollerFd, spy)
             discard(driver.start())
-            // Gate BEFORE any socket exists. TlsRealEngines.singleEngine below requires BoringSSL and cancels without it; cancelling from
-            // there would leave the loopback pair already open and unreclaimed, one leaked pair per leaf, visible only on a host that
-            // stages OpenSSL but not BoringSSL.
-            TlsRealEngines.assumeBoringSslReady()
-            PosixTestSockets.loopbackPair().map { case (client, accepted) =>
-                val handle    = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
-                val rawEngine = TlsRealEngines.singleEngine(isServer = true)
-                val engine    = new RecordingTlsEngine(rawEngine)
-                handle.tls = Present(engine)
-                val closeWakeDone = backend.closeWakeDone()
-                // Register the fd-close obligation WHILE the driver is still live: this submits the discharge op to engineQueue (and does NOT
-                // self-close inline, since the driver has not gone terminal yet).
-                driver.closeHandle(handle)
-                driver.close()
-                closeWakeDone.safe.get.map { _ =>
-                    discard(sock.close(client))
-                    // Whichever mechanism actually ran it (the loop's own per-cycle drain, or the terminal sweep's catch-all), the obligation
-                    // must have been discharged exactly once by the time the terminal exit has fully completed.
-                    assert(
-                        spy.closeCounts.getOrDefault(accepted, 0) == 1,
-                        s"a pre-terminal enqueued close must be discharged exactly once, counts=${spy.closeCounts}"
-                    )
-                    assert(engine.freeCount.get() == 1, s"the engine must be freed exactly once, was ${engine.freeCount.get()}")
+            Scope.ensure(Sync.defer(driver.close())).andThen {
+                PosixTestSockets.loopbackPair().map { case (client, accepted) =>
+                    val handle    = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                    val rawEngine = TlsRealEngines.singleEngine(isServer = true)
+                    val engine    = new RecordingTlsEngine(rawEngine)
+                    handle.tls = Present(engine)
+                    val closeWakeDone = backend.closeWakeDone()
+                    // Register the fd-close obligation WHILE the driver is still live: this submits the discharge op to engineQueue (and does NOT
+                    // self-close inline, since the driver has not gone terminal yet).
+                    driver.closeHandle(handle)
+                    driver.close()
+                    closeWakeDone.safe.get.map { _ =>
+                        discard(sock.close(client))
+                        // Whichever mechanism actually ran it (the loop's own per-cycle drain, or the terminal sweep's catch-all), the obligation
+                        // must have been discharged exactly once by the time the terminal exit has fully completed.
+                        assert(
+                            spy.closeCounts.getOrDefault(accepted, 0) == 1,
+                            s"a pre-terminal enqueued close must be discharged exactly once, counts=${spy.closeCounts}"
+                        )
+                        assert(engine.freeCount.get() == 1, s"the engine must be freed exactly once, was ${engine.freeCount.get()}")
+                    }
                 }
             }
         }

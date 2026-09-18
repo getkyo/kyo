@@ -1,6 +1,7 @@
 package kyo.net
 
 import kyo.*
+import kyo.net.internal.JsTransport
 
 /** Coverage for the JS read-dispatch re-entry under a long run of back-to-back reads over the REAL Node transport.
   *
@@ -26,6 +27,13 @@ class JsReadDispatchTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
+    // Select Node directly: the process default can select a koffi posix backend on this host.
+    private def mkTransport()(using Frame): JsTransport < (Sync & Scope) =
+        Sync.defer(JsTransport.init(poolSize = 1)).map { transport =>
+            // Unsafe: this fixture owns the single Node driver and closes it after its connections and listeners.
+            Scope.ensure(Sync.defer(transport.pool.next().close())).andThen(transport)
+        }
+
     // A few MB so Node fragments the write into many "data" chunks: each chunk drives one real read-pump re-entry cycle (awaitRead -> resume ->
     // data -> complete -> onComplete -> requestNextRead), exercising a long run of back-to-back reads on the actual JS dispatch.
     private val payloadSize = 4 * 1024 * 1024
@@ -49,8 +57,8 @@ class JsReadDispatchTest extends Test:
     "JS read dispatch re-entry over the real Node transport" - {
 
         "a multi-megabyte stream drives many back-to-back reads, reassembled exactly and in order (no StackOverflow, no lost re-arm)" in {
-            val transport: Transport = NetPlatform.transport
             for
+                transport <- mkTransport()
                 listener <- transport.listen("127.0.0.1", 0, 128) { serverConn =>
                     // Server: stream the whole payload, then leave the connection for the client to drain and close.
                     discard(Sync.Unsafe.evalOrThrow {
@@ -59,8 +67,10 @@ class JsReadDispatchTest extends Test:
                         }
                     })
                 }.safe.get
+                _ <- Scope.ensure(Sync.defer(listener.close()))
                 port = listener.port
                 conn <- transport.connect("127.0.0.1", port).safe.get
+                _    <- Scope.ensure(Sync.defer(conn.close()))
                 // Read until the full payload length is collected. Each take is one (or more) Node "data" chunk(s); the read pump re-arms after
                 // each, so this loop walks the real re-entry path payloadSize bytes deep.
                 collected <- Loop[Array[Byte], Array[Byte], Async & Abort[Closed]](Array.emptyByteArray) { acc =>

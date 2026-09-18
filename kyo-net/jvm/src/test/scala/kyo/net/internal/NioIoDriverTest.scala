@@ -411,9 +411,9 @@ class NioIoDriverTest extends Test:
       * The strand this reproduces: a standing grace probe holds OP_READ, fresh bytes arrive, and the probe's dispatch stages them in the
       * window between awaitRead's staging pre-check (which saw Absent) and armRead installing the pump cell. The staged bytes then sit
       * against an armed read that nothing completes: the socket is empty so the selector never fires again, and no path re-checks staging
-      * after the arm. Each iteration re-runs the race; the randomized sub-selector-latency spin scans the alignment between the probe's
-      * dispatch and the arm so the overlap lands within the iteration budget. A bounded read that never completes while stagedBytes is
-      * non-empty is the strand.
+      * after the arm. Each iteration re-runs the race with a different spin count between the probe's dispatch and the arm. Reads and
+      * staging observations use the framework's hang guard: on Windows ARM64 the former two-second wrapper timed out even though the
+      * original read promise already contained Success(Bytes), before cancellation. That measured continuation scheduling, not lost bytes.
       *
       * `encode` turns the plaintext the peer sends into its wire bytes: identity for plain TCP, one wrapped TLS record for TLS. On the TLS
       * leaf the probe therefore stages CIPHERTEXT and delivery must route it through the engine (feed + unwrap); reads always assert the
@@ -431,15 +431,22 @@ class NioIoDriverTest extends Test:
         val iterations = 600
         val rng        = new java.util.Random(0x57a11)
 
-        def readBytes(iter: Int, bound: Duration): Maybe[Array[Byte]] < Async =
+        def writeBytes(bytes: Array[Byte]): Unit < Async =
+            val buffer = ByteBuffer.wrap(encode(bytes))
+            assertEventually(Sync.defer {
+                discard(sv.write(buffer))
+                !buffer.hasRemaining
+            })
+        end writeBytes
+
+        def readBytes(iter: Int): Array[Byte] < Async =
             val p = new IOPromise[Closed, ReadOutcome]
             driver.awaitRead(handle, p.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]])
-            Abort.run[Closed | Timeout](Async.timeout(bound)(p.asInstanceOf[Fiber.Unsafe[ReadOutcome, Abort[Closed]]].safe.get)).map {
-                case Result.Success(ReadOutcome.Bytes(span)) => Present(span.toArray)
-                case Result.Failure(_: Timeout)              => Absent
+            p.asInstanceOf[Fiber.Unsafe[ReadOutcome, Abort[Closed]]].safe.getResult.map {
+                case Result.Success(ReadOutcome.Bytes(span)) => span.toArray
                 case other =>
                     assert(false, s"iteration $iter: unexpected read outcome $other")
-                    Absent
+                    Array.emptyByteArray
             }
         end readBytes
 
@@ -448,50 +455,131 @@ class NioIoDriverTest extends Test:
             driver.closeHandle(handle)
             driver.close()
         }) {
+            discard(sv.configureBlocking(false))
             Loop(0) { iter =>
                 if iter == iterations then Loop.done(succeed)
                 else
                     // Arm (or re-arm) the grace probe and prove it is staging: the sentinel must land in graceStaging, which also leaves the
                     // probe re-armed as a standing FIN watch holding OP_READ (the n == 0 re-install after the staging read drains the socket).
                     discard(driver.isPeerClosed(handle))
-                    discard(sv.write(ByteBuffer.wrap(encode(sentinel))))
-                    awaitCondition(4.seconds)(driver.stagedBytes(handle) >= 1).map { staged =>
-                        assert(
-                            staged,
-                            s"iteration $iter: the probe never staged the sentinel " +
-                                s"(pendingRead=${driver.hasPendingRead(handle)}, staged=${driver.stagedBytes(handle)}, " +
-                                s"arm=${driver.readArmState(handle)}, interest=${driver.interestOpsFor(handle.channel)}, " +
-                                s"peerClosed=${handle.peerClosed})"
-                        )
-                    }.andThen {
-                        readBytes(iter, 4.seconds).map { got =>
-                            assert(got.exists(_.toList == sentinel.toList), s"iteration $iter: sentinel drain got $got")
+                    writeBytes(sentinel).andThen(assertEventually(Sync.defer(driver.stagedBytes(handle) >= 1))).andThen {
+                        readBytes(iter).map { got =>
+                            assert(got.toList == sentinel.toList, s"iteration $iter: sentinel drain got ${got.toList}")
                         }
                     }.andThen {
                         // The race: fresh bytes toward a socket whose standing probe holds OP_READ, then a pump arm on this carrier.
-                        discard(sv.write(ByteBuffer.wrap(encode(payload))))
-                        val spinUntil = java.lang.System.nanoTime() + rng.nextInt(60000).toLong
-                        while java.lang.System.nanoTime() < spinUntil do ()
-                        Loop(Array.emptyByteArray) { received =>
-                            if received.length >= payload.length then
-                                assert(received.toList == payload.toList, s"iteration $iter: payload round-trip got ${received.toList}")
-                                Loop.done(())
-                            else
-                                readBytes(iter, 2.seconds).map {
-                                    case Present(bytes) => Loop.continue(received ++ bytes)
-                                    case Absent =>
-                                        assert(
-                                            false,
-                                            s"iteration $iter: read never completed with stagedBytes=${driver.stagedBytes(handle)}; " +
-                                                "staged grace-probe bytes stranded against an armed read"
-                                        )
-                                        Loop.done(())
-                                }
+                        writeBytes(payload).andThen {
+                            var spins = rng.nextInt(64)
+                            while spins > 0 do
+                                Thread.onSpinWait()
+                                spins -= 1
+                            Loop(Array.emptyByteArray) { received =>
+                                if received.length >= payload.length then
+                                    assert(received.toList == payload.toList, s"iteration $iter: payload round-trip got ${received.toList}")
+                                    Loop.done(())
+                                else
+                                    readBytes(iter).map(bytes => Loop.continue(received ++ bytes))
+                            }
                         }
                     }.andThen(Loop.continue(iter + 1))
             }
         }
     end stagingRaceLoop
+
+    /** Drive a private selector-carrier boundary synchronously, without adding a test hook to the production read path. */
+    private def stagingBoundary(driver: NioIoDriver, name: String, parameterTypes: Class[?]*)(arguments: AnyRef*): Unit =
+        val method = classOf[NioIoDriver].getDeclaredMethod(name, parameterTypes*)
+        method.setAccessible(true)
+        discard(method.invoke(driver, arguments*))
+    end stagingBoundary
+
+    /** Only the probe's read boundary is substituted. The real handle remains registered with a real selector. */
+    private class ProbeReadChannel(readBytes: ByteBuffer => Int)
+        extends SocketChannel(java.nio.channels.spi.SelectorProvider.provider()):
+        def read(buffer: ByteBuffer): Int                                           = readBytes(buffer)
+        def read(buffers: Array[ByteBuffer], offset: Int, length: Int): Long        = throw new UnsupportedOperationException
+        def write(buffer: ByteBuffer): Int                                          = throw new UnsupportedOperationException
+        def write(buffers: Array[ByteBuffer], offset: Int, length: Int): Long       = throw new UnsupportedOperationException
+        def bind(address: java.net.SocketAddress): SocketChannel                    = throw new UnsupportedOperationException
+        def setOption[A](option: java.net.SocketOption[A], value: A): SocketChannel = throw new UnsupportedOperationException
+        def getOption[A](option: java.net.SocketOption[A]): A                       = throw new UnsupportedOperationException
+        def supportedOptions(): java.util.Set[java.net.SocketOption[?]]             = java.util.Collections.emptySet()
+        def shutdownInput(): SocketChannel                                          = throw new UnsupportedOperationException
+        def shutdownOutput(): SocketChannel                                         = throw new UnsupportedOperationException
+        def socket(): java.net.Socket                                               = throw new UnsupportedOperationException
+        def isConnected(): Boolean                                                  = true
+        def isConnectionPending(): Boolean                                          = false
+        def connect(address: java.net.SocketAddress): Boolean                       = throw new UnsupportedOperationException
+        def finishConnect(): Boolean                                                = throw new UnsupportedOperationException
+        def getRemoteAddress(): java.net.SocketAddress                              = throw new UnsupportedOperationException
+        def getLocalAddress(): java.net.SocketAddress                               = throw new UnsupportedOperationException
+        def implCloseSelectableChannel(): Unit                                      = ()
+        def implConfigureBlocking(blocking: Boolean): Unit                          = ()
+    end ProbeReadChannel
+
+    "staging between the empty pre-check and the read arm is delivered without socket readiness" in {
+        withDriverAndHandle() { (driver, handle, _) =>
+            val promise = new IOPromise[Closed, ReadOutcome]
+            assert(handle.graceStaging.get().isEmpty)
+            // The pre-check has observed no bytes. The probe stages them before the caller installs its read arm.
+            handle.graceStaging.set(Chunk(Array[Byte](4, 5, 6)))
+            // Unsafe: reflection uses the erased promise and Frame representations at this private JVM boundary.
+            stagingBoundary(driver, "armRead", classOf[NioHandle], classOf[IOPromise[?, ?]], classOf[AllowUnsafe], classOf[String])(
+                handle,
+                promise,
+                summon[AllowUnsafe],
+                Frame.internal.asInstanceOf[String]
+            )
+            // No bytes were sent to the socket. Only the arm's queued staging handoff can complete this promise.
+            stagingBoundary(driver, "drainStagedDeliveries", classOf[AllowUnsafe])(summon[AllowUnsafe])
+            assert(
+                promise.poll().map(_.map {
+                    case ReadOutcome.Bytes(bytes) => Chunk.from(bytes.toArray)
+                    case _                        => Chunk.empty[Byte]
+                }) == Present(Result.succeed(Chunk[Byte](4, 5, 6))),
+                s"the queued handoff must deliver [4,5,6]; read=${promise.poll()}"
+            )
+        }
+    }
+
+    "a probe that stages after the read arm completes that arm in its dispatch tail" in {
+        withDriverAndHandle() { (driver, handle, _) =>
+            val promise = new IOPromise[Closed, ReadOutcome]
+            val probe   = Present(ReadArmCell(Promise.Unsafe.init[ReadOutcome, Abort[Closed]](), probe = true))
+            handle.readArm.set(probe)
+            var reads = 0
+            val channel = new ProbeReadChannel(buffer =>
+                reads += 1
+                if reads == 1 then
+                    // The probe owns the empty slot but has not stashed its read yet. The pump sees empty staging and arms.
+                    driver.awaitRead(handle, promise.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]])
+                    discard(buffer.put(Array[Byte](4, 5, 6)))
+                    3
+                else 0
+                end if
+            )
+            try
+                stagingBoundary(
+                    driver,
+                    "dispatchGraceProbe",
+                    classOf[SocketChannel],
+                    classOf[Object],
+                    classOf[NioHandle],
+                    classOf[AllowUnsafe]
+                )(channel, probe.asInstanceOf[AnyRef], handle, summon[AllowUnsafe])
+                assert(reads == 2)
+                // This drives dispatchGraceProbe itself: removing its delivery call must leave the promise pending.
+                assert(
+                    promise.poll().map(_.map {
+                        case ReadOutcome.Bytes(bytes) => Chunk.from(bytes.toArray)
+                        case _                        => Chunk.empty[Byte]
+                    }) == Present(Result.succeed(Chunk[Byte](4, 5, 6))),
+                    s"the probe tail must deliver [4,5,6]; read=${promise.poll()}"
+                )
+            finally channel.close()
+            end try
+        }
+    }
 
     /** A handshaked client/server JDK SSLEngine pair, driven engine-to-engine in memory so the socket never carries handshake bytes.
       * TLSv1.2 keeps the exchange free of post-handshake records (a TLS 1.3 NewSessionTicket would ride ahead of the first application

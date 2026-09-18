@@ -4,8 +4,10 @@ import kyo.*
 import kyo.net.NetBackendUnavailableException
 import kyo.net.NetConfig
 import kyo.net.Test
+import kyo.net.Transport
 import kyo.net.internal.posix.PosixConstants
 import kyo.net.internal.posix.PosixTransport
+import kyo.net.internal.transport.TransportImpl
 
 /** JVM backend-selection tests for the unified transport wiring. They confirm the production `IoBackendPlatform.transport` selects the
   * OS-appropriate posix backend (kqueue on this macOS/BSD host, io_uring/epoll on Linux) over the always-available `NioBackend` floor, that
@@ -23,6 +25,21 @@ class JvmPosixBackendSelectionTest extends Test:
     given Frame = Frame.internal
 
     private val transportConfig = NetConfig.default
+
+    /** These leaves build fresh transports to exercise selection, so their driver pools belong to the leaf scope. */
+    private def ownedTransport(build: => Transport)(using Frame, kyo.test.AssertScope): Transport < (Sync & Scope) =
+        Sync.defer(build).map { transport =>
+            Scope.ensure(Sync.defer {
+                // Unsafe: release every driver of the transport owned by this fixture after its connections and listeners.
+                transport match
+                    case impl: TransportImpl[?] =>
+                        var i = 0
+                        while i < impl.pool.size do
+                            impl.pool.next().close()
+                            i += 1
+                    case other => fail(s"unexpected transport implementation: ${other.getClass.getName}")
+            }).andThen(transport)
+        }
 
     /** Drive a real loopback echo through `transport`: listen on an ephemeral port whose handler echoes one inbound chunk, connect, write the
       * payload, and read the echoed bytes back. Returns the bytes received by the client.
@@ -79,11 +96,15 @@ class JvmPosixBackendSelectionTest extends Test:
         // posix backend WINS selection, so a run that forces the nio floor (KYO_NET_ONLY=nio or -Dkyo.net.backend=nio, the cell-isolation and
         // forced-backend CI legs) has deliberately removed the thing under test; cancel rather than report a failure the run itself caused.
         if IoBackendPlatform.selected.name == "nio" then cancel("nio is forced; this leaf asserts posix wins selection")
-        val unsafe = IoBackendPlatform.transport()
-        assert(unsafe.isInstanceOf[PosixTransport], s"production transport is ${unsafe.getClass.getSimpleName}, expected PosixTransport")
-        val payload = "posix-echo".getBytes
-        echoRoundTrip(unsafe, payload).map { got =>
-            assert(got.toList == payload.toList, s"round-trip got ${new String(got)}")
+        ownedTransport(IoBackendPlatform.transport()).map { unsafe =>
+            assert(
+                unsafe.isInstanceOf[PosixTransport],
+                s"production transport is ${unsafe.getClass.getSimpleName}, expected PosixTransport"
+            )
+            val payload = "posix-echo".getBytes
+            echoRoundTrip(unsafe, payload).map { got =>
+                assert(got.toList == payload.toList, s"round-trip got ${new String(got)}")
+            }
         }
     }
 
@@ -99,11 +120,12 @@ class JvmPosixBackendSelectionTest extends Test:
         ).getOrThrow
         assert(forced.name == "nio", s"forced selected=${forced.name}")
         // The forced floor must build the NioTransport, not a PosixTransport, and that floor must round-trip as production.
-        val unsafe = forced.build()
-        assert(!unsafe.isInstanceOf[PosixTransport], "forced-nio transport is a PosixTransport, expected NioTransport")
-        val payload = "nio-floor-echo".getBytes
-        echoRoundTrip(unsafe, payload).map { got =>
-            assert(got.toList == payload.toList, s"forced-nio round-trip got ${new String(got)}")
+        ownedTransport(forced.build()).map { unsafe =>
+            assert(!unsafe.isInstanceOf[PosixTransport], "forced-nio transport is a PosixTransport, expected NioTransport")
+            val payload = "nio-floor-echo".getBytes
+            echoRoundTrip(unsafe, payload).map { got =>
+                assert(got.toList == payload.toList, s"forced-nio round-trip got ${new String(got)}")
+            }
         }
     }
 

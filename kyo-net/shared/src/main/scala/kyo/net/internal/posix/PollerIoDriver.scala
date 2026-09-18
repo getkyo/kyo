@@ -180,6 +180,11 @@ final private[net] class PollerIoDriver private[posix] (
     // The check in drainReady tries pendingAccepts first, then falls through to pendingReads.
     private val pendingAccepts = new IntRefMap[PosixHandle]()
 
+    // The kqueue changelist borrows each registered fd until poll submits it. Retain the handle guard across that interval, including
+    // overflow flushes and a pending poll, so a concurrent close cannot recycle the fd before the kernel sees its interest change.
+    // Reused and confined to the poll carrier; cancellation releases removed changes, and terminal teardown releases any remaining entries.
+    private val registrationHolds = new java.util.ArrayList[Registration]()
+
     // Poll-cycle liveness counter, incremented once per poll-loop iteration and exposed through the Diagnostics dump: a frozen
     // value when a leaf hangs means the poll loop is dead/stuck; an advancing value means it is live but not delivering to some fd.
     @volatile private var diagPollCycles: Long = 0L
@@ -512,6 +517,24 @@ final private[net] class PollerIoDriver private[posix] (
         runCycle(task, donePromise, startMillis, clock)
     end processSharedTransportCycle
 
+    private def releaseRegistrationHolds()(using AllowUnsafe): Unit =
+        while !registrationHolds.isEmpty() do
+            discard(registrationHolds.remove(registrationHolds.size() - 1).handle.endDeferredClose())
+        end while
+    end releaseRegistrationHolds
+
+    private def releaseRegistrationHolds(handle: PosixHandle, fd: Int)(using AllowUnsafe): Unit =
+        var i = registrationHolds.size() - 1
+        while i >= 0 do
+            val reg = registrationHolds.get(i)
+            if (reg.handle eq handle) && regMatches(reg, fd, reg.kind) then
+                discard(registrationHolds.remove(i))
+                discard(handle.endDeferredClose())
+            end if
+            i -= 1
+        end while
+    end releaseRegistrationHolds
+
     /** One poll cycle: drain queued interest changes, park in the OS poll, dispatch what came back, and hand the next wait to another carrier. */
     private def runCycle(
         task: Task,
@@ -608,6 +631,7 @@ final private[net] class PollerIoDriver private[posix] (
       * exit, at the cost of one extra activation, rather than duplicating teardown at a second site.
       */
     private def dispatchAndContinue(task: Task)(using AllowUnsafe, Frame): Unit =
+        releaseRegistrationHolds()
         drainReady(pollScratch.fds, pollScratch.flags, pollScratch.ids, pollScratch.readyCount)
         // Sole consumer of the change/engine FIFOs, once per cycle, whether or not events fired: a command or engine op enqueued by
         // submitChange/submitEngineOp (or by this cycle's own dispatch) is drained within one cycle, and each submit wakes the park so an idle
@@ -694,21 +718,24 @@ final private[net] class PollerIoDriver private[posix] (
       * being drained by identity, not value, so it is not a sound error predicate on its own.
       */
     private def terminalTeardown()(using AllowUnsafe, Frame): Unit =
-        terminal.set(true)
-        drainFifos()
-        sweepPendingCloses()
-        teardownComplete.set(true)
-        sweepPendingCloses()
-        val reason = closeReason
-        if reason != null && closeTeardownClaim.compareAndSet(false, true) then closeTeardown(reason)
-        if !pendingCloses.isEmpty() then
-            val stranded = new StringBuilder
-            pendingCloses.forEach(h => discard(stranded.append("fd=").append(h.readFd).append('/').append(h.writeFd).append(' ')))
-            kyo.internal.Diagnostics.reportViolation(
-                s"$label: ${pendingCloses.size()} close obligation(s) [$stranded] survived the terminal teardown's post-completion " +
-                    "re-sweep (stranded-close class regression)"
-            )
-        end if
+        try
+            terminal.set(true)
+            drainFifos()
+            sweepPendingCloses()
+            teardownComplete.set(true)
+            sweepPendingCloses()
+            val reason = closeReason
+            if reason != null && closeTeardownClaim.compareAndSet(false, true) then closeTeardown(reason)
+            if !pendingCloses.isEmpty() then
+                val stranded = new StringBuilder
+                pendingCloses.forEach(h => discard(stranded.append("fd=").append(h.readFd).append('/').append(h.writeFd).append(' ')))
+                kyo.internal.Diagnostics.reportViolation(
+                    s"$label: ${pendingCloses.size()} close obligation(s) [$stranded] survived the terminal teardown's post-completion " +
+                        "re-sweep (stranded-close class regression)"
+                )
+            end if
+        finally releaseRegistrationHolds()
+        end try
     end terminalTeardown
 
     def awaitRead(handle: PosixHandle, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
@@ -1251,6 +1278,20 @@ final private[net] class PollerIoDriver private[posix] (
         // Public IoDriver cancel: the fd is still open (live-fd withdrawal). EV_DELETE must execute on kqueue to prevent stale events.
         deregisterFds(handle, fdClosing = false)
 
+    /** Close a listener after any admitted registration has finished borrowing its fd. The callback owns the listener's shutdown and close;
+      * storing it as a guard-managed credit prevents a staged accept interest from reaching the kernel after that fd number is recycled.
+      */
+    override def closeListener(handle: PosixHandle, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit =
+        deregisterFds(handle, fdClosing = true)
+        val held = handle.beginDeferredClose()
+        try
+            if handle.claimFdClose() then handle.fdCloseSink = Present(closeFd)
+            PosixHandle.close(handle)
+        finally
+            if held then discard(handle.endDeferredClose())
+        end try
+    end closeListener
+
     /** Claim this handle's fd close (the one-shot [[PosixHandle.claimFdClose]]) and, if won, shut it down immediately and install the deferred
       * real `close(fd)` as [[PosixHandle.fdCloseSink]] -- the shared claim-then-defer dance every abrupt (non-`close_notify`) close path on
       * this driver runs BEFORE calling `PosixHandle.close` / `requestClose` for the handle. Winning the claim proves the fd is still owned by
@@ -1493,15 +1534,12 @@ final private[net] class PollerIoDriver private[posix] (
                 // gone, so nothing else can touch the poll-fiber-confined maps closeTeardown clears.
                 if teardownComplete.get() && closeTeardownClaim.compareAndSet(false, true) then closeTeardown(closed)
             else
-                // start() was never called: no poll loop ran, so no carrier is using the maps or the scratch. Tear down directly.
-                closeTeardown(closed)
+                // start() was never called: no poll carrier owns the maps or scratch. Run the same terminal drain here, including releasing
+                // registrations staged by a manual drain. It publishes terminal state before releasing guards, so resource-free callbacks
+                // cannot enqueue work for a loop that will never run.
+                terminalTeardown()
                 backend.close(pollerFd)
                 freeScratch()
-                // Mark the teardown finished on this path too. No loop ever ran, so drainFifos will never run either, which is exactly
-                // what these flags are read to mean: submitEngineOp's recheck drains a late op here instead of leaving it queued for a
-                // consumer that does not exist, and closeHandle self-closes inline instead of deferring to that same absent consumer.
-                terminal.set(true)
-                teardownComplete.set(true)
             end if
         end if
     end close
@@ -2418,17 +2456,18 @@ final private[net] class PollerIoDriver private[posix] (
       * mismatched. Applies nothing when no registration matches (a cancel removed it before the command ran). The handle's `@volatile` promise/id
       * reads here pair with the await methods' stores (published before the registration offer; the queue offer/take is the happens-before barrier).
       */
-    private def applyRegistration(fd: Int, kind: RegKind)(using AllowUnsafe, Frame): Long =
+    private inline def applyRegistration(fd: Int, kind: RegKind)(inline register: Long => Unit)(using AllowUnsafe, Frame): Unit =
         Maybe(takeRegistration(fd, kind)) match
             case Present(reg) =>
                 val handle = reg.handle
-                if handle.isClosing() then
-                    // A closing handle must never (re-)claim its fd. The ReadPump always re-arms (ReadPump.requestNextRead), so a read re-arm can
+                if !handle.beginDeferredClose() then
+                    // The guard atomically rejects a closing handle and protects an admitted fd until its registration reaches the kernel.
+                    // The ReadPump always re-arms (ReadPump.requestNextRead), so a read re-arm can
                     // race the connection close: by the time this registration applies on the poll carrier, the handle's fd may already be closed
                     // and recycled into a NEW connection. Applying it would overwrite the new owner's activeFds/pendingReads entry and (epoll)
                     // MOD-re-encode the kernel event under the dead handle's id, so the new connection's reads are evicted and never dispatch (a
                     // strand). Skip the registration entirely: fail the dangling promise Closed so its consumer tears down instead of hanging, then
-                    // return IdNoCheck so the caller skips backend.registerRead and the missed-edge re-dispatch. This is the register-side dual of
+                    // skip the backend registration and the missed-edge re-dispatch. This is the register-side dual of
                     // dispatchRead's beginDispatch guard and the OpDeregister id-guard; a live handle still registers normally below.
                     val res = kind match
                         case RegKind.Accept => s"listener ${handleLabel(handle)}"
@@ -2444,12 +2483,12 @@ final private[net] class PollerIoDriver private[posix] (
                             handle.pendingWritablePromise.foreach(_.completeDiscard(Result.fail(closed)))
                             handle.pendingWritablePromise = Absent
                     end match
-                    PollScratch.IdNoCheck
+                    ()
                 else if kind == RegKind.Read && handle.upgradeActive && !handle.handshakeReading then
                     // STARTTLS upgrade confinement (poller): an OpRegisterRead for the read side while the handle is upgrading and the handshake has
                     // not yet taken read ownership (handshakeReading false) is the retiring plaintext ReadPump's stray re-arm (its requestNextRead
                     // raced detachForUpgrade). Admitting it would deposit the pump's promise as the fd's read owner and let the next readability event
-                    // deliver the peer's first TLS flight to the pump instead of the handshake. SKIP the backend register (return IdNoCheck) so the
+                    // deliver the peer's first TLS flight to the pump instead of the handshake. SKIP the backend register so the
                     // stray never owns the fd; the handshake's own arm (handshakeReading set in awaitReadCiphertext) is admitted by the branch below.
                     // Do NOT fail the pump's pendingReadPromise here: upgradeActive is set BEFORE detachForUpgrade flips the connection state to
                     // Upgrading, so failing the promise on this carrier could tear the pump down while the state is still Established, letting its
@@ -2457,31 +2496,38 @@ final private[net] class PollerIoDriver private[posix] (
                     // failed post-CAS instead, by whichever of the three sweeps its deposit ordering reaches: deregisterFds (deposit before the
                     // sweep), awaitRead's own isUpgraded re-check (deposit after the marker), or armUpgradeProducerRead's occupant fail (deposit in
                     // the sweep-to-marker gap). This is the poller dual of NioIoDriver's dispatchReadPlain upgrade guard.
-                    PollScratch.IdNoCheck
+                    discard(handle.endDeferredClose())
                 else
-                    kind match
-                        case RegKind.Read =>
-                            activeFds.put(fd, handle.id.packed)
-                            activeHandles.put(fd, handle)
-                            pendingReads.put(fd, handle)
-                        case RegKind.Accept =>
-                            activeFds.put(fd, handle.id.packed)
-                            activeHandles.put(fd, handle)
-                            pendingAccepts.put(fd, handle)
-                        case RegKind.Write =>
-                            activeFds.put(fd, handle.id.packed)
-                            handle.pendingWritablePromise match
-                                case Present(p) => pendingWritables.put(fd, PendingWritable(p, handle.id, handle))
-                                case Absent => () // the writable was already failed/cleared (cancel raced the registration); nothing to arm
-                            end match
-                    end match
-                    handle.id.packed
+                    val batched = pollScratch.kqueueData.isDefined
+                    if batched then discard(registrationHolds.add(reg))
+                    try
+                        kind match
+                            case RegKind.Read =>
+                                activeFds.put(fd, handle.id.packed)
+                                activeHandles.put(fd, handle)
+                                pendingReads.put(fd, handle)
+                            case RegKind.Accept =>
+                                activeFds.put(fd, handle.id.packed)
+                                activeHandles.put(fd, handle)
+                                pendingAccepts.put(fd, handle)
+                            case RegKind.Write =>
+                                activeFds.put(fd, handle.id.packed)
+                                handle.pendingWritablePromise match
+                                    case Present(p) => pendingWritables.put(fd, PendingWritable(p, handle.id, handle))
+                                    case Absent =>
+                                        () // the writable was already failed/cleared (cancel raced the registration); nothing to arm
+                                end match
+                        end match
+                        register(handle.id.packed)
+                    finally
+                        if !batched then discard(handle.endDeferredClose())
+                    end try
                 end if
             case Absent =>
-                // No registration matched (a cancel removed it before the command ran). Return IdNoCheck so the caller skips the backend register:
+                // No registration matched (a cancel removed it before the command ran). Skip the backend register:
                 // arming a fd with no pending op would leave an interest with no owner id to tag the knote, and there is no op
                 // to deliver to anyway.
-                PollScratch.IdNoCheck
+                ()
         end match
     end applyRegistration
 
@@ -2499,10 +2545,7 @@ final private[net] class PollerIoDriver private[posix] (
             // (RegKind.Accept vs RegKind.Read), so the live entry is applied to pendingAccepts vs pendingReads for THIS command, never confused with a
             // concurrently-pending registration of the other kind on the same fd.
             if accept then
-                val id = applyRegistration(fd, RegKind.Accept)
-                // Skip the backend register when no registration matched (id == IdNoCheck): there is no pending op to arm and no owner id to tag the
-                // kqueue knote (the udata stale-event cookie). The id is the registering handle's monotonic id, passed to the backend as the knote udata.
-                if id != PollScratch.IdNoCheck then
+                applyRegistration(fd, RegKind.Accept) { id =>
                     val rc = backend.registerRead(pollerFd, fd, id, pollScratch)
                     if rc < 0 then
                         Maybe(pendingAccepts.remove(fd)).foreach { h =>
@@ -2512,10 +2555,9 @@ final private[net] class PollerIoDriver private[posix] (
                             h.pendingAcceptPromise = Absent
                         }
                     end if
-                end if
+                }
             else
-                val id = applyRegistration(fd, RegKind.Read)
-                if id != PollScratch.IdNoCheck then
+                applyRegistration(fd, RegKind.Read) { id =>
                     val rc = backend.registerRead(pollerFd, fd, id, pollScratch)
                     if rc < 0 then
                         Maybe(pendingReads.remove(fd)).foreach { h =>
@@ -2540,11 +2582,10 @@ final private[net] class PollerIoDriver private[posix] (
                             if h.readMightHaveMore || missed || missedEofd then dispatchRead(fd)
                         }
                     end if
-                end if
+                }
             end if
         else if op == OpRegisterWrite then
-            val id = applyRegistration(fd, RegKind.Write)
-            if id != PollScratch.IdNoCheck then
+            applyRegistration(fd, RegKind.Write) { id =>
                 val rc = backend.registerWrite(pollerFd, fd, id, pollScratch)
                 if rc < 0 then
                     Maybe(pendingWritables.remove(fd)).foreach { entry =>
@@ -2553,7 +2594,7 @@ final private[net] class PollerIoDriver private[posix] (
                         ))
                     }
                 end if
-            end if
+            }
         else
             // OpDeregister: remove this fd's entries from the poll-fiber-confined maps HERE, on the poll-loop carrier (single-writer),
             // but ONLY when activeFds still carries the DEREGISTERING handle's HandleId. The deregistering handle is taken from deregIntake (paired
@@ -2594,6 +2635,10 @@ final private[net] class PollerIoDriver private[posix] (
                             h.pendingAcceptPromise.foreach(_.completeDiscard(Result.fail(closed)))
                             h.pendingAcceptPromise = Absent
                         end if
+                        // deregister removed this fd's staged changes, so no future poll needs their holds. Release only this owner/fd:
+                        // a split read/write handle or another fd can still have changes waiting for submission. A closing handle's earlier
+                        // live cancel waits for its closing deregister's promise sweep above, before the last hold can free its promise slots.
+                        if fdClosing || !h.isClosing() then releaseRegistrationHolds(h, fd)
                     end if
                 case Absent =>
                     // No paired handle (the offer-before-submit ordering prevents this in practice). Safe default: remove nothing rather than risk

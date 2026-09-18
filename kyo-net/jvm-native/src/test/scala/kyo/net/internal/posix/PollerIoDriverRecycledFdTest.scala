@@ -99,6 +99,153 @@ class PollerIoDriverRecycledFdTest extends Test:
         }.map(_ => succeed)
     }
 
+    "a close between staging an interest and submitting the poll never registers a freed fd" in {
+        if !PosixConstants.isMacOrBsd then cancel("kqueue is macOS/BSD-only")
+        PosixTestSockets.loopbackPair().map { case (client, accepted) =>
+            val real     = PollerBackend.default()
+            val pollerFd = real.create()
+            val backend  = RecordingPollerBackend(real)
+            val driver   = TestDrivers.forBackend(backend, pollerFd, sock)
+            val handle   = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+            val entered  = Promise.Unsafe.init[Unit, Any]()
+            val heldPoll = Promise.Unsafe.init[Int, Any]()
+            backend.setPrePollLatch(entered)
+            backend.setPrePollHold(heldPoll)
+            // Queue the read before start so the held first poll owns a real staged registration.
+            val read = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
+            driver.awaitRead(handle, read)
+            val stopped = driver.start()
+            Scope.ensure {
+                Sync.defer {
+                    driver.closeHandle(handle)
+                    driver.close()
+                    heldPoll.completeDiscard(Result.succeed(0))
+                }.andThen(stopped.safe.get).andThen(sock.close(client).safe.get.unit)
+            }.andThen {
+                entered.safe.get.map { _ =>
+                    val scratch = backend.lastScratch
+                    val kq      = scratch.kqueueData.get
+                    assert(kq.nChanges == 1, s"expected the read registration to be staged before close, got ${kq.nChanges}")
+                    // The driver is suspended on heldPoll, so it cannot drain the close command or touch scratch. Plaintext close runs its
+                    // synchronous JVM/Native close path on this carrier. Submit the held batch here before allowing the driver to continue.
+                    driver.closeHandle(handle)
+                    real.poll(pollerFd, 0, kq.changelistBuf, kq.nChanges, scratch).safe.get.map { n =>
+                        val errors = (0 until n).filter(i =>
+                            scratch.ids(i) == handle.id.packed && (scratch.flags(i) & PollFlags.Error) != 0
+                        ).map(i => KEvent.data(kq.eventsBuffer, i)).toList
+                        heldPoll.completeDiscard(Result.succeed(n))
+                        assert(errors == List.empty[Long], s"poll submitted an interest after its fd was freed: errno=$errors")
+                    }
+                }
+            }
+        }
+    }
+
+    "terminal teardown releases a registration staged after the final poll" in {
+        if !PosixConstants.isMacOrBsd then cancel("kqueue is macOS/BSD-only")
+        PosixTestSockets.loopbackPair().map { case (client, accepted) =>
+            val real     = PollerBackend.default()
+            val spy      = RecordingSocketBindings(sock)
+            val backend  = RecordingPollerBackend(real)
+            val driver   = TestDrivers.forBackend(backend, real.create(), spy)
+            val handle   = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+            val entered  = Promise.Unsafe.init[Unit, Any]()
+            val heldPoll = Promise.Unsafe.init[Int, Any]()
+            backend.setPrePollLatch(entered)
+            backend.setPrePollHold(heldPoll)
+            val stopped = driver.start()
+            Scope.ensure {
+                Sync.defer {
+                    driver.closeHandle(handle)
+                    driver.close()
+                    heldPoll.completeDiscard(Result.succeed(0))
+                }.andThen(stopped.safe.get).andThen(sock.close(client).safe.get.unit)
+            }.andThen {
+                entered.safe.get.map { _ =>
+                    val read = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
+                    driver.awaitRead(handle, read)
+                    // The post-poll FIFO drain stages this read, then closes the handle and driver. No later poll can submit that batch,
+                    // so terminal teardown must release its registration hold and let the socket's deferred physical close finish.
+                    driver.submitEngineOp { () =>
+                        driver.closeHandle(handle)
+                        driver.close()
+                    }
+                    heldPoll.completeDiscard(Result.succeed(0))
+                    stopped.safe.get.map { _ =>
+                        assert(backend.registeredReadFds.contains(accepted))
+                        assert(spy.closeCounts.getOrDefault(accepted, 0) == 1)
+                        assert(handle.readBuffer.isClosed)
+                    }
+                }
+            }
+        }
+    }
+
+    "canceling a staged registration releases only its fd hold without another poll" in {
+        if !PosixConstants.isMacOrBsd then cancel("kqueue is macOS/BSD-only")
+        PosixTestSockets.loopbackPair().map { case (client, accepted) =>
+            PosixTestSockets.loopbackPair().map { case (otherClient, otherAccepted) =>
+                val real    = PollerBackend.default()
+                val spy     = RecordingSocketBindings(sock)
+                val backend = RecordingPollerBackend(real)
+                val driver  = TestDrivers.forBackend(backend, real.create(), spy)
+                val handle  = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                val other   = PosixHandle.socket(otherAccepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                Scope.ensure(Sync.defer {
+                    driver.closeHandle(handle)
+                    driver.closeHandle(other)
+                    driver.close()
+                }.andThen(sock.close(client).safe.get.unit).andThen(sock.close(otherClient).safe.get.unit)).andThen {
+                    driver.awaitRead(handle, Promise.Unsafe.init[ReadOutcome, Abort[Closed]]())
+                    driver.awaitRead(other, Promise.Unsafe.init[ReadOutcome, Abort[Closed]]())
+                    driver.drainFifos()
+                    assert(backend.registeredReadFds.contains(accepted))
+                    assert(backend.registeredReadFds.contains(otherAccepted))
+
+                    // Connection release withdraws its interests before requesting physical close. Once both commands have removed this fd's
+                    // staged changes, an idle poll must not be needed to release its hold and complete close.
+                    driver.cancel(handle)
+                    driver.closeHandle(handle)
+                    driver.drainFifos()
+                    assert(spy.closeCounts.getOrDefault(accepted, 0) == 1)
+                    assert(handle.readBuffer.isClosed)
+
+                    // The other fd is still borrowed by its staged registration. Closing it cannot recycle it until its own deregistration drains.
+                    driver.closeHandle(other)
+                    assert(spy.closeCounts.getOrDefault(otherAccepted, 0) == 0)
+                    assert(!other.readBuffer.isClosed)
+                    driver.drainFifos()
+                    assert(spy.closeCounts.getOrDefault(otherAccepted, 0) == 1)
+                    assert(other.readBuffer.isClosed)
+                }
+            }
+        }
+    }
+
+    "closing an unstarted driver releases registrations staged by a manual drain" in {
+        if !PosixConstants.isMacOrBsd then cancel("kqueue is macOS/BSD-only")
+        PosixTestSockets.loopbackPair().map { case (client, accepted) =>
+            val real    = PollerBackend.default()
+            val spy     = RecordingSocketBindings(sock)
+            val backend = RecordingPollerBackend(real)
+            val driver  = TestDrivers.forBackend(backend, real.create(), spy)
+            val handle  = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+            Scope.ensure(Sync.defer {
+                driver.closeHandle(handle)
+                driver.close()
+            }.andThen(sock.close(client).safe.get.unit)).andThen {
+                val read = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
+                driver.awaitRead(handle, read)
+                driver.drainFifos()
+                driver.closeHandle(handle)
+                driver.close()
+                assert(backend.registeredReadFds.contains(accepted))
+                assert(spy.closeCounts.getOrDefault(accepted, 0) == 1)
+                assert(handle.readBuffer.isClosed)
+            }
+        }
+    }
+
     "a stale deregister does not evict a recycled fd's new registration" in {
         PosixTestSockets.assumePoller()
         // Two handles share one fd, the recycled-fd shape: `live` is the new owner (registered for reads), `stale` is the prior handle whose

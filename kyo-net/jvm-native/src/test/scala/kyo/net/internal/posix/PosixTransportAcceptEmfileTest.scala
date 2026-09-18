@@ -116,6 +116,43 @@ class PosixTransportAcceptEmfileTest extends Test:
 
     "PosixTransport accept loop" - {
 
+        "listener close cannot recycle the fd during a non-blocking accept" in {
+            assumePollerReady()
+            val spy       = RecordingSocketBindings(Ffi.load[SocketBindings])
+            val real      = PollerBackend.default()
+            val driver    = TestDrivers.forBackend(real, real.create(), spy)
+            val transport = TestTransports.forTesting(driver, spy, backendIsEpoll = false)
+            val accepted  = Promise.Unsafe.init[(Int, Int), Any]()
+            val stopped   = driver.start()
+            Scope.ensure(Sync.defer(driver.close()).andThen(stopped.safe.get)).andThen {
+                transport.listen("127.0.0.1", 0, 4)(connection => connection.close()).safe.get.map { listener =>
+                    Scope.ensure(Sync.defer(listener.close())).andThen {
+                        // Close inside the real syscall boundary, after acceptAll entered but before libc receives the listener fd.
+                        spy.onAcceptNow = _ => listener.close()
+                        spy.afterAcceptNow = (fd, result) =>
+                            accepted.completeDiscard(Result.succeed((fd, if result.value < 0 then result.errorCode else 0)))
+                        val client = spy.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
+                        Scope.ensure(spy.close(client).safe.get.unit).andThen {
+                            val (address, length) =
+                                SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", listener.port).getOrElse(fail("encode failed"))
+                            Scope.ensure(Sync.defer(address.close())).andThen {
+                                spy.connect(client, address, length).safe.get.map { connected =>
+                                    assert(connected.value == 0, s"client connect failed errno=${connected.errorCode}")
+                                    accepted.safe.get.map { case (fd, errno) =>
+                                        assert(errno == 0, s"acceptNow used listener fd $fd after close: errno=$errno")
+                                        driver.close()
+                                        stopped.safe.get.map { _ =>
+                                            assert(spy.closeCounts.getOrDefault(fd, 0) == 1)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         "does not spin on acceptNow EMFILE while a connection is pending (bounded retry)" in {
             assumePollerReady()
             val settled = Promise.Unsafe.init[AcceptGuard, Any]()
