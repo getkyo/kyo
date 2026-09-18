@@ -1,6 +1,6 @@
 package kyo.kernel
 
-import kyo.Frame
+import kyo.*
 import kyo.kernel.internal.*
 import scala.annotation.nowarn
 import scala.util.control.NonFatal
@@ -60,6 +60,25 @@ object Effect:
                 f(ex)
         end try
     end catching
+
+    /** Records ownership as soon as a computation produces its value. Unlike `map`, the success callback has no intervening safepoint:
+      * an interrupt may abandon the caller's continuation, but must not abandon cleanup registration for a resource already acquired.
+      * Suspended steps still run through the normal evaluator and remain interruptible. The callback only registers ownership; it must
+      * not run user computations or perform asynchronous cleanup.
+      */
+    private[kyo] def onSuccess[A, S](v: A < S)(f: A => Unit)(using _frame: Frame): A < S =
+        def loop(v: A < S): A < S =
+            v match
+                case suspended: KyoSuspend[IX, OX, EX, Any, A, S] @unchecked =>
+                    new KyoContinue[IX, OX, EX, Any, A, S](suspended):
+                        def frame = _frame
+                        def apply(v: OX[Any], context: Context)(using Safepoint): A < S =
+                            loop(suspended(v, context))
+                case value =>
+                    f(value.unsafeGet)
+                    value
+        loop(v)
+    end onSuccess
 
     private[kyo] def defer[A, S](f: Safepoint ?=> A < S)(using Frame): A < S =
         deferInline(f)

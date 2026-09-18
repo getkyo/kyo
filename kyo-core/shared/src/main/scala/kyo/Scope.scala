@@ -3,6 +3,7 @@ package kyo
 import kyo.Result.Error
 import kyo.Result.Panic
 import kyo.kernel.ContextEffect
+import kyo.kernel.Effect
 
 /** A structured effect for safe acquisition and finalization of resources.
   *
@@ -68,6 +69,9 @@ object Scope:
 
     /** Acquires a resource and provides a release function.
       *
+      * Acquisition remains interruptible. Once it produces a value, its release is registered before another interruption point. If the
+      * scope has already closed, the release runs on a separate fiber and acquisition panics with [[Closed]].
+      *
       * @param acquire
       *   The effect to acquire the resource.
       * @param release
@@ -77,10 +81,23 @@ object Scope:
       * @return
       *   The acquired resource wrapped in Resource, Sync, and S effects.
       */
-    def acquireRelease[A, S](acquire: => A < S)(release: A => Any < (Async & Abort[Throwable]))(using Frame): A < (Scope & Sync & S) =
-        Sync.defer {
-            acquire.map { resource =>
-                ensure(release(resource)).andThen(resource)
+    def acquireRelease[A, S](acquire: => A < S)(release: A => Any < (Async & Abort[Throwable]))(using
+        frame: Frame
+    ): A < (Scope & Sync & S) =
+        ContextEffect.suspendWith(Tag[Scope]) { finalizer =>
+            Effect.onSuccess(Sync.defer(acquire)) { resource =>
+                // Unsafe: register in the same step that produces the resource, before interruption can discard a continuation.
+                import AllowUnsafe.embrace.danger
+                if !finalizer.tryEnsureUnsafe(_ => release(resource)) then
+                    // Unsafe: this callback cannot suspend; a rejected offer belongs only to the detached cleanup carrier.
+                    discard(Fiber.Unsafe.init {
+                        Abort.run[Throwable](release(resource)).map(_.foldError(
+                            _ => (),
+                            error => Log.error("Scope finalizer failed", error.exception)
+                        ))
+                    })
+                    throw finalizer.registrationClosed
+                end if
             }
         }
 
@@ -144,6 +161,9 @@ object Scope:
     /** Represents a finalizer for a resource. */
     sealed abstract class Finalizer:
         def ensure(v: Maybe[Error[Any]] => Any < (Async & Abort[Throwable]))(using Frame): Unit < Sync
+        private[kyo] def tryEnsureUnsafe(v: Maybe[Error[Any]] => Any < (Async & Abort[Throwable]))(using AllowUnsafe): Boolean
+        private[kyo] def registrationClosed(using Frame): Closed
+    end Finalizer
 
     object Finalizer:
         sealed abstract class Awaitable extends Finalizer:
@@ -161,15 +181,22 @@ object Scope:
 
                         def ensure(v: Maybe[Error[Any]] => Any < (Async & Abort[Throwable]))(using Frame): Unit < Sync =
                             Sync.Unsafe.defer {
-                                if !queue.offer(v).contains(true) then
-                                    Abort.panic(new Closed(
-                                        "Finalizer",
-                                        frame,
-                                        "This finalizer is already closed. This may happen if a background fiber escapes the scope of a 'Scope.run' call."
-                                    ))
+                                if !tryEnsureUnsafe(v) then Abort.panic(registrationClosed)
                                 else ()
                             }
                         end ensure
+
+                        private[kyo] def tryEnsureUnsafe(v: Maybe[Error[Any]] => Any < (Async & Abort[Throwable]))(using
+                            AllowUnsafe
+                        ): Boolean =
+                            queue.offer(v).contains(true)
+
+                        private[kyo] def registrationClosed(using Frame): Closed =
+                            new Closed(
+                                "Finalizer",
+                                frame,
+                                "This finalizer is already closed. This may happen if a background fiber escapes the scope of a 'Scope.run' call."
+                            )
 
                         def close(ex: Maybe[Error[Any]])(using Frame): Unit < Sync =
                             Sync.Unsafe.defer {

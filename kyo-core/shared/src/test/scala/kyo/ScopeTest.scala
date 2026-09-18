@@ -152,6 +152,152 @@ class ScopeTest extends kyo.test.Test[Any]:
         }
     }
 
+    "acquisition handover" - {
+        "an interrupt in the final acquisition step still releases its value exactly once" in {
+            for
+                acquired  <- AtomicInt.init(0)
+                released  <- AtomicInt.init(0)
+                handoff   <- Promise.init[Fiber[Unit, Any], Any]
+                finalized <- Promise.init[Int, Any]
+                fiber <- Fiber.initUnscoped {
+                    handoff.get.map { self =>
+                        Scope.run {
+                            Scope.ensure(released.get.map(count => finalized.complete(Result.succeed(count)))).andThen {
+                                Scope.acquireRelease {
+                                    // Unsafe: interrupt inside the acquisition node, after creating its resource and before returning it.
+                                    Sync.Unsafe.defer {
+                                        discard(acquired.unsafe.incrementAndGet())
+                                        discard(self.unsafe.interrupt())
+                                        "token"
+                                    }
+                                } { token =>
+                                    assert(token == "token")
+                                    released.incrementAndGet.unit
+                                }.unit
+                            }
+                        }
+                    }
+                }
+                _      <- handoff.complete(Result.succeed(fiber))
+                result <- fiber.getResult
+                // Scope finalizers run in reverse registration order, so this observer runs after the resource release.
+                r <- finalized.get
+                a <- acquired.get
+            yield
+                assert(result.isPanic)
+                assert(a == 1)
+                assert(r == 1)
+            end for
+        }
+
+        "a scope closing during acquisition releases the late value exactly once" in {
+            val scopeFrame = summon[Frame]
+            for
+                entered  <- Latch.init(1)
+                gate     <- Latch.init(1)
+                acquired <- AtomicInt.init(0)
+                released <- AtomicInt.init(0)
+                fiber <- Scope.run {
+                    Fiber.initUnscoped {
+                        Scope.acquireRelease {
+                            entered.release.andThen(gate.await).andThen(acquired.incrementAndGet)
+                        } { value =>
+                            assert(value == 1)
+                            released.incrementAndGet.unit
+                        }
+                    }.flatMap(fiber => entered.await.andThen(fiber))
+                }(using scopeFrame)
+                _      <- gate.release
+                result <- fiber.getResult
+                _      <- assertEventually(released.get.map(_ == 1))
+                a      <- acquired.get
+                r      <- released.get
+            yield
+                assert(result.panic.exists(_.isInstanceOf[Closed]))
+                assert(result.panic.exists(_.getMessage.contains(s"Finalizer created at ${scopeFrame.position.show} is closed.")))
+                assert(a == 1)
+                assert(r == 1)
+            end for
+        }
+
+        "failed and panicking acquisitions register no release" in {
+            val panic = new RuntimeException("acquisition panic")
+            for
+                released <- AtomicInt.init(0)
+                failure <- Abort.run[String] {
+                    Scope.run(Scope.acquireRelease(Abort.fail("acquisition failure"))(_ => released.incrementAndGet.unit))
+                }
+                crashed <- Abort.run[Nothing] {
+                    Scope.run(Scope.acquireRelease(Sync.defer(throw panic))(_ => released.incrementAndGet.unit))
+                }
+                count <- released.get
+            yield
+                assert(failure.failure.contains("acquisition failure"))
+                assert(crashed.panic.contains(panic))
+                assert(count == 0)
+            end for
+        }
+
+        "a rejected release may suspend and fail without replacing the registration error" in {
+            val failure = new RuntimeException("release failure")
+            for
+                start    <- Latch.init(1)
+                gate     <- Latch.init(1)
+                entered  <- Latch.init(1)
+                finished <- Latch.init(1)
+                released <- AtomicInt.init(0)
+                fiber <- Scope.run {
+                    Fiber.initUnscoped {
+                        start.await.andThen {
+                            Scope.acquireRelease("token") { _ =>
+                                Sync.ensure(finished.release) {
+                                    entered.release.andThen(gate.await).andThen {
+                                        released.incrementAndGet.andThen(Abort.fail(failure))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                _      <- start.release
+                result <- fiber.getResult
+                _      <- entered.await
+                before <- released.get
+                _      <- gate.release
+                _      <- finished.await
+                after  <- released.get
+            yield
+                assert(result.panic.exists(_.isInstanceOf[Closed]))
+                assert(before == 0)
+                assert(after == 1)
+            end for
+        }
+
+        "a suspended acquisition stays interruptible without releasing an unacquired value" in {
+            for
+                entered  <- Latch.init(1)
+                stopped  <- Latch.init(1)
+                released <- AtomicInt.init(0)
+                fiber <- Fiber.initUnscoped {
+                    Scope.run {
+                        Scope.acquireRelease {
+                            Sync.ensure(stopped.release)(entered.release.andThen(Async.never))
+                        }(_ => released.incrementAndGet.unit)
+                    }
+                }
+                _      <- entered.await
+                won    <- fiber.interrupt
+                result <- fiber.getResult
+                _      <- stopped.await
+                count  <- released.get
+            yield
+                assert(won)
+                assert(result.isPanic)
+                assert(count == 0)
+            end for
+        }
+    }
+
     "failures" - {
         case object TestException extends NoStackTrace
 
@@ -201,13 +347,13 @@ class ScopeTest extends kyo.test.Test[Any]:
                 (l, f) <- Scope.run(io)
                 _      <- l.release
                 result <- f.getResult
-            yield assert(result.panic.exists(_.isInstanceOf[Closed]))
+            yield
+                assert(result.panic.exists(_.isInstanceOf[Closed]))
+                assert(!called)
             end for
         }
 
-        "a resource acquired after the scope closed is released rather than leaked".pendingUntilFixed(
-            "acquisition and registration are two steps, so a scope that closes between them refuses the registration and the acquired resource is never released"
-        ) in {
+        "a resource acquired after the scope closed is released rather than leaked" in {
             for
                 acquired <- AtomicInt.init(0)
                 released <- AtomicInt.init(0)
@@ -223,6 +369,7 @@ class ScopeTest extends kyo.test.Test[Any]:
                 _      <- gate.release
                 result <- fiber.getResult
                 a      <- acquired.get
+                _      <- assertEventually(released.get.map(_ == a))
                 r      <- released.get
             yield
                 // Only the leak invariant is pinned, deliberately. Asserting that the resource was acquired first would pin the shape of
