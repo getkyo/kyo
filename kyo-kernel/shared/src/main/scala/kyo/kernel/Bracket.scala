@@ -44,8 +44,8 @@ object Bracket:
 
     private[kyo] object Cell:
 
-        // compareAndSet fires the release once, whichever ending reaches it first. `state` is the per-run value it owes: the acquired
-        // resource for a bracket, the slot `ensuringWith` makes on entry, so a value run twice shares nothing.
+        // `state` is the per-run value handed to the release: the acquired resource for a bracket, the slot `ensuringWith` makes on
+        // entry, so a value run twice shares nothing.
         final class Live[R](val state: R, fin: (R, Maybe[Throwable]) => Unit, frame: Frame) extends Cell:
             @volatile private var ended              = false
             private[kyo] def endedItsExtent: Boolean = ended

@@ -45,8 +45,7 @@ import scala.annotation.tailrec
   * a slice counts only while that slice is still what the slot is running, so a stop aimed at work that has already finished is ignored
   * rather than landing on whatever ran next, and `endSlice` clears one aimed at the slice just ended.
   *
-  * Nothing here blocks or interrupts: a stop is a request the owner honors when it next polls, which is why a computation that never polls is
-  * never preempted, and why the budget and the stop share one check.
+  * Nothing here blocks or interrupts, so a computation that never polls is never preempted.
   *
   * @see
   *   [[Safepoint.period]] For the budget, which defaults per platform and is overridable

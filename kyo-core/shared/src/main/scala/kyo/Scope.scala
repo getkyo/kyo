@@ -136,10 +136,10 @@ object Scope:
     def run[A, S](closeParallelism: Int)(v: A < (Scope & S))(using frame: Frame): A < (Async & S) =
         Sync.Unsafe.defer {
             val finalizer = Finalizer.Unsafe.init(closeParallelism)
-            // A scope closes at the end of the `Scope.run` that opened it and nowhere else. `derive` joins a nested run
-            // as a child, `fork` shares registration but not membership; see `Finalizer` for why children are closed
-            // rather than only waited for, and why a fork is a root. `StreamCoreExtensionsTest:890` pins that a
-            // resource's lifetime does not depend on whether a combinator forked.
+            // A scope closes at the end of the `Scope.run` that opened it and nowhere else. See `Finalizer` for how a
+            // nested run joins as a child, why children are closed rather than only waited for, and why a fork is a
+            // root. `StreamCoreExtensionsTest:890` pins that a resource's lifetime does not depend on whether a
+            // combinator forked.
             ContextEffect.handle(
                 Tag[Scope],
                 derive = (outer: Maybe[Finalizer]) =>
@@ -167,8 +167,8 @@ object Scope:
         }
 
     /** The finalizers registered against one scope, run in reverse registration order when it closes. A nested run
-      * joins as a child through [[addChild]]; closing a scope closes its children and waits for them before releasing
-      * its own, so inner resources release before outer. A fork shares registration but not membership; see [[forked]].
+      * joins as a child through [[addChild]], so inner resources release before outer. A fork shares registration but
+      * not membership; see [[forked]].
       */
     sealed abstract class Finalizer:
         def ensure(v: Maybe[Error[Any]] => Any < (Async & Abort[Throwable]))(using Frame): Unit < Sync
@@ -258,8 +258,7 @@ object Scope:
                     ): Unit =
                         if !queue.offer(v).contains(true) then
                             // The scope already closed, so no later drain runs this release: it runs here, detached,
-                            // or the resource leaks. The throw tells the caller its resource is unscoped; the log is
-                            // the only trace of a finalizer off-scope.
+                            // or the resource leaks. The throw tells the caller its resource is unscoped.
                             Log.live.unsafe.warn(
                                 s"Scope: a finalizer was registered on a closed scope at ${frame.position.show}, running it detached"
                             )

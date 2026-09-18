@@ -16,7 +16,7 @@ object Region:
     type NoEscape = Isolate.Disallowed
 
     /** Removes the marker from a value the region has taken back (the clause's answer). The value is consumed on this fiber inside the scope
-      * that owns what the continuation carries; the row is phantom, so this is a representation assertion on the row alone.
+      * that owns what the continuation carries.
       */
     private[kyo] inline def discharge[A, S](v: A < (S & NoEscape)): A < S =
         v.asInstanceOf[A < S]

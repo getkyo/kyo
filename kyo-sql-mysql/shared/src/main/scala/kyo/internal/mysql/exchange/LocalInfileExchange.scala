@@ -101,8 +101,7 @@ private[mysql] object LocalInfileExchange:
                                             }
                                         ).flatMap {
                                             case Result.Success(_) =>
-                                                // A typed stream failure fires at a chunk boundary with nothing in
-                                                // flight, so the terminator is genuine and the connection stays reusable.
+                                                // The terminator is genuine on this branch, so the connection stays reusable.
                                                 channel.endCleanup().andThen(latch.release)
                                             case Result.Failure(_) =>
                                                 // Cleanup failed (write error or ERR from server).

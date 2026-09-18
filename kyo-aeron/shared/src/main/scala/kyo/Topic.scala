@@ -336,9 +336,8 @@ object Topic:
         Stream {
             Env.use[AeronTransport] { transport =>
                 val resolvedStreamId = streamId.getOrElse(tag.hash.abs)
-                // `ensureMap`, not `map`: the add completes by producing the subscription, and its closer must be
-                // registered in that same step. `map` polls first, so an interrupt taken as the subscription arrives
-                // parks before the `Sync.ensure` installs, leaving the subscription open with nothing to close it.
+                // `ensureMap`, not `map`, for the same reason as the publication path: the subscription's closer must
+                // be registered in the step the add completes in.
                 addSubscriptionDeadline(transport, aeronUri, resolvedStreamId, defaultAddTimeout).ensureMap {
                     case Absent =>
                         // Closed client: reported as backpressure so the retry schedule absorbs it. A driver
@@ -533,9 +532,8 @@ object Topic:
                             Loop.foreach[Maybe[Sub], Async & Abort[TopicTransportException]] {
                                 Sync.Unsafe.defer {
                                     val poll = transport.pollAddSubscription(tok)
-                                    // The transport's `_get` takes the token on a Done poll, so ownership passes to the
-                                    // subscription in the same step as the poll: an interrupt landing between the poll
-                                    // and the clear would otherwise let the finalizer free a token the driver already took.
+                                    // The token passes to the subscription in the same step as the poll, as it does in
+                                    // addPublicationDeadline.
                                     poll match
                                         case AeronTransport.AddPoll.Done(subscription) =>
                                             tokOwned = false

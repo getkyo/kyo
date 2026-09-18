@@ -12,7 +12,8 @@ trait Implicits:
     /** Implicitly converts a plain value to an effectful computation.
       *
       * A computation used where a value is expected is wrapped in `Nested` to prevent unsound flattening; a plain value is lifted directly.
-      * The `CanLift` constraint rejects lifts where the pending effect sets do not match.
+      * The `CanLift` constraint refuses an argument that is already a computation, and a kyo module object; a `Unit`
+      * computation widened to another row is the separate case `abortCastUnit` answers with a guided error.
       *
       * @param v
       *   The value to lift into the effect context

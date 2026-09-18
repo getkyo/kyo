@@ -11,8 +11,7 @@ import scala.util.NotGiven
   * module object (`Abort` where `Abort(...)` was meant would otherwise become `Abort.type < S`, hiding the missing argument list).
   *
   * It is a soft constraint: it tests whether the type being lifted is a computation. At a concrete type it can answer; inside a generic
-  * function the type parameter is abstract and cannot be tested, so the lift fires and a nested computation results. Nesting therefore
-  * happens exactly where this constraint cannot see what it is looking at.
+  * function the type parameter is abstract and cannot be tested, so the lift fires and a nested computation results.
   *
   * @tparam A
   *   The type to check for nested effects

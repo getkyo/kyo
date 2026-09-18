@@ -302,7 +302,7 @@ final private[kernel] class Stack:
                 out(i * 4 + 2) = continuations(j)
                 // Escaping peel: each region keeps its own release in the snapshot, and the whole snapshot is owed to the
                 // scope below (settled if the remainder resumes, drained if it is dropped, never both, so the release runs
-                // once). A non-escaping dump instead moves the release to the holder, which runs it once at the holder.
+                // once).
                 if escaping then out(i * 4 + 3) = releases(j).asInstanceOf[AnyRef]
                 else
                     out(i * 4 + 3) = null

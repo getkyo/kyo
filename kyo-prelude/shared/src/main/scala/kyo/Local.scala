@@ -140,9 +140,8 @@ object Local:
 
     /** Creates a new Local instance with the given default value and fork-boundary strategy.
       *
-      * `forkValue` decides what a forked computation receives: the value itself to inherit it, a
-      * transformation of it, or `Absent` for a local that must not cross. `joinValue` decides what the
-      * parent holds once a fork ends, defaulting to keeping its own value.
+      * `forkValue` has three choices: the value itself to inherit it, a transformation of it, or `Absent`
+      * for a local that must not cross. `joinValue` defaults to keeping the parent's own value.
       *
       * @param defaultValue
       *   The default value for the Local

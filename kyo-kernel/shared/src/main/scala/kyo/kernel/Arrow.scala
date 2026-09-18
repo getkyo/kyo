@@ -42,11 +42,7 @@ import scala.annotation.targetName
   */
 sealed trait Arrow[-A, +B, -S] extends Kyo[B, S]:
 
-    /** Applies this arrow to a value already in hand, answering a computation because the arrow may perform `S` on the way.
-      *
-      * This is the plain application, and the whole of [[chain]] is visible in it: a composed arrow hands the value to its first link with
-      * the second passed along behind it, so no node is built for the composition itself.
-      */
+    /** Applies this arrow to a value already in hand, answering a computation because the arrow may perform `S` on the way. */
     def apply(v: A): B < S =
         Debugger.onUnfused(this)
         this.head(v, this.tail)

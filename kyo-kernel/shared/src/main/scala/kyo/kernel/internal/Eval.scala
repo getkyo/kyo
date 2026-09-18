@@ -657,9 +657,7 @@ import scala.annotation.tailrec
     /** Releases the regions `v` still holds, and hands `f` the input of the first operation under them that `effectTag` answers, so a caller
       * owing something to an operation the computation stands at can settle it without a second walk. `f` runs before anything is released.
       *
-      * The walk runs none of the computation: a deferral is walked, not evaluated. An operation under a deferral does not exist yet, and
-      * neither does anything it would have waited on, so it is not reported; a step of the deferral here would be the caller's code, which
-      * after an interrupt would acquire what nothing then releases.
+      * An operation under a deferral does not exist yet, and neither does anything it would have waited on, so it is not reported.
       */
     def release[I[_], O[_], E <: ArrowEffect[I, O], A, S](v: A < S, ex: Throwable, effectTag: Tag[E])(
         f: [C] => I[C] => Unit
@@ -678,11 +676,9 @@ import scala.annotation.tailrec
             v match
                 case p: Pending[?, ?] =>
                     p match
-                        // A deferral is walked, not run. When its value is still a computation the walk descends into it;
-                        // when its value is settled the body under the deferral is not reached: running it here would be
-                        // the caller's code, which after an interrupt would acquire what nothing then releases, and an
-                        // operation under a deferral that never ran is not waited on yet. A settled value owns no region,
-                        // so the walk stops there.
+                        // A deferral is walked, not run: running the body under it would be the caller's code, which after
+                        // an interrupt would acquire what nothing then releases, and an operation that never ran is not
+                        // waited on yet. A settled value owns no region, so the walk stops there.
                         case kyo: Pending.Defer[a, b, c, s] @unchecked =>
                             // Erasure-forced: the types joining a chain's links are existential from out here.
                             val after = kyo.contB.chain(cont).asInstanceOf[Arrow[Any, Any, Any]]

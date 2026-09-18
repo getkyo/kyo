@@ -11,8 +11,8 @@ import kyo.kernel.Arrow
   * call sites go through [[Debugger.enabled]], a compile-time flag that is false, and an `inline if` on a false constant leaves no trace in
   * the bytecode. Turning it on is a recompile, not a runtime switch.
   *
-  * That is deliberate. These hooks sit on the hottest paths in the module, and a runtime check on each would show up in the benchmarks
-  * whether or not a debugger was installed.
+  * These hooks sit on the hottest paths in the module, and a runtime check on each would show up in the benchmarks whether or not a
+  * debugger was installed.
   */
 abstract private[kyo] class Debugger:
 

@@ -374,9 +374,8 @@ object Fiber:
           *   The error to interrupt the Fiber with
           */
         inline def interruptAwait(inline error: => Result.Error[E])(using Frame): Unit < Async =
-            // One defer: the interrupt is a synchronous promise write, then a single join awaits the result, which a
-            // fiber makes available once its finalizers have run. The result is discarded, so the fiber's own effects
-            // are never run here, and the wait itself is pure `Async`.
+            // One defer: the interrupt is a synchronous promise write and the join that follows awaits the result. The
+            // result is discarded, so the fiber's own effects are never run here, and the wait itself is pure `Async`.
             Sync.Unsafe.defer {
                 discard(self.lower.interrupt(error))
                 Async.useResult(self.lower)(_ => ())
@@ -801,8 +800,7 @@ object Fiber:
                 if numWorkers == 1 then
                     initUnscoped[E, Chunk[B], S, S2](Kyo.foreachIndexed(items)(f))
                 else
-                    // the crossing is per item rather than per worker, so it is named here: the array holding each item's
-                    // isolated form is typed by it
+                    // named here rather than inline: the array holding each item's isolated form is typed by it
                     val crossing = isolate.crossing
                     Sync.Unsafe.defer {
                         // A worker's value is Unit; what it produces reaches the promise through `complete`, so the array
@@ -827,9 +825,9 @@ object Fiber:
                         end State
                         val state = new State
                         // One captured state for all workers, crossed once per item inside workerLoop; the worker task crosses
-                        // nothing (its value is the Unit nobody joins), so a task-level crossing would install the state twice and
-                        // produce a transform the completion discards. The interrupt parent is read once and passed to each child
-                        // before any is scheduled, so an interrupt arriving while they launch cannot orphan one.
+                        // nothing, so a task-level crossing would install the state twice and produce a transform the completion
+                        // discards. The interrupt parent is read once and passed to each child before any is scheduled, so an
+                        // interrupt arriving while they launch cannot orphan one.
                         crossing.capture { captured =>
                             val parent = IOTask.currentTask()
                             @tailrec def loop(i: Int): Unit =
@@ -856,8 +854,6 @@ object Fiber:
             end if
         end foreachIndexed
 
-        // The crossing happens here, not at the caller: each raced computation goes through the isolate against one captured
-        // state, its restore traveling inside the fiber.
         def race[E, A, S, S2](using
             isolate: Isolate[S, Abort[E] & Async, S2]
         )(
@@ -876,8 +872,9 @@ object Fiber:
 
         private object Race:
 
-            // One captured state for the whole race, each computation isolated against it. The interrupt parent is read once
-            // and passed to each child before any is scheduled (see Fiber.internal.foreachIndexed).
+            // One captured state for the whole race, each computation isolated against it here rather than at the caller, so
+            // its restore travels inside the fiber. The interrupt parent is read once and passed to each child before any is
+            // scheduled (see Fiber.internal.foreachIndexed).
             private inline def apply[E, A, S, S2](race: Race[E, A, S2], iterable: Iterable[A < (Abort[E] & Async & S)])(
                 using
                 isolate: Isolate[S, Abort[E] & Async, S2],

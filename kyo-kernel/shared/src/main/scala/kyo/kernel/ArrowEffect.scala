@@ -18,9 +18,7 @@ import scala.annotation.tailrec
   * answers `X` unchanged.
   *
   * Two families answer an operation:
-  *   - [[ArrowEffect.handleCont]] hands the clause the continuation as an [[Arrow]], to apply once, many times, or not at all. What the
-  *     region holds moves to it and is released once, where it ends, so a clause that resumes more than once runs each shot against the live
-  *     resource.
+  *   - [[ArrowEffect.handleCont]] hands the clause the continuation as an [[Arrow]], to apply once, many times, or not at all.
   *   - [[ArrowEffect.handleLoop]] hands the clause the input alone and takes a [[Loop.Outcome]] back; [[ArrowEffect.handleLoopState]] carries
   *     state between occurrences.
   *
@@ -601,9 +599,7 @@ object ArrowEffect:
             }
     end Mask
 
-    /** Handles the first occurrence of an arrow effect and transforms the final result. This is useful when you want to handle just the
-      * first instance of an effect and transform its result into a different type, while leaving any subsequent occurrences of the effect
-      * unhandled.
+    /** Handles the first occurrence of an arrow effect and transforms the final result, leaving later occurrences unhandled.
       *
       * The continuation handed to `handle` is the remainder of `v`, carrying every region that sat between this handler and the operation, a
       * bracket included. Those regions are re-installed each time the holder resumes the continuation, running against the live resource, and

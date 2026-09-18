@@ -33,11 +33,8 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
       *   - `Done`: terminal, remainder released.
       *
       * `Idle` and the error are the only states another thread may take this task out of; every other transition is the owner's, and each
-      * one out of a slice is a CAS since an interrupt may have taken the word meanwhile. An interrupt lands under any owner: over `Idle` it
-      * takes the task and schedules a run that claims the error and releases; over the thread or the promise it takes the word and leaves
-      * the release to the owner, who finds the error at the slice's end. So a run is never scheduled for a slice in flight, and the two
-      * contended claims are out of `Idle` and out of the error. The field is the opaque `Status`, read and written only through its
-      * constructors and accessors, so the union never leaks; it still erases to `Object`, which is the type the platform handle names.
+      * one out of a slice is a CAS since an interrupt may have taken the word meanwhile. So a run is never scheduled for a slice in
+      * flight, and the two contended claims are out of `Idle` and out of the error.
       */
     @volatile private var status: Status = Status.Idle
 
@@ -430,9 +427,7 @@ object IOTask:
       */
     private[scheduler] opaque type Status <: AnyRef = Thread | IOPromise[?, ?] | Idle.type | Done.type | Result.Error[?]
 
-    /** The whole surface of the status word. The union and every discrimination on it live here; a task reads and writes its status only
-      * through these, so no call site ever sees the representation.
-      */
+    /** The whole surface of the status word: the union and every discrimination on it live here. */
     private[scheduler] object Status:
         val Idle: Status = IOTask.Idle
         val Done: Status = IOTask.Done
@@ -443,7 +438,7 @@ object IOTask:
         /** Parked on this promise, awaiting its completion; not to be rescheduled. */
         def parked(promise: IOPromise[?, ?]): Status = promise
 
-        /** Interrupted with this error, the remainder not yet released; the promise stays pending until it is. */
+        /** Interrupted with this error, the remainder not yet released. */
         def interrupted(error: Result.Error[?]): Status = error
 
         extension (self: Status)

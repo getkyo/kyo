@@ -132,11 +132,10 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
             // Unsafe: getOrCreateSlotChan and every pool operation require AllowUnsafe.
             // Unsafe: bridging to kyo-net ConnectionPool.
             Sync.Unsafe.defer(getOrCreateSlotChan(address, config.maxConnections)).flatMap { slotCh =>
-                // The slot's give-back is registered on the enclosing Scope BEFORE the take, and the take claims the
-                // slot in the step it completes in (see takeSlot): a caller interrupted on the take's join is
-                // abandoned without resuming, so a give-back registered after the take would never be. The Scope also
-                // closes when the connect fails, which is what prevents a slot leak: without it, a connect failure after
-                // a server restart would strand the slot and eventually deadlock the pool.
+                // The slot's give-back is registered on the enclosing Scope BEFORE the take, which claims the slot in
+                // the step it completes in (see `takeSlot`). The Scope also closes when the connect fails, which is
+                // what prevents a slot leak: without it, a connect failure after a server restart would strand the
+                // slot and eventually deadlock the pool.
                 Sync.Unsafe.defer(AtomicBoolean.Unsafe.init(false)).flatMap { held =>
                     Scope.ensure {
                         Sync.Unsafe.defer {
@@ -404,10 +403,9 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
     )(using Frame): A < (S & Async & Abort[SqlException]) =
         // The stopwatch times the wait for a permit, which is the time spent blocked on a saturated pool.
         Clock.stopwatch.flatMap { sw =>
-            // The permit is owned by a finalizer before it is taken. The give-back is registered first, on a scope opened
-            // around the take, and `takeSlot` claims the permit into `held` in the step the take completes in, so there is
-            // no moment at which a taken permit has no owner: a caller interrupted while parked on the take's join is
-            // abandoned without resuming, and the scope's close, which the abandonment runs, gives back what was claimed.
+            // The permit is owned by a finalizer before it is taken: the give-back is registered first, on a scope
+            // opened around the take, and `takeSlot` claims the permit into `held` in the step the take completes in,
+            // so there is no moment at which a taken permit has no owner.
             // The give-back is a Scope finalizer, not a `Sync.ensure` one. `Sync.ensure` covers the interrupt and panic
             // edges but NOT a typed `Abort` handled outside its region: that finalizer parks until the calling FIBER
             // ends, so an ordinary statement failure would strand the permit until the caller's whole program finished.
@@ -433,10 +431,10 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
                                         case Result.Failure(e: SqlServerException) =>
                                             // DEBUG, not ERROR. The caller is handed the same failure as a typed value and
                                             // decides what it is: a tool running user-written SQL gets a syntax error back
-                                            // from the server as its ordinary answer. Writing it at ERROR filled an
-                                            // operator's dashboard with entries for a program behaving correctly, and on a
-                                            // stdio transport anything the library writes on its own initiative is a
-                                            // candidate for corrupting the channel. The typed Abort is the report.
+                                            // from the server as its ordinary answer. At ERROR this fills an operator's
+                                            // dashboard with entries for a program behaving correctly, and on a stdio
+                                            // transport anything the library writes on its own initiative is a candidate
+                                            // for corrupting the channel.
                                             Log.debug(s"kyo.sql: server error sqlState=${e.sqlState} msg=${e.serverMessage}")
                                                 .andThen(Abort.fail[SqlException](e))
                                         case Result.Failure(e) => Abort.fail[SqlException](e)

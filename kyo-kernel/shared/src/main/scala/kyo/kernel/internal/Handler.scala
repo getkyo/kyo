@@ -75,9 +75,7 @@ sealed abstract private[kernel] class Handler[E <: Effect, A, -S]:
     abstract class FirstHandler[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends ArrowHandler[Unit, E, A, B, S]:
         def run[X](input: I[X], cont: Arrow[O[X], A, E & S]): B < (E & S)
 
-        /** Whether the handed-out remainder may be resumed more than once, which holds its dumped regions rather than letting each close at
-          * its own end. Default single-shot.
-          */
+        /** Whether the handed-out remainder may be resumed more than once. Default single-shot. */
         private[kyo] def repeated: Boolean = false
 
         private[kyo] def answering[X](input: I[X], cont: Arrow[O[X], A, E & S], kyo: Pending[?, ?], stack: Stack): B < (E & S) =
