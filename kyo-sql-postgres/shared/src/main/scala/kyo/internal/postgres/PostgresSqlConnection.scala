@@ -26,7 +26,7 @@ import kyo.net.NetTlsConfig
   */
 final private[kyo] class PostgresSqlConnection private[postgres] (
     private[kyo] val underlying: PostgresConnection,
-    private val address: SqlConfig.Address,
+    private val address: SqlConfig.Address.Network,
     // The mode travels with the settings because the reclaim's cancel opens a second socket to the same server and has
     // to make the same encryption decision this one was opened under. Given only the settings it cannot: `Absent` would
     // be indistinguishable from "nothing to negotiate with" under a mode that demands encryption.
@@ -278,26 +278,35 @@ private[kyo] object PostgresSqlConnection:
             def open(address: SqlConfig.Address, password: Maybe[String], config: SqlConfig)(using
                 Frame
             ): PostgresSqlConnection < (Async & Abort[SqlException]) =
-                connect(address, password, config, options).flatMap { conn =>
-                    populateTypeRegistry(PostgresConfig.of(config).typeNames, conn).flatMap { registry =>
-                        // Unsafe: two plain flags backing the in-flight window; initialised before the
-                        // connection is visible to any caller.
-                        Sync.Unsafe.defer(
-                            new PostgresSqlConnection(
-                                conn,
-                                address,
-                                config.tlsMode,
-                                config.tls,
-                                registry,
-                                AtomicBoolean.Unsafe.init(false),
-                                AtomicBoolean.Unsafe.init(true),
-                                AtomicBoolean.Unsafe.init(false)
+                // Narrowed once, here: everything beneath takes a network address, so no layer below carries a host
+                // and port that might be absent. Unreachable in practice, the registry routing by scheme.
+                SqlConfig.Address.requireNetwork(address).flatMap { address =>
+                    connect(address, password, config, options).flatMap { conn =>
+                        populateTypeRegistry(PostgresConfig.of(config).typeNames, conn).flatMap { registry =>
+                            // Unsafe: two plain flags backing the in-flight window; initialised before the
+                            // connection is visible to any caller.
+                            Sync.Unsafe.defer(
+                                new PostgresSqlConnection(
+                                    conn,
+                                    address,
+                                    config.tlsMode,
+                                    config.tls,
+                                    registry,
+                                    AtomicBoolean.Unsafe.init(false),
+                                    AtomicBoolean.Unsafe.init(true),
+                                    AtomicBoolean.Unsafe.init(false)
+                                )
                             )
-                        )
+                        }
                     }
                 }
 
-    private def connect(address: SqlConfig.Address, password: Maybe[String], config: SqlConfig, options: SqlConfig.Url.Options)(using
+    private def connect(
+        address: SqlConfig.Address.Network,
+        password: Maybe[String],
+        config: SqlConfig,
+        options: SqlConfig.Url.Options
+    )(using
         Frame
     ): PostgresConnection < (Async & Abort[SqlException]) =
         // The startup packet carries `user` as a mandatory parameter, so it is resolved before any branch below opens a
@@ -355,7 +364,7 @@ private[kyo] object PostgresSqlConnection:
     end connect
 
     private def plainConnect(
-        address: SqlConfig.Address,
+        address: SqlConfig.Address.Network,
         user: String,
         password: Maybe[String],
         config: SqlConfig,
@@ -458,7 +467,7 @@ private[kyo] object PostgresSqlConnection:
       */
     private[kyo] def notificationStream(
         pool: SqlConnectionPool[PostgresSqlConnection],
-        address: SqlConfig.Address,
+        address: SqlConfig.Address.Network,
         password: Maybe[String],
         channel: String,
         config: SqlConfig

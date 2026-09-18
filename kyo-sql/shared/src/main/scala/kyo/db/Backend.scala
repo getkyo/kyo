@@ -6,8 +6,10 @@ import kyo.Async
 import kyo.Chunk
 import kyo.Frame
 import kyo.Maybe
+import kyo.Result
 import kyo.SqlClient
 import kyo.SqlConfig
+import kyo.SqlConnectionException
 import kyo.SqlException
 import kyo.internal.BackendPlatformSpecific
 
@@ -81,6 +83,15 @@ abstract class Backend:
       * returned client was opened under.
       */
     def open(url: SqlConfig.Url, config: SqlConfig)(using Frame): SqlClient < (Async & Abort[SqlException])
+
+    /** Reads `raw` into the URL this backend will be opened with.
+      *
+      * Defaults to the network form, `scheme://[user[:password]@]host:port/db[?options]`, which [[kyo.SqlConfig.Url.parse]] implements. An
+      * embedded engine overrides this, naming a file path that has no host, port, or credentials. The scheme is resolved first, from the
+      * text before `://`, and only then is the rest handed to the backend that claims it.
+      */
+    def parseUrl(raw: String)(using Frame): Result[SqlConnectionException, SqlConfig.Url] =
+        SqlConfig.Url.parse(raw)
 
 end Backend
 

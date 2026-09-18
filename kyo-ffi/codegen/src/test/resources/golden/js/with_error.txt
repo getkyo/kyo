@@ -8,7 +8,7 @@ import scala.scalajs.js.annotation.*
 import scala.scalajs.js.typedarray.*
 import scala.scalajs.reflect.annotation.EnableReflectiveInstantiation
 import kyo.ffi.*
-import kyo.ffi.internal.{AbiCheck, JsRawSegment, KoffiFacade, KoffiFn, NativeLoader, StructAbiCheck}
+import kyo.ffi.internal.{AbiCheck, JsRawSegment, KoffiFacade, KoffiFn, NativeFacade, NativeLoader, StructAbiCheck}
 
 @EnableReflectiveInstantiation final class WithErrorBindingsImpl extends WithErrorBindings:
     import WithErrorBindingsImpl.*
@@ -22,8 +22,8 @@ end WithErrorBindingsImpl
 
 object WithErrorBindingsImpl:
     AbiCheck.verify(1, "kyo.example.WithErrorBindings")
-    private val facade = KoffiFacade.load(
-        NativeLoader.jsResolve("kyo_we"),
+    private val facade = NativeFacade.load(
+        "kyo_we",
         Seq(
             KoffiFn("failable", "failable", "int", Seq[js.Any]("int".asInstanceOf[js.Any]))
         )

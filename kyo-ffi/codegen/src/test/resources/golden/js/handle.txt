@@ -8,7 +8,7 @@ import scala.scalajs.js.annotation.*
 import scala.scalajs.js.typedarray.*
 import scala.scalajs.reflect.annotation.EnableReflectiveInstantiation
 import kyo.ffi.*
-import kyo.ffi.internal.{AbiCheck, JsRawSegment, KoffiFacade, KoffiFn, NativeLoader, StructAbiCheck}
+import kyo.ffi.internal.{AbiCheck, JsRawSegment, KoffiFacade, KoffiFn, NativeFacade, NativeLoader, StructAbiCheck}
 
 @EnableReflectiveInstantiation final class HandleBindingsImpl extends HandleBindings:
     import HandleBindingsImpl.*
@@ -25,8 +25,8 @@ end HandleBindingsImpl
 
 object HandleBindingsImpl:
     AbiCheck.verify(1, "kyo.example.HandleBindings")
-    private val facade = KoffiFacade.load(
-        NativeLoader.jsResolve("kyo_handle"),
+    private val facade = NativeFacade.load(
+        "kyo_handle",
         Seq(
             KoffiFn("open", "open", "void*", Seq[js.Any]("string".asInstanceOf[js.Any])),
             KoffiFn("close", "close", "void", Seq[js.Any]("void*".asInstanceOf[js.Any]))

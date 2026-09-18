@@ -37,7 +37,7 @@ abstract class SqlPositionalRowCodec extends SqlRow.Codec:
       * One [[kyo.SqlRow.ColumnKind.Float]] covers both widths, and they do not render alike: reading a four-byte column at the wider type
       * widens 0.1 to 0.10000000149011612 before it is rendered. A backend with a single width leaves this alone.
       */
-    private[kyo] def isSingleWidthFloat(typeToken: Int): Boolean = false
+    def isSingleWidthFloat(typeToken: Int): Boolean = false
 
     /** Renders one column as the string [[kyo.SqlRow.text]] promises: one per stored value, whatever carried the row.
       *

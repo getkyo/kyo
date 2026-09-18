@@ -2,9 +2,13 @@ package kyo
 
 import kyo.Sql.*
 
-/** Cross-backend conformance for [[SqlClient.withAdvisoryLock]]: on every backend that contributes a descriptor, the lock excludes a
-  * concurrent session while a body holds it, releases when that body returns, keys distinct locks apart, and routes the body's own
-  * statements to the locked session.
+/** Cross-backend conformance for [[SqlClient.withAdvisoryLock]]: on every backend that HAS advisory locks, the lock excludes a concurrent
+  * session while a body holds it, releases when that body returns, keys distinct locks apart, and routes the body's own statements to the
+  * locked session.
+  *
+  * Keyed advisory locks are a capability: an engine whose concurrency is one writer over the whole database has no per-key lock to hand out.
+  * The leaves split on `hasAdvisoryLocks` and the final leaf claims the other side, asserting a typed refusal, so every backend is covered
+  * by exactly one of the two.
   *
   * The suite observes the lock ONLY through the typed `withAdvisoryLock` surface, never a raw engine-specific lock probe. That is a
   * deliberate constraint, and it shapes the design: the one acquire semantics every engine shares is the blocking one, so exclusion and
@@ -29,7 +33,7 @@ class SqlClientAdvisoryLockTest extends SqlBackendTest:
     private def oneConnection: SqlConfig =
         SqlConfig(maxConnections = 1, acquireTimeout = 3.seconds, queryTimeout = 20.seconds)
 
-    "a held lock excludes a concurrent session until the body releases it" - forEachBackend() { (_, client, _) =>
+    "a held lock excludes a concurrent session until the body releases it" - forEachBackend(where = _.hasAdvisoryLocks) { (_, client, _) =>
         // Both engines make `withAdvisoryLock` block until the lock is granted, so exclusion shows up as an ordering.
         // The contender attempts only once the holder is inside, and it cannot acquire until the holder releases, which
         // happens as the holder's body returns. The holder records "holder-exit" as the last step INSIDE the body, so
@@ -69,7 +73,7 @@ class SqlClientAdvisoryLockTest extends SqlBackendTest:
         end for
     }
 
-    "a lock on a different key does not contend with a held key" - forEachBackend() { (_, client, _) =>
+    "a lock on a different key does not contend with a held key" - forEachBackend(where = _.hasAdvisoryLocks) { (_, client, _) =>
         // The key names the lock: two acquires of the same key contend, two of different keys do not. This is the
         // cross-engine, typed-surface form of the name-mapping guarantee, observed without reading the engine's own
         // lock table. If the two keys wrongly mapped to one lock, the second acquire would block on the held first and
@@ -94,7 +98,7 @@ class SqlClientAdvisoryLockTest extends SqlBackendTest:
         end for
     }
 
-    "the body's statements run on the locked session" - forEachBackend(oneConnection) { (_, client, _) =>
+    "the body's statements run on the locked session" - forEachBackend(oneConnection, where = _.hasAdvisoryLocks) { (_, client, _) =>
         // On a pool of exactly one connection the lock holds the only session there is, so a statement inside the body
         // can answer at all only if it lands on the locked connection. A statement that failed to route would reach
         // for the pool, find the one permit held by the lock, and fail at `acquireTimeout`; a green leaf is the proof
@@ -111,7 +115,7 @@ class SqlClientAdvisoryLockTest extends SqlBackendTest:
         end for
     }
 
-    "an interrupted holder still releases the lock" - forEachBackend() { (_, client, _) =>
+    "an interrupted holder still releases the lock" - forEachBackend(where = _.hasAdvisoryLocks) { (_, client, _) =>
         // The release is a scope finalizer, so a holder interrupted mid-body must still free the lock. Without
         // that, the holder's pooled session would carry the held lock to its next borrower, and the contender
         // below would block on the server side instead of completing: the contender's return IS the proof.
@@ -129,6 +133,19 @@ class SqlClientAdvisoryLockTest extends SqlBackendTest:
             outcome <- client.withAdvisoryLock(key)(42)
         yield assert(outcome == 42, "the contender must acquire a lock an interrupted holder released")
         end for
+    }
+
+    "an engine without advisory locks refuses the acquire rather than blocking" - forEachBackend(where = !_.hasAdvisoryLocks) {
+        (_, client, _) =>
+            // The complement of every leaf above: an engine with no per-key lock has to REFUSE, typed and immediately. Running the body
+            // anyway would hand back a lock excluding nobody, and blocking would stall a caller waiting on what the body releases.
+            val key = 5150L
+            Abort.run[SqlException](client.withAdvisoryLock(key)(42)).map { outcome =>
+                assert(
+                    outcome.isFailure,
+                    s"an engine with no advisory locks must refuse withAdvisoryLock with a typed failure, got $outcome"
+                )
+            }
     }
 
 end SqlClientAdvisoryLockTest

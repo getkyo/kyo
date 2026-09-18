@@ -1477,10 +1477,12 @@ object SqlClient:
     private[kyo] def factoryFor(rawUrl: String, registry: Backend.Registry)(using
         Frame
     ): (SqlConfig.Url, Backend) < Abort[SqlException] =
-        Abort.get(SqlConfig.Url.parse(rawUrl)).flatMap { url =>
-            registry.forScheme(url.address.scheme) match
-                case Present(backend) => (url, backend)
-                case Absent           => Abort.fail(SqlConnectionUnsupportedSchemeException(url.address.scheme, registry.schemes))
+        // The scheme is resolved BEFORE the rest is parsed, so each backend reads the URL shape it answers to. A
+        // network parser applied to an embedded engine's path would reject a URL that backend understands perfectly.
+        Abort.get(SqlConfig.Url.schemeOf(rawUrl)).flatMap { scheme =>
+            registry.forScheme(scheme) match
+                case Present(backend) => Abort.get(backend.parseUrl(rawUrl)).map(url => (url, backend))
+                case Absent           => Abort.fail(SqlConnectionUnsupportedSchemeException(scheme, registry.schemes))
         }
 
 end SqlClient

@@ -406,3 +406,15 @@ runs:
           command -v cmake >/dev/null 2>&1 || brew install cmake
         fi
         bash kyo-aeron/scripts/build-aeron.sh "$OS_ARCH"
+
+    # The staged SQLite source is gitignored, and kyo-sql-sqlite's ffiLibraries hard-errors without it
+    # rather than compiling a stub, so every leg that touches that module has to stage it first. No
+    # os-arch mapping, unlike the two above: SQLite is one architecture-independent .c that the FFI
+    # plugin compiles per platform, so the same staged tree serves every runner.
+    - name: Prepare SQLite
+      if: ${{ inputs.target == 'JVM' || inputs.target == 'Native' || inputs.target == 'JS' || inputs.target == 'Wasm' }}
+      shell: bash
+      # Needs curl, unzip and shasum only, all preinstalled on every hosted runner. A failure here is a
+      # hard error for the same reason BoringSSL's is: the alternative is a build that cannot find the
+      # engine and reports it as something else entirely.
+      run: bash kyo-sql-sqlite/scripts/build-sqlite.sh

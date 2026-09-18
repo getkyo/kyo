@@ -28,6 +28,8 @@ class SqlClientInitMacroSchemesTest extends Test:
     // compile-time leaf is unaffected: it reads the derived registry, not runtime discovery.
     TestBackendRegistration.ensure()
 
+    // The scheme below is deliberately not the name of an engine anyone might ship. These two leaves assert what happens to an
+    // UNCLAIMED scheme, so one picked because no backend claims it today silently stops testing anything the day a backend does.
     "a literal unclaimed scheme compiles rather than failing the build, because a runtime-registered backend can still claim it" in {
         // The scheme check for a literal URL is a compile-time WARNING, not an error: a backend registered at startup can
         // still open the scheme, so enforcement is at the run-time boundary (next leaf), not the compile boundary. A warning
@@ -35,16 +37,19 @@ class SqlClientInitMacroSchemesTest extends Test:
         // the run-time typed failure below, which is where the classpath's claimed schemes are actually checked for completeness.
         val errors = typeCheckErrors("""import kyo.*
 def probe(using Frame): Unit =
-    val _ = Scope.run(SqlClient.initUnscoped("sqlite://u:p@localhost:5432/db"))""")
+    val _ = Scope.run(SqlClient.initUnscoped("not-a-registered-scheme://u:p@localhost:5432/db"))""")
         assert(errors.isEmpty, s"a literal unclaimed scheme must compile (warn, not error), got: ${errors.map(_.message)}")
     }
 
     "a URL the compiler cannot read compiles, and the typed failure names every available scheme" in {
         // Passing through a val makes the argument opaque to the splice, which is the shape a library wrapper produces.
-        val computed = "sqlite" + "://u:p@localhost:5432/db"
+        val computed = "not-a-registered-scheme" + "://u:p@localhost:5432/db"
         Abort.run[SqlException](Scope.run(SqlClient.initUnscoped(computed))).map {
             case Result.Failure(e: SqlConnectionUnsupportedSchemeException) =>
-                assert(e.scheme == "sqlite", s"expected the failure to name the scheme asked for, got ${e.scheme}")
+                assert(
+                    e.scheme == "not-a-registered-scheme",
+                    s"expected the failure to name the scheme asked for, got ${e.scheme}"
+                )
                 assert(
                     e.available.contains("postgres") && e.available.contains("mysql"),
                     s"expected the failure to list the available schemes, got ${e.available}"

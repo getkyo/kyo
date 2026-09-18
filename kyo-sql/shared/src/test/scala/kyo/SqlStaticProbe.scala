@@ -1,5 +1,8 @@
 package kyo
 
+import kyo.Maybe
+import kyo.Maybe.Absent
+import kyo.Maybe.Present
 import scala.quoted.*
 
 /** Test-only wrapper around [[kyo.internal.SqlStaticMacro]].
@@ -23,5 +26,20 @@ object SqlStaticProbe:
 
     private def renderImpl(q: Expr[Sql.Executable[?]])(using Quotes): Expr[Sql.Rendered] =
         kyo.internal.SqlStaticMacro.impl(q)
+
+    /** Renders `q` the way `.run` does: a dialect that cannot express the statement is left out rather than failing the compile.
+      *
+      * Needed as soon as a construct is not renderable by EVERY dialect on the classpath. [[render]] is `.runStatic`'s behaviour, where one
+      * dialect refusing is the whole render refusing. That is right for a caller demanding a static rendering and wrong for a test asserting
+      * what each dialect does with a construct only some of them have.
+      *
+      * Answers [[Absent]] when nothing could be rendered at all, which is also what `.run` falls back from.
+      */
+    inline def renderOpportunistic(inline q: Sql.Executable[?]): Maybe[Sql.Rendered] = ${ renderOpportunisticImpl('q) }
+
+    private def renderOpportunisticImpl(q: Expr[Sql.Executable[?]])(using Quotes): Expr[Maybe[Sql.Rendered]] =
+        kyo.internal.SqlStaticMacro.tryImpl(q) match
+            case Present(rendered) => '{ Maybe($rendered) }
+            case Absent            => '{ Maybe.empty[Sql.Rendered] }
 
 end SqlStaticProbe

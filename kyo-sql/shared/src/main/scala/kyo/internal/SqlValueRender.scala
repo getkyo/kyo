@@ -15,7 +15,7 @@ import kyo.discard
   * Forms are chosen on three grounds in order: determined by the value alone, unambiguous to read back, and where one spelling is a literal
   * on every engine it wins. An engine is named below as evidence that a choice had to be made, never as the source of the form.
   */
-private[kyo] object SqlValueRender:
+object SqlValueRender:
 
     // ── Integer ─────────────────────────────────────────────────────────────────
 

@@ -5,6 +5,7 @@ import kyo.db.Connection
 import kyo.db.Idiom
 import kyo.db.Runtime
 import kyo.internal.client.SqlConnectionPool
+import kyo.internal.network
 
 /** Contract tests for the [[DB]] effect: the database a computation runs its statements against.
   *
@@ -152,7 +153,7 @@ object DBTest:
 
     private val stubUrl: SqlConfig.Url =
         SqlConfig.Url(
-            SqlConfig.Address("stub", "stub-host", 1, "stubdb", Absent),
+            SqlConfig.Address.Network("stub", "stub-host", 1, "stubdb", Absent),
             Absent,
             SqlConfig.Url.Options.default
         )
@@ -164,8 +165,8 @@ object DBTest:
                 Frame
             ): Connection < (Async & Abort[SqlException]) =
                 Abort.fail(SqlConnectionConnectFailedException(
-                    address.host,
-                    address.port,
+                    address.network.host,
+                    address.network.port,
                     new IllegalStateException("DBTest never opens a connection")
                 ))
 
