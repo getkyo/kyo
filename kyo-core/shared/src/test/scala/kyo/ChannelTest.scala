@@ -208,6 +208,36 @@ class ChannelTest extends kyo.test.Test[Any]:
                     assert(found == (1 to items), s"lost: ${(1 to items).diff(found)}, extra: ${found.diff(1 to items)}")
                 end for
             }
+
+            // A zero-capacity channel has no ring to hand a value back into: the hand-back is held as a put until the
+            // next taker. Whichever way the put and the interrupt land, the value reaches exactly one taker.
+            "a take interrupted while parked on a zero-capacity channel never loses a racing put" in {
+                val rounds = 100
+                Loop.indexed { i =>
+                    if i >= rounds then Loop.done
+                    else
+                        for
+                            c      <- Channel.init[Int](0)
+                            taker  <- Fiber.initUnscoped(c.take)
+                            _      <- assertEventually(c.pendingTakes.map(_ == 1))
+                            putter <- Fiber.initUnscoped(c.put(i))
+                            _      <- taker.interrupt
+                            r      <- taker.getResult
+                            // the interrupted taker either consumed the value before the interrupt landed, or the
+                            // value was handed back and the next take receives it
+                            v <- ((r match
+                                case Result.Success(x) => x
+                                case _                 => c.take
+                            ): Int < (Async & Abort[Closed]))
+                            _    <- putter.get
+                            left <- c.pendingPuts
+                        yield
+                            assert(v == i, s"round $i: the value was $v")
+                            assert(left == 0, s"round $i: a put stayed held after the value was delivered: pendingPuts=$left")
+                            Loop.continue
+                        end for
+                }
+            }
         }
     }
     "putBatch" - {

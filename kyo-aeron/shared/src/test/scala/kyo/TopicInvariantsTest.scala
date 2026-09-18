@@ -241,7 +241,7 @@ class TopicInvariantsTest extends Test:
                 )
                 _ <- started.await
                 // Publish 2 * messages.size messages so both consumers can receive their own set.
-                _ <- Fiber.initUnscoped {
+                publisher <- Fiber.initUnscoped {
                     val probes =
                         Stream.unfold(0, chunkSize = 1) { step =>
                             receiving1.pending.map { w1 =>
@@ -253,8 +253,17 @@ class TopicInvariantsTest extends Test:
                         }
                     Topic.publish[Int]("aeron:ipc")(probes.concat(Stream.init(messages ++ messages)))
                 }
-                received1 <- consumer1.get
-                received2 <- consumer2.get
+                // The publisher is supervised (#1936): a publication that fails leaves both consumers waiting for
+                // messages that never come, so its error is raced against the consumers and surfaces as the failure
+                // instead of the suite timeout. A publisher that completes cleanly says nothing about the consumers.
+                publisherFailed = publisher.getResult.map { r =>
+                    r.foldError(
+                        _ => Async.never[(Chunk[Int], Chunk[Int])],
+                        e => Abort.error(e)
+                    )
+                }
+                received <- Async.race(Kyo.zip(consumer1.get, consumer2.get), publisherFailed)
+                (received1, received2) = received
             yield
                 assert(
                     received1 == messages,

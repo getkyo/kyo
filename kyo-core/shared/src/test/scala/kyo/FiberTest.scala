@@ -1331,6 +1331,50 @@ class FiberTest extends kyo.test.Test[Any]:
                 seen <- order.get
             yield assert(seen.reverse == List("fiber", "scope"))
         }
+
+        // A scoped fiber's own scope is closed by the enclosing scope's release, with the fiber's own verdict: a
+        // finalizer registered directly in the fiber's body runs then, not when the fiber ends, and it is told how
+        // the fiber ended rather than how the enclosing scope did.
+        "a finalizer registered in a scoped fiber's body runs at the enclosing scope's close with a clean ending" in {
+            for
+                seen <- AtomicRef.init(Maybe.empty[Maybe[Result.Error[Any]]])
+                inside <- Scope.run {
+                    Fiber.init(Scope.ensure(e => seen.set(Present(e))).andThen(42)).map(_.get).andThen(seen.get)
+                }
+                after <- seen.get
+            yield
+                assert(inside == Absent, s"the finalizer ran before the enclosing scope closed: $inside")
+                assert(after == Present(Absent), s"the finalizer of a fiber that completed saw $after")
+            end for
+        }
+
+        "a finalizer registered in a scoped fiber's body sees the fiber's typed failure" in {
+            for
+                seen <- AtomicRef.init(Maybe.empty[Maybe[Result.Error[Any]]])
+                result <- Scope.run {
+                    Fiber.init(Scope.ensure(e => seen.set(Present(e))).andThen(Abort.fail("boom"))).map(_.getResult)
+                }
+                after <- seen.get
+            yield
+                assert(result.failure.contains("boom"), s"$result")
+                assert(after == Present(Present(Result.Failure("boom"))), s"the finalizer saw $after")
+            end for
+        }
+
+        "a finalizer registered in a scoped fiber's body sees the interrupt the enclosing scope's close delivers" in {
+            for
+                seen    <- AtomicRef.init(Maybe.empty[Maybe[Result.Error[Any]]])
+                started <- Latch.init(1)
+                _ <- Scope.run {
+                    Fiber.init(Scope.ensure(e => seen.set(Present(e))).andThen(started.release).andThen(Async.never))
+                        .andThen(started.await)
+                }
+                after <- seen.get
+            yield after match
+                case Present(Present(Result.Panic(_: Interrupted))) => succeed
+                case other                                          => fail(s"the finalizer of an interrupted fiber saw $other")
+            end for
+        }
     }
 
 end FiberTest

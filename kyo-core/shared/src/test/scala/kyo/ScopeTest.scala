@@ -1541,6 +1541,65 @@ class ScopeTest extends kyo.test.Test[Any]:
         }
     }
 
+    "under a handler that replays" - {
+
+        // `Choice.run` outside `Scope.run` answers the choice inside the scope's body twice, so the body runs
+        // twice and each branch registers a finalizer. The bracket contract under a replaying handler (SyncTest,
+        // "under a handler that replays") is that every branch runs against the live region and the release runs
+        // once after all of them; a scope's registrations are the counterpart, each running once. Today the
+        // scope's close is part of the continuation the handler replays, so the first shot's end closes it and the
+        // second shot's registration is refused with Closed, on this branch as on main; the two leaves below are
+        // pending until the close is held by the replaying handler the way a bracket's release is.
+        "every branch of a replaying handler registers its finalizer and each runs once".pendingUntilFixed(
+            "Scope.run closes its scope at the end of each shot of a replaying handler, so the second shot registers on a closed scope and is refused with Closed"
+        ) in {
+            for
+                log <- AtomicRef.init(Chunk.empty[String])
+                res <- Abort.run[Closed] {
+                    Choice.run {
+                        Scope.run {
+                            Choice.eval(1, 2).map { n =>
+                                Scope.ensure(log.updateAndGet(_.append(s"release $n")).unit).andThen(n)
+                            }
+                        }
+                    }
+                }
+                _       <- assertEventually(log.get.map(_.size == 2))
+                entries <- log.get
+            yield
+                assert(res == Result.succeed(Chunk(1, 2)), s"a branch was refused: $res")
+                assert(entries.sorted == Chunk("release 1", "release 2"), s"releases were $entries")
+            end for
+        }
+
+        "every branch of a replaying handler acquires its own resource and each is released once".pendingUntilFixed(
+            "Scope.run closes its scope at the end of each shot of a replaying handler, so the second shot's acquisition registers on a closed scope and is refused with Closed"
+        ) in {
+            for
+                released <- AtomicRef.init(Chunk.empty[Int])
+                seen     <- AtomicRef.init(Chunk.empty[(Int, Int)])
+                res <- Abort.run[Closed] {
+                    Choice.run {
+                        Scope.run {
+                            Choice.eval(1, 2).map { n =>
+                                Scope.acquireRelease(Sync.defer(n))(r => released.updateAndGet(_.append(r)).unit).map { r =>
+                                    released.get.map(rs => seen.updateAndGet(_.append((n, rs.size))).andThen(r))
+                                }
+                            }
+                        }
+                    }
+                }
+                _  <- assertEventually(released.get.map(_.size == 2))
+                rs <- released.get
+                s  <- seen.get
+            yield
+                assert(res == Result.succeed(Chunk(1, 2)), s"a branch was refused: $res")
+                assert(rs.sorted == Chunk(1, 2), s"released $rs")
+                assert(s.forall((_, r) => r == 0), s"a branch observed a release before its use ended: $s")
+            end for
+        }
+    }
+
     "racing scopes (#1735)" - {
 
         // #1735 as reported: four items, a resource that is an item taken from the channel and released by putting
