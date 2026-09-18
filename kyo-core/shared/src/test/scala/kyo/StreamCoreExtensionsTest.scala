@@ -1025,6 +1025,39 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
             }
         }
 
+        // The Scope form of the same criterion, the issue's second test. `take` ends the emitter by discarding its
+        // continuation, so the scope leaves by its abnormal-exit path, which hands the release to a detached drain
+        // that nothing awaits (the decision recorded under #1723 in ScopeTest): the finalizer lands after `run` has
+        // returned. The finalizer suspends on a fiber join first so a round cannot win the race, and the rounds keep
+        // the pending marker stable.
+        "the Scope finalizer of a taken stream runs after the last element it emitted".pendingUntilFixed(
+            "by decision there is no backpressure on abnormal exit: the scope's release runs on a detached drain that the end of take does not await"
+        ) in {
+            val rounds = 50
+            Loop.indexed { i =>
+                if i >= rounds then Loop.done
+                else
+                    AtomicRef.init(List.empty[String]).map { log =>
+                        val stream = Stream:
+                            Scope.run:
+                                Scope.ensure(
+                                    Fiber.initUnscoped(Kyo.unit).map(_.getResult).andThen(log.updateAndGet("finalized" :: _).unit)
+                                ).andThen:
+                                    Loop(0) { j =>
+                                        log.updateAndGet(j.toString :: _).andThen:
+                                            Emit.valueWith(Chunk(j))(Loop.continue(j + 1))
+                                    }
+                        stream.take(5).run.map { emitted =>
+                            log.get.map { entries =>
+                                assert(emitted == Chunk(0, 1, 2, 3, 4))
+                                assert(entries == List("finalized", "4", "3", "2", "1", "0"), s"round $i: order was $entries")
+                                Loop.continue
+                            }
+                        }
+                    }
+            }
+        }
+
         "takeWhile early exit with scope ensure" in {
             AtomicInt.init(0).map { counter =>
                 Scope.run {

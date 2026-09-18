@@ -1287,6 +1287,30 @@ class ScopeTest extends kyo.test.Test[Any]:
                 assert(afterSupplied == 1, s"the caller-supplied finalizer must run once, at the outer exit: supplied=$afterSupplied")
             end for
         }
+
+        // The same opt-out with a real resource in the caller's argument rather than a counter: the callee's run
+        // must leave it open, and the outer exit closes it once.
+        "a resource the caller acquires stays open across a masked generic call and closes at the outer exit" in {
+            import kyo.kernel.ArrowEffect.Mask
+
+            def generic[A, S](effect: A < S): A < (Async & S) =
+                Scope.run(Sync.defer(()).andThen(effect))
+
+            val r = TestResource(1)
+            for
+                seen <- Scope.run {
+                    Mask.run[Scope](generic(Mask[Scope](Scope.acquire(r)))).map { res =>
+                        // read inside the outer scope, after the callee's scope has closed
+                        Sync.defer((res.id, res.closes))
+                    }
+                }
+                (id, closesInside) = seen
+            yield
+                assert(id == 1)
+                assert(closesInside == 0, s"the callee's scope closed the caller's resource: closes=$closesInside")
+                assert(r.closes == 1, s"the outer exit must close the resource once: closes=${r.closes}")
+            end for
+        }
     }
 
     "forks" - {
@@ -1372,6 +1396,30 @@ class ScopeTest extends kyo.test.Test[Any]:
                         assert(r, s"round $i: the async finalizer had not completed before the next effect ran")
                         Loop.continue
             }
+        }
+
+        // The half that is delivered: a scope short-circuited by an outer handler is closed at that handler's end,
+        // as a child of the enclosing scope, so its releases run before the enclosing scope's own finalizers rather
+        // than with the outermost unwind.
+        "a scope short-circuited by an outer handler releases before the enclosing scope's own finalizers" in {
+            for
+                order <- AtomicRef.init(Chunk.empty[String])
+                _ <- Scope.run {
+                    Scope.ensure(order.updateAndGet(_.append("outer")).unit).andThen {
+                        Abort.run {
+                            Check.runAbort {
+                                Scope.run {
+                                    Scope.ensure(order.updateAndGet(_.append("inner")).unit)
+                                        .andThen(Check.require(false, "boom"))
+                                }
+                            }
+                        }
+                    }
+                }
+                _   <- assertEventually(order.get.map(_.size == 2))
+                seq <- order.get
+            yield assert(seq == Chunk("inner", "outer"), s"order was $seq")
+            end for
         }
     }
 
@@ -1470,6 +1518,25 @@ class ScopeTest extends kyo.test.Test[Any]:
                 }
                 seq <- order.get
             yield assert(seq == Chunk("inner", "outer"), s"order was $seq")
+            end for
+        }
+
+        // The other half of #1131: a child that completes on its own releases at its own exit, while the scope it
+        // was spawned in is still open, rather than deferring to that scope's close.
+        "a scoped fiber's nested run releases at its own exit while the enclosing scope is still open" in {
+            for
+                released <- AtomicInt.init(0)
+                seen <- Scope.run {
+                    Fiber.init {
+                        Scope.run {
+                            Scope.acquireRelease(Sync.defer("child"))(_ => released.incrementAndGet.unit).unit
+                        }
+                    }.map(_.get).andThen(released.get)
+                }
+                after <- released.get
+            yield
+                assert(seen == 1, s"the child's resource was not released at the child's own exit: released=$seen")
+                assert(after == 1, s"the enclosing scope's close released it again: released=$after")
             end for
         }
     }

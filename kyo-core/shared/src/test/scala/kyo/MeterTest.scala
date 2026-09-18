@@ -832,4 +832,67 @@ class MeterTest extends kyo.test.Test[Any]:
         }
     }
 
+    "typed abort (#1846)" - {
+        // A permit is released through the kernel's bracket, so a body that ends with a typed Abort, the ending the
+        // old Sync.ensure missed, gives its permit back like any other ending, and the meter is usable afterwards.
+        "a semaphore body that aborts with a typed error returns its permit" in {
+            for
+                meter  <- Meter.initSemaphore(1)
+                result <- Abort.run[String](meter.run(Abort.fail("boom")))
+                free   <- meter.availablePermits
+                again  <- meter.run(42)
+            yield
+                assert(result.failure.contains("boom"))
+                assert(free == 1, s"the permit was not returned after a typed abort: free=$free")
+                assert(again == 42)
+            end for
+        }
+
+        "a mutex body that aborts with a typed error releases the mutex" in {
+            for
+                meter  <- Meter.initMutex
+                result <- Abort.run[String](meter.run(Abort.fail("boom")))
+                free   <- meter.availablePermits
+                again  <- meter.run(42)
+            yield
+                assert(result.failure.contains("boom"))
+                assert(free == 1, s"the mutex was not released after a typed abort: free=$free")
+                assert(again == 42)
+            end for
+        }
+
+        "a tryRun body that aborts with a typed error returns its permit" in {
+            for
+                meter  <- Meter.initSemaphore(1)
+                result <- Abort.run[String](meter.tryRun(Abort.fail("boom")))
+                free   <- meter.availablePermits
+                again  <- meter.tryRun(42)
+            yield
+                assert(result.failure.contains("boom"))
+                assert(free == 1, s"the permit was not returned after a typed abort: free=$free")
+                assert(again == Maybe(42))
+            end for
+        }
+
+        "a waiter behind a body that aborts with a typed error is admitted" in {
+            for
+                meter   <- Meter.initSemaphore(1)
+                entered <- Latch.init(1)
+                gate    <- Latch.init(1)
+                holder  <- Fiber.initUnscoped(Abort.run[String](meter.run(entered.release.andThen(gate.await).andThen(Abort.fail("boom")))))
+                _       <- entered.await
+                waiter  <- Fiber.initUnscoped(meter.run(42))
+                _       <- assertEventually(meter.pendingWaiters.map(_ == 1))
+                _       <- gate.release
+                held    <- holder.get
+                got     <- waiter.get
+                free    <- meter.availablePermits
+            yield
+                assert(held.failure.contains("boom"))
+                assert(got == 42)
+                assert(free == 1, s"permits after both bodies ended: free=$free")
+            end for
+        }
+    }
+
 end MeterTest
