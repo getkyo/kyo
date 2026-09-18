@@ -47,4 +47,28 @@ class BrowserLauncherJvmTest extends BaseBrowserTest:
         }
     }
 
+    // terminateTree: Chrome's helpers (zygotes, GPU process, network service) outlive the main process by a few
+    // milliseconds and write into the user-data-dir as they go down, so a removal that runs as soon as the main process
+    // is dead can find the directory re-created behind it. The tree here has that shape: a parent whose background child
+    // keeps re-creating a directory and survives the parent's death on its own.
+    "terminateTree leaves no descendant alive to write into the directory" in {
+        assume(!Platform.isWindows, "POSIX process tree")
+        val outerTmp = Paths.get(java.lang.System.getProperty("java.io.tmpdir"))
+        val dir      = outerTmp.resolve(s"kyo-browser-jvm-test-${UUID.randomUUID()}")
+        val script   = s"mkdir -p '$dir'; (while true; do mkdir -p '$dir/x'; sleep 0.005; done) & wait"
+        def removeDir: Unit < Async =
+            Abort.run[FileSystemException](Path.run(Path(dir.toString).removeAll)).unit
+        Scope.run {
+            Scope.ensure(removeDir).andThen {
+                for
+                    proc <- Command("sh", "-c", script).spawnUnscoped
+                    _    <- assertEventually(Sync.defer(Files.exists(dir.resolve("x"))))
+                    _    <- BrowserLauncher.terminateTree(proc)
+                    _    <- removeDir
+                    _    <- Async.sleep(300.millis)
+                yield assert(!Files.exists(dir), s"a descendant survived terminateTree and re-created $dir")
+            }
+        }
+    }
+
 end BrowserLauncherJvmTest

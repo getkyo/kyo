@@ -15,11 +15,11 @@ import scala.jdk.CollectionConverters.*
   *
   * `BrowserLauncher.launch` implements the contract via two independent finalizer chains:
   *
-  *   1. The Chrome subprocess is registered with the enclosing `Scope` via `Command.spawn`'s
-  *      `Scope.acquireRelease(proc)((_) => destroyForcibly())`.
+  *   1. The Chrome process tree is registered with the enclosing `Scope` via `Scope.acquireRelease(proc)(terminateTree)`, whose
+  *      release kills the main process and every descendant listed while it was alive, and returns once none of them is left.
   *   2. The user-data temp directory is cleaned up via two complementary finalizers: `Path.tempDir`'s own
   *      `Scope.acquireRelease` and the `Scope.ensure(removeTmpDir(...))` in `BrowserLauncher.launch`, both
-  *      of which run LIFO **after** the process is killed so the directory is no longer locked when removeAll runs.
+  *      of which run LIFO **after** the tree is gone so nothing writes into the directory when removeAll runs.
   *
   * Plus a JVM-level safety net via `BrowserLauncherPlatform.registerShutdownHook(proc)` for the case where the JVM exits before scope
   * finalizers run (BrowserLauncherPlatform.scala:5-27).

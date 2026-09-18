@@ -306,6 +306,10 @@ class DomBackendDelegationTest extends kyo.test.Test[Any]:
                 _ <- fiber.interrupt
                 _ <- finalized.await
                 _ <- fiber.getResult
+                // The fiber's result settles once its abandonment has released what it held; the mount scope's own
+                // finalizers, the join among them, run detached from it, so the chronology is complete only once the
+                // join has been recorded.
+                _ <- assertEventually(Sync.defer(chronology.contains("drain-joined")))
             yield
                 val channelClose = chronology.indexOf("channel-close")
                 val interrupt    = chronology.indexOf("drain-interrupt")

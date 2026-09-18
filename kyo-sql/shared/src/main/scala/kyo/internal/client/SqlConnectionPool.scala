@@ -132,25 +132,29 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
             // Unsafe: getOrCreateSlotChan and every pool operation require AllowUnsafe.
             // Unsafe: bridging to kyo-net ConnectionPool.
             Sync.Unsafe.defer(getOrCreateSlotChan(address, config.maxConnections)).flatMap { slotCh =>
-                // Take the slot and register its release in Scope.ensure BEFORE attempting to connect. If the
-                // connect fails, the surrounding Scope still closes and still returns the slot, which is what
-                // prevents a slot leak: without it, a connect failure after a server restart would strand the slot
-                // and eventually deadlock the pool.
-                Abort.run[SqlException](takeSlot(slotCh, config)).flatMap {
-                    case Result.Failure(e: SqlConnectionAcquireTimeoutException) =>
-                        Log.warn(
-                            s"kyo.sql: pool acquire timeout after ${config.acquireTimeout} poolSize=${config.maxConnections}"
-                        ).andThen(Abort.fail(e))
-                    case Result.Failure(e) => Abort.fail(e)
-                    case Result.Panic(t)   => Abort.error(Result.Panic(t))
-                    case Result.Success(()) =>
-                        leaseClock.elapsed.flatMap(dur => metrics.recordPoolAcquireWait(dur.toMillis)).andThen {
-                            Scope.ensure {
-                                Sync.Unsafe.defer {
-                                    discard(Sync.Unsafe.evalOrThrow(Abort.run[Closed](slotCh.offer(()))))
-                                }
-                            }.andThen(acquireScoped(address, password, netKey, config, leaseClock))
+                // The slot's give-back is registered on the enclosing Scope BEFORE the take, and the take claims the
+                // slot in the step it completes in (see takeSlot): a caller interrupted on the take's join is
+                // abandoned without resuming, so a give-back registered after the take would never be. The Scope also
+                // closes when the connect fails, which is what prevents a slot leak: without it, a connect failure after
+                // a server restart would strand the slot and eventually deadlock the pool.
+                Sync.Unsafe.defer(AtomicBoolean.Unsafe.init(false)).flatMap { held =>
+                    Scope.ensure {
+                        Sync.Unsafe.defer {
+                            if held.get() then discard(Sync.Unsafe.evalOrThrow(Abort.run[Closed](slotCh.offer(()))))
                         }
+                    }.andThen {
+                        Abort.run[SqlException](takeSlot(slotCh, config, held)).flatMap {
+                            case Result.Failure(e: SqlConnectionAcquireTimeoutException) =>
+                                Log.warn(
+                                    s"kyo.sql: pool acquire timeout after ${config.acquireTimeout} poolSize=${config.maxConnections}"
+                                ).andThen(Abort.fail(e))
+                            case Result.Failure(e) => Abort.fail(e)
+                            case Result.Panic(t)   => Abort.error(Result.Panic(t))
+                            case Result.Success(()) =>
+                                leaseClock.elapsed.flatMap(dur => metrics.recordPoolAcquireWait(dur.toMillis))
+                                    .andThen(acquireScoped(address, password, netKey, config, leaseClock))
+                        }
+                    }
                 }
             }
         }
@@ -365,9 +369,23 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
                 ch
         )
 
-    private def takeSlot(slotCh: Channel[Unit], config: SqlConfig)(using Frame): Unit < (Async & Abort[SqlException]) =
+    /** Takes a permit, claiming it into `held` in the step the take completes in.
+      *
+      * Under a finite `acquireTimeout` the take runs in the child fiber `timeoutWithError` forks, and the caller parks on its join. A
+      * caller interrupted there is abandoned without resuming (see `IOTask.abandon`): nothing is delivered to the join, so a permit the
+      * child took would be owned by its result and by nobody else. The claim is a plain flag write inside the take itself, so no park can
+      * separate the two: the take either completes claimed, or is refused by the channel's own interrupt handoff and leaves the permit in
+      * the channel. [[withSlot]] registers the give-back for a claimed permit before this is called.
+      */
+    private def takeSlot(slotCh: Channel[Unit], config: SqlConfig, held: AtomicBoolean.Unsafe)(using
+        Frame
+    ): Unit < (Async & Abort[SqlException]) =
         val take: Unit < (Async & Abort[SqlException]) =
-            Abort.run[Closed](slotCh.take).flatMap {
+            Abort.run[Closed](slotCh.takeWith { _ =>
+                // Unsafe: the flag is written in the step the take delivers in, so the claim and the take are one step.
+                import AllowUnsafe.embrace.danger
+                held.set(true)
+            }).flatMap {
                 case Result.Success(()) => ()
                 case Result.Failure(_)  => Abort.fail(SqlConnectionPoolClosedException())
                 case Result.Panic(t)    => Abort.error(Result.Panic(t))
@@ -386,43 +404,48 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
     )(using Frame): A < (S & Async & Abort[SqlException]) =
         // The stopwatch times the wait for a permit, which is the time spent blocked on a saturated pool.
         Clock.stopwatch.flatMap { sw =>
-            Abort.run[SqlException](takeSlot(slotCh, config)).flatMap {
-                case Result.Failure(e: SqlConnectionAcquireTimeoutException) =>
-                    Log.warn(
-                        s"kyo.sql: pool acquire timeout after ${config.acquireTimeout} poolSize=${config.maxConnections}"
-                    ).andThen(Abort.fail(e))
-                case Result.Failure(e) => Abort.fail(e)
-                case Result.Panic(t)   => Abort.error(Result.Panic(t))
-                case Result.Success(()) =>
-                    sw.elapsed.flatMap(dur => metrics.recordPoolAcquireWait(dur.toMillis)).andThen {
-                        // The permit is returned by a Scope finalizer, not a `Sync.ensure` one. `Sync.ensure` covers
-                        // the interrupt and panic edges but NOT a typed `Abort` handled outside its region: that
-                        // finalizer parks until the calling FIBER ends, so an ordinary statement failure would strand
-                        // the permit until the caller's whole program finished. `Scope.run` closes its scope as part
-                        // of evaluating the body, so the finalizer fires on that edge too.
-                        Scope.run {
-                            Scope.ensure {
-                                Sync.Unsafe.defer {
-                                    discard(Sync.Unsafe.evalOrThrow(Abort.run[Closed](slotCh.offer(()))))
+            // The permit is owned by a finalizer before it is taken. The give-back is registered first, on a scope opened
+            // around the take, and `takeSlot` claims the permit into `held` in the step the take completes in, so there is
+            // no moment at which a taken permit has no owner: a caller interrupted while parked on the take's join is
+            // abandoned without resuming, and the scope's close, which the abandonment runs, gives back what was claimed.
+            // The give-back is a Scope finalizer, not a `Sync.ensure` one. `Sync.ensure` covers the interrupt and panic
+            // edges but NOT a typed `Abort` handled outside its region: that finalizer parks until the calling FIBER
+            // ends, so an ordinary statement failure would strand the permit until the caller's whole program finished.
+            // `Scope.run` closes its scope as part of evaluating the body, so the finalizer fires on that edge too.
+            Sync.Unsafe.defer(AtomicBoolean.Unsafe.init(false)).flatMap { held =>
+                Scope.run {
+                    Scope.ensure {
+                        Sync.Unsafe.defer {
+                            if held.get() then discard(Sync.Unsafe.evalOrThrow(Abort.run[Closed](slotCh.offer(()))))
+                        }
+                    }.andThen {
+                        Abort.run[SqlException](takeSlot(slotCh, config, held)).flatMap {
+                            case Result.Failure(e: SqlConnectionAcquireTimeoutException) =>
+                                Log.warn(
+                                    s"kyo.sql: pool acquire timeout after ${config.acquireTimeout} poolSize=${config.maxConnections}"
+                                ).andThen(Abort.fail(e))
+                            case Result.Failure(e) => Abort.fail(e)
+                            case Result.Panic(t)   => Abort.error(Result.Panic(t))
+                            case Result.Success(()) =>
+                                sw.elapsed.flatMap(dur => metrics.recordPoolAcquireWait(dur.toMillis)).andThen {
+                                    Abort.run[SqlException](body).flatMap {
+                                        case Result.Success(a)                     => a
+                                        case Result.Failure(e: SqlServerException) =>
+                                            // DEBUG, not ERROR. The caller is handed the same failure as a typed value and
+                                            // decides what it is: a tool running user-written SQL gets a syntax error back
+                                            // from the server as its ordinary answer. Writing it at ERROR filled an
+                                            // operator's dashboard with entries for a program behaving correctly, and on a
+                                            // stdio transport anything the library writes on its own initiative is a
+                                            // candidate for corrupting the channel. The typed Abort is the report.
+                                            Log.debug(s"kyo.sql: server error sqlState=${e.sqlState} msg=${e.serverMessage}")
+                                                .andThen(Abort.fail[SqlException](e))
+                                        case Result.Failure(e) => Abort.fail[SqlException](e)
+                                        case Result.Panic(t)   => Abort.error(Result.Panic(t))
+                                    }
                                 }
-                            }.andThen {
-                                Abort.run[SqlException](body).flatMap {
-                                    case Result.Success(a)                     => a
-                                    case Result.Failure(e: SqlServerException) =>
-                                        // DEBUG, not ERROR. The caller is handed the same failure as a typed value and
-                                        // decides what it is: a tool running user-written SQL gets a syntax error back
-                                        // from the server as its ordinary answer. Writing it at ERROR filled an
-                                        // operator's dashboard with entries for a program behaving correctly, and on a
-                                        // stdio transport anything the library writes on its own initiative is a
-                                        // candidate for corrupting the channel. The typed Abort is the report.
-                                        Log.debug(s"kyo.sql: server error sqlState=${e.sqlState} msg=${e.serverMessage}")
-                                            .andThen(Abort.fail[SqlException](e))
-                                    case Result.Failure(e) => Abort.fail[SqlException](e)
-                                    case Result.Panic(t)   => Abort.error(Result.Panic(t))
-                                }
-                            }
                         }
                     }
+                }
             }
         }
     end withSlot
