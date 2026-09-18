@@ -1029,7 +1029,7 @@ check_worker_count() {
     allowed=$(( modules * ${NATIVE_WORKER_MAX:-2} ))
     if [ "$starts" -gt "$allowed" ]; then
         log "WARNING: $starts native test-runner processes for $modules module(s) (expected at most $allowed)"
-        echo "::warning title=native test workers::$starts test-runner processes started for $modules module(s); expected at most $allowed. A per-suite worker means Test / parallelExecution is back on for Native."
+        echo "::warning title=native test workers::$starts test-runner processes started for $modules module(s); expected at most $allowed. Inspect runner lifetimes and task grouping; this count alone does not establish per-suite parallel execution."
     else
         log "native test-runner processes: $starts for $modules module(s) (ceiling $allowed)"
     fi
