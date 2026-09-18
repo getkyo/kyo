@@ -978,7 +978,10 @@ object Span:
           */
         inline def updated(idx: Int, x: A)(using ClassTag[A]): Span[A] =
             val size = self.length
-            val r    = new Array[A](size)
+            // Checked here rather than left to the array write: on Scala.js an out-of-bounds write is undefined behavior and
+            // surfaces as a fatal error, not the exception this method promises.
+            if idx < 0 || idx >= size then throw new IndexOutOfBoundsException(s"$idx is out of bounds (min 0, max ${size - 1})")
+            val r = new Array[A](size)
             System.arraycopy(self, 0, r, 0, size)
             r(idx) = x
             r
