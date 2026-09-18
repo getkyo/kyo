@@ -336,16 +336,28 @@ class MysqlParamWriterTest extends Test:
         end match
     }
 
-    "duration encoding raises SqlRequestDurationOverflowException naming the MySQL day-count bound" in {
-        // Duration with more than Int.MaxValue days, MysqlParamWriter.duration() guards
-        // day-count overflow eagerly and raises the typed SqlRequestDurationOverflowException leaf.
-        val hugeSeconds = (Int.MaxValue.toLong + 1L) * 86400L
-        val value       = java.time.Duration.ofSeconds(hugeSeconds)
+    "duration encoding raises SqlRequestDurationOverflowException naming the span a TIME column holds" in {
+        // One second past 838:59:59. The writer guards the span the column holds, not the four-byte day count the
+        // wire struct carries: a span between the two bounds is accepted by the server, SILENTLY CLAMPED to its
+        // ceiling, and reported as a successful write, so refusing it before it goes out is the only place the
+        // caller can learn their duration was not stored.
+        val value = java.time.Duration.ofSeconds(MysqlTime.MaxSpanSeconds + 1L)
         val ex = intercept[SqlRequestDurationOverflowException] {
             singleParam(_.duration(value))
         }
-        assert(ex.totalDays > Int.MaxValue.toLong, s"expected totalDays > Int.MaxValue, got: ${ex.totalDays}")
-        assert(ex.limit == "the MySQL TIME day-count range", s"unexpected limit: ${ex.limit}")
+        assert(
+            ex.totalSeconds == MysqlTime.MaxSpanSeconds + 1L,
+            s"expected totalSeconds ${MysqlTime.MaxSpanSeconds + 1L}, got: ${ex.totalSeconds}"
+        )
+        assert(ex.limit == MysqlTime.SpanLimitDescription, s"unexpected limit: ${ex.limit}")
+    }
+
+    "duration encoding accepts the largest span a TIME column holds" in {
+        // The boundary from the legal side, so the guard cannot be one second wide in the other direction and
+        // refuse a value the column stores perfectly well.
+        val value = java.time.Duration.ofSeconds(MysqlTime.MaxSpanSeconds)
+        val param = singleParam(_.duration(value))
+        assertBytesMatch(param.encoded, encode(value, MysqlEncoder.durationEncoder), "the largest legal span")
     }
 
     "calendarInterval encoding raises SqlRequestPeriodOverflowException instead of an unchecked ArithmeticException" in {

@@ -3,7 +3,7 @@ import org.scalajs.sbtplugin.ScalaJSPlugin
 lazy val root = (project in file("."))
     .enablePlugins(KyoFfiPlugin, ScalaJSPlugin)
     .settings(
-        scalaVersion := "3.8.3",
+        scalaVersion := sys.props("kyo.scalaVersion"),
         ffiLibraryId := "test_js_lib",
         TaskKey[Unit]("checkPlatform") := {
             val p = ffiTargetPlatform.value

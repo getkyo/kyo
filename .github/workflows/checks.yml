@@ -110,6 +110,14 @@ jobs:
           bash scripts/apt-install.sh --if-missing cmake uuid-dev
           bash kyo-aeron/scripts/build-aeron.sh linux-aarch64
 
+      # SQLite (build-time only): `sbt doctest` compiles kyo-sql-sqlite's C shim together with the
+      # vendored engine from the gitignored staged tree. Same reason as the two above, and repeated
+      # here for the same reason: this workflow does not use .github/actions/setup. No os-arch, since
+      # SQLite is one architecture-independent source the plugin compiles per platform.
+      - name: Prepare SQLite
+        shell: bash
+        run: bash kyo-sql-sqlite/scripts/build-sqlite.sh
+
       # Doctest result cache. Entries are keyed by SHA-256 over the block body, the scope closure
       # (preceding blocks and the predef), the classpath fingerprint, the Scala version and the
       # scalac options, so a restored entry is reused only when all of those match. It holds result

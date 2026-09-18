@@ -45,11 +45,12 @@ sealed trait AIProviderException extends AIGenException with AIStreamException
   */
 sealed trait AITransientException extends AIProviderException
 
-/** No API key is configured for the model's provider: a provider-access failure. Either operation
-  * reaches the provider, so it is in both failure sets.
+/** No API key is configured for the model's provider: a provider-access failure. `keyName` is the
+  * system property or environment variable that would have supplied it. Either operation reaches the
+  * provider, so it is in both failure sets.
   */
-case class AIMissingApiKeyException(model: String)(using Frame)
-    extends AIException(s"Can't locate API key for model: $model") with AIProviderException
+case class AIMissingApiKeyException(model: String, keyName: String)(using Frame)
+    extends AIException(s"Can't locate API key for model: $model (set $keyName)") with AIProviderException
 
 /** The provider HTTP call failed; the originating kyo-http `HttpException` is carried as the cause. Mapped
   * from the raw transport error at the eval/stream boundary so no non-module exception rides a public row.
@@ -82,6 +83,13 @@ case class AIInvalidThoughtException(name: String)(using Frame)
 case class AIDecodeException(detail: String)(using Frame)
     extends AIException(detail) with AIGenException
 
+/** A decider question fails the provider's limits before any request is made: a choice with no options or
+  * more than 255, a score with fewer than 2 or more than 10 levels, or two options whose inferred wire
+  * keys collide. NOT transient: the question itself is wrong.
+  */
+case class AIInvalidQuestionException(detail: String)(using Frame)
+    extends AIException(s"invalid decider question: $detail") with AIGenException
+
 /** A provider was transiently unreachable: overloaded (503/529), a network/DNS/connection error, or an
   * upstream timeout. Transient, so retrying with backoff is the correct response. Distinct from a rate
   * limit (throttled, retrying makes it worse), an auth failure (misconfigured), and a per-call timeout
@@ -94,9 +102,10 @@ case class AIProviderUnavailableException(provider: String, detail: String)(usin
   * (429). A recoverable throttle by nature (a rate-limit window resets, a quota refills), so it is
   * TRANSIENT: retrying with backoff is the correct response, and `LLM.gen` retries it on the configured
   * schedule. A bounded schedule still surfaces a genuinely-stuck account once its attempts are spent.
-  * Either operation makes the call, so it is in both failure sets.
+  * `retryAfter` is the wait the response asked for (`Retry-After`), honored before the schedule's own
+  * backoff when present. Either operation makes the call, so it is in both failure sets.
   */
-case class AIRateLimitException(provider: String, detail: String)(using Frame)
+case class AIRateLimitException(provider: String, detail: String, retryAfter: Maybe[Duration] = Absent)(using Frame)
     extends AIException(s"$provider rate limit or quota exceeded: $detail") with AITransientException
 
 /** The provider rejected authentication: an invalid or unauthorized credential (401/403), or a

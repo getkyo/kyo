@@ -546,6 +546,13 @@ class CompilerPoolTest extends kyo.test.Test[Any]:
         }
     }
 
+    /** Overflowing `maxLiveCompilers` closes the evicted instance through the cache finalizer, and the survivor keeps serving.
+      *
+      * Which of the two instances is evicted is the cache's CLOCK policy, not the pool's: both carry the accessed flag (A from its op,
+      * B from its insert), so the victim is whichever slot the hand reaches first, and the slots follow `Config.hashCode`, which includes
+      * the toolchain's Scala version. The leaf therefore asserts the property the pool owns, closing exactly the evicted instance, for
+      * either victim.
+      */
     "pool eviction closes the Instance via the Cache finalizer" in {
         Scope.run {
             Channel.initUnscoped[String](4).map { closedCh =>
@@ -554,16 +561,14 @@ class CompilerPoolTest extends kyo.test.Test[Any]:
                 val settings =
                     Compiler.Pool.Settings(isolate = false, maxConcurrentCompiles = 4, maxLiveCompilers = 1, idleEviction = Duration.Zero)
 
-                val backendA = new Backend:
+                def closeSignalingBackend(tag: String): Backend = new Backend:
                     def run(request: Request)(using Frame): Response < (Async & Abort[CompilerException]) =
                         Response.Diagnostics(Chunk.empty)
                     def close(using Frame): Unit < (Async & Abort[Throwable]) =
-                        Abort.run[Closed](closedCh.put("A")).map(_ => ())
+                        Abort.run[Closed](closedCh.put(tag)).map(_ => ())
 
-                val backendB = new Backend:
-                    def run(request: Request)(using Frame): Response < (Async & Abort[CompilerException]) =
-                        Response.Diagnostics(Chunk.empty)
-                    def close(using Frame): Unit < (Async & Abort[Throwable]) = ()
+                val backendA = closeSignalingBackend("A")
+                val backendB = closeSignalingBackend("B")
 
                 Cache.initWithFinalizer[Compiler.Config, Promise[Instance, Abort[CompilerException]]](
                     settings.maxLiveCompilers,
@@ -582,19 +587,30 @@ class CompilerPoolTest extends kyo.test.Test[Any]:
                                 cA <- pool.compiler(cfgA)
                                 _  <- Abort.run[CompilerException](cA.compile(uri, "object A"))
 
-                                // Insert B into the cache (maxLiveCompilers = 1 forces A's eviction).
+                                // Insert B into the cache: maxLiveCompilers = 1 forces one of the two out.
                                 _ <- instances.add(cfgB, completed(Instance(backendB, mB)))
 
-                                // Await the close signal: the cache finalizer calls backendA.close.
+                                // Await the close signal: the cache finalizer closes the evicted instance's backend.
                                 closedTag <- closedCh.take
-                                _ = assert(closedTag == "A", s"expected close of A, got '$closedTag'")
+                                (evictedCfg, survivorCfg) = closedTag match
+                                    case "A" => (cfgA, cfgB)
+                                    case _   => (cfgB, cfgA)
+                                _ = assert(closedTag == "A" || closedTag == "B", s"expected the close of A or B, got '$closedTag'")
 
-                                // B still serves normally after A was evicted.
-                                cB   <- pool.compiler(cfgB)
-                                resB <- Abort.run[CompilerException](cB.compile(uri, "object B"))
-                                _ = resB match
+                                // Exactly the evicted instance left the cache; the survivor is still live and was not closed.
+                                evicted  <- instances.get(evictedCfg)
+                                survivor <- instances.get(survivorCfg)
+                                _ = assert(evicted.isEmpty, s"the closed instance ($closedTag) must no longer be cached")
+                                _ = assert(survivor.nonEmpty, s"the instance that was not closed must still be cached")
+                                extraClose <- closedCh.poll
+                                _ = assert(extraClose.isEmpty, s"only the evicted instance may be closed, also got $extraClose")
+
+                                // The survivor still serves normally after the eviction.
+                                cSurvivor   <- pool.compiler(survivorCfg)
+                                resSurvivor <- Abort.run[CompilerException](cSurvivor.compile(uri, "object Survivor"))
+                                _ = resSurvivor match
                                     case Result.Success(_) => ()
-                                    case other             => assert(false, s"B should succeed after eviction of A; got $other")
+                                    case other             => assert(false, s"the survivor should serve after the eviction; got $other")
                             yield ()
                         }
                 }

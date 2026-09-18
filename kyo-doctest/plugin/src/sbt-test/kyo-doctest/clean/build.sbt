@@ -1,6 +1,6 @@
 // Scripted test: doctest then doctestClean then doctest is a cold run.
 
-ThisBuild / scalaVersion := sys.props("kyo.doctest.scalaVersion")
+ThisBuild / scalaVersion := sys.props("kyo.scalaVersion")
 
 lazy val root = (project in file("."))
     .enablePlugins(KyoDoctestPlugin)

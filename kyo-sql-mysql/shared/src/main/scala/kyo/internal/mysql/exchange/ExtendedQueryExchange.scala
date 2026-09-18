@@ -242,8 +242,12 @@ private[mysql] object ExtendedQueryExchange:
                 val firstByte = firstPayload(0) & 0xff
                 if firstByte == 0x00 || (firstByte == 0xfe && firstPayload.size >= 7) then
                     // OkPacket (no result set, DML statement).
-                    ProtocolDecode.decode("OK", firstPayload.slice(1, firstPayload.size), channel.unmarshallers.okPacket).map { ok =>
-                        (Chunk.empty[MysqlRow], ok.affectedRows, ok.lastInsertId)
+                    ProtocolDecode.decode("OK", firstPayload.slice(1, firstPayload.size), channel.unmarshallers.okPacket).flatMap { ok =>
+                        // Observed like every other status packet: a statement with no result set still reports the
+                        // warnings it raised and the session variables it changed, and this is the path a prepared
+                        // DML takes.
+                        channel.observeStatus(ok.statusFlags, ok.warnings, ok.sessionStateInfo)
+                            .andThen((Chunk.empty[MysqlRow], ok.affectedRows, ok.lastInsertId))
                     }
                 else if firstByte == 0xff then
                     readErrPayload(firstPayload).flatMap(err =>
@@ -307,7 +311,12 @@ private[mysql] object ExtendedQueryExchange:
                 // length-encoded marker and the length is the only way to tell a short EOF from a row. `skipEofIfNeeded`
                 // keeps it for the same reason, on a branch guarded by `!deprecateEof` where a legacy 5-byte EOF is the
                 // only legal packet.
-                acc
+                //
+                // Decoded rather than discarded: its flags are where the server says whether the statement has result
+                // sets nobody has read, and a prepared `CALL` takes this path.
+                ResultSetExchange.readTerminator(channel, payload, sqlText, connectionId).andThen(
+                    drainRemainingBinary(channel, deprecateEof, sqlText, paramCount, connectionId).andThen(acc)
+                )
             else if firstByte == 0xff then
                 readErrPayload(payload).flatMap(err => Abort.fail(MysqlErrors.mkServerError(err, sqlText, paramCount, connectionId)))
             else if firstByte == 0x00 then
@@ -382,5 +391,60 @@ private[mysql] object ExtendedQueryExchange:
         val digest = PureHash.sha256(sql.getBytes(java.nio.charset.StandardCharsets.UTF_8))
         digest.take(8).map(b => f"${b & 0xff}%02x").mkString
     end cacheKey
+
+    /** Reads and discards every result set the statement produced beyond the one the caller asked for.
+      *
+      * The binary twin of the text path's drain, separate because the rows it walks past are in this protocol's binary form and the text
+      * reader would misframe them.
+      *
+      * Called only when the server said more result sets are pending, stopping as soon as one says otherwise. The rows are dropped because
+      * the surface that reached here asked for one result set, and leaving them on the wire hands them to the next borrower.
+      */
+    private def drainRemainingBinary(
+        channel: MysqlChannel,
+        deprecateEof: Boolean,
+        sqlText: Maybe[String],
+        paramCount: Int,
+        connectionId: Maybe[Long]
+    )(using Frame): Unit < (Async & Abort[SqlException]) =
+        if !channel.sessionState.moreResultsExpected then ()
+        else
+            channel.readRawPayload.flatMap { payload =>
+                val firstByte = payload(0) & 0xff
+                if firstByte == 0xff then
+                    readErrPayload(payload).flatMap(err =>
+                        Abort.fail(MysqlErrors.mkServerError(err, sqlText, paramCount, connectionId))
+                    )
+                else if firstByte == 0x00 || (firstByte == 0xfe && payload.size >= 7) then
+                    // A status packet for a statement in the sequence that produced no rows of its own, which is what
+                    // the CALL itself answers with after the procedure's result set.
+                    ProtocolDecode.decode("OK", payload.slice(1, payload.size), channel.unmarshallers.okPacket)
+                        .flatMap(ok => channel.observeStatus(ok.statusFlags, ok.warnings, ok.sessionStateInfo))
+                        .andThen(drainRemainingBinary(channel, deprecateEof, sqlText, paramCount, connectionId))
+                else
+                    val reader = MysqlBufferReader(payload)
+                    ProtocolDecode.decode("column count", reader.readLenencInt()).flatMap { columnCountLong =>
+                        val columnCount = columnCountLong.toInt
+                        readColumnDefs(channel, columnCount).flatMap { columnDefs =>
+                            skipEofIfNeeded(channel, columnCount, deprecateEof).flatMap { _ =>
+                                // readBinaryRows reaches its own terminator and continues the drain from there, so this
+                                // walks the whole remaining sequence however many result sets it holds.
+                                readBinaryRows(
+                                    channel,
+                                    columnDefs,
+                                    columnDefs.map(_.columnType),
+                                    deprecateEof,
+                                    Chunk.empty,
+                                    sqlText,
+                                    paramCount,
+                                    connectionId
+                                ).andThen(())
+                            }
+                        }
+                    }
+                end if
+            }
+        end if
+    end drainRemainingBinary
 
 end ExtendedQueryExchange

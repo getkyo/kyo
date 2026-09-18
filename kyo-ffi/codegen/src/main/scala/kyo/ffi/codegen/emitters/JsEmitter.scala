@@ -38,7 +38,7 @@ object JsEmitter extends EmitterBase.Ops with PlatformTypes:
               |import scala.scalajs.js.typedarray.*
               |import scala.scalajs.reflect.annotation.EnableReflectiveInstantiation
               |import kyo.ffi.*
-              |import kyo.ffi.internal.{AbiCheck, JsRawSegment, KoffiFacade, KoffiFn, NativeLoader, StructAbiCheck}
+              |import kyo.ffi.internal.{AbiCheck, JsRawSegment, KoffiFacade, KoffiFn, NativeFacade, NativeLoader, StructAbiCheck}
               |""".stripMargin
         )
     end emitHeader
@@ -787,8 +787,11 @@ object JsEmitter extends EmitterBase.Ops with PlatformTypes:
                 sb ++= s"    private val $pname: scala.scalajs.js.Any = $expr\n"
             }
         }
-        sb ++= s"""    private val facade = KoffiFacade.load(\n"""
-        sb ++= s"""        NativeLoader.jsResolve("${spec.library}"),\n"""
+        // The library ID, not a resolved path: a browser has no path to resolve, and asking NativeLoader for one
+        // there throws before the facade is built, since the first thing it reads is `process`. NativeFacade picks
+        // the transport and resolves only if that transport needs a file.
+        sb ++= s"""    private val facade = NativeFacade.load(\n"""
+        sb ++= s"""        "${spec.library}",\n"""
         sb ++= "        Seq(\n"
         val fnLines = spec.methods.zipWithIndex.map { case (m, i) =>
             val last = i == spec.methods.size - 1

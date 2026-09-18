@@ -31,7 +31,9 @@ class PostgresDialectGroupedViewRenderTest extends Test:
     "leaf 3, groupBy.select.orderBy.limit renders ORDER BY DESC + LIMIT" in {
         val q = people.groupBy(_.p.deptId).select(view => view.deptId).orderBy(view => view.deptId.desc).limit(10)
         val r = q.render(PostgresDialect)
-        assert(r.onlySql.get == """SELECT "p"."deptId" FROM "person" "p" GROUP BY "p"."deptId" ORDER BY "p"."deptId" DESC LIMIT 10""")
+        assert(
+            r.onlySql.get == """SELECT "p"."deptId" FROM "person" "p" GROUP BY "p"."deptId" ORDER BY "p"."deptId" DESC NULLS FIRST LIMIT 10"""
+        )
     }
 
     "leaf 4, groupBy.select(view.age.sum) renders SELECT SUM" in {

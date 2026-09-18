@@ -11,9 +11,10 @@ import kyo.kernel.*
 /** A typed effect representing first-class conversations with a large language model.
   *
   * `LLM` is a custom `ArrowEffect` whose ops carry data and read/append per-instance conversation histories
-  * held in one threaded `State`; a program typed `< LLM` has no `Async` in its row. The one op that reaches
-  * the world is `Gen`, whose handler runs the eval loop: that is where `Async` and `Abort[AIGenException]`
-  * enter, riding out on `run`'s residual. `AI` identifies one conversation slot.
+  * held in one threaded `State`; a program typed `< LLM` has no `Async` in its row. The ops that reach the
+  * world are `Gen`, whose handler runs the eval loop, and `Decide`, whose handler runs the decision glue:
+  * that is where `Async` and `Abort[AIGenException]` enter, riding out on `run`'s residual. `AI` identifies
+  * one conversation slot.
   *
   * @see
   *   [[kyo.ai.Context]] for the conversation history
@@ -22,6 +23,8 @@ import kyo.kernel.*
   * @see
   *   [[kyo.Tool]], [[kyo.Thought]], [[kyo.Prompt]], [[kyo.Mode]], [[kyo.Observe]] for the composable
   *   generation surface
+  * @see
+  *   [[kyo.Decider]] for typed decisions over the same effect
   */
 sealed trait LLM extends ArrowEffect[LLM.internal.Op, Id]
 
@@ -66,6 +69,7 @@ object LLM:
             case o: Op.Add        => Present(o.target)
             case o: Op.Set        => Present(o.target)
             case o: Op.Gen[?]     => Present(o.target)
+            case o: Op.Decide[?]  => Present(o.target)
             case o: Op.Stream[?]  => Present(o.target)
             case o: Op.Discard    => Present(o.target)
             case o: Op.GetSession => Present(o.target)
@@ -122,6 +126,12 @@ object LLM:
                             // threads the updated state back; Async & Abort enter here and ride out on run's
                             // residual.
                             runWith(state)(genLoop(op.target, op.schema))((s, c) => (s, c))
+                                .map((s, c) => Loop.continue(s, c))
+                        case op: Op.Decide[C] @unchecked =>
+                            // A decision is itself an LLM computation (reads config, may generate on the
+                            // completion backend, records on the instance), so a nested runWith discharges
+                            // its ops and threads the state back; Async & Abort enter here as for Gen.
+                            runWith(state)(Decider.internal.decide(op.target, op.plan, op.record))((s, c) => (s, c))
                                 .map((s, c) => Loop.continue(s, c))
                         case op: Op.Stream[C] @unchecked =>
                             // The SSE projection is itself an LLM computation (reads config, assembles the
@@ -197,7 +207,7 @@ object LLM:
         given Schema[A] = schema
         AI.config.map { config =>
             if config.provider.usesApiKey && config.apiKey.isEmpty then
-                Abort.fail[AIGenException](AIMissingApiKeyException(config.modelName))
+                Abort.fail[AIGenException](AIMissingApiKeyException(config.modelName, config.provider.keyName))
             else
                 // The result_tool rides every request: its definition plus prompt go into the request body
                 // via enrichedContext.
@@ -501,6 +511,9 @@ object LLM:
 
     private[kyo] def gen[A](target: AI, schema: Schema[A])(using Frame): A < LLM = suspend(Op.Gen[A](target, schema))
 
+    private[kyo] def decide[R](target: AI, plan: Decider.internal.Plan[R], record: Boolean)(using Frame): R < LLM =
+        suspend(Op.Decide(target, plan, record))
+
     private[kyo] def stream[A](target: AI, schema: Schema[A])(using
         Frame,
         Tag[Emit[Chunk[A]]]
@@ -683,11 +696,13 @@ object LLM:
                                         // sees it, so the clause names AITransientException alone: transport
                                         // blips, transient outages, and throttles retry; auth failures,
                                         // timeouts, and rejected requests surface without retry. Command
-                                        // harnesses classify into the same leaves.
+                                        // harnesses classify into the same leaves. A throttle's Retry-After
+                                        // is waited out, under the deadline, before the schedule's backoff.
                                         Abort.recover[HttpException](e =>
                                             Abort.fail(Completion.classifyHttp(config, e))
                                         )(_),
                                         config.meter.run,
+                                        Completion.awaitRetryAfter(config.timeout)(_),
                                         Retry[AITransientException](config.retrySchedule)(_)
                                     )
                             }.map {
@@ -814,12 +829,13 @@ object LLM:
           */
         abstract class Op[A]
         object Op:
-            case class Read(target: AI)                      extends Op[Context]
-            case class Add(target: AI, message: Message)     extends Op[Unit]
-            case class Set(target: AI, context: Context)     extends Op[Unit]
-            case object Init                                 extends Op[AI]
-            case object Env                                  extends Op[AIEnv]
-            case class Gen[A](target: AI, schema: Schema[A]) extends Op[A]
+            case class Read(target: AI)                                                       extends Op[Context]
+            case class Add(target: AI, message: Message)                                      extends Op[Unit]
+            case class Set(target: AI, context: Context)                                      extends Op[Unit]
+            case object Init                                                                  extends Op[AI]
+            case object Env                                                                   extends Op[AIEnv]
+            case class Gen[A](target: AI, schema: Schema[A])                                  extends Op[A]
+            case class Decide[R](target: AI, plan: Decider.internal.Plan[R], record: Boolean) extends Op[R]
             case class Stream[A](target: AI, schema: Schema[A], emitTag: Tag[Emit[Chunk[A]]])
                 extends Op[kyo.Stream[A, LLM & Async & Scope & Abort[AIStreamException]]]
             case class SetEnv(env: AIEnv)                         extends Op[AIEnv]

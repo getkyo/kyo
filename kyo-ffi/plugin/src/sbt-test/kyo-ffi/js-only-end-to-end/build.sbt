@@ -2,7 +2,7 @@ import org.scalajs.sbtplugin.ScalaJSPlugin
 import org.scalajs.sbtplugin.ScalaJSPlugin.autoImport._
 import org.scalajs.linker.interface.ModuleKind
 
-ThisBuild / scalaVersion := "3.8.3"
+ThisBuild / scalaVersion := sys.props("kyo.scalaVersion")
 ThisBuild / version      := "0.1.0-SNAPSHOT"
 
 // JS-only end-to-end: Scala.js project + koffi-loaded native lib.

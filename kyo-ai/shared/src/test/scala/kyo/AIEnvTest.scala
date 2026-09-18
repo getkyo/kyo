@@ -15,6 +15,10 @@ class AIEnvTest extends kyo.test.Test[Any]:
         assert(base.mapConfig(_.temperature(0.1)).config.get.temperature == Present(0.1))
     }
 
+    "mapConfig leaves an absent config absent: an instance without an override keeps inheriting" in {
+        assert(AIEnv.empty.mapConfig(_.temperature(0.1)).config.isEmpty)
+    }
+
     "prompt replaces the scope prompt wholesale" in {
         val env = base.prompt(Prompt.init("only-this"))
         LLM.run(env.prompt.prompts).map(ps => assert(ps.toList == List("only-this"), s"prompts: $ps"))

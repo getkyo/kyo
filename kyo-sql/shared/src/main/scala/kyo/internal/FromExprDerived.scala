@@ -532,9 +532,22 @@ object FromExprDerived:
                     case TypeApply(sel @ Select(_, name), _) if name.startsWith("copy$default$") =>
                         transformTerm(sel)(owner)
                     case sel @ Select(receiver, name) if name.startsWith("copy$default$") =>
+                        // Only where `copy` is the COMPILER'S, the same condition `asConstruction` puts on recognising
+                        // a copy at all. N indexes the parameter list of the `copy` the default belongs to, and only
+                        // the synthetic one has the case fields in declaration order; a user-declared `copy` suppresses
+                        // it, so rewriting there would fold a neighbouring field to the wrong constant. Declining
+                        // leaves the term unrewritten, dropping the statement to the (correct) dynamic path.
+                        val cls =
+                            try transformTerm(receiver)(owner).tpe.widen.typeSymbol
+                            catch case _: Throwable => Symbol.noSymbol
+                        val copyIsCompilers =
+                            try cls != Symbol.noSymbol && cls.declaredMethod("copy").exists(isSynthetic)
+                            catch case _: Throwable => false
                         val fields =
-                            try transformTerm(receiver)(owner).tpe.widen.typeSymbol.caseFields
-                            catch case _: Throwable => Nil
+                            if !copyIsCompilers then Nil
+                            else
+                                try cls.caseFields
+                                catch case _: Throwable => Nil
                         val index =
                             try name.stripPrefix("copy$default$").toInt - 1
                             catch case _: Throwable => -1

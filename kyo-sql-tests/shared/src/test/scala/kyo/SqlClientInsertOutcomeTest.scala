@@ -46,23 +46,20 @@ class SqlClientInsertOutcomeTest extends SqlBackendTest:
         end for
     }
 
-    // ── A batch insert, where the two engines report opposite ends of the range ──
+    // ── A batch insert reports the first key, on every engine ───────────────────
 
-    "a batch INSERT's generatedKey is the id its wire protocol reports" - forEachBackend() { (backend, client, _) =>
-        // The two engines disagree here by protocol, not by choice. An engine with RETURNING returns one row per
-        // inserted row, so a 3-row insert produces three keys and the outcome carries the LAST. An engine without it
-        // reads last_insert_id off the OK packet, which is the FIRST id of a multi-row insert. A caller that assumed
-        // one answer would be off by (rowCount - 1) on the other. The auto-increment key spelling also differs by
-        // engine, so the DDL fragment comes from the descriptor's `autoIncrementPrimaryKey` rather than a literal;
-        // `supportsReturning` selects only which end of the range the outcome reports.
+    "a batch INSERT's generatedKey is the first id it generated" - forEachBackend() { (backend, client, _) =>
+        // The protocol difference is real and constrains the answer in ONE direction only. RETURNING yields one row
+        // per inserted row, so every key is available; an OK packet carries a single field defined as the first row's
+        // id and cannot recover the rest. The engine that has every key can report the first, and the engine that has
+        // only the first cannot report the last, so the first is the only value both can answer with. Reporting the
+        // last on one engine leaves a caller off by (rowCount - 1) depending on which engine ran.
         //
         // `.overriding(_.id := Sql.default)` is required rather than decoration: `values(row)` sends every column, and
         // an engine that accepts an explicit value in an identity column without advancing its sequence would
         // otherwise report the ids supplied here.
-        val autoIncPk = backend.autoIncrementPrimaryKey
-        val expectedKey =
-            if client.dialect.supportsReturning then SqlClient.InsertOutcome.GeneratedKey.Value(3L)
-            else SqlClient.InsertOutcome.GeneratedKey.Value(1L)
+        val autoIncPk   = backend.autoIncrementPrimaryKey
+        val expectedKey = SqlClient.InsertOutcome.GeneratedKey.Value(1L)
         for
             _ <- client.executeRaw(s"CREATE TABLE account (id $autoIncPk, name VARCHAR(255) NOT NULL)")
             result <- Sql
@@ -75,7 +72,7 @@ class SqlClientInsertOutcomeTest extends SqlBackendTest:
             assert(result.affectedRows == 3L, s"expected three inserted rows, got ${result.affectedRows}")
             assert(
                 result.generatedKey == expectedKey,
-                s"the batch's generatedKey must be the end its wire protocol reports, got ${result.generatedKey}"
+                s"${backend.label}: the batch's generatedKey must be the first id it generated, got ${result.generatedKey}"
             )
             assert(ids == Chunk(1L, 2L, 3L), s"a fresh table must generate ids 1, 2, 3 for the three rows, got $ids")
         end for

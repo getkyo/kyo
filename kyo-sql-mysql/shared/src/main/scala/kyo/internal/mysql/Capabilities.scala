@@ -25,6 +25,11 @@ object Capabilities:
     /** Database (schema name) can be specified on connect in Handshake Response Packet. */
     val CLIENT_CONNECT_WITH_DB: Long = 1L << 3
 
+    /** Report rows MATCHED rather than CHANGED. Without it an update that found its target and altered nothing reports zero, which a caller
+      * reads as "no such row" and the other flavor reports as one.
+      */
+    val CLIENT_FOUND_ROWS: Long = 1L << 1
+
     /** Can use LOAD DATA LOCAL. */
     val CLIENT_LOCAL_FILES: Long = 1L << 7
 
@@ -60,12 +65,14 @@ object Capabilities:
 
     /** The default capability flags that kyo-sql negotiates.
       *
-      * Includes protocol 4.1, transactions, plugin auth, CLIENT_DEPRECATE_EOF (which replaces EOF packets with OK everywhere), and
+      * Includes protocol 4.1, transactions, plugin auth, CLIENT_DEPRECATE_EOF (which replaces EOF packets with OK everywhere),
       * CLIENT_LOCAL_FILES (required so the server sends a 0xFB LOCAL_INFILE_REQUEST packet for LOAD DATA LOCAL INFILE statements instead of
-      * rejecting them outright).
+      * rejecting them outright), and CLIENT_FOUND_ROWS (so a write reports the rows it MATCHED, which is what the other flavor reports and
+      * what a caller reading the count is entitled to assume).
       */
     val Default: Long =
         CLIENT_LONG_PASSWORD |
+            CLIENT_FOUND_ROWS |
             CLIENT_LONG_FLAG |
             CLIENT_CONNECT_WITH_DB |
             CLIENT_PROTOCOL_41 |

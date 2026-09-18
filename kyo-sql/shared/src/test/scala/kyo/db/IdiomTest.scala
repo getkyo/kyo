@@ -430,10 +430,19 @@ class IdiomTest extends Test:
     }
 
     "order by renders the direction keyword and the standard null placements" in {
+        // A bare `.asc` renders its placement rather than omitting it. This assertion used to read
+        // `!asc.contains("NULLS")`, pinning the opposite: an omitted placement left the ordering to the engine,
+        // and the engines disagree, so one written query answered `1, 2, NULL` on one and `NULL, 1, 2` on another.
+        // An absent value now sorts as the largest, which is last ascending and first descending.
         val asc = sqlText(stub, Sql.from[Person]("p").orderBy(c => c.p.age.asc))
         assert(asc.contains("ORDER BY"))
         assert(asc.contains("ASC"))
-        assert(!asc.contains("NULLS"))
+        assert(asc.contains("NULLS LAST"))
+        val desc = sqlText(stub, Sql.from[Person]("p").orderBy(c => c.p.age.desc))
+        assert(desc.contains("DESC"))
+        assert(desc.contains("NULLS FIRST"))
+        // An explicitly named placement still renders exactly what it names, including the one that
+        // contradicts the resolved default.
         val descLast = sqlText(stub, Sql.from[Person]("p").orderBy(c => c.p.age.descAbsentLast))
         assert(descLast.contains("DESC"))
         assert(descLast.contains("NULLS LAST"))

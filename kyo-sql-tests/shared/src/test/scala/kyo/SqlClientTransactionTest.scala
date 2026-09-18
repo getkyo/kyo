@@ -10,6 +10,14 @@ import scala.compiletime.testing.typeChecks
   * One file rather than three. The isolation levels, the typed-error effect row, and the commit-or-roll-back behavior are three aspects of
   * the same method, and splitting them left two files of thirty-odd lines each whose relationship to this one had to be explained.
   * Savepoints are the exception and live in [[SqlClientNestedTransactionTest]], because nesting has five scenarios of its own.
+  *
+  * **What is left here is deliberately NOT cross-engine.** The type-level leaves (the level enum's shape, the effect row a body's own error
+  * travels on) are facts about the API and need no server. The behavioral leaves that remain are depth against ONE engine, on that engine's
+  * own introspection: a pid read back to prove which session a statement ran on.
+  *
+  * The cross-engine properties are asserted once per registered backend elsewhere: the four isolation levels and the read-only refusal in
+  * [[SqlIsolationConformanceTest]], what survives a failure inside a transaction in [[SqlTransactionSemanticsConformanceTest]], and what
+  * isolation MEANS under contention in [[SqlIsolationAnomalyConformanceTest]].
   */
 class SqlClientTransactionTest extends SqlContainerTest:
 
@@ -19,9 +27,6 @@ class SqlClientTransactionTest extends SqlContainerTest:
 
     private def pgUrl(ctx: SqlSharedContainers.SchemaCtx): String =
         s"postgres://${ctx.username}:${ctx.password}@${ctx.host}:${ctx.port}/${ctx.database}"
-
-    private def myUrl(ctx: SqlSharedContainers.SchemaCtx): String =
-        s"mysql://${ctx.username}:${ctx.password}@${ctx.host}:${ctx.port}/${ctx.database}"
 
     private def text(row: SqlRow): String =
         row.column(0) match
@@ -253,59 +258,19 @@ def probe(using Frame): Int < (Async & Abort[SqlException | Domain] & DB) =
         }
     }
 
-    "the isolation level a transaction names is the one the PG server reports inside it" in {
-        Scope.run {
-            SqlSharedContainers.withFreshSchema(Backend.Postgres) { ctx =>
-                SqlClient.init(pgUrl(ctx)).flatMap { client =>
-                    DB.run(client) {
-                        client.transaction(Present(SqlClient.IsolationLevel.RepeatableRead), readOnly = false) {
-                            client.query("SHOW transaction_isolation")
-                        }.map { rows =>
-                            assert(rows.size == 1)
-                            assert(
-                                text(rows(0)) == "repeatable read",
-                                s"expected the server to report repeatable read, got '${text(rows(0))}'"
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    "a readOnly transaction on MySQL refuses a write" in {
-        Scope.run {
-            SqlSharedContainers.withFreshSchema(Backend.MySQL) { ctx =>
-                MysqlClient.init(myUrl(ctx)).flatMap { client =>
-                    DB.run(client) {
-                        client.executeRaw("CREATE TABLE note (body VARCHAR(32) NOT NULL)").andThen {
-                            Abort.run[SqlException](
-                                client.transaction(Maybe.Absent, readOnly = true) {
-                                    client.executeRaw("INSERT INTO note VALUES ('nope')")
-                                }
-                            ).flatMap { outcome =>
-                                client.query("SELECT count(*) FROM note").flatMap { rows =>
-                                    rows(0).decode[Long](0).map { count =>
-                                        assert(count == 0L, s"a read-only transaction must write nothing, count was $count")
-                                        outcome match
-                                            case Result.Failure(e: SqlServerException) =>
-                                                assert(
-                                                    e.serverMessage.toLowerCase.contains("read only") ||
-                                                        e.serverMessage.toLowerCase.contains("read-only"),
-                                                    s"expected the server to name the read-only transaction, got '${e.serverMessage}'"
-                                                )
-                                            case other =>
-                                                fail(s"expected the write to be refused, got $other")
-                                        end match
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
+    // Two single-engine leaves stood here and are gone because the battery now covers them on BOTH engines, which is
+    // strictly more than either stated:
+    //
+    //   - "the isolation level a transaction names is the one the PG server reports inside it" asserted one level on
+    //     one engine through that engine's own introspection SQL. SqlIsolationConformanceTest asserts all four levels
+    //     on every backend, through the descriptor's introspection hook, against an expectation owned by the suite
+    //     rather than read from the production mapping.
+    //   - "a readOnly transaction on MySQL refuses a write" asserted the refusal, that nothing was written, and that
+    //     the server named the reason, on one engine. The battery's readOnly leaf asserts those same three things on
+    //     every backend.
+    //
+    // Removed rather than kept beside the battery: a per-engine copy of a property the battery states adds no coverage
+    // and is one more place a divergence can be written down as inevitable.
 
     // --- A child fiber inherits the transaction, so its statements join it ---
 
@@ -362,53 +327,8 @@ def probe(using Frame): Int < (Async & Abort[SqlException | Domain] & DB) =
         }
     }
 
-    // --- Concurrent statements inside a body serialise on the session mutex ---
-
-    /** Forks `count` inserts inside one transaction with NO await between the starts, so all of them race onto the
-      * pinned session at once. Without the session mutex the protocol frames of different statements interleave on
-      * one socket: on PostgreSQL a reader consumes another statement's messages and fails to decode, and on MySQL the
-      * session has no barrier to resynchronise against at all. With it they queue, every insert lands, and the commit
-      * is atomic. The count read back OUTSIDE the transaction is what proves the commit carried all of them.
-      */
-    private def forkedInsertsCommit(url: String, count: Int)(using
-        Frame,
-        kyo.test.AssertScope
-    ): Unit < (Async & Scope & Abort[SqlException]) =
-        SqlClient.init(url).flatMap { client =>
-            DB.run(client) {
-                client.executeRaw("CREATE TABLE tx_fork (id INT PRIMARY KEY)").andThen {
-                    client.transaction {
-                        Kyo.foreach(1 to count)(i =>
-                            Fiber.initUnscoped(client.execute(sql"INSERT INTO tx_fork VALUES ($i)"))
-                        ).flatMap { fibers =>
-                            Kyo.foreach(fibers)(_.get).unit
-                        }
-                    }.andThen {
-                        client.query(sql"SELECT COUNT(*) FROM tx_fork").flatMap { rows =>
-                            rows(0).decode[Long](0).map { total =>
-                                assert(total == count.toLong, s"all $count forked inserts must commit, found $total rows")
-                                ()
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-    "statements forked without an await inside a transaction body all commit on PostgreSQL" in {
-        Scope.run {
-            SqlSharedContainers.withFreshSchema(Backend.Postgres) { ctx =>
-                forkedInsertsCommit(pgUrl(ctx), 24).andThen(succeed)
-            }
-        }
-    }
-
-    "statements forked without an await inside a transaction body all commit on MySQL" in {
-        Scope.run {
-            SqlSharedContainers.withFreshSchema(Backend.MySQL) { ctx =>
-                forkedInsertsCommit(myUrl(ctx), 24).andThen(succeed)
-            }
-        }
-    }
+    // The forked-statements pair that used to close this file, one leaf per engine over a shared body, is now a single
+    // leaf in SqlTransactionSemanticsConformanceTest: the property is identical on both engines, so a battery leaf
+    // states it once and a third backend gets it for free.
 
 end SqlClientTransactionTest

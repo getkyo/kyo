@@ -204,7 +204,7 @@ final class SqlSchemaReaderMock(
       * matches. A reader built with no column names never leaves the positional answer, which is what a single-column read and a
       * declaration-order replay both want.
       */
-    override private[kyo] def fieldIndex(index: Int, names: Chunk[String]): Int =
+    override def fieldIndex(index: Int, names: Chunk[String]): Int =
         var j = 0
         while j < names.size do
             if matches(index, names(j)) then return j

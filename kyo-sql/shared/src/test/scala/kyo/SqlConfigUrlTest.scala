@@ -5,6 +5,7 @@ import kyo.Maybe.Absent
 import kyo.Maybe.Present
 import kyo.SqlConnectionException
 import kyo.SqlConnectionUrlParseException
+import kyo.internal.network
 
 class SqlConfigUrlTest extends Test:
     "valid URL returns Result.Success" in {
@@ -13,10 +14,10 @@ class SqlConfigUrlTest extends Test:
         assert(result.isSuccess)
         val url = result.getOrElse(???)
         assert(url.address.scheme == "postgres")
-        assert(url.address.host == "localhost")
-        assert(url.address.port == 5432)
-        assert(url.address.database == "mydb")
-        assert(url.address.user == Present("alice"))
+        assert(url.address.network.host == "localhost")
+        assert(url.address.network.port == 5432)
+        assert(url.address.network.database == "mydb")
+        assert(url.address.network.user == Present("alice"))
         assert(url.password == Present("secret"))
     }
     "missing scheme returns Result.Failure with correct message" in {
@@ -43,8 +44,8 @@ class SqlConfigUrlTest extends Test:
         result match
             case Result.Success(url) =>
                 assert(url.address.scheme == "ftp", s"expected scheme 'ftp', got: ${url.address.scheme}")
-                assert(url.address.host == "host")
-                assert(url.address.database == "db")
+                assert(url.address.network.host == "host")
+                assert(url.address.network.database == "db")
             case other =>
                 fail(s"Expected Result.Success for an unclaimed scheme but got: $other")
         end match
@@ -55,7 +56,7 @@ class SqlConfigUrlTest extends Test:
         result match
             case Result.Success(url) =>
                 assert(url.address.scheme == "postgresql", s"expected scheme 'postgresql', got: ${url.address.scheme}")
-                assert(url.address.port == 5432)
+                assert(url.address.network.port == 5432)
             case other =>
                 fail(s"Expected Result.Success for the postgresql alias but got: $other")
         end match
@@ -198,17 +199,17 @@ class SqlConfigUrlTest extends Test:
 
     "a URL with no colon in the userinfo declares no password" in {
         val url = SqlConfig.Url.parse("postgres://alice@localhost:5432/mydb").getOrThrow
-        assert(url.address.user == Present("alice"))
+        assert(url.address.network.user == Present("alice"))
         assert(url.password == Absent)
     }
     "a URL with a colon and nothing after it declares an empty password" in {
         val url = SqlConfig.Url.parse("postgres://alice:@localhost:5432/mydb").getOrThrow
-        assert(url.address.user == Present("alice"))
+        assert(url.address.network.user == Present("alice"))
         assert(url.password == Present(""))
     }
     "a URL with no userinfo at all declares neither user nor password" in {
         val url = SqlConfig.Url.parse("postgres://localhost:5432/mydb").getOrThrow
-        assert(url.address.user == Absent)
+        assert(url.address.network.user == Absent)
         assert(url.password == Absent)
     }
     // The distinction the user field's `Maybe` type exists for, and the one a plain `String` cannot express: an
@@ -217,9 +218,9 @@ class SqlConfigUrlTest extends Test:
     "an @ with nothing before it declares an empty user, which is not the same as naming none" in {
         val declaredEmpty = SqlConfig.Url.parse("postgres://@localhost:5432/mydb").getOrThrow
         val named         = SqlConfig.Url.parse("postgres://localhost:5432/mydb").getOrThrow
-        assert(declaredEmpty.address.user == Present(""))
-        assert(named.address.user == Absent)
-        assert(declaredEmpty.address.user != named.address.user)
+        assert(declaredEmpty.address.network.user == Present(""))
+        assert(named.address.network.user == Absent)
+        assert(declaredEmpty.address.network.user != named.address.network.user)
         assert(declaredEmpty.password == Absent)
     }
     // The colon still governs the password inside a declared-empty userinfo, so `:secret@` names an empty
@@ -227,7 +228,7 @@ class SqlConfigUrlTest extends Test:
     // half is empty, and it has to keep the password rather than losing it to the empty-user branch.
     "a userinfo of just :password declares an empty user and a real password" in {
         val url = SqlConfig.Url.parse("postgres://:secret@localhost:5432/mydb").getOrThrow
-        assert(url.address.user == Present(""))
+        assert(url.address.network.user == Present(""))
         assert(url.password == Present("secret"))
     }
 
@@ -280,7 +281,7 @@ class SqlConfigUrlTest extends Test:
         // silently hand the server a wrong credential.
         val url = SqlConfig.Url.parse("postgres://alice:se@cret@localhost:5432/mydb").getOrThrow
         assert(url.password == Present("se@cret"), s"the whole password must survive, got: ${url.password}")
-        assert(url.address.host == "localhost", s"the host must start after the last at-sign, got: ${url.address.host}")
+        assert(url.address.network.host == "localhost", s"the host must start after the last at-sign, got: ${url.address.network.host}")
     }
 
     "toString masks unclaimed option values" in {

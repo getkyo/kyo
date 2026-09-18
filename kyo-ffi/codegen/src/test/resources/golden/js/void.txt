@@ -8,7 +8,7 @@ import scala.scalajs.js.annotation.*
 import scala.scalajs.js.typedarray.*
 import scala.scalajs.reflect.annotation.EnableReflectiveInstantiation
 import kyo.ffi.*
-import kyo.ffi.internal.{AbiCheck, JsRawSegment, KoffiFacade, KoffiFn, NativeLoader, StructAbiCheck}
+import kyo.ffi.internal.{AbiCheck, JsRawSegment, KoffiFacade, KoffiFn, NativeFacade, NativeLoader, StructAbiCheck}
 
 @EnableReflectiveInstantiation final class VoidBindingsImpl extends VoidBindings:
     import VoidBindingsImpl.*
@@ -20,8 +20,8 @@ end VoidBindingsImpl
 
 object VoidBindingsImpl:
     AbiCheck.verify(1, "kyo.example.VoidBindings")
-    private val facade = KoffiFacade.load(
-        NativeLoader.jsResolve("kyo_void"),
+    private val facade = NativeFacade.load(
+        "kyo_void",
         Seq(
             KoffiFn("noop", "noop", "void", Seq[js.Any]())
         )

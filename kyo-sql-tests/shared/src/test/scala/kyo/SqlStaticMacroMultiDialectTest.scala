@@ -1,5 +1,6 @@
 package kyo
 import kyo.Sql.*
+import kyo.db.Backend
 import kyo.db.Idiom
 
 /** Verifies what `.runStatic`'s compile-time fold does across SEVERAL dialects at once.
@@ -11,9 +12,9 @@ import kyo.db.Idiom
   * engine's spelling.
   *
   * These live here rather than beside the single-dialect scenarios in `kyo-sql-postgres` because the assertion IS about the set. A module
-  * carrying one backend sees one entry, so `perDialect.keySet == Set(postgres, mysql)` is unsatisfiable there for a reason that has nothing
-  * to do with the macro. `kyo-sql-tests` is the only module whose compile classpath carries both backends' services entries, so it is the
-  * only place the multi-dialect half of Mechanism A is observable at all.
+  * carrying one backend sees one entry, so an assertion about the SET is unsatisfiable there for a reason that has nothing to do with the
+  * macro. `kyo-sql-tests` is the only module whose compile classpath carries every backend's services entry, so it is the only place the
+  * multi-dialect half of Mechanism A is observable at all.
   *
   * The counterpart single-dialect scenarios are `kyo.SqlRunStaticTest` in `kyo-sql-postgres`; each assertion lives in the module where its
   * premise holds.
@@ -25,12 +26,18 @@ class SqlStaticMacroMultiDialectTest extends Test:
 
     case class Person(id: Long, name: String, age: Int, deptId: Long) derives SqlSchema
 
+    case class Amount(v: BigDecimal) derives SqlSchema
+
     // Mechanism A's whole point: the emitted splice covers every backend the compile classpath carries, so the
     // same call site runs against either engine without re-rendering. Both dialects ship in this build, so a
     // probe of the same statement carries both entries.
     "a static fold covers every dialect on the compile classpath" in {
         val rendered = SqlStaticProbe.render(Sql.from[Person]("p").select(c => c.p.name))
-        assert(rendered.perDialect.keySet == Set(Idiom.Id("postgres"), Idiom.Id("mysql")))
+        // The registry's own set rather than a literal pair, so this asserts that the fold covers whatever the
+        // classpath carries rather than which engines exist.
+        val onClasspath = Backend.Registry.current.factories.map(_.dialect.id).toSet
+        assert(onClasspath.sizeIs > 1, s"this module must carry more than one backend for the set to mean anything, saw $onClasspath")
+        assert(rendered.perDialect.keySet == onClasspath, s"folded ${rendered.perDialect.keySet}, classpath carries $onClasspath")
         assert(rendered.onlySql == Absent, "a multi-dialect render has no single answer")
     }
 
@@ -61,13 +68,32 @@ class SqlStaticMacroMultiDialectTest extends Test:
     // time. That reduction happens during inlining, so the spliced tree is an ordinary constructor call the lift can fold:
     // asserting the per-dialect SQL is what proves it, because a tree the macro could not fold would fall back to the
     // runtime renderer and produce no constants at all.
+    // EVERY dialect's divisor is wrapped, which is how dividing by zero comes to mean one thing on both. It is not
+    // enough to guard the engine that raises in a SELECT: the other engine raises too in a data-change statement, where
+    // its default sql_mode carries ERROR_FOR_DIVISION_BY_ZERO, and division reaches an UPDATE ... SET through the typed
+    // lane. So the guard is the baseline's and both dialects carry it.
     "a static fold lifts both divisions and gives each dialect its own operator" in {
         val quotient = SqlStaticProbe.render(Sql.from[Person]("p").select(c => c.p.age / c.p.age))
-        assert(quotient.sqlFor(Idiom.Id("postgres")).get.contains("""(CAST("p"."age" AS NUMERIC) / "p"."age")"""))
-        assert(quotient.sqlFor(Idiom.Id("mysql")).get.contains("(`p`.`age` / `p`.`age`)"))
+        assert(quotient.sqlFor(Idiom.Id("postgres")).get.contains("""(CAST("p"."age" AS NUMERIC) / NULLIF("p"."age", 0))"""))
+        assert(quotient.sqlFor(Idiom.Id("mysql")).get.contains("(`p`.`age` / NULLIF(`p`.`age`, 0))"))
         val truncated = SqlStaticProbe.render(Sql.from[Person]("p").select(c => c.p.age.divideTruncating(c.p.age)))
-        assert(truncated.sqlFor(Idiom.Id("postgres")).get.contains("""("p"."age" / "p"."age")"""))
-        assert(truncated.sqlFor(Idiom.Id("mysql")).get.contains("(`p`.`age` DIV `p`.`age`)"))
+        assert(truncated.sqlFor(Idiom.Id("postgres")).get.contains("""("p"."age" / NULLIF("p"."age", 0))"""))
+        assert(truncated.sqlFor(Idiom.Id("mysql")).get.contains("(`p`.`age` DIV NULLIF(`p`.`age`, 0))"))
+    }
+
+    /** The fractional division, a different node from the two above: `Divide` rather than `DivideIntegral`, reached by dividing a
+      * non-integral operand. Pinned per dialect because an engine whose `/` truncates on two integer operands must spell it differently.
+      */
+    "a static fold gives each dialect its own spelling of a fractional division" in {
+        val quotient = SqlStaticProbe.render(Sql.from[Amount]("a").select(c => c.a.v / c.a.v))
+        assert(
+            quotient.sqlFor(Idiom.Id("postgres")).get.contains("""("a"."v" / NULLIF("a"."v", 0))"""),
+            s"postgres rendered ${quotient.sqlFor(Idiom.Id("postgres")).get}"
+        )
+        assert(
+            quotient.sqlFor(Idiom.Id("sqlite")).get.contains("""(CAST("a"."v" AS REAL) / NULLIF("a"."v", 0))"""),
+            s"sqlite rendered ${quotient.sqlFor(Idiom.Id("sqlite")).get}"
+        )
     }
 
     "a static fold lifts the aggregate nodes, whose result type is no longer their operand's" in {
@@ -88,11 +114,27 @@ class SqlStaticMacroMultiDialectTest extends Test:
         val tally = SqlStaticProbe.render(Sql.from[Person]("p").count(_.p.age))
         assert(tally.sqlFor(Idiom.Id("postgres")).get == """SELECT COUNT("p"."age") FROM "person" "p"""")
         assert(tally.sqlFor(Idiom.Id("mysql")).get == "SELECT COUNT(`p`.`age`) FROM `person` `p`")
-        val rolledUp = SqlStaticProbe.render(
+        // Rollup is the first construct not every dialect can express, so it exercises what `.run` does when one
+        // dialect on the classpath refuses. Read through the capability rather than by name, so a new backend
+        // needs no edit here.
+        val everyDialectHasRollup = Backend.Registry.current.factories.forall(_.dialect.supportsRollup)
+        val rolledUp = SqlStaticProbe.renderOpportunistic(
             Sql.from[Person]("p").groupByRollup(c => c.p.deptId).select(v => (v.deptId, v.age.sum))
         )
-        assert(rolledUp.sqlFor(Idiom.Id("postgres")).get.contains("""GROUP BY ROLLUP ("p"."deptId")"""))
-        assert(rolledUp.sqlFor(Idiom.Id("mysql")).get.contains("GROUP BY `p`.`deptId` WITH ROLLUP"))
+        if everyDialectHasRollup then
+            // Each engine's own spelling, which is the multi-dialect property this suite exists for.
+            assert(rolledUp.get.sqlFor(Idiom.Id("postgres")).get.contains("""GROUP BY ROLLUP ("p"."deptId")"""))
+            assert(rolledUp.get.sqlFor(Idiom.Id("mysql")).get.contains("GROUP BY `p`.`deptId` WITH ROLLUP"))
+        else
+            // The fold is all-or-nothing on purpose. A PARTIAL set would be worse than none: `sqlForOrFail` reads a
+            // missing dialect as "deployed against a backend you were not compiled with", so a client whose engine
+            // lacks rollup would be told the wrong thing. Abandoning the fold sends the statement to the runtime
+            // renderer, where the connected dialect refuses it for the right reason.
+            assert(
+                rolledUp.isEmpty,
+                s"a dialect on the classpath cannot express a rollup, so nothing may fold, yet ${rolledUp.map(_.perDialect.keySet)} did"
+            )
+        end if
     }
 
     // --- Runtime binds fold. This is the design's worked example, and the acceptance test for it. ---

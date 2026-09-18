@@ -17,7 +17,7 @@ private[kyo] object DragClientJs:
       */
     def script(basePath: String): String =
         s"""// kyo drag runtime: native lifecycle + pointer/touch/keyboard sensors, collision, auto-scroll,
-           |// announcements, teardown, reconnect reset. Installed once per page; no per-element listeners.
+           |// announcements, teardown, reconnect reset. Installed once per session; no per-element listeners.
            |function installDragRuntime(post,lifecycle){
            |var ACT=6,HOLD=250,SLOP=8,EDGE=24,STEP=16;
            |var phase="Idle",ctx=null,pending=null,holdTimer=null,frame=null,closed=false;
@@ -221,7 +221,8 @@ private[kyo] object DragClientJs:
            |  if(holdTimer){clearTimeout(holdTimer);holdTimer=null;}
            |  if(ctx)finish(true);
            |  tokens={};cancelledReads={};
-           |  for(var ci=0;ci<caps.length;ci++)document.removeEventListener(caps[ci][0],caps[ci][1],true);}
+           |  for(var ci=0;ci<caps.length;ci++)document.removeEventListener(caps[ci][0],caps[ci][1],true);
+           |  window.removeEventListener("pagehide",cleanup);}
            |window.addEventListener("pagehide",cleanup);
            |if(lifecycle&&lifecycle.onClose)lifecycle.onClose(cleanup);
            |return {resolve:resolve,cleanup:cleanup,serveDropRead:serveDropRead};

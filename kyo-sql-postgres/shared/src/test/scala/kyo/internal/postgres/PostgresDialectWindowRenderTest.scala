@@ -42,7 +42,7 @@ class PostgresDialectWindowRenderTest extends Test:
         )
         assert(
             q.render(PostgresDialect).onlySql.get ==
-                """SELECT RANK() OVER (PARTITION BY "p"."deptId" ORDER BY "p"."age" ASC) FROM "person" "p""""
+                """SELECT RANK() OVER (PARTITION BY "p"."deptId" ORDER BY "p"."age" ASC NULLS LAST) FROM "person" "p""""
         )
     }
 
@@ -54,7 +54,7 @@ class PostgresDialectWindowRenderTest extends Test:
         )
         assert(
             q.render(PostgresDialect).onlySql.get ==
-                """SELECT DENSE_RANK() OVER (PARTITION BY "p"."deptId" ORDER BY "p"."name" ASC) FROM "person" "p""""
+                """SELECT DENSE_RANK() OVER (PARTITION BY "p"."deptId" ORDER BY "p"."name" ASC NULLS LAST) FROM "person" "p""""
         )
     }
 
@@ -66,7 +66,7 @@ class PostgresDialectWindowRenderTest extends Test:
         )
         assert(
             q.render(PostgresDialect).onlySql.get ==
-                """SELECT PERCENT_RANK() OVER (ORDER BY "p"."age" DESC) FROM "person" "p""""
+                """SELECT PERCENT_RANK() OVER (ORDER BY "p"."age" DESC NULLS FIRST) FROM "person" "p""""
         )
     }
 
@@ -78,7 +78,7 @@ class PostgresDialectWindowRenderTest extends Test:
         )
         assert(
             q.render(PostgresDialect).onlySql.get ==
-                """SELECT CUME_DIST() OVER (ORDER BY "p"."id" ASC) FROM "person" "p""""
+                """SELECT CUME_DIST() OVER (ORDER BY "p"."id" ASC NULLS LAST) FROM "person" "p""""
         )
     }
 
@@ -96,7 +96,7 @@ class PostgresDialectWindowRenderTest extends Test:
         )
         assert(
             q.render(PostgresDialect).onlySql.get ==
-                """SELECT SUM("p"."age") OVER (PARTITION BY "p"."deptId" ORDER BY "p"."age" ASC RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM "person" "p""""
+                """SELECT SUM("p"."age") OVER (PARTITION BY "p"."deptId" ORDER BY "p"."age" ASC NULLS LAST RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM "person" "p""""
         )
     }
 
@@ -119,7 +119,7 @@ class PostgresDialectWindowRenderTest extends Test:
         val rp = q.render(PostgresDialect)
         assert(
             rp.onlySql.get ==
-                """SELECT SUM("p"."age") OVER (PARTITION BY "p"."deptId" ORDER BY "p"."id" ASC ROWS BETWEEN $1 PRECEDING AND CURRENT ROW) FROM "person" "p""""
+                """SELECT SUM("p"."age") OVER (PARTITION BY "p"."deptId" ORDER BY "p"."id" ASC NULLS LAST ROWS BETWEEN $1 PRECEDING AND CURRENT ROW) FROM "person" "p""""
         )
         assert(rp.params.size == 1)
         rp.params.head.value match
@@ -139,7 +139,7 @@ class PostgresDialectWindowRenderTest extends Test:
         )
         assert(
             q.render(PostgresDialect).onlySql.get ==
-                """SELECT SUM("p"."age") OVER (ORDER BY "p"."id" ASC ROWS UNBOUNDED PRECEDING) FROM "person" "p""""
+                """SELECT SUM("p"."age") OVER (ORDER BY "p"."id" ASC NULLS LAST ROWS UNBOUNDED PRECEDING) FROM "person" "p""""
         )
     }
 
@@ -155,7 +155,7 @@ class PostgresDialectWindowRenderTest extends Test:
         )
         assert(
             q.render(PostgresDialect).onlySql.get ==
-                """SELECT SUM("p"."age") OVER (ORDER BY "p"."age" ASC GROUPS BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING) FROM "person" "p""""
+                """SELECT SUM("p"."age") OVER (ORDER BY "p"."age" ASC NULLS LAST GROUPS BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING) FROM "person" "p""""
         )
     }
 
@@ -167,7 +167,7 @@ class PostgresDialectWindowRenderTest extends Test:
                 .over(WindowSpec(Chunk.empty, Chunk(c.p.id.asc), Maybe.empty))
         )
         val rp = q.render(PostgresDialect)
-        assert(rp.onlySql.get == """SELECT LEAD("p"."age", $1) OVER (ORDER BY "p"."id" ASC) FROM "person" "p"""")
+        assert(rp.onlySql.get == """SELECT LEAD("p"."age", $1) OVER (ORDER BY "p"."id" ASC NULLS LAST) FROM "person" "p"""")
         assert(rp.params.size == 1)
     }
 
@@ -177,7 +177,7 @@ class PostgresDialectWindowRenderTest extends Test:
                 .over(WindowSpec(Chunk.empty, Chunk(c.p.id.asc), Maybe.empty))
         )
         val rp = q.render(PostgresDialect)
-        assert(rp.onlySql.get == """SELECT LAG("p"."age", $1) OVER (ORDER BY "p"."id" ASC) FROM "person" "p"""")
+        assert(rp.onlySql.get == """SELECT LAG("p"."age", $1) OVER (ORDER BY "p"."id" ASC NULLS LAST) FROM "person" "p"""")
         assert(rp.params.size == 1)
     }
 
@@ -188,7 +188,7 @@ class PostgresDialectWindowRenderTest extends Test:
         )
         assert(
             q.render(PostgresDialect).onlySql.get ==
-                """SELECT FIRST_VALUE("p"."name") OVER (PARTITION BY "p"."deptId" ORDER BY "p"."id" ASC) FROM "person" "p""""
+                """SELECT FIRST_VALUE("p"."name") OVER (PARTITION BY "p"."deptId" ORDER BY "p"."id" ASC NULLS LAST) FROM "person" "p""""
         )
     }
 
@@ -199,7 +199,7 @@ class PostgresDialectWindowRenderTest extends Test:
         )
         assert(
             q.render(PostgresDialect).onlySql.get ==
-                """SELECT LAST_VALUE("p"."name") OVER (PARTITION BY "p"."deptId" ORDER BY "p"."id" ASC) FROM "person" "p""""
+                """SELECT LAST_VALUE("p"."name") OVER (PARTITION BY "p"."deptId" ORDER BY "p"."id" ASC NULLS LAST) FROM "person" "p""""
         )
     }
 
@@ -211,7 +211,7 @@ class PostgresDialectWindowRenderTest extends Test:
         val rp = q.render(PostgresDialect)
         assert(
             rp.onlySql.get ==
-                """SELECT NTH_VALUE("p"."name", $1) OVER (PARTITION BY "p"."deptId" ORDER BY "p"."id" ASC) FROM "person" "p""""
+                """SELECT NTH_VALUE("p"."name", $1) OVER (PARTITION BY "p"."deptId" ORDER BY "p"."id" ASC NULLS LAST) FROM "person" "p""""
         )
         rp.params.head.value match
             case value: Int => assert(value == 3)
@@ -228,7 +228,7 @@ class PostgresDialectWindowRenderTest extends Test:
         )
         assert(
             q.render(PostgresDialect).onlySql.get ==
-                """SELECT SUM("p"."age") OVER (PARTITION BY "p"."deptId" ORDER BY "p"."age" ASC) FROM "person" "p""""
+                """SELECT SUM("p"."age") OVER (PARTITION BY "p"."deptId" ORDER BY "p"."age" ASC NULLS LAST) FROM "person" "p""""
         )
         assert(q.render(PostgresDialect).params.isEmpty)
     }
@@ -241,7 +241,7 @@ class PostgresDialectWindowRenderTest extends Test:
         )
         assert(
             q.render(PostgresDialect).onlySql.get ==
-                """SELECT MAX("p"."age") OVER (ORDER BY "p"."id" ASC) FROM "person" "p""""
+                """SELECT MAX("p"."age") OVER (ORDER BY "p"."id" ASC NULLS LAST) FROM "person" "p""""
         )
         assert(q.render(PostgresDialect).params.isEmpty)
     }
@@ -329,7 +329,7 @@ class PostgresDialectWindowRenderTest extends Test:
         )
         assert(
             q.render(PostgresDialect).onlySql.get ==
-                """SELECT RANK() OVER (PARTITION BY "p"."deptId" ORDER BY "p"."age" ASC) FROM "person" "p""""
+                """SELECT RANK() OVER (PARTITION BY "p"."deptId" ORDER BY "p"."age" ASC NULLS LAST) FROM "person" "p""""
         )
         assert(q.render(PostgresDialect).params.isEmpty)
     }

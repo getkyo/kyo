@@ -1,6 +1,7 @@
 package kyo
 import kyo.Test
 import kyo.db.Idiom
+import kyo.internal.network
 
 /** Pins which entry points install the ambient client (the [[DB]] effect) and which do not.
   *
@@ -57,8 +58,8 @@ class SqlClientAmbientTest extends SqlContainerTest:
             DB.run(pgUrl, config) {
                 DB.client.map { ambient =>
                     assert(
-                        ambient.address.port == 9999,
-                        s"DB.run(url) must install the client it opened for the URL, got port ${ambient.address.port}"
+                        ambient.address.network.port == 9999,
+                        s"DB.run(url) must install the client it opened for the URL, got port ${ambient.address.network.port}"
                     )
                 }
             }
@@ -153,8 +154,8 @@ class SqlClientAmbientTest extends SqlContainerTest:
             SqlClient.init(pgUrl, config).map(_.address)
         }).map {
             case Result.Success(address) =>
-                assert(address.host == "localhost", s"the returned client must name the URL's host, got '${address.host}'")
-                assert(address.port == 9999, s"the returned client must name the URL's port, got ${address.port}")
+                assert(address.network.host == "localhost", s"the returned client must name the URL's host, got '${address.network.host}'")
+                assert(address.network.port == 9999, s"the returned client must name the URL's port, got ${address.network.port}")
             case other => fail(s"the bare init must answer with a client, got $other")
         }
     }

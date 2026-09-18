@@ -29,7 +29,7 @@ import kyo.db.Idiom
 final private[kyo] class MysqlSqlConnection private[mysql] (
     private[kyo] val underlying: MysqlConnection,
     private val connectionId: Long,
-    private val address: SqlConfig.Address,
+    private val address: SqlConfig.Address.Network,
     private val password: Maybe[String],
     private val config: SqlConfig,
     private val options: SqlConfig.Url.Options,
@@ -49,15 +49,15 @@ final private[kyo] class MysqlSqlConnection private[mysql] (
     // --- Statements ---
 
     def extendedQuery(sql: String, params: Chunk[BoundValue[?]])(using Frame): Chunk[SqlRow] < (Async & Abort[SqlException]) =
-        tracked(underlying.extendedQuery(sql, native(params)).map(_.map(MysqlRowCodec.row)))
+        native(params).map(ps => tracked(underlying.extendedQuery(sql, ps).map(_.map(MysqlRowCodec.row))))
 
     def extendedExecute(sql: String, params: Chunk[BoundValue[?]])(using Frame): Long < (Async & Abort[SqlException]) =
-        tracked(underlying.extendedExecute(sql, native(params)))
+        native(params).map(ps => tracked(underlying.extendedExecute(sql, ps)))
 
     def extendedExecuteInsert(sql: String, params: Chunk[BoundValue[?]])(using
         Frame
     ): SqlClient.InsertOutcome < (Async & Abort[SqlException]) =
-        tracked(underlying.extendedExecuteInsert(sql, native(params)))
+        native(params).map(ps => tracked(underlying.extendedExecuteInsert(sql, ps)))
 
     def simpleQuery(sql: String)(using Frame): Chunk[SqlRow] < (Async & Abort[SqlException]) =
         tracked(underlying.simpleQuery(sql).map(_.map(MysqlRowCodec.row)))
@@ -85,21 +85,24 @@ final private[kyo] class MysqlSqlConnection private[mysql] (
         Frame
     ): Stream[SqlRow, Async & Abort[SqlException] & Scope] =
         Stream[SqlRow, Async & Abort[SqlException] & Scope](
-            trackedScoped(
-                underlying.streamQuery(
-                    sql,
-                    native(params),
-                    batchSize,
-                    cancelInFlight,
-                    Sync.Unsafe.defer(streamDrainedClean.set(true))
-                ).mapPure(MysqlRowCodec.row).emit
-            )
+            native(params).map { ps =>
+                trackedScoped(
+                    underlying.streamQuery(
+                        sql,
+                        ps,
+                        batchSize,
+                        cancelInFlight,
+                        Sync.Unsafe.defer(streamDrainedClean.set(true))
+                    ).mapPure(MysqlRowCodec.row).emit
+                )
+            }
         )
 
     def pipelined(stmts: Chunk[(String, Chunk[BoundValue[?]])])(using
         Frame
     ): Chunk[Result[SqlException, SqlClient.PipelineBuilder.Outcome]] < (Async & Abort[SqlException]) =
-        tracked(underlying.pipelined(stmts.map { case (sql, params) => (sql, native(params)) }))
+        Kyo.foreach(stmts) { case (sql, params) => native(params).map(sql -> _) }
+            .map(translated => tracked(underlying.pipelined(translated)))
 
     // --- Transactions ---
 
@@ -279,9 +282,17 @@ final private[kyo] class MysqlSqlConnection private[mysql] (
             }
         }
 
-    private def native(params: Chunk[BoundValue[?]])(using Frame): Chunk[BoundMysqlParam[?]] =
-        params.flatMap {
-            case b: BoundValue[a] => MysqlParamWriter.write(b.schema, b.value)
+    /** Encodes the bound values into wire parameters, turning a refusal from the encoder into a typed failure.
+      *
+      * The encoders refuse a value their wire form or the target column cannot carry by throwing, because the `SqlCodec.Writer` methods they
+      * implement return `Unit` and have nowhere to put an effect. Unconverted, that throw reaches the caller as a PANIC, past the handler the
+      * method's `Abort[SqlException]` row asked them to write.
+      */
+    private def native(params: Chunk[BoundValue[?]])(using Frame): Chunk[BoundMysqlParam[?]] < Abort[SqlException] =
+        Abort.catching[SqlException] {
+            params.flatMap {
+                case b: BoundValue[a] => MysqlParamWriter.write(b.schema, b.value)
+            }
         }
 
     /** Marks a request in flight for the duration of `body`. Raises the in-flight flag here; the shared settle-on-exit is
@@ -319,27 +330,36 @@ private[kyo] object MysqlSqlConnection:
             def open(address: SqlConfig.Address, password: Maybe[String], config: SqlConfig)(using
                 Frame
             ): MysqlSqlConnection < (Async & Abort[SqlException]) =
-                connect(address, password, config, options).flatMap { conn =>
-                    conn.connectionId.get.flatMap { cid =>
-                        // Unsafe: three plain flags backing the in-flight window and the stream drain's
-                        // clean-boundary record; initialised before the connection is visible to any caller.
-                        Sync.Unsafe.defer(
-                            new MysqlSqlConnection(
-                                conn,
-                                cid,
-                                address,
-                                password,
-                                config,
-                                options,
-                                AtomicBoolean.Unsafe.init(false),
-                                AtomicBoolean.Unsafe.init(false),
-                                AtomicBoolean.Unsafe.init(false)
+                // Narrowed once, here: everything beneath takes a network address, so no layer below carries a host
+                // and port that might be absent. Unreachable in practice, the registry routing by scheme.
+                SqlConfig.Address.requireNetwork(address).flatMap { address =>
+                    connect(address, password, config, options).flatMap { conn =>
+                        conn.connectionId.get.flatMap { cid =>
+                            // Unsafe: three plain flags backing the in-flight window and the stream drain's
+                            // clean-boundary record; initialised before the connection is visible to any caller.
+                            Sync.Unsafe.defer(
+                                new MysqlSqlConnection(
+                                    conn,
+                                    cid,
+                                    address,
+                                    password,
+                                    config,
+                                    options,
+                                    AtomicBoolean.Unsafe.init(false),
+                                    AtomicBoolean.Unsafe.init(false),
+                                    AtomicBoolean.Unsafe.init(false)
+                                )
                             )
-                        )
+                        }
                     }
                 }
 
-    private[mysql] def connect(address: SqlConfig.Address, password: Maybe[String], config: SqlConfig, options: SqlConfig.Url.Options)(using
+    private[mysql] def connect(
+        address: SqlConfig.Address.Network,
+        password: Maybe[String],
+        config: SqlConfig,
+        options: SqlConfig.Url.Options
+    )(using
         Frame
     ): MysqlConnection < (Async & Abort[SqlException]) =
         // The handshake response carries the user name as a mandatory field, so it is resolved before any branch below
@@ -391,7 +411,7 @@ private[kyo] object MysqlSqlConnection:
     end connect
 
     private def plainConnect(
-        address: SqlConfig.Address,
+        address: SqlConfig.Address.Network,
         user: String,
         password: Maybe[String],
         config: SqlConfig,

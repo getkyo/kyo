@@ -20,6 +20,7 @@ import kyo.SqlRow
 import kyo.SqlUnsupportedTypeOnBackendException
 import kyo.Test
 import kyo.db.Idiom
+import kyo.internal.SqlJsonArray
 import kyo.internal.mysql.types.MysqlEncoder
 
 /** Verifies that [[MysqlRowReader]] decodes raw binary wire bytes from a [[kyo.SqlRow]] into the correct Scala values.
@@ -571,7 +572,7 @@ class MysqlRowReaderTest extends Test:
     "container columns" - {
 
         // A container column is a whole-column read through the vocabulary: MySQL has no array column type, so a
-        // Chunk travels as a JSON array in a text column, which `MysqlJsonArray` formats and parses. Every leaf
+        // Chunk travels as a JSON array in a text column, which `SqlJsonArray` formats and parses. Every leaf
         // here also pins that the column is ONE column however many elements it holds, by reading a trailing
         // scalar after it.
 

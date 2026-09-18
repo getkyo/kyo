@@ -33,6 +33,14 @@ end WebsiteReadmeException
 final case class WebsiteMarkdownException(slug: String, detail: String)(using Frame)
     extends WebsiteException(s"markdown render failed for $slug: $detail")
 
+/** No linked site bundle was found: `searched` holds no `scala-*` directory with a `-opt` link containing `main.js`. Raised when
+  * `--bundle-dir` is absent, so the bundle has to be linked first (`kyo-website-bundleJS/Compile/fullLinkJS`) or its directory passed.
+  */
+final case class WebsiteBundleNotFoundException(searched: Path)(using Frame)
+    extends WebsiteException(
+        s"no linked site bundle under $searched: run `sbt kyo-website-bundleJS/Compile/fullLinkJS` or pass --bundle-dir"
+    )
+
 /** Writing a route's file failed. */
 final case class WebsiteEmitException(route: String, cause: Throwable)(using Frame)
     extends WebsiteException(s"emit failed for route $route", cause)

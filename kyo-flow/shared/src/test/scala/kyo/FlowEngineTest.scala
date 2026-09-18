@@ -9026,18 +9026,19 @@ class FlowEngineTest extends FlowEngineSupport:
             }
         }
 
-        /** A negative lease is refused.
+        /** A zero lease is refused.
           *
-          * The last of the unchecked tuning values, and the one whose consequence is least obvious: a negative lease makes every
-          * claim expire before it is written, so an execution is claimed and instantly reclaimable, by this engine or any other.
+          * The last of the unchecked tuning values, and the one whose consequence is least obvious: a zero lease makes every claim
+          * expire the moment it is written, so an execution is claimed and instantly reclaimable, by this engine or any other.
+          * [[kyo.Duration]] has no negative values, so zero is also where a caller asking for a negative lease arrives.
           */
-        "an engine configured with a negative lease is refused at init" in {
+        "an engine configured with a zero lease is refused at init" in {
             Clock.withTimeControl { _ =>
                 FlowStore.initMemory.map { store =>
                     Abort.run[Throwable] {
-                        FlowEngine.init(store, FlowEngine.Config(lease = -1.seconds, renewEvery = -2.seconds))
+                        FlowEngine.init(store, FlowEngine.Config(lease = Duration.Zero))
                     }.map { result =>
-                        assert(!result.isSuccess, "a negative lease expires before it is written and must not be accepted")
+                        assert(!result.isSuccess, "a zero lease expires the moment it is written and must not be accepted")
                     }
                 }
             }
@@ -9473,7 +9474,7 @@ class FlowEngineTest extends FlowEngineSupport:
           * `renewEvery >= lease` means the claim expires before the first renewal is ever attempted, so every renewal is refused. A
           * refused renewal interrupts the execution, so any step longer than the lease is interrupted, released, reclaimed and
           * re-run on a permanent loop that makes no progress and writes several history events per turn. It belongs to the same
-          * family of unusable tunings as zero workers, zero batch size, and negative durations.
+          * family of unusable tunings as zero workers, zero batch size, and zero durations.
           */
         "a renewal interval at least as long as the lease is refused at init" in {
             Clock.withTimeControl { _ =>
@@ -9504,7 +9505,7 @@ class FlowEngineTest extends FlowEngineSupport:
             Clock.withTimeControl { _ =>
                 FlowStore.initMemory.map { store =>
                     Abort.run[FlowInvalidConfigException] {
-                        FlowEngine.init(store, FlowEngine.Config(workerCount = 0, batchSize = 0, lease = -1.seconds))
+                        FlowEngine.init(store, FlowEngine.Config(workerCount = 0, batchSize = 0, lease = Duration.Zero))
                     }.map { result =>
                         val settings = result match
                             case Result.Failure(e) => e.problems.map(_.setting).toSet

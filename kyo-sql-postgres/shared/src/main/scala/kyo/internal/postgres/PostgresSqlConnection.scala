@@ -26,7 +26,7 @@ import kyo.net.NetTlsConfig
   */
 final private[kyo] class PostgresSqlConnection private[postgres] (
     private[kyo] val underlying: PostgresConnection,
-    private val address: SqlConfig.Address,
+    private val address: SqlConfig.Address.Network,
     // The mode travels with the settings because the reclaim's cancel opens a second socket to the same server and has
     // to make the same encryption decision this one was opened under. Given only the settings it cannot: `Absent` would
     // be indistinguishable from "nothing to negotiate with" under a mode that demands encryption.
@@ -59,15 +59,15 @@ final private[kyo] class PostgresSqlConnection private[postgres] (
     // --- Statements ---
 
     def extendedQuery(sql: String, params: Chunk[BoundValue[?]])(using Frame): Chunk[SqlRow] < (Async & Abort[SqlException]) =
-        tracked(underlying.extendedQuery(sql, native(params)))
+        native(params).map(ps => tracked(underlying.extendedQuery(sql, ps)))
 
     def extendedExecute(sql: String, params: Chunk[BoundValue[?]])(using Frame): Long < (Async & Abort[SqlException]) =
-        tracked(underlying.extendedExecute(sql, native(params)))
+        native(params).map(ps => tracked(underlying.extendedExecute(sql, ps)))
 
     def extendedExecuteInsert(sql: String, params: Chunk[BoundValue[?]])(using
         Frame
     ): SqlClient.InsertOutcome < (Async & Abort[SqlException]) =
-        tracked(underlying.extendedExecuteInsert(sql, native(params)))
+        native(params).map(ps => tracked(underlying.extendedExecuteInsert(sql, ps)))
 
     def simpleQuery(sql: String)(using Frame): Chunk[SqlRow] < (Async & Abort[SqlException]) =
         tracked(underlying.simpleQuery(sql))
@@ -79,20 +79,20 @@ final private[kyo] class PostgresSqlConnection private[postgres] (
         Frame
     ): Stream[SqlRow, Async & Abort[SqlException] & Scope] =
         Stream[SqlRow, Async & Abort[SqlException] & Scope](
-            trackedScoped(underlying.streamQuery(sql, native(params), batchSize).emit)
+            native(params).map(ps => trackedScoped(underlying.streamQuery(sql, ps, batchSize).emit))
         )
 
     def pipelined(stmts: Chunk[(String, Chunk[BoundValue[?]])])(using
         Frame
     ): Chunk[Result[SqlException, SqlClient.PipelineBuilder.Outcome]] < (Async & Abort[SqlException]) =
-        val translated = stmts.map { case (sql, params) => (sql, native(params)) }
-        // A pipeline puts one Sync barrier per statement on the wire in a single write, so an interrupted pipeline
-        // leaves as many ReadyForQuery messages queued as it had statements left. Reading forward to the next one
-        // would resynchronise to the wrong place and hand the next borrower the rest of this batch's responses, and
-        // there is no cheaper resynchronisation either: after the cancelled statement the server still runs the ones
-        // behind it, so waiting for the last barrier is waiting for the whole batch. Marked unresyncable, so the
-        // reclaim destroys the connection instead of pretending it can put it back.
-        trackedAs(resyncable = false)(underlying.pipelined(translated))
+        Kyo.foreach(stmts) { case (sql, params) => native(params).map(sql -> _) }.map { translated =>
+            // A pipeline puts one Sync barrier per statement on the wire in a single write, so an interrupted pipeline
+            // leaves as many ReadyForQuery messages queued as it had statements left. Reading forward to the next one
+            // resynchronises to the wrong place and hands the next borrower the rest of this batch's responses, and
+            // waiting for the last barrier is waiting for the whole batch, since the server still runs the statements
+            // behind the cancelled one. Marked unresyncable, so the reclaim destroys the connection.
+            trackedAs(resyncable = false)(underlying.pipelined(translated))
+        }
     end pipelined
 
     // --- Transactions ---
@@ -208,9 +208,17 @@ final private[kyo] class PostgresSqlConnection private[postgres] (
 
     // --- Lifecycle ---
 
-    private def native(params: Chunk[BoundValue[?]])(using Frame): Chunk[BoundParam[?]] =
-        params.flatMap {
-            case b: BoundValue[a] => PostgresParamWriter.write(b.schema, b.value, typeRegistry)
+    /** Encodes the bound values into wire parameters, turning a refusal from the encoder into a typed failure.
+      *
+      * The encoders refuse a value their wire form cannot carry by throwing, because the `SqlCodec.Writer` methods they implement return
+      * `Unit` and have nowhere to put an effect. Unconverted, that throw reaches the caller as a PANIC, past the handler the method's
+      * `Abort[SqlException]` row asked them to write.
+      */
+    private def native(params: Chunk[BoundValue[?]])(using Frame): Chunk[BoundParam[?]] < Abort[SqlException] =
+        Abort.catching[SqlException] {
+            params.flatMap {
+                case b: BoundValue[a] => PostgresParamWriter.write(b.schema, b.value, typeRegistry)
+            }
         }
 
     /** Marks a request in flight for the duration of `body`, resyncable, the default for a single-barrier exchange. */
@@ -270,26 +278,35 @@ private[kyo] object PostgresSqlConnection:
             def open(address: SqlConfig.Address, password: Maybe[String], config: SqlConfig)(using
                 Frame
             ): PostgresSqlConnection < (Async & Abort[SqlException]) =
-                connect(address, password, config, options).flatMap { conn =>
-                    populateTypeRegistry(PostgresConfig.of(config).typeNames, conn).flatMap { registry =>
-                        // Unsafe: two plain flags backing the in-flight window; initialised before the
-                        // connection is visible to any caller.
-                        Sync.Unsafe.defer(
-                            new PostgresSqlConnection(
-                                conn,
-                                address,
-                                config.tlsMode,
-                                config.tls,
-                                registry,
-                                AtomicBoolean.Unsafe.init(false),
-                                AtomicBoolean.Unsafe.init(true),
-                                AtomicBoolean.Unsafe.init(false)
+                // Narrowed once, here: everything beneath takes a network address, so no layer below carries a host
+                // and port that might be absent. Unreachable in practice, the registry routing by scheme.
+                SqlConfig.Address.requireNetwork(address).flatMap { address =>
+                    connect(address, password, config, options).flatMap { conn =>
+                        populateTypeRegistry(PostgresConfig.of(config).typeNames, conn).flatMap { registry =>
+                            // Unsafe: two plain flags backing the in-flight window; initialised before the
+                            // connection is visible to any caller.
+                            Sync.Unsafe.defer(
+                                new PostgresSqlConnection(
+                                    conn,
+                                    address,
+                                    config.tlsMode,
+                                    config.tls,
+                                    registry,
+                                    AtomicBoolean.Unsafe.init(false),
+                                    AtomicBoolean.Unsafe.init(true),
+                                    AtomicBoolean.Unsafe.init(false)
+                                )
                             )
-                        )
+                        }
                     }
                 }
 
-    private def connect(address: SqlConfig.Address, password: Maybe[String], config: SqlConfig, options: SqlConfig.Url.Options)(using
+    private def connect(
+        address: SqlConfig.Address.Network,
+        password: Maybe[String],
+        config: SqlConfig,
+        options: SqlConfig.Url.Options
+    )(using
         Frame
     ): PostgresConnection < (Async & Abort[SqlException]) =
         // The startup packet carries `user` as a mandatory parameter, so it is resolved before any branch below opens a
@@ -347,7 +364,7 @@ private[kyo] object PostgresSqlConnection:
     end connect
 
     private def plainConnect(
-        address: SqlConfig.Address,
+        address: SqlConfig.Address.Network,
         user: String,
         password: Maybe[String],
         config: SqlConfig,
@@ -450,7 +467,7 @@ private[kyo] object PostgresSqlConnection:
       */
     private[kyo] def notificationStream(
         pool: SqlConnectionPool[PostgresSqlConnection],
-        address: SqlConfig.Address,
+        address: SqlConfig.Address.Network,
         password: Maybe[String],
         channel: String,
         config: SqlConfig

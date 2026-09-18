@@ -17,7 +17,8 @@ set -uo pipefail
 #   2. The mtime of one .nir on the module's classpath is bumped. That is the whole trigger: Scala
 #      Native's build-skip checksum covers classpath mtimes, so the next link rebuilds, while every
 #      compilation unit's NIR is byte-identical so incremental codegen considers all of them unchanged.
-#   3. The relink succeeds and emits no missing-object diagnostics.
+#   3. The relink succeeds and emits no missing-object diagnostics. On Linux, both binaries
+#      declare a non-executable GNU_STACK segment.
 #
 # Step 3 is what regressed. When the hook deleted `<workdir>/generated` but left `package2hash`, the
 # incremental-codegen state naming those IR files, codegen skipped regenerating every unchanged unit
@@ -42,8 +43,8 @@ if [ "${1:-}" = "--self-test" ]; then
     SELFDIR=$(mktemp -d)
     trap 'rm -rf "$SELFDIR"' EXIT
 
-    WORKDIR_REL="kyo-data/native/target/scala-3.8.4/native-test"
-    CLASSES_REL="kyo-data/native/target/scala-3.8.4/classes"
+    WORKDIR_REL="kyo-data/native/target/scala-3.x/native-test"
+    CLASSES_REL="kyo-data/native/target/scala-3.x/classes"
 
     # Build a fake repo whose layout matches what the real script discovers, plus a stub sbt whose
     # behaviour per invocation is read from a scenario file. The stub emulates the build AND the
@@ -55,6 +56,29 @@ if [ "${1:-}" = "--self-test" ]; then
         : > "$SELFDIR/repo/$CLASSES_REL/kyo/Sample.nir"
         : > "$SELFDIR/repo/$WORKDIR_REL/build-checksum"
         : > "$SELFDIR/repo/calls.log"
+        echo Darwin > "$SELFDIR/repo/os"
+        echo rw > "$SELFDIR/repo/stack-mode"
+        cat > "$SELFDIR/uname" <<STUB
+#!/usr/bin/env bash
+cat "$SELFDIR/repo/os"
+STUB
+        cat > "$SELFDIR/readelf" <<STUB
+#!/usr/bin/env bash
+[ "\$1" = -lW ] && [ -f "\$2" ] || exit 2
+n=\$(( \$(cat "$SELFDIR/repo/reads" 2>/dev/null || echo 0) + 1 ))
+echo "\$n" > "$SELFDIR/repo/reads"
+mode=\$(cat "$SELFDIR/repo/stack-mode")
+case "\$mode" in
+    error) exit 3 ;;
+    missing) echo '  LOAD 0 0 0 0 0 R E 0x1000' ;;
+    rwe) echo '  GNU_STACK 0 0 0 0 0 RWE 0x10' ;;
+    rw-then-rwe)
+        if [ "\$n" = 1 ]; then flags=RW; else flags=RWE; fi
+        echo "  GNU_STACK 0 0 0 0 0 \$flags 0x10" ;;
+    rw) echo '  GNU_STACK 0 0 0 0 0 RW 0x10' ;;
+esac
+STUB
+        chmod +x "$SELFDIR/uname" "$SELFDIR/readelf"
     }
 
     # <exit-1> <exit-2> <mode>
@@ -62,6 +86,8 @@ if [ "${1:-}" = "--self-test" ]; then
     #   mode=stale      relink prints the #1821 missing-object errors
     #   mode=unpruned   links succeed but the hook leaves the work directory populated
     #   mode=skipped    relink short-circuits instead of rebuilding
+    # Generated shell variables expand when the stub runs, not while writing it.
+    # shellcheck disable=SC2016
     make_sbt_stub() {
         {
             printf '#!/usr/bin/env bash\n'
@@ -79,6 +105,7 @@ if [ "${1:-}" = "--self-test" ]; then
             printf '  echo "[error] clang: error: no such file or directory: $wd/generated/373c1303.ll.o"\n'
             printf 'fi\n'
             printf 'mkdir -p "$wd/generated"; : > "$wd/generated/373c1303.ll"; : > "$wd/build-checksum"\n'
+            printf ': > "${wd%%/native-test}/kyo-data-test"\n'
             printf 'if [ "$mode" != unpruned ]; then rm -rf "$wd/generated"; fi\n'
             printf 'exit "$code"\n'
         } > "$SELFDIR/sbt"
@@ -140,6 +167,24 @@ if [ "${1:-}" = "--self-test" ]; then
     if exit_is 2 && links_run 1; then record ok "a classpath with no .nir exits 2"
     else record no "a classpath with no .nir exits 2"; fi
 
+    # Linux must inspect the ELF stack after both real links; Darwin skips this check.
+    make_fixture; make_sbt_stub 0 0 clean; echo Linux > "$SELFDIR/repo/os"; run_harness
+    if exit_is 0 && links_run 2 && [ "$(cat "$SELFDIR/repo/reads" 2>/dev/null)" = 2 ]; then
+        record ok "Linux checks a non-executable stack after both links"
+    else record no "Linux checks a non-executable stack after both links"; fi
+
+    for mode in rwe missing error; do
+        make_fixture; make_sbt_stub 0 0 clean; echo Linux > "$SELFDIR/repo/os"
+        echo "$mode" > "$SELFDIR/repo/stack-mode"; run_harness
+        if exit_is 1 && links_run 1 && out_has "stack"; then record ok "Linux rejects stack inspection: $mode"
+        else record no "Linux rejects stack inspection: $mode"; fi
+    done
+
+    make_fixture; make_sbt_stub 0 0 clean; echo Linux > "$SELFDIR/repo/os"
+    echo rw-then-rwe > "$SELFDIR/repo/stack-mode"; run_harness
+    if exit_is 1 && links_run 2 && out_has "stack"; then record ok "Linux rejects an executable stack introduced by relinking"
+    else record no "Linux rejects an executable stack introduced by relinking"; fi
+
     # Negative control: a deliberately wrong expectation MUST flip FAIL, proving the harness is not
     # vacuous. Not counted in the scenario total.
     make_fixture; make_sbt_stub 0 0 clean; run_harness
@@ -147,7 +192,7 @@ if [ "${1:-}" = "--self-test" ]; then
 
     echo ""
     echo "Results: $PASS/$TOTAL passed, $FAIL failed"
-    [ "$FAIL" -eq 0 ] && [ "$TOTAL" -eq 7 ]
+    [ "$FAIL" -eq 0 ] && [ "$TOTAL" -eq 12 ]
     exit $?
 fi
 
@@ -202,6 +247,21 @@ assert_pruned() {
     log "$stage: work directory pruned to build-checksum"
 }
 
+assert_non_executable_stack() {
+    [ "$(uname -s)" = Linux ] || return 0
+    local stage="$1" binary headers
+    binary="$(resolve "${MODULE}-test")"
+    [ -n "$binary" ] || fail "$stage: no Native test binary to inspect for stack permissions"
+    headers=$(readelf -lW "$binary") || fail "$stage: could not inspect ELF stack permissions"
+    if ! printf '%s\n' "$headers" | awk '
+        $1 == "GNU_STACK" { count++; if ($7 != "RW") invalid = 1 }
+        END { exit (count != 1 || invalid) }
+    '; then
+        fail "$stage: ELF stack must have one non-executable GNU_STACK segment with RW permissions ($binary)"
+    fi
+    log "$stage: ELF stack is non-executable"
+}
+
 log "module $MODULE"
 
 link "first link" || fail "first link of $PROJECT/Test/nativeLink"
@@ -209,6 +269,7 @@ link "first link" || fail "first link of $PROJECT/Test/nativeLink"
 WORKDIR="$(resolve native-test)"
 [ -n "$WORKDIR" ] || fail "no native-test work directory under $MODULE/native/target/scala-*"
 assert_pruned "$WORKDIR" "first link"
+assert_non_executable_stack "first link"
 
 CLASSES="$(resolve classes)"
 [ -n "$CLASSES" ] || fail "no classes directory under $MODULE/native/target/scala-*" 2
@@ -231,5 +292,6 @@ if ! grep -q "LLVM IR files" "$LOG"; then
     fail "relink did not rebuild, so it proves nothing: the checksum invalidation stopped working"
 fi
 assert_pruned "$WORKDIR" "relink"
+assert_non_executable_stack "relink"
 
 log "PASSED: $PROJECT relinks cleanly after the CI intermediates drop"

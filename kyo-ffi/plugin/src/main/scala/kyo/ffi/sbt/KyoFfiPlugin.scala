@@ -12,7 +12,7 @@ import sbt.Keys._
   * `META-INF/native/{os}-{arch}/`.
   *
   * Platform detection: `ffiTargetPlatform` defaults to the output of
-  * [[PlatformDetect.detectFromAutoPlugins]], which inspects the enabled
+  * `PlatformDetect.detectFromAutoPlugins`, which inspects the enabled
   * auto-plugin list. Scala Native projects (via `ScalaNativePlugin`) yield
   * `Native`; Scala.js projects (via `ScalaJSPlugin`) yield `JS`; any other
   * shape falls back to `JVM`. Users inside a `crossProject` get the right
@@ -961,13 +961,13 @@ object KyoFfiPlugin extends AutoPlugin {
         // references to the system-lib symbols resolve against the `-l` flags that follow.
         ffiNativeLinkingOptions := {
             val platform = ffiTargetPlatform.value
+            val libs     = ffiLibrariesResolved.value
             if (platform != "Native") Nil
             else {
                 // Same target OS ffiCompile resolves its link libs for (the host unless
                 // ffiTargetOsArch overrides it), so the two never disagree about which per-OS libs
                 // a build needs.
                 val buildOs = CCompiler.resolveTargetOsArch(ffiTargetOsArch.value)._1
-                val libs    = ffiLibrariesResolved.value
                 libs.flatMap { lib =>
                     val libDirs = lib.libDirs.distinct
                     if (libDirs.nonEmpty)
@@ -1292,10 +1292,10 @@ object KyoFfiPlugin extends AutoPlugin {
       */
     private def ffiNativeResourceGenerator: Def.Initialize[Task[Seq[File]]] = Def.task {
         val platform = ffiTargetPlatform.value
+        val log      = streams.value.log
+        val libs     = ffiLibrariesResolved.value
         if (platform != "Native") Seq.empty[File]
         else {
-            val log     = streams.value.log
-            val libs    = ffiLibrariesResolved.value
             val destDir = (Compile / resourceManaged).value / "scala-native"
             // Headers travel with the sources: Scala Native compiles the copies in destDir, so a source
             // that includes a project-local header cannot resolve it unless the header is copied too.
@@ -1333,7 +1333,7 @@ object KyoFfiPlugin extends AutoPlugin {
       * Two audiences want different answers to "what flags does this module's bundled C need". A module built alongside this one shares its
       * filesystem, so the staged BoringSSL tree this module compiled against is a real path it can use. A module that resolves this one as a
       * published artifact does not: that path names a machine it has never seen. The packaged manifests answer the second question and these
-      * answer the first, which is why these are dropped from `packageBin` (see [[ffiPackageBinFlagsFilter]]) and never leave the build.
+      * answer the first, which is why these are dropped from `packageBin` (see `ffiPackageBinFlagsFilter`) and never leave the build.
       */
     val ffiNativeInBuildLinkFlagsDir: Seq[String]    = Seq("META-INF", "kyo-ffi", "native-link-flags-inbuild")
     val ffiNativeInBuildCompileFlagsDir: Seq[String] = Seq("META-INF", "kyo-ffi", "native-compile-flags-inbuild")
@@ -1439,7 +1439,7 @@ object KyoFfiPlugin extends AutoPlugin {
       * What survives is what names no file and needs no tree: a system `-l<name>` such as `-luring`, and bare linker options.
       *
       * The dropped flags are not lost to the build that produced them; they are written to the in-build manifests, which
-      * [[ffiPackageBinFlagsFilter]] keeps out of the jar.
+      * `ffiPackageBinFlagsFilter` keeps out of the jar.
       */
     private[sbt] def partitionPortableFlags(flags: Seq[String], vendoredLinkLibs: Set[String] = Set.empty): (Seq[String], Seq[String]) =
         flags.partition { flag =>

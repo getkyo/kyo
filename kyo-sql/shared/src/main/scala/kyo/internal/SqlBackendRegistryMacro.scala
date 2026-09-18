@@ -3,6 +3,7 @@ package kyo.internal
 import java.nio.charset.StandardCharsets
 import kyo.Chunk
 import kyo.db.Backend
+import scala.annotation.publicInBinary
 import scala.quoted.*
 import scala.util.control.NonFatal
 
@@ -15,7 +16,10 @@ import scala.util.control.NonFatal
   *
   * An empty result is not an error here: a project may summon a registry before adding a backend, and the diagnostic belongs at the point a
   * URL is actually opened, where the scheme being asked for is known.
+  *
+  * Public binary visibility supports inline callers while Scala access remains restricted to kyo.
   */
+@publicInBinary
 private[kyo] object SqlBackendRegistryMacro:
 
     private val servicesPath = "META-INF/services/kyo.db.Backend"
