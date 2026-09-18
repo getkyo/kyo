@@ -54,7 +54,13 @@ case "$osarch" in
     darwin-aarch64|darwin-x86_64) ;;
     linux-x86_64|linux-aarch64) ;;
     linux-musl-x86_64|linux-musl-aarch64) ;;
-    windows-x86_64|windows-aarch64) ;;
+    windows-x86_64|windows-aarch64)
+        echo "[kyo-sql-doltlite] DoltLite is not staged on Windows." >&2
+        echo "  The win-x64 release carries doltlite.h and libdoltlite.dll only, with no static archive" >&2
+        echo "  and no import library, and the shim links the archive rather than the DLL. The module" >&2
+        echo "  declares itself absent here (kyoSqlDoltLiteOsArchTargets), so nothing needs staging." >&2
+        exit 0
+        ;;
     *) echo "[kyo-sql-doltlite] unsupported target: $osarch" >&2; exit 1 ;;
 esac
 

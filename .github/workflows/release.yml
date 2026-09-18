@@ -285,13 +285,13 @@ jobs:
       - uses: ./.github/actions/windows-native-setup
         with:
           os-arch: windows-x86_64
-      # SQLite stages one C source that every target compiles. DoltLite stages a compiled library, and
-      # upstream publishes a win-x64 build, so this leg downloads it.
+      # SQLite only, as on the ARM leg below: it stages C source, which this toolchain compiles. DoltLite
+      # is absent on Windows by declaration (kyoSqlDoltLiteOsArchTargets), upstream publishing a DLL with
+      # no archive to link into the shim. The release guard reads that declaration and requires no
+      # DoltLite native here.
       - name: Stage vendored natives (windows-x86_64)
         shell: bash
-        run: |
-          bash kyo-sql-sqlite/scripts/build-sqlite.sh
-          bash kyo-sql-doltlite/scripts/build-doltlite.sh
+        run: bash kyo-sql-sqlite/scripts/build-sqlite.sh
       - name: Compile every module's windows-x86_64 natives
         shell: bash
         run: sbt -Dplatform=JVM ffiCompileAll

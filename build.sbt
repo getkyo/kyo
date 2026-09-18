@@ -1207,11 +1207,18 @@ lazy val `kyo-sql-sqlite` =
 // surface, and the container-driven suites sharing `internal/SqlSharedContainers`. That fixture connects to
 // both engines directly, so it can live neither in core (which must compile with no backend) nor in one engine
 // module (the other's suites could not see it). `test->test` on all three lets the suites reuse core's `Test`
-// Every platform DoltLite is built and bundled for, which is every one the build supports except
-// Windows on ARM. Upstream publishes a win-x64 library and no win-arm64 one, and builds Windows through
-// MSYS2/MinGW: that image's MinGW gcc emits x86_64, and MSVC, the only native toolchain on the ARM
-// runner, cannot drive the autoconf build (Makefile.msc carries no doltlite target at all). Declaring
-// `osTargets = Seq(...)` instead would be OS-granular and would drop the working x64 native with it.
+// Every platform DoltLite is built and bundled for, which is every one the build supports except Windows.
+//
+// `linkFlags` below links the static archive INTO the shim, so the engine travels with it. Upstream
+// publishes no archive for Windows: the win-x64 release carries `doltlite.h` and `libdoltlite.dll` and
+// nothing else, with no import library either, and there is no win-arm64 release at all. Linking the DLL
+// instead is not a substitute, for the reason recorded on `linkFlags`: the shim is extracted to a temp
+// directory the DLL is not in, so a dynamic link resolves at build time and fails at run time with
+// "Cannot open library".
+//
+// So the module declares itself absent on Windows and the engine reports that as a typed
+// `DoltLiteEngineUnavailableException`, which its suites already assume on. Per os-arch rather than
+// `osTargets`, because the list is otherwise arch-granular.
 //
 // kyo-sql-sqlite is unaffected and stays on every platform: it compiles C source, which MSVC handles.
 def kyoSqlDoltLiteOsArchTargets: Seq[String] = Seq(
@@ -1220,8 +1227,7 @@ def kyoSqlDoltLiteOsArchTargets: Seq[String] = Seq(
     "linux-aarch64",
     "linux-x86_64",
     "linux-musl-aarch64",
-    "linux-musl-x86_64",
-    "windows-x86_64"
+    "linux-musl-x86_64"
 )
 
 // The embedded VERSIONED engine: DoltLite is a SQLite fork that keeps the sqlite3_* API and replaces the storage

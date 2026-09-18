@@ -423,6 +423,6 @@ runs:
     # and upstream publishes no build for Windows on ARM. kyo-sql-doltlite declares itself absent there
     # (kyoSqlDoltLiteOsArchTargets), so this skips that one leg rather than failing it.
     - name: Prepare DoltLite
-      if: ${{ (inputs.target == 'JVM' || inputs.target == 'Native' || inputs.target == 'JS' || inputs.target == 'Wasm') && inputs.os != 'windows-arm64' }}
+      if: ${{ (inputs.target == 'JVM' || inputs.target == 'Native' || inputs.target == 'JS' || inputs.target == 'Wasm') && !startsWith(inputs.os, 'windows') }}
       shell: bash
       run: bash kyo-sql-doltlite/scripts/build-doltlite.sh
