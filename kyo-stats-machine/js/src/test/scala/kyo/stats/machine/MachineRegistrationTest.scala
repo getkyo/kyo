@@ -21,4 +21,14 @@ class MachineRegistrationTest extends kyo.test.Test[Any]:
         assert(registered.exists(_.isInstanceOf[MachineStatFactory]))
     }
 
+    // The other half of the same claim, asserted on the host it is about. The MachineStats link-check program states
+    // that a host with no machine to read gets no factory; until this row existed, nothing checked that in a browser.
+    // The export still forces the initializer here, so what is under test is the gate inside it, not whether it ran.
+    "in a page the export still fires and registers nothing".onlyBrowser in {
+        assert(MachineRegistration.init)
+        assert(!kyo.internal.Platform.isNodeLike, "this row runs in a page")
+        val registered = JSServiceLoaderRegistry.get(classOf[ExporterFactory].getName)
+        assert(!registered.exists(_.isInstanceOf[MachineStatFactory]))
+    }
+
 end MachineRegistrationTest

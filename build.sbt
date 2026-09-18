@@ -900,8 +900,9 @@ lazy val `kyo-sql` =
             `js-settings`,
             `tzdb-test-data`,
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
-            // A database connection is a socket, which a page has not, and the suites stage temp directories through
-            // node:os. No browser row.
+            // A database connection is a socket, which a page has not, so nothing links a SQL client into one. The
+            // AST, idiom and schema suites are environment-neutral and a page could run them, but a page runs the same
+            // V8 the Node row does, so they would prove nothing further there. No browser row.
             kyoBrowserRow := false
         )
         // openssl-native-settings: kyo-net's Native C shims reference TLS symbols (TLS_client_method,
@@ -927,8 +928,9 @@ lazy val `kyo-sql-postgres` =
             `js-settings`,
             `tzdb-test-data`,
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
-            // Shares kyo-sql's test fixtures, which import node:os and node:process, and connects over a socket a page
-            // has not. No browser row.
+            // Shares kyo-sql's test fixtures, which reach node:os and node:process through TestNodeBuiltins at the
+            // call rather than through an import, and connects over a socket a page has not. The wire codec suites are
+            // environment-neutral, and a page runs the same V8 the Node row does. No browser row.
             kyoBrowserRow := false
         )
         // openssl-native-settings: this module's auth/TLS sources reach kyo-net's Native C shims, so a test
@@ -948,8 +950,9 @@ lazy val `kyo-sql-mysql` =
             `js-settings`,
             `tzdb-test-data`,
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
-            // Shares kyo-sql's test fixtures, which import node:os and node:process, and connects over a socket a page
-            // has not. No browser row.
+            // Shares kyo-sql's test fixtures, which reach node:os and node:process through TestNodeBuiltins at the
+            // call rather than through an import, and connects over a socket a page has not. The wire codec suites are
+            // environment-neutral, and a page runs the same V8 the Node row does. No browser row.
             kyoBrowserRow := false
         )
         .nativeSettings(`native-settings`, `openssl-native-settings`, `tzdb-test-data`)
@@ -976,8 +979,9 @@ lazy val `kyo-sql-tests` =
         .jsSettings(
             `js-settings`,
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
-            // Shares kyo-sql's test fixtures, which import node:os and node:process, and connects over a socket a page
-            // has not. No browser row.
+            // Shares kyo-sql's test fixtures, which reach node:os and node:process through TestNodeBuiltins at the
+            // call rather than through an import, and connects over a socket a page has not. The wire codec suites are
+            // environment-neutral, and a page runs the same V8 the Node row does. No browser row.
             kyoBrowserRow := false
         )
         .nativeSettings(
@@ -1141,7 +1145,8 @@ lazy val `kyo-ffi-it` =
             ffiKoffiJsBootstrap("kyo-ffi-it-js-test"),
             // A JVM-and-JS fixture for kyo-ffi's own tests; it has no Wasm row.
             kyoWasmRow := false,
-            // Loads its bundled library through koffi, which needs a Node-like `process` global. No browser row.
+            // Loads its bundled library through koffi, which needs a Node-like `process` global. Every leaf calls into
+            // a real compiled library, so there is no environment-neutral body here for a page to run. No browser row.
             kyoBrowserRow := false
         )
 
@@ -2053,7 +2058,8 @@ lazy val `kyo-aeron` =
                 }
             }).value,
             // The Aeron media driver runs over UDP and shared-memory IPC, neither of which a page has, and the JS
-            // bindings load through koffi, which needs a Node-like `process` global. No browser row.
+            // bindings load through koffi, which needs a Node-like `process` global. The seven leaves that need no
+            // driver (exception messages, the C symbol-name list) are host-invariant. No browser row.
             kyoBrowserRow := false
         )
 
@@ -2179,7 +2185,8 @@ lazy val `kyo-jsonrpc-http` =
             `js-settings`,
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
             // Every leaf stands up an HttpServer and talks to it, and a page cannot bind a port. A page's client is
-            // fetch, which kyo-http's own browser row covers. No browser row.
+            // fetch, which kyo-http's own browser row covers. The exclusion holds because no leaf here is
+            // environment-neutral, not because most would cancel: add one and it is worth revisiting. No browser row.
             kyoBrowserRow := false
         )
 
@@ -2475,7 +2482,8 @@ lazy val `kyo-case-app` =
         .jsSettings(
             `js-settings`,
             // case-app's PlatformUtil reads `require("process")` at first use, which no page resolves, and a page has
-            // no argv to parse. No browser row.
+            // no argv to parse. 18 of the 21 leaves carry .notJs and are absent from every JS row; of the three left,
+            // two are typeCheckFailure assertions the compiler settles. No browser row.
             kyoBrowserRow := false
         )
         .nativeSettings(`native-settings`)
@@ -2598,7 +2606,9 @@ lazy val `kyo-pod` =
         .jsSettings(
             `js-settings`,
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
-            // Talks to a container daemon over its unix socket or CLI, neither of which a page has. No browser row.
+            // The *ItTest suites talk to a container daemon over its unix socket or CLI, neither of which a page has.
+            // The rest of the module (image references, config modelling, stream framing) is environment-neutral, but
+            // nothing links a container client into a page, so a row there would prove nothing. No browser row.
             kyoBrowserRow := false
         )
 
@@ -2667,8 +2677,9 @@ lazy val `kyo-browser` =
         .jsSettings(
             `js-settings`,
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
-            // Launches Chrome from the host and drives it over CDP, so it runs beside a page, never inside one.
-            // No browser row.
+            // Launches Chrome from the host and drives it over CDP, so it runs beside a page, never inside one. The
+            // selector, key, image and CDP codec suites never open one, but in a row they would run inside a Chrome
+            // this module's own sibling drives, so a failure could belong to either. No browser row.
             kyoBrowserRow := false
         )
 
