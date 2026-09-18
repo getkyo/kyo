@@ -5,7 +5,7 @@ addSbtPlugin("com.eed3si9n"       % "sbt-buildinfo"  % "0.13.2")
 // build.sbt reads git.gitHeadCommit for the scaladoc source links. sbt-ci-release
 // carried sbt-git transitively up to 1.11.2 and dropped it in 1.12.0, so the build
 // declares the plugin it actually uses rather than relying on another one's closure.
-addSbtPlugin("com.github.sbt"     % "sbt-git"        % "2.2.0")
+addSbtPlugin("com.github.sbt" % "sbt-git" % "2.2.0")
 
 // kyo-doctest-plugin: wired in-tree via project/build.sbt (same pattern as kyo-compat-plugin).
 // The plugin's source is compiled directly into the meta-build, so build.sbt

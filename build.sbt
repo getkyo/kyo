@@ -48,7 +48,7 @@ inThisBuild(List(
     organization := "io.getkyo",
     homepage     := Some(url("https://getkyo.io")),
     licenses     := List("Apache-2.0" -> url("http://www.apache.org/licenses/LICENSE-2.0")),
-    developers := List(
+    developers   := List(
         Developer(
             "fwbrasil",
             "Flavio Brasil",
@@ -732,8 +732,8 @@ lazy val `kyo-scheduler-finagle` =
                     Seq.empty
             },
             scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
-            crossScalaVersions := Seq(scala213Version, scala33Version),
-            publish / skip     := scalaVersion.value != scala213Version,
+            crossScalaVersions                   := Seq(scala213Version, scala33Version),
+            publish / skip                       := scalaVersion.value != scala213Version,
             Compile / unmanagedSourceDirectories := {
                 if (scalaVersion.value == scala213Version)
                     (Compile / unmanagedSourceDirectories).value
@@ -1071,7 +1071,7 @@ lazy val `kyo-sql-sqlite` =
             // Hand the plugin the codegen project's classpath, as kyo-aeron does, so a cold build compiles the
             // codegen first rather than falling back to a bundled resource absent on a clean checkout.
             ffiCodegenClasspath := (LocalProject("kyo-ffi-codegen") / Compile / fullClasspath).value.map(_.data),
-            ffiLibraries := {
+            ffiLibraries        := {
                 // baseDirectory is the per-platform dir for a cross-project, so the shim and the staged SQLite
                 // source are one level up. The shim is ours and lives in the repo; SQLite's own source is staged
                 // by scripts/build-sqlite.sh. Both compile into one shared library.
@@ -1322,7 +1322,7 @@ lazy val `kyo-ffi-it` =
                 val cSrcs  = (cDir ** "*.c").get
                 val outDir = target.value / "nativelib"
                 IO.createDirectory(outDir)
-                val osName = sys.props.getOrElse("os.name", "").toLowerCase
+                val osName      = sys.props.getOrElse("os.name", "").toLowerCase
                 val (ext, flag) =
                     if (osName.contains("mac")) ("dylib", "-dynamiclib")
                     else if (osName.contains("win")) ("dll", "-shared")
@@ -1354,7 +1354,7 @@ lazy val `kyo-ffi-it` =
             Test / jsEnv := {
                 val ffiOut = target.value / "ffi"
                 val osName = sys.props.getOrElse("os.name", "").toLowerCase
-                val osTag =
+                val osTag  =
                     if (osName.contains("mac")) "darwin"
                     else if (osName.contains("win")) "windows"
                     else if (osName.contains("linux"))
@@ -1366,7 +1366,7 @@ lazy val `kyo-ffi-it` =
                     else osName
                 val ext    = if (osTag == "darwin") "dylib" else if (osTag == "windows") "dll" else "so"
                 val prefix = if (osTag == "windows") "" else "lib"
-                val arch = sys.props.getOrElse("os.arch", "") match {
+                val arch   = sys.props.getOrElse("os.arch", "") match {
                     case "x86_64" | "amd64"  => "x86_64"
                     case "aarch64" | "arm64" => "aarch64"
                     case other               => other
@@ -1749,7 +1749,7 @@ lazy val `kyo-stats-machine` =
             Test / jsEnv := {
                 val ffiOut = target.value / "ffi"
                 val osName = sys.props.getOrElse("os.name", "").toLowerCase
-                val osTag =
+                val osTag  =
                     if (osName.contains("mac")) "darwin"
                     else if (osName.contains("win")) "windows"
                     else if (osName.contains("linux"))
@@ -1761,7 +1761,7 @@ lazy val `kyo-stats-machine` =
                     else osName
                 val ext    = if (osTag == "darwin") "dylib" else if (osTag == "windows") "dll" else "so"
                 val prefix = if (osTag == "windows") "" else "lib"
-                val arch = sys.props.getOrElse("os.arch", "") match {
+                val arch   = sys.props.getOrElse("os.arch", "") match {
                     case "x86_64" | "amd64"  => "x86_64"
                     case "aarch64" | "arm64" => "aarch64"
                     case other               => other
@@ -1792,7 +1792,7 @@ lazy val `kyo-stats-machine` =
             Test / jsEnv := {
                 val ffiOut = target.value / "ffi"
                 val osName = sys.props.getOrElse("os.name", "").toLowerCase
-                val osTag =
+                val osTag  =
                     if (osName.contains("mac")) "darwin"
                     else if (osName.contains("win")) "windows"
                     else if (osName.contains("linux"))
@@ -1804,7 +1804,7 @@ lazy val `kyo-stats-machine` =
                     else osName
                 val ext    = if (osTag == "darwin") "dylib" else if (osTag == "windows") "dll" else "so"
                 val prefix = if (osTag == "windows") "" else "lib"
-                val arch = sys.props.getOrElse("os.arch", "") match {
+                val arch   = sys.props.getOrElse("os.arch", "") match {
                     case "x86_64" | "amd64"  => "x86_64"
                     case "aarch64" | "arm64" => "aarch64"
                     case other               => other
@@ -1968,8 +1968,8 @@ def stripSystemOpensslForStagedBoringSsl(kyoNetBase: File)(base: NativeConfig): 
 def stagedBoringSslForceLoadLinkOpts(kyoNetBase: File): Seq[String] =
     if (!boringSslStaged(kyoNetBase)) Nil
     else {
-        val libDir = boringSslStagedDir(kyoNetBase) / "lib"
-        val isMac  = System.getProperty("os.name", "").toLowerCase.contains("mac")
+        val libDir    = boringSslStagedDir(kyoNetBase) / "lib"
+        val isMac     = System.getProperty("os.name", "").toLowerCase.contains("mac")
         val forceLoad =
             if (isMac)
                 Seq("libssl.a", "libcrypto.a").map(a => s"-Wl,-force_load,${(libDir / a).getAbsolutePath}")
@@ -2228,7 +2228,7 @@ lazy val `kyo-net` =
                                                 s"META-INF/native/*/lib$id.* artifact was produced; the build did not compile or stage it."
                                         )
                                 case "absent" => () // intentionally empty (e.g. kyonet_openssl on JVM); no native expected
-                                case other =>
+                                case other    =>
                                     sys.error(s"[kyo-net native-guard] library '$id' has unknown state '$other' in ${sf.getName}.")
                             }
                         }
@@ -2361,7 +2361,7 @@ lazy val `kyo-aeron` =
             // build compiles the codegen first. Without it ffiGenerate falls back to the plugin's
             // bundled-resource path, absent on a clean checkout, and Ffi.load fails with ImplNotFound.
             ffiCodegenClasspath := (LocalProject("kyo-ffi-codegen") / Compile / fullClasspath).value.map(_.data),
-            ffiLibraries := {
+            ffiLibraries        := {
                 // baseDirectory is the per-platform dir for a cross-project, so the shared C shim and
                 // the staged aeron archives are one level up.
                 val sharedBase  = baseDirectory.value / ".." / "shared"
@@ -2373,8 +2373,8 @@ lazy val `kyo-aeron` =
                 // runners' libuuid.a is non-PIC and cannot go into the shim's shared object. -latomic is
                 // aarch64-only, where 64-bit atomic_fetch_add lowers to an out-of-line libatomic call.
                 // macOS supplies all of them via libSystem.
-                val aeronArch = hostOsArch.split("-").lastOption.getOrElse("")
-                val isWindows = hostOsArch.startsWith("windows")
+                val aeronArch            = hostOsArch.split("-").lastOption.getOrElse("")
+                val isWindows            = hostOsArch.startsWith("windows")
                 val linuxSystemLinkFlags =
                     if (hostOsArch.startsWith("linux"))
                         Seq("-lpthread", "-lm", "-ldl", "-luuid") ++ (if (aeronArch == "aarch64") Seq("-latomic") else Nil)
@@ -2424,14 +2424,14 @@ lazy val `kyo-aeron` =
             // reason; kept here so a change there cannot silently reintroduce the port collision.
             // (The JS and Wasm blocks need no equivalent: they inherit it from `js-settings`.)
             Test / parallelExecution := false,
-            nativeConfig := {
+            nativeConfig             := {
                 val base = nativeConfig.value
                 // Scala Native compiles the C shim from a copy under scala-native/, so both the staged
                 // Aeron headers and the shim's own directory (holding kyo_aeron.h) must be on the
                 // include path. Without them kyo_aeron.c's #if __has_include(<aeronc.h>) guard is false
                 // and every function compiles out, leaving an empty .c.o and undefined symbols at link.
-                val aeronStaged = baseDirectory.value / ".." / "build" / "aeron" / "staged" / hostOsArch
-                val cSrcDir     = baseDirectory.value / ".." / "shared" / "src" / "main" / "c"
+                val aeronStaged   = baseDirectory.value / ".." / "build" / "aeron" / "staged" / hostOsArch
+                val cSrcDir       = baseDirectory.value / ".." / "shared" / "src" / "main" / "c"
                 val aeronIncludes = Seq(
                     s"-I${cSrcDir.absolutePath}",
                     s"-I${(aeronStaged / "include" / "aeron").absolutePath}",
@@ -2449,7 +2449,7 @@ lazy val `kyo-aeron` =
                 val targetDir = target.value
                 val ffiOut    = targetDir / "ffi"
                 val os        = sys.props.getOrElse("os.name", "").toLowerCase
-                val ext =
+                val ext       =
                     if (os.contains("mac")) "dylib"
                     else if (os.contains("win")) "dll"
                     else "so"
@@ -2479,7 +2479,7 @@ lazy val `kyo-aeron` =
                 val nodeMods   = targetBase / "node_modules"
                 val marker     = nodeMods / "koffi" / "package.json"
                 val koffiRange = "^2.7" // must match kyo.ffi.internal.FfiErrors.KoffiSupportedRange
-                val pjContent =
+                val pjContent  =
                     s"""{"name":"kyo-aeron-js-test","private":true,"dependencies":{"koffi":"$koffiRange"}}"""
                 val pj = targetBase / "package.json"
                 if (!pj.exists() || IO.read(pj) != pjContent) {
@@ -2506,7 +2506,7 @@ lazy val `kyo-aeron` =
                 val targetDir = target.value
                 val ffiOut    = targetDir / "ffi"
                 val os        = sys.props.getOrElse("os.name", "").toLowerCase
-                val ext =
+                val ext       =
                     if (os.contains("mac")) "dylib"
                     else if (os.contains("win")) "dll"
                     else "so"
@@ -2541,7 +2541,7 @@ lazy val `kyo-aeron` =
                 val nodeMods   = targetBase / "node_modules"
                 val marker     = nodeMods / "koffi" / "package.json"
                 val koffiRange = "^2.7" // must match kyo.ffi.internal.FfiErrors.KoffiSupportedRange
-                val pjContent =
+                val pjContent  =
                     s"""{"name":"kyo-aeron-wasm-test","private":true,"dependencies":{"koffi":"$koffiRange"}}"""
                 val pj = targetBase / "package.json"
                 if (!pj.exists() || IO.read(pj) != pjContent) {
@@ -3024,11 +3024,11 @@ lazy val `kyo-pod` =
             // for humans to forget. Brackets ensure no collision with unit-test descriptions that
             // happen to mention "podman" or "docker" as words (e.g. "docker auto-pull progress…").
             Test / testForkedParallel := true,
-            Test / testGrouping := {
+            Test / testGrouping       := {
                 val javaOptionsValue = javaOptions.value.toVector
                 val envsVarsValue    = envVars.value
                 val testSrcDirs      = (Test / unmanagedSourceDirectories).value
-                val baseFork = (envOverrides: Map[String, String]) =>
+                val baseFork         = (envOverrides: Map[String, String]) =>
                     ForkOptions(
                         javaHome = javaHome.value,
                         outputStrategy = outputStrategy.value,
@@ -3050,7 +3050,7 @@ lazy val `kyo-pod` =
                     // not mere textual mentions. A suite's scaladoc can reference `runBackends` (ContainerOrchestrationItTest
                     // points readers at ContainerItTest) while the suite itself only uses the single-fork `runBackend`; a plain
                     // `contains` check then forks that http-only suite per runtime and runs it twice against one daemon.
-                    val runtimeHelperCall = """\b(runBackendsLong|runBackends|runRuntimes)\s*[{(]""".r
+                    val runtimeHelperCall  = """\b(runBackendsLong|runBackends|runRuntimes)\s*[{(]""".r
                     val usesRuntimeMarkers = srcOpt.exists { f =>
                         runtimeHelperCall.findFirstIn(IO.read(f)).isDefined
                     }
@@ -3130,7 +3130,7 @@ lazy val `kyo-browser` =
             // a Chrome dies, and the dead-Chrome failures cascade -- the very thing the serial mode prevents.)
             Test / parallelExecution  := false,
             Test / testForkedParallel := false,
-            Test / testGrouping := {
+            Test / testGrouping       := {
                 val javaOptionsValue = (Test / javaOptions).value.toVector
                 val envsVarsValue    = envVars.value
                 (Test / definedTests).value map { test =>
@@ -3246,7 +3246,7 @@ lazy val `kyo-ui` =
             // per-suite groups so the Chrome processes don't compete. Mirrors kyo-browser's jvmSettings.
             Test / parallelExecution  := false,
             Test / testForkedParallel := false,
-            Test / testGrouping := {
+            Test / testGrouping       := {
                 val javaOptionsValue = (Test / javaOptions).value.toVector
                 val envsVarsValue    = envVars.value
                 (Test / definedTests).value map { test =>
@@ -3623,7 +3623,7 @@ lazy val `wasm-settings` = Seq(
     fork                     := false,
     bspEnabled               := false,
     Test / parallelExecution := false,
-    jsEnv := new NodeJSEnv(
+    jsEnv                    := new NodeJSEnv(
         NodeJSEnv.Config().withArgs(List(
             "--max_old_space_size=5120",
             // exnref: the WASM backend emits exnref exception-handling opcodes Node needs to load it.
@@ -3674,7 +3674,7 @@ lazy val `kyo-doctest-plugin` = (project in file("kyo-doctest/plugin"))
         // scalafmt-dynamic powers the `doctestFormat` task (rewrite-in-place of README scala
         // blocks using the repo's .scalafmt.conf). Pinned to the .scalafmt.conf version.
         libraryDependencies += "org.scalameta" %% "scalafmt-dynamic" % "3.11.5",
-        scriptedLaunchOpts := Seq(
+        scriptedLaunchOpts                     := Seq(
             "-Xmx1024M",
             "-Dplugin.version=" + version.value,
             // Path to the runner-classpath file written by scriptedDependencies below.
@@ -3956,7 +3956,7 @@ lazy val `kyo-test-sbt-publish` =
             buildInfoPackage                       := "kyo.test.sbt",
             buildInfoObject                        := "BuildInfo",
             libraryDependencies += "org.scalatest" %% "scalatest" % "3.2.20" % Test,
-            scriptedLaunchOpts := Seq(
+            scriptedLaunchOpts                     := Seq(
                 // The native sub-build links a real binary in this JVM; 1G (enough for the other
                 // three) OOMs inside nativeLink.
                 "-Xmx4G",
