@@ -34,7 +34,7 @@ class McpServerLifecycleTest extends Test:
         val closeCount = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
         JsonRpcTransport.inMemory.flatMap { (inner, _) =>
             class ClosingTransport(base: JsonRpcTransport) extends JsonRpcTransport:
-                def send(env: JsonRpcEnvelope)(using Frame): Unit < (Async & Abort[Closed]) =
+                def send(env: JsonRpcEnvelope)(using Frame): Unit < (Async & Abort[Closed | JsonRpcError]) =
                     base.send(env)
                 def incoming(using Frame): Stream[JsonRpcEnvelope, Async & Abort[Closed]] =
                     base.incoming

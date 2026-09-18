@@ -14,7 +14,7 @@ class JsonRpcHandlerBackpressureTest extends JsonRpcTest:
       * writerChannel fills behind the first in-flight send.
       */
     private class GatedTransport(inner: JsonRpcTransport, gate: Latch) extends JsonRpcTransport:
-        def send(env: JsonRpcEnvelope)(using Frame): Unit < (Async & Abort[Closed]) =
+        def send(env: JsonRpcEnvelope)(using Frame): Unit < (Async & Abort[Closed | JsonRpcError]) =
             gate.await.andThen(inner.send(env))
         def incoming(using Frame): Stream[JsonRpcEnvelope, Async & Abort[Closed]] = inner.incoming
         def close(using Frame): Unit < Async                                      = inner.close
