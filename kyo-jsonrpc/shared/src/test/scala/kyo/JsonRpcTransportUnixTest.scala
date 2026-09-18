@@ -24,6 +24,32 @@ class JsonRpcTransportUnixTest extends JsonRpcTest:
             client.outbound.safe.put(Span.fromUnsafe(payload.getBytes("UTF-8"))).andThen(Sync.defer(client.close()))
         }
 
+    // `unixDomain` binds the listener, which creates the socket file, in the step that starts the listen fiber, and
+    // registers their release only once the join returns. An interrupt landing at that join leaves both behind, and
+    // the next bind on the same path fails. The join lasts a listen round trip, so the rounds interrupt at staggered
+    // delays around it, and the check is the bind itself.
+    "an interrupt landing as the listener binds leaves no listener or socket file behind" in {
+        assumeUnixSockets()
+        Path.run(Path.tempDir("kyo-jsonrpc-uds-").map { tempDir =>
+            val sock   = Path(tempDir, "test.sock")
+            val rounds = 40
+            for
+                _ <- Loop.indexed { i =>
+                    if i >= rounds then Loop.done
+                    else
+                        Fiber.initUnscoped(Scope.run(JsonRpcTransport.unixDomain(sock).andThen(Async.never))).map { fiber =>
+                            Async.delay((i % 3).millis)(fiber.interrupt).andThen(fiber.getResult).andThen(Loop.continue)
+                        }
+                }
+                bound <- Abort.run[Throwable](Scope.run(JsonRpcTransport.unixDomain(sock).unit))
+                left  <- sock.exists
+            yield
+                assert(bound.isSuccess, s"the path is still held by a listener a round left behind: $bound")
+                assert(!left, "the socket file is still there after the last transport closed")
+            end for
+        })
+    }
+
     "unixDomain binds and accepts a connection" in {
         assumeUnixSockets()
         Path.run(Path.tempDir("kyo-jsonrpc-uds-").map { tempDir =>

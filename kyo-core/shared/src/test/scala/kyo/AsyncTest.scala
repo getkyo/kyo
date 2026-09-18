@@ -480,6 +480,33 @@ class AsyncTest extends kyo.test.Test[Any]:
         yield assert(r1 == 0 && r2 == 42)
     }
 
+    // The caller of `uninterruptible` parks on a masked promise that refuses the interrupt link, so an interrupt
+    // abandons the caller and leaves the shielded body to run to its end: the caller's own finalizers run at once,
+    // and what the body produces reaches only what the body itself completes. A value the body produces is therefore
+    // owned by a registration inside the shielded computation, never by the caller's continuation.
+    "interrupting the caller of uninterruptible runs the caller's finalizer while the shielded body completes" in {
+        for
+            start          <- Latch.init(1)
+            gate           <- Latch.init(1)
+            callerReleased <- AtomicBoolean.init(false)
+            produced       <- Promise.init[Int, Any]
+            fiber <- Fiber.initUnscoped {
+                Sync.ensure(callerReleased.set(true)) {
+                    Async.uninterruptible(start.release.andThen(gate.await).andThen(produced.complete(Result.succeed(42)).unit))
+                }
+            }
+            _ <- start.await
+            _ <- fiber.interrupt
+            _ <- fiber.getResult
+            r <- callerReleased.get
+            _ <- gate.release
+            v <- produced.get
+        yield
+            assert(r, "the caller's finalizer did not run when the caller was interrupted")
+            assert(v == 42, "the shielded body did not complete")
+        end for
+    }
+
     "boundary inference with Abort" - {
         "same failures" in {
             val v: Int < Abort[Int]                            = 1

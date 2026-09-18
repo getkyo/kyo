@@ -47,6 +47,21 @@ Severity scale:
 
 Verified and holding, with the evidence in section 2: Bracket exactly-once and re-entry refusal, the release and abandonment walk, `ensureMap`, `Stack.dump` and the owed-remainder lanes, unwinding, Isolate crossings, `Scope` (finalizer close, children, forks, closed-scope registration, #1928), `Fiber`/`IOTask` (interrupt, abandon, link-before-release, settle-after-release, uninterruptible promises), `Channel.parkedTake`, `Meter`, `Fiber.init`, `Fiber.use`, `Async.timeout`'s spawn wiring, kyo-sql's slot permit and connection custody, kyo-sql reclaim, kyo-net `ConnectionPool` ring and reaper.
 
+## Review notes
+
+Findings were re-checked against the tree and, where a deterministic leaf could be written without production changes, turned into tests; the results are recorded here.
+
+- K3 (`Sync.ensure` polls after the region's clean release): reproduced. `SyncTest`, "a caller's ensureMap after the region runs when the interrupt lands as the region ends", pending. Deterministic on every platform through the finalizer's self-interrupt.
+- C1 (`Scope.run`'s clean exit awaits its drain with the value in flight): reproduced. `ScopeInterruptTest`, "an interrupt at Scope.run's drain await does not strand the value the body produced", pending.
+- C2, `Kyo.async` instance: reproduced. `AsyncCombinatorsTest`, "interrupting the caller of async interrupts the effect it registered", pending. The `&>`, `<&` and `<&>` instances could not be written as a leaf: the extensions' isolate inference folds `Async` into the receiver's `S` for any computation whose row names `Async`, so they fail to compile against such computations; a usability defect of its own, since the orphaning only matters for computations that park.
+- C2 and C3, `mapPar`: not reproduced. `StreamCoreExtensionsTest`, "mapPar interrupted with element fibers buffered interrupts every element fiber", is green: with one element fiber joined and the rest buffered, all four are interrupted with the consumer. The window in the finding, a stop between the take and the join's link, is narrower than a leaf can land on without a seam.
+- C4 (`Async.uninterruptible`): a usage contract rather than a defect, since nothing can release an arbitrary value delivered to a masked promise. Pinned as such: `AsyncTest`, "interrupting the caller of uninterruptible runs the caller's finalizer while the shielded body completes".
+- C5: `Queue.close` does document the interrupted close (`Queue.scala:129-131`), in the same words as `Channel.close`. No gap.
+- D13, stdio half: not observable in-process, because the stdio claim is by design never released (`NioTransport.scala:172-176`: exactly one stdio per process), so a leaked claim and a correctly closed one look alike. The UDS half has a leaf, `JsonRpcTransportUnixTest`, "an interrupt landing as the listener binds leaves no listener or socket file behind".
+- D15 (PubSub): not reproduced. `PubSubTest`, "a subscriber interrupted at the subscribe reply is not left in the set", samples the window in 200 rounds and stays green; the interrupt requested as soon as the actor reports the subscriber lands after the subscriber's fiber has resumed. The finding stands by reading; a seam on the reply promise would be needed to land the interrupt inside the window.
+- D18 (`Command.spawn`): reproduced. `CommandTest`, "an interrupt landing during spawn does not orphan the process", pending: 8 of 40 rounds, interrupted at staggered delays around the fork, left a `sleep` process behind (killed by the leaf afterwards).
+- DOC1: fixed in `kyo-kernel/CONTRIBUTING.md`, rewritten to the current walk.
+
 ## 2. Kernel rules, verified against the code
 
 Each rule is stated as the docs state it, then where the code does it and which leaf pins it.

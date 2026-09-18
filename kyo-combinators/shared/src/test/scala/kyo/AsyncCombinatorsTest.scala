@@ -113,6 +113,33 @@ class AsyncCombinatorsTest extends kyo.test.Test[Any]:
                     assert(v == (1, 2))
                 )
             }
+
+        }
+
+        "async" - {
+            // `Kyo.async` spawns the effect handed to its continuation with Fiber.initUnscoped, which parents nothing,
+            // and the caller parks on a promise that fiber completes. An interrupt of the caller abandons it and
+            // nothing reaches the spawned fiber: it runs on, holding whatever it acquired, until it ends by itself.
+            "interrupting the caller of async interrupts the effect it registered".pendingUntilFixed(
+                "Kyo.async spawns the registered effect with Fiber.initUnscoped and never links it to the caller, so an interrupted caller leaves it running unowned"
+            ) in {
+                for
+                    gate     <- Latch.init(1)
+                    entered  <- Latch.init(1)
+                    released <- AtomicBoolean.init(false)
+                    fiber <- Fiber.initUnscoped {
+                        Kyo.async[Int, Nothing] { register =>
+                            Sync.defer(register(Sync.ensure(released.set(true))(entered.release.andThen(gate.await).andThen(1))))
+                        }
+                    }
+                    _ <- entered.await
+                    _ <- fiber.interrupt
+                    _ <- fiber.getResult
+                    r <- Abort.run[Timeout](Async.timeout(2.seconds)(assertEventually(released.get)))
+                    _ <- gate.release
+                yield assert(r.isSuccess, "the registered effect was orphaned: its finalizer did not run once the caller was interrupted")
+                end for
+            }
         }
         "fork" - {
             "should fork a fiber and manage its lifecycle" in {

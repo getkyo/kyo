@@ -419,4 +419,31 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
         end for
     }
 
+    // A clean Scope.run exit closes its scope and then awaits the drain on a join, with the body's value in flight.
+    // A caller that registers that value once the run returns is exposed at every clean exit: an interrupt at the
+    // await abandons the continuation, the backstop finds the scope already closed, and the value reaches nobody.
+    // The inner finalizer parks on a gate so the drain is a real join when the interrupt lands.
+    "an interrupt at Scope.run's drain await does not strand the value the body produced".pendingUntilFixed(
+        "Scope.run's clean exit awaits its drain on a join with the body's value in flight, so an interrupt there abandons the continuation and the value never reaches the caller's registration"
+    ) in {
+        for
+            gate     <- Latch.init(1)
+            draining <- Latch.init(1)
+            closes   <- AtomicInt.init(0)
+            fiber <- Fiber.initUnscoped {
+                Scope.run {
+                    Scope.run(Scope.ensure(draining.release.andThen(gate.await)).andThen(Sync.defer("handle")))
+                        .ensureMap(h => Scope.ensure(closes.incrementAndGet.unit).andThen(h))
+                }
+            }
+            _ <- draining.await
+            _ <- fiber.interrupt
+            _ <- gate.release
+            _ <- fiber.getResult
+            r <- Abort.run[Timeout](Async.timeout(2.seconds)(assertEventually(closes.get.map(_ == 1))))
+            c <- closes.get
+        yield assert(r.isSuccess && c == 1, s"the handle the inner run produced was registered by nobody: closes=$c")
+        end for
+    }
+
 end ScopeInterruptTest

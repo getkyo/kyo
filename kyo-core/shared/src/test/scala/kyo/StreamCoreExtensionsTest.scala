@@ -1327,6 +1327,32 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
             end for
         }
 
+        // The leaf above ends the consumer normally. Here the consumer fiber is interrupted while one element fiber
+        // is joined and the others sit buffered in the output channel: the joined one is reached through the join
+        // link, and the buffered ones through the handler's cleanup, so none runs on unowned.
+        "mapPar interrupted with element fibers buffered interrupts every element fiber" in {
+            for
+                started  <- Latch.init(4)
+                released <- AtomicInt.init(0)
+                gate     <- Latch.init(1)
+                source: Stream[Int, Any] =
+                    Stream(Emit.valueWith(Chunk(1))(Emit.valueWith(Chunk(2))(Emit.valueWith(Chunk(3))(Emit.value(Chunk(4))))))
+                consumer <- Fiber.initUnscoped {
+                    source.mapPar(8) { v =>
+                        Sync.ensure(released.incrementAndGet.unit):
+                            started.release.andThen(gate.await).andThen(v)
+                    }.run
+                }
+                _ <- started.await
+                _ <- consumer.interrupt
+                _ <- consumer.getResult
+                r <- Abort.run[Timeout](Async.timeout(2.seconds)(assertEventually(released.get.map(_ == 4))))
+                _ <- gate.release
+                n <- released.get
+            yield assert(r.isSuccess, s"$n of the 4 element fibers were interrupted with the consumer; the rest ran on unowned")
+            end for
+        }
+
         // The public peel confines its rest to the callback, so neither reproduction below compiles against
         // it: the fork is refused where the crossing's isolate is demanded, and the hand-off on the row. The
         // internal peel hands out an unconfined rest.

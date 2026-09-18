@@ -150,6 +150,30 @@ class PubSubTest extends kyo.test.Test[Any]:
                 n     <- topic.subscriberCount
             yield assert(n == 0)
         }
+
+        // The subscribe reply is a join: the actor has added the subscriber by the time it answers, and the
+        // unsubscribe is registered only when the subscriber's fiber resumes. An interrupt landing between the two
+        // would abandon that continuation and leave the subscriber in the set, where every later publish waits on a
+        // mailbox nobody drains. The interrupt here is requested as soon as the actor reports the subscriber, so the
+        // rounds sample that window; each round asserts the set is empty once the subscriber's fiber has settled.
+        "a subscriber interrupted at the subscribe reply is not left in the set" in {
+            val rounds = 200
+            Loop.indexed { i =>
+                if i >= rounds then Loop.done
+                else
+                    for
+                        topic <- PubSub.linearized[Int]
+                        chan  <- Channel.init[Int](4)
+                        fiber <- Fiber.initUnscoped(Scope.run(topic.subscribe(Subject.init(chan)).andThen(Async.never)))
+                        _     <- assertEventually(topic.subscriberCount.map(_ == 1))
+                        _     <- fiber.interrupt
+                        _     <- fiber.getResult
+                        n     <- topic.subscriberCount
+                    yield
+                        assert(n == 0, s"round $i: the subscriber stayed in the set after its fiber was interrupted")
+                        Loop.continue
+            }
+        }
         "publish after close fails with Closed" in {
             for
                 topic  <- PubSub.linearized[Int]

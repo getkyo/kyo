@@ -610,6 +610,42 @@ class SyncTest extends kyo.test.Test[Any]:
             }.andThen(assert(true))
         }
 
+        // The region's clean end and the caller's next step are two polls apart: the finalizer runs as the region
+        // ends, and the step that raises the recorded abort polls after it. A stop delivered while the finalizer
+        // runs, here requested by the finalizer itself, parks on that poll. A guard that hands its value on at a
+        // clean end (the shape Topic's add-deadline guards document) has closed nothing by then, and the caller's
+        // `ensureMap`, chained after the poll, never runs: the value is owned by nobody.
+        "a caller's ensureMap after the region runs when the interrupt lands as the region ends".pendingUntilFixed(
+            "Sync.ensure raises the recorded abort in a map that polls after the region's release, so a stop delivered while the finalizer runs parks between the region's end and the caller's ensureMap, and the value the region handed on is owned by nobody"
+        ) in {
+            for
+                handoff <- Promise.init[Fiber[Unit, Any], Any]
+                ended   <- AtomicBoolean.init(false)
+                owned   <- AtomicBoolean.init(false)
+                fiber <- Fiber.initUnscoped {
+                    (handoff.get.map { self =>
+                        Sync.ensure {
+                            // Unsafe: the interrupt is requested from inside the finalizer, so the stop lands on
+                            // the first poll after the region's end.
+                            Sync.Unsafe.defer {
+                                discard(self.unsafe.interrupt())
+                                ended.unsafe.set(true)
+                            }
+                        }(Sync.defer("token")).ensureMap { _ =>
+                            owned.set(true).andThen(Async.never).andThen(Kyo.unit)
+                        }
+                    }): Unit < (Sync & Async)
+                }
+                _ <- handoff.complete(Result.succeed(fiber))
+                _ <- fiber.getResult
+                e <- ended.get
+                o <- owned.get
+            yield
+                assert(e, "the finalizer did not run")
+                assert(o, "the region ended cleanly and handed its value on, and the caller's ensureMap never owned it")
+            end for
+        }
+
         // An interrupt landing as the body produces its outcome: the body interrupts its own fiber, so
         // delivery lands at the next safepoint, after the body's step and before the region completes.
         // No second thread, so it runs on every platform.

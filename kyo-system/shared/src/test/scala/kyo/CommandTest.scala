@@ -281,6 +281,35 @@ class CommandTest extends kyo.test.Test[Any]:
         }
     }
 
+    // `spawn` forks the process in one step and registers its release in the next: a stop delivered while the fork
+    // runs parks the registration, and the process is nobody's. The fork lasts milliseconds, so the rounds interrupt
+    // at staggered delays around it and the check is on the operating system's view, by a unique argv.
+    "an interrupt landing during spawn does not orphan the process".pendingUntilFixed(
+        "Command.spawn forks the process in one step and registers its release in the next, so a stop delivered during the fork parks the registration and the process outlives the scope that spawned it"
+    ).notJs.notWasm in {
+        val seconds = 300 + scala.util.Random.nextInt(1000)
+        val cmd     = Command("sleep", seconds.toString)
+        val rounds  = 40
+        def alive: Chunk[String] < (Async & Abort[CommandException]) =
+            Command("pgrep", "-f", s"^sleep $seconds$$").textWithExitCode.map((out, _) =>
+                Chunk.from(out.linesIterator.map(_.trim).filter(_.nonEmpty).toSeq)
+            )
+        for
+            _ <- Loop.indexed { i =>
+                if i >= rounds then Loop.done
+                else
+                    Fiber.initUnscoped(Scope.run(cmd.spawn.andThen(Async.never))).map { fiber =>
+                        Async.delay((i % 5).millis)(fiber.interrupt).andThen(fiber.getResult).andThen(Loop.continue)
+                    }
+            }
+            r    <- Abort.run[Timeout](Async.timeout(5.seconds)(assertEventually(alive.map(_.isEmpty))))
+            left <- alive
+            // whatever was orphaned is killed here so it does not outlive the suite
+            _ <- Kyo.foreachDiscard(left)(pid => Abort.run[CommandException](Command("kill", "-9", pid).waitFor).unit)
+        yield assert(r.isSuccess, s"${left.size} process(es) outlived the scope that spawned them: ${left.mkString(", ")}")
+        end for
+    }
+
     "spawnUnscoped returns a live process the caller owns and must close" in {
         for
             proc <- trueCmd.spawnUnscoped
