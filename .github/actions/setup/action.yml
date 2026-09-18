@@ -418,3 +418,11 @@ runs:
       # hard error for the same reason BoringSSL's is: the alternative is a build that cannot find the
       # engine and reports it as something else entirely.
       run: bash kyo-sql-sqlite/scripts/build-sqlite.sh
+
+    # DoltLite stages a compiled library rather than source, so unlike SQLite above it is per os-arch,
+    # and upstream publishes no build for Windows on ARM. kyo-sql-doltlite declares itself absent there
+    # (kyoSqlDoltLiteOsArchTargets), so this skips that one leg rather than failing it.
+    - name: Prepare DoltLite
+      if: ${{ (inputs.target == 'JVM' || inputs.target == 'Native' || inputs.target == 'JS' || inputs.target == 'Wasm') && inputs.os != 'windows-arm64' }}
+      shell: bash
+      run: bash kyo-sql-doltlite/scripts/build-doltlite.sh

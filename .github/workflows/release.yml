@@ -62,6 +62,10 @@ jobs:
           bash kyo-aeron/scripts/build-aeron.sh darwin-aarch64
           bash kyo-aeron/scripts/build-aeron.sh darwin-x86_64
           bash kyo-sql-sqlite/scripts/build-sqlite.sh
+          # Both Mac targets, like the two above it. SQLite needs one call because it stages C source
+          # that every target compiles; DoltLite stages a compiled library, so each target needs its own.
+          bash kyo-sql-doltlite/scripts/build-doltlite.sh darwin-aarch64
+          bash kyo-sql-doltlite/scripts/build-doltlite.sh darwin-x86_64
       # ONE compile for every FFI module. The plugin knows which projects declare ffiLibraries, so the
       # workflow does not enumerate them: adding an FFI module needs no edit here. Previously this job
       # carried a hand-written block per module (compile, collect, upload), which is how a module ends up
@@ -134,6 +138,7 @@ jobs:
           bash kyo-net/build/boringssl/build-boringssl.sh linux-x86_64
           bash kyo-aeron/scripts/build-aeron.sh linux-x86_64
           bash kyo-sql-sqlite/scripts/build-sqlite.sh
+          bash kyo-sql-doltlite/scripts/build-doltlite.sh
           sbt -Dplatform=JVM ffiCompileAll
           mkdir -p natives-out
           find . -path '*/target/ffi/lib*-linux-x86_64.so' -exec cp -n {} natives-out/ \;
@@ -146,13 +151,14 @@ jobs:
           # glibc dependency).
           docker run --rm -v "$PWD:/work" -w /work eclipse-temurin:25-jdk-alpine sh -c '
             set -eu
-            apk add --no-cache bash cmake go build-base git file binutils perl linux-headers liburing-dev util-linux-dev curl tar
+            apk add --no-cache bash cmake go build-base git file binutils perl linux-headers liburing-dev util-linux-dev curl tar tcl
             sbt_ver="$(sed -n "s/^sbt.version=//p" project/build.properties)"
             curl -fsSL "https://github.com/sbt/sbt/releases/download/v${sbt_ver}/sbt-${sbt_ver}.tgz" | tar -xz -C /opt
             export PATH="/opt/sbt/bin:$PATH"
             bash kyo-net/build/boringssl/build-boringssl.sh linux-musl-x86_64
             bash kyo-aeron/scripts/build-aeron.sh linux-musl-x86_64
             bash kyo-sql-sqlite/scripts/build-sqlite.sh
+            bash kyo-sql-doltlite/scripts/build-doltlite.sh
             sbt -Dplatform=JVM ffiCompileAll
             mkdir -p natives-out
             find . -path "*/target/ffi/lib*-linux-musl-x86_64.so" -exec cp -n {} natives-out/ \;
@@ -208,6 +214,7 @@ jobs:
           bash kyo-net/build/boringssl/build-boringssl.sh linux-aarch64
           bash kyo-aeron/scripts/build-aeron.sh linux-aarch64
           bash kyo-sql-sqlite/scripts/build-sqlite.sh
+          bash kyo-sql-doltlite/scripts/build-doltlite.sh
           sbt -Dplatform=JVM ffiCompileAll
           mkdir -p natives-out
           find . -path '*/target/ffi/lib*-linux-aarch64.so' -exec cp -n {} natives-out/ \;
@@ -216,13 +223,14 @@ jobs:
         run: |
           docker run --rm -v "$PWD:/work" -w /work eclipse-temurin:25-jdk-alpine sh -c '
             set -eu
-            apk add --no-cache bash cmake go build-base git file binutils perl linux-headers liburing-dev util-linux-dev curl tar
+            apk add --no-cache bash cmake go build-base git file binutils perl linux-headers liburing-dev util-linux-dev curl tar tcl
             sbt_ver="$(sed -n "s/^sbt.version=//p" project/build.properties)"
             curl -fsSL "https://github.com/sbt/sbt/releases/download/v${sbt_ver}/sbt-${sbt_ver}.tgz" | tar -xz -C /opt
             export PATH="/opt/sbt/bin:$PATH"
             bash kyo-net/build/boringssl/build-boringssl.sh linux-musl-aarch64
             bash kyo-aeron/scripts/build-aeron.sh linux-musl-aarch64
             bash kyo-sql-sqlite/scripts/build-sqlite.sh
+            bash kyo-sql-doltlite/scripts/build-doltlite.sh
             sbt -Dplatform=JVM ffiCompileAll
             mkdir -p natives-out
             find . -path "*/target/ffi/lib*-linux-musl-aarch64.so" -exec cp -n {} natives-out/ \;
@@ -277,11 +285,13 @@ jobs:
       - uses: ./.github/actions/windows-native-setup
         with:
           os-arch: windows-x86_64
-      # SQLite stages one C source, which every target compiles for itself.
+      # SQLite stages one C source that every target compiles. DoltLite stages a compiled library, and
+      # upstream publishes a win-x64 build, so this leg downloads it.
       - name: Stage vendored natives (windows-x86_64)
         shell: bash
         run: |
           bash kyo-sql-sqlite/scripts/build-sqlite.sh
+          bash kyo-sql-doltlite/scripts/build-doltlite.sh
       - name: Compile every module's windows-x86_64 natives
         shell: bash
         run: sbt -Dplatform=JVM ffiCompileAll
@@ -325,7 +335,10 @@ jobs:
       - uses: ./.github/actions/windows-native-setup
         with:
           os-arch: windows-aarch64
-      # SQLite stages C source, which the ARM64 MSVC toolchain compiles like any other target.
+      # SQLite only: it stages C source, which the ARM64 MSVC toolchain compiles like any other target.
+      # DoltLite is absent here by declaration (kyoSqlDoltLiteOsArchTargets), because upstream publishes
+      # no win-arm64 library and its autoconf build has no toolchain on this runner. The release guard
+      # reads that declaration, so it requires no DoltLite native for this platform rather than failing.
       - name: Stage vendored natives (windows-aarch64)
         shell: bash
         run: |

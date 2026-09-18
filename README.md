@@ -303,6 +303,7 @@ What every Kyo program uses. `kyo-core` and `kyo-prelude` carry the effects you 
 | -------------------------------------------- | --- | --- | ------ | ---- | ---------------------------------------------------------------------------------------------------------- |
 | [kyo-core](kyo-core/README.md)†              | ✅  | ✅  | ✅     | ✅   | I/O and concurrency: `Sync`, `Async`, `Scope`, `Fiber`, `Channel`, `Hub`, `Queue`, `Clock`, `Log`          |
 | [kyo-system](kyo-system/README.md)           | ✅  | ✅  | ✅     | ✅   | File system, OS processes, and environment: `Path`, `Command`, `Process`, `System`, `FileSystemException`  |
+| [kyo-system-doltfs](kyo-system-doltfs/README.md) | ✅  | ✅  | ✅     | ✅   | A `FileSystem` stored in a version-controlled database: a file is a row, so a tree branches and merges     |
 | [kyo-prelude](kyo-prelude/README.md)         | ✅  | ✅  | ✅     | ✅   | Strictly-pure effect layer: `Abort`, `Env`, `Var`, `Memo`, `Choice`, `Emit`, `Poll`, `Stream`, `Layer`     |
 | [kyo-data](kyo-data/README.md)               | ✅  | ✅  | ✅     | ✅   | Low-allocation data types: `Maybe`, `Result`, `Chunk`, `Span`, `Duration`, `Instant`, `Schedule`, `TypeMap`|
 | [kyo-kernel](kyo-kernel/README.md)           | ✅  | ✅  | ✅     | ✅   | Algebraic-effects substrate; defines `A < S`, `ArrowEffect`, `ContextEffect`, multi-shot continuations     |
@@ -319,6 +320,8 @@ The vertical an application developer assembles: HTTP services and clients, SQL 
 | [kyo-sql-postgres](kyo-sql-postgres/README.md) | ✅  | ✅  | ✅     | ✅   | PostgreSQL driver speaking the wire protocol on kyo-net, plus `COPY` and `LISTEN`/`NOTIFY`                 |
 | [kyo-sql-mysql](kyo-sql-mysql/README.md)     | ✅  | ✅  | ✅     | ✅   | MySQL driver speaking the wire protocol on kyo-net, plus `LOAD DATA LOCAL INFILE`                          |
 | [kyo-sql-sqlite](kyo-sql-sqlite/README.md)   | ✅  | ✅  | ✅     | ✅   | SQLite driver over the C library through kyo-ffi, an embedded file or in-memory database, no server        |
+| [kyo-sql-dolt](kyo-sql-dolt/README.md)       | ✅  | ✅  | ✅     | ✅   | Dolt driver on the MySQL wire, plus branches, commits, merges and diffs over the data itself                |
+| [kyo-sql-doltlite](kyo-sql-doltlite/README.md) | ✅  | ✅  | ✅     | ✅   | Dolt's version control embedded: one file carrying branches, commits, merges and diffs, no server           |
 | [kyo-schema](kyo-schema/README.md)           | ✅  | ✅  | ✅     | ✅   | One `derives Schema` powers validation, lenses, diffs, builders, and structural conversion; codecs plug in |
 | [kyo-schema-json](kyo-schema-json/README.md) | ✅  | ✅  | ✅     | ✅   | JSON codec, JSON Schema generation, pure `Json.Lines` framing, and effectful `Jsonl` streams and files    |
 | [kyo-schema-protobuf](kyo-schema-protobuf/README.md) | ✅  | ✅  | ✅     | ✅   | Protocol Buffers codec for kyo-schema: `Protobuf.encode`/`decode` binary plus `.proto` schema export       |

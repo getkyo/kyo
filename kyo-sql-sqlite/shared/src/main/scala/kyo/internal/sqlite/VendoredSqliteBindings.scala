@@ -11,8 +11,9 @@ import kyo.internal.sqlite.SqliteBindings
 /** The vendored SQLite engine, bound.
   *
   * The declarations are COPIED from [[SqliteBindings]] rather than inherited: the generator reads the methods declared
-  * DIRECTLY on a trait, so one that merely extends another leaves every inherited member unimplemented. A test
-  * compares this copy against the parent trait method for method, since the two drift silently otherwise.
+  * DIRECTLY on a trait, so one that merely extends another leaves every inherited member unimplemented.
+  * `DoltLiteBindings` carries the same copy. A test compares each against the parent trait method for method,
+  * since they drift silently otherwise.
   *
   * After editing this trait run a full `sbt clean`, not `ffiClean`: the ffiGenerate cache is keyed on TASTy and
   * silently drops new methods otherwise.

@@ -12,9 +12,10 @@ package kyo
   *
   * `opfs` requires the page to be cross-origin isolated (COOP `same-origin` plus COEP `require-corp`) and is
   * reachable only from a worker, so a connection on a browser's main thread gets memory storage whatever it names.
-  * The pooled `opfs-sahpool` VFS needs neither, at the cost of holding the database in a pool of opaque files. An
-  * unknown name fails the open rather than falling back, so a caller that asked for durable storage never silently
-  * gets memory.
+  * The pooled `opfs-sahpool` VFS needs neither, at the cost of holding the database in a pool of opaque files, and
+  * it is SQLite-only: DoltLite replaces SQLite's storage layer and needs file-control operations that VFS lacks, so
+  * a database opens on it and then every statement fails `SQLITE_NOTFOUND`. An unknown name fails the open rather
+  * than falling back, so a caller that asked for durable storage never silently gets memory.
   *
   * @param name
   *   the VFS name as registered with SQLite; empty means the platform default.

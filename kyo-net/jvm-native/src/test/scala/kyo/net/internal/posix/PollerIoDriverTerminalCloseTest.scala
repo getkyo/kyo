@@ -24,15 +24,16 @@ class PollerIoDriverTerminalCloseTest extends Test:
 
         "closeHandle on a live TLS handle after the driver has gone terminal self-closes: fd closed and engine freed exactly once" in {
             PosixTestSockets.assumePoller()
-            // Gate before anything is allocated: TlsRealEngines.singleEngine below cancels without BoringSSL, and a cancel past this point
-            // would strand the started driver, its poller fd, and the loopback pair.
-            TlsRealEngines.assumeBoringSslReady()
             val spy      = RecordingSocketBindings(Ffi.load[SocketBindings])
             val real     = PollerBackend.default()
             val pollerFd = real.create()
             val backend  = RecordingPollerBackend(real)
             val driver   = TestDrivers.forBackend(backend, pollerFd, spy)
             discard(driver.start())
+            // Gate BEFORE any socket exists. TlsRealEngines.singleEngine below requires BoringSSL and cancels without it; cancelling from
+            // there would leave the loopback pair already open and unreclaimed, one leaked pair per leaf, visible only on a host that
+            // stages OpenSSL but not BoringSSL.
+            TlsRealEngines.assumeBoringSslReady()
             PosixTestSockets.loopbackPair().map { case (client, accepted) =>
                 val handle    = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 val rawEngine = TlsRealEngines.singleEngine(isServer = true)
@@ -57,15 +58,16 @@ class PollerIoDriverTerminalCloseTest extends Test:
 
         "an op enqueued before the driver goes terminal is discharged exactly once (sweep or drain, never stranded)" in {
             PosixTestSockets.assumePoller()
-            // Gate before anything is allocated: TlsRealEngines.singleEngine below cancels without BoringSSL, and a cancel past this point
-            // would strand the started driver, its poller fd, and the loopback pair.
-            TlsRealEngines.assumeBoringSslReady()
             val spy      = RecordingSocketBindings(Ffi.load[SocketBindings])
             val real     = PollerBackend.default()
             val pollerFd = real.create()
             val backend  = RecordingPollerBackend(real)
             val driver   = TestDrivers.forBackend(backend, pollerFd, spy)
             discard(driver.start())
+            // Gate BEFORE any socket exists. TlsRealEngines.singleEngine below requires BoringSSL and cancels without it; cancelling from
+            // there would leave the loopback pair already open and unreclaimed, one leaked pair per leaf, visible only on a host that
+            // stages OpenSSL but not BoringSSL.
+            TlsRealEngines.assumeBoringSslReady()
             PosixTestSockets.loopbackPair().map { case (client, accepted) =>
                 val handle    = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 val rawEngine = TlsRealEngines.singleEngine(isServer = true)

@@ -64,8 +64,7 @@ class PosixTransportShutdownReclaimTest extends Test:
             // Captured BEFORE close(), per closeWake's documented contract: it notifies whatever promise is installed at the moment it runs,
             // so installing one after close() races the driver's terminal exit and can never be notified.
             val closeWakeDone = backend.closeWakeDone()
-            // Closes the driver on any path that ends before the explicit driver.close() below. Idempotent.
-            Scope.ensure(Sync.defer(driver.close())).andThen(PosixTestSockets.loopbackPair()).map { case (client, accepted) =>
+            PosixTestSockets.loopbackPair().map { case (client, accepted) =>
                 // A listener that is ALREADY closed, standing in for one that closed inside handleAccepted's window: the accept-side
                 // registration happens on the driver carrier at the end of handleAccepted, and dischargeListenerHandshakes runs on the
                 // closing carrier, so a close anywhere in that window sweeps an empty map and this registration arrives afterwards.
@@ -215,11 +214,7 @@ class PosixTransportShutdownReclaimTest extends Test:
             )
             discard(driver.start())
             val unbounded = serverTls.copy(handshakeTimeout = Duration.Infinity)
-            // Closes the driver on any path that ends before the explicit driver.close() below (a failed assertEventually, a timeout).
-            // Registered first, so it runs after the listener and client fd guards. Idempotent.
-            Scope.ensure(Sync.defer(driver.close())).andThen(
-                transport.listenTls("127.0.0.1", 0, 4, unbounded)(_ => ()).safe.get
-            ).map { listener =>
+            transport.listenTls("127.0.0.1", 0, 4, unbounded)(_ => ()).safe.get.map { listener =>
                 // Guards the listener even on a path that fails before the explicit close()/driver.close() below run (e.g. connectRaw or
                 // an assertEventually failing). Idempotent, so it is a harmless no-op after the explicit listener.close() on the success path.
                 Scope.ensure(Sync.defer(listener.close())).andThen {
