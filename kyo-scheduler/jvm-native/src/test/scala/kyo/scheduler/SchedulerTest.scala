@@ -50,6 +50,72 @@ class SchedulerTest extends AnyFreeSpec with NonImplicitAssertions {
         }
     }
 
+    "blocked-worker migration" - {
+        for (blockedCount <- Seq(5, 6)) {
+            s"conserves tasks with bounded migration when $blockedCount of six workers are blocked" in {
+                val workerCount = 6
+                val taskCount   = 24
+                val workers     = scala.collection.mutable.ArrayBuffer.empty[Worker]
+                val executor: java.util.concurrent.Executor = runnable => {
+                    workers += runnable.asInstanceOf[Worker]
+                    ()
+                }
+                // A thread factory may decline to create a thread. Keep maintenance queued until this test drives
+                // checkAvailability explicitly, so the operation bound and task counts do not depend on wall time.
+                val timer = new java.util.concurrent.ScheduledThreadPoolExecutor(1, (_: Runnable) => (null: Thread))
+                val cfg = Scheduler.Config.default.copy(
+                    coreWorkers = workerCount,
+                    minWorkers = workerCount,
+                    maxWorkers = workerCount,
+                    scheduleStride = workerCount,
+                    virtualizeWorkers = false
+                )
+                val scheduler  = new Scheduler(executor, (_: Runnable) => (), timer, cfg)
+                val executions = new Array[Int](taskCount)
+                var insertions = 0
+                val tasks = Array.tabulate(taskCount) { index =>
+                    new Task {
+                        override private[scheduler] def runtime(): Int = {
+                            insertions += 1
+                            assert(insertions <= workerCount * taskCount, "one maintenance pass repeatedly migrated the same queued tasks")
+                            0
+                        }
+                        def run(startMillis: Long, clock: InternalClock, deadline: Long): Task.Result = {
+                            executions(index) += 1
+                            Task.Done
+                        }
+                    }
+                }
+                try {
+                    // A full placement stride fills each empty worker before reusing one. Capture its dispatched
+                    // runnable without mounting a thread, then populate all queues before marking workers blocked.
+                    tasks.take(workerCount).foreach(scheduler.schedule)
+                    assert(workers.size == workerCount)
+                    tasks.drop(workerCount).zipWithIndex.foreach { case (task, index) =>
+                        workers(index % workerCount).enqueue(task)
+                    }
+                    workers.take(blockedCount).foreach(_.blocked = true)
+                    insertions = 0
+                    workers.foreach(_.checkAvailability(0L))
+                    assert(insertions <= workerCount * taskCount)
+                    assert(workers.map(_.load()).sum == taskCount)
+                    if (blockedCount < workerCount) {
+                        assert(workers.take(blockedCount).map(_.load()).sum == 0)
+                        workers.last.run()
+                    } else {
+                        workers.foreach(_.blocked = false)
+                        workers.foreach(_.run())
+                    }
+                    assert(executions.toSeq == Seq.fill(taskCount)(1))
+                    assert(workers.map(_.load()).sum == 0)
+                } finally {
+                    scheduler.shutdown()
+                    val _ = timer.shutdownNow()
+                }
+            }
+        }
+    }
+
     "flush" - {
         "flushes tasks from the current worker" in withScheduler { scheduler =>
             val cdl1  = new CountDownLatch(1)

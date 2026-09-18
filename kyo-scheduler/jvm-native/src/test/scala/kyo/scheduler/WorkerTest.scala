@@ -22,27 +22,45 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
     implicit override val patienceConfig: PatienceConfig =
         PatienceConfig(timeout = Span(15, Seconds), interval = Span(50, Millis))
 
-    // A worker mounts by submitting ITSELF here, so wrapping the executor lets afterEach count in-flight run() invocations and
-    // wait for zero, not a fixed settle. The InternalClock ticker also runs here but is not a Worker, so the isInstanceOf filter excludes it.
-    private val activeWorkers = new AtomicInteger(0)
-    val executor: Executor = command =>
-        TestExecutors.cached.execute { () =>
-            val isWorker = command.isInstanceOf[Worker]
-            if (isWorker) { val _ = activeWorkers.incrementAndGet() }
-            try command.run()
-            finally if (isWorker) { val _ = activeWorkers.decrementAndGet() }
+    // Track every executor invocation, including fixture-owned clock loops, so cleanup cannot silently leak background work.
+    private val activeTasks = new AtomicInteger(0)
+    val executor: Executor = command => {
+        val _ = activeTasks.incrementAndGet()
+        try TestExecutors.cached.execute { () =>
+                try command.run()
+                finally { val _ = activeTasks.decrementAndGet() }
+            }
+        catch {
+            case error: java.util.concurrent.RejectedExecutionException =>
+                val _ = activeTasks.decrementAndGet()
+                throw error
         }
+    }
 
     // Set to true after each test to stop all workers created during that test
     private var globalStop = new AtomicBoolean(false)
+    private val clocks     = new ConcurrentLinkedQueue[InternalClock]()
+
+    private def createClock(executor: Executor): InternalClock = {
+        val clock = InternalClock(executor)
+        val _     = clocks.add(clock)
+        clock
+    }
 
     override def afterEach(): Unit = {
         globalStop.set(true)
-        // Wait for every mounted worker's run() loop to actually return (activeWorkers back to 0), not for a fixed
+        var clock = clocks.poll()
+        while (clock ne null) {
+            clock.stop()
+            clock = clocks.poll()
+        }
+        // Wait for every executor task to actually return (activeTasks back to 0), not for a fixed
         // delay. The nanoTime bound is a catastrophic-only hang canary, never the pass condition.
         val deadline = System.nanoTime() + 15000000000L
-        while (activeWorkers.get() > 0 && System.nanoTime() < deadline) Thread.`yield`()
+        while (activeTasks.get() > 0 && System.nanoTime() < deadline) Thread.`yield`()
+        val remaining = activeTasks.get()
         globalStop = new AtomicBoolean(false) // fresh for next test
+        val _ = assert(remaining == 0, s"$remaining executor tasks did not finish during test cleanup")
     }
 
     private def createWorker(
@@ -53,7 +71,7 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
         currentEpoch: () => Long = () => 0L
     ): Worker = {
         val testStop = globalStop
-        val clock    = InternalClock(executor)
+        val clock    = createClock(executor)
         new Worker(0, executor, scheduleTask, stealTask, clock, 5) {
             def currentInterruptEpoch(): Long = currentEpoch()
             def shouldStop()                  = testStop.get() || stop()
@@ -686,10 +704,11 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
         val scheduled = new AtomicInteger
 
         def withWorker[A](testCode: Worker => A): A = {
-            val clock = InternalClock(executor)
+            val testStop = globalStop
+            val clock    = createClock(executor)
             val worker = new Worker(0, executor, (_, _) => { scheduled.incrementAndGet(); () }, _ => null, clock, 10) {
                 def currentInterruptEpoch(): Long = 0L
-                def shouldStop()                  = false
+                def shouldStop()                  = testStop.get()
             }
             testCode(worker)
         }
@@ -711,9 +730,10 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
                 while (cdl.getCount() > 0) {}
                 Task.Done
             })
-            worker.enqueue(longRunningTask)
-            eventually(assert(!worker.checkAvailability(System.currentTimeMillis())))
-            cdl.countDown()
+            try {
+                worker.enqueue(longRunningTask)
+                eventually(assert(!worker.checkAvailability(System.currentTimeMillis())))
+            } finally cdl.countDown()
         }
 
         "when worker is blocked" in withWorker { worker =>
@@ -722,9 +742,10 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
                 cdl.await()
                 Task.Done
             })
-            worker.enqueue(blockedTask)
-            eventually(assert(!worker.checkAvailability(System.currentTimeMillis())))
-            cdl.countDown()
+            try {
+                worker.enqueue(blockedTask)
+                eventually(assert(!worker.checkAvailability(System.currentTimeMillis())))
+            } finally cdl.countDown()
         }
 
         "drains queue when transitioning to stalled state" in withWorker { worker =>
@@ -733,31 +754,33 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
                 cdl.await()
                 Task.Done
             })
-            worker.enqueue(stalledTask)
-            worker.enqueue(TestTask())
-            worker.enqueue(TestTask())
-            eventually {
-                assert(!worker.checkAvailability(System.currentTimeMillis()))
-                assert(worker.load() == 1) // Only the running task should remain
-            }
-            cdl.countDown()
+            try {
+                worker.enqueue(stalledTask)
+                worker.enqueue(TestTask())
+                worker.enqueue(TestTask())
+                eventually {
+                    assert(!worker.checkAvailability(System.currentTimeMillis()))
+                    assert(worker.load() == 1) // Only the running task should remain
+                }
+            } finally cdl.countDown()
         }
 
         "preempts long-running task if queue isn't empty" in withWorker { worker =>
-            var preempted = false
+            val preempted = new AtomicBoolean(false)
             val longRunningTask = TestTask(
                 _run = () => {
-                    while (!preempted) {}
+                    while (!preempted.get()) {}
                     Task.Done
                 },
-                _preempt = () => preempted = true
+                _preempt = () => preempted.set(true)
             )
             worker.enqueue(longRunningTask)
             worker.enqueue(longRunningTask)
-            eventually {
-                assert(!worker.checkAvailability(System.currentTimeMillis()))
-                assert(preempted)
-            }
+            try eventually {
+                    assert(!worker.checkAvailability(System.currentTimeMillis()))
+                    assert(preempted.get())
+                }
+            finally preempted.set(true)
         }
         "preempts a long-running task even when the queue is empty (so run() can attempt a steal)" in withWorker { worker =>
             // Replaces the original "doesn't preempt ... if queue is empty". A worker pinned on a long
@@ -765,19 +788,20 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
             // on another (blocked) worker's queue (the scheduler-wedge fix: the pinned worker is the
             // only one that can make progress, but with an empty queue it had no reason to yield).
             // The task here exits once preempted.
-            var preempted = false
+            val preempted = new AtomicBoolean(false)
             val longRunningTask = TestTask(
                 _run = () => {
-                    while (!preempted) {}
+                    while (!preempted.get()) {}
                     Task.Done
                 },
-                _preempt = () => preempted = true
+                _preempt = () => preempted.set(true)
             )
             worker.enqueue(longRunningTask)
-            eventually {
-                worker.checkAvailability(System.currentTimeMillis())
-                assert(preempted)
-            }
+            try eventually {
+                    worker.checkAvailability(System.currentTimeMillis())
+                    assert(preempted.get())
+                }
+            finally preempted.set(true)
         }
         "drains queue only once when transitioning to stalled state" in withWorker { worker =>
             scheduled.set(0)
@@ -786,20 +810,21 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
                 cdl.await()
                 Task.Done
             })
-            worker.enqueue(stalledTask)
+            try {
+                worker.enqueue(stalledTask)
 
-            for (_ <- 1 to 5) {
+                for (_ <- 1 to 5) {
+                    worker.enqueue(TestTask())
+                }
+
+                eventually(assert(!worker.checkAvailability(System.currentTimeMillis())))
                 worker.enqueue(TestTask())
-            }
+                assert(!worker.checkAvailability(System.currentTimeMillis()))
+                worker.enqueue(TestTask())
+                assert(!worker.checkAvailability(System.currentTimeMillis()))
 
-            eventually(assert(!worker.checkAvailability(System.currentTimeMillis())))
-            worker.enqueue(TestTask())
-            assert(!worker.checkAvailability(System.currentTimeMillis()))
-            worker.enqueue(TestTask())
-            assert(!worker.checkAvailability(System.currentTimeMillis()))
-
-            assert(scheduled.get() == 5)
-            cdl.countDown()
+                assert(scheduled.get() == 5)
+            } finally cdl.countDown()
             eventually(assert(worker.checkAvailability(System.currentTimeMillis())))
         }
         "a Stalled worker still preempts its CPU-bound task when fresh work queues up (wedge regression)" in withWorker { worker =>
@@ -818,21 +843,22 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
                     Task.Done
                 }
             )
-            worker.enqueue(cpuBound)
-            worker.enqueue(TestTask()) // queue non-empty so the worker stalls and drains, entering Stalled
-            eventually {
-                assert(!worker.checkAvailability(System.currentTimeMillis()))
-                assert(worker.load() == 1) // filler drained; only the running CPU-bound task remains
-            }
-            val afterStall = preempts
-            // Fresh work arrives AFTER the worker is already Stalled with an empty queue. The old
-            // code never re-preempted here; the fix keeps issuing doPreempt while Stalled.
-            worker.enqueue(TestTask())
-            eventually {
-                worker.checkAvailability(System.currentTimeMillis())
-                assert(preempts > afterStall, "a Stalled worker must keep preempting its CPU-bound task when new work queues behind it")
-            }
-            release.countDown()
+            try {
+                worker.enqueue(cpuBound)
+                worker.enqueue(TestTask()) // queue non-empty so the worker stalls and drains, entering Stalled
+                eventually {
+                    assert(!worker.checkAvailability(System.currentTimeMillis()))
+                    assert(worker.load() == 1) // filler drained; only the running CPU-bound task remains
+                }
+                val afterStall = preempts
+                // Fresh work arrives AFTER the worker is already Stalled with an empty queue. The old
+                // code never re-preempted here; the fix keeps issuing doPreempt while Stalled.
+                worker.enqueue(TestTask())
+                eventually {
+                    worker.checkAvailability(System.currentTimeMillis())
+                    assert(preempts > afterStall, "a Stalled worker must keep preempting its CPU-bound task when new work queues behind it")
+                }
+            } finally release.countDown()
         }
     }
 
