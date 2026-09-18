@@ -111,6 +111,10 @@ os_headline() {
         proc)
             local avail swap disk load psi steal
             avail=$(awk '/^MemAvailable:/{printf "%d", $2/1024}' /proc/meminfo 2>/dev/null)
+            # Windows reaches this branch through Git Bash, whose emulated /proc/meminfo publishes MemFree but
+            # not MemAvailable. Without the fallback every Windows sample reports `?` and a run that dies under
+            # memory pressure carries no memory evidence at all.
+            [ -n "$avail" ] || avail=$(awk '/^MemFree:/{printf "%d", $2/1024}' /proc/meminfo 2>/dev/null)
             swap=$(awk '/^SwapFree:/{printf "%d", $2/1024}' /proc/meminfo 2>/dev/null)
             disk=$(df -Pm . 2>/dev/null | awk 'NR==2{print $4}')
             load=$(cut -d' ' -f1 /proc/loadavg 2>/dev/null)
@@ -146,8 +150,29 @@ sched_snapshot() {
 # "whose memory is it" when a link or test phase overcommits the box. Best-effort: skipped where
 # ps is unavailable (minimal containers).
 proc_top() {
-    command -v ps >/dev/null 2>&1 || return 0
     local rows
+    # On Windows, `ps` is the MSYS build and reports its own accounting rather than the Windows working set,
+    # so a JVM holding gigabytes prints as single-digit MB and the attribution is worse than absent. `tasklist`
+    # reports the real figure. Anything unexpected in its output yields no rows, which prints nothing at all.
+    case "$OS" in
+        MINGW* | MSYS* | CYGWIN*)
+            command -v tasklist >/dev/null 2>&1 || return 0
+            rows=$(MSYS2_ARG_CONV_EXCL='*' tasklist /FO CSV /NH 2>/dev/null | tr -d '\r' | awk -F'","' '
+                {
+                    # Windows image names carry spaces ("Memory Compression", "System Idle Process"), which the
+                    # field-split output below would read as separate columns, so they join like the posix branch.
+                    name = $1; gsub(/"/, "", name); sub(/\.[Ee][Xx][Ee]$/, "", name); gsub(/ /, "_", name)
+                    mem = $5; gsub(/[^0-9]/, "", mem)
+                    if (name != "" && mem + 0 > 0) { r[name] += mem; n[name]++ }
+                }
+                END { for (c in r) printf "%d %s %d\n", r[c], c, n[c] }' \
+                | sort -rn | head -3 \
+                | awk '{ printf "%s%s:%dM/%d", sep, $2, $1 / 1024, $3; sep = " " }')
+            [ -n "$rows" ] && printf 'top=[%s]' "$rows"
+            return 0
+            ;;
+    esac
+    command -v ps >/dev/null 2>&1 || return 0
     rows=$(ps axo rss=,comm= 2>/dev/null | awk '
         {
             rss = $1; $1 = ""; cmd = substr($0, 2)
