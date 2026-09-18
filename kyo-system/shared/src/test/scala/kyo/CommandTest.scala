@@ -283,9 +283,10 @@ class CommandTest extends kyo.test.Test[Any]:
 
     // `spawn` forks the process in one step and registers its release in the next: a stop delivered while the fork
     // runs parks the registration, and the process is nobody's. The fork lasts a fraction of a millisecond on Native
-    // and a few on the JVM, below what a timer lands in, so each round releases a latch in the step before the fork
-    // and a second fiber spins on the clock to a staggered offset from it before requesting the stop directly. The
-    // check is on the operating system's view, by a unique argv.
+    // and a few on the JVM, below what a timer lands in, and a fiber woken by a latch the spawner releases is queued
+    // behind the fork on the same worker. So the leaf's own fiber, already running, spins on a flag the spawner sets
+    // in the step before the fork, spins on to a staggered offset, and requests the stop directly. The check is on
+    // the operating system's view, by a unique argv.
     "an interrupt landing during spawn does not orphan the process".pendingUntilFixed(
         "Command.spawn forks the process in one step and registers its release in the next, so a stop delivered during the fork parks the registration and the process outlives the scope that spawned it"
     ).notJs.notWasm in {
@@ -300,17 +301,15 @@ class CommandTest extends kyo.test.Test[Any]:
             _ <- Loop.indexed { i =>
                 if i >= rounds then Loop.done
                 else
-                    Latch.initWith(1) { started =>
-                        Fiber.initUnscoped(Scope.run(started.release.andThen(cmd.spawn).andThen(Async.never))).map { fiber =>
-                            started.await.andThen {
-                                Sync.Unsafe.defer {
-                                    import AllowUnsafe.embrace.danger
-                                    val target = java.lang.System.nanoTime() + (i % 40) * 100_000L
-                                    while java.lang.System.nanoTime() < target do ()
-                                    discard(fiber.unsafe.interrupt())
-                                }
-                            }.andThen(fiber.getResult).andThen(Loop.continue)
-                        }
+                    val forking = new java.util.concurrent.atomic.AtomicBoolean(false)
+                    Fiber.initUnscoped(Scope.run(Sync.defer(forking.set(true)).andThen(cmd.spawn).andThen(Async.never))).map { fiber =>
+                        Sync.Unsafe.defer {
+                            val bound = java.lang.System.nanoTime() + 200_000_000L
+                            while !forking.get() && java.lang.System.nanoTime() < bound do ()
+                            val target = java.lang.System.nanoTime() + (i % 40) * 100_000L
+                            while java.lang.System.nanoTime() < target do ()
+                            discard(fiber.unsafe.interrupt())
+                        }.andThen(fiber.getResult).andThen(Loop.continue)
                     }
             }
             r    <- Abort.run[Timeout](Async.timeout(5.seconds)(assertEventually(alive.map(_.isEmpty))))
