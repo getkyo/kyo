@@ -29,7 +29,7 @@ object BuilderMacro:
 
         // Build the construct function: Map[String, Any] => A
         // Use reflect.Lambda to avoid quote-splicing context issues
-        val mapType = TypeRepr.of[Map[String, Any]]
+        val mapType                                  = TypeRepr.of[Map[String, Any]]
         val constructFn: Expr[Map[String, Any] => A] =
             Lambda(
                 Symbol.spliceOwner,

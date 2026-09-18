@@ -106,7 +106,7 @@ class TlsEngineIoTest extends Test:
                     val a2         = Array.tabulate[Byte](16)(i => (i + 20).toByte)
                     val cipher1    = encryptRecords(client, Seq(a1, a2))
                     val cipher1Buf = Buffer.fromArray[Byte](cipher1)
-                    val out1 =
+                    val out1       =
                         try harness.callFeedAndDecrypt(engine, cipher1Buf, cipher1.length, handle)
                         finally cipher1Buf.close()
                     assert(out1.toList == (a1 ++ a2).toList, s"first decode mismatch: got ${out1.toList}")
@@ -117,7 +117,7 @@ class TlsEngineIoTest extends Test:
                     val b2         = Array.tabulate[Byte](8)(i => (i + 120).toByte)
                     val cipher2    = encryptRecords(client, Seq(b1, b2))
                     val cipher2Buf = Buffer.fromArray[Byte](cipher2)
-                    val out2 =
+                    val out2       =
                         try harness.callFeedAndDecrypt(engine, cipher2Buf, cipher2.length, handle)
                         finally cipher2Buf.close()
                     assert(out2.toList == (b1 ++ b2).toList, s"second decode mismatch: got ${out2.toList}")
@@ -144,7 +144,7 @@ class TlsEngineIoTest extends Test:
                     val record    = Array.tabulate[Byte](40)(i => (i + 1).toByte)
                     val cipher    = encryptRecords(client, Seq(record))
                     val cipherBuf = Buffer.fromArray[Byte](cipher)
-                    val out =
+                    val out       =
                         try harness.callFeedAndDecrypt(engine, cipherBuf, cipher.length, handle)
                         finally cipherBuf.close()
 

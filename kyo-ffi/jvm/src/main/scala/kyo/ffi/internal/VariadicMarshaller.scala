@@ -120,7 +120,7 @@ object VariadicMarshaller:
                 case i: java.lang.Integer => (JAVA_INT, i)
                 case l: java.lang.Long    => (JAVA_LONG, l)
                 case d: java.lang.Double  => (JAVA_DOUBLE, d)
-                case s: String =>
+                case s: String            =>
                     val seg = scratch.allocUtf8(s, bindingFqn, methodName)
                     (ADDRESS, seg)
                 case b: Buffer[?] =>

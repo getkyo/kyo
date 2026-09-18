@@ -59,7 +59,7 @@ class UIServerWsTest extends kyo.test.Test[Any]:
     "validated events preserve every non-start phase" in {
         val mouse    = MouseEventData(UI.Modifiers.none, Absent)
         val keyboard = KeyboardEventData("Enter", UI.Modifiers.none, Absent)
-        val target = DragProtocol.TargetData(
+        val target   = DragProtocol.TargetData(
             "session",
             Drag.Operation.Copy,
             Absent,
@@ -154,7 +154,7 @@ class UIServerWsTest extends kyo.test.Test[Any]:
             // serverEnded flips when the real serveSession handler ends on disconnect (its Scope.run completes or is
             // interrupted, either way closing the connection's subscription Scope). Public witness, no internal hook.
             serverEnded <- AtomicBoolean.init(false)
-            _ <- Scope.run {
+            _           <- Scope.run {
                 HttpWebSocket.connect(
                     (serverWs: HttpWebSocket) => Sync.ensure(serverEnded.set(true))(UIServer.serveSession(serverWs, app)),
                     (clientWs: HttpWebSocket) =>
@@ -352,7 +352,7 @@ class UIServerWsTest extends kyo.test.Test[Any]:
             maxBase64Length = 12,
             maxDecodedChunkSize = 4.bytes
         )
-        val item = DragProtocol.ItemData.Text(Map("text/plain" -> "text"))
+        val item       = DragProtocol.ItemData.Text(Map("text/plain" -> "text"))
         val validStart = DragProtocol.ClientMessage.Event(
             UIEvent.DragStart(
                 Seq("root"),
@@ -565,7 +565,7 @@ class UIServerWsTest extends kyo.test.Test[Any]:
         val limits        = DragProtocol.Limits.default
         val validPath     = Seq.fill(256)("segment")
         val oversizedPath = Seq.fill(257)("segment")
-        val valid = DragProtocol.ClientMessage.Event(
+        val valid         = DragProtocol.ClientMessage.Event(
             UIEvent.DragEnd(validPath, DragProtocol.EndData("session", Drag.Operation.Copy, cancelled = false))
         )
         val oversized = DragProtocol.ClientMessage.Event(
@@ -611,7 +611,7 @@ class UIServerWsTest extends kyo.test.Test[Any]:
     }
 
     "DragProtocol validation enforces identifier, metadata, and reason boundaries" in {
-        val limits = DragProtocol.Limits.default
+        val limits       = DragProtocol.Limits.default
         val emptySession = DragProtocol.ClientMessage.Event(
             UIEvent.DragEnd(Seq("source"), DragProtocol.EndData("", Drag.Operation.Copy, cancelled = false))
         )
@@ -757,7 +757,7 @@ class UIServerWsTest extends kyo.test.Test[Any]:
                             _     <- clientWs.put(HttpWebSocket.Payload.Text(Json.encode[UIEvent](start)))
                             _     <- clientWs.put(HttpWebSocket.Payload.Text(Json.encode[UIEvent](drop)))
                             frame <- clientWs.take()
-                            _ <- captured.set(frame match
+                            _     <- captured.set(frame match
                                 case HttpWebSocket.Payload.Text(data) => Present(data)
                                 case _                                => Absent)
                         yield ()

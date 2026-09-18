@@ -194,7 +194,7 @@ private[completion] object OpenAICompletion extends Completion:
         else
             Json.decode[StreamChunk](line) match
                 case Result.Success(chunk) =>
-                    val choice = chunk.choices.flatMap(cs => Maybe.fromOption(cs.headOption))
+                    val choice   = chunk.choices.flatMap(cs => Maybe.fromOption(cs.headOption))
                     val fragment = choice
                         .flatMap(_.delta)
                         .flatMap(_.tool_calls)
@@ -205,7 +205,7 @@ private[completion] object OpenAICompletion extends Completion:
                     Result.Success(
                         fragment match
                             case Present(f) => Completion.Delta.Fragment(f)
-                            case Absent =>
+                            case Absent     =>
                                 if choice.exists(c => stopReason(c.finish_reason) == Completion.StopReason.MaxOutputTokens)
                                 then Completion.Delta.OutputLimit
                                 // The final usage chunk the request asked for via stream_options: empty
@@ -372,8 +372,8 @@ private[completion] object OpenAICompletion extends Completion:
                 // Fitted before mapping, so the wire sees the shape its entry declares. On a single-system
                 // wire, later system messages arrive as user turns behind a prelude naming what they are;
                 // the prefix is this family's serialization idiom.
-                val convert = (content: String) => UserMessage(s"${Completion.systemInstructionPrefix} $content", Absent)
-                val entries = Completion.fitSystemMessages(config, ctx.messages, convert).map(toEntry).toList
+                val convert  = (content: String) => UserMessage(s"${Completion.systemInstructionPrefix} $content", Absent)
+                val entries  = Completion.fitSystemMessages(config, ctx.messages, convert).map(toEntry).toList
                 val toolDefs =
                     if tools.isEmpty then Absent
                     else
@@ -406,7 +406,7 @@ private[completion] object OpenAICompletion extends Completion:
                 // stays activated and still refuses the forced choice.
                 val forcedResultTurn =
                     tools.size == 1 && tools.headMaybe.exists(_.name == Completion.resultToolName)
-                val reasoningRequested = config.reasoningEnabled && !forcedResultTurn
+                val reasoningRequested                     = config.reasoningEnabled && !forcedResultTurn
                 val (thinking, reasoningEffort, activated) =
                     if !reasoningRequested then
                         // Off, in whichever encoding this endpoint reads. A non-reasoning entry sends nothing:
@@ -414,7 +414,7 @@ private[completion] object OpenAICompletion extends Completion:
                         // outright by a non-reasoning one. No arm here activates, so the flag is a literal.
                         config.modelReasoning match
                             case Config.ReasoningEncoding.Unavailable => (Absent, Absent, false)
-                            case _ =>
+                            case _                                    =>
                                 config.reasoningOff match
                                     case Config.ReasoningOff.ThinkingDisabled => (Present(ThinkingToggle(offThinking)), Absent, false)
                                     case Config.ReasoningOff.Level(word)      => (Absent, Present(word), false)

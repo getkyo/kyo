@@ -82,7 +82,7 @@ object Glob:
 
         append(self.segments.size)
         self.segments.foreach {
-            case Recursive => append(EncodedRecursiveSegment)
+            case Recursive                               => append(EncodedRecursiveSegment)
             case Segment(Automaton(transitions, accept)) =>
                 append(EncodedAutomatonSegment)
                 append(accept)
@@ -158,13 +158,13 @@ object Glob:
                         val state           = ArrayBuffer.empty[Transition]
                         var transitionIndex = 0
                         while transitionIndex < transitionCount do
-                            val kind = read()
-                            val to   = read()
+                            val kind       = read()
+                            val to         = read()
                             val transition =
                                 kind match
-                                    case EncodedEpsilon      => Epsilon(to)
-                                    case EncodedAnyCharacter => Consume(to, AnyCharacter)
-                                    case EncodedLiteral      => Consume(to, Literal(read().toChar))
+                                    case EncodedEpsilon        => Epsilon(to)
+                                    case EncodedAnyCharacter   => Consume(to, AnyCharacter)
+                                    case EncodedLiteral        => Consume(to, Literal(read().toChar))
                                     case EncodedCharacterClass =>
                                         val negated    = read() == 1
                                         val rangeCount = read()
@@ -288,7 +288,7 @@ object Glob:
     final private case class CharacterRange(start: Char, end: Char):
         def contains(value: Char, caseSensitivity: CaseSensitivity): Boolean =
             caseSensitivity match
-                case CaseSensitivity.Sensitive => value >= start && value <= end
+                case CaseSensitivity.Sensitive   => value >= start && value <= end
                 case CaseSensitivity.Insensitive =>
                     val foldedValue = fold(value)
                     val foldedStart = fold(start)
@@ -308,8 +308,8 @@ object Glob:
 
         def parse(): Result[GlobParseException, Glob] =
             splitSegments() match
-                case Result.Failure(error) => Result.fail(error)
-                case Result.Panic(error)   => Result.panic(error)
+                case Result.Failure(error)       => Result.fail(error)
+                case Result.Panic(error)         => Result.panic(error)
                 case Result.Success(rawSegments) =>
                     val compiled                           = ArrayBuffer.empty[PathSegment]
                     var index                              = 0
@@ -391,7 +391,7 @@ object Glob:
                         end match
                     case ']' => return fail(index, "unmatched closing bracket")
                     case '}' => return fail(index, "unmatched closing brace")
-                    case _ =>
+                    case _   =>
                         atoms += AtomLiteral(char)
                         index += 1
                 end match
@@ -407,8 +407,8 @@ object Glob:
                 if value.charAt(index) == ',' || value.charAt(index) == '}' then
                     return fail(index, "empty alternative branch")
                 parseSequence(inAlternative = true) match
-                    case Result.Failure(error) => return Result.fail(error)
-                    case Result.Panic(error)   => return Result.panic(error)
+                    case Result.Failure(error)               => return Result.fail(error)
+                    case Result.Panic(error)                 => return Result.panic(error)
                     case Result.Success((branch, delimiter)) =>
                         branches += branch
                         if delimiter == '}' then
@@ -495,7 +495,7 @@ object Glob:
                 values(index) match
                     case AtomLiteral(value) => edge(current, Consume(next, Literal(value)))
                     case AtomAnyCharacter   => edge(current, Consume(next, AnyCharacter))
-                    case AtomAnyCharacters =>
+                    case AtomAnyCharacters  =>
                         edge(current, Epsilon(next))
                         edge(current, Consume(current, AnyCharacter))
                     case AtomClass(negated, ranges) => edge(current, Consume(next, CharacterClass(negated, ranges)))

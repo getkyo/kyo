@@ -155,7 +155,7 @@ class Http1ParserTest extends kyo.BaseHttpTest:
             val fullRequest = "GET /hello HTTP/1.1\r\nHost: localhost\r\n\r\n"
             val bytes       = fullRequest.getBytes(StandardCharsets.US_ASCII)
             val chunkSize   = 10
-            val chunks = (0 until bytes.length by chunkSize).map { start =>
+            val chunks      = (0 until bytes.length by chunkSize).map { start =>
                 val end = math.min(start + chunkSize, bytes.length)
                 bytes.slice(start, end)
             }.toSeq
@@ -212,7 +212,7 @@ class Http1ParserTest extends kyo.BaseHttpTest:
 
             var closedCalled             = false
             var parsedReq: ParsedRequest = null.asInstanceOf[ParsedRequest]
-            val parser = new Http1Parser(
+            val parser                   = new Http1Parser(
                 channel,
                 builder,
                 smallMax,
@@ -383,7 +383,7 @@ class Http1ParserTest extends kyo.BaseHttpTest:
             val builder = new ParsedRequestBuilder
 
             var closedCalled = false
-            val parser = new Http1Parser(
+            val parser       = new Http1Parser(
                 channel,
                 builder,
                 onClosed = () => closedCalled = true

@@ -35,7 +35,7 @@ class MysqlDialectCteRenderTest extends Test:
     "WITH RECURSIVE on MySQL 5.7 raises SqlUnsupportedException" in {
         val q       = Sql.commonTablesRecursive(cte)(nodes)
         val version = Present(Idiom.ServerVersion(5, 7, 44))
-        val ex = intercept[SqlUnsupportedDialectFeatureException] {
+        val ex      = intercept[SqlUnsupportedDialectFeatureException] {
             q.render(MysqlDialect, version)
         }
         assert(ex.feature == "WITH RECURSIVE", s"expected feature 'WITH RECURSIVE', got: ${ex.feature}")

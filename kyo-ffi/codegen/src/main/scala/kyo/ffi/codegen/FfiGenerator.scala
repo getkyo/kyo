@@ -130,7 +130,7 @@ object FfiGenerator:
 
     private[codegen] def writeSpec(spec: TraitSpec, outputDir: Path, platform: Platform, includeDirs: Seq[String] = Nil): Path =
         val rendered = platform match
-            case Platform.JVM => JvmEmitter.emit(spec)
+            case Platform.JVM    => JvmEmitter.emit(spec)
             case Platform.Native =>
                 val available = headersAvailable(spec.headers, includeDirs)
                 NativeEmitter.emit(spec, headersAvailable = available)

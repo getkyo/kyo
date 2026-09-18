@@ -59,7 +59,7 @@ class SqlSchemaReaderTest extends Test:
 
     "nextExtension rejects a type another dialect owns" in {
         val reader = readerOf(SqlSchemaWriterMock.Call.Extension("hstore", SqlCodec.Format.Binary, Span.empty))
-        val ex = intercept[SqlUnsupportedTypeOnBackendException] {
+        val ex     = intercept[SqlUnsupportedTypeOnBackendException] {
             val _ = reader.nextExtension(SqlSchemaWriterMock.mysql, "geometry")
         }
         assert(ex.dialect == SqlSchemaWriterMock.mysql)
@@ -69,7 +69,7 @@ class SqlSchemaReaderTest extends Test:
 
     "reading past the last column raises a decode failure" in {
         val reader = readerOf()
-        val ex = intercept[SqlDecodeException] {
+        val ex     = intercept[SqlDecodeException] {
             val _ = reader.int()
         }
         assert(ex.getMessage.contains("0 recorded calls"))

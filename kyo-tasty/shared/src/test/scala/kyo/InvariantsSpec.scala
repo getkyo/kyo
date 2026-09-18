@@ -316,8 +316,8 @@ class InvariantsSpec extends kyo.test.Test[Any]:
     // are pure instance methods that require no Frame and return plain values.
     // This test compiles and runs on JVM, JS, and Native without a platform filter.
     "Classpath ClassLike-narrowed methods are callable without a Frame on all three platforms" in {
-        val animalId = Tasty.SymbolId(1)
-        val dogId    = Tasty.SymbolId(2)
+        val animalId    = Tasty.SymbolId(1)
+        val dogId       = Tasty.SymbolId(2)
         val animalClass = Tasty.Symbol.Class(
             animalId,
             Tasty.Name("Animal"),
@@ -436,7 +436,7 @@ class InvariantsSpec extends kyo.test.Test[Any]:
     //   2 -> Class "Tag" (ownerId = 3)
     //   3 -> Package "shop" (ownerId = -1)
     "Classpath typeParams and annotation methods are callable without a Frame on all three platforms" in {
-        val tpId = Tasty.SymbolId(0)
+        val tpId  = Tasty.SymbolId(0)
         val tpSym = Tasty.Symbol.TypeParam(
             tpId,
             Tasty.Name("T"),
@@ -448,7 +448,7 @@ class InvariantsSpec extends kyo.test.Test[Any]:
         )
         val annType    = Tasty.Type.Named(Tasty.SymbolId(2))
         val annotation = Tasty.Annotation(annType, Chunk.empty, Tasty.Name("shop.Tag"))
-        val classSym = Tasty.Symbol.Class(
+        val classSym   = Tasty.Symbol.Class(
             Tasty.SymbolId(1),
             Tasty.Name("Container"),
             Tasty.Flags.empty,
@@ -671,12 +671,12 @@ class InvariantsSpec extends kyo.test.Test[Any]:
     // dissolved catch-alls must satisfy. The full syntactic invariant is enforced by the L0
     // grep gate (see decisions.md).
     "representative Tasty.Type leaf cases are reachable and distinguishable" in {
-        val named: Tasty.Type    = Tasty.Type.Named(Tasty.SymbolId(0))
-        val termRef: Tasty.Type  = Tasty.Type.TermRef(Tasty.Type.Nothing, Tasty.Name("p"))
-        val applied: Tasty.Type  = Tasty.Type.Applied(named, Chunk.empty)
-        val nothing: Tasty.Type  = Tasty.Type.Nothing
-        val anyT: Tasty.Type     = Tasty.Type.Any
-        val thisType: Tasty.Type = Tasty.Type.ThisType(Tasty.SymbolId(0))
+        val named: Tasty.Type            = Tasty.Type.Named(Tasty.SymbolId(0))
+        val termRef: Tasty.Type          = Tasty.Type.TermRef(Tasty.Type.Nothing, Tasty.Name("p"))
+        val applied: Tasty.Type          = Tasty.Type.Applied(named, Chunk.empty)
+        val nothing: Tasty.Type          = Tasty.Type.Nothing
+        val anyT: Tasty.Type             = Tasty.Type.Any
+        val thisType: Tasty.Type         = Tasty.Type.ThisType(Tasty.SymbolId(0))
         def label(t: Tasty.Type): String = t match
             case _: Tasty.Type.Named           => "named"
             case _: Tasty.Type.TermRef         => "termRef"

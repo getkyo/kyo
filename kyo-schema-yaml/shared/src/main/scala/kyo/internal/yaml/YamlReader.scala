@@ -41,7 +41,7 @@ final private[kyo] class YamlReader private (
         peek match
             case _: MappingStart =>
                 discard(objectStart())
-                val acc = ArrayBuffer.empty[(String, Structure.Value)]
+                val acc                   = ArrayBuffer.empty[(String, Structure.Value)]
                 @tailrec def loop(): Unit =
                     if hasNextField() then
                         val name = field()
@@ -52,7 +52,7 @@ final private[kyo] class YamlReader private (
                 Structure.Value.Record(Chunk.from(acc.toSeq))
             case _: SequenceStart =>
                 discard(arrayStart())
-                val acc = ArrayBuffer.empty[Structure.Value]
+                val acc                   = ArrayBuffer.empty[Structure.Value]
                 @tailrec def loop(): Unit =
                     if hasNextElement() then
                         discard(acc.addOne(readStructure()))
@@ -66,7 +66,7 @@ final private[kyo] class YamlReader private (
                     case ScalarValue.Bool(b)    => Structure.Value.Bool(b)
                     case ScalarValue.Str(s)     => Structure.Value.Str(s)
                     case ScalarValue.Special(s) => Structure.Value.Str(s)
-                    case ScalarValue.Number(n) =>
+                    case ScalarValue.Number(n)  =>
                         if n.indexOf('.') >= 0 || n.indexOf('e') >= 0 || n.indexOf('E') >= 0 then
                             Structure.Value.Decimal(n.toDouble)
                         else Structure.Value.Integer(n.toLong)
@@ -242,7 +242,7 @@ final private[kyo] class YamlReader private (
         withDelegate(_.hasNextField()) {
             sourceFrames match
                 case (_: SourceMappingFrame | _: SourceFlowMappingFrame) :: _ => sourceHasNextField()
-                case _ =>
+                case _                                                        =>
                     prepare()
                     !atNodeEnd
             end match
@@ -253,7 +253,7 @@ final private[kyo] class YamlReader private (
         withDelegate(_.hasNextElement()) {
             sourceFrames match
                 case (_: SourceSequenceFrame | _: SourceFlowSequenceFrame) :: _ => sourceHasNextElement()
-                case _ =>
+                case _                                                          =>
                     prepare()
                     !atNodeEnd
             end match
@@ -288,7 +288,7 @@ final private[kyo] class YamlReader private (
             case ScalarValue.Special("NaN")       => Float.NaN
             case ScalarValue.Special("Infinity")  => Float.PositiveInfinity
             case ScalarValue.Special("-Infinity") => Float.NegativeInfinity
-            case ScalarValue.Number(value) =>
+            case ScalarValue.Number(value)        =>
                 checkNumericScalar(value)
                 try value.toFloat
                 catch
@@ -301,7 +301,7 @@ final private[kyo] class YamlReader private (
             case ScalarValue.Special("NaN")       => Double.NaN
             case ScalarValue.Special("Infinity")  => Double.PositiveInfinity
             case ScalarValue.Special("-Infinity") => Double.NegativeInfinity
-            case ScalarValue.Number(value) =>
+            case ScalarValue.Number(value)        =>
                 checkNumericScalar(value)
                 try value.toDouble
                 catch
@@ -341,7 +341,7 @@ final private[kyo] class YamlReader private (
             else
                 trySourceNil() match
                     case Present(value) => value
-                    case Absent =>
+                    case Absent         =>
                         currentAliasOr(_.isNil()) {
                             peek match
                                 case Scalar(value, meta, _) if resolveScalar(value, meta) == ScalarValue.Null =>
@@ -592,7 +592,7 @@ final private[kyo] class YamlReader private (
         withDelegate(_.scalarValue()) {
             trySourceScalarValue() match
                 case Present(value) => value
-                case Absent =>
+                case Absent         =>
                     currentAliasOr(_.scalarValue()) {
                         peek match
                             case Scalar(value, meta, _) =>
@@ -629,7 +629,7 @@ final private[kyo] class YamlReader private (
             case Present("tag:yaml.org,2002:int")          => taggedInt(value)
             case Present("tag:yaml.org,2002:float")        => taggedFloat(value)
             case _ if meta.style != Yaml.ScalarStyle.Plain => ScalarValue.Str(value)
-            case _ =>
+            case _                                         =>
                 YamlScalars.resolve(value, yamlVersion) match
                     case YamlScalars.Core.Null           => ScalarValue.Null
                     case YamlScalars.Core.Bool(value)    => ScalarValue.Bool(value)
@@ -1047,17 +1047,17 @@ final private[kyo] class YamlReader private (
         val restStart = sourcePos
         val rest      = readSourceRestOfLineFrom(restStart)
         val trimmed   = stripSourceComment(rest).trim
-        val value =
+        val value     =
             if trimmed.nonEmpty then
                 val tailStart = sourcePos
                 val tailEnd   = captureFollowingIndentedBlock(frame.indent)
-                val captured =
+                val captured  =
                     if tailEnd > tailStart then trimmed + "\n" + normalizeBlock(tailStart, tailEnd, frame.indent + 2)
                     else trimmed + "\n"
                 SourceValue(captured, lineNumber)
             else
-                val start = sourcePos
-                val end   = captureNestedBlock(frame.indent, includeIndentlessSequence = false)
+                val start    = sourcePos
+                val end      = captureNestedBlock(frame.indent, includeIndentlessSequence = false)
                 val captured =
                     if end > start then normalizeBlock(start, end, frame.indent + 2)
                     else "\n"
@@ -1423,7 +1423,7 @@ final private[kyo] class YamlReader private (
                     case '_'  => b.append('\u00a0')
                     case 'L'  => b.append('\u2028')
                     case 'P'  => b.append('\u2029')
-                    case 'x' =>
+                    case 'x'  =>
                         b.append(readSourceHexEscape(s, i, 2, baseIndex).toChar)
                         i += 2
                     case 'u' =>
@@ -1904,7 +1904,7 @@ final private[kyo] class YamlReader private (
     private def subtreeEnd(start: Int): Int =
         prepare()
         events(start) match
-            case _: Scalar | _: Alias => start + 1
+            case _: Scalar | _: Alias               => start + 1
             case _: MappingStart | _: SequenceStart =>
                 var depth = 1
                 var i     = start + 1
@@ -1925,7 +1925,7 @@ final private[kyo] class YamlReader private (
     private def finished: Boolean =
         delegate match
             case Present(reader) if !reader.finished => false
-            case _ =>
+            case _                                   =>
                 if allowSourcePull && !prepared then
                     skipSourceBlankAndCommentLines()
                     sourceFrames.isEmpty && (sourcePos >= source.length || sourceIsDocumentMarker("..."))
@@ -2010,11 +2010,11 @@ object YamlReader:
     sealed private trait SourceFrame:
         def indent: Int
     end SourceFrame
-    final private case class SourceMappingFrame(indent: Int, var count: Int = 0) extends SourceFrame
+    final private case class SourceMappingFrame(indent: Int, var count: Int = 0)                   extends SourceFrame
     final private case class SourceFlowMappingFrame(var first: Boolean = true, var count: Int = 0) extends SourceFrame:
         def indent: Int = 0
     end SourceFlowMappingFrame
-    final private case class SourceSequenceFrame(indent: Int, var count: Int = 0) extends SourceFrame
+    final private case class SourceSequenceFrame(indent: Int, var count: Int = 0)                   extends SourceFrame
     final private case class SourceFlowSequenceFrame(var first: Boolean = true, var count: Int = 0) extends SourceFrame:
         def indent: Int = 0
     end SourceFlowSequenceFrame
@@ -2135,7 +2135,7 @@ object YamlReader:
 
     private def subtreeEnd(events: Array[Event], start: Int): Int =
         events(start) match
-            case _: Scalar | _: Alias => start + 1
+            case _: Scalar | _: Alias               => start + 1
             case _: MappingStart | _: SequenceStart =>
                 var depth = 1
                 var i     = start + 1

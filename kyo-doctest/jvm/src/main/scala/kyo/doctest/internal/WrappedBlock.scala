@@ -119,8 +119,8 @@ private[kyo] object WrappedBlock:
         setupBodies: Chunk[String],
         blockBodyLines: List[String]
     ): WrappedBlock =
-        val prefix = Chunk(PackageDecl + Newline, s"object $objName {" + Newline)
-        val suffix = Chunk("}" + Newline)
+        val prefix            = Chunk(PackageDecl + Newline, s"object $objName {" + Newline)
+        val suffix            = Chunk("}" + Newline)
         val (content, mapBuf) =
             emitSetupAndBody(
                 startingLine = 3,
@@ -150,7 +150,7 @@ private[kyo] object WrappedBlock:
         blockBodyLines: List[String]
     ): (String, Chunk[(Int, Int)]) =
         // Emit setup lines with blockBodyLine == 0.
-        val allSetupLines = setupBodies.toList.flatMap(_.split(Newline, -1).toList)
+        val allSetupLines                            = setupBodies.toList.flatMap(_.split(Newline, -1).toList)
         val (setupEmitted, setupMap, lineAfterSetup) =
             allSetupLines.foldLeft((Chunk.empty[String], List.empty[(Int, Int)], startingLine)) {
                 case ((lines, mapAcc, ln), sl) =>

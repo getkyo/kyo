@@ -27,8 +27,8 @@ final private[kyo] class StdioWireTransport extends JsonRpcWireTransport:
         Stream.unfold[Unit, Chunk[Byte], Async & Abort[Closed]]((), chunkSize = 1) { _ =>
             // EOFException from Console.readLine signals stream end; absorbed into Absent to close the stream
             Abort.run[java.io.IOException](Console.readLine).map {
-                case Result.Failure(_) => Maybe.Absent
-                case Result.Panic(_)   => Maybe.Absent
+                case Result.Failure(_)    => Maybe.Absent
+                case Result.Panic(_)      => Maybe.Absent
                 case Result.Success(line) =>
                     val bytes = Chunk.from((line + "\n").getBytes("UTF-8"))
                     Maybe.Present((bytes, ()))

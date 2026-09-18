@@ -57,12 +57,12 @@ private[kyo] object McpCompletionRefSchema:
             typeTag match
                 case "ref/prompt"   => McpHandler.CompletionRef.Prompt(name)
                 case "ref/resource" => McpHandler.CompletionRef.Resource(uri)
-                case other =>
+                case other          =>
                     mcp.McpEnumSchema.discriminatorMismatch(reader, "ref/prompt|ref/resource", other)
             end match
         end serializeRead
 
-        @publicInBinary private[kyo] def getter(value: McpHandler.CompletionRef): Maybe[Any] = Maybe(value)
+        @publicInBinary private[kyo] def getter(value: McpHandler.CompletionRef): Maybe[Any]                          = Maybe(value)
         @publicInBinary private[kyo] def setter(value: McpHandler.CompletionRef, next: Any): McpHandler.CompletionRef =
             next match
                 case r: McpHandler.CompletionRef => r

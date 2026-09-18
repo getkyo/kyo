@@ -106,7 +106,7 @@ object FlowDuplicateNameException:
     private[kyo] def describe(workflowId: String, conflicts: Seq[FlowNameConflict]): String =
         val listed   = conflicts.map(c => s"\n  ${c.show}").mkString
         val parallel = conflicts.exists(_.composition.contains("branches"))
-        val remedy =
+        val remedy   =
             if parallel then
                 "\nGive each branch a durable path of its own: wrap it in a subflow with its own name, or, when the parallelism is " +
                     "over runtime data rather than over distinct flows, use foreach, whose items are identified one per item."
@@ -190,7 +190,7 @@ case class FlowInvalidConfigException(problems: Seq[FlowConfigProblem])(using Fr
 
 object FlowInvalidConfigException:
     private[kyo] def describe(problems: Seq[FlowConfigProblem]): String =
-        val listed = problems.map(p => s"\n  ${p.show}").mkString
+        val listed  = problems.map(p => s"\n  ${p.show}").mkString
         val counted =
             if problems.size == 1 then "one setting cannot be used"
             else s"${problems.size} settings cannot be used"

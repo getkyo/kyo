@@ -30,9 +30,9 @@ class SqlStreamingConformanceTest extends SqlBackendTest:
     "both streaming surfaces yield every row, decoded and in order" - {
         forEachBackend() { (backend, client, _) =>
             for
-                _   <- client.executeRaw(streamRowDdl(backend))
-                _   <- Kyo.foreachDiscard(0 until rowCount)(i => Sql.insert[StreamRow].values(StreamRow(i.toLong, s"payload-$i")).run)
-                raw <- Scope.run(client.streamQuery(Sql.from[StreamRow]("r").orderBy(c => c.r.id.asc)).run)
+                _        <- client.executeRaw(streamRowDdl(backend))
+                _        <- Kyo.foreachDiscard(0 until rowCount)(i => Sql.insert[StreamRow].values(StreamRow(i.toLong, s"payload-$i")).run)
+                raw      <- Scope.run(client.streamQuery(Sql.from[StreamRow]("r").orderBy(c => c.r.id.asc)).run)
                 streamed <-
                     Kyo.foreach(raw)(r => Abort.recover((e: SqlDecodeException) => Abort.fail(e: SqlException))(r.decode[StreamRow]))
                 // The ambient form over the same rows: `fragment.stream` needs no client handle and decodes each row as

@@ -29,8 +29,7 @@ class PostgresEncoderNumericTest extends kyo.Test:
         buf.toSpan
     end encode
 
-    private def readU16(bytes: Span[Byte], offset: Int): Int =
-        ((bytes(offset) & 0xff) << 8) | (bytes(offset + 1) & 0xff)
+    private def readU16(bytes: Span[Byte], offset: Int): Int = ((bytes(offset) & 0xff) << 8) | (bytes(offset + 1) & 0xff)
 
     private def readI16(bytes: Span[Byte], offset: Int): Int =
         val raw = readU16(bytes, offset)

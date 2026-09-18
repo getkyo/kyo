@@ -192,9 +192,9 @@ private[kyo] object CallEngine:
     )(using frame: Frame, allow: AllowUnsafe): (Fiber.Promise[JsonRpcId, Any], Out < (Async & Abort[JsonRpcError | Closed])) =
         // Promise.Unsafe.init so idSignal is accessible before the call runs; it is read from Sync-only Exchange
         // callbacks (no safe Promise equivalent), and is built under the AllowUnsafe propagated by the caller.
-        val idSignalUnsafe = Promise.Unsafe.init[JsonRpcId, Any]()
-        val idSignal       = idSignalUnsafe
-        val idPromise      = idSignalUnsafe.safe
+        val idSignalUnsafe                                           = Promise.Unsafe.init[JsonRpcId, Any]()
+        val idSignal                                                 = idSignalUnsafe
+        val idPromise                                                = idSignalUnsafe.safe
         val callEffect: Out < (Async & Abort[JsonRpcError | Closed]) =
             Fiber.Promise.init[JsonRpcError, Any].map { abortSignal =>
                 inFlight.getAndIncrement.map { prev =>
@@ -540,7 +540,7 @@ private[kyo] object CallEngine:
                                                 Loop.forever {
                                                     progChan.take.map { sv =>
                                                         policy.extractProgressValue(sv).map {
-                                                            case Absent => Kyo.unit
+                                                            case Absent            => Kyo.unit
                                                             case Present(rawValue) =>
                                                                 Structure.decode[T](rawValue) match
                                                                     // typed stream emit after per-item decode; no canonical alternative
@@ -560,7 +560,7 @@ private[kyo] object CallEngine:
                                                 case Result.Failure(_) =>
                                                     // Channel closed: check for a non-null final result and emit it as last chunk.
                                                     finalRef.get.map {
-                                                        case Absent => Kyo.unit
+                                                        case Absent      => Kyo.unit
                                                         case Present(sv) =>
                                                             Structure.decode[T](sv) match
                                                                 // final item stream emit after decode; no canonical alternative

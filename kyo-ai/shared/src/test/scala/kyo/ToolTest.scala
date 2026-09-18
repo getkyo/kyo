@@ -60,7 +60,7 @@ class ToolTest extends kyo.test.Test[Any]:
                 )
             }
         ).map { ctx =>
-            val msgs = ctx.messages.toList
+            val msgs             = ctx.messages.toList
             val hasProcessingMsg = msgs.exists {
                 case ToolMessage(cid, content) => cid == callId && content.contains("Processing tool call")
                 case _                         => false
@@ -131,7 +131,7 @@ class ToolTest extends kyo.test.Test[Any]:
                     .andThen(ai.context.map(identity))
             }
         ).map { ctx =>
-            val msgs = ctx.messages.toList
+            val msgs    = ctx.messages.toList
             val failMsg = msgs.collect {
                 case ToolMessage(cid, content) if cid == failCallId => content
             }

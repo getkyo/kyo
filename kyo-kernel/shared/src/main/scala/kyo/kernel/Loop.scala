@@ -253,7 +253,7 @@ object Loop:
                     loop(run(next._1))
                 case kyo: KyoSuspend[IX, OX, EX, Any, Outcome[A, O], S] @unchecked =>
                     new KyoContinue[IX, OX, EX, Any, O, S](kyo):
-                        def frame = _frame
+                        def frame                                                = _frame
                         def apply(v: OX[Any], context: Context)(using Safepoint) =
                             loop(kyo(v, context))
                 case res =>
@@ -287,7 +287,7 @@ object Loop:
                     loop(run(next._1, next._2))
                 case kyo: KyoSuspend[IX, OX, EX, Any, Outcome2[A, B, O], S] @unchecked =>
                     new KyoContinue[IX, OX, EX, Any, O, S](kyo):
-                        def frame = _frame
+                        def frame                                                = _frame
                         def apply(v: OX[Any], context: Context)(using Safepoint) =
                             loop(kyo(v, context))
                 case res =>
@@ -321,7 +321,7 @@ object Loop:
                     loop(run(next._1, next._2, next._3))
                 case kyo: KyoSuspend[IX, OX, EX, Any, Outcome3[A, B, C, O], S] @unchecked =>
                     new KyoContinue[IX, OX, EX, Any, O, S](kyo):
-                        def frame = _frame
+                        def frame                                                = _frame
                         def apply(v: OX[Any], context: Context)(using Safepoint) =
                             loop(kyo(v, context))
                 case res =>
@@ -357,7 +357,7 @@ object Loop:
                     loop(run(next._1, next._2, next._3, next._4))
                 case kyo: KyoSuspend[IX, OX, EX, Any, Outcome4[A, B, C, D, O], S] @unchecked =>
                     new KyoContinue[IX, OX, EX, Any, O, S](kyo):
-                        def frame = _frame
+                        def frame                                                = _frame
                         def apply(v: OX[Any], context: Context)(using Safepoint) =
                             loop(kyo(v, context))
                 case res =>
@@ -387,7 +387,7 @@ object Loop:
                     loop(idx + 1)(run(idx))
                 case kyo: KyoSuspend[IX, OX, EX, Any, Outcome[Unit, O], S] @unchecked =>
                     new KyoContinue[IX, OX, EX, Any, O, S](kyo):
-                        def frame = _frame
+                        def frame                                                = _frame
                         def apply(v: OX[Any], context: Context)(using Safepoint) =
                             loop(idx)(kyo(v, context))
                 case res =>
@@ -418,7 +418,7 @@ object Loop:
                     loop(idx + 1)(run(idx, next._1))
                 case kyo: KyoSuspend[IX, OX, EX, Any, Outcome[A, O], S] @unchecked =>
                     new KyoContinue[IX, OX, EX, Any, O, S](kyo):
-                        def frame = _frame
+                        def frame                                                = _frame
                         def apply(v: OX[Any], context: Context)(using Safepoint) =
                             loop(idx)(kyo(v, context))
                 case res =>
@@ -450,7 +450,7 @@ object Loop:
                     loop(idx + 1)(run(idx, next._1, next._2))
                 case kyo: KyoSuspend[IX, OX, EX, Any, Outcome2[A, B, O], S] @unchecked =>
                     new KyoContinue[IX, OX, EX, Any, O, S](kyo):
-                        def frame = _frame
+                        def frame                                                = _frame
                         def apply(v: OX[Any], context: Context)(using Safepoint) =
                             loop(idx)(kyo(v, context))
                 case res =>
@@ -484,7 +484,7 @@ object Loop:
                     loop(idx + 1)(run(idx, next._1, next._2, next._3))
                 case kyo: KyoSuspend[IX, OX, EX, Any, Outcome3[A, B, C, O], S] @unchecked =>
                     new KyoContinue[IX, OX, EX, Any, O, S](kyo):
-                        def frame = _frame
+                        def frame                                                = _frame
                         def apply(v: OX[Any], context: Context)(using Safepoint) =
                             loop(idx)(kyo(v, context))
                 case res =>
@@ -520,7 +520,7 @@ object Loop:
                     loop(idx + 1)(run(idx, next._1, next._2, next._3, next._4))
                 case kyo: KyoSuspend[IX, OX, EX, Any, Outcome4[A, B, C, D, O], S] @unchecked =>
                     new KyoContinue[IX, OX, EX, Any, O, S](kyo):
-                        def frame = _frame
+                        def frame                                                = _frame
                         def apply(v: OX[Any], context: Context)(using Safepoint) =
                             loop(idx)(kyo(v, context))
                 case res =>
@@ -546,7 +546,7 @@ object Loop:
                     loop(run)
                 case kyo: KyoSuspend[IX, OX, EX, Any, Outcome[Unit, A], S] @unchecked =>
                     new KyoContinue[IX, OX, EX, Any, A, S](kyo):
-                        def frame = _frame
+                        def frame                                                = _frame
                         def apply(v: OX[Any], context: Context)(using Safepoint) =
                             loop(kyo(v, context))
                 case res => res.asInstanceOf[A]
@@ -573,7 +573,7 @@ object Loop:
                 v match
                     case kyo: KyoSuspend[IX, OX, EX, Any, Unit, S] @unchecked =>
                         new KyoContinue[IX, OX, EX, Any, Unit, S](kyo):
-                            def frame = _frame
+                            def frame                                                = _frame
                             def apply(v: OX[Any], context: Context)(using Safepoint) =
                                 loop(i)(kyo(v, context))
                     case _ =>
@@ -599,7 +599,7 @@ object Loop:
             v match
                 case kyo: KyoSuspend[IX, OX, EX, Any, Nothing, S] @unchecked =>
                     new KyoContinue[IX, OX, EX, Any, Nothing, S](kyo):
-                        def frame = _frame
+                        def frame                                                = _frame
                         def apply(v: OX[Any], context: Context)(using Safepoint) =
                             loop(kyo(v, context))
                 case _ =>
@@ -629,7 +629,7 @@ object Loop:
                     v match
                         case kyo: KyoSuspend[IX, OX, EX, Any, Unit, S] @unchecked =>
                             new KyoContinue[IX, OX, EX, Any, Unit, S](kyo):
-                                def frame = _frame
+                                def frame                                                = _frame
                                 def apply(v: OX[Any], context: Context)(using Safepoint) =
                                     loop(kyo(v, context))
                         case _ =>

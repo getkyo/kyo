@@ -38,9 +38,7 @@ class EffectTest extends kyo.test.Test[Any]:
                 case _: RuntimeException => "caught"
             }
 
-            val result = ArrowEffect.handle(Tag[TestEffect1], effect)(
-                [C] => (input, cont) => cont(input.toString)
-            )
+            val result = ArrowEffect.handle(Tag[TestEffect1], effect)([C] => (input, cont) => cont(input.toString))
 
             assert(result.eval == "caught")
         }
@@ -64,7 +62,7 @@ class EffectTest extends kyo.test.Test[Any]:
 
         "simple" in {
             var executed = false
-            val effect = Effect.defer {
+            val effect   = Effect.defer {
                 executed = true
                 42
             }
@@ -74,7 +72,7 @@ class EffectTest extends kyo.test.Test[Any]:
         }
 
         "nested defer calls" in {
-            var order = List.empty[Int]
+            var order  = List.empty[Int]
             val effect = Effect.defer {
                 order = 1 :: order
                 Effect.defer {

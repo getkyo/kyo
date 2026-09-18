@@ -24,7 +24,7 @@ class STMTest extends kyo.test.Test[Any]:
                 ref      <- TRef.init(0)
                 start    <- Latch.init(1)
                 continue <- Latch.init(1)
-                fiber <- Fiber.initUnscoped {
+                fiber    <- Fiber.initUnscoped {
                     STM.run {
                         for
                             _ <- ref.set(42)
@@ -43,9 +43,9 @@ class STMTest extends kyo.test.Test[Any]:
 
         "independent transactions don't interfere" in {
             for
-                ref1 <- TRef.init(10)
-                ref2 <- TRef.init(20)
-                _    <- STM.run(ref1.set(30))
+                ref1   <- TRef.init(10)
+                ref2   <- TRef.init(20)
+                _      <- STM.run(ref1.set(30))
                 result <- STM.run {
                     for
                         v <- ref2.get
@@ -62,7 +62,7 @@ class STMTest extends kyo.test.Test[Any]:
     "Retry behavior" - {
         "explicit retry" in {
             for
-                ref <- TRef.init(0)
+                ref    <- TRef.init(0)
                 result <- Abort.run {
                     STM.run {
                         for
@@ -78,7 +78,7 @@ class STMTest extends kyo.test.Test[Any]:
             for
                 ref     <- TRef.init(0)
                 counter <- AtomicInt.init(0)
-                result <- Abort.run {
+                result  <- Abort.run {
                     STM.run(Schedule.repeat(3)) {
                         for
                             _ <- counter.incrementAndGet
@@ -99,7 +99,7 @@ class STMTest extends kyo.test.Test[Any]:
                     latch1   <- Latch.init(1)
                     latch2   <- Latch.init(1)
                     attempts <- AtomicInt.init
-                    _ <-
+                    _        <-
                         Fiber.initUnscoped {
                             STM.run(latch1.release.andThen(ref.set(42)))
                                 .andThen(latch2.release)
@@ -128,7 +128,7 @@ class STMTest extends kyo.test.Test[Any]:
             for
                 ref      <- TRef.init(0)
                 attempts <- AtomicInt.init
-                v <-
+                v        <-
                     Abort.run {
                         STM.run(Schedule.repeat(10)) {
                             for
@@ -153,7 +153,7 @@ class STMTest extends kyo.test.Test[Any]:
         "with Var effect" in {
             Var.run(42) {
                 for
-                    ref <- TRef.init(0)
+                    ref    <- TRef.init(0)
                     result <-
                         Var.isolate.update[Int].use {
                             STM.run {
@@ -173,7 +173,7 @@ class STMTest extends kyo.test.Test[Any]:
 
         "with Emit effect" in {
             for
-                ref <- TRef.init(0)
+                ref    <- TRef.init(0)
                 result <- Emit.run {
                     Emit.isolate.merge[Int].use {
                         STM.run {
@@ -193,7 +193,7 @@ class STMTest extends kyo.test.Test[Any]:
         "rollback on failure preserves effect isolation" in {
             val ex = new Exception("Test failure")
             for
-                ref <- TRef.init(0)
+                ref    <- TRef.init(0)
                 result <-
                     Emit.run {
                         Abort.run {
@@ -217,13 +217,13 @@ class STMTest extends kyo.test.Test[Any]:
         "with nested Var isolations" in {
             Var.run(0) {
                 for
-                    ref <- TRef.init(1)
+                    ref    <- TRef.init(1)
                     result <-
                         Var.isolate.update[Int].use {
                             STM.run {
                                 for
-                                    _ <- ref.set(2)
-                                    _ <- Var.set(1)
+                                    _           <- ref.set(2)
+                                    _           <- Var.set(1)
                                     innerResult <-
                                         Var.isolate.update[Int].use {
                                             STM.run {
@@ -247,14 +247,14 @@ class STMTest extends kyo.test.Test[Any]:
 
         "with Memo effect" in {
             var count = 0
-            val f = Memo[Int, Int, Any] { x =>
+            val f     = Memo[Int, Int, Any] { x =>
                 count += 1
                 x * 2
             }
 
             Memo.run {
                 for
-                    ref <- TRef.init(1)
+                    ref    <- TRef.init(1)
                     result <- STM.run {
                         for
                             _      <- ref.set(2)
@@ -274,7 +274,7 @@ class STMTest extends kyo.test.Test[Any]:
             val ex = new Exception("Test failure")
             Var.run(0) {
                 for
-                    ref <- TRef.init(0)
+                    ref    <- TRef.init(0)
                     result <- Emit.run {
                         Abort.run {
                             Emit.isolate.merge[Int].andThen(Var.isolate.update[Int]).use {
@@ -304,10 +304,10 @@ class STMTest extends kyo.test.Test[Any]:
 
         "nested transactions share the same transaction context" in {
             for
-                ref <- TRef.init(0)
+                ref    <- TRef.init(0)
                 result <- STM.run {
                     for
-                        _ <- ref.set(1)
+                        _           <- ref.set(1)
                         innerResult <- STM.run {
                             for
                                 v1 <- ref.get
@@ -325,10 +325,10 @@ class STMTest extends kyo.test.Test[Any]:
         "nested transaction rollbacks affect outer transaction" in {
             for
                 ref <- TRef.init(0)
-                _ <-
+                _   <-
                     STM.run {
                         for
-                            _ <- ref.set(1)
+                            _      <- ref.set(1)
                             result <-
                                 Abort.run {
                                     STM.run {
@@ -346,10 +346,10 @@ class STMTest extends kyo.test.Test[Any]:
 
         "multiple levels of nesting maintain consistency" in {
             for
-                ref <- TRef.init(0)
+                ref    <- TRef.init(0)
                 result <- STM.run {
                     for
-                        _ <- ref.set(1)
+                        _  <- ref.set(1)
                         v1 <- STM.run {
                             for
                                 _  <- ref.set(2)
@@ -366,11 +366,11 @@ class STMTest extends kyo.test.Test[Any]:
 
         "nested transactions see parent modifications" in {
             for
-                ref <- TRef.init(0)
+                ref    <- TRef.init(0)
                 result <- STM.run {
                     for
-                        _  <- ref.set(1)
-                        v1 <- ref.get
+                        _            <- ref.set(1)
+                        v1           <- ref.get
                         nestedResult <- STM.run {
                             for
                                 v2 <- ref.get
@@ -386,11 +386,11 @@ class STMTest extends kyo.test.Test[Any]:
 
         "nested transaction modifications are visible to parent" in {
             for
-                ref1 <- TRef.init(0)
-                ref2 <- TRef.init(0)
+                ref1   <- TRef.init(0)
+                ref2   <- TRef.init(0)
                 result <- STM.run {
                     for
-                        _ <- ref1.set(1)
+                        _            <- ref1.set(1)
                         nestedResult <- STM.run {
                             for
                                 v1 <- ref1.get
@@ -412,10 +412,10 @@ class STMTest extends kyo.test.Test[Any]:
 
         "sequential nested transactions see previous changes" in {
             for
-                ref <- TRef.init(0)
+                ref    <- TRef.init(0)
                 result <- STM.run {
                     for
-                        _ <- ref.set(1)
+                        _  <- ref.set(1)
                         r1 <- STM.run {
                             for
                                 v1 <- ref.get
@@ -436,7 +436,7 @@ class STMTest extends kyo.test.Test[Any]:
 
         "nested transaction rollback preserves parent changes" in {
             for
-                ref <- TRef.init(0)
+                ref    <- TRef.init(0)
                 result <- STM.run {
                     for
                         _  <- ref.set(1)
@@ -463,7 +463,7 @@ class STMTest extends kyo.test.Test[Any]:
 
         "transaction rollback on failure" in {
             for
-                ref <- TRef.init(42)
+                ref    <- TRef.init(42)
                 result <- Abort.run {
                     STM.run {
                         for
@@ -478,8 +478,8 @@ class STMTest extends kyo.test.Test[Any]:
 
         "multiple refs rollback on failure" in {
             for
-                ref1 <- TRef.init(10)
-                ref2 <- TRef.init(20)
+                ref1   <- TRef.init(10)
+                ref2   <- TRef.init(20)
                 result <- Abort.run {
                     STM.run {
                         for
@@ -496,7 +496,7 @@ class STMTest extends kyo.test.Test[Any]:
 
         "nested transaction rollback on inner failure" in {
             for
-                ref <- TRef.init(1)
+                ref    <- TRef.init(1)
                 result <- Abort.run {
                     STM.run {
                         for
@@ -516,8 +516,8 @@ class STMTest extends kyo.test.Test[Any]:
 
         "partial updates within transaction are atomic" in {
             for
-                ref1 <- TRef.init("initial1")
-                ref2 <- TRef.init("initial2")
+                ref1   <- TRef.init("initial1")
+                ref2   <- TRef.init("initial2")
                 result <- Abort.run {
                     STM.run {
                         for
@@ -539,7 +539,7 @@ class STMTest extends kyo.test.Test[Any]:
 
         "exception in update function rolls back" in {
             for
-                ref <- TRef.init(0)
+                ref    <- TRef.init(0)
                 result <- Abort.run {
                     STM.run {
                         ref.update { x =>
@@ -571,9 +571,9 @@ class STMTest extends kyo.test.Test[Any]:
 
         "concurrent reads and writes".notJs in {
             (for
-                size  <- sizes
-                ref   <- TRef.init(0)
-                latch <- Latch.init(1)
+                size       <- sizes
+                ref        <- TRef.init(0)
+                latch      <- Latch.init(1)
                 writeFiber <- Fiber.initUnscoped(
                     latch.await.andThen(Async.fill(size, size)(STM.run(ref.update(_ + 1))))
                 )
@@ -596,7 +596,7 @@ class STMTest extends kyo.test.Test[Any]:
             (for
                 size <- sizes
                 ref  <- TRef.init(0)
-                _ <- Async.fill(size, size) {
+                _    <- Async.fill(size, size) {
                     STM.run(retrySchedule) {
                         for
                             _ <- ref.update(_ + 1)
@@ -619,7 +619,7 @@ class STMTest extends kyo.test.Test[Any]:
             val philosophers = 5
             (for
                 forks <- Kyo.fill(philosophers)(TRef.init(true))
-                _ <- Async.foreach(0 until philosophers, philosophers) { i =>
+                _     <- Async.foreach(0 until philosophers, philosophers) { i =>
                     val leftFork  = forks(i)
                     val rightFork = forks((i + 1) % philosophers)
                     Async.collectAll((1 to 10).map { _ =>
@@ -751,11 +751,11 @@ class STMTest extends kyo.test.Test[Any]:
     "async transaction nesting" - {
         "nested transactions with async boundary should fail gracefully" in {
             for
-                ref <- TRef.init(0)
+                ref    <- TRef.init(0)
                 result <- Abort.run {
                     STM.run {
                         for
-                            _ <- ref.set(1)
+                            _     <- ref.set(1)
                             fiber <- Fiber.initUnscoped {
                                 STM.run {
                                     for
@@ -780,7 +780,7 @@ class STMTest extends kyo.test.Test[Any]:
 
         "tick should not leak across async boundaries" in {
             for
-                ref <- TRef.init(0)
+                ref                     <- TRef.init(0)
                 (parentTick, childTick) <-
                     STM.run {
                         STM.withCurrentTransaction { parentTick =>
@@ -885,7 +885,7 @@ class STMTest extends kyo.test.Test[Any]:
             for
                 numerator   <- TRef.init(0)
                 denominator <- TRef.init(1)
-                writer <- Fiber.initUnscoped {
+                writer      <- Fiber.initUnscoped {
                     Async.foreachDiscard(1 to 10000) { i =>
                         STM.run(retrySchedule) {
                             for
@@ -917,7 +917,7 @@ class STMTest extends kyo.test.Test[Any]:
         "double read consistency".onlyJvm in {
             val retrySchedule = STM.defaultRetrySchedule.forever
             for
-                ref <- TRef.init(0L)
+                ref    <- TRef.init(0L)
                 writer <- Fiber.initUnscoped {
                     Async.foreachDiscard(1L to 50000L) { i =>
                         STM.run(retrySchedule)(ref.set(i))
@@ -942,8 +942,8 @@ class STMTest extends kyo.test.Test[Any]:
         "even odd".onlyJvm in {
             val retrySchedule = STM.defaultRetrySchedule.forever
             for
-                even <- TRef.init(0)
-                odd  <- TRef.init(1)
+                even   <- TRef.init(0)
+                odd    <- TRef.init(1)
                 writer <- Fiber.initUnscoped {
                     Async.foreachDiscard(1 to 10000) { _ =>
                         STM.run(retrySchedule) {
@@ -978,9 +978,9 @@ class STMTest extends kyo.test.Test[Any]:
         "sum invariant".onlyJvm in {
             val retrySchedule = STM.defaultRetrySchedule.forever
             for
-                a <- TRef.init(500)
-                b <- TRef.init(300)
-                c <- TRef.init(200)
+                a      <- TRef.init(500)
+                b      <- TRef.init(300)
+                c      <- TRef.init(200)
                 reader <- Fiber.initUnscoped {
                     Async.foreachDiscard(1 to 10000) { _ =>
                         STM.run(retrySchedule) {
@@ -1042,8 +1042,8 @@ class STMTest extends kyo.test.Test[Any]:
                 STM.Tick.testOnlySet(Int.MaxValue.toLong + 1000)
             }.andThen {
                 for
-                    ref1 <- TRef.init(10)
-                    ref2 <- TRef.init(20)
+                    ref1   <- TRef.init(10)
+                    ref2   <- TRef.init(20)
                     result <- STM.run {
                         for
                             v1 <- ref1.get
@@ -1075,10 +1075,10 @@ class STMTest extends kyo.test.Test[Any]:
                 STM.Tick.testOnlySet(Int.MaxValue.toLong + 1000)
             }.andThen {
                 for
-                    ref <- TRef.init(0)
+                    ref    <- TRef.init(0)
                     result <- STM.run {
                         for
-                            _ <- ref.set(1)
+                            _           <- ref.set(1)
                             innerResult <- STM.run {
                                 for
                                     v1 <- ref.get
@@ -1099,7 +1099,7 @@ class STMTest extends kyo.test.Test[Any]:
             }.andThen {
                 val retrySchedule = STM.defaultRetrySchedule.forever
                 for
-                    ref <- TRef.init(0L)
+                    ref    <- TRef.init(0L)
                     writer <- Fiber.initUnscoped {
                         Async.foreachDiscard(1L to 5000L) { i =>
                             STM.run(retrySchedule)(ref.set(i))
@@ -1252,7 +1252,7 @@ class STMTest extends kyo.test.Test[Any]:
         "currentTransaction Local returns Absent when read outside any STM.run scope" in {
             for
                 observedAbsent <- AtomicBoolean.init(false)
-                v <- STM.withCurrentTransactionOrNew[Int, Sync] { _ =>
+                v              <- STM.withCurrentTransactionOrNew[Int, Sync] { _ =>
                     observedAbsent.set(true).andThen(42)
                 }
                 observed <- observedAbsent.get
@@ -1262,7 +1262,7 @@ class STMTest extends kyo.test.Test[Any]:
         "withCurrentTransactionOrNew outside STM.run runs the body but does not commit a transaction" in {
             for
                 observedTick <- AtomicLong.init(-1L)
-                _ <- STM.withCurrentTransactionOrNew[Unit, Sync] { tick =>
+                _            <- STM.withCurrentTransactionOrNew[Unit, Sync] { tick =>
                     observedTick.set(tick).unit
                 }
                 tick <- observedTick.get
@@ -1274,7 +1274,7 @@ class STMTest extends kyo.test.Test[Any]:
                 outerTick <- AtomicLong.init(-1L)
                 innerTick <- AtomicLong.init(-1L)
                 _         <- STM.withCurrentTransactionOrNew[Unit, Sync] { t => outerTick.set(t).unit }
-                parent <- STM.run {
+                parent    <- STM.run {
                     STM.withCurrentTransaction { parent =>
                         STM.withCurrentTransactionOrNew[Unit, Sync] { t => innerTick.set(t).unit }
                             .map(_ => parent: Long)
@@ -1309,7 +1309,7 @@ class STMTest extends kyo.test.Test[Any]:
                 ref      <- TRef.init(0)
                 latch    <- Latch.init(1)
                 attempts <- AtomicInt.init
-                _ <- Fiber.initUnscoped {
+                _        <- Fiber.initUnscoped {
                     // Writer waits for the reader's first read (of 0) before setting 1, forcing a retry.
                     latch.await.andThen(STM.run(ref.set(1)))
                 }
@@ -1347,7 +1347,7 @@ class STMTest extends kyo.test.Test[Any]:
             Var.run(0) {
                 for
                     ref <- TRef.init(0)
-                    _ <- Var.isolate.update[Int].use {
+                    _   <- Var.isolate.update[Int].use {
                         STM.run {
                             for
                                 _ <- ref.set(42)
@@ -1366,7 +1366,7 @@ class STMTest extends kyo.test.Test[Any]:
         "STM.run with Schedule.done on first conflict surfaces FailedTransaction immediately" in {
             for
                 attempts <- AtomicInt.init
-                result <- Abort.run[FailedTransaction] {
+                result   <- Abort.run[FailedTransaction] {
                     STM.run(Schedule.done) {
                         attempts.incrementAndGet.andThen(STM.retry)
                     }
@@ -1438,7 +1438,7 @@ class STMTest extends kyo.test.Test[Any]:
         "single-ref read-only transaction that aborts with user error probes the commit without mutating the ref" in {
             val ex = new RuntimeException("user-fail-after-read-0022")
             for
-                ref <- TRef.init(7)
+                ref    <- TRef.init(7)
                 result <- Abort.run[Throwable] {
                     STM.run {
                         for
@@ -1460,7 +1460,7 @@ class STMTest extends kyo.test.Test[Any]:
             val n = 16
             for
                 refs <- Kyo.fill(n)(TRef.init(0))
-                _ <- STM.run {
+                _    <- STM.run {
                     Kyo.foreachDiscard(refs.zipWithIndex) { case (r, i) => r.set(i + 1) }
                 }
                 finals <- STM.run(Kyo.foreach(refs)(_.get))
@@ -1471,9 +1471,9 @@ class STMTest extends kyo.test.Test[Any]:
         "multi-ref read-only transaction that aborts with user error probes without mutating any ref" in {
             val ex = new RuntimeException("user-fail-after-multi-read-0024")
             for
-                r1 <- TRef.init(10)
-                r2 <- TRef.init(20)
-                r3 <- TRef.init(30)
+                r1     <- TRef.init(10)
+                r2     <- TRef.init(20)
+                r3     <- TRef.init(30)
                 result <- Abort.run[Throwable] {
                     STM.run {
                         for
@@ -1539,7 +1539,7 @@ class STMTest extends kyo.test.Test[Any]:
                 start <- Latch.init(1)
                 step2 <- Latch.init(1)
                 done  <- Latch.init(2)
-                _ <- Fiber.initUnscoped {
+                _     <- Fiber.initUnscoped {
                     STM.run {
                         for
                             _ <- r1.get
@@ -1580,7 +1580,7 @@ class STMTest extends kyo.test.Test[Any]:
             for
                 refs     <- Kyo.fill(nFibers)(TRef.init(0))
                 attempts <- Kyo.fill(nFibers)(AtomicInt.init)
-                _ <- Async.foreach(refs.zip(attempts).zipWithIndex, nFibers) { case ((r, a), i) =>
+                _        <- Async.foreach(refs.zip(attempts).zipWithIndex, nFibers) { case ((r, a), i) =>
                     STM.run {
                         for
                             _ <- a.incrementAndGet
@@ -1597,7 +1597,7 @@ class STMTest extends kyo.test.Test[Any]:
             for
                 r1 <- TRef.init(0)
                 r2 <- TRef.init(0)
-                _ <- Async.zip(
+                _  <- Async.zip(
                     STM.run { r1.set(1).andThen(r2.set(1)) },
                     STM.run { r2.set(2).andThen(r1.set(2)) }
                 )
@@ -1613,7 +1613,7 @@ class STMTest extends kyo.test.Test[Any]:
             for
                 ref      <- TRef.init(0)
                 attempts <- AtomicInt.init
-                rfiber <- Fiber.initUnscoped {
+                rfiber   <- Fiber.initUnscoped {
                     Async.fill(100, 100)(STM.run(ref.get))
                 }
                 _ <- Abort.run {
@@ -1636,7 +1636,7 @@ class STMTest extends kyo.test.Test[Any]:
             for
                 ref      <- TRef.init(0)
                 sideRuns <- AtomicInt.init
-                writer <- Fiber.initUnscoped {
+                writer   <- Fiber.initUnscoped {
                     Async.fill(5, 5)(STM.run(ref.update(_ + 1)))
                 }
                 _ <- Abort.run {
@@ -1659,7 +1659,7 @@ class STMTest extends kyo.test.Test[Any]:
             for
                 ref      <- TRef.init(0)
                 observed <- AtomicInt.init
-                _ <- STM.run(ref.set(42)).andThen {
+                _        <- STM.run(ref.set(42)).andThen {
                     STM.run(ref.get).map(v => observed.set(v))
                 }
                 v <- observed.get
@@ -1673,7 +1673,7 @@ class STMTest extends kyo.test.Test[Any]:
                 latch2   <- Latch.init(1)
                 latch3   <- Latch.init(1)
                 attempts <- AtomicInt.init
-                _ <- Fiber.initUnscoped {
+                _        <- Fiber.initUnscoped {
                     // Writer blocks on latch3 until the reader has done its first ref.get, then
                     // sets ref=42 and commits. latch2 releases after commit so the reader's second
                     // ref.get races with a fresh tick on the same ref.
@@ -1711,7 +1711,7 @@ class STMTest extends kyo.test.Test[Any]:
             for
                 ref     <- TRef.init(0)
                 readers <- AtomicRef.init(List.empty[Int])
-                _ <- Async.zip(
+                _       <- Async.zip(
                     Async.fill(n, n)(STM.run(ref.update(_ + 1))),
                     Async.fill(n, n)(STM.run(ref.get).map(v => readers.updateAndGet(v :: _).unit))
                 )
@@ -1731,7 +1731,7 @@ class STMTest extends kyo.test.Test[Any]:
             for
                 ref      <- TRef.init(0L)
                 mismatch <- AtomicInt.init
-                writer <- Fiber.initUnscoped {
+                writer   <- Fiber.initUnscoped {
                     Async.foreachDiscard(1L to 5000L)(i => STM.run(retrySchedule)(ref.set(i)))
                 }
                 reader <- Fiber.initUnscoped {
@@ -1757,7 +1757,7 @@ class STMTest extends kyo.test.Test[Any]:
                 for
                     r1 <- TRef.init(10)
                     r2 <- TRef.init(20)
-                    _ <- STM.run {
+                    _  <- STM.run {
                         for
                             v1 <- r1.get
                             v2 <- r2.get
@@ -1785,7 +1785,7 @@ class STMTest extends kyo.test.Test[Any]:
         "STM.run inside Var-of-TRef[Int] effect commits TRef writes; Var state is preserved" in {
             for
                 initialRef <- TRef.init(7)
-                _ <- Var.run(initialRef) {
+                _          <- Var.run(initialRef) {
                     Var.isolate.update[TRef[Int]].use {
                         STM.run {
                             for
@@ -1803,7 +1803,7 @@ class STMTest extends kyo.test.Test[Any]:
         "STM.run with Schedule.never terminates cleanly on first abort" in {
             for
                 attempts <- AtomicInt.init
-                result <- Abort.run[FailedTransaction] {
+                result   <- Abort.run[FailedTransaction] {
                     STM.run(Schedule.never) {
                         attempts.incrementAndGet.andThen(STM.retry)
                     }
@@ -1827,9 +1827,9 @@ class STMTest extends kyo.test.Test[Any]:
 
         "STM.retry after writing 3 refs rolls back all 3 writes" in {
             for
-                r1 <- TRef.init(10)
-                r2 <- TRef.init(20)
-                r3 <- TRef.init(30)
+                r1     <- TRef.init(10)
+                r2     <- TRef.init(20)
+                r3     <- TRef.init(30)
                 result <- Abort.run[FailedTransaction] {
                     STM.run(Schedule.done) {
                         for
@@ -1865,7 +1865,7 @@ class STMTest extends kyo.test.Test[Any]:
             for
                 refs     <- Kyo.fill(n)(TRef.init(0))
                 attempts <- AtomicInt.init
-                writer <- Fiber.initUnscoped {
+                writer   <- Fiber.initUnscoped {
                     Async.sleep(5.millis).andThen(STM.run(Kyo.foreachDiscard(refs)(_.update(_ + 1))))
                 }
                 _ <- STM.run(Schedule.repeat(20)) {
@@ -1887,7 +1887,7 @@ class STMTest extends kyo.test.Test[Any]:
             for
                 ref      <- TRef.init(0)
                 attempts <- AtomicInt.init
-                result <- Abort.run[FailedTransaction] {
+                result   <- Abort.run[FailedTransaction] {
                     STM.run(Schedule.repeat(k)) {
                         for
                             _ <- attempts.incrementAndGet
@@ -1919,7 +1919,7 @@ class STMTest extends kyo.test.Test[Any]:
                 for
                     attempts     <- AtomicInt.init(0)
                     firstAttempt <- Promise.init[Unit, Any]
-                    fiber <- Fiber.initUnscoped(Abort.run[FailedTransaction] {
+                    fiber        <- Fiber.initUnscoped(Abort.run[FailedTransaction] {
                         STM.run(Schedule.fixed(delay).take(3)) {
                             attempts.incrementAndGet.unit
                                 .andThen(firstAttempt.completeUnit)
@@ -1969,7 +1969,7 @@ class STMTest extends kyo.test.Test[Any]:
                 gateRead  <- Latch.init(1)
                 gateWrite <- Latch.init(1)
                 attempts  <- AtomicInt.init
-                _ <- Fiber.initUnscoped {
+                _         <- Fiber.initUnscoped {
                     gateRead.await.andThen(STM.run(ref.set(99))).andThen(gateWrite.release)
                 }
                 v <- STM.run(Schedule.repeat(5)) {
@@ -1989,7 +1989,7 @@ class STMTest extends kyo.test.Test[Any]:
         "successive STM.run calls on the same fiber produce no observable buffer leak across iterations" in {
             for
                 refs <- Kyo.fill(3)(TRef.init(0))
-                _ <- Kyo.foreachDiscard(1 to 100) { i =>
+                _    <- Kyo.foreachDiscard(1 to 100) { i =>
                     STM.run {
                         Kyo.foreachDiscard(refs)(_.set(i))
                     }
@@ -2000,9 +2000,9 @@ class STMTest extends kyo.test.Test[Any]:
 
         "multi-ref commit returning false via boundary.break does not leak the Break exception".notJs in {
             for
-                r1 <- TRef.init(0)
-                r2 <- TRef.init(0)
-                r3 <- TRef.init(0)
+                r1     <- TRef.init(0)
+                r2     <- TRef.init(0)
+                r3     <- TRef.init(0)
                 writer <- Fiber.initUnscoped {
                     Async.foreachDiscard(1 to 50) { _ =>
                         STM.run(Kyo.foreachDiscard(List(r1, r2, r3))(_.update(_ + 1)))
@@ -2027,7 +2027,7 @@ class STMTest extends kyo.test.Test[Any]:
                         ref    <- TRef.init(0)
                         writer <- Fiber.initUnscoped(STM.run(ref.set(99)))
                         _      <- writer.get
-                        r <- STM.run(Schedule.done) {
+                        r      <- STM.run(Schedule.done) {
                             ref.get.map { _ => (STM.retry: Unit < STM) }
                         }
                     yield r
@@ -2044,7 +2044,7 @@ class STMTest extends kyo.test.Test[Any]:
         "STM.run with Schedule.never on always-retry body terminates with FailedTransaction" in {
             for
                 attempts <- AtomicInt.init
-                result <- Abort.run[FailedTransaction] {
+                result   <- Abort.run[FailedTransaction] {
                     STM.run(Schedule.never) {
                         attempts.incrementAndGet.andThen(STM.retry)
                     }
@@ -2060,7 +2060,7 @@ class STMTest extends kyo.test.Test[Any]:
         "unchecked exception inside STM.run body surfaces as Panic after probe-commit; ref rolled back" in {
             val ex = new IllegalStateException("user-thrown-0061")
             for
-                ref <- TRef.init(7)
+                ref    <- TRef.init(7)
                 result <- Abort.run[Throwable] {
                     STM.run {
                         ref.set(99).andThen(Sync.defer { throw ex })
@@ -2081,7 +2081,7 @@ class STMTest extends kyo.test.Test[Any]:
             val k = 1000
             for
                 attempts <- AtomicInt.init
-                result <- Abort.run[FailedTransaction] {
+                result   <- Abort.run[FailedTransaction] {
                     STM.run(Schedule.repeat(k)) {
                         attempts.incrementAndGet.andThen(STM.retry)
                     }
@@ -2122,7 +2122,7 @@ class STMTest extends kyo.test.Test[Any]:
         "blocking sleep inside STM.run body completes (no driver deadlock)" in {
             for
                 ref <- TRef.init(0)
-                _ <- STM.run {
+                _   <- STM.run {
                     for
                         _ <- ref.set(1)
                         _ <- Async.sleep(50.millis)
@@ -2136,7 +2136,7 @@ class STMTest extends kyo.test.Test[Any]:
         "STM.run body's events appear in source order on every retry" in {
             for
                 events <- AtomicRef.init(List.empty[String])
-                _ <- Abort.run {
+                _      <- Abort.run {
                     STM.run(Schedule.repeat(2)) {
                         for
                             _ <- events.updateAndGet("a" :: _).unit
@@ -2154,7 +2154,7 @@ class STMTest extends kyo.test.Test[Any]:
 
         "STM.run wrapped in Async.timeout surfaces timeout failure even on infinite retry schedule" in {
             for
-                ref <- TRef.init(0)
+                ref    <- TRef.init(0)
                 result <- Abort.run {
                     Async.timeout(100.millis) {
                         STM.run(STM.defaultRetrySchedule.forever) {
@@ -2168,9 +2168,9 @@ class STMTest extends kyo.test.Test[Any]:
         "nested STM.run that retries leaves outer-write rollback exclusively to the nested scope" in {
             for
                 ref <- TRef.init(0)
-                _ <- STM.run {
+                _   <- STM.run {
                     for
-                        _ <- ref.set(1)
+                        _      <- ref.set(1)
                         innerR <- Abort.run {
                             STM.run {
                                 for
@@ -2188,7 +2188,7 @@ class STMTest extends kyo.test.Test[Any]:
         "STM.retry rolls back writes made after a TRef set even on the same ref" in {
             for
                 ref <- TRef.init(0)
-                _ <- Abort.run {
+                _   <- Abort.run {
                     STM.run(Schedule.done) {
                         for
                             _ <- ref.set(1)
@@ -2219,7 +2219,7 @@ class STMTest extends kyo.test.Test[Any]:
         "after STM.run returns success, a follow-up STM.run on the same ref does not block" in {
             for
                 ref <- TRef.init(0)
-                v <- STM.run(ref.set(1)).andThen {
+                v   <- STM.run(ref.set(1)).andThen {
                     STM.run(ref.get)
                 }
             yield assert(v == 1, s"chained STM.run should see 1; got $v")
@@ -2258,7 +2258,7 @@ class STMTest extends kyo.test.Test[Any]:
         "Sync.defer side effect inside STM.run body runs once per attempt" in {
             for
                 counter <- AtomicInt.init
-                _ <- Abort.run {
+                _       <- Abort.run {
                     STM.run(Schedule.repeat(2)) {
                         for
                             _ <- Sync.defer(counter.incrementAndGet)
@@ -2272,7 +2272,7 @@ class STMTest extends kyo.test.Test[Any]:
 
         "STM.retryIf(value.isEmpty) on TRef[Maybe[V]] proceeds when value becomes Present" in {
             for
-                ref <- TRef.init(Maybe.empty[Int])
+                ref    <- TRef.init(Maybe.empty[Int])
                 writer <- Fiber.initUnscoped {
                     Async.sleep(20.millis).andThen(STM.run(ref.set(Maybe(42))))
                 }
@@ -2298,8 +2298,8 @@ class STMTest extends kyo.test.Test[Any]:
 
         "retryIf based on multi-ref reads retries when any read ref changes" in {
             for
-                r1 <- TRef.init(0)
-                r2 <- TRef.init(0)
+                r1     <- TRef.init(0)
+                r2     <- TRef.init(0)
                 writer <- Fiber.initUnscoped {
                     Async.sleep(20.millis).andThen(STM.run(r2.set(1)))
                 }
@@ -2358,10 +2358,10 @@ class STMTest extends kyo.test.Test[Any]:
             for
                 logCount <- AtomicInt.init
                 attempts <- AtomicInt.init
-                writer <- Fiber.initUnscoped {
+                writer   <- Fiber.initUnscoped {
                     Async.fill(3, 3)(STM.run(TRef.init(0).map(_ => ())))
                 }
-                ref <- TRef.init(0)
+                ref     <- TRef.init(0)
                 writer2 <- Fiber.initUnscoped {
                     Async.fill(3, 3)(STM.run(ref.update(_ + 1)))
                 }
@@ -2395,7 +2395,7 @@ class STMTest extends kyo.test.Test[Any]:
         "STM.retry is non-blocking: retries until schedule exhausted, then fails" in {
             for
                 attempts <- AtomicInt.init
-                result <- Abort.run[FailedTransaction] {
+                result   <- Abort.run[FailedTransaction] {
                     STM.run(Schedule.repeat(3)) {
                         attempts.incrementAndGet.andThen(STM.retry)
                     }
@@ -2410,7 +2410,7 @@ class STMTest extends kyo.test.Test[Any]:
             for
                 r      <- TRef.init(0)
                 aborts <- AtomicInt.init
-                _ <- Abort.run {
+                _      <- Abort.run {
                     STM.run(Schedule.repeat(5)) {
                         for
                             _ <- aborts.incrementAndGet
@@ -2434,7 +2434,7 @@ class STMTest extends kyo.test.Test[Any]:
             val expected = Async.defaultConcurrency * 16 + 1
             for
                 attempts <- AtomicInt.init
-                result <- Abort.run[FailedTransaction] {
+                result   <- Abort.run[FailedTransaction] {
                     STM.run(attempts.incrementAndGet.andThen(STM.retry))
                 }
                 n <- attempts.get
@@ -2449,7 +2449,7 @@ class STMTest extends kyo.test.Test[Any]:
                 r1 <- TRef.init(0)
                 r2 <- TRef.init(0)
                 r3 <- TRef.init(0)
-                _ <- Abort.run {
+                _  <- Abort.run {
                     STM.run(Schedule.done) {
                         for
                             _ <- r1.set(1)
@@ -2460,7 +2460,7 @@ class STMTest extends kyo.test.Test[Any]:
                     }
                 }
                 attempts <- AtomicInt.init
-                _ <- STM.run {
+                _        <- STM.run {
                     attempts.incrementAndGet.andThen(
                         Kyo.foreachDiscard(List(r1, r2, r3))(_.set(99))
                     )
@@ -2538,7 +2538,7 @@ class STMTest extends kyo.test.Test[Any]:
                 ref      <- TRef.init(0)
                 prints   <- AtomicInt.init
                 attempts <- AtomicInt.init
-                writer <- Fiber.initUnscoped {
+                writer   <- Fiber.initUnscoped {
                     Async.fill(2, 2)(STM.run(ref.update(_ + 1)))
                 }
                 _ <- Abort.run {
@@ -2558,7 +2558,7 @@ class STMTest extends kyo.test.Test[Any]:
 
         "a Kyo computation captured inside an STM.run and run after STM.run completes returns the post-commit value" in {
             for
-                ref <- TRef.init(0)
+                ref      <- TRef.init(0)
                 deferred <- STM.run {
                     ref.set(42).map(_ => ref.get)
                 }
@@ -2570,7 +2570,7 @@ class STMTest extends kyo.test.Test[Any]:
             for
                 stamps   <- AtomicRef.init(List.empty[Long])
                 attempts <- AtomicInt.init
-                _ <- Abort.run {
+                _        <- Abort.run {
                     STM.run(Schedule.repeat(2)) {
                         for
                             _ <- attempts.incrementAndGet
@@ -2589,7 +2589,7 @@ class STMTest extends kyo.test.Test[Any]:
             for
                 ticks <- STM.run {
                     for
-                        parent <- STM.withCurrentTransaction(t => (t: Long))
+                        parent    <- STM.withCurrentTransaction(t => (t: Long))
                         childTick <- Fiber.initUnscoped {
                             STM.withCurrentTransactionOrNew { t => (t: Long) }
                         }.map(_.get)
@@ -2632,7 +2632,7 @@ class STMTest extends kyo.test.Test[Any]:
             for
                 counter  <- AtomicInt.init
                 attempts <- AtomicInt.init
-                _ <- Abort.run {
+                _        <- Abort.run {
                     STM.run(Schedule.repeat(4)) {
                         for
                             _ <- attempts.incrementAndGet
@@ -2650,7 +2650,7 @@ class STMTest extends kyo.test.Test[Any]:
             for
                 r1 <- TRef.init(0)
                 r2 <- TRef.init(0)
-                _ <- Async.zip(
+                _  <- Async.zip(
                     STM.run(r1.set(1).andThen(r2.set(2))),
                     STM.run(r2.set(3).andThen(r1.set(4)))
                 )
@@ -2674,7 +2674,7 @@ class STMTest extends kyo.test.Test[Any]:
 
         "nested STM.run with inner exception propagated upward rolls back the outer's writes" in {
             for
-                ref <- TRef.init(0)
+                ref    <- TRef.init(0)
                 result <- Abort.run[Throwable] {
                     STM.run {
                         for
@@ -2729,7 +2729,7 @@ class STMTest extends kyo.test.Test[Any]:
         "inline f in withCurrentTransaction captures call-site values (counter increment observed)" in {
             for
                 counter <- AtomicInt.init(0)
-                result <- STM.run {
+                result  <- STM.run {
                     STM.withCurrentTransaction { _ =>
                         counter.incrementAndGet
                     }
@@ -2743,7 +2743,7 @@ class STMTest extends kyo.test.Test[Any]:
         "inline f in withCurrentTransactionOrNew captures call-site values" in {
             for
                 counter <- AtomicInt.init(0)
-                result <- STM.withCurrentTransactionOrNew[Int, Sync] { _ =>
+                result  <- STM.withCurrentTransactionOrNew[Int, Sync] { _ =>
                     counter.incrementAndGet
                 }
                 n <- counter.get
@@ -2766,7 +2766,7 @@ class STMTest extends kyo.test.Test[Any]:
             for
                 refs     <- Kyo.fill(20)(TRef.init(0))
                 attempts <- AtomicInt.init
-                _ <- Abort.run {
+                _        <- Abort.run {
                     STM.run(Schedule.repeat(k)) {
                         for
                             _ <- attempts.incrementAndGet
@@ -2786,7 +2786,7 @@ class STMTest extends kyo.test.Test[Any]:
                 v <- STM.run {
                     for
                         outerRef <- TRef.init(0)
-                        _ <- Kyo.foreachDiscard(1 to k) { i =>
+                        _        <- Kyo.foreachDiscard(1 to k) { i =>
                             STM.run {
                                 for
                                     r <- TRef.init(i)
@@ -2804,9 +2804,9 @@ class STMTest extends kyo.test.Test[Any]:
         "nested STM.run + STM.retry under Abort.run rolls back inner-only writes; outer commit publishes outer-only writes" in {
             for
                 ref <- TRef.init(0)
-                _ <- STM.run {
+                _   <- STM.run {
                     for
-                        _ <- ref.set(7)
+                        _      <- ref.set(7)
                         innerR <- Abort.run {
                             STM.run {
                                 for
@@ -2833,7 +2833,7 @@ class STMTest extends kyo.test.Test[Any]:
         "inner STM.run reads the value set by outer STM.run before outer's commit" in {
             for
                 ref <- TRef.init(0)
-                v <- STM.run {
+                v   <- STM.run {
                     for
                         _      <- ref.set(5)
                         innerV <- STM.run(ref.get)

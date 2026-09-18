@@ -263,11 +263,10 @@ object SnapshotFormat:
     end writeInt64LE
 
     /** Read a little-endian 32-bit int from position `pos` in `bytes`. */
-    def readInt32LE(bytes: Array[Byte], pos: Int): Int =
-        (bytes(pos) & 0xff) |
-            ((bytes(pos + 1) & 0xff) << 8) |
-            ((bytes(pos + 2) & 0xff) << 16) |
-            ((bytes(pos + 3) & 0xff) << 24)
+    def readInt32LE(bytes: Array[Byte], pos: Int): Int = (bytes(pos) & 0xff) |
+        ((bytes(pos + 1) & 0xff) << 8) |
+        ((bytes(pos + 2) & 0xff) << 16) |
+        ((bytes(pos + 3) & 0xff) << 24)
 
     /** Read a little-endian 64-bit long from position `pos` in `bytes`. */
     def readInt64LE(bytes: Array[Byte], pos: Int): Long =

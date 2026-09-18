@@ -224,7 +224,7 @@ class TTableTest extends kyo.test.Test[Any]:
                 for
                     table <- TTable.Indexed.init["name" ~ String & "age" ~ Int, "age" ~ Int]
                     id    <- STM.run(table.insert("name" ~ "Alice" & "age" ~ 30))
-                    _ <- Abort.run {
+                    _     <- Abort.run {
                         STM.run {
                             for
                                 _ <- table.update(id, "name" ~ "Alice" & "age" ~ 31)
@@ -287,10 +287,10 @@ class TTableTest extends kyo.test.Test[Any]:
         "nested updates should maintain consistency" in {
             for
                 table <- TTable.init["name" ~ String & "age" ~ Int]
-                id <- STM.run {
+                id    <- STM.run {
                     for
                         id <- table.insert("name" ~ "Alice" & "age" ~ 30)
-                        _ <- STM.run {
+                        _  <- STM.run {
                             for
                                 _ <- table.update(id, "name" ~ "Bob" & "age" ~ 31)
                                 _ <- STM.run(table.update(id, "name" ~ "Charlie" & "age" ~ 32))
@@ -353,7 +353,7 @@ class TTableTest extends kyo.test.Test[Any]:
             for
                 table <- TTable.init["name" ~ String & "age" ~ Int]
                 id    <- STM.run(table.insert("name" ~ "Alice" & "age" ~ 30))
-                _ <- Abort.run {
+                _     <- Abort.run {
                     STM.run {
                         for
                             _ <- table.update(id, "name" ~ "Bob" & "age" ~ 31)
@@ -377,7 +377,7 @@ class TTableTest extends kyo.test.Test[Any]:
             for
                 table <- TTable.init["name" ~ String & "age" ~ Int & "email" ~ String]
                 id    <- STM.run(table.insert("name" ~ "Alice" & "age" ~ 30 & "email" ~ "alice@test.com"))
-                _ <- Abort.run {
+                _     <- Abort.run {
                     STM.run {
                         for
                             _ <- table.update(id, "name" ~ "Bob" & "age" ~ 31 & "email" ~ "bob@test.com")
@@ -398,7 +398,7 @@ class TTableTest extends kyo.test.Test[Any]:
             for
                 table <- TTable.Indexed.init["name" ~ String & "age" ~ Int, "name" ~ String]
                 id    <- STM.run(table.insert("name" ~ "Alice" & "age" ~ 30))
-                _ <- Abort.run {
+                _     <- Abort.run {
                     STM.run {
                         for
                             _ <- table.update(id, "name" ~ "Bob" & "age" ~ 31)
@@ -517,7 +517,7 @@ class TTableTest extends kyo.test.Test[Any]:
             for
                 table <- TTable.init["name" ~ String]
                 preId <- STM.run(table.insert("name" ~ "pre"))
-                _ <- Abort.run(STM.run {
+                _     <- Abort.run(STM.run {
                     table.insert("name" ~ "doomed").andThen(Abort.fail(new Exception("boom")))
                 })
                 postId <- STM.run(table.insert("name" ~ "post"))
@@ -594,7 +594,7 @@ class TTableTest extends kyo.test.Test[Any]:
             for
                 table <- TTable.init["name" ~ String]
                 id    <- STM.run(table.insert("name" ~ "Alice"))
-                _ <- Abort.run(STM.run(
+                _     <- Abort.run(STM.run(
                     table.remove(id).andThen(Abort.fail(new Exception("boom")))
                 ))
                 after <- STM.run(table.get(id))
@@ -842,7 +842,7 @@ class TTableTest extends kyo.test.Test[Any]:
             for
                 table <- TTable.Indexed.init["name" ~ String & "age" ~ Int, "age" ~ Int]
                 id    <- STM.run(table.insert("name" ~ "Alice" & "age" ~ 30))
-                _ <- Abort.run(STM.run {
+                _     <- Abort.run(STM.run {
                     for
                         _ <- table.update(id, "name" ~ "Alice" & "age" ~ 31)
                         _ <- STM.run(
@@ -890,7 +890,7 @@ class TTableTest extends kyo.test.Test[Any]:
             for
                 table1 <- TTable.init["name" ~ String]
                 table2 <- TTable.init["age" ~ Int]
-                _ <- STM.run {
+                _      <- STM.run {
                     for
                         _ <- table1.insert("name" ~ "Alice")
                         _ <- table2.insert("age" ~ 30)
@@ -967,7 +967,7 @@ class TTableTest extends kyo.test.Test[Any]:
 
         "queryIds inside the same STM.run as an insert observes the newly-inserted record" in {
             for
-                table <- TTable.Indexed.init["name" ~ String, "name" ~ String]
+                table  <- TTable.Indexed.init["name" ~ String, "name" ~ String]
                 result <- STM.run {
                     for
                         id  <- table.insert("name" ~ "Eve")
@@ -1027,7 +1027,7 @@ class TTableTest extends kyo.test.Test[Any]:
         "Indexed.insert in a failed transaction does not leak index entries" in {
             for
                 table <- TTable.Indexed.init["name" ~ String, "name" ~ String]
-                _ <- Abort.run(STM.run(
+                _     <- Abort.run(STM.run(
                     table.insert("name" ~ "Ghost").andThen(Abort.fail(new Exception("boom")))
                 ))
                 ids  <- STM.run(table.queryIds("name" ~ "Ghost"))
@@ -1040,7 +1040,7 @@ class TTableTest extends kyo.test.Test[Any]:
         "Indexed.upsert in a failed transaction does not leak index entries" in {
             for
                 table <- TTable.Indexed.init["name" ~ String, "name" ~ String]
-                _ <- Abort.run(STM.run(
+                _     <- Abort.run(STM.run(
                     table.upsert(table.unsafeId(7), "name" ~ "Ghost")
                         .andThen(Abort.fail(new Exception("boom")))
                 ))
@@ -1233,8 +1233,8 @@ class TTableTest extends kyo.test.Test[Any]:
     "Complex transaction scenarios" - {
         "interleaved operations on same record" in {
             for
-                table <- TTable.init["name" ~ String & "age" ~ Int]
-                id    <- STM.run(table.insert("name" ~ "Alice" & "age" ~ 30))
+                table  <- TTable.init["name" ~ String & "age" ~ Int]
+                id     <- STM.run(table.insert("name" ~ "Alice" & "age" ~ 30))
                 result <- STM.run {
                     for
                         original    <- table.get(id)
@@ -1256,7 +1256,7 @@ class TTableTest extends kyo.test.Test[Any]:
             for
                 table1 <- TTable.init["name" ~ String & "age" ~ Int]
                 table2 <- TTable.init["name" ~ String & "age" ~ Int]
-                _ <- Abort.run {
+                _      <- Abort.run {
                     STM.run {
                         for
                             id1 <- table1.insert("name" ~ "Alice" & "age" ~ 30)

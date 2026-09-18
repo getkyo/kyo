@@ -42,7 +42,7 @@ extension (kyoObject: Kyo.type)
         for
             promise <- Promise.init[A, Abort[E]]
             registerFn = (eff: A < (Abort[E] & Async)) =>
-                val effFiber = Fiber.initUnscoped(eff)
+                val effFiber      = Fiber.initUnscoped(eff)
                 val updatePromise =
                     effFiber.map(_.onComplete(a => promise.completeDiscard(a)))
                 val updatePromiseIO = Fiber.initUnscoped(updatePromise).unit

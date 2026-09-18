@@ -62,9 +62,9 @@ private[net] enum CapabilityOutcome derives CanEqual:
 
     /** One line for the selection report and for the terminal exception's cause. */
     def describe: String = this match
-        case Available           => "available"
-        case UnsupportedOS       => "not applicable to this OS/runtime"
-        case Unavailable(reason) => s"unavailable ($reason)"
+        case Available                => "available"
+        case UnsupportedOS            => "not applicable to this OS/runtime"
+        case Unavailable(reason)      => s"unavailable ($reason)"
         case NotBundled(id, platform) =>
             s"native library '$id' is not on the classpath for $platform; on the JVM, add kyo-net's $platform classifier artifact, " +
                 s"""libraryDependencies += "io.getkyo" %% "kyo-net" % <version> classifier "$platform""""

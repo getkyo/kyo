@@ -46,8 +46,8 @@ class DeployWorkflowTest extends WebsiteTest:
         val lines = workflowText.linesIterator.toList
         val out   = new StringBuilder
         // Match the `run:` key at any indentation, capturing its indent and the inline remainder.
-        val runKey                   = """^(\s*)run:\s*(.*)$""".r
-        def indentOf(s: String): Int = s.takeWhile(_ == ' ').length
+        val runKey                                                         = """^(\s*)run:\s*(.*)$""".r
+        def indentOf(s: String): Int                                       = s.takeWhile(_ == ' ').length
         def collectBlock(rest: List[String], keyIndent: Int): List[String] =
             rest match
                 case head :: tail if head.isBlank               => collectBlock(tail, keyIndent)
@@ -55,7 +55,7 @@ class DeployWorkflowTest extends WebsiteTest:
                 case _                                          => rest
         def walk(rest: List[String]): Unit =
             rest match
-                case Nil => ()
+                case Nil          => ()
                 case line :: tail =>
                     line match
                         case runKey(indent, inline) if inline == "|" || inline == ">" || inline.startsWith("|") || inline.startsWith(">") =>

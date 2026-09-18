@@ -376,10 +376,10 @@ object LLM:
         Tag[Emit[Chunk[A]]],
         Tag[Emit[Chunk[Completion.StreamElement]]]
     ): (String, AIStats) < (Emit[Chunk[A]] & Async & Scope & Abort[AIStreamException]) =
-        given Schema[A] = schema
+        given Schema[A]                                                                 = schema
         def emitText(delta: String): Unit < (Emit[Chunk[A]] & Abort[AIStreamException]) =
             Structure.decode[A](Structure.Value.Str(delta)) match
-                case Result.Success(a) => Emit.value(Chunk(a))
+                case Result.Success(a)   => Emit.value(Chunk(a))
                 case Result.Failure(err) =>
                     Abort.fail(AIStreamDeltaException(s"stream[String] decoded text chunk failed schema validation: $err"))
                 case Result.Panic(ex) =>
@@ -437,7 +437,7 @@ object LLM:
         Tag[Emit[Chunk[A]]],
         Tag[Emit[Chunk[Completion.StreamElement]]]
     ): (String, AIStats) < (Emit[Chunk[A]] & Async & Scope & Abort[AIStreamException]) =
-        given Schema[A] = schema
+        given Schema[A]                                              = schema
         def decodeElement(raw: String): A < Abort[AIStreamException] =
             Json.decode[Structure.Value](raw) match
                 case Result.Success(v) =>
@@ -648,7 +648,7 @@ object LLM:
                     )
                 else ctx
             context <- Prompt.internal.enrichedContext(requestCtx, allTools)
-            _ <- Log.debug(
+            _       <- Log.debug(
                 // Carries the facts that DECIDE this request's shape, not just its size: the reasoning state,
                 // resolved amount, and ceiling are each derived from a declaration, so a turn that behaved
                 // unexpectedly can't be diagnosed from the call alone without this.
@@ -734,7 +734,7 @@ object LLM:
             // decode guessing at usability would fail working turns, or let a truncated call through to be
             // reported as a schema problem many rejections later.
             _ <- Kyo.when(reply.stopReason == Completion.StopReason.MaxOutputTokens) {
-                val stopped = messages.collect { case msg: AssistantMessage => msg.calls }.flatten
+                val stopped  = messages.collect { case msg: AssistantMessage => msg.calls }.flatten
                 val unusable =
                     stopped.isEmpty ||
                         stopped.lastOption.exists(call => Json.decode[Structure.Value](call.arguments).isFailure)
@@ -773,11 +773,11 @@ object LLM:
             // touches the payload or adds a parallel repair channel.
             preRejections <- capture.rejections
             _             <- Tool.internal.handle(ai, allTools, calls.filterNot(call => completedCallIds.contains(call.id)))
-            r <- capture.value.map {
+            r             <- capture.value.map {
                 case present @ Present(_) => Kyo.lift(present)
-                case Absent =>
+                case Absent               =>
                     val calledResult = calls.exists(_.function == Completion.resultToolName)
-                    val repair =
+                    val repair       =
                         if calledResult then
                             // The call was dispatched and rejected; the tool loop already fed the reason
                             // back. Record the rejection for the exhaustion report when a decode-stage
@@ -835,9 +835,9 @@ object LLM:
           * GC'd, letting the sweep (`State.pruned`) find and drop it. `isValid` is false once collected.
           */
         final class AIRef(ai: AI) extends WeakReference[AI](ai):
-            private val refId: Long    = ai.id
-            def isValid: Boolean       = get() != null
-            override def hashCode: Int = refId.hashCode
+            private val refId: Long              = ai.id
+            def isValid: Boolean                 = get() != null
+            override def hashCode: Int           = refId.hashCode
             override def equals(o: Any): Boolean = o match
                 case r: AIRef => refId == r.refId
                 case _        => false

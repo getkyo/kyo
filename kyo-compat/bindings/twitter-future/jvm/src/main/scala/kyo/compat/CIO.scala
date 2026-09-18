@@ -74,7 +74,7 @@ object CIO:
     ): CIO[B] =
         deferLift {
             acquire.lower().flatMap { a =>
-                val released = new java.util.concurrent.atomic.AtomicBoolean(false)
+                val released                   = new java.util.concurrent.atomic.AtomicBoolean(false)
                 def runRelease(): Future[Unit] =
                     if released.compareAndSet(false, true) then
                         val relFut =
@@ -164,7 +164,7 @@ object CIO:
             deferLift {
                 self.lower().transform {
                     case Return(a) => Future.value(a)
-                    case Throw(t) =>
+                    case Throw(t)  =>
                         try Future.exception(f(t))
                         catch case t2: Throwable if NonFatal(t2) => Future.exception(t2)
                 }
@@ -234,7 +234,7 @@ object CIO:
             val fb           = b.lower()
             val p            = new Promise[A]()
             val cancelSignal = new java.util.concurrent.CancellationException("race: loser cancelled")
-            val _ = fa.respond {
+            val _            = fa.respond {
                 case result =>
                     if p.updateIfEmpty(result) then fb.raise(cancelSignal)
             }
@@ -257,7 +257,7 @@ object CIO:
     private def parWithRaiseCascade[B](futs: Seq[Future[B]]): Future[Seq[B]] =
         val p      = new Promise[Seq[B]]()
         val joined = Future.collect(futs)
-        val _ = joined.respond { r =>
+        val _      = joined.respond { r =>
             val _ = p.updateIfEmpty(r)
         }
         p.setInterruptHandler { case t =>
@@ -273,7 +273,7 @@ object CIO:
         inline concurrency: Int = Int.MaxValue
     )(f: A => CIO[B]): CIO[CChunk[B]] =
         deferLift {
-            val items = coll.toVector
+            val items                = coll.toVector
             val futs: Seq[Future[B]] =
                 if concurrency == Int.MaxValue then items.map(a => f(a).lower())
                 else
@@ -288,7 +288,7 @@ object CIO:
         inline concurrency: Int = Int.MaxValue
     )(f: (Int, A) => CIO[B]): CIO[CChunk[B]] =
         deferLift {
-            val items = coll.toVector.zipWithIndex
+            val items                = coll.toVector.zipWithIndex
             val futs: Seq[Future[B]] =
                 if concurrency == Int.MaxValue then items.map { case (a, i) => f(i, a).lower() }
                 else
@@ -303,7 +303,7 @@ object CIO:
         inline concurrency: Int = Int.MaxValue
     )(f: A => CIO[Any]): CIO[Unit] =
         deferLift {
-            val items = coll.toVector
+            val items                  = coll.toVector
             val futs: Seq[Future[Any]] =
                 if concurrency == Int.MaxValue then items.map(a => f(a).lower())
                 else
@@ -319,7 +319,7 @@ object CIO:
         inline concurrency: Int = Int.MaxValue
     )(p: A => CIO[Boolean]): CIO[CChunk[A]] =
         deferLift {
-            val items = coll.toVector
+            val items                      = coll.toVector
             val futs: Seq[Future[Boolean]] =
                 if concurrency == Int.MaxValue then items.map(a => p(a).lower())
                 else
@@ -336,7 +336,7 @@ object CIO:
         inline concurrency: Int = Int.MaxValue
     ): CIO[CChunk[A]] =
         deferLift {
-            val items = coll.toVector
+            val items                = coll.toVector
             val futs: Seq[Future[A]] =
                 if concurrency == Int.MaxValue then items.map(c => c.lower())
                 else
@@ -351,7 +351,7 @@ object CIO:
         inline concurrency: Int = Int.MaxValue
     ): CIO[Unit] =
         deferLift {
-            val items = coll.toVector
+            val items                  = coll.toVector
             val futs: Seq[Future[Any]] =
                 if concurrency == Int.MaxValue then items.map(c => c.lower())
                 else
@@ -363,7 +363,7 @@ object CIO:
     /** Bridges a one-shot completion callback into `CIO`; `register` receives a `Try[A] => Unit`. */
     inline def async[A](inline register: ((Try[A] => Unit) => Unit)): CIO[A] =
         deferLift {
-            val p = new Promise[A]()
+            val p                  = new Promise[A]()
             val cb: Try[A] => Unit = {
                 case Success(a) =>
                     val _ = p.updateIfEmpty(Return(a))

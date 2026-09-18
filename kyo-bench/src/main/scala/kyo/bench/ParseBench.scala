@@ -28,7 +28,7 @@ class ParseBench extends BaseBench:
         bh.consume(Parse.runResult(repeatSpecificCharInput)(repeatSpecificCharKyoParser).eval)
     @Benchmark def repeatSpecificCharZIO(bh: Blackhole) = bh.consume(repeatSpecificCharZIOParser.parseString(repeatSpecificCharInput))
 
-    val repeatFirstOfCharInput: String = "truefalsemaybemaybenot" * 1000
+    val repeatFirstOfCharInput: String                          = "truefalsemaybemaybenot" * 1000
     val repeatFirstOfCharKyoParser: Chunk[String] < Parse[Char] = Parse.repeat(Parse.firstOf(
         Parse.literal("true"),
         Parse.literal("false"),
@@ -145,9 +145,8 @@ class ParseBench extends BaseBench:
 
         lazy val listSep = Parser.char(',').surroundedBy(whitespaces)
 
-        lazy val list: Parser[String, Char, Json] =
-            (Parser.char('[') ~> json.repeatWithSep0(listSep) <~ Parser.char(']'))
-                .map(Json.Array.apply)
+        lazy val list: Parser[String, Char, Json] = (Parser.char('[') ~> json.repeatWithSep0(listSep) <~ Parser.char(']'))
+            .map(Json.Array.apply)
 
         lazy val keyValueSep = Parser.char(':').surroundedBy(whitespaces)
 

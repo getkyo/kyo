@@ -518,7 +518,7 @@ class YamlTest extends kyo.test.Test[Any]:
                   |---
                   |  x: 7
                   |""".stripMargin
-            val bytes = Span.from(yaml.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+            val bytes  = Span.from(yaml.getBytes(java.nio.charset.StandardCharsets.UTF_8))
             val config =
                 Yaml.ReaderConfig.Default.copy(documentMode = Yaml.ReaderConfig.DocumentMode.MergeTopLevelMappings)
 
@@ -1008,7 +1008,7 @@ class YamlTest extends kyo.test.Test[Any]:
                 )
 
             val captured = reader.captureValue()
-            val decoded = Result.catching[DecodeException] {
+            val decoded  = Result.catching[DecodeException] {
                 summon[Schema[List[MTPerson]]].readFrom(captured)
             }
             val next = reader.captureValue()
@@ -1034,7 +1034,7 @@ class YamlTest extends kyo.test.Test[Any]:
             val reader = kyo.internal.yaml.YamlReader("{name: Alice, text: 'brace } inside'}\n[1]\n")
 
             val captured = reader.captureValue()
-            val decoded = Result.catching[DecodeException] {
+            val decoded  = Result.catching[DecodeException] {
                 summon[Schema[scala.collection.immutable.Map[String, String]]].readFrom(captured)
             }
             val next = reader.captureValue()
@@ -1292,7 +1292,7 @@ class YamlTest extends kyo.test.Test[Any]:
 
         "EOF-adjacent: trailing blank lines and no trailing newline both decode to the same value" in {
             val yamlNoTrail = "tables:\n  - name: t1\n    source:\n      type: YamlRabbit\n      host: localhost"
-            val yamlTrail =
+            val yamlTrail   =
                 """tables:
                   |  - name: t1
                   |    source:

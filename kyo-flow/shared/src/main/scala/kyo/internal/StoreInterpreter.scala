@@ -88,8 +88,8 @@ private[kyo] class StoreInterpreter(
       */
     private def fencedStatus(outcome: FlowStore.StatusOutcome < S): Unit < S =
         outcome.map {
-            case FlowStore.StatusOutcome.Applied   => ()
-            case FlowStore.StatusOutcome.ClaimLost => Abort.fail[FlowSuspension](FlowSuspension.ClaimLost)
+            case FlowStore.StatusOutcome.Applied             => ()
+            case FlowStore.StatusOutcome.ClaimLost           => Abort.fail[FlowSuspension](FlowSuspension.ClaimLost)
             case FlowStore.StatusOutcome.WrongSideOfTerminal =>
                 Abort.panic(new IllegalStateException(
                     s"a mid-attempt lifecycle write for ${eid.value} carried a terminal status, which only finish may write"
@@ -128,7 +128,7 @@ private[kyo] class StoreInterpreter(
     private def guard: Unit < S =
         reentering match
             case Present(cause) => Abort.fail[FlowException](FlowResumedUnwindException(cause))
-            case _ =>
+            case _              =>
                 store.getExecution(eid).map {
                     case Present(s) if s.cancelRequested => Abort.fail[FlowException](FlowCancelledException(eid.value))
                     case _                               => ()
@@ -185,7 +185,7 @@ private[kyo] class StoreInterpreter(
             error match
                 case _: FlowStoreException => ()
                 case _: Interrupted        => ()
-                case e: FlowException =>
+                case e: FlowException      =>
                     appendEvent(ts => Flow.Event.StepFailed(flowId, eid, name, e.getMessage, Maybe(e.kind), ts))
                 case e =>
                     appendEvent(ts => Flow.Event.StepFailed(flowId, eid, name, e.getMessage, Maybe.empty, ts))
@@ -193,7 +193,7 @@ private[kyo] class StoreInterpreter(
         def raise(result: Result[Throwable, V]): V < S =
             result match
                 case Result.Success(v) => v
-                case _ =>
+                case _                 =>
                     val error = errorOf(result)
                     recordFailure(error).andThen {
                         error match
@@ -237,12 +237,12 @@ private[kyo] class StoreInterpreter(
                 }
 
         meta.retry match
-            case Absent => attemptOnce.map(raise)
+            case Absent            => attemptOnce.map(raise)
             case Present(schedule) =>
                 def attempt(sched: Maybe[Schedule], attemptNum: Int): V < S =
                     attemptOnce.map {
                         case Result.Success(v) => v
-                        case result =>
+                        case result            =>
                             val error = errorOf(result)
                             if !isAccident(error) then raise(result)
                             else
@@ -363,7 +363,7 @@ private[kyo] class StoreInterpreter(
     def onInput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Schema[V]): V < S =
         store.getField[V](eid, name).map {
             case Present(v) => v
-            case _ =>
+            case _          =>
                 guard.andThen(
                     Clock.nowWith { now =>
                         fenced(
@@ -499,7 +499,7 @@ private[kyo] class StoreInterpreter(
             }
             parked match
                 case Present(suspension) => Abort.fail[FlowSuspension](suspension)
-                case Absent =>
+                case Absent              =>
                     if all.isEmpty then Abort.panic(new IllegalStateException("a race ended with no branch outcome"))
                     else reraise(all(all.size - 1))
             end match

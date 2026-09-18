@@ -258,7 +258,7 @@ class PostgresRowReaderTest extends Test:
         // dialect other than the active one is rejected; naming a real sibling engine over-specifies that and
         // would make this suite depend on the other backend's module.
         val foreign = Idiom.Id("acme")
-        val ex = intercept[SqlUnsupportedTypeOnBackendException] {
+        val ex      = intercept[SqlUnsupportedTypeOnBackendException] {
             val _ = r.nextExtension(foreign, "geometry")
         }
         assert(ex.dialect == foreign)
@@ -334,7 +334,7 @@ class PostgresRowReaderTest extends Test:
     "a value read on a NULL column that isNil never saw still raises" in {
         val row = nullRow()
         val r   = reader(row)
-        val ex = intercept[SqlDecodeColumnAbsentException] {
+        val ex  = intercept[SqlDecodeColumnAbsentException] {
             r.int()
         }
         assert(ex.columnIndex == Maybe(0), s"expected columnIndex 0, got: ${ex.columnIndex}")
@@ -353,7 +353,7 @@ class PostgresRowReaderTest extends Test:
         val emptyTextBytes = Span.from("".getBytes(java.nio.charset.StandardCharsets.UTF_8))
         val row            = binaryRow(emptyTextBytes)
         val r              = reader(row)
-        val ex = intercept[SqlDecodeEmptyStringForCharException] {
+        val ex             = intercept[SqlDecodeEmptyStringForCharException] {
             r.char()
         }
         assert(ex.columnIndex == Maybe(0), s"expected columnIndex 0, got: ${ex.columnIndex}")
@@ -375,7 +375,7 @@ class PostgresRowReaderTest extends Test:
         val fdInt4 = SqlRow.Column("column", 23)
         val row    = pgRow(Chunk(Maybe.Present(encode(1, PostgresEncoder.int4Binary))), Chunk(fdInt4), Format.Binary)
         val r      = reader(row)
-        val ex = intercept[kyo.SqlDecodeColumnTypeMismatchException] {
+        val ex     = intercept[kyo.SqlDecodeColumnTypeMismatchException] {
             val _ = r.nextArrayOfInt()
         }
         assert(ex.columnType == "int4", s"the refusal names the column's type, got ${ex.columnType}")
@@ -390,7 +390,7 @@ class PostgresRowReaderTest extends Test:
         // earlier.
         val fdUnknown = SqlRow.Column("column", 999999)
         val row       = pgRow(Chunk(Maybe.Present(encode(1, PostgresEncoder.int4Binary))), Chunk(fdUnknown), Format.Binary)
-        val ex = intercept[kyo.SqlDecodeArrayFormatException] {
+        val ex        = intercept[kyo.SqlDecodeArrayFormatException] {
             val _ = reader(row).nextArrayOfInt()
         }
         assert(ex.length == 4, s"the refusal reports the payload length it was handed, got ${ex.length}")
@@ -413,7 +413,7 @@ class PostgresRowReaderTest extends Test:
     /** Build PG binary int4[] bytes for `{1,2,3}`: ndim=1 | hasNulls=0 | elemOID=23 | dimSize=3 | lbound=1 | (len=4|val)*3
       */
     private def pgInt4ArrayBytes(values: Int*): Span[Byte] =
-        val buf = new java.io.ByteArrayOutputStream
+        val buf                        = new java.io.ByteArrayOutputStream
         def writeInt32BE(v: Int): Unit =
             buf.write((v >> 24) & 0xff)
             buf.write((v >> 16) & 0xff)
@@ -443,7 +443,7 @@ class PostgresRowReaderTest extends Test:
       * followed by no data, which is the wire format's marker and not a sentinel this test invents.
       */
     private def pgBinaryArrayBytes(elemOid: Int, elements: Seq[Maybe[Span[Byte]]]): Span[Byte] =
-        val buf = new java.io.ByteArrayOutputStream
+        val buf                        = new java.io.ByteArrayOutputStream
         def writeInt32BE(v: Int): Unit =
             buf.write((v >> 24) & 0xff)
             buf.write((v >> 16) & 0xff)
@@ -468,7 +468,7 @@ class PostgresRowReaderTest extends Test:
 
     /** Builds an hstore binary payload: Int32 entryCount BE, then per entry Int32 keyLen BE + key, Int32 valLen BE + value. */
     private def pgHstoreBytes(entries: (String, String)*): Span[Byte] =
-        val buf = new java.io.ByteArrayOutputStream
+        val buf                        = new java.io.ByteArrayOutputStream
         def writeInt32BE(v: Int): Unit =
             buf.write((v >> 24) & 0xff)
             buf.write((v >> 16) & 0xff)
@@ -489,7 +489,7 @@ class PostgresRowReaderTest extends Test:
 
     /** Build PG binary text[] bytes for `{"a","b"}`. */
     private def pgTextArrayBytes(values: String*): Span[Byte] =
-        val buf = new java.io.ByteArrayOutputStream
+        val buf                        = new java.io.ByteArrayOutputStream
         def writeInt32BE(v: Int): Unit =
             buf.write((v >> 24) & 0xff)
             buf.write((v >> 16) & 0xff)
@@ -511,7 +511,7 @@ class PostgresRowReaderTest extends Test:
 
     /** Build PG binary array bytes carrying `elemOid` in the header, for the layout-compatible element types. */
     private def pgArrayBytesOfOid(elemOid: Int, payloads: Array[Byte]*): Span[Byte] =
-        val buf = new java.io.ByteArrayOutputStream
+        val buf                        = new java.io.ByteArrayOutputStream
         def writeInt32BE(v: Int): Unit =
             buf.write((v >> 24) & 0xff)
             buf.write((v >> 16) & 0xff)
@@ -589,7 +589,7 @@ class PostgresRowReaderTest extends Test:
         "an int8[] element that does not fit an Int is refused rather than truncated" in {
             val tooBig = 1L << 40
             val row    = pgRowCols(("arr", pgArrayBytesOfOid(20, int8BE(1L), int8BE(tooBig)), 1016))
-            val ex = intercept[kyo.SqlDecodeException] {
+            val ex     = intercept[kyo.SqlDecodeException] {
                 val _ = reader(row).nextArrayOfInt()
             }
             assert(
@@ -723,7 +723,7 @@ class PostgresRowReaderTest extends Test:
             case class JsonSandwich(a: Int, m: JsonText, z: String) derives CanEqual
 
             val jsonBytes = Span.from(Array[Byte](0x01.toByte) ++ """{"k":2}""".getBytes(StandardCharsets.UTF_8))
-            val row = pgRowCols(
+            val row       = pgRowCols(
                 ("a", encode(1, PostgresEncoder.int4Binary), PostgresEncoder.OID_INT4),
                 ("m", jsonBytes, 3802),
                 ("z", textBytes("tail"), PostgresEncoder.OID_TEXT)
@@ -921,7 +921,7 @@ class PostgresRowReaderTest extends Test:
 
     "Int over a date column is refused rather than answering the day count" in {
         val row = pgRowCols(("d", encode(java.time.LocalDate.of(2026, 8, 25), PostgresEncoder.dateBinary), PostgresEncoder.OID_DATE))
-        val ex = intercept[kyo.SqlDecodeColumnTypeMismatchException] {
+        val ex  = intercept[kyo.SqlDecodeColumnTypeMismatchException] {
             val _ = reader(row).int()
         }
         assert(ex.columnType == "date", s"the refusal names the column's type, got ${ex.columnType}")
@@ -930,7 +930,7 @@ class PostgresRowReaderTest extends Test:
 
     "Boolean over a date column is refused rather than answering the day count's sign" in {
         val row = pgRowCols(("d", encode(java.time.LocalDate.of(2026, 8, 25), PostgresEncoder.dateBinary), PostgresEncoder.OID_DATE))
-        val ex = intercept[kyo.SqlDecodeColumnTypeMismatchException] {
+        val ex  = intercept[kyo.SqlDecodeColumnTypeMismatchException] {
             val _ = reader(row).boolean()
         }
         assert(ex.columnType == "date", s"the refusal names the column's type, got ${ex.columnType}")

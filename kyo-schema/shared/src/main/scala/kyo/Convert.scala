@@ -14,7 +14,7 @@ package kyo
   *   [[Schema.convert]] for transform-aware conversion from A to B
   */
 final class Convert[A, B](f: A => B) extends Conversion[A, B]:
-    def apply(a: A): B = f(a)
+    def apply(a: A): B                                  = f(a)
     def andThen[C](other: Convert[B, C]): Convert[A, C] =
         new Convert(a => other(f(a)))
 end Convert

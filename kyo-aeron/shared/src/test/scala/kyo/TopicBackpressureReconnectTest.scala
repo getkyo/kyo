@@ -62,7 +62,7 @@ class TopicBackpressureReconnectTest extends Test:
         val exhaustSchedule = Schedule.fixed(20.millis).take(50)
         Topic.run {
             for
-                started <- Latch.init(1)
+                started  <- Latch.init(1)
                 consumer <- Fiber.initUnscoped(using Topic.isolate)(
                     started.release.andThen(Topic.stream[DropMsg](dropUri).take(firstBatch.size).run)
                 )
@@ -77,7 +77,7 @@ class TopicBackpressureReconnectTest extends Test:
                 }
             yield result match
                 case Result.Failure(_: TopicBackpressureExhaustedException) => succeed
-                case Result.Failure(other) =>
+                case Result.Failure(other)                                  =>
                     fail(
                         s"expected TopicBackpressureExhaustedException after subscriber departed, got ${other.getClass.getSimpleName}: $other"
                     )
@@ -134,7 +134,7 @@ class TopicBackpressureReconnectTest extends Test:
             Topic.run {
                 for
                     started1 <- Latch.init(1)
-                    sub1 <- Fiber.initUnscoped(using Topic.isolate)(
+                    sub1     <- Fiber.initUnscoped(using Topic.isolate)(
                         started1.release.andThen(Topic.stream[SubRestartMsg](uri).take(phase1.size).run)
                     )
                     _         <- started1.await
@@ -143,7 +143,7 @@ class TopicBackpressureReconnectTest extends Test:
                     _ = assert(received1 == phase1, s"sub#1 phase-1 mismatch: $received1")
                     // sub#1 has stopped (fiber joined); gate the phase-2 publish behind sub#2's registration.
                     started2 <- Latch.init(1)
-                    sub2 <- Fiber.initUnscoped(using Topic.isolate)(
+                    sub2     <- Fiber.initUnscoped(using Topic.isolate)(
                         started2.release.andThen(Topic.stream[SubRestartMsg](uri).take(phase2.size).run)
                     )
                     _         <- started2.await
@@ -174,7 +174,7 @@ class TopicBackpressureReconnectTest extends Test:
                     started        <- Latch.init(2)
                     shortReceiving <- Latch.init(1)
                     longReceiving  <- Latch.init(1)
-                    shortSub <- Fiber.initUnscoped(using Topic.isolate)(
+                    shortSub       <- Fiber.initUnscoped(using Topic.isolate)(
                         started.release.andThen(
                             Topic.stream[SubRestartMsgB](uri)
                                 .tap(_ => shortReceiving.release)
@@ -238,8 +238,8 @@ class TopicBackpressureReconnectTest extends Test:
 
         Topic.run {
             for
-                started1 <- Latch.init(2)
-                echo1    <- Fiber.initUnscoped(using Topic.isolate)(echoOnce(started1))
+                started1   <- Latch.init(2)
+                echo1      <- Fiber.initUnscoped(using Topic.isolate)(echoOnce(started1))
                 initiator1 <- Fiber.initUnscoped(using Topic.isolate)(
                     started1.release.andThen(Topic.stream[RestartPong](echoUri).take(1).run)
                 )
@@ -249,8 +249,8 @@ class TopicBackpressureReconnectTest extends Test:
                 _      <- echo1.get
                 _ = assert(pongs1 == Seq(RestartPong(1)), s"round-1 pong mismatch: $pongs1")
                 // Round 1 is torn down (both streams closed); a fresh responder and initiator must resume.
-                started2 <- Latch.init(2)
-                echo2    <- Fiber.initUnscoped(using Topic.isolate)(echoOnce(started2))
+                started2   <- Latch.init(2)
+                echo2      <- Fiber.initUnscoped(using Topic.isolate)(echoOnce(started2))
                 initiator2 <- Fiber.initUnscoped(using Topic.isolate)(
                     started2.release.andThen(Topic.stream[RestartPong](echoUri).take(1).run)
                 )

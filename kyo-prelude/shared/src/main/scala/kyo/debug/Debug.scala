@@ -47,8 +47,8 @@ object Debug:
       */
     def trace[A, S](v: => A < S)(using Frame): A < S =
         val interceptor = new Safepoint.Interceptor:
-            var lastFrame = Frame.internal
-            var lastValue = Maybe.empty[Any]
+            var lastFrame                                = Frame.internal
+            var lastValue                                = Maybe.empty[Any]
             def enter(frame: Frame, value: Any): Boolean =
                 if frame ne lastFrame then
                     lastValue.foreach(printValue)
@@ -112,7 +112,7 @@ object Debug:
 
     private def printValue(value: Any) =
         println("───────────────────────────────────".dim)
-        val rendered = pprint(value).render
+        val rendered  = pprint(value).render
         val truncated =
             if rendered.length > maxValueLength then
                 rendered.take(maxValueLength) + " ... (truncated)"

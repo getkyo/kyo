@@ -19,9 +19,9 @@ object StubConnection:
         val _outbound: Channel.Unsafe[Span[Byte]] = Channel.Unsafe.init[Span[Byte]](capacity = 1024)
         val closing                               = Promise.Unsafe.init[Unit, Any]()
         new Connection:
-            def inbound: Channel.Unsafe[Span[Byte]]  = _inbound
-            def outbound: Channel.Unsafe[Span[Byte]] = _outbound
-            def isOpen(using AllowUnsafe): Boolean   = !_outbound.closed()
+            def inbound: Channel.Unsafe[Span[Byte]]     = _inbound
+            def outbound: Channel.Unsafe[Span[Byte]]    = _outbound
+            def isOpen(using AllowUnsafe): Boolean      = !_outbound.closed()
             def close()(using AllowUnsafe, Frame): Unit =
                 discard(_inbound.close())
                 discard(_outbound.close())

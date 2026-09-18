@@ -147,7 +147,7 @@ abstract class SnapshotTestBase[S] extends TestBase[S]:
         storeAndCompare[A](codec, path, norm) { (storedValue, textDiff) =>
             val ops = Changeset[A](storedValue, norm)(using schema, frame).operations
             if ops.nonEmpty then
-                val paths = snapshotChangedPaths(ops)
+                val paths   = snapshotChangedPaths(ops)
                 val diagram = textDiff match
                     case Maybe.Present(diff) => s"changed fields: ${paths.mkString(", ")}\n\n$diff"
                     case Maybe.Absent        => s"changed fields: ${paths.mkString(", ")}"

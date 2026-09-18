@@ -92,7 +92,7 @@ object JsEmitter extends EmitterBase.Ops with PlatformTypes:
                 case TypeRef.BooleanT | TypeRef.ByteT | TypeRef.ShortT | TypeRef.IntT | TypeRef.LongT |
                     TypeRef.FloatT | TypeRef.DoubleT | TypeRef.StringT => ()
                 case TypeRef.BufferT(_) => ()
-                case other =>
+                case other              =>
                     throw new IllegalStateException(
                         s"variadic method '${method.scalaName}' on '${spec.fqcn}' has unsupported fixed parameter type $other, " +
                             "variadic v1 supports only primitives, String, and Buffer[A] in the fixed-arg list"
@@ -102,7 +102,7 @@ object JsEmitter extends EmitterBase.Ops with PlatformTypes:
         method.returnShape match
             case ReturnShape.Void         => ()
             case ReturnShape.Primitive(_) => ()
-            case other =>
+            case other                    =>
                 throw new IllegalStateException(
                     s"variadic method '${method.scalaName}' on '${spec.fqcn}' has unsupported return shape $other, " +
                         "variadic v1 supports only Unit / primitive returns"
@@ -289,7 +289,7 @@ object JsEmitter extends EmitterBase.Ops with PlatformTypes:
                             // Retained: obtain a C-callable handle via `KoffiFacade.register`, pin a close-time unregister on the
                             // user-supplied guard, and pass the handle at the arg slot. The guard's close() drains the cleanups via
                             // `GuardCore.forEachRetainedCleanup` → `KoffiFacade.unregister`.
-                            val handleN = s"${name}H"
+                            val handleN    = s"${name}H"
                             val guardParam = method.params.find(_.tpe == TypeRef.GuardT).getOrElse(
                                 throw new IllegalStateException(
                                     s"Retained callback method '${method.scalaName}' is missing an Ffi.Guard parameter"
@@ -324,7 +324,7 @@ object JsEmitter extends EmitterBase.Ops with PlatformTypes:
         // and the body decodes the filled buffer back into the case class (the same out-pointer convention struct
         // PARAMETERS already use, and the same out-first order as the JVM and Native emitters). This avoids koffi's
         // native by-value struct return so the ABI is identical across all three backends.
-        val structOutName = "__kyoStructOut"
+        val structOutName                 = "__kyoStructOut"
         val structOutCell: Option[String] = method.returnShape match
             case ReturnShape.Struct(sSpec) => Some(s"""KoffiFacade.outStruct("${sSpec.simpleName}")""")
             case _                         => None
@@ -371,7 +371,7 @@ object JsEmitter extends EmitterBase.Ops with PlatformTypes:
                 case ReturnShape.Primitive(t) =>
                     (List(s"val retVal = $rawExpr.asInstanceOf[${jsScalaReturn(t)}]"), "retVal")
                 case ReturnShape.MultiValue(sSpec) =>
-                    val head = sSpec.fields.head
+                    val head     = sSpec.fields.head
                     val headCast = head.tpe match
                         case TypeRef.LongT => "asInstanceOf[js.BigInt].toString.toLong"
                         case _             => s"asInstanceOf[${jsScalaReturn(head.tpe)}]"
@@ -416,7 +416,7 @@ object JsEmitter extends EmitterBase.Ops with PlatformTypes:
                     val sp             = safeName(sizeParam)
                     val elemScala      = scalaTypeOf(elem)
                     val checkedBorrows = spec.companion.exists(_.checkedBorrows)
-                    val checkedCall =
+                    val checkedCall    =
                         s"Buffer.Unsafe.wrapBorrowedChecked[$elemScala](retVal, $sp.toInt, kyo.ffi.internal.BufferFactory.currentBorrowOwner())"
                     val uncheckedCall =
                         s"Buffer.Unsafe.wrapBorrowed[$elemScala](retVal, $sp.toInt)"
@@ -496,7 +496,7 @@ object JsEmitter extends EmitterBase.Ops with PlatformTypes:
         methodName: String
     ): (List[String], String) =
         val setupBuf = List.newBuilder[String]
-        val fields = fieldsToWrite(sSpec).map { f =>
+        val fields   = fieldsToWrite(sSpec).map { f =>
             val (fSetup, fExpr) = structFieldJsExprWithSetup(structVar, f, structsByName, bindingFqn, methodName)
             setupBuf ++= fSetup
             s""""${f.name}" -> $fExpr"""
@@ -537,7 +537,7 @@ object JsEmitter extends EmitterBase.Ops with PlatformTypes:
                 // Boolean as "bool" (the Scala wrapper exchanges a genuine Boolean), unlike func-ABI positions.
                 val emptySpec  = TraitSpec("", "", "", "", Nil, Nil, None)
                 val paramTypes = cbParams.map(t => s""""${koffiProtoType(t, emptySpec)}"""").mkString(", ")
-                val retType = cbRet match
+                val retType    = cbRet match
                     case TypeRef.UnitT => "void"
                     case other         => koffiProtoType(other, emptySpec)
                 // Use a unique proto name per call to avoid koffi "Duplicate type name" errors.
@@ -546,7 +546,7 @@ object JsEmitter extends EmitterBase.Ops with PlatformTypes:
                 val jsFnExpr        = s"js.Any.fromFunction$arity($acc)"
                 val protoNamePrefix = s"${structVar}_${f.name}"
                 val protoExpr       = s"""KoffiFacade.proto("${protoNamePrefix}_" + $counterVar, "$retType", Seq[String]($paramTypes))"""
-                val setup = List(
+                val setup           = List(
                     s"val $counterVar = kyo.ffi.internal.KoffiFacade.nextProtoId()",
                     s"val $jsFnVar: js.Function = $jsFnExpr",
                     s"val $protoVar = $protoExpr",
@@ -588,7 +588,8 @@ object JsEmitter extends EmitterBase.Ops with PlatformTypes:
             val m = s"v$i"
             v match
                 case TypeRef.BooleanT =>
-                    buf += s"""  case __v: java.lang.Boolean => js.Dynamic.literal("$m" -> (if __v.booleanValue then 1 else 0).asInstanceOf[js.Any])"""
+                    buf +=
+                        s"""  case __v: java.lang.Boolean => js.Dynamic.literal("$m" -> (if __v.booleanValue then 1 else 0).asInstanceOf[js.Any])"""
                 case TypeRef.ByteT =>
                     buf += s"""  case __v: java.lang.Byte => js.Dynamic.literal("$m" -> __v.byteValue.asInstanceOf[js.Any])"""
                 case TypeRef.ShortT =>
@@ -596,7 +597,8 @@ object JsEmitter extends EmitterBase.Ops with PlatformTypes:
                 case TypeRef.IntT =>
                     buf += s"""  case __v: java.lang.Integer => js.Dynamic.literal("$m" -> __v.intValue.asInstanceOf[js.Any])"""
                 case TypeRef.LongT =>
-                    buf += s"""  case __v: java.lang.Long => js.Dynamic.literal("$m" -> js.BigInt(__v.longValue.toString).asInstanceOf[js.Any])"""
+                    buf +=
+                        s"""  case __v: java.lang.Long => js.Dynamic.literal("$m" -> js.BigInt(__v.longValue.toString).asInstanceOf[js.Any])"""
                 case TypeRef.FloatT =>
                     buf += s"""  case __v: java.lang.Float => js.Dynamic.literal("$m" -> __v.floatValue.asInstanceOf[js.Any])"""
                 case TypeRef.DoubleT =>
@@ -674,7 +676,7 @@ object JsEmitter extends EmitterBase.Ops with PlatformTypes:
                     sizeField.tpe match
                         case TypeRef.IntT  => s"$sib.asInstanceOf[Int]"
                         case TypeRef.LongT => s"$sib.asInstanceOf[js.BigInt].toString.toLong.toInt"
-                        case other =>
+                        case other         =>
                             throw new IllegalStateException(
                                 s"internal: sibling size type $other not Int/Long for struct '${sSpec.fqcn}'"
                             )
@@ -704,7 +706,7 @@ object JsEmitter extends EmitterBase.Ops with PlatformTypes:
                     // Checked-borrow opt-in via `Ffi.Config.checkedBorrows` or the process-wide
                     // sys-prop `-Dkyo.ffi.checkedBorrows=true`. On JS the checked path additionally detects detached
                     // ArrayBuffers via `u8a.buffer.byteLength == 0`.
-                    val sizeExpr = bufferSizeExpr(f.name)
+                    val sizeExpr    = bufferSizeExpr(f.name)
                     val checkedCall =
                         s"Buffer.Unsafe.wrapBorrowedChecked[${scalaTypeOf(elem)}]($sel.asInstanceOf[Uint8Array], $sizeExpr, kyo.ffi.internal.BufferFactory.currentBorrowOwner())"
                     val uncheckedCall =
@@ -771,9 +773,10 @@ object JsEmitter extends EmitterBase.Ops with PlatformTypes:
         spec.structs.foreach { s =>
             if checked.contains(s.fqcn) then
                 val expected = structByteSize(s, structsByName)
-                sb ++= s"""    StructAbiCheck.verifyByteSize("${spec.fqcn}", "${s.simpleName}", ${expected}L, KoffiFacade.sizeof(${koffiStructHandleName(
-                        s
-                    )}.asInstanceOf[js.Any]).toLong)\n"""
+                sb ++=
+                    s"""    StructAbiCheck.verifyByteSize("${spec.fqcn}", "${s.simpleName}", ${expected}L, KoffiFacade.sizeof(${koffiStructHandleName(
+                            s
+                        )}.asInstanceOf[js.Any]).toLong)\n"""
         }
         // Register callback prototypes so the per-function arg strings can reference them by name. Each callback param produces exactly
         // one proto declaration, shared between transient and retained shapes. We bind the return
@@ -818,7 +821,7 @@ object JsEmitter extends EmitterBase.Ops with PlatformTypes:
     private def emitCallbackProtos(method: MethodSpec, spec: TraitSpec): List[(String, String)] =
         method.callbackKind match
             case CallbackKind.None => Nil
-            case _ =>
+            case _                 =>
                 method.params.collect { case ParamSpec(pname, TypeRef.FnPtrT(params, ret)) =>
                     val protoName = callbackProtoName(method.scalaName, pname)
                     val argStrs   = params.map(t => s""""${koffiProtoType(t, spec)}"""").mkString(", ")
@@ -906,7 +909,7 @@ object JsEmitter extends EmitterBase.Ops with PlatformTypes:
         val variadicMarker =
             if method.hasVarargs then List(""""...".asInstanceOf[js.Any]""") else Nil
         val allArgs = (structOutArg ++ argParts ++ extraOut ++ variadicMarker).mkString(", ")
-        val result = method.returnShape match
+        val result  = method.returnShape match
             case ReturnShape.Void                 => "void"
             case ReturnShape.Primitive(t)         => koffiType(t, spec)
             case ReturnShape.MultiValue(sSpec)    => koffiType(sSpec.fields.head.tpe, spec)
@@ -1021,9 +1024,9 @@ object JsEmitter extends EmitterBase.Ops with PlatformTypes:
       * write side ([[emitJsUnionFieldObject]]) and read side ([[emitJsUnionFieldRead]]).
       */
     private def emitTypeRegistrations(spec: TraitSpec): String =
-        val structsByName = EmitterBase.structsByName(spec)
-        val emitted       = scala.collection.mutable.Set.empty[String]
-        val sb            = new StringBuilder
+        val structsByName                               = EmitterBase.structsByName(spec)
+        val emitted                                     = scala.collection.mutable.Set.empty[String]
+        val sb                                          = new StringBuilder
         def emitUnionReg(variants: List[TypeRef]): Unit =
             val name = unionTypeName(variants, spec)
             if !emitted(name) then
@@ -1171,13 +1174,13 @@ object JsEmitter extends EmitterBase.Ops with PlatformTypes:
     ): String =
         val v0 = s"""$sel.selectDynamic("v0")"""
         firstVariant match
-            case TypeRef.BooleanT => s"$v0.asInstanceOf[Int] != 0"
-            case TypeRef.ByteT    => s"$v0.asInstanceOf[Byte]"
-            case TypeRef.ShortT   => s"$v0.asInstanceOf[Short]"
-            case TypeRef.IntT     => s"$v0.asInstanceOf[Int]"
-            case TypeRef.LongT    => s"$v0.asInstanceOf[js.BigInt].toString.toLong"
-            case TypeRef.FloatT   => s"$v0.asInstanceOf[Float]"
-            case TypeRef.DoubleT  => s"$v0.asInstanceOf[Double]"
+            case TypeRef.BooleanT   => s"$v0.asInstanceOf[Int] != 0"
+            case TypeRef.ByteT      => s"$v0.asInstanceOf[Byte]"
+            case TypeRef.ShortT     => s"$v0.asInstanceOf[Short]"
+            case TypeRef.IntT       => s"$v0.asInstanceOf[Int]"
+            case TypeRef.LongT      => s"$v0.asInstanceOf[js.BigInt].toString.toLong"
+            case TypeRef.FloatT     => s"$v0.asInstanceOf[Float]"
+            case TypeRef.DoubleT    => s"$v0.asInstanceOf[Double]"
             case TypeRef.StructT(n) =>
                 val child = structsByName.getOrElse(n, throw new IllegalStateException(s"nested struct '$n' not found"))
                 emitStructReadExpr(child, s"$v0.asInstanceOf[js.Dynamic]", structsByName, checkedBorrows)

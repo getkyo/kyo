@@ -95,9 +95,9 @@ class CapabilityProbeTest extends Test:
         // raises the wrapped LibraryNotFound. The backend must lose selection HERE, so the floor builds, rather than reporting available and
         // failing at the first connection.
         val shimless = new CapabilityDescriptor:
-            def name: String              = "epoll"
-            def priority: Int             = 20
-            def libraryIds: Chunk[String] = shimIds
+            def name: String                                               = "epoll"
+            def priority: Int                                              = 20
+            def libraryIds: Chunk[String]                                  = shimIds
             private[net] def doProbe(using AllowUnsafe): CapabilityOutcome =
                 CapabilityProbe.run(libraryIds)(throw new ExceptionInInitializerError(libraryNotFound))
         val floor = new CapabilityDescriptor:

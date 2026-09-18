@@ -124,7 +124,7 @@ class ZStreamsTest extends kyo.test.Test[Any]:
             import java.util.concurrent.atomic.AtomicInteger
 
             // ZIO stream with internal mutable counter that multiple Kyo streams will race on
-            val counter = new AtomicInteger(0)
+            val counter   = new AtomicInteger(0)
             val zioStream = ZStream.unfoldChunkZIO(()) { _ =>
                 ZIO.succeed {
                     val value = counter.getAndIncrement()
@@ -299,7 +299,7 @@ class ZStreamsTest extends kyo.test.Test[Any]:
             import scala.collection.concurrent.TrieMap
 
             // Kyo stream with internal mutable counter that multiple ZIO streams will race on
-            val counter = new AtomicInteger(0)
+            val counter   = new AtomicInteger(0)
             val kyoStream = Stream.unfold((), chunkSize = 1) { _ =>
                 val value = counter.getAndIncrement()
                 if value < 100 then

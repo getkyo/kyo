@@ -90,11 +90,10 @@ object PostgresDecoder:
             ((bytes(offset + 6) & 0xffL) << 8) |
             (bytes(offset + 7) & 0xffL)
 
-    private def readBigEndianInt(bytes: Span[Byte], offset: Int): Int =
-        ((bytes(offset) & 0xff) << 24) |
-            ((bytes(offset + 1) & 0xff) << 16) |
-            ((bytes(offset + 2) & 0xff) << 8) |
-            (bytes(offset + 3) & 0xff)
+    private def readBigEndianInt(bytes: Span[Byte], offset: Int): Int = ((bytes(offset) & 0xff) << 24) |
+        ((bytes(offset + 1) & 0xff) << 16) |
+        ((bytes(offset + 2) & 0xff) << 8) |
+        (bytes(offset + 3) & 0xff)
 
     private def readBigEndianShort(bytes: Span[Byte], offset: Int): Short =
         (((bytes(offset) & 0xff) << 8) | (bytes(offset + 1) & 0xff)).toShort
@@ -243,7 +242,7 @@ object PostgresDecoder:
       * `false` would silently misreport a column value the driver has no basis for calling falsy.
       */
     val bool: PostgresDecoder[Boolean] = new PostgresDecoder[Boolean]:
-        val oids: Set[Int] = Set(OID_BOOL)
+        val oids: Set[Int]                                                                = Set(OID_BOOL)
         def read(format: Format, bytes: Span[Byte], columnOid: Int)(using Frame): Boolean = format match
             case Format.Binary =>
                 if isBoolBinary(columnOid, bytes) then bytes(0) != 0.toByte
@@ -266,7 +265,7 @@ object PostgresDecoder:
     // --- Short ---
 
     val int2: PostgresDecoder[Short] = new PostgresDecoder[Short]:
-        val oids: Set[Int] = Set(OID_INT2)
+        val oids: Set[Int]                                                              = Set(OID_INT2)
         def read(format: Format, bytes: Span[Byte], columnOid: Int)(using Frame): Short = format match
             case Format.Binary => narrowToShort(integralValueOf(bytes, columnOid, "Short"), "numeric column")
             case Format.Text   => narrowToShort(wholeOf(parseDecimalText(text(bytes)), "Short", "text"), "text")
@@ -274,7 +273,7 @@ object PostgresDecoder:
     // --- Int ---
 
     val int4: PostgresDecoder[Int] = new PostgresDecoder[Int]:
-        val oids: Set[Int] = Set(OID_INT4)
+        val oids: Set[Int]                                                            = Set(OID_INT4)
         def read(format: Format, bytes: Span[Byte], columnOid: Int)(using Frame): Int = format match
             case Format.Binary => narrowToInt(integralValueOf(bytes, columnOid, "Int"), "numeric column")
             case Format.Text   => narrowToInt(wholeOf(parseDecimalText(text(bytes)), "Int", "text"), "text")
@@ -282,7 +281,7 @@ object PostgresDecoder:
     // --- Long ---
 
     val int8: PostgresDecoder[Long] = new PostgresDecoder[Long]:
-        val oids: Set[Int] = Set(OID_INT8)
+        val oids: Set[Int]                                                             = Set(OID_INT8)
         def read(format: Format, bytes: Span[Byte], columnOid: Int)(using Frame): Long = format match
             case Format.Binary => integralValueOf(bytes, columnOid, "Long")
             case Format.Text   => wholeOf(parseDecimalText(text(bytes)), "Long", "text")
@@ -299,7 +298,7 @@ object PostgresDecoder:
     // --- Float4 ---
 
     val float4: PostgresDecoder[Float] = new PostgresDecoder[Float]:
-        val oids: Set[Int] = Set(OID_FLOAT4)
+        val oids: Set[Int]                                                              = Set(OID_FLOAT4)
         def read(format: Format, bytes: Span[Byte], columnOid: Int)(using Frame): Float = format match
             case Format.Binary => approximateValueOf(bytes, columnOid, NumericWire.Float4, "Float").toFloat
             case Format.Text   => text(bytes).toFloat
@@ -307,7 +306,7 @@ object PostgresDecoder:
     // --- Float8 ---
 
     val float8: PostgresDecoder[Double] = new PostgresDecoder[Double]:
-        val oids: Set[Int] = Set(OID_FLOAT8)
+        val oids: Set[Int]                                                               = Set(OID_FLOAT8)
         def read(format: Format, bytes: Span[Byte], columnOid: Int)(using Frame): Double = format match
             case Format.Binary => approximateValueOf(bytes, columnOid, NumericWire.Float8, "Double")
             case Format.Text   => text(bytes).toDouble
@@ -329,7 +328,7 @@ object PostgresDecoder:
       * Value reconstruction: sum_i(digits[i] * 10000^(weight - i)), then apply dscale.
       */
     val numeric: PostgresDecoder[BigDecimal] = new PostgresDecoder[BigDecimal]:
-        val oids: Set[Int] = Set(OID_NUMERIC)
+        val oids: Set[Int]                                                                          = Set(OID_NUMERIC)
         def read(format: Format, bytes: Span[Byte], columnOid: Int)(using frame: Frame): BigDecimal = format match
             case Format.Text   => parseDecimalText(text(bytes))
             case Format.Binary => decimalValueOf(bytes, columnOid, NumericWire.Numeric, "BigDecimal")
@@ -496,7 +495,7 @@ object PostgresDecoder:
 
     val textDecoder: PostgresDecoder[String] = new PostgresDecoder[String]:
         // Accepts text OID, varchar OID (1043), and bpchar OID (1042).
-        val oids: Set[Int] = Set(OID_TEXT, 1043, 1042)
+        val oids: Set[Int]                                                               = Set(OID_TEXT, 1043, 1042)
         def read(format: Format, bytes: Span[Byte], columnOid: Int)(using Frame): String =
             requireTextColumn("String", columnOid)
             text(bytes)
@@ -513,7 +512,7 @@ object PostgresDecoder:
     // For all Text-format values the full byte span is decoded as UTF-8 (no prefix to strip).
 
     val jsonDecoder: PostgresDecoder[String] = new PostgresDecoder[String]:
-        val oids: Set[Int] = Set(OID_JSON, OID_JSONB)
+        val oids: Set[Int]                                                               = Set(OID_JSON, OID_JSONB)
         def read(format: Format, bytes: Span[Byte], columnOid: Int)(using Frame): String =
             format match
                 case Format.Binary if bytes.size > 0 && bytes(0) == 0x01.toByte =>
@@ -532,7 +531,7 @@ object PostgresDecoder:
     //     backslash doubled. Returning those bytes as-is would decode `\001` as four ASCII characters
     //     rather than the one byte 0x01.
     val bytea: PostgresDecoder[Span[Byte]] = new PostgresDecoder[Span[Byte]]:
-        val oids: Set[Int] = Set(OID_BYTEA)
+        val oids: Set[Int]                                                                   = Set(OID_BYTEA)
         def read(format: Format, bytes: Span[Byte], columnOid: Int)(using Frame): Span[Byte] = format match
             case Format.Binary => bytes
             case Format.Text   =>
@@ -609,7 +608,7 @@ object PostgresDecoder:
     // Uses kyo.Instant (preferred over java.time.Instant).
 
     val timestamptz: PostgresDecoder[kyo.Instant] = new PostgresDecoder[kyo.Instant]:
-        val oids: Set[Int] = Set(OID_TIMESTAMPTZ)
+        val oids: Set[Int]                                                                    = Set(OID_TIMESTAMPTZ)
         def read(format: Format, bytes: Span[Byte], columnOid: Int)(using Frame): kyo.Instant = format match
             case Format.Binary =>
                 val pgMicros    = readBigEndianLong(bytes, 0)
@@ -637,7 +636,7 @@ object PostgresDecoder:
     // No Kyo equivalent for LocalDate; java.time.LocalDate is used.
 
     val date: PostgresDecoder[java.time.LocalDate] = new PostgresDecoder[java.time.LocalDate]:
-        val oids: Set[Int] = Set(OID_DATE)
+        val oids: Set[Int]                                                                            = Set(OID_DATE)
         def read(format: Format, bytes: Span[Byte], columnOid: Int)(using Frame): java.time.LocalDate = format match
             case Format.Binary =>
                 val pgDays  = readBigEndianInt(bytes, 0)
@@ -650,7 +649,7 @@ object PostgresDecoder:
     // No Kyo equivalent for LocalDateTime; java.time.LocalDateTime is used.
 
     val timestamp: PostgresDecoder[java.time.LocalDateTime] = new PostgresDecoder[java.time.LocalDateTime]:
-        val oids: Set[Int] = Set(OID_TIMESTAMP)
+        val oids: Set[Int]                                                                                = Set(OID_TIMESTAMP)
         def read(format: Format, bytes: Span[Byte], columnOid: Int)(using Frame): java.time.LocalDateTime = format match
             case Format.Binary =>
                 val pgMicros = readBigEndianLong(bytes, 0)
@@ -666,7 +665,7 @@ object PostgresDecoder:
     // No Kyo equivalent for LocalTime; java.time.LocalTime is used.
 
     val time: PostgresDecoder[java.time.LocalTime] = new PostgresDecoder[java.time.LocalTime]:
-        val oids: Set[Int] = Set(OID_TIME)
+        val oids: Set[Int]                                                                            = Set(OID_TIME)
         def read(format: Format, bytes: Span[Byte], columnOid: Int)(using Frame): java.time.LocalTime = format match
             case Format.Binary =>
                 val micros = readBigEndianLong(bytes, 0)
@@ -681,7 +680,7 @@ object PostgresDecoder:
     // Text format: ISO-8601 extended, e.g. "13:45:30.123456+05:30"; parsed via OffsetTime.parse.
 
     val timetz: PostgresDecoder[java.time.OffsetTime] = new PostgresDecoder[java.time.OffsetTime]:
-        val oids: Set[Int] = Set(OID_TIMETZ)
+        val oids: Set[Int]                                                                             = Set(OID_TIMETZ)
         def read(format: Format, bytes: Span[Byte], columnOid: Int)(using Frame): java.time.OffsetTime = format match
             case Format.Binary =>
                 val micros        = readBigEndianLong(bytes, 0)
@@ -713,7 +712,7 @@ object PostgresDecoder:
     // months/years raises a SqlDecodeIntervalException directing the caller to cast to ISO-formatted text.
 
     val interval: PostgresDecoder[java.time.Duration] = new PostgresDecoder[java.time.Duration]:
-        val oids: Set[Int] = Set(OID_INTERVAL)
+        val oids: Set[Int]                                                                                  = Set(OID_INTERVAL)
         def read(format: Format, bytes: Span[Byte], columnOid: Int)(using frame: Frame): java.time.Duration = format match
             case Format.Binary =>
                 val micros = readBigEndianLong(bytes, 0)
@@ -743,7 +742,7 @@ object PostgresDecoder:
                             case hhmmss(sign, hh, mm, ss, fracOrNull) =>
                                 val totalSecs = hh.toLong * 3600L + mm.toLong * 60L + ss.toLong
                                 val fracStr   = if fracOrNull == null then "" else fracOrNull
-                                val nanos =
+                                val nanos     =
                                     if fracStr.isEmpty then 0L
                                     else
                                         // Pad or truncate to 9 digits for nanoseconds.
@@ -835,7 +834,7 @@ object PostgresDecoder:
                     if y != null || mo != null || w != null || d != null || h != null || mi != null || sec != null =>
                     val totalMonths = Math.addExact(Math.multiplyExact(intervalCount(y, s), 12L), intervalCount(mo, s))
                     val totalDays   = Math.addExact(intervalCount(d, s), Math.multiplyExact(intervalCount(w, s), 7L))
-                    val micros = Math.addExact(
+                    val micros      = Math.addExact(
                         Math.addExact(
                             Math.multiplyExact(intervalCount(h, s), MicrosPerHour),
                             Math.multiplyExact(intervalCount(mi, s), MicrosPerMinute)
@@ -942,7 +941,7 @@ object PostgresDecoder:
     // raises the same SqlDecodeIntervalException the binary arm raises for a non-zero microseconds field.
 
     val intervalPeriod: PostgresDecoder[java.time.Period] = new PostgresDecoder[java.time.Period]:
-        val oids: Set[Int] = Set(OID_INTERVAL)
+        val oids: Set[Int]                                                                                = Set(OID_INTERVAL)
         def read(format: Format, bytes: Span[Byte], columnOid: Int)(using frame: Frame): java.time.Period = format match
             case Format.Binary =>
                 val micros = readBigEndianLong(bytes, 0)
@@ -971,7 +970,7 @@ object PostgresDecoder:
       * and fractional seconds only when there are any.
       */
     val intervalValue: PostgresDecoder[SqlValue] = new PostgresDecoder[SqlValue]:
-        val oids: Set[Int] = Set(OID_INTERVAL)
+        val oids: Set[Int]                                                                        = Set(OID_INTERVAL)
         def read(format: Format, bytes: Span[Byte], columnOid: Int)(using frame: Frame): SqlValue = format match
             case Format.Binary =>
                 SqlValue.Interval(
@@ -1000,7 +999,7 @@ object PostgresDecoder:
       * bytes back as UTF-8 is mojibake for every address.
       */
     val inetValue: PostgresDecoder[SqlValue] = new PostgresDecoder[SqlValue]:
-        val oids: Set[Int] = Set(OID_INET)
+        val oids: Set[Int]                                                                        = Set(OID_INET)
         def read(format: Format, bytes: Span[Byte], columnOid: Int)(using frame: Frame): SqlValue = format match
             case Format.Binary =>
                 // Length-checked before any index: a truncated struct would raise a raw IndexOutOfBounds from a
@@ -1044,8 +1043,8 @@ object PostgresDecoder:
     private def expandIpv6(addrText: String, whole: String)(using Frame): Array[Int] =
         // The mixed notation an IPv4-mapped address takes, `::ffff:192.168.0.1`, which the server writes for that
         // family and a hex parse of the tail refuses. The dotted quad is two groups.
-        val lastColon = addrText.lastIndexOf(':')
-        val tailText  = if lastColon < 0 then "" else addrText.substring(lastColon + 1)
+        val lastColon      = addrText.lastIndexOf(':')
+        val tailText       = if lastColon < 0 then "" else addrText.substring(lastColon + 1)
         val (body, mapped) =
             if tailText.contains('.') then
                 val octets = tailText.split('.')
@@ -1089,37 +1088,37 @@ object PostgresDecoder:
 
     /** A `bool`. The typed decoder reads both wire forms already, `t`/`f` included, so one arm serves both. */
     val boolValue: PostgresDecoder[SqlValue] = new PostgresDecoder[SqlValue]:
-        val oids: Set[Int] = Set(OID_BOOL)
+        val oids: Set[Int]                                                                        = Set(OID_BOOL)
         def read(format: Format, bytes: Span[Byte], columnOid: Int)(using frame: Frame): SqlValue =
             SqlValue.Bool(bool.read(format, bytes, columnOid))
 
     /** An integral column at any of its widths, which the column's own OID resolves. */
     val integerValue: PostgresDecoder[SqlValue] = new PostgresDecoder[SqlValue]:
-        val oids: Set[Int] = Set(OID_INT2, OID_INT4, OID_INT8)
+        val oids: Set[Int]                                                                        = Set(OID_INT2, OID_INT4, OID_INT8)
         def read(format: Format, bytes: Span[Byte], columnOid: Int)(using frame: Frame): SqlValue =
             SqlValue.Integer(BigInt(int8.read(format, bytes, columnOid)))
 
     /** A text-family column, whose bytes are its rendering under both formats. */
     val textValue: PostgresDecoder[SqlValue] = new PostgresDecoder[SqlValue]:
-        val oids: Set[Int] = Set(OID_TEXT, 1043, 1042, 19, 18, 142)
+        val oids: Set[Int]                                                                        = Set(OID_TEXT, 1043, 1042, 19, 18, 142)
         def read(format: Format, bytes: Span[Byte], columnOid: Int)(using frame: Frame): SqlValue =
             SqlValue.Text(text(bytes))
 
     /** A `json` or `jsonb` document, with the `jsonb` binary version byte stripped. */
     val jsonValue: PostgresDecoder[SqlValue] = new PostgresDecoder[SqlValue]:
-        val oids: Set[Int] = Set(OID_JSON, OID_JSONB)
+        val oids: Set[Int]                                                                        = Set(OID_JSON, OID_JSONB)
         def read(format: Format, bytes: Span[Byte], columnOid: Int)(using frame: Frame): SqlValue =
             SqlValue.Json(jsonDecoder.read(format, bytes, columnOid))
 
     /** A `uuid`, in the canonical lower-case form. */
     val uuidValue: PostgresDecoder[SqlValue] = new PostgresDecoder[SqlValue]:
-        val oids: Set[Int] = Set(OID_UUID)
+        val oids: Set[Int]                                                                        = Set(OID_UUID)
         def read(format: Format, bytes: Span[Byte], columnOid: Int)(using frame: Frame): SqlValue =
             SqlValue.Uuid(uuid.read(format, bytes, columnOid))
 
     /** A `bytea`, whose text form the session's `bytea_output` chooses between two spellings of; the decoder reads both. */
     val byteaValue: PostgresDecoder[SqlValue] = new PostgresDecoder[SqlValue]:
-        val oids: Set[Int] = Set(OID_BYTEA)
+        val oids: Set[Int]                                                                        = Set(OID_BYTEA)
         def read(format: Format, bytes: Span[Byte], columnOid: Int)(using frame: Frame): SqlValue =
             SqlValue.Bytes(bytea.read(format, bytes, columnOid))
 
@@ -1129,7 +1128,7 @@ object PostgresDecoder:
     ): Maybe[SqlValue] =
         format match
             case Format.Binary => isInfinite(bytes)
-            case Format.Text =>
+            case Format.Text   =>
                 val rendering = text(bytes)
                 if rendering == "infinity" then Maybe(SqlValue.TemporalInfinity(negative = false))
                 else if rendering == "-infinity" then Maybe(SqlValue.TemporalInfinity(negative = true))
@@ -1137,7 +1136,7 @@ object PostgresDecoder:
 
     /** A `date`, with `infinity` and `-infinity` recognised before the value is read. */
     val dateValue: PostgresDecoder[SqlValue] = new PostgresDecoder[SqlValue]:
-        val oids: Set[Int] = Set(OID_DATE)
+        val oids: Set[Int]                                                                        = Set(OID_DATE)
         def read(format: Format, bytes: Span[Byte], columnOid: Int)(using frame: Frame): SqlValue =
             temporalSpecial(
                 format,
@@ -1149,7 +1148,7 @@ object PostgresDecoder:
                         case _            => Maybe.empty
             ).getOrElse {
                 format match
-                    case Format.Text => dateFieldsOf(text(bytes))
+                    case Format.Text   => dateFieldsOf(text(bytes))
                     case Format.Binary =>
                         val value = date.read(format, bytes, columnOid)
                         val bc    = value.getYear <= 0
@@ -1159,7 +1158,7 @@ object PostgresDecoder:
 
     /** A `timestamp`, a wall-clock value with no zone. */
     val timestampValue: PostgresDecoder[SqlValue] = new PostgresDecoder[SqlValue]:
-        val oids: Set[Int] = Set(OID_TIMESTAMP)
+        val oids: Set[Int]                                                                        = Set(OID_TIMESTAMP)
         def read(format: Format, bytes: Span[Byte], columnOid: Int)(using frame: Frame): SqlValue =
             temporalSpecial(
                 format,
@@ -1171,7 +1170,7 @@ object PostgresDecoder:
                         case _             => Maybe.empty
             ).getOrElse {
                 format match
-                    case Format.Text => dateTimeFieldsOf(text(bytes))
+                    case Format.Text   => dateTimeFieldsOf(text(bytes))
                     case Format.Binary =>
                         val value = timestamp.read(format, bytes, columnOid)
                         val bc    = value.getYear <= 0
@@ -1196,7 +1195,7 @@ object PostgresDecoder:
       * the text form is parsed rather than handed back.
       */
     val timestamptzValue: PostgresDecoder[SqlValue] = new PostgresDecoder[SqlValue]:
-        val oids: Set[Int] = Set(OID_TIMESTAMPTZ)
+        val oids: Set[Int]                                                                        = Set(OID_TIMESTAMPTZ)
         def read(format: Format, bytes: Span[Byte], columnOid: Int)(using frame: Frame): SqlValue =
             val special: Maybe[SqlValue] = format match
                 case Format.Binary =>
@@ -1238,13 +1237,13 @@ object PostgresDecoder:
       * this column on the same span rendering a MySQL `TIME` uses.
       */
     val timeValue: PostgresDecoder[SqlValue] = new PostgresDecoder[SqlValue]:
-        val oids: Set[Int] = Set(OID_TIME)
+        val oids: Set[Int]                                                                        = Set(OID_TIME)
         def read(format: Format, bytes: Span[Byte], columnOid: Int)(using frame: Frame): SqlValue =
             spanOfDay(microsOfDay(format, bytes, columnOid))
 
     /** A `timetz`: the time of day, then its zone. */
     val timetzValue: PostgresDecoder[SqlValue] = new PostgresDecoder[SqlValue]:
-        val oids: Set[Int] = Set(OID_TIMETZ)
+        val oids: Set[Int]                                                                        = Set(OID_TIMETZ)
         def read(format: Format, bytes: Span[Byte], columnOid: Int)(using frame: Frame): SqlValue = format match
             case Format.Binary =>
                 // The wire carries microseconds-of-day then the zone's seconds WEST of UTC.
@@ -1372,7 +1371,7 @@ object PostgresDecoder:
 
     /** A `numeric`, with the three special values rendered rather than refused. */
     val numericValue: PostgresDecoder[SqlValue] = new PostgresDecoder[SqlValue]:
-        val oids: Set[Int] = Set(OID_NUMERIC)
+        val oids: Set[Int]                                                                        = Set(OID_NUMERIC)
         def read(format: Format, bytes: Span[Byte], columnOid: Int)(using frame: Frame): SqlValue = format match
             case Format.Binary =>
                 // The sign field of the wire header carries the special values, so they are read before the digits are.
@@ -1400,13 +1399,13 @@ object PostgresDecoder:
       * decides how many digits the server writes, and the connection is not told its value.
       */
     val float4Value: PostgresDecoder[SqlValue] = new PostgresDecoder[SqlValue]:
-        val oids: Set[Int] = Set(OID_FLOAT4)
+        val oids: Set[Int]                                                                        = Set(OID_FLOAT4)
         def read(format: Format, bytes: Span[Byte], columnOid: Int)(using frame: Frame): SqlValue =
             SqlValue.Float4(float4.read(format, bytes, columnOid))
 
     /** A `float8`. See [[float4Text]] for why the text form is parsed rather than handed back. */
     val float8Value: PostgresDecoder[SqlValue] = new PostgresDecoder[SqlValue]:
-        val oids: Set[Int] = Set(OID_FLOAT8)
+        val oids: Set[Int]                                                                        = Set(OID_FLOAT8)
         def read(format: Format, bytes: Span[Byte], columnOid: Int)(using frame: Frame): SqlValue =
             SqlValue.Float8(float8.read(format, bytes, columnOid))
 
@@ -1415,7 +1414,7 @@ object PostgresDecoder:
     // Text: canonical 36-character hyphenated form (e.g. "550e8400-e29b-41d4-a716-446655440000").
 
     val uuid: PostgresDecoder[java.util.UUID] = new PostgresDecoder[java.util.UUID]:
-        val oids: Set[Int] = Set(OID_UUID)
+        val oids: Set[Int]                                                                              = Set(OID_UUID)
         def read(format: Format, bytes: Span[Byte], columnOid: Int)(using frame: Frame): java.util.UUID = format match
             case Format.Binary =>
                 if bytes.size != 16 then
@@ -1441,7 +1440,7 @@ object PostgresDecoder:
       */
     private def arrayDecoder[A](elemDecoder: PostgresDecoder[A], typeName: String, arrayOids: Set[Int]): PostgresDecoder[Chunk[A]] =
         new PostgresDecoder[Chunk[A]]:
-            val oids: Set[Int] = arrayOids
+            val oids: Set[Int]                                                                        = arrayOids
             def read(format: Format, bytes: Span[Byte], columnOid: Int)(using frame: Frame): Chunk[A] =
                 val arr     = new PostgresArrayReader(bytes, format, frame)
                 val count   = arr.openArray()

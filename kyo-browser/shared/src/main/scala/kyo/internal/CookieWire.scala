@@ -112,7 +112,7 @@ private[kyo] object CookieBanner:
             val effectiveSchedule = schedule.getOrElse(cfg.loadSchedule)
             val d                 = NavigationWatcher.loadScheduleTimeout(effectiveSchedule)
             val deadlineMs        = if d.isFinite then d.toMillis else CookieBanner.defaultCookieBannerDeadline.toMillis
-            val js = s"""(async () => {
+            val js                = s"""(async () => {
                 const selectors = [
                     "[id*='accept'][id*='cookie' i]",
                     "[class*='accept'][class*='cookie' i]",
@@ -149,7 +149,7 @@ private[kyo] object CookieBanner:
                     .map { env =>
                         CdpEvalDecoder.extractEvalValue(env).map { raw =>
                             Json.decode[CookieBannerReply](raw) match
-                                case Result.Success(CookieBannerReply("none", _)) => Maybe.empty[Selector]
+                                case Result.Success(CookieBannerReply("none", _))                => Maybe.empty[Selector]
                                 case Result.Success(CookieBannerReply("accepted", Present(sel))) =>
                                     Present(Selector.css(sel))
                                 case Result.Success(CookieBannerReply("timeout", _)) =>

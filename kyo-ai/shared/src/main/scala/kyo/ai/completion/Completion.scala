@@ -137,7 +137,7 @@ object Completion:
         val provider = config.provider.name
         e match
             case e: HttpTimeoutException => AICompletionTimeoutException(provider, e.duration)
-            case e: HttpStatusException =>
+            case e: HttpStatusException  =>
                 e.status.code match
                     case 401 | 403     => AIProviderAuthException(provider, e.getMessage)
                     case 429           => AIRateLimitException(provider, e.getMessage)
@@ -329,13 +329,13 @@ object Completion:
                                                             else Absent
                                                         streamError match
                                                             case Present(exc) => Abort.fail(exc)
-                                                            case Absent =>
+                                                            case Absent       =>
                                                                 parseDeltaArguments(event.data) match
                                                                     case Result.Success(Delta.Fragment(fragment)) =>
                                                                         Present(StreamElement.Fragment(fragment))
                                                                     case Result.Success(Delta.Usage(stats)) =>
                                                                         Present(StreamElement.Usage(stats))
-                                                                    case Result.Success(Delta.Skip) => Maybe.empty[StreamElement]
+                                                                    case Result.Success(Delta.Skip)        => Maybe.empty[StreamElement]
                                                                     case Result.Success(Delta.OutputLimit) =>
                                                                         Abort.fail(AIOutputLimitException(
                                                                             config.provider.name,

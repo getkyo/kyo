@@ -51,7 +51,7 @@ class SqlConfigExtensionTest extends Test:
         }
 
         "replacing one type leaves another type's extension in place" in {
-            val probe = SqlConfigExtensionTest.Probe("keep me")
+            val probe  = SqlConfigExtensionTest.Probe("keep me")
             val config = SqlConfig.default
                 .extension(probe)
                 .extension(PostgresConfig(typeNames = Set("hstore")))
@@ -198,7 +198,7 @@ class SqlConfigExtensionTest extends Test:
     "builder methods set exactly their field" in {
         val sched  = Schedule.fixed(1.second)
         val tlsCfg = kyo.net.NetTlsConfig(caCertPath = Present("/tmp/ca.pem"))
-        val built = SqlConfig.default
+        val built  = SqlConfig.default
             .maxConnections(20)
             .minConnections(2)
             .acquireTimeout(5.seconds)

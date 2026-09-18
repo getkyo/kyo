@@ -103,7 +103,7 @@ private[kyo] object Accessibility:
                 case s: `tokenList`          => Present(s.value)
                 case b: `boolean`            => Present(b.value.toString)
                 case b: `booleanOrUndefined` => Present(b.value.toString)
-                case n: `number` =>
+                case n: `number`             =>
                     val d      = n.value
                     val asLong = d.toLong
                     if !d.isInfinite && !d.isNaN && d == asLong.toDouble then Present(asLong.toString)
@@ -150,7 +150,7 @@ private[kyo] object Accessibility:
                     case Absent =>
                         reply.result match
                             case Present(tree) => Chunk.from(tree.nodes.map(toAxNode))
-                            case Absent =>
+                            case Absent        =>
                                 Abort.fail(BrowserProtocolErrorException(
                                     "Accessibility.getFullAXTree",
                                     s"reply has neither result nor error: $wire"
@@ -174,8 +174,8 @@ private[kyo] object Accessibility:
       */
     private def toAxNode(wire: AxNodeWire): AxNode =
         import AxValue.asString
-        val role = wire.role.flatMap(_.asString).getOrElse("")
-        val name = wire.name.flatMap(_.asString).getOrElse("")
+        val role      = wire.role.flatMap(_.asString).getOrElse("")
+        val name      = wire.name.flatMap(_.asString).getOrElse("")
         val baseProps = wire.properties.foldLeft(Dict.empty[String, String]) { (acc, prop) =>
             (prop.value.flatMap(_.asString): @unchecked) match
                 case Present(v) => acc.update(prop.name, v)

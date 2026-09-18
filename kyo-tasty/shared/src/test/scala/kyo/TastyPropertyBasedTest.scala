@@ -33,7 +33,7 @@ class TastyPropertyBasedTest extends kyo.test.Test[Any]:
         }.map {
             case Result.Success(_) => None
             case Result.Failure(_) => None
-            case Result.Panic(ex) =>
+            case Result.Panic(ex)  =>
                 val name = ex.getClass.getName
                 // Only unexpected panic classes are failures.
                 // SectionValidationException, IllegalArgumentException from known error paths
@@ -53,7 +53,7 @@ class TastyPropertyBasedTest extends kyo.test.Test[Any]:
     // Acceptable outcomes: Success, TastyError (any variant), known decode rejection.
     // Unacceptable: NullPointerException, ArrayIndexOutOfBoundsException, IllegalStateException.
     "decoder never panics on 100 random byte arrays (seed=0xc0ffee42)" in {
-        val rng = new scala.util.Random(SEED)
+        val rng                                                            = new scala.util.Random(SEED)
         def go(remaining: Int, panics: List[String]): List[String] < Async =
             if remaining == 0 then panics
             else
@@ -77,8 +77,8 @@ class TastyPropertyBasedTest extends kyo.test.Test[Any]:
     // Takes kyo.fixtures.Embedded.plainClassTasty, truncates at random offsets, attempts decode.
     // Same panic-class criteria as PROP-PB-001.
     "decoder never panics on 100 truncated fixture byte arrays (seed=0xc0ffee42)" in {
-        val rng      = new scala.util.Random(SEED)
-        val original = kyo.fixtures.Embedded.plainClassTasty
+        val rng                                                            = new scala.util.Random(SEED)
+        val original                                                       = kyo.fixtures.Embedded.plainClassTasty
         def go(remaining: Int, panics: List[String]): List[String] < Async =
             if remaining == 0 then panics
             else
@@ -139,8 +139,8 @@ class TastyPropertyBasedTest extends kyo.test.Test[Any]:
     // or the classpath has errors recorded.
     // Uses 50 random single-byte flip positions; seed 0xdeadbeefL.
     "bit-flipped fixture either fails cleanly or reports errors (seed=0xdeadbeef)" in {
-        val rng  = new scala.util.Random(0xdeadbeefL)
-        val base = kyo.fixtures.Embedded.plainClassTasty
+        val rng                                   = new scala.util.Random(0xdeadbeefL)
+        val base                                  = kyo.fixtures.Embedded.plainClassTasty
         def flipOneByte(offset: Int): Array[Byte] =
             val copy = base.clone()
             copy(offset) = (copy(offset) ^ 0xff.toByte).toByte
@@ -160,8 +160,8 @@ class TastyPropertyBasedTest extends kyo.test.Test[Any]:
                     else
                         None
                 case Result.Failure(_) => None
-                case Result.Panic(ex) =>
-                    val name = ex.getClass.getName
+                case Result.Panic(ex)  =>
+                    val name       = ex.getClass.getName
                     val acceptable = Seq(
                         "kyo.internal.tasty.SectionValidationException",
                         "java.lang.IllegalArgumentException",
@@ -171,7 +171,7 @@ class TastyPropertyBasedTest extends kyo.test.Test[Any]:
                     else Some(s"panic: $name at offset=$offset")
             }
         end tryOnce
-        val flips = 50
+        val flips                                                          = 50
         def go(remaining: Int, panics: List[String]): List[String] < Async =
             if remaining == 0 then panics
             else
@@ -197,7 +197,7 @@ class TastyPropertyBasedTest extends kyo.test.Test[Any]:
     "TagKind throwFor produces TastyError.UnknownTagInPosition for unknown tag 0" in {
         import kyo.internal.tasty.reader.TagKind
         val invalidTag = 0
-        val positions = Seq(
+        val positions  = Seq(
             (TagKind.TypePositionTag.position, () => TagKind.TypePositionTag.throwFor(invalidTag)),
             (TagKind.TreePositionTag.position, () => TagKind.TreePositionTag.throwFor(invalidTag)),
             (TagKind.TptPositionTag.position, () => TagKind.TptPositionTag.throwFor(invalidTag)),

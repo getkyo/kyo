@@ -75,15 +75,15 @@ class ResolverTest extends kyo.BrowserTest:
     "decode failure path raises BrowserProtocolErrorException (pure)" in {
         val malformed = "{this is not valid JSON for GetFrameTreeResult}"
         // decodeOrFail was removed; inline the decode logic here for test continuity.
-        val method = "DOM.getDocument"
+        val method                                                    = "DOM.getDocument"
         val decoded: GetFrameTreeResult < Abort[BrowserReadException] = Json.decode[CdpReply[GetFrameTreeResult]](malformed) match
             case Result.Success(reply) =>
                 reply.result match
                     case Present(v) => v
-                    case Absent =>
+                    case Absent     =>
                         reply.error match
                             case Present(cdpErr) => Abort.fail(BrowserProtocolErrorException(method, cdpErr.message))
-                            case Absent => Abort.fail(BrowserProtocolErrorException.decodeFailure(
+                            case Absent          => Abort.fail(BrowserProtocolErrorException.decodeFailure(
                                     method,
                                     s"reply has neither result nor error: $malformed"
                                 ))

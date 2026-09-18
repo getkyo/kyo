@@ -61,7 +61,7 @@ class PosixTransportHandshakeLivenessTest extends Test:
             // (it runs only on a successful handshake via onFinished; the deadline path skips it).
             "stalled: deadline reaps a TCP-only client that sends no ClientHello" in {
                 assumeTlsAndPoller()
-                given Frame = Frame.internal
+                given Frame   = Frame.internal
                 val serverTls = NetTlsConfig(
                     certChainPath = Present(TlsTestCert.certPath),
                     privateKeyPath = Present(TlsTestCert.keyPath)

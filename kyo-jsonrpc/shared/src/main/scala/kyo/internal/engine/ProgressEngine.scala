@@ -86,7 +86,7 @@ private[kyo] object ProgressEngine:
         writerChannel: Channel[WriterMsg]
     )(using frame: Frame, allow: AllowUnsafe): Maybe[Structure.Value => Unit < (Async & Abort[Closed])] =
         progressPolicy match
-            case Absent => Absent
+            case Absent          => Absent
             case Present(policy) =>
                 val paramsVal = params.getOrElse(Structure.Value.Null)
                 // Unsafe: evalOrThrow runs Sync effect inside AllowUnsafe context
@@ -103,7 +103,7 @@ private[kyo] object ProgressEngine:
                         // pass the gate and then race on the put, letting a smaller value follow a larger one.
                         // Holding this mutex across the compare AND the put makes a value reach the wire only if
                         // it is strictly greater than the highest already emitted.
-                        val monoMutex = Sync.Unsafe.evalOrThrow(Meter.initMutexUnscoped)
+                        val monoMutex                                               = Sync.Unsafe.evalOrThrow(Meter.initMutexUnscoped)
                         val sink: Structure.Value => Unit < (Async & Abort[Closed]) =
                             value =>
                                 Sync.defer(Maybe(pendingInbound.get(id))).map {
@@ -130,7 +130,7 @@ private[kyo] object ProgressEngine:
                                                         )
                                                     case _ => Absent
                                             newPct match
-                                                case Absent => emit()
+                                                case Absent          => emit()
                                                 case Present(newVal) =>
                                                     monoMutex.run {
                                                         monoRef.get.map {

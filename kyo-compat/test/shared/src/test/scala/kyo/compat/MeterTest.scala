@@ -75,9 +75,9 @@ class MeterTest extends CompatTest:
     "concurrent runs respect the permit limit" in run {
         // Meter(2) + 4 runs: the limit shows up as concurrency, not elapsed. Peak active must be exactly 2 (never 3+,
         // never serialised to 1); the two-way barrier holds the first two until both have a permit so the peak reaches 2.
-        val ctr    = new AtomicInteger(0)
-        val active = new AtomicInteger(0)
-        val peak   = new AtomicInteger(0)
+        val ctr                            = new AtomicInteger(0)
+        val active                         = new AtomicInteger(0)
+        val peak                           = new AtomicInteger(0)
         def one(barrier: CLatch): CIO[Int] =
             CIO.defer {
                 val cur = active.incrementAndGet()
@@ -121,7 +121,7 @@ class MeterTest extends CompatTest:
         // holding the only permit (false => not yet acquired), the waiter reads `releasing` (true => acquired after release).
         val waiterEntered = new AtomicBoolean(false)
         val releasing     = new AtomicBoolean(false)
-        val c =
+        val c             =
             CMeter.init(1).flatMap { m =>
                 CPromise.init[Unit].flatMap { acquired =>
                     CPromise.init[Unit].flatMap { attempting =>

@@ -141,7 +141,7 @@ class PostgresClientNotificationsTest extends Test:
                             Abort.run[SqlException](client.notifications("chan").take(1).run)
                         }.map {
                             case Result.Failure(_: SqlConnectionPoolClosedException) => succeed
-                            case other =>
+                            case other                                               =>
                                 fail(
                                     "subscribing on a closed client must be refused by the pool; instead it reached " +
                                         s"the transport: $other"

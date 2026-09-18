@@ -62,7 +62,7 @@ class SqlRunMacroTest extends Test:
         // search would find. The two coincide wherever only the derived given is in scope, so the difference is only observable with a
         // second instance the call site names explicitly.
         val explicit = summon[SqlSchema[Person]]
-        val errors = typeCheckErrors(
+        val errors   = typeCheckErrors(
             """def probe(using f: Frame): Chunk[String] < (Abort[SqlException] & DB) =
     Sql.from[Person]("p").select(c => c.p.name).run(using summon[SqlSchema[String]], f)"""
         )

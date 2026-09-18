@@ -30,7 +30,7 @@ class TopicTest extends Test:
             Topic.run(AeronDriver.Settings(clientLivenessTimeout = 20.seconds, publicationUnblockTimeout = 25.seconds)) {
                 for
                     started <- Latch.init(1)
-                    fiber <-
+                    fiber   <-
                         Fiber.initUnscoped(using Topic.isolate)(
                             started.release.andThen(Topic.stream[Message](uri).take(messages.size).run)
                         )
@@ -48,7 +48,7 @@ class TopicTest extends Test:
             Topic.run {
                 for
                     started <- Latch.init(1)
-                    fiber <-
+                    fiber   <-
                         Fiber.initUnscoped(using Topic.isolate)(
                             started.release.andThen(Topic.stream[Message](uri).take(messages.size).run)
                         )
@@ -84,7 +84,7 @@ class TopicTest extends Test:
 
             Topic.run {
                 for
-                    started <- Latch.init(2)
+                    started  <- Latch.init(2)
                     strFiber <-
                         Fiber.initUnscoped(
                             started.release.andThen(Topic.stream[GenericMessage[String]](uri).take(strMessages.size).run)
@@ -138,7 +138,7 @@ class TopicTest extends Test:
                     started    <- Latch.init(2)
                     receiving1 <- Latch.init(1)
                     receiving2 <- Latch.init(1)
-                    fiber1 <- Fiber.initUnscoped(started.release.andThen(
+                    fiber1     <- Fiber.initUnscoped(started.release.andThen(
                         Topic.stream[Message](uri).tap(_ => receiving1.release).filterPure(_.value >= 0).take(messages.size).run
                     ))
                     fiber2 <- Fiber.initUnscoped(started.release.andThen(
@@ -174,7 +174,7 @@ class TopicTest extends Test:
                     started    <- Latch.init(2)
                     receiving1 <- Latch.init(1)
                     receiving2 <- Latch.init(1)
-                    slowFiber <-
+                    slowFiber  <-
                         Fiber.initUnscoped(started.release.andThen(
                             Topic.stream[Message](uri)
                                 .tap(_ => receiving1.release)
@@ -300,9 +300,9 @@ class TopicTest extends Test:
 
         Topic.run {
             for
-                started    <- Latch.init(2)
-                receiving1 <- Latch.init(1)
-                receiving2 <- Latch.init(1)
+                started      <- Latch.init(2)
+                receiving1   <- Latch.init(1)
+                receiving2   <- Latch.init(1)
                 failingFiber <- Fiber.initUnscoped(
                     started.release.andThen(
                         Topic.stream[Message](uri)
@@ -450,7 +450,7 @@ class TopicTest extends Test:
             }.map { result =>
                 result match
                     case Result.Failure(_: TopicRegistrationFailedException) => succeed
-                    case Result.Failure(other) =>
+                    case Result.Failure(other)                               =>
                         fail(
                             s"Expected TopicRegistrationFailedException but got ${other.getClass.getSimpleName}: $other"
                         )
@@ -525,7 +525,7 @@ class TopicTest extends Test:
                 }
             yield result match
                 case Result.Failure(_: TopicMessageTooLargeException) => succeed
-                case Result.Failure(other) =>
+                case Result.Failure(other)                            =>
                     fail(s"oversize: expected TopicMessageTooLargeException but got ${other.getClass.getSimpleName}: $other")
                 case Result.Panic(t) =>
                     fail(s"oversize: expected TopicMessageTooLargeException but got panic: ${t.getClass.getSimpleName}")
@@ -543,7 +543,7 @@ class TopicTest extends Test:
                 Topic.stream[Message](badUri, boundedSchedule2).take(1).run
             ).map {
                 case Result.Failure(_: TopicRegistrationFailedException) => succeed
-                case Result.Failure(other) =>
+                case Result.Failure(other)                               =>
                     fail(
                         s"registration: expected terminal TopicRegistrationFailedException; " +
                             s"got ${other.getClass.getSimpleName}: $other (registration error did not surface as terminal)"

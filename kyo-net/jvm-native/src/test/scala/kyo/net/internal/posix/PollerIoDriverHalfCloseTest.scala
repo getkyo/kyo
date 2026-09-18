@@ -126,7 +126,7 @@ class PollerIoDriverHalfCloseTest extends Test:
                                         s"half-close surfaced Closed after ${acc.size()} of ${payload.length} bytes instead of an " +
                                             "empty-Span EOF (an EV_EOF -> Error event was routed to dispatchError)"
                                     )
-                                case Result.Success(other) => fail(s"unexpected reader outcome: $other after ${acc.size()} bytes")
+                                case Result.Success(other)      => fail(s"unexpected reader outcome: $other after ${acc.size()} bytes")
                                 case Result.Failure(_: Timeout) =>
                                     fail(s"half-close read stalled after ${acc.size()} of ${payload.length} bytes (no EOF delivered)")
                                 case other => fail(s"unexpected outcome: $other")

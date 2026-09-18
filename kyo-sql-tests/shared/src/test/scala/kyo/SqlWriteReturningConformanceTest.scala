@@ -34,7 +34,7 @@ class SqlWriteReturningConformanceTest extends SqlBackendTest:
     "an UPDATE answers the rows it changed" - {
         forEachBackend() { (backend, client, _) =>
             for
-                _ <- createWidgets(backend, client)
+                _      <- createWidgets(backend, client)
                 result <- Abort.run[SqlException](
                     Sql.update[Widget]("widget")
                         .set(_.price := BigDecimal(9))
@@ -60,7 +60,7 @@ class SqlWriteReturningConformanceTest extends SqlBackendTest:
     "an UPDATE answers a single returned column at that column's own type" - {
         forEachBackend() { (backend, client, _) =>
             for
-                _ <- createWidgets(backend, client)
+                _      <- createWidgets(backend, client)
                 result <- Abort.run[SqlException](
                     Sql.update[Widget]("widget").set(_.name := "hex nut").returning(_.name).where(_.id == 2L).run
                 )
@@ -79,7 +79,7 @@ class SqlWriteReturningConformanceTest extends SqlBackendTest:
     "a DELETE answers the rows it removed" - {
         forEachBackend() { (backend, client, _) =>
             for
-                _ <- createWidgets(backend, client)
+                _      <- createWidgets(backend, client)
                 result <- Abort.run[SqlException](
                     Sql.delete[Widget]("widget").returning(r => (r.id, r.name)).where(_.id == 3L).run
                 )
@@ -104,7 +104,7 @@ class SqlWriteReturningConformanceTest extends SqlBackendTest:
             if !backend.supportsReturning then succeed(s"${backend.label} has no RETURNING clause")
             else
                 for
-                    _ <- createWidgets(backend, client)
+                    _     <- createWidgets(backend, client)
                     typed <- Sql.update[Widget]("widget")
                         .set(_.price := BigDecimal(7))
                         .returning(r => (r.id, r.price))
@@ -127,7 +127,7 @@ class SqlWriteReturningConformanceTest extends SqlBackendTest:
     "an INSERT answers the rows it wrote" - {
         forEachBackend() { (backend, client, _) =>
             for
-                _ <- createWidgets(backend, client)
+                _      <- createWidgets(backend, client)
                 result <- Abort.run[SqlException](
                     Sql.insert[Widget]("widget")
                         .values(Widget(4L, "screw", BigDecimal(5)))
@@ -152,7 +152,7 @@ class SqlWriteReturningConformanceTest extends SqlBackendTest:
     "an INSERT answers a single returned column at that column's own type" - {
         forEachBackend() { (backend, client, _) =>
             for
-                _ <- createWidgets(backend, client)
+                _      <- createWidgets(backend, client)
                 result <- Abort.run[SqlException](
                     Sql.insert[Widget]("widget").values(Widget(5L, "rivet", BigDecimal(6))).returning(_.name).run
                 )

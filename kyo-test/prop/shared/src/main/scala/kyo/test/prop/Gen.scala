@@ -173,7 +173,7 @@ object Gen:
     def int: Gen[Int] = new Gen[Int]:
         def sample(seed: Seed, size: Int): Tree[Int] =
             val clampedSize = math.max(0, size)
-            val edges =
+            val edges       =
                 if clampedSize == 0 then Chunk(0)
                 else Chunk(0, 1, -1, clampedSize, -clampedSize, Int.MinValue, Int.MaxValue)
             edgeBiased(seed, clampedSize, edges)(shrinkInt) { drawSeed =>
@@ -191,7 +191,7 @@ object Gen:
     def long: Gen[Long] = new Gen[Long]:
         def sample(seed: Seed, size: Int): Tree[Long] =
             val clampedSize = math.max(0, size)
-            val edges =
+            val edges       =
                 if clampedSize == 0 then Chunk(0L)
                 else Chunk(0L, 1L, -1L, clampedSize.toLong, -clampedSize.toLong, Long.MinValue, Long.MaxValue)
             edgeBiased(seed, clampedSize, edges)(shrinkLong) { drawSeed =>
@@ -211,7 +211,7 @@ object Gen:
     def double: Gen[Double] = new Gen[Double]:
         def sample(seed: Seed, size: Int): Tree[Double] =
             val clampedSize = math.max(0, size)
-            val edges =
+            val edges       =
                 if clampedSize == 0 then Chunk(0.0)
                 else
                     Chunk(
@@ -236,7 +236,7 @@ object Gen:
       * toward the empty string and the maximum-length string (both in-band: length stays within [0, clampedSize]); shrinks toward empty.
       */
     def string: Gen[String] = new Gen[String]:
-        private val chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+        private val chars                              = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
         private def draw(seed: Seed, len: Int): String =
             val sb      = new StringBuilder(len)
             var current = seed
@@ -618,7 +618,7 @@ object Gen:
         )
 
     private def mapShrinkSteps[K, V](pairs: Chunk[(K, Tree[V])]): Iterator[Chunk[(K, Tree[V])]] =
-        val dropPhase = pairs.indices.reverse.iterator.map(i => pairs.take(i) ++ pairs.drop(i + 1))
+        val dropPhase  = pairs.indices.reverse.iterator.map(i => pairs.take(i) ++ pairs.drop(i + 1))
         val valuePhase = pairs.indices.iterator.flatMap { i =>
             val (k, vt) = pairs(i)
             vt.shrinks().iterator.map(child => pairs.take(i) ++ Chunk((k, child)) ++ pairs.drop(i + 1))
@@ -672,7 +672,7 @@ object Gen:
                 val sign             = if v < 0 then -1.0 else 1.0
                 val integralNeighbor = v.toLong.toDouble // truncation toward 0: 2.7 -> 2.0, -3.1 -> -3.0
                 val mirror           = if v < 0 then Iterator.single(-v) else Iterator.empty[Double]
-                val integral =
+                val integral         =
                     if integralNeighbor != v && integralNeighbor != 0.0 then Iterator.single(integralNeighbor) else Iterator.empty[Double]
                 Chunk.from(mirror ++ integral ++ halvingSequence(abs).map(_ * sign) ++ Iterator.single(0.0))
         // Finiteness guard: never emit a non-finite candidate (halving/truncation of a finite value stays finite; this is a safety net).

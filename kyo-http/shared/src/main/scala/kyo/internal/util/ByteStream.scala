@@ -39,8 +39,8 @@ object ByteStream:
                             if idx > maxSize then
                                 Abort.fail(HttpProtocolException("Data exceeds max size before delimiter"))
                             else
-                                val before = combined.slice(0, idx)
-                                val after  = combined.slice(idx + delimiter.length, combined.size)
+                                val before    = combined.slice(0, idx)
+                                val after     = combined.slice(idx + delimiter.length, combined.size)
                                 val remaining =
                                     if after.nonEmpty then Stream.init(Seq(after)).concat(rest)
                                     else rest

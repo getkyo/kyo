@@ -83,19 +83,19 @@ class ZZCdpParamsRoundTripTest extends kyo.BaseBrowserTest:
                 "RemoteObject.object"         -> roundTrip[RemoteObject](RemoteObject.`object`(description = Present("Promise"))),
                 "RemoteObject.null"           -> roundTrip[RemoteObject](RemoteObject.`object`(subtype = Present("null"))),
                 "RemoteObject.undefined"      -> roundTrip[RemoteObject](RemoteObject.`undefined`()),
-                "ExceptionDetails" -> roundTrip(ExceptionDetails(
+                "ExceptionDetails"            -> roundTrip(ExceptionDetails(
                     Present("boom"),
                     Present(RemoteObject.`object`(description = Present("Error")))
                 )),
-                "ViewportParams" -> roundTrip(ViewportParams(800, 600, deviceScaleFactor = 2, mobile = true)),
-                "ScreenshotClip" -> roundTrip(ScreenshotClip(0.0, 0.0, 100.0, 200.0, scale = 2.0)),
+                "ViewportParams"   -> roundTrip(ViewportParams(800, 600, deviceScaleFactor = 2, mobile = true)),
+                "ScreenshotClip"   -> roundTrip(ScreenshotClip(0.0, 0.0, 100.0, 200.0, scale = 2.0)),
                 "ScreenshotParams" -> roundTrip(ScreenshotParams(
                     Browser.ScreenshotFormat.Png,
                     Present(80),
                     Present(ScreenshotClip(0, 0, 10, 10))
                 )),
-                "ScreenshotResult" -> roundTrip(ScreenshotResult("aGVsbG8=")),
-                "PrintToPdfResult" -> roundTrip(PrintToPdfResult("cGRm")),
+                "ScreenshotResult"       -> roundTrip(ScreenshotResult("aGVsbG8=")),
+                "PrintToPdfResult"       -> roundTrip(PrintToPdfResult("cGRm")),
                 "DispatchKeyEventParams" -> roundTrip(DispatchKeyEventParams(
                     KeyEventType.Down,
                     Present("a"),
@@ -154,7 +154,7 @@ class ZZCdpParamsRoundTripTest extends kyo.BaseBrowserTest:
                 "SetFileInputFilesParams"    -> roundTrip(SetFileInputFilesParams(Seq("/tmp/a.txt", "/tmp/b.txt"), 7)),
                 "TargetInfo"                 -> roundTrip(TargetInfo("target-1", "page", "https://example.com")),
                 "GetTargetsResult"           -> roundTrip(GetTargetsResult(Seq(TargetInfo("target-1", "page", "https://example.com")))),
-                "SetDownloadBehaviorParams" -> roundTrip(SetDownloadBehaviorParams(
+                "SetDownloadBehaviorParams"  -> roundTrip(SetDownloadBehaviorParams(
                     PageDownload.Behavior.Allow,
                     Present("/tmp"),
                     Present(true)

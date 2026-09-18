@@ -67,7 +67,7 @@ class WindowsBindingsTest extends kyo.test.Test[Any]:
         "writes total and free straight into the drive's retained cells; a zero return writes nothing" in {
             for handles <- MachineHandles.init
             yield
-                val okCell = handles.diskStore("wbtest-diskfreeinto-ok")
+                val okCell  = handles.diskStore("wbtest-diskfreeinto-ok")
                 val okStore =
                     new WindowsDisk.Store("wbtest-e:\\", Buffer.alloc[Long](1), Buffer.alloc[Long](1), Buffer.alloc[Long](1), okCell)
                 val stubOk = new StubBindings
@@ -77,7 +77,7 @@ class WindowsBindingsTest extends kyo.test.Test[Any]:
                 assert(gaugePath("machine", "disk", "wbtest-diskfreeinto-ok", "total") == 500000000000.0)
                 assert(histogramSummary("machine", "disk", "wbtest-diskfreeinto-ok", "free").sum == 100000000000.0)
 
-                val zeroCell = handles.diskStore("wbtest-diskfreeinto-zero")
+                val zeroCell  = handles.diskStore("wbtest-diskfreeinto-zero")
                 val zeroStore =
                     new WindowsDisk.Store("wbtest-f:\\", Buffer.alloc[Long](1), Buffer.alloc[Long](1), Buffer.alloc[Long](1), zeroCell)
                 val stubZero = new StubBindings

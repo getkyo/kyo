@@ -9,7 +9,7 @@ class SyncTest extends kyo.test.Test[Any]:
     "lazyRun" - {
         "execution" in {
             var called = false
-            val v =
+            val v      =
                 Sync.defer {
                     called = true
                     1
@@ -23,7 +23,7 @@ class SyncTest extends kyo.test.Test[Any]:
         "next handled effects can execute" in {
             import AllowUnsafe.embrace.danger
             var called = false
-            val v =
+            val v      =
                 Env.get[Int].map { i =>
                     Sync.defer {
                         called = true
@@ -56,7 +56,7 @@ class SyncTest extends kyo.test.Test[Any]:
             ()
         }
         "stack-safe" in {
-            val frames = 10000
+            val frames                   = 10000
             def loop(i: Int): Int < Sync =
                 Sync.defer {
                     if i < frames then
@@ -71,7 +71,7 @@ class SyncTest extends kyo.test.Test[Any]:
     }
     "run" - {
         "execution" in {
-            var called = false
+            var called        = false
             val v: Int < Sync =
                 Sync.defer {
                     called = true
@@ -84,7 +84,7 @@ class SyncTest extends kyo.test.Test[Any]:
             }
         }
         "stack-safe" in {
-            val frames = 100000
+            val frames                    = 100000
             def loop(i: Int): Unit < Sync =
                 Sync.defer {
                     if i < frames then

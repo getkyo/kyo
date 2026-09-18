@@ -46,8 +46,8 @@ private[ffi] object BufferFactory extends BufferFactoryBase:
         import AllowUnsafe.embrace.danger
         Buffer.Raw.unwrap(raw) match
             case seg: MemorySegment =>
-                val byteLen: Long = size.toLong * l.size
-                val bound: Long   = math.min(byteLen, borrowedBufferMaxBytes)
+                val byteLen: Long        = size.toLong * l.size
+                val bound: Long          = math.min(byteLen, borrowedBufferMaxBytes)
                 val sized: MemorySegment =
                     if seg.byteSize() == 0L then seg.reinterpret(bound).nn
                     else seg

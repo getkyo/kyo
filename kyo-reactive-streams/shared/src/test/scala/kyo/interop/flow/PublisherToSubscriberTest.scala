@@ -23,7 +23,7 @@ abstract private class PublisherToSubscriberTest extends kyo.test.Test[Any]:
             subscriber <- streamSubscriber
             _ = publisher.subscribe(subscriber)
             subscriberStream <- subscriber.stream
-            (isSame, _) <- subscriberStream
+            (isSame, _)      <- subscriberStream
                 .fold(true -> 0) { case ((acc, expected), cur) =>
                     (acc && (expected == cur)) -> (expected + 1)
                 }
@@ -169,22 +169,22 @@ abstract private class PublisherToSubscriberTest extends kyo.test.Test[Any]:
             end emit
 
             for
-                counter     <- AtomicInt.init(0)
-                publisher   <- Stream(Emit.valueWith(Chunk.empty)(emit(counter))).toPublisher
-                subscriber1 <- streamSubscriber
-                subStream1  <- subscriber1.stream
-                subscriber2 <- streamSubscriber
-                subStream2  <- subscriber2.stream
-                subscriber3 <- streamSubscriber
-                subStream3  <- subscriber3.stream
-                subscriber4 <- streamSubscriber
-                subStream4  <- subscriber4.stream
-                latch       <- Latch.init(4)
-                fiber1      <- Fiber.initUnscoped(latch.release.andThen(subStream1.run.unit))
-                fiber2      <- Fiber.initUnscoped(latch.release.andThen(subStream2.run.unit))
-                fiber3      <- Fiber.initUnscoped(latch.release.andThen(subStream3.run.unit))
-                fiber4      <- Fiber.initUnscoped(latch.release.andThen(subStream4.run.unit))
-                latchPub    <- Latch.init(1)
+                counter        <- AtomicInt.init(0)
+                publisher      <- Stream(Emit.valueWith(Chunk.empty)(emit(counter))).toPublisher
+                subscriber1    <- streamSubscriber
+                subStream1     <- subscriber1.stream
+                subscriber2    <- streamSubscriber
+                subStream2     <- subscriber2.stream
+                subscriber3    <- streamSubscriber
+                subStream3     <- subscriber3.stream
+                subscriber4    <- streamSubscriber
+                subStream4     <- subscriber4.stream
+                latch          <- Latch.init(4)
+                fiber1         <- Fiber.initUnscoped(latch.release.andThen(subStream1.run.unit))
+                fiber2         <- Fiber.initUnscoped(latch.release.andThen(subStream2.run.unit))
+                fiber3         <- Fiber.initUnscoped(latch.release.andThen(subStream3.run.unit))
+                fiber4         <- Fiber.initUnscoped(latch.release.andThen(subStream4.run.unit))
+                latchPub       <- Latch.init(1)
                 publisherFiber <- Fiber.initUnscoped(latch.await.andThen(Scope.run(
                     Stream(Emit.valueWith(Chunk.empty)(emit(counter)))
                         .toPublisher
@@ -234,7 +234,7 @@ abstract private class PublisherToSubscriberTest extends kyo.test.Test[Any]:
                         s.request(Long.MaxValue)
                         discard(Sync.Unsafe.evalOrThrow(subscribed.unsafe.completeDiscard(Result.succeed(()))))
                     def onNext(v: Int): Unit = ()
-                    def onComplete(): Unit =
+                    def onComplete(): Unit   =
                         discard(Sync.Unsafe.evalOrThrow(terminated.unsafe.completeDiscard(Result.succeed("onComplete"))))
                     def onError(e: Throwable): Unit =
                         discard(Sync.Unsafe.evalOrThrow(terminated.unsafe.completeDiscard(Result.succeed("onError"))))
@@ -261,8 +261,8 @@ abstract private class PublisherToSubscriberTest extends kyo.test.Test[Any]:
                     Loop(0)(cur => Emit.valueWith(Chunk(cur))(Loop.continue(cur + 1)))
                 )
             for
-                promise    <- Fiber.Promise.init[Unit, Abort[Throwable]]
-                subscriber <- streamSubscriber
+                promise      <- Fiber.Promise.init[Unit, Abort[Throwable]]
+                subscriber   <- streamSubscriber
                 subscription <- Sync.Unsafe.defer {
                     StreamSubscription.Unsafe.subscribe(
                         stream,

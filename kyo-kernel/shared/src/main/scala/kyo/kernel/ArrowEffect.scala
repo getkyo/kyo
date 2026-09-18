@@ -63,9 +63,9 @@ object ArrowEffect:
         inline funcionInput: I[A]
     ): O[A] < E =
         new KyoSuspend[I, O, E, A, O[A], E]:
-            def frame = _frame
-            def tag   = effectTag
-            def input = funcionInput
+            def frame                                             = _frame
+            def tag                                               = effectTag
+            def input                                             = funcionInput
             def apply(v: O[A], context: Context)(using Safepoint) =
                 v
 
@@ -91,9 +91,9 @@ object ArrowEffect:
         inline f: Safepoint ?=> O[A] => B < S
     ): B < (S & E) =
         new KyoSuspend[I, O, E, A, B, S & E]:
-            def frame = _frame
-            def tag   = effectTag
-            def input = funcionInput
+            def frame                                             = _frame
+            def tag                                               = effectTag
+            def input                                             = funcionInput
             def apply(v: O[A], context: Context)(using Safepoint) =
                 Safepoint.handle(v)(
                     suspend = f(v),
@@ -136,7 +136,7 @@ object ArrowEffect:
                     )
                 case kyo: KyoSuspend[IX, OX, EX, Any, A, E & S & S2] @unchecked =>
                     new KyoContinue[IX, OX, EX, Any, A, S & S2](kyo):
-                        def frame = _frame
+                        def frame                                                = _frame
                         def apply(v: OX[Any], context: Context)(using Safepoint) =
                             handleLoop(kyo(v, context), context)
                     end new
@@ -191,7 +191,7 @@ object ArrowEffect:
                     )
                 case kyo: KyoSuspend[IX, OX, EX, Any, A, E1 & E2 & S & S2] @unchecked =>
                     new KyoContinue[IX, OX, EX, Any, A, S & S2](kyo):
-                        def frame = _frame
+                        def frame                                                = _frame
                         def apply(v: OX[Any], context: Context)(using Safepoint) =
                             handle2Loop(kyo(v, context), context)
                     end new
@@ -261,7 +261,7 @@ object ArrowEffect:
                     )
                 case kyo: KyoSuspend[IX, OX, EX, Any, A, E1 & E2 & E3 & S & S2] @unchecked =>
                     new KyoContinue[IX, OX, EX, Any, A, S & S2](kyo):
-                        def frame = _frame
+                        def frame                                                = _frame
                         def apply(v: OX[Any], context: Context)(using Safepoint) =
                             handle3Loop(kyo(v, context), context)
                     end new
@@ -343,7 +343,7 @@ object ArrowEffect:
                     )
                 case kyo: KyoSuspend[IX, OX, EX, Any, A, E1 & E2 & E3 & E4 & S & S2] @unchecked =>
                     new KyoContinue[IX, OX, EX, Any, A, S & S2](kyo):
-                        def frame = _frame
+                        def frame                                                = _frame
                         def apply(v: OX[Any], context: Context)(using Safepoint) =
                             handle4Loop(kyo(v, context), context)
                     end new
@@ -387,7 +387,7 @@ object ArrowEffect:
                     )
                 case kyo: KyoSuspend[IX, OX, EX, Any, A, E & S] @unchecked =>
                     new KyoContinue[IX, OX, EX, Any, B, S & S2](kyo):
-                        def frame = _frame
+                        def frame                                                = _frame
                         def apply(v: OX[Any], context: Context)(using Safepoint) =
                             handleFirstLoop(kyo(v, context), context)
                     end new
@@ -457,7 +457,7 @@ object ArrowEffect:
                             handleLoopLoop(handle(kyo.input, kyo(_, context)), context)
                         case kyo: KyoSuspend[IX, OX, EX, Any, A, E & S] @unchecked =>
                             new KyoContinue[IX, OX, EX, Any, A, S & S2](kyo):
-                                def frame = _frame
+                                def frame                                                = _frame
                                 def apply(v: OX[Any], context: Context)(using Safepoint) =
                                     handleLoopLoop(Loop.continue(kyo(v, context)), context)
                             end new
@@ -551,7 +551,7 @@ object ArrowEffect:
                             handleLoopLoop(handle(kyo.input, state, kyo(_, context)), context)
                         case kyo: KyoSuspend[IX, OX, EX, Any, A, E & S] @unchecked =>
                             new KyoContinue[IX, OX, EX, Any, B, S & S2](kyo):
-                                def frame = _frame
+                                def frame                                                = _frame
                                 def apply(v: OX[Any], context: Context)(using Safepoint) =
                                     handleLoopLoop(Loop.continue(state, kyo(v, context)), context)
                             end new
@@ -596,7 +596,7 @@ object ArrowEffect:
                     )
                 case kyo: KyoSuspend[IX, OX, EX, Any, A, E & S & S2 & S3] @unchecked =>
                     new KyoContinue[IX, OX, EX, Any, B, S & S2 & S3](kyo):
-                        def frame = _frame
+                        def frame                                                = _frame
                         def apply(v: OX[Any], context: Context)(using Safepoint) =
                             try handleLoop(kyo(v, context), context)
                             catch

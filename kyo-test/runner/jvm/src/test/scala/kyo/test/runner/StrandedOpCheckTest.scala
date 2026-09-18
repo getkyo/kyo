@@ -21,7 +21,7 @@ class StrandedOpCheckTest extends AnyFunSuite with NonImplicitAssertions:
 
     test("reports a component whose pending work survives with frozen cycles as stranded") {
         val name = freshName("stranded")
-        val reg = Diagnostics.register(name)(
+        val reg  = Diagnostics.register(name)(
             () => "unused",
             () => Diagnostics.Probe(closed = false, cycles = 7L, pending = true)
         )
@@ -35,7 +35,7 @@ class StrandedOpCheckTest extends AnyFunSuite with NonImplicitAssertions:
     test("does not report a component whose cycle counter advances between samples") {
         val name    = freshName("advancing")
         val counter = new AtomicLong(0L)
-        val reg = Diagnostics.register(name)(
+        val reg     = Diagnostics.register(name)(
             () => "unused",
             () => Diagnostics.Probe(closed = false, cycles = counter.incrementAndGet(), pending = true)
         )
@@ -48,7 +48,7 @@ class StrandedOpCheckTest extends AnyFunSuite with NonImplicitAssertions:
 
     test("does not report a closed component even with frozen cycles and pending work") {
         val name = freshName("closed")
-        val reg = Diagnostics.register(name)(
+        val reg  = Diagnostics.register(name)(
             () => "unused",
             () => Diagnostics.Probe(closed = true, cycles = 3L, pending = true)
         )
@@ -62,7 +62,7 @@ class StrandedOpCheckTest extends AnyFunSuite with NonImplicitAssertions:
     test("does not report a component whose pending flag clears between samples") {
         val name  = freshName("drained")
         val first = new AtomicBoolean(true)
-        val reg = Diagnostics.register(name)(
+        val reg   = Diagnostics.register(name)(
             () => "unused",
             () => Diagnostics.Probe(closed = false, cycles = 1L, pending = first.getAndSet(false))
         )
@@ -75,7 +75,7 @@ class StrandedOpCheckTest extends AnyFunSuite with NonImplicitAssertions:
 
     test("does not report a component matched by the fork's aggregated allowlist") {
         val name = freshName("stranded")
-        val reg = Diagnostics.register(name)(
+        val reg  = Diagnostics.register(name)(
             () => "unused",
             () => Diagnostics.Probe(closed = false, cycles = 1L, pending = true)
         )
@@ -88,7 +88,7 @@ class StrandedOpCheckTest extends AnyFunSuite with NonImplicitAssertions:
 
     test("does not report a component matched by LeakCheck's default processSharedTransport marker") {
         val name = freshName("marked") + " processSharedTransport"
-        val reg = Diagnostics.register(name)(
+        val reg  = Diagnostics.register(name)(
             () => "unused",
             () => Diagnostics.Probe(closed = false, cycles = 1L, pending = true)
         )

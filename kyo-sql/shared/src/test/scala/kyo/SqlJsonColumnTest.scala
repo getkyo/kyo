@@ -44,7 +44,7 @@ class SqlJsonColumnTest extends Test:
 
     "jsonColumn round-trips every variant of a sum type" in {
         given SqlSchema.Column[SqlJsonColumnPayload] = SqlJsonColumnPayload.column
-        val cases = Seq[SqlJsonColumnPayload](
+        val cases                                    = Seq[SqlJsonColumnPayload](
             SqlJsonColumnSuccess("ok"),
             SqlJsonColumnFailure(500, "boom")
         )

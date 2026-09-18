@@ -50,7 +50,7 @@ final case class HttpUrl(
                     case Present(socketPath) =>
                         val unixScheme  = s + "+unix"
                         val encodedPath = java.net.URLEncoder.encode(socketPath, "UTF-8")
-                        val sb = new StringBuilder(
+                        val sb          = new StringBuilder(
                             unixScheme.length + 3 + encodedPath.length + path.length + rawQuery.fold(0)(_.length + 1)
                         )
                         discard(sb.append(unixScheme).append("://").append(encodedPath))
@@ -101,7 +101,7 @@ final case class HttpUrl(
     /** URL without query params, safe for logging/error messages (no sensitive data). */
     def baseUrl: String =
         scheme match
-            case Absent => path
+            case Absent     => path
             case Present(s) =>
                 unixSocket match
                     case Present(socketPath) =>
@@ -195,9 +195,9 @@ object HttpUrl:
             if isUnix then
                 parseUnixSocketUrl(url, schemeName, afterScheme)
             else
-                val slashIdx = url.indexOf('/', afterScheme)
-                val qIdx     = url.indexOf('?', afterScheme)
-                val hashIdx  = url.indexOf('#', afterScheme)
+                val slashIdx     = url.indexOf('/', afterScheme)
+                val qIdx         = url.indexOf('?', afterScheme)
+                val hashIdx      = url.indexOf('#', afterScheme)
                 val authorityEnd =
                     val m0 = url.length
                     val m1 = if slashIdx >= 0 && slashIdx < m0 then slashIdx else m0
@@ -234,9 +234,9 @@ object HttpUrl:
             else DefaultHttpPort
         // Find end of authority: first unencoded slash after ://
         // The authority contains the URL-encoded socket path (e.g., %2Fvar%2Frun%2Fdocker.sock)
-        val slashIdx = url.indexOf('/', afterScheme)
-        val qIdx     = url.indexOf('?', afterScheme)
-        val hashIdx  = url.indexOf('#', afterScheme)
+        val slashIdx     = url.indexOf('/', afterScheme)
+        val qIdx         = url.indexOf('?', afterScheme)
+        val hashIdx      = url.indexOf('#', afterScheme)
         val authorityEnd =
             val m0 = url.length
             val m1 = if slashIdx >= 0 && slashIdx < m0 then slashIdx else m0
@@ -273,7 +273,7 @@ object HttpUrl:
 
     private inline def parseAuthority[A](authority: String, scheme: String)(inline f: (String, Int) => A): A =
         val defaultPort = schemeDefaultPort(scheme)
-        val hostPort =
+        val hostPort    =
             if authority.startsWith("[") then authority
             else
                 val atIdx = authority.indexOf('@')

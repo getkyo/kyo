@@ -100,7 +100,7 @@ class SslLibProviderOwnershipTest extends Test:
             if !liveSsls.remove(ssl) then strayFrees += 1
 
         def sslSetVerifyName(ssl: Long, hostname: String)(using AllowUnsafe): Int = fallible(0)(verifyNameResult)
-        def sslRequireUnmatchableIdentity(ssl: Long)(using AllowUnsafe): Int =
+        def sslRequireUnmatchableIdentity(ssl: Long)(using AllowUnsafe): Int      =
             unmatchableCalls += 1
             fallible(0)(unmatchableResult)
         def sslSetConnectState(ssl: Long)(using AllowUnsafe): Unit = connectStateCalls += 1
@@ -234,7 +234,7 @@ class SslLibProviderOwnershipTest extends Test:
                     (1 to calls).map { n =>
                         val bindings = StubBindings()
                         bindings.failAt = n
-                        val failed = buildAndRelease(bindings, config, hostname)
+                        val failed   = buildAndRelease(bindings, config, hostname)
                         val problems =
                             (if bindings.liveCtxs.nonEmpty then
                                  Seq(s"$label, failing call $n: ${bindings.liveCtxs.size} context(s) stranded")

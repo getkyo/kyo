@@ -102,7 +102,8 @@ class MysqlDialectTranslationTest extends Test:
         val q = Sql.from[TA]("a").fullOuterJoin(Sql.from[TB]("b")).on(j => j.a.id == j.b.id)
         val r = q.render(MysqlDialect)
         assert(
-            r.onlySql.get == "SELECT * FROM (SELECT * FROM `ta` `a` LEFT JOIN `tb` `b` ON (`a`.`id` = `b`.`id`) UNION SELECT * FROM `ta` `a` RIGHT JOIN `tb` `b` ON (`a`.`id` = `b`.`id`)) `sub`"
+            r.onlySql.get ==
+                "SELECT * FROM (SELECT * FROM `ta` `a` LEFT JOIN `tb` `b` ON (`a`.`id` = `b`.`id`) UNION SELECT * FROM `ta` `a` RIGHT JOIN `tb` `b` ON (`a`.`id` = `b`.`id`)) `sub`"
         )
         // No literal binds in this predicate; both sides of the UNION have the same (zero) param count.
         assert(r.params.isEmpty)

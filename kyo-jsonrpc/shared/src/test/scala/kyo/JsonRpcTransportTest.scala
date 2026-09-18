@@ -157,8 +157,8 @@ class JsonRpcTransportTest extends JsonRpcTest:
             })
         }.map { outerResult =>
             outerResult match
-                case Result.Failure(_) => fail("timed out - incoming did not close on EOF")
-                case Result.Panic(t)   => fail(s"panic: ${t.getMessage}")
+                case Result.Failure(_)           => fail("timed out - incoming did not close on EOF")
+                case Result.Panic(t)             => fail(s"panic: ${t.getMessage}")
                 case Result.Success(innerResult) =>
                     innerResult match
                         case Result.Success(chunk: Chunk[?]) => assert(chunk.isEmpty)

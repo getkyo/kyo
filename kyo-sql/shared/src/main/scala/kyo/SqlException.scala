@@ -101,8 +101,8 @@ object SqlConnectionUrlParseException:
       * over-masking a diagnostic beats leaking a credential.
       */
     private[kyo] def redactUserInfo(url: String): String =
-        val schemeSep = url.indexOf("://")
-        val start     = if schemeSep < 0 then 0 else schemeSep + 3
+        val schemeSep    = url.indexOf("://")
+        val start        = if schemeSep < 0 then 0 else schemeSep + 3
         val authorityEnd =
             if schemeSep < 0 then url.length
             else

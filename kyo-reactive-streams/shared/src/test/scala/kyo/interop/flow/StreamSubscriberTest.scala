@@ -11,10 +11,10 @@ final class StreamSubscriberTest extends kyo.test.Test[Any]:
         batchSize: Int
     ) =
         new Publisher[Int]:
-            private val counter = java.util.concurrent.atomic.AtomicInteger(1)
+            private val counter                                            = java.util.concurrent.atomic.AtomicInteger(1)
             override def subscribe(subscriber: Subscriber[? >: Int]): Unit =
                 import AllowUnsafe.embrace.danger
-                val isCanceled = java.util.concurrent.atomic.AtomicBoolean(false)
+                val isCanceled   = java.util.concurrent.atomic.AtomicBoolean(false)
                 val subscription = new Subscription:
                     override def request(n: Long): Unit =
                         val requestCount = java.util.concurrent.atomic.AtomicInteger(0)

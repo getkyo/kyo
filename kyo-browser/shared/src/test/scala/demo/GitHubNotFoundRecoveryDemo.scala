@@ -31,7 +31,7 @@ final class GitHubNotFoundRecoveryDemo extends BrowserDemo[GitHubNotFoundRecover
 
     def flow(using Frame): RecoveryReport < (Browser & Async & Scope & Abort[Throwable]) =
         for
-            _ <- step(1, "Strict mode: goto a known-404 URL with failOnHttpError=true (the default); catch the typed exception")
+            _            <- step(1, "Strict mode: goto a known-404 URL with failOnHttpError=true (the default); catch the typed exception")
             firstAttempt <- Abort.run[BrowserNavigationException] {
                 Browser.goto(missingUrlStrict)
             }

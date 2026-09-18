@@ -224,7 +224,7 @@ class RoundTripTest extends Test:
             MysqlTemporalDecoder.decodeDatetimeBytes(Span.from(Array.empty[Byte]))
         ).eval
         result match
-            case Result.Success(ldt) => fail(s"Expected the zero date to be refused, got $ldt")
+            case Result.Success(ldt)                           => fail(s"Expected the zero date to be refused, got $ldt")
             case Result.Failure(e: SqlDecodeTemporalException) =>
                 assert(e.year == 0 && e.month == 0 && e.day == 0, s"the refusal must report the zero components, got $e")
                 assert(e.structLength == 0, s"expected structLength 0, got ${e.structLength}")

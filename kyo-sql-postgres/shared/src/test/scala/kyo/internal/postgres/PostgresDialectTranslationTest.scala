@@ -128,7 +128,8 @@ class PostgresDialectTranslationTest extends Test:
             .onConflictDoUpdate(_.name)(c => c.name := Excluded(c.name))
         val r = s.render(PostgresDialect)
         assert(
-            r.onlySql.get == """INSERT INTO "user" ("id", "name") VALUES ($1, $2) ON CONFLICT ("name") DO UPDATE SET "name" = EXCLUDED."name" RETURNING "id""""
+            r.onlySql.get ==
+                """INSERT INTO "user" ("id", "name") VALUES ($1, $2) ON CONFLICT ("name") DO UPDATE SET "name" = EXCLUDED."name" RETURNING "id""""
         )
         assert(boundValues(r) == Seq(1L, "Alice"))
     }

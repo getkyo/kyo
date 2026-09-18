@@ -39,8 +39,7 @@ class ErrorReporterTest extends kyo.test.Test[Any]:
 
     // A small source content string with multiple lines for context extraction.
     // Line 42 (1-indexed) is "val x: Int = \"hello\""
-    private val sampleSource: String =
-        (1 to 50).map(i => if i == 42 then "val x: Int = \"hello\"" else s"// line $i").mkString("\n")
+    private val sampleSource: String = (1 to 50).map(i => if i == 42 then "val x: Int = \"hello\"" else s"// line $i").mkString("\n")
 
     "render of a single error produces README.md:LINE:COL and error: label" in {
         val d      = makeDiagnostic(readmeLine = 42, col = 5)

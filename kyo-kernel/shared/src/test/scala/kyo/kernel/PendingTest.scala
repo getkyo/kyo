@@ -135,11 +135,9 @@ class PendingTest extends kyo.test.Test[Any]:
 
     sealed trait TestEffect extends ArrowEffect[Const[Int], Const[Int]]
     object TestEffect:
-        def apply(i: Int): Int < TestEffect = ArrowEffect.suspend[Unit](Tag[TestEffect], i)
+        def apply(i: Int): Int < TestEffect       = ArrowEffect.suspend[Unit](Tag[TestEffect], i)
         def run[A, S](v: => A < (TestEffect & S)) =
-            ArrowEffect.handle(Tag[TestEffect], v)(
-                [C] => (input, cont) => cont(input + 1)
-            )
+            ArrowEffect.handle(Tag[TestEffect], v)([C] => (input, cont) => cont(input + 1))
     end TestEffect
 
     "evalNow" - {
@@ -159,7 +157,7 @@ class PendingTest extends kyo.test.Test[Any]:
         "accepts nested computations" in {
             Safepoint.eval {
                 Kyo.lift(TestEffect(1)).evalNow match
-                    case Absent => fail()
+                    case Absent     => fail()
                     case Present(v) =>
                         TestEffect.run(v).evalNow match
                             case Absent     => fail()
@@ -183,7 +181,7 @@ class PendingTest extends kyo.test.Test[Any]:
 
         "allows chaining of operations" in {
             val effect: Int < TestEffect = TestEffect(1)
-            val result = effect
+            val result                   = effect
                 .handle(v => v.map(_ * 2))
                 .handle(v => TestEffect.run(v))
             assert(result.eval == 4)
@@ -191,7 +189,7 @@ class PendingTest extends kyo.test.Test[Any]:
 
         "works with functions that return effects" in {
             val effect: Int < TestEffect = TestEffect(1)
-            val result = effect.handle { v =>
+            val result                   = effect.handle { v =>
                 TestEffect.run(v).map { x =>
                     TestEffect.run(TestEffect(1))
                 }
@@ -328,7 +326,8 @@ class PendingTest extends kyo.test.Test[Any]:
             def run[A, S](v: A < (TestEffect1 & S)): A < S =
                 ArrowEffect.handle(Tag[TestEffect1], v)([C] =>
                     (input, cont) =>
-                        cont(s"Effect1:$input"))
+                        cont(s"Effect1:$input")
+                )
         end TestEffect1
 
         sealed trait TestEffect2 extends ArrowEffect[Const[String], Const[Int]]
@@ -339,7 +338,8 @@ class PendingTest extends kyo.test.Test[Any]:
             def run[A, S](v: A < (TestEffect2 & S)): A < S =
                 ArrowEffect.handle(Tag[TestEffect2], v)([C] =>
                     (input, cont) =>
-                        cont(input.length + 10))
+                        cont(input.length + 10)
+                )
         end TestEffect2
 
         sealed trait TestEffect3 extends ContextEffect[Boolean]
@@ -358,7 +358,7 @@ class PendingTest extends kyo.test.Test[Any]:
                 var seenNested                                                 = 0
                 def addFinalizer(f: Maybe[Result.Error[Any]] => Unit): Unit    = ()
                 def removeFinalizer(f: Maybe[Result.Error[Any]] => Unit): Unit = ()
-                def enter(frame: Frame, value: Any): Boolean =
+                def enter(frame: Frame, value: Any): Boolean                   =
                     value match
                         case _: kyo.kernel.internal.Kyo[?, ?] =>
                             seenNested += 1
@@ -484,7 +484,7 @@ class PendingTest extends kyo.test.Test[Any]:
             def processValue(v: Int): Int < TestEffect2 < TestEffect1 =
                 TestEffect1(v).map(s => Kyo.lift(TestEffect2(s + "!")))
 
-            val input = 100
+            val input  = 100
             val result = processValue(input).flatten
                 .map(n => n * 2)
                 .flatMap(n => TestEffect3().map(_ => n))

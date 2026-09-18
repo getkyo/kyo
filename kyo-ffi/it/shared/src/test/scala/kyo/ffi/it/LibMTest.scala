@@ -55,7 +55,7 @@ class LibMTest extends ItTestBase:
 
     "sqrt" - {
         "table-driven: exactly representable squares" in {
-            val libm = Ffi.load[LibMBindings]
+            val libm                         = Ffi.load[LibMBindings]
             val cases: Seq[(Double, Double)] = Seq(
                 0.0     -> 0.0,
                 1.0     -> 1.0,
@@ -89,7 +89,7 @@ class LibMTest extends ItTestBase:
 
     "pow" - {
         "table-driven: integer exponents" in {
-            val libm = Ffi.load[LibMBindings]
+            val libm                                   = Ffi.load[LibMBindings]
             val cases: Seq[((Double, Double), Double)] = Seq(
                 (2.0, 0.0)  -> 1.0,
                 (2.0, 1.0)  -> 2.0,
@@ -187,7 +187,7 @@ class LibMTest extends ItTestBase:
 
     "floor" - {
         "table-driven: varied inputs" in {
-            val libm = Ffi.load[LibMBindings]
+            val libm                         = Ffi.load[LibMBindings]
             val cases: Seq[(Double, Double)] = Seq(
                 0.0     -> 0.0,
                 0.5     -> 0.0,
@@ -221,7 +221,7 @@ class LibMTest extends ItTestBase:
 
     "fabs" - {
         "table-driven: varied signs" in {
-            val libm = Ffi.load[LibMBindings]
+            val libm                         = Ffi.load[LibMBindings]
             val cases: Seq[(Double, Double)] = Seq(
                 0.0   -> 0.0,
                 1.0   -> 1.0,

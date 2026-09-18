@@ -478,7 +478,7 @@ private[kyo] object DragProtocol:
         field: String
     ): Result[ValidationFailure, Maybe[WireByteSize]] =
         value match
-            case Absent => Result.succeed(Absent)
+            case Absent         => Result.succeed(Absent)
             case Present(value) =>
                 validatedWireByteSize(value, field).map(Present(_))
 
@@ -547,7 +547,7 @@ private[kyo] object DragProtocol:
     /** Validates an untrusted decoded browser message before runtime dispatch. */
     private[kyo] def validate(message: ClientMessage, limits: Limits): Result[ValidationFailure, ClientMessage] =
         val result = message match
-            case ClientMessage.Event(value) => validateEventAndDomain(value, limits).unit
+            case ClientMessage.Event(value)                      => validateEventAndDomain(value, limits).unit
             case ClientMessage.FileChunk(requestId, bytesBase64) =>
                 validateIdentifier(requestId, "requestId", limits).flatMap(_ => validateBase64(bytesBase64, limits))
             case ClientMessage.FileReadComplete(requestId) =>
@@ -584,30 +584,30 @@ private[kyo] object DragProtocol:
                     case event: UIEvent.ChangeChecked => Result.succeed(ValidatedEvent.ChangeChecked(event))
                     case event: UIEvent.ChangeNumeric =>
                         validateNumber(event.value, "value").map(_ => ValidatedEvent.ChangeNumeric(event))
-                    case event: UIEvent.Submit => validateMouse(event.mouse, limits).map(_ => ValidatedEvent.Submit(event))
+                    case event: UIEvent.Submit  => validateMouse(event.mouse, limits).map(_ => ValidatedEvent.Submit(event))
                     case event: UIEvent.KeyDown =>
                         validateKeyboard(event.keyboard, limits).map(_ => ValidatedEvent.KeyDown(event))
                     case event: UIEvent.KeyUp =>
                         validateKeyboard(event.keyboard, limits).map(_ => ValidatedEvent.KeyUp(event))
-                    case event: UIEvent.Focus => validateMouse(event.mouse, limits).map(_ => ValidatedEvent.Focus(event))
-                    case event: UIEvent.Blur  => validateMouse(event.mouse, limits).map(_ => ValidatedEvent.Blur(event))
+                    case event: UIEvent.Focus  => validateMouse(event.mouse, limits).map(_ => ValidatedEvent.Focus(event))
+                    case event: UIEvent.Blur   => validateMouse(event.mouse, limits).map(_ => ValidatedEvent.Blur(event))
                     case event: UIEvent.Scroll =>
                         validateNumber(event.deltaX, "deltaX")
                             .flatMap(_ => validateNumber(event.deltaY, "deltaY"))
                             .flatMap(_ => validateOptionalIdentifier(event.targetId, "targetId", limits))
                             .map(_ => ValidatedEvent.Scroll(event))
-                    case event: UIEvent.Hover   => validateMouse(event.mouse, limits).map(_ => ValidatedEvent.Hover(event))
-                    case event: UIEvent.Unhover => validateMouse(event.mouse, limits).map(_ => ValidatedEvent.Unhover(event))
+                    case event: UIEvent.Hover     => validateMouse(event.mouse, limits).map(_ => ValidatedEvent.Hover(event))
+                    case event: UIEvent.Unhover   => validateMouse(event.mouse, limits).map(_ => ValidatedEvent.Unhover(event))
                     case event: UIEvent.DragStart =>
                         validateStartAndDomain(event.event, limits).map(ValidatedEvent.Start(event, _))
-                    case event: UIEvent.DragEnd => validateEnd(event.event, limits).map(_ => ValidatedEvent.End(event))
+                    case event: UIEvent.DragEnd   => validateEnd(event.event, limits).map(_ => ValidatedEvent.End(event))
                     case event: UIEvent.DragEnter =>
                         validateTarget(event.event, limits).map(_ => ValidatedEvent.Enter(event))
                     case event: UIEvent.DragLeave =>
                         validateTarget(event.event, limits).map(_ => ValidatedEvent.Leave(event))
                     case event: UIEvent.DragOver =>
                         validateTarget(event.event, limits).map(_ => ValidatedEvent.Over(event))
-                    case event: UIEvent.Drop => validateTarget(event.event, limits).map(_ => ValidatedEvent.Drop(event))
+                    case event: UIEvent.Drop     => validateTarget(event.event, limits).map(_ => ValidatedEvent.Drop(event))
                     case event: UIEvent.SortMove =>
                         validateSortMove(event.sessionId, event.move, limits).map(_ => ValidatedEvent.SortMove(event))
             }
@@ -705,7 +705,7 @@ private[kyo] object DragProtocol:
                     }
             case ItemData.Uri(value) =>
                 validateText(value, "uri", limits.maxTextLength, allowEmpty = false).map(_ => Drag.Item.Uri(value))
-            case ItemData.File(meta) => validateFileMetaAndDomain(meta, limits).map(Drag.Item.File(_))
+            case ItemData.File(meta)             => validateFileMetaAndDomain(meta, limits).map(Drag.Item.File(_))
             case ItemData.Directory(token, name) =>
                 validateIdentifier(token, "token", limits)
                     .flatMap(_ => validateText(name, "name", limits.maxNameLength, allowEmpty = false))
@@ -714,7 +714,7 @@ private[kyo] object DragProtocol:
 
     private def validateEntry(entry: EntryData, limits: Limits): Result[ValidationFailure, Unit] =
         entry match
-            case EntryData.File(meta) => validateFileMetaAndDomain(meta, limits).unit
+            case EntryData.File(meta)             => validateFileMetaAndDomain(meta, limits).unit
             case EntryData.Directory(token, name) =>
                 validateIdentifier(token, "token", limits)
                     .flatMap(_ => validateText(name, "name", limits.maxNameLength, allowEmpty = false))

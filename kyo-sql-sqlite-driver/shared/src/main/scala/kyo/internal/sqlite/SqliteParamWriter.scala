@@ -34,7 +34,7 @@ final private[sqlite] class SqliteParamWriter(frame0: Frame) extends SqlCodec.Wr
     def char(value: Char): Unit     = text(value.toString)
 
     /** A float is widened to the double SQLite stores, which is lossless: the narrowing on the way back recovers the bit pattern. */
-    def float(value: Float): Unit = double(value.toDouble)
+    def float(value: Float): Unit   = double(value.toDouble)
     def double(value: Double): Unit =
         // NaN is REFUSED rather than bound: sqlite3_bind_double stores it as NULL and reports success, so binding it
         // would turn a value into an absent one silently.

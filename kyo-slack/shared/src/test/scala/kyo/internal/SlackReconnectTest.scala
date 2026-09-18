@@ -50,7 +50,7 @@ class SlackReconnectTest extends kyo.test.Test[Any]:
                 ready.release.andThen {
                     val conn = new SlackTransport.Conn:
                         private[kyo] def put(text: String)(using Frame): Unit < (Async & Abort[Closed]) = recorded.put(text)
-                        private[kyo] def stream(using Frame): Stream[String, Async] =
+                        private[kyo] def stream(using Frame): Stream[String, Async]                     =
                             tap match
                                 case Absent                 => feed.streamUntilClosed()
                                 case Present((mark, latch)) =>
@@ -157,7 +157,7 @@ class SlackReconnectTest extends kyo.test.Test[Any]:
         for
             residueBuffered <- Latch.init(1)
             releaseLoop     <- Latch.init(1)
-            old <- conduit(
+            old             <- conduit(
                 Seq(helloFrame, eventFrame("A"), disconnectWarning, eventFrame("B"), sentinel),
                 tap = Present((sentinel, residueBuffered))
             )
@@ -289,7 +289,7 @@ class SlackReconnectTest extends kyo.test.Test[Any]:
         for
             residueBuffered <- Latch.init(1)
             releaseLoop     <- Latch.init(1)
-            old <- conduit(
+            old             <- conduit(
                 Seq(helloFrame, eventFrame("A"), eventFrame("B"), sentinel),
                 tap = Present((sentinel, residueBuffered))
             )

@@ -80,12 +80,12 @@ private[kyo] object SqlClientProbe:
             unused("extendedExecute")
         def extendedExecuteInsert(sql: String, params: Chunk[BoundValue[?]])(using
             Frame
-        ): SqlClient.InsertOutcome < (Async & Abort[SqlException]) = unused("extendedExecuteInsert")
+        ): SqlClient.InsertOutcome < (Async & Abort[SqlException])                               = unused("extendedExecuteInsert")
         def simpleQuery(sql: String)(using Frame): Chunk[SqlRow] < (Async & Abort[SqlException]) = unused("simpleQuery")
         def simpleExecute(sql: String)(using Frame): Long < (Async & Abort[SqlException])        = unused("simpleExecute")
         def beginTransaction(isolation: Maybe[SqlClient.IsolationLevel], readOnly: Boolean)(using
             Frame
-        ): Unit < (Async & Abort[SqlException]) = unused("beginTransaction")
+        ): Unit < (Async & Abort[SqlException])                                                  = unused("beginTransaction")
         def commitTransaction(using Frame): Unit < (Async & Abort[SqlException])                 = unused("commitTransaction")
         def rollbackTransaction(using Frame): Unit < (Async & Abort[SqlException])               = unused("rollbackTransaction")
         def savepoint(name: String)(using Frame): Unit < (Async & Abort[SqlException])           = unused("savepoint")

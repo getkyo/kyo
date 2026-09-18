@@ -487,7 +487,7 @@ private[kyo] object ProbesJs:
                     //   * `<textarea>` and contentEditable: `\r\n` and lone `\r` become `\n`; embedded `\n` is preserved.
                     //   * `<input>` (any type) and other elements: same `\r` normalization, then `\n` is stripped entirely
                     //     by the value-sanitization algorithm.
-                    val crNormalized = expected.replace("\r\n", "\n").replace("\r", "\n")
+                    val crNormalized       = expected.replace("\r\n", "\n").replace("\r", "\n")
                     val normalizedExpected =
                         if tag == "INPUT" then crNormalized.replace("\n", "")
                         else crNormalized

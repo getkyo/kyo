@@ -30,7 +30,7 @@ private[kyo] object ChartScales:
             if i >= rows.size then acc
             else
                 domainFn(rows(i)) match
-                    case Absent => loop(i + 1, acc)
+                    case Absent     => loop(i + 1, acc)
                     case Present(d) =>
                         val newAcc = d match
                             case Domain.Continuous(v) =>
@@ -38,13 +38,13 @@ private[kyo] object ChartScales:
                                 if !ChartFoundations.isFiniteDouble(v) then acc
                                 else
                                     acc match
-                                        case Absent => Present(Extent.Continuous(v, v))
+                                        case Absent                             => Present(Extent.Continuous(v, v))
                                         case Present(Extent.Continuous(lo, hi)) =>
                                             Present(Extent.Continuous(math.min(lo, v), math.max(hi, v)))
                                         case Present(Extent.Categories(_)) => Present(Extent.Continuous(v, v))
                             case Domain.Category(key) =>
                                 acc match
-                                    case Absent => Present(Extent.Categories(Chunk(key)))
+                                    case Absent                           => Present(Extent.Categories(Chunk(key)))
                                     case Present(Extent.Categories(keys)) =>
                                         if keys.exists(_ == key) then Present(Extent.Categories(keys))
                                         else Present(Extent.Categories(keys.append(key)))
@@ -54,7 +54,7 @@ private[kyo] object ChartScales:
                                 if !ChartFoundations.isFiniteDouble(ms.toDouble) then acc
                                 else
                                     acc match
-                                        case Absent => Present(Extent.Continuous(ms.toDouble, ms.toDouble))
+                                        case Absent                             => Present(Extent.Continuous(ms.toDouble, ms.toDouble))
                                         case Present(Extent.Continuous(lo, hi)) =>
                                             Present(Extent.Continuous(math.min(lo, ms.toDouble), math.max(hi, ms.toDouble)))
                                         case Present(Extent.Categories(_)) => Present(Extent.Continuous(ms.toDouble, ms.toDouble))
@@ -328,7 +328,7 @@ private[kyo] object ChartScales:
         def loop(i: Int, sums: Map[String, (Double, Double)]): Map[String, (Double, Double)] =
             if i >= rows.size then sums
             else
-                val row = rows(i)
+                val row  = rows(i)
                 val xKey = mark.x.plottable.toDomain(mark.x.accessor(row)) match
                     case Present(d) => domainKey(d)
                     case Absent     => ""
@@ -357,7 +357,7 @@ private[kyo] object ChartScales:
         def loop(i: Int, totals: Map[String, Double]): Map[String, Double] =
             if i >= rows.size then totals
             else
-                val row = rows(i)
+                val row  = rows(i)
                 val xKey = mark.x.plottable.toDomain(mark.x.accessor(row)) match
                     case Present(d) => domainKey(d)
                     case Absent     => ""
@@ -390,8 +390,8 @@ private[kyo] object ChartScales:
         case other                              => other
 
     private def mergeExtents(a: Maybe[Extent], b: Maybe[Extent]): Maybe[Extent] = (a, b) match
-        case (Absent, x) => x
-        case (x, Absent) => x
+        case (Absent, x)                => x
+        case (x, Absent)                => x
         case (Present(ea), Present(eb)) =>
             (ea, eb) match
                 case (Extent.Continuous(lo1, hi1), Extent.Continuous(lo2, hi2)) =>
@@ -453,9 +453,9 @@ private[kyo] object ChartScales:
             rangeLo: Double,
             rangeHi: Double
         ): Scale =
-            val pad     = effectivePad(ov, axisCfg)
-            val nice    = ov.map(_.nice).getOrElse(true)
-            val reverse = axisCfg.reversed
+            val pad                        = effectivePad(ov, axisCfg)
+            val nice                       = ov.map(_.nice).getOrElse(true)
+            val reverse                    = axisCfg.reversed
             val kindOpt: Maybe[Scale.Kind] = ov.flatMap(_.kind) match
                 case Present(ScaleKind.Band)         => Present(Scale.Kind.Band)
                 case Present(ScaleKind.Log)          => Present(Scale.Kind.Log)
@@ -466,7 +466,7 @@ private[kyo] object ChartScales:
                 case _                               => Absent
             val kind = kindOpt.getOrElse(Scale.Kind.Linear)
             // Swap range bounds when reverse=true.
-            val (rLoBase, rHiBase) = if reverse then (rangeHi, rangeLo) else (rangeLo, rangeHi)
+            val (rLoBase, rHiBase)            = if reverse then (rangeHi, rangeLo) else (rangeLo, rangeHi)
             val (extFinal, rLo, rHi, useNice) = ov.flatMap(_.kind) match
                 // Pad applies to an explicit linear domain too; withPad must win.
                 case Present(ScaleKind.Linear(domLo, domHi)) =>
@@ -494,7 +494,7 @@ private[kyo] object ChartScales:
             case Present(ScaleKind.Point)        => Present(Scale.Kind.Point)
             case Present(ScaleKind.Symlog)       => Present(Scale.Kind.Symlog)
             case _                               => Absent
-        val xKind = xKindOpt.getOrElse(inferKind(xExt, marks, isX = true))
+        val xKind                                 = xKindOpt.getOrElse(inferKind(xExt, marks, isX = true))
         val (xExtFinal, xLoRaw, xHiRaw, useXNice) = xOverride.flatMap(_.kind) match
             // Pad applies to an explicit linear domain too (every other arm pads); withPad must win.
             // An explicit linear x-domain is honored exactly (nice=false), mirroring the y path below.

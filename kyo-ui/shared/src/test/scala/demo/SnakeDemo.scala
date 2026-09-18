@@ -119,7 +119,7 @@ object SnakeDemo extends KyoApp:
         case Keyboard.ArrowDown  => Present(Dir.Down)
         case Keyboard.ArrowLeft  => Present(Dir.Left)
         case Keyboard.ArrowRight => Present(Dir.Right)
-        case Keyboard.Char(c) =>
+        case Keyboard.Char(c)    =>
             c.toLower match
                 case 'w' => Present(Dir.Up)
                 case 's' => Present(Dir.Down)

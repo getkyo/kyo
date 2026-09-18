@@ -77,7 +77,7 @@ object CIO:
         inline use: A => CIO[B]
     ): CIO[B] =
         deferLift {
-            val a = acquire.lower
+            val a                            = acquire.lower
             val useResult: scala.util.Try[B] =
                 try scala.util.Success(use(a).lower)
                 catch case t: Throwable => scala.util.Failure(t)
@@ -222,7 +222,7 @@ object CIO:
             val capturedOx = summon[Ox]
             val items      = coll.toList
             val thunks     = items.map(a => () => f(a).lower(using capturedOx))
-            val results =
+            val results    =
                 if concurrency == Int.MaxValue then ox.par(thunks)
                 else ox.parLimit(concurrency)(thunks)
             CChunk.lift(results.toVector)
@@ -237,7 +237,7 @@ object CIO:
             val capturedOx = summon[Ox]
             val items      = coll.toList.zipWithIndex
             val thunks     = items.map { case (a, i) => () => f(i, a).lower(using capturedOx) }
-            val results =
+            val results    =
                 if concurrency == Int.MaxValue then ox.par(thunks)
                 else ox.parLimit(concurrency)(thunks)
             CChunk.lift(results.toVector)
@@ -251,7 +251,7 @@ object CIO:
         deferLift {
             val capturedOx = summon[Ox]
             val thunks     = coll.toList.map(a => () => f(a).lower(using capturedOx))
-            val _ =
+            val _          =
                 if concurrency == Int.MaxValue then ox.par(thunks)
                 else ox.parLimit(concurrency)(thunks)
         }
@@ -266,7 +266,7 @@ object CIO:
             val capturedOx = summon[Ox]
             val items      = coll.toList
             val thunks     = items.map(a => () => p(a).lower(using capturedOx))
-            val flags =
+            val flags      =
                 if concurrency == Int.MaxValue then ox.par(thunks)
                 else ox.parLimit(concurrency)(thunks)
             CChunk.lift(items.zip(flags).collect { case (a, true) => a }.toVector)
@@ -280,7 +280,7 @@ object CIO:
         deferLift {
             val capturedOx = summon[Ox]
             val thunks     = coll.toList.map(c => () => c.lower(using capturedOx))
-            val results =
+            val results    =
                 if concurrency == Int.MaxValue then ox.par(thunks)
                 else ox.parLimit(concurrency)(thunks)
             CChunk.lift(results.toVector)
@@ -294,7 +294,7 @@ object CIO:
         deferLift {
             val capturedOx = summon[Ox]
             val thunks     = coll.toList.map(c => () => c.lower(using capturedOx))
-            val _ =
+            val _          =
                 if concurrency == Int.MaxValue then ox.par(thunks)
                 else ox.parLimit(concurrency)(thunks)
         }
@@ -304,7 +304,7 @@ object CIO:
       */
     inline def async[A](inline register: ((scala.util.Try[A] => Unit) => Unit)): CIO[A] =
         deferLift {
-            val cf = new java.util.concurrent.CompletableFuture[A]()
+            val cf                            = new java.util.concurrent.CompletableFuture[A]()
             val cb: scala.util.Try[A] => Unit = {
                 case scala.util.Success(a) =>
                     val _ = cf.complete(a)

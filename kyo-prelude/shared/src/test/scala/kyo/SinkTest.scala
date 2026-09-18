@@ -4,7 +4,7 @@ class SinkTest extends kyo.test.Test[Any]:
 
     "sinks" - {
         "discard" in {
-            val sink = Sink.discard[Int]
+            val sink   = Sink.discard[Int]
             val stream = Stream:
                 Var.get[Int].map: init =>
                     Loop(init): i =>
@@ -166,7 +166,7 @@ class SinkTest extends kyo.test.Test[Any]:
             val s1 = Sink:
                 Loop(0, 3): (acc, i) =>
                     Poll.one[Chunk[Int]].map:
-                        case Absent => Loop.done(acc)
+                        case Absent         => Loop.done(acc)
                         case Present(chunk) =>
                             val newAcc = acc + chunk.take(i).reduce(_ + _)
                             if chunk.size >= i then Loop.done(newAcc)

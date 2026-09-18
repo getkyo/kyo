@@ -9,7 +9,7 @@ private[kyo] trait SecureRandomPlatformSpecific:
       */
     private[kyo] def liveUnsafe: SecureRandom.Unsafe =
         new SecureRandom.Unsafe:
-            private lazy val underlying = new java.security.SecureRandom
+            private lazy val underlying                               = new java.security.SecureRandom
             def nextBytes(length: Int)(using AllowUnsafe): Span[Byte] =
                 val arr = new Array[Byte](length)
                 underlying.nextBytes(arr)

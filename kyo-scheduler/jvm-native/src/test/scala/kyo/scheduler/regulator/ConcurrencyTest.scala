@@ -46,7 +46,7 @@ class ConcurrencyTest extends AnyFreeSpec with NonImplicitAssertions {
 
         // The regulator reads jitter then load on this thread with no probe between, so the load supplier
         // is where this cycle's deciding jitter can be captured exactly.
-        val running = new AtomicReference[Concurrency](null)
+        val running     = new AtomicReference[Concurrency](null)
         val concurrency = new Concurrency(
             () => {
                 jitterAtDecision = running.get().status().regulator.measurementsJitter

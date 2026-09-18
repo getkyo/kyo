@@ -222,33 +222,38 @@ class SymbolPredicateTest extends kyo.test.Test[Any]:
         val typeParamSym    = makeSymbol(kind = SymbolKind.TypeParam)
         val valSym          = makeSymbol(kind = SymbolKind.Val)
         assert(
-            typeAliasSym.isInstanceOf[Tasty.Symbol.TypeAlias] || typeAliasSym.isInstanceOf[
-                Tasty.Symbol.OpaqueType
-            ] || typeAliasSym.isInstanceOf[Tasty.Symbol.AbstractType] || typeAliasSym.isInstanceOf[Tasty.Symbol.TypeParam],
+            typeAliasSym.isInstanceOf[Tasty.Symbol.TypeAlias] ||
+                typeAliasSym.isInstanceOf[
+                    Tasty.Symbol.OpaqueType
+                ] || typeAliasSym.isInstanceOf[Tasty.Symbol.AbstractType] || typeAliasSym.isInstanceOf[Tasty.Symbol.TypeParam],
             "isTypeLike: TypeAlias"
         )
         assert(
-            opaqueTypeSym.isInstanceOf[Tasty.Symbol.TypeAlias] || opaqueTypeSym.isInstanceOf[
-                Tasty.Symbol.OpaqueType
-            ] || opaqueTypeSym.isInstanceOf[Tasty.Symbol.AbstractType] || opaqueTypeSym.isInstanceOf[Tasty.Symbol.TypeParam],
+            opaqueTypeSym.isInstanceOf[Tasty.Symbol.TypeAlias] ||
+                opaqueTypeSym.isInstanceOf[
+                    Tasty.Symbol.OpaqueType
+                ] || opaqueTypeSym.isInstanceOf[Tasty.Symbol.AbstractType] || opaqueTypeSym.isInstanceOf[Tasty.Symbol.TypeParam],
             "isTypeLike: OpaqueType"
         )
         assert(
-            abstractTypeSym.isInstanceOf[Tasty.Symbol.TypeAlias] || abstractTypeSym.isInstanceOf[
-                Tasty.Symbol.OpaqueType
-            ] || abstractTypeSym.isInstanceOf[Tasty.Symbol.AbstractType] || abstractTypeSym.isInstanceOf[Tasty.Symbol.TypeParam],
+            abstractTypeSym.isInstanceOf[Tasty.Symbol.TypeAlias] ||
+                abstractTypeSym.isInstanceOf[
+                    Tasty.Symbol.OpaqueType
+                ] || abstractTypeSym.isInstanceOf[Tasty.Symbol.AbstractType] || abstractTypeSym.isInstanceOf[Tasty.Symbol.TypeParam],
             "isTypeLike: AbstractType"
         )
         assert(
-            typeParamSym.isInstanceOf[Tasty.Symbol.TypeAlias] || typeParamSym.isInstanceOf[
-                Tasty.Symbol.OpaqueType
-            ] || typeParamSym.isInstanceOf[Tasty.Symbol.AbstractType] || typeParamSym.isInstanceOf[Tasty.Symbol.TypeParam],
+            typeParamSym.isInstanceOf[Tasty.Symbol.TypeAlias] ||
+                typeParamSym.isInstanceOf[
+                    Tasty.Symbol.OpaqueType
+                ] || typeParamSym.isInstanceOf[Tasty.Symbol.AbstractType] || typeParamSym.isInstanceOf[Tasty.Symbol.TypeParam],
             "isTypeLike: TypeParam"
         )
         assert(
-            !valSym.isInstanceOf[Tasty.Symbol.TypeAlias] || valSym.isInstanceOf[Tasty.Symbol.OpaqueType] || valSym.isInstanceOf[
-                Tasty.Symbol.AbstractType
-            ] || valSym.isInstanceOf[Tasty.Symbol.TypeParam],
+            !valSym.isInstanceOf[Tasty.Symbol.TypeAlias] || valSym.isInstanceOf[Tasty.Symbol.OpaqueType] ||
+                valSym.isInstanceOf[
+                    Tasty.Symbol.AbstractType
+                ] || valSym.isInstanceOf[Tasty.Symbol.TypeParam],
             "isTypeLike: Val should be false"
         )
 
@@ -257,39 +262,45 @@ class SymbolPredicateTest extends kyo.test.Test[Any]:
         val fieldSym = makeSymbol(kind = SymbolKind.Field)
         val paramSym = makeSymbol(kind = SymbolKind.Parameter)
         assert(
-            methodSym.isInstanceOf[Tasty.Symbol.Method] || methodSym.isInstanceOf[Tasty.Symbol.Val] || methodSym.isInstanceOf[
-                Tasty.Symbol.Var
-            ] || methodSym.isInstanceOf[Tasty.Symbol.Field] || methodSym.isInstanceOf[Tasty.Symbol.Parameter],
+            methodSym.isInstanceOf[Tasty.Symbol.Method] || methodSym.isInstanceOf[Tasty.Symbol.Val] ||
+                methodSym.isInstanceOf[
+                    Tasty.Symbol.Var
+                ] || methodSym.isInstanceOf[Tasty.Symbol.Field] || methodSym.isInstanceOf[Tasty.Symbol.Parameter],
             "isTerm: Method"
         )
         assert(
-            valSym.isInstanceOf[Tasty.Symbol.Method] || valSym.isInstanceOf[Tasty.Symbol.Val] || valSym.isInstanceOf[
-                Tasty.Symbol.Var
-            ] || valSym.isInstanceOf[Tasty.Symbol.Field] || valSym.isInstanceOf[Tasty.Symbol.Parameter],
+            valSym.isInstanceOf[Tasty.Symbol.Method] || valSym.isInstanceOf[Tasty.Symbol.Val] ||
+                valSym.isInstanceOf[
+                    Tasty.Symbol.Var
+                ] || valSym.isInstanceOf[Tasty.Symbol.Field] || valSym.isInstanceOf[Tasty.Symbol.Parameter],
             "isTerm: Val"
         )
         assert(
-            varSym.isInstanceOf[Tasty.Symbol.Method] || varSym.isInstanceOf[Tasty.Symbol.Val] || varSym.isInstanceOf[
-                Tasty.Symbol.Var
-            ] || varSym.isInstanceOf[Tasty.Symbol.Field] || varSym.isInstanceOf[Tasty.Symbol.Parameter],
+            varSym.isInstanceOf[Tasty.Symbol.Method] || varSym.isInstanceOf[Tasty.Symbol.Val] ||
+                varSym.isInstanceOf[
+                    Tasty.Symbol.Var
+                ] || varSym.isInstanceOf[Tasty.Symbol.Field] || varSym.isInstanceOf[Tasty.Symbol.Parameter],
             "isTerm: Var"
         )
         assert(
-            fieldSym.isInstanceOf[Tasty.Symbol.Method] || fieldSym.isInstanceOf[Tasty.Symbol.Val] || fieldSym.isInstanceOf[
-                Tasty.Symbol.Var
-            ] || fieldSym.isInstanceOf[Tasty.Symbol.Field] || fieldSym.isInstanceOf[Tasty.Symbol.Parameter],
+            fieldSym.isInstanceOf[Tasty.Symbol.Method] || fieldSym.isInstanceOf[Tasty.Symbol.Val] ||
+                fieldSym.isInstanceOf[
+                    Tasty.Symbol.Var
+                ] || fieldSym.isInstanceOf[Tasty.Symbol.Field] || fieldSym.isInstanceOf[Tasty.Symbol.Parameter],
             "isTerm: Field"
         )
         assert(
-            paramSym.isInstanceOf[Tasty.Symbol.Method] || paramSym.isInstanceOf[Tasty.Symbol.Val] || paramSym.isInstanceOf[
-                Tasty.Symbol.Var
-            ] || paramSym.isInstanceOf[Tasty.Symbol.Field] || paramSym.isInstanceOf[Tasty.Symbol.Parameter],
+            paramSym.isInstanceOf[Tasty.Symbol.Method] || paramSym.isInstanceOf[Tasty.Symbol.Val] ||
+                paramSym.isInstanceOf[
+                    Tasty.Symbol.Var
+                ] || paramSym.isInstanceOf[Tasty.Symbol.Field] || paramSym.isInstanceOf[Tasty.Symbol.Parameter],
             "isTerm: Parameter"
         )
         assert(
-            !classSym.isInstanceOf[Tasty.Symbol.Method] || classSym.isInstanceOf[Tasty.Symbol.Val] || classSym.isInstanceOf[
-                Tasty.Symbol.Var
-            ] || classSym.isInstanceOf[Tasty.Symbol.Field] || classSym.isInstanceOf[Tasty.Symbol.Parameter],
+            !classSym.isInstanceOf[Tasty.Symbol.Method] || classSym.isInstanceOf[Tasty.Symbol.Val] ||
+                classSym.isInstanceOf[
+                    Tasty.Symbol.Var
+                ] || classSym.isInstanceOf[Tasty.Symbol.Field] || classSym.isInstanceOf[Tasty.Symbol.Parameter],
             "isTerm: Class should be false"
         )
 

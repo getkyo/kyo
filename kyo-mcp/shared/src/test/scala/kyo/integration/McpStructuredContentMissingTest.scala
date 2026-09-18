@@ -85,7 +85,7 @@ class McpStructuredContentMissingTest extends Test:
                         _ <- srv.closeNow
                         _ <- client.closeNow
                     yield result match
-                        case Result.Failure(_: McpToolStructuredDecodeException) => succeed
+                        case Result.Failure(_: McpToolStructuredDecodeException)  => succeed
                         case Result.Failure(_: McpToolStructuredMissingException) =>
                             fail("expected McpToolStructuredDecodeException, got Missing")
                         case other => fail(s"expected McpToolStructuredDecodeException, got $other")

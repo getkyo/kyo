@@ -36,7 +36,7 @@ abstract class FileSystemWatchTestSuite extends kyo.test.Test[Any]:
 
     private def glob(value: String): Glob =
         Glob.parse(value) match
-            case Result.Success(glob) => glob
+            case Result.Success(glob)  => glob
             case Result.Failure(error) =>
                 throw new AssertionError(s"invalid test glob at ${error.offset}: ${error.reason}")
             case Result.Panic(error) => throw error

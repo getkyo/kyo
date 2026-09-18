@@ -49,7 +49,7 @@ private[kyo] object IFrameResolver:
                                 tab.frameContexts.get.map { ctxMap =>
                                     ctxMap.get(fid) match
                                         case Present(cid) => IFrameHandle(fid, cid)
-                                        case Absent =>
+                                        case Absent       =>
                                             Abort.fail(
                                                 BrowserIFrameInvalidException(BrowserIFrameInvalidException.Reason.ContextNotObserved)
                                             )

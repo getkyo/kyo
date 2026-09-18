@@ -49,7 +49,7 @@ class ChromeDownloaderTest extends BaseBrowserTest:
         new System:
             // ChromeDownloader only uses env/operatingSystem/architecture, never the low-level
             // Unsafe surface, so delegating to the live System's Unsafe is a no-op for these tests.
-            def unsafe: System.Unsafe = System.live.unsafe
+            def unsafe: System.Unsafe                                                                      = System.live.unsafe
             def env[E, A](name: String)(using p: Parser[E, A], frame: Frame): Maybe[A] < (Abort[E] & Sync) =
                 Sync.defer(envOverrides.get(name) match
                     case Some(v) => Abort.get(p(v).map(Maybe(_)))
@@ -336,8 +336,8 @@ class ChromeDownloaderTest extends BaseBrowserTest:
     // (no buffered cap) and sinks each chunk to disk, so the download succeeds and the full body lands on the file even
     // though it far exceeds the cap.
     "downloadZip streams a body larger than maxResponseLength to disk instead of rejecting it" in {
-        val bodySize = 256 * 1024
-        val body     = Span.fromUnsafe(new Array[Byte](bodySize))
+        val bodySize                              = 256 * 1024
+        val body                                  = Span.fromUnsafe(new Array[Byte](bodySize))
         val bodyStream: Stream[Span[Byte], Async] = Stream[Span[Byte], Async] {
             Emit.valueWith(Chunk(body))(())
         }

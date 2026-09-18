@@ -86,7 +86,7 @@ object Runner {
                 resultFile.getAbsolutePath
             )
 
-            val cwd = new File(".").getCanonicalFile.getAbsolutePath
+            val cwd    = new File(".").getCanonicalFile.getAbsolutePath
             val labels = sources.map { f =>
                 val abs = f.getCanonicalFile.getAbsolutePath
                 if (abs.startsWith(cwd + "/")) abs.substring(cwd.length + 1) else abs

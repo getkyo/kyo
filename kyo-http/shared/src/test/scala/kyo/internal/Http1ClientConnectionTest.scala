@@ -71,7 +71,7 @@ class Http1ClientConnectionTest extends kyo.BaseHttpTest:
 
             var result: ParsedResponse = null.asInstanceOf[ParsedResponse]
             var bodyResult: Span[Byte] = Span.empty[Byte]
-            val parser = new Http1ResponseParser(
+            val parser                 = new Http1ResponseParser(
                 channel,
                 onResponseParsed = (resp, body) =>
                     result = resp
@@ -95,7 +95,7 @@ class Http1ClientConnectionTest extends kyo.BaseHttpTest:
             discard(channel.offer(Span.fromUnsafe(response.getBytes(StandardCharsets.US_ASCII))))
 
             var result: ParsedResponse = null.asInstanceOf[ParsedResponse]
-            val parser = new Http1ResponseParser(
+            val parser                 = new Http1ResponseParser(
                 channel,
                 onResponseParsed = (resp, _) => result = resp
             )
@@ -107,7 +107,7 @@ class Http1ClientConnectionTest extends kyo.BaseHttpTest:
         }
 
         "parse response with multiple headers" in {
-            val channel = Channel.Unsafe.init[Span[Byte]](16)
+            val channel  = Channel.Unsafe.init[Span[Byte]](16)
             val response =
                 "HTTP/1.1 200 OK\r\n" +
                     "Content-Type: text/plain\r\n" +
@@ -117,7 +117,7 @@ class Http1ClientConnectionTest extends kyo.BaseHttpTest:
             discard(channel.offer(Span.fromUnsafe(response.getBytes(StandardCharsets.US_ASCII))))
 
             var result: ParsedResponse = null.asInstanceOf[ParsedResponse]
-            val parser = new Http1ResponseParser(
+            val parser                 = new Http1ResponseParser(
                 channel,
                 onResponseParsed = (resp, _) => result = resp
             )
@@ -137,7 +137,7 @@ class Http1ClientConnectionTest extends kyo.BaseHttpTest:
             discard(channel.offer(Span.fromUnsafe(response.getBytes(StandardCharsets.US_ASCII))))
 
             var result: ParsedResponse = null.asInstanceOf[ParsedResponse]
-            val parser = new Http1ResponseParser(
+            val parser                 = new Http1ResponseParser(
                 channel,
                 onResponseParsed = (resp, _) => result = resp
             )
@@ -154,7 +154,7 @@ class Http1ClientConnectionTest extends kyo.BaseHttpTest:
             discard(channel.offer(Span.fromUnsafe(response.getBytes(StandardCharsets.US_ASCII))))
 
             var result: ParsedResponse = null.asInstanceOf[ParsedResponse]
-            val parser = new Http1ResponseParser(
+            val parser                 = new Http1ResponseParser(
                 channel,
                 onResponseParsed = (resp, _) => result = resp
             )
@@ -170,7 +170,7 @@ class Http1ClientConnectionTest extends kyo.BaseHttpTest:
             discard(channel.offer(Span.fromUnsafe(response.getBytes(StandardCharsets.US_ASCII))))
 
             var result: ParsedResponse = null.asInstanceOf[ParsedResponse]
-            val parser = new Http1ResponseParser(
+            val parser                 = new Http1ResponseParser(
                 channel,
                 onResponseParsed = (resp, _) => result = resp
             )
@@ -185,14 +185,14 @@ class Http1ClientConnectionTest extends kyo.BaseHttpTest:
             val fullResponse = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"
             val bytes        = fullResponse.getBytes(StandardCharsets.US_ASCII)
             val chunkSize    = 8
-            val chunks = (0 until bytes.length by chunkSize).map { start =>
+            val chunks       = (0 until bytes.length by chunkSize).map { start =>
                 val end = math.min(start + chunkSize, bytes.length)
                 bytes.slice(start, end)
             }
             chunks.foreach(chunk => discard(channel.offer(Span.fromUnsafe(chunk))))
 
             var result: ParsedResponse = null.asInstanceOf[ParsedResponse]
-            val parser = new Http1ResponseParser(
+            val parser                 = new Http1ResponseParser(
                 channel,
                 onResponseParsed = (resp, _) => result = resp
             )
@@ -206,7 +206,7 @@ class Http1ClientConnectionTest extends kyo.BaseHttpTest:
         "channel closed triggers onClosed" in {
             val channel      = Channel.Unsafe.init[Span[Byte]](16)
             var closedCalled = false
-            val parser = new Http1ResponseParser(
+            val parser       = new Http1ResponseParser(
                 channel,
                 onClosed = () => closedCalled = true
             )
@@ -224,7 +224,7 @@ class Http1ClientConnectionTest extends kyo.BaseHttpTest:
 
             var closedCalled           = false
             var parsed: ParsedResponse = null.asInstanceOf[ParsedResponse]
-            val parser = new Http1ResponseParser(
+            val parser                 = new Http1ResponseParser(
                 channel,
                 maxHeaderSize = smallMax,
                 onResponseParsed = (resp, _) => parsed = resp,
@@ -244,7 +244,7 @@ class Http1ClientConnectionTest extends kyo.BaseHttpTest:
 
             // Pre-stage response on inbound before sending request
             val responseBytes = "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello"
-            val resp = sendAndAwait(
+            val resp          = sendAndAwait(
                 conn,
                 inbound,
                 HttpMethod.GET,
@@ -322,7 +322,7 @@ class Http1ClientConnectionTest extends kyo.BaseHttpTest:
             val (inbound, outbound, conn) = mkConnection()
 
             val bodyContent = "response body content"
-            val resp = sendAndAwait(
+            val resp        = sendAndAwait(
                 conn,
                 inbound,
                 HttpMethod.GET,

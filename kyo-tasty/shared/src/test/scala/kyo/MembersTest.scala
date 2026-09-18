@@ -125,8 +125,8 @@ class MembersTest extends kyo.test.Test[Any]:
     //   0 -> Class "Child" (ownerId = 1)
     //   1 -> Package "examplepkg" (memberIds = Chunk(SymbolId(0)))
     private def buildPkgFixture(using Frame): Tasty.Classpath < Sync =
-        val childId = SymbolId(0)
-        val pkgId   = SymbolId(1)
+        val childId    = SymbolId(0)
+        val pkgId      = SymbolId(1)
         val childClass = Tasty.Symbol.Class(
             childId,
             Tasty.Name("Child"),
@@ -156,7 +156,7 @@ class MembersTest extends kyo.test.Test[Any]:
         buildPkgFixture.map { classpath =>
             val pkgOpt = classpath.symbols.toSeq.collectFirst { case p: Tasty.Symbol.Package => p }
             pkgOpt match
-                case None => fail("Package symbol not found in fixture")
+                case None      => fail("Package symbol not found in fixture")
                 case Some(pkg) =>
                     val declaredNames = classpath.members(pkg, Tasty.MemberScope.Declared).map(_.simpleName)
                     val allNames      = classpath.members(pkg, Tasty.MemberScope.All).map(_.simpleName)
@@ -180,7 +180,7 @@ class MembersTest extends kyo.test.Test[Any]:
         buildPkgFixture.map { classpath =>
             val pkgOpt = classpath.symbols.toSeq.collectFirst { case p: Tasty.Symbol.Package => p }
             pkgOpt match
-                case None => fail("Package symbol not found in fixture")
+                case None      => fail("Package symbol not found in fixture")
                 case Some(pkg) =>
                     val inh = classpath.members(pkg, Tasty.MemberScope.Inherited)
                     assert(
@@ -266,7 +266,7 @@ class MembersTest extends kyo.test.Test[Any]:
                 case c: Tasty.Symbol.Class if c.simpleName == "Child" => c
             }
             childOpt match
-                case None => fail("Child class not found in synthetic classpath fixture")
+                case None        => fail("Child class not found in synthetic classpath fixture")
                 case Some(child) =>
                     val viaAll       = classpath.findMember(child, "y", Tasty.MemberScope.All)
                     val viaInherited = classpath.findMember(child, "y", Tasty.MemberScope.Inherited)

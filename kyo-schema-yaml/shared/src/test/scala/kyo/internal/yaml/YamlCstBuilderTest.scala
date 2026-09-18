@@ -96,7 +96,7 @@ class YamlCstBuilderTest extends kyo.test.Test[Any]:
 
             val stream = Yaml.cstAll("a: 1\nb: 2\n").getOrThrow
 
-            var scalarCount = 0
+            var scalarCount  = 0
             val failOnSecond = new Yaml.Events.Handler[Int, TestErr]:
                 override def scalar(context: Int, value: String, meta: Yaml.ScalarMeta): Result[TestErr, Int] =
                     scalarCount += 1
@@ -138,7 +138,7 @@ class YamlCstBuilderTest extends kyo.test.Test[Any]:
     "Yaml.Cst.fromEvents with malformed event sequences" - {
 
         "returns failure for a CollectionEnd with no matching start" in {
-            val mark = Yaml.Mark(0, 1, 1)
+            val mark   = Yaml.Mark(0, 1, 1)
             val events = Chunk(
                 Yaml.Events.Event.StreamStart(mark),
                 Yaml.Events.Event.DocumentStart(mark),
@@ -156,7 +156,7 @@ class YamlCstBuilderTest extends kyo.test.Test[Any]:
             val mark       = Yaml.Mark(0, 1, 1)
             val meta       = Yaml.Meta(Absent, Absent, mark)
             val scalarMeta = Yaml.ScalarMeta(Absent, Absent, Yaml.ScalarStyle.Plain, mark)
-            val events = Chunk(
+            val events     = Chunk(
                 Yaml.Events.Event.StreamStart(mark),
                 Yaml.Events.Event.DocumentStart(mark),
                 Yaml.Events.Event.MappingStart(meta),
@@ -176,7 +176,7 @@ class YamlCstBuilderTest extends kyo.test.Test[Any]:
         "returns failure for a duplicate document start" in {
             val mark       = Yaml.Mark(0, 1, 1)
             val scalarMeta = Yaml.ScalarMeta(Absent, Absent, Yaml.ScalarStyle.Plain, mark)
-            val events = Chunk(
+            val events     = Chunk(
                 Yaml.Events.Event.StreamStart(mark),
                 Yaml.Events.Event.DocumentStart(mark),
                 Yaml.Events.Event.Scalar("hello", scalarMeta),

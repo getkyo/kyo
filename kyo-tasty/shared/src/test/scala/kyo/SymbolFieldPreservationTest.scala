@@ -167,7 +167,7 @@ class SymbolFieldPreservationTest extends kyo.test.Test[Any]:
     }
 
     "Flags(Flag.Synthetic) is preserved on all 14 subtypes" in {
-        val sf = Tasty.Flags(Tasty.Flag.Synthetic)
+        val sf                      = Tasty.Flags(Tasty.Flag.Synthetic)
         val syms: Seq[Tasty.Symbol] = Seq(
             Tasty.Symbol.Class(
                 SymbolId(1),
@@ -325,7 +325,7 @@ class SymbolFieldPreservationTest extends kyo.test.Test[Any]:
 
     "declaredType is accessible on Method/Val/Var/Field/Parameter" in {
         val namedType = Tasty.Type.Named(SymbolId(1))
-        val method = Tasty.Symbol.Method(
+        val method    = Tasty.Symbol.Method(
             SymbolId(20),
             Tasty.Name("m"),
             Tasty.Flags.empty,
@@ -389,7 +389,7 @@ class SymbolFieldPreservationTest extends kyo.test.Test[Any]:
 
     //   parentTypes=Chunk(Type.Named(SymbolId(2))).
     "parentTypes is accessible on Class/Trait/Object and carries constructed value" in {
-        val pt = Chunk(Tasty.Type.Named(SymbolId(2)))
+        val pt  = Chunk(Tasty.Type.Named(SymbolId(2)))
         val cls = Tasty.Symbol.Class(
             SymbolId(30),
             Tasty.Name("C"),

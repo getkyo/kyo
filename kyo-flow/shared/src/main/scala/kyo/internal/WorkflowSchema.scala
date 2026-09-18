@@ -8,7 +8,7 @@ import kyo.*
   * Tag-based lookup provides a safe downcast.
   */
 private[kyo] case class TypeEntry[V](tag: Tag[V], schema: Schema[V]):
-    def encode(value: V)(using Frame): FlowStore.FieldData = FlowStore.FieldData(schema.encodeString[Json](value), tag.erased)
+    def encode(value: V)(using Frame): FlowStore.FieldData       = FlowStore.FieldData(schema.encodeString[Json](value), tag.erased)
     def decode(data: FlowStore.FieldData)(using Frame): Maybe[V] =
         if !(data.tag =:= tag.erased) then Maybe.empty
         else schema.decodeString[Json](data.value).toMaybe
@@ -69,7 +69,7 @@ private[kyo] object WorkflowSchema:
           */
         def assemble(decoded: Dict[String, Any]): Record[Any] =
             val prefix = s"$path${NodePath.Separator}"
-            val own = decoded.foldLeft(Dict.empty[String, Any]) { (acc, name, value) =>
+            val own    = decoded.foldLeft(Dict.empty[String, Any]) { (acc, name, value) =>
                 if !name.startsWith(prefix) then acc
                 else
                     val bare = name.substring(prefix.length)
@@ -119,7 +119,7 @@ private[kyo] object WorkflowSchema:
       * change inside a child re-keys every parent that embeds it, in both halves.
       */
     private object IdentityVisitor extends FlowVisitor[Identity]:
-        def onInit(name: String, frame: Frame, meta: Flow.Meta) = Identity("INIT", Chunk.empty)
+        def onInit(name: String, frame: Frame, meta: Flow.Meta)                              = Identity("INIT", Chunk.empty)
         def onInput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Schema[V]) =
             Identity(s"I:$name:${Tag[V].show}", Chunk(s"$name:${Tag[V].show}"))
         def onOutput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Schema[V]) =
@@ -211,7 +211,7 @@ private[kyo] object WorkflowSchema:
             case n: AndThen[?, ?, ?, ?, ?, ?] @unchecked => subflowsOf(n.first, path) ++ subflowsOf(n.second, path)
             case n: Zip[?, ?, ?, ?, ?, ?] @unchecked     => subflowsOf(n.left, path) ++ subflowsOf(n.right, path)
             case n: Race[?, ?, ?, ?, ?, ?] @unchecked    => subflowsOf(n.left, path) ++ subflowsOf(n.right, path)
-            case n: Gather[?, ?, ?] @unchecked =>
+            case n: Gather[?, ?, ?] @unchecked           =>
                 n.flows.foldLeft(Chunk.empty[SubflowAssembly])((acc, f) => acc ++ subflowsOf(f, path))
             case _ => Chunk.empty
 

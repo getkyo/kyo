@@ -3673,7 +3673,7 @@ lazy val `kyo-doctest-plugin` = (project in file("kyo-doctest/plugin"))
         sbtPlugin          := true,
         // scalafmt-dynamic powers the `doctestFormat` task (rewrite-in-place of README scala
         // blocks using the repo's .scalafmt.conf). Pinned to the .scalafmt.conf version.
-        libraryDependencies += "org.scalameta" %% "scalafmt-dynamic" % "3.9.6",
+        libraryDependencies += "org.scalameta" %% "scalafmt-dynamic" % "3.11.5",
         scriptedLaunchOpts := Seq(
             "-Xmx1024M",
             "-Dplugin.version=" + version.value,

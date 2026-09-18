@@ -100,7 +100,7 @@ class AllocationProbeTest extends AsyncFreeSpec with NonImplicitAssertions:
                 }
         }.map {
             case _: TestResult.Passed => succeed
-            case other =>
+            case other                =>
                 fail(s"Expected Passed: a spike confined to one trial must be filtered by the minimum, got $other")
         }
     }

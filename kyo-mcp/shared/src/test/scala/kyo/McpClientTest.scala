@@ -212,7 +212,7 @@ class McpClientTest extends Test:
                 client.callTool[WrongShape]("add")(AddIn(2, 3))
             ).map { result =>
                 result match
-                    case Result.Failure(_: McpToolStructuredDecodeException) => succeed
+                    case Result.Failure(_: McpToolStructuredDecodeException)  => succeed
                     case Result.Failure(_: McpToolStructuredMissingException) =>
                         fail("expected McpToolStructuredDecodeException, got Missing")
                     case other => fail(s"expected McpToolStructuredDecodeException, got $other")
@@ -355,7 +355,7 @@ class McpClientTest extends Test:
     // readResource[Out] typed default lane: happy path returns the concrete decoded value.
     "readResource[Out] decodes JSON text payload to Out" in {
         case class Payload(value: String) derives Schema, CanEqual
-        val uri = McpResourceUri.parse("file:///payload").get
+        val uri           = McpResourceUri.parse("file:///payload").get
         val resourceRoute = McpHandler.resource(uri, "payload") {
             Chunk(McpHandler.ResourceBody.text(Json.encode[Payload](Payload("hello"))))
         }
@@ -370,7 +370,7 @@ class McpClientTest extends Test:
     // structured-decode error, not a missing-field error.
     "readResource[Out] aborts McpToolStructuredDecodeException for a Blob resource" in {
         case class Payload(value: String) derives Schema, CanEqual
-        val uri = McpResourceUri.parse("file:///blob").get
+        val uri       = McpResourceUri.parse("file:///blob").get
         val blobRoute = McpHandler.resource(uri, "blob") {
             Chunk(McpHandler.ResourceBody.blob("base64data"))
         }

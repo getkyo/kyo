@@ -15,9 +15,9 @@ import kyo.internal.tasty.query.Binding
 class ClasspathPureDataTest extends kyo.test.Test[Any]:
 
     // Compile-time Schema and CanEqual summon checks for Classpath and Indices.
-    val _schemaClasspath: Schema[Classpath]             = summon[Schema[Classpath]]
-    val _schemaIndices: Schema[Classpath.Indices]       = summon[Schema[Classpath.Indices]]
-    val _canEqClasspath: CanEqual[Classpath, Classpath] = summon[CanEqual[Classpath, Classpath]]
+    val _schemaClasspath: Schema[Classpath]                           = summon[Schema[Classpath]]
+    val _schemaIndices: Schema[Classpath.Indices]                     = summon[Schema[Classpath.Indices]]
+    val _canEqClasspath: CanEqual[Classpath, Classpath]               = summon[CanEqual[Classpath, Classpath]]
     val _canEqIndices: CanEqual[Classpath.Indices, Classpath.Indices] =
         summon[CanEqual[Classpath.Indices, Classpath.Indices]]
 

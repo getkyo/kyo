@@ -56,7 +56,7 @@ class SqlValueDomainConformanceTest extends SqlBackendTest:
 
     "a string containing a NUL byte is stored exactly or refused" - {
         forEachBackend() { (backend, client, _) =>
-            val value = "a" + 0.toChar + "b"
+            val value                             = "a" + 0.toChar + "b"
             def roundTrip(v: String)(using Frame) =
                 Sql.insert[Label].values(Label(v)).run
                     .andThen(Sql.from[Label]("l").run.map(_.head.v))
@@ -99,7 +99,7 @@ class SqlValueDomainConformanceTest extends SqlBackendTest:
       */
     "a duration longer than one engine's time column is stored exactly or refused" - {
         forEachBackend() { (backend, client, _) =>
-            val value = java.time.Duration.ofHours(1000)
+            val value                                         = java.time.Duration.ofHours(1000)
             def roundTrip(v: java.time.Duration)(using Frame) =
                 Sql.insert[Elapsed].values(Elapsed(v)).run
                     .andThen(Sql.from[Elapsed]("e").run.map(_.head.v))

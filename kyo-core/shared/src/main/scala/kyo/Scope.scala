@@ -181,7 +181,7 @@ object Scope:
                                 queue.close().safe.onComplete { backlog =>
                                     backlog.foldError(
                                         _.map {
-                                            case Absent => Kyo.unit
+                                            case Absent         => Kyo.unit
                                             case Present(tasks) =>
                                                 if tasks.isEmpty then
                                                     promise.completeUnitDiscard

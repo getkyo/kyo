@@ -86,7 +86,7 @@ class TypePolishTest extends kyo.test.Test[Any]:
     }
 
     "show returns non-empty String for every Type case" in {
-        val n = Tasty.Type.Named(SymbolId(0))
+        val n        = Tasty.Type.Named(SymbolId(0))
         val classSym = Tasty.Symbol.Class(
             SymbolId(0),
             Tasty.Name("Foo"),

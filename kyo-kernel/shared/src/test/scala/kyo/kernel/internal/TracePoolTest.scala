@@ -70,7 +70,7 @@ class TracePoolTest extends kyo.test.Test[Any]:
     "size management should be correct" in {
         val local = new TestLocal
 
-        val traces = for (_ <- 1 to TracePool.localCapacity) yield local.borrow()
+        val traces = for _ <- 1 to TracePool.localCapacity yield local.borrow()
 
         local.release(traces.head)
 
@@ -81,7 +81,7 @@ class TracePoolTest extends kyo.test.Test[Any]:
         local.release(borrowed)
 
         val newTraces =
-            for (_ <- 1 to TracePool.localCapacity) yield
+            for _ <- 1 to TracePool.localCapacity yield
                 val trace = local.borrow()
                 assert(trace != null, "Failed to borrow after releasing all traces")
                 trace

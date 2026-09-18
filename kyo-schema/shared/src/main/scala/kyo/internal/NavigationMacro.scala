@@ -102,8 +102,8 @@ object NavigationMacro:
     def resolve[Focus: Type, Name <: String: Type](using q: Quotes): ResolvedField =
         import q.reflect.*
 
-        val nameStr  = extractName[Name]
-        val expanded = ExpandMacro.expandType(TypeRepr.of[Focus])
+        val nameStr            = extractName[Name]
+        val expanded           = ExpandMacro.expandType(TypeRepr.of[Focus])
         val (valueType, isSum) = classifyField(expanded, nameStr).getOrElse {
             val available = MacroUtils.collectFields(expanded).map(_._1)
             report.errorAndAbort(
@@ -118,8 +118,8 @@ object NavigationMacro:
     def resolveSimple[Focus: Type, Name <: String: Type](using q: Quotes): (String, quotes.reflect.TypeRepr) =
         import q.reflect.*
 
-        val nameStr  = extractName[Name]
-        val expanded = ExpandMacro.expandType(TypeRepr.of[Focus])
+        val nameStr   = extractName[Name]
+        val expanded  = ExpandMacro.expandType(TypeRepr.of[Focus])
         val valueType = findValueType(expanded, nameStr).getOrElse {
             val available = MacroUtils.collectFields(expanded).map(_._1)
             report.errorAndAbort(

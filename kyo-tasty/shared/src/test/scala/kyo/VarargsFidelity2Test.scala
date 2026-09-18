@@ -18,10 +18,11 @@ class VarargsFidelity2Test extends Fidelity2TestBase:
 
     "at least one apply or concat method parameter has Type.Repeated type" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
-            given Tasty.Classpath = classpath
-            val targetNames       = Set("apply", "concat")
+            given Tasty.Classpath    = classpath
+            val targetNames          = Set("apply", "concat")
             val repeatedTargetParams = classpath.allParameters.filter { p =>
-                p.declaredType.isInstanceOf[Tasty.Type.Repeated] && (classpath.symbol(p.ownerId) match
+                p.declaredType.isInstanceOf[Tasty.Type.Repeated] &&
+                (classpath.symbol(p.ownerId) match
                     case m: Tasty.Symbol.Method =>
                         import Tasty.Name.asString
                         targetNames.contains(m.name.asString)
@@ -40,7 +41,7 @@ class VarargsFidelity2Test extends Fidelity2TestBase:
     "at least one method has a Type.Repeated parameter" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
             given Tasty.Classpath = classpath
-            val repeatedParams =
+            val repeatedParams    =
                 classpath.allParameters.filter((p: Tasty.Symbol.Parameter) => p.declaredType.isInstanceOf[Tasty.Type.Repeated])
             assert(
                 repeatedParams.nonEmpty,

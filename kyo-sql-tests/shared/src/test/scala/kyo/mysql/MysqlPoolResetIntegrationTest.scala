@@ -39,7 +39,7 @@ class MysqlPoolResetIntegrationTest extends SqlContainerTest:
     private def readUserVar(client: SqlClient)(using Frame): String < (Async & Abort[SqlException]) =
         client.query("SELECT @user_var").map { rows =>
             rows.headOption match
-                case None => "NULL"
+                case None      => "NULL"
                 case Some(row) =>
                     row.decode[Maybe[Long]](0).map {
                         case Maybe.Present(v) => v.toString

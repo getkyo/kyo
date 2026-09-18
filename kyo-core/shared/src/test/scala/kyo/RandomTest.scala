@@ -372,14 +372,14 @@ class RandomTest extends kyo.test.Test[Any]:
     class TestUnsafe extends Random.Unsafe:
         private val javaRandom = new java.util.Random()
 
-        def nextInt()(using AllowUnsafe): Int                    = javaRandom.nextInt()
-        def nextInt(exclusiveBound: Int)(using AllowUnsafe): Int = javaRandom.nextInt(exclusiveBound)
-        def nextLong()(using AllowUnsafe): Long                  = javaRandom.nextLong()
-        def nextDouble()(using AllowUnsafe): Double              = javaRandom.nextDouble()
-        def nextBoolean()(using AllowUnsafe): Boolean            = javaRandom.nextBoolean()
-        def nextFloat()(using AllowUnsafe): Float                = javaRandom.nextFloat()
-        def nextGaussian()(using AllowUnsafe): Double            = javaRandom.nextGaussian()
-        def nextValue[A](seq: Seq[A])(using AllowUnsafe): A      = seq(javaRandom.nextInt(seq.size))
+        def nextInt()(using AllowUnsafe): Int                                  = javaRandom.nextInt()
+        def nextInt(exclusiveBound: Int)(using AllowUnsafe): Int               = javaRandom.nextInt(exclusiveBound)
+        def nextLong()(using AllowUnsafe): Long                                = javaRandom.nextLong()
+        def nextDouble()(using AllowUnsafe): Double                            = javaRandom.nextDouble()
+        def nextBoolean()(using AllowUnsafe): Boolean                          = javaRandom.nextBoolean()
+        def nextFloat()(using AllowUnsafe): Float                              = javaRandom.nextFloat()
+        def nextGaussian()(using AllowUnsafe): Double                          = javaRandom.nextGaussian()
+        def nextValue[A](seq: Seq[A])(using AllowUnsafe): A                    = seq(javaRandom.nextInt(seq.size))
         def nextValues[A](length: Int, seq: Seq[A])(using AllowUnsafe): Seq[A] =
             Seq.fill(length)(nextValue(seq))
         def nextStringAlphanumeric(length: Int)(using AllowUnsafe): String =

@@ -141,7 +141,7 @@ object OrderedDict:
         def apply(key: K): V =
             reduce(
                 span =>
-                    val n = Span.size(span) / 2
+                    val n                        = Span.size(span) / 2
                     @tailrec def loop(i: Int): V =
                         if i >= n then throw new NoSuchElementException(key.toString)
                         else
@@ -166,8 +166,8 @@ object OrderedDict:
         def get(key: K): Maybe[V] =
             reduce(
                 span =>
-                    val n  = Span.size(span) / 2
-                    val kr = key.asInstanceOf[AnyRef]
+                    val n                               = Span.size(span) / 2
+                    val kr                              = key.asInstanceOf[AnyRef]
                     @tailrec def loop(i: Int): Maybe[V] =
                         if i >= n then Maybe.empty
                         else
@@ -198,9 +198,9 @@ object OrderedDict:
         def update(key: K, value: V): OrderedDict[K, V] =
             reduce(
                 span =>
-                    val n   = Span.size(span) / 2
-                    val src = Span.toArrayUnsafe(span)
-                    val kr  = key.asInstanceOf[AnyRef]
+                    val n                             = Span.size(span) / 2
+                    val src                           = Span.toArrayUnsafe(span)
+                    val kr                            = key.asInstanceOf[AnyRef]
                     @tailrec def indexOf(i: Int): Int =
                         if i >= n then -1
                         else
@@ -214,7 +214,7 @@ object OrderedDict:
                         arr(n + idx) = value
                         Span.fromUnsafe(arr)
                     else
-                        val b = OrderedDictBuilder.init[K, V]
+                        val b                           = OrderedDictBuilder.init[K, V]
                         @tailrec def loop(i: Int): Unit =
                             if i < n then
                                 discard(b.add(Span.apply(span)(i).asInstanceOf[K], Span.apply(span)(n + i).asInstanceOf[V]))
@@ -233,8 +233,8 @@ object OrderedDict:
         def remove(key: K): OrderedDict[K, V] =
             reduce(
                 span =>
-                    val n   = Span.size(span) / 2
-                    val src = Span.toArrayUnsafe(span)
+                    val n                             = Span.size(span) / 2
+                    val src                           = Span.toArrayUnsafe(span)
                     @tailrec def indexOf(i: Int): Int =
                         if i >= n then -1
                         else
@@ -276,7 +276,7 @@ object OrderedDict:
         def foreach(fn: (K, V) => Unit): Unit =
             reduce(
                 span =>
-                    val n = Span.size(span) / 2
+                    val n                           = Span.size(span) / 2
                     @tailrec def loop(i: Int): Unit =
                         if i < n then
                             fn(Span.apply(span)(i).asInstanceOf[K], Span.apply(span)(n + i).asInstanceOf[V])
@@ -290,7 +290,7 @@ object OrderedDict:
         inline def foreachKey(inline fn: K => Unit): Unit =
             reduce(
                 span =>
-                    val n = Span.size(span) / 2
+                    val n                           = Span.size(span) / 2
                     @tailrec def loop(i: Int): Unit =
                         if i < n then
                             fn(Span.apply(span)(i).asInstanceOf[K])
@@ -304,7 +304,7 @@ object OrderedDict:
         inline def foreachValue(inline fn: V => Unit): Unit =
             reduce(
                 span =>
-                    val n = Span.size(span) / 2
+                    val n                           = Span.size(span) / 2
                     @tailrec def loop(i: Int): Unit =
                         if i < n then
                             fn(Span.apply(span)(n + i).asInstanceOf[V])
@@ -405,7 +405,7 @@ object OrderedDict:
         def foldLeft[B](z: B)(fn: (B, K, V) => B): B =
             reduce(
                 span =>
-                    val n = Span.size(span) / 2
+                    val n                                = Span.size(span) / 2
                     @tailrec def loop(i: Int, acc: B): B =
                         if i >= n then acc
                         else loop(i + 1, fn(acc, Span.apply(span)(i).asInstanceOf[K], Span.apply(span)(n + i).asInstanceOf[V]))
@@ -526,8 +526,8 @@ object OrderedDict:
         def keys(using ClassTag[K]): Span[K] =
             reduce(
                 span =>
-                    val n   = Span.size(span) / 2
-                    val arr = new Array[K](n)
+                    val n                           = Span.size(span) / 2
+                    val arr                         = new Array[K](n)
                     @tailrec def loop(i: Int): Unit =
                         if i < n then
                             arr(i) = Span.apply(span)(i).asInstanceOf[K]
@@ -548,8 +548,8 @@ object OrderedDict:
         def values(using ClassTag[V]): Span[V] =
             reduce(
                 span =>
-                    val n   = Span.size(span) / 2
-                    val arr = new Array[V](n)
+                    val n                           = Span.size(span) / 2
+                    val arr                         = new Array[V](n)
                     @tailrec def loop(i: Int): Unit =
                         if i < n then
                             arr(i) = Span.apply(span)(n + i).asInstanceOf[V]
@@ -573,7 +573,7 @@ object OrderedDict:
                     val n = Span.size(span) / 2
                     if n == 0 then Chunk.empty
                     else
-                        val b = Chunk.newBuilder[(K, V)]
+                        val b                           = Chunk.newBuilder[(K, V)]
                         @tailrec def loop(i: Int): Unit =
                             if i < n then
                                 b += ((Span.apply(span)(i).asInstanceOf[K], Span.apply(span)(n + i).asInstanceOf[V]))
@@ -594,7 +594,7 @@ object OrderedDict:
         def toMap: Map[K, V] =
             reduce(
                 span =>
-                    val n = Span.size(span) / 2
+                    val n                                                              = Span.size(span) / 2
                     @tailrec def loop(i: Int, map: TreeSeqMap[K, V]): TreeSeqMap[K, V] =
                         if i >= n then map
                         else loop(i + 1, map.updated(Span.apply(span)(i).asInstanceOf[K], Span.apply(span)(n + i).asInstanceOf[V]))
@@ -687,7 +687,7 @@ object OrderedDict:
                         error = new IllegalArgumentException(s"Invalid OrderedDict entry (missing '='): $trimmed")
                     else
                         rk(trimmed.substring(0, eqIdx).trim) match
-                            case Left(e) => error = e
+                            case Left(e)    => error = e
                             case Right(key) =>
                                 rv(trimmed.substring(eqIdx + 1).trim) match
                                     case Left(e)      => error = e

@@ -360,12 +360,12 @@ class MembersCrossProductTest extends kyo.test.Test[Any]:
                 Chunk.empty
             )
 
-        val m1 = makeMethod(m1Id, p1Id)
-        val p1 = makeClass(p1Id, "P1", Chunk(m1Id), Chunk.empty)
-        val m2 = makeMethod(m2Id, p2Id)
-        val p2 = makeClass(p2Id, "P2", Chunk(m2Id), Chunk.empty)
-        val m3 = makeMethod(m3Id, p3Id)
-        val p3 = makeClass(p3Id, "P3", Chunk(m3Id), Chunk.empty)
+        val m1    = makeMethod(m1Id, p1Id)
+        val p1    = makeClass(p1Id, "P1", Chunk(m1Id), Chunk.empty)
+        val m2    = makeMethod(m2Id, p2Id)
+        val p2    = makeClass(p2Id, "P2", Chunk(m2Id), Chunk.empty)
+        val m3    = makeMethod(m3Id, p3Id)
+        val p3    = makeClass(p3Id, "P3", Chunk(m3Id), Chunk.empty)
         val child = makeClass(
             childId,
             "Child",
@@ -386,7 +386,7 @@ class MembersCrossProductTest extends kyo.test.Test[Any]:
         buildClassHierarchy.map { classpath =>
             val baseOpt = classpath.symbols.toSeq.collectFirst { case c: Tasty.Symbol.Class if c.simpleName == "Base" => c }
             baseOpt match
-                case None => fail("Base class not found in fixture")
+                case None       => fail("Base class not found in fixture")
                 case Some(base) =>
                     val result = classpath.members(base, Tasty.MemberScope.Declared)
                     assert(
@@ -401,7 +401,7 @@ class MembersCrossProductTest extends kyo.test.Test[Any]:
         buildClassHierarchy.map { classpath =>
             val childOpt = classpath.symbols.toSeq.collectFirst { case c: Tasty.Symbol.Class if c.simpleName == "Child" => c }
             childOpt match
-                case None => fail("Child class not found in fixture")
+                case None        => fail("Child class not found in fixture")
                 case Some(child) =>
                     val result = classpath.members(child, Tasty.MemberScope.Declared)
                     assert(
@@ -416,7 +416,7 @@ class MembersCrossProductTest extends kyo.test.Test[Any]:
         buildClassHierarchy.map { classpath =>
             val childOpt = classpath.symbols.toSeq.collectFirst { case c: Tasty.Symbol.Class if c.simpleName == "Child" => c }
             childOpt match
-                case None => fail("Child class not found in fixture")
+                case None        => fail("Child class not found in fixture")
                 case Some(child) =>
                     val result = classpath.members(child, Tasty.MemberScope.Inherited)
                     assert(
@@ -431,7 +431,7 @@ class MembersCrossProductTest extends kyo.test.Test[Any]:
         buildClassHierarchy.map { classpath =>
             val childOpt = classpath.symbols.toSeq.collectFirst { case c: Tasty.Symbol.Class if c.simpleName == "Child" => c }
             childOpt match
-                case None => fail("Child class not found in fixture")
+                case None        => fail("Child class not found in fixture")
                 case Some(child) =>
                     val result = classpath.members(child, Tasty.MemberScope.All)
                     assert(
@@ -448,7 +448,7 @@ class MembersCrossProductTest extends kyo.test.Test[Any]:
         buildOverrideFixture.map { classpath =>
             val cOpt = classpath.symbols.toSeq.collectFirst { case c: Tasty.Symbol.Class if c.simpleName == "C" => c }
             cOpt match
-                case None => fail("Class C not found in fixture")
+                case None    => fail("Class C not found in fixture")
                 case Some(c) =>
                     val allMembers = classpath.members(c, Tasty.MemberScope.All)
                     val mSym       = allMembers.find(_.simpleName == "m")
@@ -468,7 +468,7 @@ class MembersCrossProductTest extends kyo.test.Test[Any]:
         buildTraitHierarchy.map { classpath =>
             val btOpt = classpath.symbols.toSeq.collectFirst { case t: Tasty.Symbol.Trait if t.simpleName == "BaseTrait" => t }
             btOpt match
-                case None => fail("BaseTrait not found in fixture")
+                case None     => fail("BaseTrait not found in fixture")
                 case Some(bt) =>
                     val result = classpath.members(bt, Tasty.MemberScope.Declared)
                     assert(
@@ -483,7 +483,7 @@ class MembersCrossProductTest extends kyo.test.Test[Any]:
         buildTraitHierarchy.map { classpath =>
             val ctOpt = classpath.symbols.toSeq.collectFirst { case t: Tasty.Symbol.Trait if t.simpleName == "ChildTrait" => t }
             ctOpt match
-                case None => fail("ChildTrait not found in fixture")
+                case None     => fail("ChildTrait not found in fixture")
                 case Some(ct) =>
                     val result = classpath.members(ct, Tasty.MemberScope.Inherited)
                     assert(
@@ -498,7 +498,7 @@ class MembersCrossProductTest extends kyo.test.Test[Any]:
         buildTraitHierarchy.map { classpath =>
             val ctOpt = classpath.symbols.toSeq.collectFirst { case t: Tasty.Symbol.Trait if t.simpleName == "ChildTrait" => t }
             ctOpt match
-                case None => fail("ChildTrait not found in fixture")
+                case None     => fail("ChildTrait not found in fixture")
                 case Some(ct) =>
                     val result = classpath.members(ct, Tasty.MemberScope.All)
                     assert(
@@ -515,7 +515,7 @@ class MembersCrossProductTest extends kyo.test.Test[Any]:
         buildObjectHierarchy.map { classpath =>
             val objOpt = classpath.symbols.toSeq.collectFirst { case o: Tasty.Symbol.Object if o.simpleName == "ChildObj" => o }
             objOpt match
-                case None => fail("ChildObj not found in fixture")
+                case None      => fail("ChildObj not found in fixture")
                 case Some(obj) =>
                     val result = classpath.members(obj, Tasty.MemberScope.Declared)
                     assert(
@@ -530,7 +530,7 @@ class MembersCrossProductTest extends kyo.test.Test[Any]:
         buildObjectHierarchy.map { classpath =>
             val objOpt = classpath.symbols.toSeq.collectFirst { case o: Tasty.Symbol.Object if o.simpleName == "ChildObj" => o }
             objOpt match
-                case None => fail("ChildObj not found in fixture")
+                case None      => fail("ChildObj not found in fixture")
                 case Some(obj) =>
                     val result = classpath.members(obj, Tasty.MemberScope.Inherited)
                     assert(
@@ -545,7 +545,7 @@ class MembersCrossProductTest extends kyo.test.Test[Any]:
         buildObjectHierarchy.map { classpath =>
             val objOpt = classpath.symbols.toSeq.collectFirst { case o: Tasty.Symbol.Object if o.simpleName == "ChildObj" => o }
             objOpt match
-                case None => fail("ChildObj not found in fixture")
+                case None      => fail("ChildObj not found in fixture")
                 case Some(obj) =>
                     val result = classpath.members(obj, Tasty.MemberScope.All)
                     assert(
@@ -562,7 +562,7 @@ class MembersCrossProductTest extends kyo.test.Test[Any]:
         buildDedupFixture.map { classpath =>
             val childOpt = classpath.symbols.toSeq.collectFirst { case c: Tasty.Symbol.Class if c.simpleName == "Child" => c }
             childOpt match
-                case None => fail("Child not found in fixture")
+                case None        => fail("Child not found in fixture")
                 case Some(child) =>
                     val result = classpath.members(child, Tasty.MemberScope.All)
                     val mCount = result.count(_.simpleName == "m")

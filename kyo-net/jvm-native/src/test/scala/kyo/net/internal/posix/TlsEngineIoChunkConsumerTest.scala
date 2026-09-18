@@ -45,9 +45,9 @@ class TlsEngineIoChunkConsumerTest extends Test:
 
                     // Collect each ciphertext chunk the SAM receives. `len` arrives as a primitive Int parameter (no Integer box at the call site);
                     // we copy exactly `len` bytes out of the reused drain buffer to reconstruct the wire ciphertext.
-                    val cipher     = new java.io.ByteArrayOutputStream
-                    var chunkCount = 0
-                    var totalLen   = 0
+                    val cipher       = new java.io.ByteArrayOutputStream
+                    var chunkCount   = 0
+                    var totalLen     = 0
                     val collectChunk = new ChunkConsumer:
                         def apply(buf: Buffer[Byte], len: Int): Unit =
                             assert(len > 0, s"a delivered chunk must have a positive length, got $len")
@@ -86,7 +86,7 @@ class TlsEngineIoChunkConsumerTest extends Test:
                     val handle  = PosixHandle.socket(78, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     val plain   = Array[Byte](1, 2, 3, 4, 5)
                     val cipher  = new java.io.ByteArrayOutputStream
-                    val sam = new ChunkConsumer:
+                    val sam     = new ChunkConsumer:
                         def apply(buf: Buffer[Byte], len: Int): Unit =
                             cipher.write(Buffer.copyToArray[Byte](buf, 0, len))
                     assert(harness.callEncrypt(handle, Span.fromUnsafe(plain), client)(sam))

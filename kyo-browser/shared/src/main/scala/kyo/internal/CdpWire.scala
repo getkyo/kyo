@@ -122,7 +122,7 @@ private[kyo] object CdpEvalDecoder:
         else
             Json.decode[Seq[String]](json) match
                 case Result.Success(list) => Chunk.from(list)
-                case other =>
+                case other                =>
                     Log.warn(s"$label: unexpected wire shape decoding Seq[String]: $other; raw=$json")
                         .andThen(Abort.fail(BrowserProtocolErrorException.decodeFailure(label, s"$other; raw=$json")))
 

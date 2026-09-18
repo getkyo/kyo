@@ -207,7 +207,7 @@ class ModuleInfoTest extends kyo.test.Test[Any]:
             for (svc, impls) <- provides yield
                 val svcUtf8Idx  = addUtf8(pool, counter, svc)
                 val svcClassIdx = addClass(pool, counter, svcUtf8Idx)
-                val implIdxs =
+                val implIdxs    =
                     for i <- impls yield
                         val iUtf8Idx = addUtf8(pool, counter, i)
                         addClass(pool, counter, iUtf8Idx)

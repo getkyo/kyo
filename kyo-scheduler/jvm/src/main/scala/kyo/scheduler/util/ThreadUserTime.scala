@@ -59,7 +59,7 @@ private[scheduler] object ThreadUserTime {
         val default = 2000000L
         val ceiling = 40000000L
         mxBean match {
-            case None => default
+            case None       => default
             case Some(bean) =>
                 val started = new java.util.concurrent.CountDownLatch(1)
                 val stop    = new java.util.concurrent.atomic.AtomicBoolean(false)

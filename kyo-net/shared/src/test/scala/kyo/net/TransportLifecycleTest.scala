@@ -63,7 +63,7 @@ class TransportLifecycleTest extends Test:
             for
                 serverRef <- AtomicRef.init[Maybe[Connection]](Absent)
                 accepted  <- Channel.init[Unit](1)
-                listener <- transport.listen("127.0.0.1", 0, 128) { serverConn =>
+                listener  <- transport.listen("127.0.0.1", 0, 128) { serverConn =>
                     discard(Sync.Unsafe.evalOrThrow {
                         Fiber.initUnscoped {
                             Abort.run[Closed] {
@@ -74,10 +74,10 @@ class TransportLifecycleTest extends Test:
                 }.safe.get
                 // Guards the listener and the client connection if `fail(...)` below fires (server connection never captured), which would
                 // otherwise throw before the trailing `listener.close()` in the yield below runs.
-                _    <- Scope.ensure(Sync.defer(listener.close()))
-                conn <- transport.connect("127.0.0.1", listener.port).safe.get
-                _    <- Scope.ensure(Sync.defer(conn.close()))
-                _    <- accepted.take
+                _      <- Scope.ensure(Sync.defer(listener.close()))
+                conn   <- transport.connect("127.0.0.1", listener.port).safe.get
+                _      <- Scope.ensure(Sync.defer(conn.close()))
+                _      <- accepted.take
                 server <- serverRef.get.map {
                     case Present(c) => c
                     case Absent     => fail("server connection was never captured")
@@ -101,7 +101,7 @@ class TransportLifecycleTest extends Test:
             for
                 serverRef <- AtomicRef.init[Maybe[Connection]](Absent)
                 accepted  <- Channel.init[Unit](1)
-                listener <- transport.listen("127.0.0.1", 0, 128) { serverConn =>
+                listener  <- transport.listen("127.0.0.1", 0, 128) { serverConn =>
                     discard(Sync.Unsafe.evalOrThrow {
                         Fiber.initUnscoped {
                             Abort.run[Closed] {

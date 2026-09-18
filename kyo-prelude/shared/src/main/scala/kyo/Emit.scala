@@ -153,9 +153,7 @@ object Emit:
         reduce: Reducible[Emit[VR]]
     ): A < (reduce.SReduced & S & S2) =
         reduce[A, S & S2]:
-            ArrowEffect.handle(tag, v)(
-                [C] => (input, cont) => f(input).map(_ => cont(()))
-            )
+            ArrowEffect.handle(tag, v)([C] => (input, cont) => f(input).map(_ => cont(())))
 
     /** Runs an Emit effect, allowing custom handling of each emitted value with a boolean result determining whether to continue.
       *
@@ -173,13 +171,12 @@ object Emit:
         reduce: Reducible[Emit[VR]]
     ): A < (reduce.SReduced & S & S2) =
         reduce:
-            ArrowEffect.handleLoop(tag, true, v)(
-                [C] =>
-                    (input, cond, cont) =>
-                        if cond then
-                            f(input).map(c => Loop.continue(c, cont(())))
-                        else
-                            Loop.continue(cond, cont(()))
+            ArrowEffect.handleLoop(tag, true, v)([C] =>
+                (input, cond, cont) =>
+                    if cond then
+                        f(input).map(c => Loop.continue(c, cont(())))
+                    else
+                        Loop.continue(cond, cont(()))
             )
 
     /** Runs an Emit effect, capturing only the first emitted value and returning a continuation.
@@ -238,7 +235,7 @@ object Emit:
                 def restore[A, S](v: (Chunk[V], A) < S)(using Frame) =
                     v.map { (state, result) =>
                         Loop(state: Seq[V]) {
-                            case Seq() => Loop.done(result)
+                            case Seq()        => Loop.done(result)
                             case head +: tail =>
                                 Emit.valueWith(head)(Loop.continue(tail))
                         }

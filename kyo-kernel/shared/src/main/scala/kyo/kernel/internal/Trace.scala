@@ -46,7 +46,7 @@ private[kyo] object Trace:
                 if index < maxTraceFrames then 0
                 else index & (maxTraceFrames - 1)
 
-            val ordered = new Array[Frame](size)
+            val ordered                                            = new Array[Frame](size)
             @tailrec def parse(idx: Int, maxSnippetSize: Int): Int =
                 if idx < size then
                     val curr = frames((start + idx) & (maxTraceFrames - 1))

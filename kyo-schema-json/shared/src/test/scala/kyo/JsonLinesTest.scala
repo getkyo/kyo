@@ -665,7 +665,7 @@ class JsonLinesTest extends kyo.test.Test[Any]:
             val validLine = "{\"name\":\"a\",\"count\":1}\n"
             val oversized = "x" * 40
             val in        = validLine + oversized
-            val rs = Json.Lines.decodeAllBytesResults[Event](
+            val rs        = Json.Lines.decodeAllBytesResults[Event](
                 Span.from(in.getBytes(StandardCharsets.UTF_8)),
                 maxLineSize = 30.bytes
             )

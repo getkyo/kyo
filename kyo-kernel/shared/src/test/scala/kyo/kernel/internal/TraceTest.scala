@@ -9,11 +9,9 @@ class TraceTest extends kyo.test.Test[Any]:
 
     sealed trait TestEffect extends ArrowEffect[Const[Int], Const[Int]]
     object TestEffect:
-        def apply(i: Int): Int < TestEffect = ArrowEffect.suspend[Unit](Tag[TestEffect], i)
+        def apply(i: Int): Int < TestEffect    = ArrowEffect.suspend[Unit](Tag[TestEffect], i)
         def run[A, S](v: A < (TestEffect & S)) =
-            ArrowEffect.handle(Tag[TestEffect], v)(
-                [C] => (input, cont) => cont(input + 1)
-            )
+            ArrowEffect.handle(Tag[TestEffect], v)([C] => (input, cont) => cont(input + 1))
     end TestEffect
 
     def ex = new Exception("test exception")

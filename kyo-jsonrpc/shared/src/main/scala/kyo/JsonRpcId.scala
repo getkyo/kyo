@@ -30,7 +30,7 @@ object JsonRpcId:
 
     /** Extractor for numeric ids. Enables `case JsonRpcId.Num(n) =>` pattern matching. */
     object Num:
-        def apply(n: Long): JsonRpcId = n
+        def apply(n: Long): JsonRpcId               = n
         def unapply(id: JsonRpcId): Maybe.Ops[Long] =
             id match
                 case n: Long => Maybe(n)
@@ -39,7 +39,7 @@ object JsonRpcId:
 
     /** Extractor for string ids. Enables `case JsonRpcId.Str(s) =>` pattern matching. */
     object Str:
-        def apply(s: String): JsonRpcId = s
+        def apply(s: String): JsonRpcId               = s
         def unapply(id: JsonRpcId): Maybe.Ops[String] =
             id match
                 case s: String => Maybe(s)
@@ -51,8 +51,8 @@ object JsonRpcId:
             id match
                 case n: Long   => ifLong(n)
                 case s: String => ifString(s)
-        def isLong: Boolean   = id.isInstanceOf[Long]
-        def isString: Boolean = id.isInstanceOf[String]
+        def isLong: Boolean          = id.isInstanceOf[Long]
+        def isString: Boolean        = id.isInstanceOf[String]
         def toLongMaybe: Maybe[Long] =
             id match
                 case n: Long => Maybe(n)

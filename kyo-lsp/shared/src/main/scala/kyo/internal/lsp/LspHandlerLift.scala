@@ -97,7 +97,7 @@ private[kyo] object LspHandlerLift:
                     mPeer match
                         case Present(peer) =>
                             val paramsValue = Structure.encode[In](in)
-                            val ctx = Lsp.RequestContext(
+                            val ctx         = Lsp.RequestContext(
                                 jsonRpc = jrCtx,
                                 peer = mkPeer(peer),
                                 workDoneToken = extractToken(paramsValue, "workDoneToken"),

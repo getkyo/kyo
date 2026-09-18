@@ -68,7 +68,7 @@ object WebsiteContent:
       */
     private def parseGroups(root: Path, rootReadme: String)(using Frame): Chunk[Group] < (Sync & Abort[WebsiteException]) =
         sectionMarker(rootReadme, "## Modules") match
-            case Absent => Chunk.empty
+            case Absent              => Chunk.empty
             case Present(modulesIdx) =>
                 val modulesBody = sliceUntilTopLevelSection(rootReadme, modulesIdx)
                 val rawGroups   = splitGroups(modulesBody)
@@ -109,7 +109,7 @@ object WebsiteContent:
       * (its name and its lines), so no mutable state escapes the fold.
       */
     private def splitGroups(modulesBody: String): Chunk[(String, Chunk[String])] =
-        val lines = Chunk.from(modulesBody.split("\n", -1).toIndexedSeq)
+        val lines                      = Chunk.from(modulesBody.split("\n", -1).toIndexedSeq)
         val (done, openName, openRows) =
             lines.foldLeft((Chunk.empty[(String, Chunk[String])], Maybe.empty[String], Chunk.empty[String])) {
                 case ((acc, current, rows), line) =>

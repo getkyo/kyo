@@ -44,7 +44,7 @@ class WebsiteExceptionTest extends WebsiteTest:
     "ReadmeFailure enum exhaustiveness" - {
         "all three cases match" in {
             import WebsiteReadmeException.ReadmeFailure
-            val cases = List(ReadmeFailure.Missing, ReadmeFailure.MalformedGroups, ReadmeFailure.MalformedTable)
+            val cases   = List(ReadmeFailure.Missing, ReadmeFailure.MalformedGroups, ReadmeFailure.MalformedTable)
             val matched = cases.map {
                 case ReadmeFailure.Missing         => "Missing"
                 case ReadmeFailure.MalformedGroups => "MalformedGroups"

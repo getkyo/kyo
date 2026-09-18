@@ -201,7 +201,7 @@ object WebsiteGenerator:
         val modules = c.groups.flatMap(_.modules)
         for
             intro <- DocsMarkdownRender.transpile(c.intro, introLinkBase(c))
-            mods <- Kyo.foreach(modules)(m =>
+            mods  <- Kyo.foreach(modules)(m =>
                 DocsMarkdownRender.transpile(m.readme, moduleLinkBase(c, m)).map(r => s"/$prefix/${m.slug}/" -> r.headings)
             )
         yield Map(s"/$prefix/" -> intro.headings) ++ mods.toSeq
@@ -229,7 +229,7 @@ object WebsiteGenerator:
         outDir: Path
     )(using Frame): Unit < (Async & Abort[WebsiteException]) =
         pickLatest(content) match
-            case Absent => ()
+            case Absent     => ()
             case Present(c) =>
                 val latestVersion = c.version.copy(latest = true)
                 val latestContent = c.copy(version = latestVersion)
@@ -357,7 +357,7 @@ object WebsiteGenerator:
     private def siteShell(versions: Chunk[WebsiteVersion], docsHome: String, body: UI)(using Frame): UI < Sync =
         for
             queryRef <- Signal.initRef("")
-            view <- SiteApp.view(
+            view     <- SiteApp.view(
                 versions,
                 docsHome,
                 Signal.initConst(DocsSearch.Index(Chunk.empty)),
@@ -433,7 +433,7 @@ object WebsiteGenerator:
         val heading       = headings.find(_.level == 1).map(_.text).getOrElse("Overview")
         val title         = s"$heading | Kyo docs ${c.version.label}"
         val selfCanonical = s"https://getkyo.io$route"
-        val canonical =
+        val canonical     =
             if isCurrentLatest && prefix != "latest" then s"https://getkyo.io/latest/"
             else selfCanonical
         WebsitePage.Options(
@@ -734,11 +734,11 @@ object WebsiteGenerator:
         while i < s.length do
             val c = s.charAt(i)
             c match
-                case '\\' => sb.append("\\\\"); ()
-                case '"'  => sb.append("\\\""); ()
-                case '\n' => sb.append("\\n"); ()
-                case '\r' => sb.append("\\r"); ()
-                case '\t' => sb.append("\\t"); ()
+                case '\\'          => sb.append("\\\\"); ()
+                case '"'           => sb.append("\\\""); ()
+                case '\n'          => sb.append("\\n"); ()
+                case '\r'          => sb.append("\\r"); ()
+                case '\t'          => sb.append("\\t"); ()
                 case _ if c < 0x20 =>
                     val hex = Integer.toHexString(c.toInt)
                     if hex.length == 1 then sb.append("\\u000").append(hex): Unit

@@ -84,7 +84,7 @@ private[completion] object CodexCompletion extends HarnessCompletion("Codex"):
                     for
                         bridge <- initBridge
                         meter  <- Meter.initMutex
-                        _ <- withSession(Seq(resultOnlyRoute(bridge, meter)), stderrTail) { (workDir, handler, events, stderrTail) =>
+                        _      <- withSession(Seq(resultOnlyRoute(bridge, meter)), stderrTail) { (workDir, handler, events, stderrTail) =>
                             for
                                 (threadId, turnId) <- startTurn(
                                     handler,
@@ -98,7 +98,7 @@ private[completion] object CodexCompletion extends HarnessCompletion("Codex"):
                                     Result.Failure(AICompletionTimeoutException("Codex", config.timeout))
                                 )(collectTurn(handler, events, threadId, turnId, stderrTail, bridge))
                                 captured <- bridge.resultCapture.get
-                                _ <- captured match
+                                _        <- captured match
                                     case Present((_, arguments)) =>
                                         Emit.value(Chunk[Completion.StreamElement](
                                             Completion.StreamElement.Fragment(arguments),
@@ -114,7 +114,7 @@ private[completion] object CodexCompletion extends HarnessCompletion("Codex"):
                     case Result.Success(_)                     => Kyo.unit
                     case Result.Failure(ex: AIStreamException) => Abort.fail(ex)
                     case Result.Failure(ex: AIGenException)    => Abort.fail(streamFailure(Absent, ex.getMessage))
-                    case Result.Failure(_: Closed) =>
+                    case Result.Failure(_: Closed)             =>
                         closedStreamFailure(stderrTail)
                     case Result.Failure(ex: JsonRpcError) => Abort.fail(streamFailure(Absent, s"${ex.code}: ${ex.message}"))
                     case Result.Failure(ex)               => Abort.fail(streamFailure(Absent, ex.getMessage))
@@ -139,7 +139,7 @@ private[completion] object CodexCompletion extends HarnessCompletion("Codex"):
                     bridge     <- initBridge
                     meter      <- Meter.initMutex
                     stderrTail <- AtomicRef.init("")
-                    result <- Abort.run[
+                    result     <- Abort.run[
                         CommandException | FileSystemException | JsonRpcError | AIGenException | Closed
                     ] {
                         withSession(Seq(toolCallRoute(tools, stateRef, meter, bridge)), stderrTail) {
@@ -163,7 +163,7 @@ private[completion] object CodexCompletion extends HarnessCompletion("Codex"):
                     }
                     next <- stateRef.get
                     _    <- LLM.setState(next)
-                    out <- result match
+                    out  <- result match
                         case Result.Success(messages)           => Kyo.lift(messages)
                         case Result.Failure(ex: AIGenException) => Abort.fail(ex)
                         case Result.Failure(_: Closed)          =>
@@ -192,7 +192,7 @@ private[completion] object CodexCompletion extends HarnessCompletion("Codex"):
                 events    <- Channel.init[RpcEvent](1024)
                 transport <- JsonRpcTransport.fromWire(processWire(proc), JsonRpcFramer.lineDelimited)
                 handler   <- JsonRpcHandler.init(transport, (eventRoutes(events) ++ toolRoutes)*)
-                _ <- requestAs[Structure.Value, InitializeParams](
+                _         <- requestAs[Structure.Value, InitializeParams](
                     handler,
                     "initialize",
                     InitializeParams(ClientInfo("kyo-ai", "0"), ClientCapabilities(experimentalApi = true))
@@ -242,7 +242,7 @@ private[completion] object CodexCompletion extends HarnessCompletion("Codex"):
             userProfile <- System.env[String]("USERPROFILE")
         yield env match
             case Present(path) => Path(path)
-            case Absent =>
+            case Absent        =>
                 val path = property.orElse(home).orElse(userProfile).getOrElse("")
                 if path.isEmpty then Path(".codex")
                 else Path(path) / ".codex"
@@ -262,7 +262,7 @@ private[completion] object CodexCompletion extends HarnessCompletion("Codex"):
                 threadStartParams(config, context, workDir, dynamicTools)
             )
             items <- historyItems(historyMessages(context))
-            _ <-
+            _     <-
                 if items.isEmpty then Kyo.unit
                 else
                     requestAs[Structure.Value, ThreadInjectItemsParams](
@@ -306,7 +306,7 @@ private[completion] object CodexCompletion extends HarnessCompletion("Codex"):
             }
         }.map {
             case Result.Success(response) => response
-            case _ =>
+            case _                        =>
                 ToolCallResponse(
                     List(ToolCallContent("inputText", toolError(Completion.resultToolName, "bridge closed"))),
                     success = false

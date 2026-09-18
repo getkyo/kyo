@@ -34,7 +34,7 @@ final class Safepoint private () extends Trace.Owner with Serializable:
         // link). getId is deprecated-not-removed and returns the same identifier, so it is kept with the
         // -release 25 deprecation suppressed. This is shared code, so it must link on every platform.
         val threadId = Thread.currentThread().getId(): @scala.annotation.nowarn("cat=deprecation")
-        val proceed =
+        val proceed  =
             state.depth <= maxStackDepth &&
                 state.threadId == threadId &&
                 (!state.hasInterceptor || interceptor.enter(frame, value))
@@ -87,11 +87,11 @@ object Safepoint:
             ((Thread.currentThread().getId(): @scala.annotation.nowarn("cat=deprecation")) << 17) & ThreadIdMask
 
         extension (state: State)
-            def depth: Int              = (state & DepthMask).toInt
-            def threadId: Long          = (state & ThreadIdMask) >>> 17
-            def hasInterceptor: Boolean = (state & InterceptorMask) != 0
-            def incrementDepth: State   = state + 1
-            def decrementDepth: State   = state - 1
+            def depth: Int                                      = (state & DepthMask).toInt
+            def threadId: Long                                  = (state & ThreadIdMask) >>> 17
+            def hasInterceptor: Boolean                         = (state & InterceptorMask) != 0
+            def incrementDepth: State                           = state + 1
+            def decrementDepth: State                           = state - 1
             def withInterceptor(hasInterceptor: Boolean): State =
                 if hasInterceptor then state | InterceptorMask
                 else state & ~InterceptorMask
@@ -109,13 +109,13 @@ object Safepoint:
         using safepoint: Safepoint
     ): A < S =
         val prev = safepoint.interceptor
-        val np =
+        val np   =
             if isNull(prev) || (prev eq p) then p
             else
                 new Interceptor:
                     override def addFinalizer(f: Maybe[Error[Any]] => Unit): Unit    = p.addFinalizer(f)
                     override def removeFinalizer(f: Maybe[Error[Any]] => Unit): Unit = p.removeFinalizer(f)
-                    def enter(frame: Frame, value: Any) =
+                    def enter(frame: Frame, value: Any)                              =
                         p.enter(frame, value) && prev.enter(frame, value)
         safepoint.setInterceptor(np)
         try v
@@ -131,7 +131,7 @@ object Safepoint:
             v match
                 case kyo: KyoSuspend[IX, OX, EX, Any, A, S] @unchecked =>
                     new KyoContinue[IX, OX, EX, Any, A, S](kyo):
-                        def frame = _frame
+                        def frame                                                       = _frame
                         def apply(v: OX[Any], context: Context)(using Safepoint): A < S =
                             loop(immediate(p)(kyo(v, context)))
                 case _ =>
@@ -181,7 +181,7 @@ object Safepoint:
             v match
                 case kyo: KyoSuspend[IX, OX, EX, Any, A, S] @unchecked =>
                     new KyoContinue[IX, OX, EX, Any, A, S](kyo):
-                        def frame = _frame
+                        def frame                                                = _frame
                         def apply(v: OX[Any], context: Context)(using Safepoint) =
                             ensuring(ensure)(ensureLoop(kyo(v, context)))
                 case kyo =>

@@ -940,7 +940,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
 
             "complex parser with custom whitespace" in {
                 val customWhitespace = Set('.', '*')
-                val parser = Parse.spaced(
+                val parser           = Parse.spaced(
                     Parse.inOrder(
                         Parse.int,
                         Parse.literal("+"),
@@ -1380,7 +1380,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
         }
 
         "large input stream" in {
-            val size = 20
+            val size   = 20
             val parser =
                 for
                     r <- Parse.int

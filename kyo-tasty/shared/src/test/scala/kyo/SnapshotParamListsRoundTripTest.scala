@@ -117,7 +117,7 @@ class SnapshotParamListsRoundTripTest extends kyo.test.Test[Any]:
         )
 
         val allSyms = Chunk(rootSym, pkgSym, methodSym)
-        val coldCp = Tasty.Classpath.make(
+        val coldCp  = Tasty.Classpath.make(
             symbols = allSyms,
             rootSymbolId = SymbolId(0),
             topLevelClassIds = Chunk.empty,

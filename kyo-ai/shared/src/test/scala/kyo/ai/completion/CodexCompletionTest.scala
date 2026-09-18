@@ -29,7 +29,8 @@ class CodexCompletionTest extends kyo.test.Test[Any]:
         // why the process died; discarding it makes every such death unattributable.
         val withTail = CodexCompletion.closedDetail("  Error: refresh token expired\n  ")
         assert(
-            withTail == "Codex app-server closed before completing the turn\n" +
+            withTail ==
+                "Codex app-server closed before completing the turn\n" +
                 "Codex app-server stderr tail:\nError: refresh token expired",
             s"the stderr tail must reach the failure detail: $withTail"
         )

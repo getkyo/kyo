@@ -49,7 +49,7 @@ class CombinedReporterStrictTest extends kyo.test.Test[Any]:
 
     /** A diagnostics sink that records every line, for assertions; and a no-op sink for tests that only need suppression. */
     final private class RecordingSink extends (String => Unit):
-        private val lines = new StringBuilder
+        private val lines          = new StringBuilder
         def apply(s: String): Unit =
             lines.append(s).append('\n'); ()
         def text: String = lines.toString

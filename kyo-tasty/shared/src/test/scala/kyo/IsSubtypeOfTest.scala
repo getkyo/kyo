@@ -10,7 +10,7 @@ class IsSubtypeOfTest extends kyo.test.Test[Any]:
 
     import kyo.Tasty.SymbolId
 
-    private var nextId: Int = 0
+    private var nextId: Int         = 0
     private def freshId(): SymbolId =
         val id = nextId
         nextId += 1
@@ -37,8 +37,8 @@ class IsSubtypeOfTest extends kyo.test.Test[Any]:
     end makeSym
 
     private def makeTestClasspath(syms: Chunk[Tasty.Symbol])(using Frame): Tasty.Classpath < Sync =
-        val maxId = syms.foldLeft(-1)((m, s) => math.max(m, s.id.value))
-        val arr   = new Array[Tasty.Symbol](maxId + 1)
+        val maxId    = syms.foldLeft(-1)((m, s) => math.max(m, s.id.value))
+        val arr      = new Array[Tasty.Symbol](maxId + 1)
         val sentinel =
             Tasty.Symbol.Package(Tasty.SymbolId(-1), Tasty.Name("<sentinel>"), Tasty.Flags.empty, Tasty.SymbolId(-1), Chunk.empty)
         var fi = 0

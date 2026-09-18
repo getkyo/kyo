@@ -30,7 +30,7 @@ private[kyo] object Finalizers:
         def add(f: Maybe[Error[Any]] => Unit): Finalizers =
             (e: @unchecked) match
                 case e if e.isEmpty || e.eq(f) => f
-                case f0: Finalizer @unchecked =>
+                case f0: Finalizer @unchecked  =>
                     val b = buffer()
                     b.add(f0)
                     b.add(f)
@@ -43,8 +43,8 @@ private[kyo] object Finalizers:
         /** Removes a finalizer function by its object identity. */
         def remove(f: Maybe[Error[Any]] => Unit): Finalizers =
             (e: @unchecked) match
-                case e if e.isEmpty => e
-                case e if e.eq(f)   => Absent
+                case e if e.isEmpty          => e
+                case e if e.eq(f)            => Absent
                 case f: Finalizer @unchecked =>
                     f
                 case arr: ArrayDeque[Finalizer] @unchecked =>
@@ -53,14 +53,14 @@ private[kyo] object Finalizers:
 
         def run(ex: Maybe[Error[Any]]): Unit =
             (e: @unchecked) match
-                case e if e.isEmpty =>
+                case e if e.isEmpty                            =>
                 case f: (Maybe[Error[Any]] => Unit) @unchecked =>
                     f(ex)
                 case arr: ArrayDeque[Finalizer] @unchecked =>
                     @tailrec def loop(): Unit =
                         arr.poll() match
                             case null =>
-                            case f =>
+                            case f    =>
                                 f(ex)
                                 loop()
                     loop()
@@ -68,7 +68,7 @@ private[kyo] object Finalizers:
 
         def size(): Int =
             (e: @unchecked) match
-                case e if e.isEmpty => 0
+                case e if e.isEmpty          => 0
                 case f: Finalizer @unchecked =>
                     1
                 case arr: ArrayDeque[Finalizer] @unchecked =>

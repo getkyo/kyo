@@ -14,7 +14,7 @@ import kyo.Result
   * available on all implementations of the JVM.
   */
 private[internal] class OsSignalPlatformSpecific:
-    private val logger = Logger.getLogger("kyo.internal.Signal")
+    private val logger  = Logger.getLogger("kyo.internal.Signal")
     val handle: Handler = {
         for
             signalClass        <- findClass("sun.misc.Signal")

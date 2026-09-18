@@ -54,7 +54,7 @@ private class FinishWithCertHookEngine(onCertSha: () => Unit) extends TlsEngine:
     def writePlain(buf: Buffer[Byte], len: Int)(using AllowUnsafe): Int      = len
     def hasBufferedPlaintext(using AllowUnsafe): Boolean                     = false
     def readBuffered()(using AllowUnsafe): Span[Byte]                        = Span.empty
-    def certSha256()(using AllowUnsafe): Maybe[Span[Byte]] =
+    def certSha256()(using AllowUnsafe): Maybe[Span[Byte]]                   =
         if once.compareAndSet(false, true) then onCertSha()
         Absent
     def shutdownStep()(using AllowUnsafe): Int = 0
@@ -69,7 +69,7 @@ private class ThrowOnFeedEngine(cause: Throwable) extends TlsEngine:
     val freed = new JAtomicBoolean(false)
     val fed   = new JAtomicBoolean(false)
 
-    def handshakeStep()(using AllowUnsafe): Int = 0
+    def handshakeStep()(using AllowUnsafe): Int                             = 0
     def feedCiphertext(buf: Buffer[Byte], len: Int)(using AllowUnsafe): Int =
         fed.set(true)
         throw cause
@@ -202,7 +202,7 @@ class PosixTransportUpgradeReleaseTest extends Test:
                                     outcome.foreach(_.close())
                                     outcome match
                                         case Result.Failure(_: NetTlsProviderUnavailableException) => ()
-                                        case other =>
+                                        case other                                                 =>
                                             fail(s"an unavailable-provider upgrade must fail closed with a NetTlsException, got $other")
                                     end match
                                     // The release's own shutdown already forced the recv to EOF; once its CQE reaps, the deferred close
@@ -350,7 +350,7 @@ class PosixTransportUpgradeReleaseTest extends Test:
                                             outcome.foreach(_.close())
                                             outcome match
                                                 case Result.Failure(_: NetTlsProviderUnavailableException) => ()
-                                                case other =>
+                                                case other                                                 =>
                                                     fail(
                                                         s"an unavailable-provider upgrade must fail closed with a NetTlsException, got $other"
                                                     )
@@ -393,7 +393,7 @@ class PosixTransportUpgradeReleaseTest extends Test:
             // detach-handover boundary has to catch. The real shape is a TLS provider that lets a raw failure escape its build (the JDK
             // floor's CertificateException for a file that exists but holds no certificate); an identity-checked RuntimeException pins the
             // mechanism without depending on which provider the host stages.
-            val boom = new RuntimeException("engine build failed outside the NetTlsException taxonomy")
+            val boom      = new RuntimeException("engine build failed outside the NetTlsException taxonomy")
             val transport =
                 TestTransports.forTesting(
                     driver,
@@ -445,8 +445,8 @@ class PosixTransportUpgradeReleaseTest extends Test:
             // `feedCoalescedHandshake`, and by then the release owes the engine as well as the fd. The leaf above cannot reach that: it throws
             // during the build, when no engine exists yet. Reaching it needs staged ciphertext, since `feedStaged` only enters the engine for
             // spans that carry bytes, which is why the peer writes first and the upgrade waits for those bytes to be sitting unconsumed.
-            val boom   = new RuntimeException("staged-ciphertext feed failed outside the NetTlsException taxonomy")
-            val engine = new ThrowOnFeedEngine(boom)
+            val boom      = new RuntimeException("staged-ciphertext feed failed outside the NetTlsException taxonomy")
+            val engine    = new ThrowOnFeedEngine(boom)
             val transport =
                 TestTransports.forTesting(driver, Ffi.load[SocketBindings], backendIsEpoll = false, buildEngine = (_, _, _) => engine)
             Sync.ensure(Sync.defer(driver.close())) {
@@ -516,7 +516,7 @@ class PosixTransportUpgradeReleaseTest extends Test:
             // The engine must reference the plaintext connection this transport creates (its certSha256 hook closes it), so it is built after
             // the transport and published into a slot the injected factory reads at upgrade time; the slot lives entirely in the test tree.
             val engineSlot = new AtomicReference[TlsEngine]()
-            val transport =
+            val transport  =
                 TestTransports.forTesting(
                     driver,
                     Ffi.load[SocketBindings],

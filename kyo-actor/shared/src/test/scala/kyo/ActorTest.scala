@@ -194,7 +194,7 @@ class ActorTest extends kyo.test.Test[Any]:
                 consumed         <- Latch.init(2)
                 cleanedUp        <- Latch.init(2)
                 childActorStates <- Queue.Unbounded.init[String]()
-                parentActor <- Actor.run {
+                parentActor      <- Actor.run {
                     for
                         childActor1 <- Actor.run {
                             for
@@ -234,8 +234,8 @@ class ActorTest extends kyo.test.Test[Any]:
             case object ParentError
 
             for
-                messageReceived <- Latch.init(1)
-                childCleaned    <- Latch.init(1)
+                messageReceived  <- Latch.init(1)
+                childCleaned     <- Latch.init(1)
                 parentActorFiber <-
                     Actor.run {
                         for
@@ -264,7 +264,7 @@ class ActorTest extends kyo.test.Test[Any]:
                 allReceived    <- Latch.init(actorCount)
                 startCounter   <- AtomicInt.init(0)
                 cleanupCounter <- AtomicInt.init(0)
-                parentActor <- Actor.run {
+                parentActor    <- Actor.run {
                     for
                         childActors <- Async.fill(actorCount) {
                             Actor.run {
@@ -293,7 +293,7 @@ class ActorTest extends kyo.test.Test[Any]:
             case class Message(value: Int, replyTo: Subject[Int])
 
             for
-                results <- Queue.Unbounded.init[Int]()
+                results     <- Queue.Unbounded.init[Int]()
                 grandparent <- Actor.run {
                     for
                         parents <- Async.foreach(1 to 2) { parentId =>
@@ -357,7 +357,7 @@ class ActorTest extends kyo.test.Test[Any]:
             started   <- Latch.init(1)
             exit      <- Latch.init(1)
             processed <- AtomicBoolean.init
-            actor <- Actor.run {
+            actor     <- Actor.run {
                 Actor.receiveAll[Int] { msg =>
                     for
                         _ <- started.release
@@ -378,7 +378,7 @@ class ActorTest extends kyo.test.Test[Any]:
         "properly cleans up resources on normal completion" in {
             for
                 resourceCleaned <- AtomicBoolean.init(false)
-                actor <- Actor.run {
+                actor           <- Actor.run {
                     Scope.ensure(resourceCleaned.set(true)).andThen {
                         Actor.receiveMax[Int](3) { _ => () }
                     }
@@ -395,7 +395,7 @@ class ActorTest extends kyo.test.Test[Any]:
             case object TestError
             for
                 resourceCleaned <- AtomicBoolean.init(false)
-                actor <- Actor.run {
+                actor           <- Actor.run {
                     Scope.ensure(resourceCleaned.set(true)).andThen {
                         Actor.receiveMax[Int](1) { _ =>
                             Abort.fail(TestError)
@@ -448,7 +448,7 @@ class ActorTest extends kyo.test.Test[Any]:
         "handles concurrent transactions correctly" in {
             for
                 loggedTransactions <- Queue.Unbounded.init[Transaction]()
-                logger <- Actor.run {
+                logger             <- Actor.run {
                     Actor.receiveMax[Transaction](11) { tx =>
                         loggedTransactions.add(tx)
                     }
@@ -597,7 +597,7 @@ class ActorTest extends kyo.test.Test[Any]:
     "receiveLoop" - {
         "processes messages until done" in {
             for
-                sum <- AtomicInt.init(0)
+                sum   <- AtomicInt.init(0)
                 actor <- Actor.run {
                     Actor.receiveLoop[Int] { msg =>
                         if msg == 0 then Loop.done
@@ -616,7 +616,7 @@ class ActorTest extends kyo.test.Test[Any]:
         "can maintain state between iterations" in {
             for
                 results <- Queue.Unbounded.init[String]()
-                actor <- Actor.run {
+                actor   <- Actor.run {
                     Var.run(0) {
                         Actor.receiveLoop[String] { msg =>
                             if msg == "stop" then Loop.done
@@ -714,7 +714,7 @@ class ActorTest extends kyo.test.Test[Any]:
         "combines receiveMax and receiveAll" in {
             for
                 results <- Queue.Unbounded.init[String]()
-                actor <- Actor.run {
+                actor   <- Actor.run {
                     for
                         _ <- Actor.receiveMax[Int](2) { msg =>
                             results.add(s"receiveMax: $msg")
@@ -736,7 +736,7 @@ class ActorTest extends kyo.test.Test[Any]:
         "combines receiveLoop and receiveMax" in {
             for
                 results <- Queue.Unbounded.init[String]()
-                actor <- Actor.run {
+                actor   <- Actor.run {
                     for
                         sum <- Actor.receiveLoop[Int](0) { (msg, acc) =>
                             if msg == 0 then Loop.done(acc)
@@ -770,7 +770,7 @@ class ActorTest extends kyo.test.Test[Any]:
         "Retry" in {
             for
                 attempts <- AtomicInt.init(0)
-                actor <- Actor.run {
+                actor    <- Actor.run {
                     Retry[TemporaryError.type] {
                         attempts.incrementAndGet.map { count =>
                             Actor.receiveAll[TestMessage] { msg =>
@@ -795,7 +795,7 @@ class ActorTest extends kyo.test.Test[Any]:
         "Retry limit" in {
             for
                 attempts <- AtomicInt.init(0)
-                actor <- Actor.run {
+                actor    <- Actor.run {
                     Retry[TemporaryError.type](Schedule.repeat(2)) {
                         attempts.incrementAndGet.map { count =>
                             Actor.receiveAll[TestMessage] { msg =>
@@ -821,7 +821,7 @@ class ActorTest extends kyo.test.Test[Any]:
         "Abort" in {
             for
                 events <- Queue.Unbounded.init[String]()
-                actor <- Actor.run {
+                actor  <- Actor.run {
                     Abort.recover[TemporaryError.type] { _ =>
                         events.add("Recovered from error").andThen {
                             Actor.receiveMax[Int](2) { msg =>
@@ -853,7 +853,7 @@ class ActorTest extends kyo.test.Test[Any]:
             for
                 attempts <- AtomicInt.init(0)
                 events   <- Queue.Unbounded.init[String]()
-                actor <- Actor.run {
+                actor    <- Actor.run {
                     Abort.recover[PermanentError.type] { _ =>
                         events.add("Switched to fallback behavior").andThen {
                             Actor.receiveMax[Int](1) { msg =>
@@ -909,7 +909,7 @@ class ActorTest extends kyo.test.Test[Any]:
                 hub        <- Hub.init[Int]
                 acc        <- AtomicInt.init(0)
                 subscribed <- Latch.init(1)
-                actor <- Actor.run {
+                actor      <- Actor.run {
                     Actor.subscribe(hub)(identity)
                         .andThen(subscribed.release)
                         .andThen(Actor.receiveMax[Int](3)(acc.addAndGet(_).unit))
@@ -928,7 +928,7 @@ class ActorTest extends kyo.test.Test[Any]:
                 hub        <- Hub.init[Int]
                 acc        <- Queue.Unbounded.init[Int]()
                 subscribed <- Latch.init(1)
-                actor <- Actor.run {
+                actor      <- Actor.run {
                     Actor.subscribe(hub, (_: Int) % 2 == 0)(identity)
                         .andThen(subscribed.release)
                         .andThen(Actor.receiveMax[Int](3)(acc.add(_).unit))
@@ -950,7 +950,7 @@ class ActorTest extends kyo.test.Test[Any]:
                 hub        <- Hub.init[Int]
                 acc        <- Queue.Unbounded.init[Int]()
                 subscribed <- Latch.init(1)
-                actor <- Actor.run {
+                actor      <- Actor.run {
                     Actor.subscribe(hub, 16)(identity)
                         .andThen(subscribed.release)
                         .andThen(Actor.receiveMax[Int](3)(acc.add(_).unit))
@@ -969,7 +969,7 @@ class ActorTest extends kyo.test.Test[Any]:
                 hub        <- Hub.init[Int]
                 acc        <- Queue.Unbounded.init[Int]()
                 subscribed <- Latch.init(1)
-                actor <- Actor.run {
+                actor      <- Actor.run {
                     Actor.subscribe(hub, 16, (_: Int) > 2)(identity)
                         .andThen(subscribed.release)
                         .andThen(Actor.receiveMax[Int](3)(acc.add(_).unit))
@@ -992,7 +992,7 @@ class ActorTest extends kyo.test.Test[Any]:
             for
                 hub        <- Hub.init[Int]
                 subscribed <- Latch.init(1)
-                total <- Actor.run {
+                total      <- Actor.run {
                     Var.run(0) {
                         Actor.subscribe(hub)(identity)
                             .andThen(subscribed.release)
@@ -1024,12 +1024,12 @@ class ActorTest extends kyo.test.Test[Any]:
                 hub          <- Hub.init[JobEvent]
                 observed     <- Queue.Unbounded.init[JobEvent]()
                 monitorReady <- Latch.init(1)
-                monitor <- Actor.run {
+                monitor      <- Actor.run {
                     Actor.subscribe(hub)(identity)
                         .andThen(monitorReady.release)
                         .andThen(Actor.receiveMax[JobEvent](jobCount * 2)(observed.add(_)))
                 }
-                _ <- monitorReady.await
+                _       <- monitorReady.await
                 workers <- Kyo.foreach(0 until workerCount) { _ =>
                     Actor.run(Actor.receiveAll[Job](job => Abort.run[Closed](hub.put(JobEvent.Completed(job.id))).unit))
                 }

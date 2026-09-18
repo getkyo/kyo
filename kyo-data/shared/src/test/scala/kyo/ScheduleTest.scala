@@ -19,7 +19,7 @@ class ScheduleTest extends kyo.test.Test[Any]:
         }
 
         "preserves sub-millisecond precision (port of zio/zio#7214)" in {
-            val s = Schedule.fixed(500.micros)
+            val s      = Schedule.fixed(500.micros)
             val delays = List.unfold((s, 0)) { case (sched, i) =>
                 if i == 3 then None
                 else sched.next(now).map((d, next) => Some((d, (next, i + 1)))).getOrElse(None)
@@ -63,7 +63,7 @@ class ScheduleTest extends kyo.test.Test[Any]:
 
         "produces strict geometric progression over 6 iterations" in {
             val schedule = Schedule.exponential(1.second, 2.0)
-            val delays = List.unfold((schedule, 0)) { case (s, i) =>
+            val delays   = List.unfold((schedule, 0)) { case (s, i) =>
                 if i == 6 then None
                 else s.next(now).map((d, s2) => Some((d, (s2, i + 1)))).getOrElse(None)
             }
@@ -104,7 +104,7 @@ class ScheduleTest extends kyo.test.Test[Any]:
 
         "produces strict fibonacci sequence over 8 iterations" in {
             val schedule = Schedule.fibonacci(1.second, 1.second)
-            val delays = List.unfold((schedule, 0)) { case (s, i) =>
+            val delays   = List.unfold((schedule, 0)) { case (s, i) =>
                 if i == 8 then None
                 else s.next(now).map((d, s2) => Some((d, (s2, i + 1)))).getOrElse(None)
             }
@@ -113,7 +113,7 @@ class ScheduleTest extends kyo.test.Test[Any]:
 
         "works with zero starting value (0,1,1,2,3,5,...)" in {
             val schedule = Schedule.fibonacci(Duration.Zero, 1.second)
-            val delays = List.unfold((schedule, 0)) { case (s, i) =>
+            val delays   = List.unfold((schedule, 0)) { case (s, i) =>
                 if i == 6 then None
                 else s.next(now).map((d, s2) => Some((d, (s2, i + 1)))).getOrElse(None)
             }
@@ -179,7 +179,7 @@ class ScheduleTest extends kyo.test.Test[Any]:
         }
 
         "stays at maxBackoff for many iterations past cap" in {
-            val s = Schedule.exponentialBackoff(1.second, 2.0, 4.seconds)
+            val s      = Schedule.exponentialBackoff(1.second, 2.0, 4.seconds)
             val delays = List.unfold((s, 0)) { case (sched, i) =>
                 if i == 10 then None
                 else sched.next(now).map((d, next) => Some((d, (next, i + 1)))).getOrElse(None)
@@ -237,14 +237,14 @@ class ScheduleTest extends kyo.test.Test[Any]:
         "emits N items total from finite inner (restarting from original when current exhausts)" in {
             val innerSchedule = Schedule.fixed(1.second).take(2)
             val s             = innerSchedule.repeat(3)
-            val results = List.unfold(s) { schedule =>
+            val results       = List.unfold(s) { schedule =>
                 schedule.next(now).map((next, newSchedule) => Some((next, newSchedule))).getOrElse(None)
             }
             assert(results == List(1.second, 1.second, 1.second))
         }
 
         "Schedule.fixed(X).repeat(N) emits at most N items" in {
-            val s = Schedule.fixed(1.second).repeat(2)
+            val s      = Schedule.fixed(1.second).repeat(2)
             val delays = List.unfold((s, 0)) { case (sched, i) =>
                 if i == 10 then None
                 else sched.next(now).map((d, next) => Some((d, (next, i + 1)))).getOrElse(None)
@@ -253,7 +253,7 @@ class ScheduleTest extends kyo.test.Test[Any]:
         }
 
         "Schedule.linear(X).repeat(N) emits at most N items (bug also affects Linear)" in {
-            val s = Schedule.linear(1.second).repeat(2)
+            val s      = Schedule.linear(1.second).repeat(2)
             val delays = List.unfold((s, 0)) { case (sched, i) =>
                 if i == 10 then None
                 else sched.next(now).map((d, next) => Some((d, (next, i + 1)))).getOrElse(None)
@@ -262,7 +262,7 @@ class ScheduleTest extends kyo.test.Test[Any]:
         }
 
         "Schedule.exponential(X, f).repeat(N) emits at most N items (bug also affects Exponential)" in {
-            val s = Schedule.exponential(1.second, 2.0).repeat(2)
+            val s      = Schedule.exponential(1.second, 2.0).repeat(2)
             val delays = List.unfold((s, 0)) { case (sched, i) =>
                 if i == 10 then None
                 else sched.next(now).map((d, next) => Some((d, (next, i + 1)))).getOrElse(None)
@@ -271,7 +271,7 @@ class ScheduleTest extends kyo.test.Test[Any]:
         }
 
         "Schedule.fibonacci(a, b).repeat(N) emits at most N items (bug also affects Fibonacci)" in {
-            val s = Schedule.fibonacci(1.second, 1.second).repeat(2)
+            val s      = Schedule.fibonacci(1.second, 1.second).repeat(2)
             val delays = List.unfold((s, 0)) { case (sched, i) =>
                 if i == 10 then None
                 else sched.next(now).map((d, next) => Some((d, (next, i + 1)))).getOrElse(None)
@@ -280,7 +280,7 @@ class ScheduleTest extends kyo.test.Test[Any]:
         }
 
         "nested repeat: outer M emissions regardless of inner count" in {
-            val s = Schedule.repeat(2).repeat(3)
+            val s      = Schedule.repeat(2).repeat(3)
             val delays = List.unfold(s) { sched =>
                 sched.next(now).map((d, next) => Some((d, next))).getOrElse(None)
             }
@@ -335,7 +335,7 @@ class ScheduleTest extends kyo.test.Test[Any]:
         "increases interval linearly" in {
             val base     = 1.second
             val schedule = Schedule.linear(base)
-            val delays = List.unfold((schedule, 0)) { case (s, i) =>
+            val delays   = List.unfold((schedule, 0)) { case (s, i) =>
                 if i == 5 then None
                 else s.next(now).map((d, s2) => Some((d, (s2, i + 1)))).getOrElse(None)
             }
@@ -344,7 +344,7 @@ class ScheduleTest extends kyo.test.Test[Any]:
 
         "uses base as both initial delay and step (regression for #1623)" in {
             val schedule = Schedule.linear(1.second)
-            val delays = List.unfold((schedule, 0)) { case (s, i) =>
+            val delays   = List.unfold((schedule, 0)) { case (s, i) =>
                 if i == 5 then None
                 else s.next(now).map((d, s2) => Some((d.toMillis, (s2, i + 1)))).getOrElse(None)
             }
@@ -353,7 +353,7 @@ class ScheduleTest extends kyo.test.Test[Any]:
 
         "works with sub-second base" in {
             val schedule = Schedule.linear(500.millis)
-            val delays = List.unfold((schedule, 0)) { case (s, i) =>
+            val delays   = List.unfold((schedule, 0)) { case (s, i) =>
                 if i == 4 then None
                 else s.next(now).map((d, s2) => Some((d, (s2, i + 1)))).getOrElse(None)
             }
@@ -385,7 +385,7 @@ class ScheduleTest extends kyo.test.Test[Any]:
         }
 
         "composes with take" in {
-            val s = Schedule.linear(1.second).take(3)
+            val s      = Schedule.linear(1.second).take(3)
             val delays = List.unfold(s) { schedule =>
                 schedule.next(now).map((d, next) => Some((d, next))).getOrElse(None)
             }
@@ -393,7 +393,7 @@ class ScheduleTest extends kyo.test.Test[Any]:
         }
 
         "composes with maxDuration" in {
-            val s = Schedule.linear(1.second).maxDuration(7.seconds)
+            val s      = Schedule.linear(1.second).maxDuration(7.seconds)
             val delays = List.unfold(s) { schedule =>
                 schedule.next(now).map((d, next) => Some((d, next))).getOrElse(None)
             }
@@ -413,7 +413,7 @@ class ScheduleTest extends kyo.test.Test[Any]:
         }
 
         "composes with delay" in {
-            val s = Schedule.linear(1.second).delay(500.millis).take(3)
+            val s      = Schedule.linear(1.second).delay(500.millis).take(3)
             val delays = List.unfold(s) { schedule =>
                 schedule.next(now).map((d, next) => Some((d, next))).getOrElse(None)
             }
@@ -421,7 +421,7 @@ class ScheduleTest extends kyo.test.Test[Any]:
         }
 
         "composes with forever and take" in {
-            val s = Schedule.linear(1.second).take(4).forever
+            val s      = Schedule.linear(1.second).take(4).forever
             val delays = List.unfold((s, 0)) { case (sched, i) =>
                 if i == 8 then None
                 else sched.next(now).map((d, next) => Some((d, (next, i + 1)))).getOrElse(None)
@@ -459,8 +459,8 @@ class ScheduleTest extends kyo.test.Test[Any]:
         }
 
         "stops when either finite side exhausts (matches docstring 'maximum delay of both')" in {
-            val s1 = Schedule.fixed(1.second).take(2)
-            val s2 = Schedule.fixed(3.seconds).take(5)
+            val s1     = Schedule.fixed(1.second).take(2)
+            val s2     = Schedule.fixed(3.seconds).take(5)
             val delays = List.unfold(s1.max(s2)) { sched =>
                 sched.next(now).map((d, next) => Some((d, next))).getOrElse(None)
             }
@@ -495,8 +495,8 @@ class ScheduleTest extends kyo.test.Test[Any]:
         }
 
         "stops when either finite side exhausts" in {
-            val s1 = Schedule.fixed(1.second).take(2)
-            val s2 = Schedule.fixed(3.seconds).take(5)
+            val s1     = Schedule.fixed(1.second).take(2)
+            val s2     = Schedule.fixed(3.seconds).take(5)
             val delays = List.unfold(s1.min(s2)) { sched =>
                 sched.next(now).map((d, next) => Some((d, next))).getOrElse(None)
             }
@@ -504,8 +504,8 @@ class ScheduleTest extends kyo.test.Test[Any]:
         }
 
         "collapses to surviving side when other becomes Absent at runtime (not eager Done)" in {
-            val a = Schedule.fixed(10.seconds).maxDuration(3.seconds)
-            val b = Schedule.fixed(1.second).take(4)
+            val a      = Schedule.fixed(10.seconds).maxDuration(3.seconds)
+            val b      = Schedule.fixed(1.second).take(4)
             val delays = List.unfold(a.min(b)) { sched =>
                 sched.next(now).map((d, next) => Some((d, next))).getOrElse(None)
             }
@@ -530,8 +530,8 @@ class ScheduleTest extends kyo.test.Test[Any]:
         }
 
         "nested take uses min count" in {
-            val a = Schedule.fixed(1.second).take(5).take(3)
-            val b = Schedule.fixed(1.second).take(3).take(5)
+            val a       = Schedule.fixed(1.second).take(5).take(3)
+            val b       = Schedule.fixed(1.second).take(3).take(5)
             val delaysA = List.unfold(a) { sched =>
                 sched.next(now).map((d, next) => Some((d, next))).getOrElse(None)
             }
@@ -586,7 +586,7 @@ class ScheduleTest extends kyo.test.Test[Any]:
         }
 
         "does not duplicate handoff between exhausted left and right (port of zio/zio#3943)" in {
-            val s = Schedule.immediate.andThen(Schedule.exponential(1.second, 2.0).take(4))
+            val s      = Schedule.immediate.andThen(Schedule.exponential(1.second, 2.0).take(4))
             val delays = List.unfold(s) { sched =>
                 sched.next(now).map((d, next) => Some((d, next))).getOrElse(None)
             }
@@ -594,8 +594,8 @@ class ScheduleTest extends kyo.test.Test[Any]:
         }
 
         "falls through to right when left is immediately Absent (orElse branch coverage)" in {
-            val left  = Schedule.fixed(10.seconds).maxDuration(3.seconds)
-            val right = Schedule.fixed(1.second).take(3)
+            val left   = Schedule.fixed(10.seconds).maxDuration(3.seconds)
+            val right  = Schedule.fixed(1.second).take(3)
             val delays = List.unfold(left.andThen(right)) { sched =>
                 sched.next(now).map((d, next) => Some((d, next))).getOrElse(None)
             }
@@ -603,7 +603,7 @@ class ScheduleTest extends kyo.test.Test[Any]:
         }
 
         "finite-left andThen immediate emits one zero after left exhausts" in {
-            val s = Schedule.fixed(1.second).take(2).andThen(Schedule.immediate)
+            val s      = Schedule.fixed(1.second).take(2).andThen(Schedule.immediate)
             val delays = List.unfold(s) { sched =>
                 sched.next(now).map((d, next) => Some((d, next))).getOrElse(None)
             }
@@ -631,7 +631,7 @@ class ScheduleTest extends kyo.test.Test[Any]:
         }
 
         "works with complex schedule" in {
-            val s = Schedule.exponential(1.second, 2.0).repeat(5).maxDuration(7.seconds)
+            val s       = Schedule.exponential(1.second, 2.0).repeat(5).maxDuration(7.seconds)
             val results = List.unfold(s) { schedule =>
                 schedule.next(now).map((next, newSchedule) => Some((next, newSchedule))).getOrElse(None)
             }
@@ -656,7 +656,7 @@ class ScheduleTest extends kyo.test.Test[Any]:
         }
 
         "nested maxDuration uses tightest budget" in {
-            val s = Schedule.fixed(1.second).maxDuration(5.seconds).maxDuration(3.seconds)
+            val s      = Schedule.fixed(1.second).maxDuration(5.seconds).maxDuration(3.seconds)
             val delays = List.unfold(s) { sched =>
                 sched.next(now).map((d, next) => Some((d, next))).getOrElse(None)
             }
@@ -669,7 +669,7 @@ class ScheduleTest extends kyo.test.Test[Any]:
         }
 
         "Schedule.fixed(Zero).maxDuration(d) terminates" in {
-            val s = Schedule.fixed(Duration.Zero).maxDuration(1.second)
+            val s     = Schedule.fixed(Duration.Zero).maxDuration(1.second)
             val count = (1 to 1000).foldLeft((Maybe(s).asInstanceOf[Maybe[Schedule]], 0)) { case ((current, c), _) =>
                 current match
                     case Present(sched) =>
@@ -682,7 +682,7 @@ class ScheduleTest extends kyo.test.Test[Any]:
         }
 
         "delay exactly equal to budget emits once then stops" in {
-            val s = Schedule.fixed(3.seconds).maxDuration(3.seconds)
+            val s      = Schedule.fixed(3.seconds).maxDuration(3.seconds)
             val delays = List.unfold(s) { sched =>
                 sched.next(now).map((d, next) => Some((d, next))).getOrElse(None)
             }
@@ -690,7 +690,7 @@ class ScheduleTest extends kyo.test.Test[Any]:
         }
 
         "budget exactly equal to sum of delays consumes them all" in {
-            val s = Schedule.fixed(1.second).maxDuration(3.seconds)
+            val s      = Schedule.fixed(1.second).maxDuration(3.seconds)
             val delays = List.unfold(s) { sched =>
                 sched.next(now).map((d, next) => Some((d, next))).getOrElse(None)
             }
@@ -754,7 +754,7 @@ class ScheduleTest extends kyo.test.Test[Any]:
         }
 
         "s.forever.take(N) yields exactly N delays" in {
-            val s = Schedule.fixed(1.second).forever.take(3)
+            val s      = Schedule.fixed(1.second).forever.take(3)
             val delays = List.unfold(s) { sched =>
                 sched.next(now).map((d, next) => Some((d, next))).getOrElse(None)
             }
@@ -866,7 +866,7 @@ class ScheduleTest extends kyo.test.Test[Any]:
             }
 
             "forever emits the same delay every iteration" in {
-                val s = Schedule.delay(2.seconds).forever
+                val s      = Schedule.delay(2.seconds).forever
                 val delays = List.unfold((s, 0)) { case (sched, i) =>
                     if i == 5 then None
                     else sched.next(now).map((d, next) => Some((d, (next, i + 1)))).getOrElse(None)
@@ -1543,7 +1543,7 @@ class ScheduleTest extends kyo.test.Test[Any]:
 
         "factor > 1 multi-sample stays in [0, 2*d] band after clamping (port of zio/zio#217)" in {
             val jittered = Schedule.fixed(1.second).jitter(2.0)
-            val samples = (1 to 1000).map { i =>
+            val samples  = (1 to 1000).map { i =>
                 val nowI = Instant.Epoch + i.seconds
                 jittered.next(nowI).get._1
             }
@@ -1555,7 +1555,7 @@ class ScheduleTest extends kyo.test.Test[Any]:
         "distribution mean stays close to base across factor settings" in {
             def meanMillis(factor: Double): Double =
                 val jittered = Schedule.fixed(1.second).jitter(factor)
-                val samples = (1 to 10000).map { i =>
+                val samples  = (1 to 10000).map { i =>
                     val nowI = Instant.Epoch + i.seconds
                     jittered.next(nowI).get._1.toMillis.toDouble
                 }

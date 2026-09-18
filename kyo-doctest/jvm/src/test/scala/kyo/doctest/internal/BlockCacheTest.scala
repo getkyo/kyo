@@ -196,7 +196,7 @@ class BlockCacheTest extends kyo.test.Test[Any]:
                     cache.lookup(block, Chunk.empty, "fp1", "3.8.3", opts2).map { result =>
                         result match
                             case Maybe.Present(_) => succeed("cache hit confirms option order does not affect key")
-                            case Maybe.Absent =>
+                            case Maybe.Absent     =>
                                 fail("expected same cache key regardless of scalac option ordering")
                     }
                 }
@@ -256,7 +256,7 @@ class BlockCacheTest extends kyo.test.Test[Any]:
                 ).map { case (_, result) =>
                     // Either Absent (lookup ran before record) or Present(Failed) is valid; no panics.
                     result match
-                        case Maybe.Absent => succeed("lookup won the race: valid outcome")
+                        case Maybe.Absent     => succeed("lookup won the race: valid outcome")
                         case Maybe.Present(e) =>
                             e.result match
                                 case _: Driver.Outcome.Failed => succeed("record won the race: Failed entry present")

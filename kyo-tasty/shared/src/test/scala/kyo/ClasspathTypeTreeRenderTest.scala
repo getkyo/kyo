@@ -22,7 +22,7 @@ class ClasspathTypeTreeRenderTest extends kyo.test.Test[Any]:
 
     import kyo.Tasty.SymbolId
 
-    private var nextId: Int = 0
+    private var nextId: Int         = 0
     private def freshId(): SymbolId =
         val id = nextId
         nextId += 1
@@ -49,8 +49,8 @@ class ClasspathTypeTreeRenderTest extends kyo.test.Test[Any]:
 
     /** Build a test Classpath with symbols indexed at their id.value positions. */
     private def makeTestClasspath(syms: Chunk[Tasty.Symbol])(using Frame): Tasty.Classpath < Sync =
-        val maxId = syms.foldLeft(-1)((m, s) => math.max(m, s.id.value))
-        val arr   = new Array[Tasty.Symbol](maxId + 1)
+        val maxId    = syms.foldLeft(-1)((m, s) => math.max(m, s.id.value))
+        val arr      = new Array[Tasty.Symbol](maxId + 1)
         val sentinel =
             Tasty.Symbol.Package(Tasty.SymbolId(-1), Tasty.Name("<sentinel>"), Tasty.Flags.empty, Tasty.SymbolId(-1), Chunk.empty)
         var fi = 0
@@ -356,7 +356,7 @@ class ClasspathTypeTreeRenderTest extends kyo.test.Test[Any]:
         nextId = 0
         val dogSym = makeSym("Dog")
         makeTestClasspath(Chunk(dogSym)).map { classpath =>
-            val annotation = Tasty.Annotation(Tasty.Type.Any, Chunk.empty, Tasty.Name("annotation"))
+            val annotation                       = Tasty.Annotation(Tasty.Type.Any, Chunk.empty, Tasty.Name("annotation"))
             val nonNamedCases: Chunk[Tasty.Type] = Chunk(
                 Tasty.Type.TermRef(Tasty.Type.Any, Tasty.Name("x")),
                 Tasty.Type.Applied(Tasty.Type.Any, Chunk(Tasty.Type.Nothing)),

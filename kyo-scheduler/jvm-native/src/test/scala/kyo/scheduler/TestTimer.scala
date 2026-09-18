@@ -12,7 +12,7 @@ case class TestTimer() extends InternalTimer {
     override def schedule(interval: Duration)(f: => Unit): TestTimerTask = {
         // A recurring schedule enqueues a fresh occurrence per run, so cancellation lives in a flag shared
         // by the whole chain: the caller's handle stays valid for every occurrence, even later ones.
-        val cancelled = new AtomicBoolean(false)
+        val cancelled                = new AtomicBoolean(false)
         def enqueue(): TestTimerTask = {
             val task = () => {
                 try f
@@ -57,8 +57,7 @@ case class TestTimer() extends InternalTimer {
 
     case class TestTimerTask(timer: TestTimer, time: Long, run: () => Unit, cancelled: AtomicBoolean)
         extends TimerTask with Ordered[TestTimerTask] {
-        def compare(that: TestTimerTask): Int =
-            (that.time - time).toInt
-        def cancel(): Boolean = cancelled.compareAndSet(false, true)
+        def compare(that: TestTimerTask): Int = (that.time - time).toInt
+        def cancel(): Boolean                 = cancelled.compareAndSet(false, true)
     }
 }

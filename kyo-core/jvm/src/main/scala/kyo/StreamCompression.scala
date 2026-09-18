@@ -265,7 +265,7 @@ object StreamCompression:
                             compressionLevel match
                                 case CompressionLevel.BestSpeed       => 0x4
                                 case CompressionLevel.BestCompression => 0x2
-                                case _ =>
+                                case _                                =>
                                     0
                             ,    // XFL: Extra flags
                             0xff // OS: Operating System
@@ -292,7 +292,7 @@ object StreamCompression:
                     bufferIO.map: buffer =>
                         Sync.defer(deflater.deflate(buffer, 0, buffer.length, flushMode.value))
                             .map:
-                                case 0 => Loop.continue(GZipState.EmitDeflated(deflater, crc32, maybeEmitFn, chunk))
+                                case 0    => Loop.continue(GZipState.EmitDeflated(deflater, crc32, maybeEmitFn, chunk))
                                 case size => Sync.defer(chunk.concat(fromUnboxByteArray(buffer, size)))
                                         .map(nextChunk => Loop.continue(GZipState.PullDeflater(deflater, crc32, maybeEmitFn, nextChunk)))
                 case GZipState.EmitDeflated(deflater, crc32, maybeEmitFn, chunk) =>
@@ -304,7 +304,7 @@ object StreamCompression:
                     Sync.defer {
                         val crcValue  = crc32.getValue
                         val bytesRead = deflater.getBytesRead()
-                        val trailer = Chunk(
+                        val trailer   = Chunk(
                             crcValue & 0xff, // CRC-32: Cyclic Redundancy Check
                             (crcValue >> 8) & 0xff,
                             (crcValue >> 16) & 0xff,

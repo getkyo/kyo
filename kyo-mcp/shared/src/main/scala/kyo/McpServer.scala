@@ -386,7 +386,7 @@ object McpServer:
                 resp.action match
                     case ElicitationResponse.Action.Decline => ElicitationOutcome.Decline
                     case ElicitationResponse.Action.Cancel  => ElicitationOutcome.Cancel
-                    case ElicitationResponse.Action.Accept =>
+                    case ElicitationResponse.Action.Accept  =>
                         resp.content match
                             case Absent =>
                                 Abort.fail(McpToolStructuredDecodeException("elicitation/create", "Accept carried no content", Absent))

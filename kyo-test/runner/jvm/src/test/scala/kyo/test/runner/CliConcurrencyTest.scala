@@ -16,7 +16,7 @@ class CliConcurrencyTest extends kyo.test.Test[Any]:
         val doneLatch  = new CountDownLatch(2)
         val codeA      = new java.util.concurrent.atomic.AtomicInteger(-1)
         val codeB      = new java.util.concurrent.atomic.AtomicInteger(-1)
-        val threadA = new Thread(() =>
+        val threadA    = new Thread(() =>
             startLatch.countDown()
             startLatch.await()
             try Cli.withTestExit { Cli.exitForTest(1) }

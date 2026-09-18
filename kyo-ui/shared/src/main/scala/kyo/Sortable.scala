@@ -79,8 +79,8 @@ object Sortable:
                                 val updated = insert(cleaned, ordered, move.anchor, move.position)
                                 Result.Success((updated, updated))
                             else
-                                val base    = destination.filterNot(requested.contains)
-                                val updated = insert(base, ordered, move.anchor, move.position)
+                                val base          = destination.filterNot(requested.contains)
+                                val updated       = insert(base, ordered, move.anchor, move.position)
                                 val updatedSource =
                                     if move.operation == Operation.Copy then source
                                     else source.filterNot(requested.contains)
@@ -145,8 +145,8 @@ object Sortable:
             else if move.anchor.exists(moving.contains) then
                 rejectWith("The destination is part of the moving selection.")
             else
-                val groups = collections.map((name, keys) => name -> keys.filter(moving.contains)).filter(_._2.nonEmpty)
-                val start  = collections.toMap
+                val groups  = collections.map((name, keys) => name -> keys.filter(moving.contains)).filter(_._2.nonEmpty)
+                val start   = collections.toMap
                 val applied = groups.foldLeft(
                     Result.succeed[Drag.Rejection, (Map[String, Chunk[String]], Maybe[String], Drag.Position)](
                         (start, move.anchor, move.position)

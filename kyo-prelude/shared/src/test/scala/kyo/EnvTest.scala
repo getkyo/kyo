@@ -278,7 +278,7 @@ class EnvTest extends kyo.test.Test[Any]:
                     string <- Env.get[String]
                     int    <- Env.get[Int]
                 yield (string, int)
-            val envMap = TypeMap("Hello")
+            val envMap                           = TypeMap("Hello")
             val result: (String, Int) < Env[Int] =
                 Env.runAll(envMap)(kyo)
             assert(Env.run(42)(result).eval == ("Hello", 42))
@@ -378,8 +378,8 @@ class EnvTest extends kyo.test.Test[Any]:
         "compose with other effects" in {
             val kyo =
                 for
-                    env <- Env.getAll[String & Int]
-                    _   <- Abort.when(env.get[Int] <= 0)("Port must be positive")
+                    env    <- Env.getAll[String & Int]
+                    _      <- Abort.when(env.get[Int] <= 0)("Port must be positive")
                     config <- Env.useAll[String & Int] { env =>
                         (env.get[String], env.get[Int])
                     }
@@ -471,7 +471,7 @@ object EnvTestOpaques:
         def apply(value: Long): Meters  = value
         def unwrap(value: Meters): Long = value
         // A summoned tag is refused inside the scope; the one derived by name is passed explicitly.
-        val tag: Tag[Meters] = Tag.derive[Meters]
+        val tag: Tag[Meters]                = Tag.derive[Meters]
         def getInside: Meters < Env[Meters] =
             Env.get[Meters](using tag, summon[kyo.internal.NotIntersection[Meters]])
         def runInside[A, S](v: A < (Env[Meters] & S)): A < S =

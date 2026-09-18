@@ -65,7 +65,7 @@ class ConnectionTlsIntrospectionTest extends Test:
         val enc = java.util.Base64.getMimeEncoder(64, "\n".getBytes)
 
         val certFile = writePem("-----BEGIN CERTIFICATE-----", enc.encodeToString(derBytes), "-----END CERTIFICATE-----")
-        val keyFile = writePem(
+        val keyFile  = writePem(
             "-----BEGIN PRIVATE KEY-----",
             enc.encodeToString(ks.getKey("server", "changeit".toCharArray).getEncoded),
             "-----END PRIVATE KEY-----"

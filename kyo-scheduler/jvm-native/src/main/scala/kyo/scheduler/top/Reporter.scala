@@ -44,7 +44,7 @@ class Reporter(
 
     if (topStatusFile.nonEmpty) {
         val intervalMs = (if (topStatusFileMs > 0) topStatusFileMs else 1000).toLong
-        val _ = executor.scheduleWithFixedDelay(
+        val _          = executor.scheduleWithFixedDelay(
             () => StatusFile.write(topStatusFile, Printer.compact(status())),
             intervalMs,
             intervalMs,

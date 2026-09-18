@@ -47,7 +47,7 @@ class SqlCancellationConformanceTest extends SqlBackendTest:
                 _               <- client.executeRaw(s"INSERT INTO cancel_probe VALUES $values")
                 discardedBefore <- client.runtime.pool.metrics.connectionsDiscarded.get
                 timedOutBefore  <- client.runtime.pool.metrics.cancelsTimedOut.get
-                _ <-
+                _               <-
                     Latch.initWith(1) { started =>
                         // The consumer holds the session in-flight: it takes the first row, signals the driver, then parks
                         // forever. The open cursor with rows still server-side is what raises the in-flight flag the reclaim
@@ -78,11 +78,13 @@ class SqlCancellationConformanceTest extends SqlBackendTest:
                                                     )
                                                     assert(
                                                         discardedAfter - discardedBefore == 0L,
-                                                        s"the interrupted session must be reclaimed, not discarded (discarded delta ${discardedAfter - discardedBefore})"
+                                                        s"the interrupted session must be reclaimed, not discarded (discarded delta ${discardedAfter -
+                                                                discardedBefore})"
                                                     )
                                                     assert(
                                                         timedOutAfter - timedOutBefore == 0L,
-                                                        s"the reclaim must finish inside the cancel budget (timed-out delta ${timedOutAfter - timedOutBefore})"
+                                                        s"the reclaim must finish inside the cancel budget (timed-out delta ${timedOutAfter -
+                                                                timedOutBefore})"
                                                     )
                                                 }
                                             }

@@ -320,7 +320,7 @@ private[kyo] object LspBuiltInRoutes:
                         // Structure changes: insert newly opened cells, remove closed cells.
                         val structureEffect: Unit < Sync =
                             cc.structure match
-                                case Absent => ()
+                                case Absent      => ()
                                 case Present(sc) =>
                                     val opens: Unit < Sync =
                                         sc.didOpen.foldLeft(().asInstanceOf[Unit < Sync]) { (acc, item) =>
