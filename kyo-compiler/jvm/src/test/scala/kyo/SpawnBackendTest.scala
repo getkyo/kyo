@@ -294,15 +294,17 @@ class SpawnBackendTest extends kyo.test.Test[Any]:
 
     // `SpawnBackend.init` spawns the worker JVM in one step and arms the kill-on-interrupt finalizer only after
     // the aeron client has connected and the exchange is wired, two parks later. A stop landing on either park
-    // abandons the continuation that would arm the kill, and the worker JVM outlives the caller. The rounds
-    // interrupt at staggered delays around the spawn. Each round's worker carries a unique token in its command
-    // line (a `-Wconf` filter that matches nothing, forwarded as a scalac option), so the count afterwards is of
-    // this round's workers alone, whatever else the suite is spawning; a worker left over is killed by the leaf.
+    // abandons the continuation that would arm the kill, and the worker JVM outlives the caller. That window opens
+    // when the spawn returns and closes a few milliseconds later, so the rounds sweep the first twelve
+    // milliseconds in quarter-millisecond steps and then coarser steps for a slower machine. Each round's worker
+    // carries a unique token in its command line (a `-Wconf` filter that matches nothing, forwarded as a scalac
+    // option), so the count afterwards is of this round's workers alone, whatever else the suite is spawning; a
+    // worker left over is killed by the leaf.
     "an interrupt landing before the kill is armed does not orphan the worker JVM".pendingUntilFixed(
         "SpawnBackend.init spawns the worker JVM and arms its kill only after the aeron connect and the exchange wiring, two parks later, so a stop landing on either park leaves the worker running with no owner"
     ) in {
         withDriver { driver =>
-            val rounds = 12
+            val rounds = 64
             def workers(token: String): Int < Async =
                 Abort.run[CommandException](Command("pgrep", "-f", token).textWithExitCode).map {
                     case Result.Success((out, _)) => out.linesIterator.count(_.trim.nonEmpty)
@@ -318,7 +320,7 @@ class SpawnBackendTest extends kyo.test.Test[Any]:
                         fiber <- Fiber.initUnscoped(
                             Abort.run[CompilerException](SpawnBackend.init(spawnConfig(Chunk(s"-Wconf:msg=$token:s")), driver, 300 + i))
                         )
-                        _ <- Async.delay((i * 4).millis)(fiber.interrupt)
+                        _ <- Async.delay(if i < 48 then (i * 250).micros else (12 + (i - 48) * 4).millis)(fiber.interrupt)
                         r <- fiber.getResult
                         _ <- r match
                             case Result.Success(Result.Success(backend)) => Abort.run[Throwable](backend.close).unit

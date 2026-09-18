@@ -282,14 +282,16 @@ class CommandTest extends kyo.test.Test[Any]:
     }
 
     // `spawn` forks the process in one step and registers its release in the next: a stop delivered while the fork
-    // runs parks the registration, and the process is nobody's. The fork lasts milliseconds, so the rounds interrupt
-    // at staggered delays around it and the check is on the operating system's view, by a unique argv.
+    // runs parks the registration, and the process is nobody's. The fork lasts a fraction of a millisecond on Native
+    // and a few on the JVM, below what a timer lands in, so each round releases a latch in the step before the fork
+    // and a second fiber spins on the clock to a staggered offset from it before requesting the stop directly. The
+    // check is on the operating system's view, by a unique argv.
     "an interrupt landing during spawn does not orphan the process".pendingUntilFixed(
         "Command.spawn forks the process in one step and registers its release in the next, so a stop delivered during the fork parks the registration and the process outlives the scope that spawned it"
     ).notJs.notWasm in {
         val seconds = 300 + scala.util.Random.nextInt(1000)
         val cmd     = Command("sleep", seconds.toString)
-        val rounds  = 40
+        val rounds  = 80
         def alive: Chunk[String] < (Async & Abort[CommandException]) =
             Command("pgrep", "-f", s"^sleep $seconds$$").textWithExitCode.map((out, _) =>
                 Chunk.from(out.linesIterator.map(_.trim).filter(_.nonEmpty).toSeq)
@@ -298,8 +300,17 @@ class CommandTest extends kyo.test.Test[Any]:
             _ <- Loop.indexed { i =>
                 if i >= rounds then Loop.done
                 else
-                    Fiber.initUnscoped(Scope.run(cmd.spawn.andThen(Async.never))).map { fiber =>
-                        Async.delay((i % 5).millis)(fiber.interrupt).andThen(fiber.getResult).andThen(Loop.continue)
+                    Latch.initWith(1) { started =>
+                        Fiber.initUnscoped(Scope.run(started.release.andThen(cmd.spawn).andThen(Async.never))).map { fiber =>
+                            started.await.andThen {
+                                Sync.Unsafe.defer {
+                                    import AllowUnsafe.embrace.danger
+                                    val target = java.lang.System.nanoTime() + (i % 40) * 100_000L
+                                    while java.lang.System.nanoTime() < target do ()
+                                    discard(fiber.unsafe.interrupt())
+                                }
+                            }.andThen(fiber.getResult).andThen(Loop.continue)
+                        }
                     }
             }
             r    <- Abort.run[Timeout](Async.timeout(5.seconds)(assertEventually(alive.map(_.isEmpty))))

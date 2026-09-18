@@ -1253,7 +1253,10 @@ class FiberTest extends kyo.test.Test[Any]:
                 assert(value == 42)
         }
 
-        "a fatal thrown in the body releases the fiber's finalizers before the promise settles with the panic" in {
+        // The task completes the promise with the fatal and then rethrows it past the boundary. On the JVM and Native
+        // the rethrow lands on the worker thread; on JS it reaches the event loop and ends the process, so the leaf
+        // cannot run there.
+        "a fatal thrown in the body releases the fiber's finalizers before the promise settles with the panic".notJs.notWasm in {
             for
                 released <- AtomicBoolean.init(false)
                 fiber <- Fiber.initUnscoped {
