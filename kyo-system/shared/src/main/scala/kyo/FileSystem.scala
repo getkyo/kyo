@@ -205,6 +205,7 @@ object FileSystem:
 
         // scoped temp: vends a service-correct removal handle so cleanup runs through the creating service
         def tempDir(prefix: String)(using Frame): Path.TempDirHandle < (S & Abort[FileStructureException])
+
         def temp(prefix: String, suffix: String)(using Frame): Path.TempFileHandle < (S & Abort[FileStructureException])
 
         /** Opens `path` for positioned writes according to `open`. The channel is closed when the
@@ -221,6 +222,59 @@ object FileSystem:
             Frame
         ): Path.ReadWriteChannel[S] < (S & Scope & Abort[FileReadException | FileWriteException | FileStructureException])
 
+        /** Synchronizes the directory entry state for `path`. Volatile backends may implement this
+          * as a successful no-op, but persistent backends must not report success when the platform
+          * cannot provide the requested guarantee.
+          */
+        def syncDirectory(path: Path)(using Frame): Unit < (S & Abort[FileWriteException])
+
+        /** Reserves a create-new sibling file in `target`'s containing directory. The returned
+          * service-owned handle supports scoped cleanup without exposing the file channel.
+          */
+        def siblingTemporary(target: Path)(using
+            Frame
+        ): Path.TempFileHandle < (S & Abort[FileWriteException | FileStructureException]) =
+            siblingTemporary(target, _ => ())
+
+        /** Transfers the released temporary to its owner synchronously before returning it. */
+        private[kyo] def siblingTemporary(target: Path, onAcquire: Path.TempFileHandle => Unit)(using
+            Frame
+        ): Path.TempFileHandle < (S & Abort[FileWriteException | FileStructureException])
+
+        private[kyo] def tempFileHandle(temporary: Path)(using Frame): Path.TempFileHandle
+
+        /** Replaces `target` with `bytes` using a synchronized sibling file and a required atomic
+          * move. The file channel is released before the move and the containing directory is
+          * synchronized only after the move succeeds. Entries for newly created parent directories
+          * are synchronized through the first existing ancestor as well.
+          *
+          * Host replacement preserves the existing regular file's owner, group, permission mode,
+          * and access ACLs, captured during temporary acquisition. The temporary is private until
+          * those permissions are restored and verified. Unsupported access controls or a failure to
+          * capture or restore them abort before replacement. A missing target uses normal new-file
+          * permissions. Concurrent external permission changes are not serialized by this operation.
+          */
+        def durableReplace(target: Path, bytes: Span[Byte])(using
+            Frame
+        ): Unit < (S & Abort[FileReadException | FileWriteException | FileStructureException])
+
+        /** Acquires an independently released channel. The backend invokes `onAcquire` synchronously
+          * with successful acquisition, before any effect continuation can be interrupted. The caller
+          * installs cleanup before calling this method; the callback transfers ownership to it.
+          * `preservePermissionsFrom` is used with CreateNew by replacement protocols. Host backends
+          * securely create the file and restore the source's access controls on sync; backends
+          * without access controls retain their ordinary create-new behavior.
+          */
+        private[kyo] def openWriteChannelUnscoped(
+            path: Path,
+            open: FileSystem.WriteOpen,
+            onAcquire: Path.ChannelCloseHandle => Unit,
+            preservePermissionsFrom: Maybe[Path] = Absent
+        )(using
+            Frame
+        ): (Path.WriteChannel[S], () => Unit < (Sync & S), Path.ChannelCloseHandle) <
+            (S & Abort[FileWriteException | FileStructureException])
+
         private[kyo] def openReadWriteChannelUnscoped(path: Path, open: FileSystem.WriteOpen)(using
             Frame
         )
@@ -230,6 +284,178 @@ object FileSystem:
             ) < (S & Abort[FileReadException | FileWriteException | FileStructureException])
 
     end Write
+
+    private def reportCleanupFailure(log: Log, primary: Maybe[Throwable], message: String, error: Throwable)(using
+        Frame,
+        AllowUnsafe
+    ): Unit =
+        primary.foreach { cause =>
+            if cause ne error then cause.addSuppressed(error)
+        }
+        try log.unsafe.error(message, error)
+        catch
+            case reporting: Throwable =>
+                // Preserve reporting failures too, even when the configured logger cannot emit.
+                if reporting ne error then error.addSuppressed(reporting)
+        end try
+        if primary.isEmpty then throw error
+    end reportCleanupFailure
+
+    private[kyo] def siblingTemporary[S](
+        fileSystem: FileSystem.Write[S & Sync],
+        target: Path,
+        onAcquire: Path.TempFileHandle => Unit
+    )(using Frame): Path.TempFileHandle < (S & Sync & Abort[FileWriteException | FileStructureException]) =
+        Log.get.map { log =>
+            Random.uuid.map { identifier =>
+                val parent                                                          = target.parent.getOrElse(Path())
+                var acquired: Maybe[(Path.ChannelCloseHandle, Path.TempFileHandle)] = Absent
+                var primaryFailure: Maybe[Throwable]                                = Absent
+                var completed                                                       = false
+                def loop(attempt: Int): Path.TempFileHandle < (S & Sync & Abort[FileWriteException | FileStructureException]) =
+                    val temporary = parent / s".kyo-temporary-$identifier-$attempt"
+                    if target.name.exists(_.equalsIgnoreCase(s".kyo-temporary-$identifier-$attempt")) then loop(attempt + 1)
+                    else
+                        val handle = fileSystem.tempFileHandle(temporary)
+                        Abort.run[FileWriteException | FileStructureException](
+                            fileSystem.openWriteChannelUnscoped(
+                                temporary,
+                                FileSystem.WriteOpen.CreateNew,
+                                close =>
+                                    acquired = Present((close, handle))
+                            )
+                        ).map {
+                            case Result.Success((_, release, _)) =>
+                                release().map { _ =>
+                                    onAcquire(handle)
+                                    completed = true
+                                    handle
+                                }
+                            case Result.Failure(_: FileAlreadyExistsException) => loop(attempt + 1)
+                            case Result.Failure(error)                         => Abort.fail(error)
+                            case Result.Panic(error)                           => Abort.panic(error)
+                        }
+                    end if
+                end loop
+                Sync.ensure { finalizerError =>
+                    val primary = finalizerError.map(_.failureOrPanic).collect { case error: Throwable => error }.orElse(primaryFailure)
+                    // Unsafe: cleanup owns acquisition before any effect continuation can be interrupted.
+                    Sync.Unsafe.defer {
+                        if !completed then
+                            acquired.foreach { (close, handle) =>
+                                try close.close()
+                                catch
+                                    case error: Throwable =>
+                                        reportCleanupFailure(log, primary, s"Failed to close temporary ${handle.path}", error)
+                                finally
+                                    try handle.remove()
+                                    catch
+                                        case error: Throwable =>
+                                            reportCleanupFailure(log, primary, s"Failed to remove temporary ${handle.path}", error)
+                            }
+                    }
+                } {
+                    Abort.run[FileWriteException | FileStructureException](loop(0)).map { result =>
+                        primaryFailure = result.failureOrPanic
+                        result
+                    }
+                }.map(Abort.get(_))
+            }
+        }
+    end siblingTemporary
+
+    private[kyo] def durableReplace[S](
+        fileSystem: FileSystem.Write[S],
+        target: Path,
+        bytes: Span[Byte]
+    )(using
+        Frame
+    ): Unit < (S & Sync & Abort[FileReadException | FileWriteException | FileStructureException]) =
+        Log.get.map { log =>
+            Random.uuid.map { identifier =>
+                val parent                                                          = target.parent.getOrElse(Path())
+                var acquired: Maybe[(Path.ChannelCloseHandle, Path.TempFileHandle)] = Absent
+                var primaryFailure: Maybe[Throwable]                                = Absent
+                var channelClosed                                                   = false
+                var moved                                                           = false
+                def open(attempt: Int): (Path, Path.WriteChannel[S], () => Unit < (S & Sync)) <
+                    (S & Sync & Abort[FileWriteException | FileStructureException]) =
+                    val temporary = parent / s".kyo-durable-$identifier-$attempt"
+                    if target.name.exists(_.equalsIgnoreCase(s".kyo-durable-$identifier-$attempt")) then open(attempt + 1)
+                    else
+                        val handle = fileSystem.tempFileHandle(temporary)
+                        Abort.run[FileWriteException | FileStructureException](
+                            fileSystem.openWriteChannelUnscoped(
+                                temporary,
+                                FileSystem.WriteOpen.CreateNew,
+                                close =>
+                                    acquired = Present((close, handle)),
+                                preservePermissionsFrom = Present(target)
+                            )
+                        ).map {
+                            case Result.Success((channel, release, _))         => (temporary, channel, release)
+                            case Result.Failure(_: FileAlreadyExistsException) => open(attempt + 1)
+                            case Result.Failure(error)                         => Abort.fail(error)
+                            case Result.Panic(error)                           => Abort.panic(error)
+                        }
+                    end if
+                end open
+                def directoriesToSync(path: Path): Chunk[Path] < (S & Sync & Abort[FileReadException]) =
+                    fileSystem.exists(path).map { exists =>
+                        val ancestor = path.parent.getOrElse(Path())
+                        if exists || ancestor == path then Chunk(path)
+                        else directoriesToSync(ancestor).map(path +: _)
+                    }
+                Sync.ensure { finalizerError =>
+                    val primary = finalizerError.map(_.failureOrPanic).collect { case error: Throwable => error }.orElse(primaryFailure)
+                    // Unsafe: acquisition transfers ownership before returning the channel. Cleanup reports
+                    // both failures without replacing the original operation failure or interruption.
+                    Sync.Unsafe.defer {
+                        acquired.foreach { (close, handle) =>
+                            try
+                                if !channelClosed then close.close()
+                            catch
+                                case error: Throwable =>
+                                    reportCleanupFailure(log, primary, s"Failed to close temporary ${handle.path}", error)
+                            finally
+                                if !moved then
+                                    try handle.remove()
+                                    catch
+                                        case error: Throwable =>
+                                            reportCleanupFailure(log, primary, s"Failed to remove temporary ${handle.path}", error)
+                        }
+                    }
+                } {
+                    Abort.run[FileReadException | FileWriteException | FileStructureException] {
+                        directoriesToSync(parent).map { directories =>
+                            open(0).map { (temporary, channel, release) =>
+                                channel.writeAt(0L, bytes).andThen(channel.sync(metadata = true)).andThen {
+                                    release().andThen {
+                                        channelClosed = true
+                                        fileSystem.move(
+                                            temporary,
+                                            target,
+                                            Path.MoveOptions(
+                                                replace = Path.Replace.Existing,
+                                                atomicity = Path.Atomicity.Required,
+                                                createFolders = false
+                                            )
+                                        ).andThen {
+                                            moved = true
+                                            Kyo.foreachDiscard(directories)(fileSystem.syncDirectory(_))
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }.map { result =>
+                        primaryFailure = result.failureOrPanic
+                        result
+                    }
+                }.map(Abort.get(_))
+            }
+        }
+    end durableReplace
 
     private val local = Local.init[FileSystem.Write[Any]](
         FileSystem.host.asInstanceOf[FileSystem.Write[Any]]

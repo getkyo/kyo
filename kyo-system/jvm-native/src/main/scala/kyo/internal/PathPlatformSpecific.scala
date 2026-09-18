@@ -52,11 +52,51 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
     def show: String        = jpath.toString.replace('\\', '/')
     def isAbsolute: Boolean = jpath.isAbsolute || parts.headOption.contains("")
 
+    private[kyo] def hostPath: Maybe[String] =
+        if !(jpath.getFileSystem eq java.nio.file.FileSystems.getDefault) then Absent
+        else
+            val value = jpath.toString
+            try
+                // NIO can retain filename bytes that its display string cannot represent.
+                // Shared reconstruction also treats literal POSIX backslashes as separators.
+                if java.nio.file.Paths.get(value).equals(jpath) && Path(value).unsafe.equals(this) then Present(value)
+                else Absent
+            catch case _: InvalidPathException => Absent
+            end try
+
     override def equals(other: Any): Boolean = other match
         case that: NioPathUnsafe => this.jpath.equals(that.jpath)
         case _                   => false
 
     override def hashCode(): Int = jpath.hashCode()
+
+    override private[kyo] def syncDirectory()(using Frame, AllowUnsafe): Result[FileWriteException, Unit] =
+        try
+            val directory  = if jpath.toString.isEmpty then java.nio.file.Paths.get(".") else jpath
+            val attributes = Files.readAttributes(directory, classOf[BasicFileAttributes])
+            if !attributes.isDirectory then Result.fail(FileNotADirectoryException(safe))
+            else
+                NioDirectorySyncPlatform.sync(directory)
+                Result.unit
+            end if
+        catch
+            case e: IOException if NioExceptionBoundary.isInterrupted(e)  => Result.panic(e)
+            case e: IOException if NioExceptionBoundary.isFileNotFound(e) =>
+                // NIO can collapse ENOTDIR into NoSuchFileException. Inspect the existing ancestor
+                // on this failure path to preserve the directory operation's precise error.
+                @scala.annotation.tailrec
+                def hasFileAncestor(parent: Maybe[java.nio.file.Path]): Boolean = parent match
+                    case Present(path) =>
+                        if Files.exists(path) then !Files.isDirectory(path)
+                        else hasFileAncestor(Maybe(path.getParent))
+                    case Absent => false
+                if hasFileAncestor(Maybe(jpath.getParent)) then Result.fail(FileNotADirectoryException(safe))
+                else Result.fail(FileNotFoundException(safe))
+            case e: IOException if NioExceptionBoundary.isNotDirectory(e) => Result.fail(FileNotADirectoryException(safe))
+            case e: AccessDeniedException                                 => Result.fail(FileAccessDeniedException(safe))
+            case e: InvalidPathException => Result.fail(FileInvalidPathException(e.getInput, FileSystemOperation.SyncDirectory))
+            case e: IOException          => Result.fail(FileIOException(safe, FileSystemOperation.SyncDirectory, e))
+            case e: Throwable            => Result.panic(e)
 
     // --- Inspection ---
 
@@ -323,14 +363,21 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
 
     // --- Positioned channel ---
 
+    private def prepareChannelParent(open: FileSystem.WriteOpen)(using Frame): Result[FileStructureException, Unit] =
+        if open == FileSystem.WriteOpen.Existing then Result.unit
+        else
+            // A parent conflict cannot be resolved by choosing a different filename.
+            catchFs(FileSystemOperation.Create)(ensureParent(jpath)).mapFailure {
+                case _: FileAlreadyExistsException => FileNotADirectoryException(safe)
+                case error                         => error
+            }
+
     private def openRawChannel(mode: Path.RawChannelAccess): Path.RawChannel =
         def writeOptions(open: FileSystem.WriteOpen): Array[StandardOpenOption] = open match
             case FileSystem.WriteOpen.Existing => Array(StandardOpenOption.WRITE)
             case FileSystem.WriteOpen.Create =>
-                ensureParent(jpath)
                 Array(StandardOpenOption.WRITE, StandardOpenOption.CREATE)
             case FileSystem.WriteOpen.CreateNew =>
-                ensureParent(jpath)
                 Array(StandardOpenOption.WRITE, StandardOpenOption.CREATE_NEW)
         val opts: Array[StandardOpenOption] = mode match
             case Path.RawChannelAccess.Read            => Array(StandardOpenOption.READ)
@@ -345,12 +392,12 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
         AllowUnsafe,
         Frame
     ): Result[FileWriteException | FileStructureException, Path.RawChannel] =
-        catchChannelWrite(openRawChannel(Path.RawChannelAccess.Write(open)))
+        prepareChannelParent(open).flatMap(_ => catchChannelWrite(openRawChannel(Path.RawChannelAccess.Write(open))))
     def openReadWriteChannelRaw(open: FileSystem.WriteOpen)(using
         AllowUnsafe,
         Frame
     ): Result[FileReadException | FileWriteException | FileStructureException, Path.RawChannel] =
-        catchChannelWrite(openRawChannel(Path.RawChannelAccess.ReadWrite(open)))
+        prepareChannelParent(open).flatMap(_ => catchChannelWrite(openRawChannel(Path.RawChannelAccess.ReadWrite(open))))
 
     // --- Advisory lock ---
 
