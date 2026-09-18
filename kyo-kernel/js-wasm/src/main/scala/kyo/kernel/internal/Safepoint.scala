@@ -46,9 +46,10 @@ object Safepoint:
     private var depth: State        = State.init
     private var armedDeadline: Long = Long.MaxValue
 
+    // A pending stop drains the budget of an armed run at the next poll, as the slot table's resolve does on the JVM
+    // and Native: the bind after the step that requested it then defers instead of running under the stop.
     def get(): Slot =
-
-        if depth.isArmed && expired() then depth = depth.drained
+        if depth.isArmed && stopped(0) then depth = depth.drained
         0
     end get
 
