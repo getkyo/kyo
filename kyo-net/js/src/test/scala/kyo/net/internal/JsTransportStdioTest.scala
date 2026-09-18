@@ -14,18 +14,22 @@ import scala.scalajs.js as sjs
   */
 class JsTransportStdioTest extends Test:
 
-    // The subject is JsTransport.stdio, which is Node's stdio over Node's transport. A page has neither, so its "no process global"
-    // case is not this suite's case: it never gets as far as having a transport to ask.
-    override protected def hostFilters = kyo.Chunk(kyo.test.HostFilter.NotBrowser)
-
     import AllowUnsafe.embrace.danger
 
+    /** Runs `f` with `process` deleted from the global object.
+      *
+      * Read and restore through `globalThis`, and restore only what was stashed: a bare `process` is a ReferenceError where none is
+      * declared. In a page there is nothing to delete and nothing to put back, so the leaf below asserts the host's own state rather
+      * than a fabricated one. `JsTransport.init` needs no host to construct (its driver allocates a promise and nothing else), and
+      * `stdio` reads `process` off `globalThis` before it claims the slot, so a page reaches the refusal for real.
+      */
     private def withoutProcessGlobal[A](f: => A): A =
         val global = sjs.Dynamic.global.globalThis
-        val saved  = sjs.Dynamic.global.process
+        val saved  = global.selectDynamic("process")
+        val had    = !sjs.isUndefined(saved)
         sjs.special.delete(global, "process")
         try f
-        finally global.updateDynamic("process")(saved)
+        finally if had then global.updateDynamic("process")(saved)
         end try
     end withoutProcessGlobal
 

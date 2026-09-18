@@ -31,12 +31,15 @@ class JsTransportTlsConfigTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
-    // Lazy, not eager: `require` is a bare identifier read with no binding in a page, and a field initialized in the class body runs
-    // when the suite is constructed, which is before any host filter can cancel a leaf. Forced only from a leaf body, the filter below
-    // means a page never reaches them.
-    private lazy val fs       = sjs.Dynamic.global.require("fs")
-    private lazy val os       = sjs.Dynamic.global.require("os")
-    private lazy val nodePath = sjs.Dynamic.global.require("path")
+    // Node's own modules, reached through `process.getBuiltinModule` at the call, as JsIoDriverTest does. Not
+    // `sjs.Dynamic.global.require`: that is a bare identifier read, absent under the ESModule kind the Wasm row
+    // links, where it resolves only because the sbt harness injects one. A def, so a page never evaluates it.
+    private def builtin(id: String): sjs.Dynamic =
+        kyo.internal.PlatformJs.nodeBuiltin(id).getOrElse(throw new IllegalStateException(s"this suite needs $id"))
+
+    private def fs       = builtin("node:fs")
+    private def os       = builtin("node:os")
+    private def nodePath = builtin("node:path")
 
     /** An absolute path that does not exist, so any read of it fails deterministically. */
     private def unreadablePath(): String =

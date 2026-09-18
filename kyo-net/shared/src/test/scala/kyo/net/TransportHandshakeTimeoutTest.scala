@@ -14,6 +14,10 @@ import kyo.net.internal.TlsProviderPlatform
   */
 class TransportHandshakeTimeoutTest extends Test:
 
+    // Reaches NetPlatform.transport directly rather than through the per-backend fan-out, and a page selects no backend. Stated here
+    // rather than left to assumeTls, which cancels these leaves in a page for a different reason and only by coincidence.
+    override protected def hostFilters = kyo.Chunk(kyo.test.HostFilter.NotBrowser)
+
     import AllowUnsafe.embrace.danger
 
     private def assumeTls(): Unit =

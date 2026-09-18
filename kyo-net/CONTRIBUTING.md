@@ -171,9 +171,11 @@ sbt 'kyo-netJS/BrowserWasmTest/test'
 The browser rows run because `NetPlatform`'s scaladoc states what a page gets, and a row is what makes that a checked
 fact: the probe selects no candidate there and every operation fails `NetBackendUnavailableException`. `kyo.net.Test`
 already covers it by construction, registering a leaf per backend and cancelling the unavailable ones with a reason
-naming the host, so those cells need nothing. The suites that reach `NetPlatform.transport` directly, rather than
-through that fan-out, carry their own `NotBrowser` filter, and the `Js*` transport suites hold Node's modules in
-`lazy val`s so the filter has a chance to cancel a leaf before a field initializer reaches `require`.
+naming that backend, so those cells need nothing. A cancel says a backend was unavailable, not what an operation
+returns, so `DeferredTransportTest` asserts that half in a page: one `connect` through `NetPlatform.transport`, failing
+`NetBackendUnavailableException` on its own channel. The suites that reach `NetPlatform.transport` directly carry their
+own `NotBrowser` filter, and the `Js*` transport suites reach Node's modules through `process.getBuiltinModule` at the
+call, so nothing a page cannot evaluate runs while the suite is being constructed.
 
 ### FFI binding changes need a full clean
 

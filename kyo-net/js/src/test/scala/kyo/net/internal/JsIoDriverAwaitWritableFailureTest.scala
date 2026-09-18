@@ -27,8 +27,12 @@ class JsIoDriverAwaitWritableFailureTest extends Test:
       * reads. The driver registers its one-shot listeners on it; the test emits the event to drive the handler.
       */
     private def mockSocket(): sjs.Dynamic =
-        val EventEmitter = sjs.Dynamic.global.require("events").EventEmitter
-        val sock         = sjs.Dynamic.newInstance(EventEmitter)()
+        // node:events through `process.getBuiltinModule`, not a bare `require`, which the ESModule kind the Wasm row links has not.
+        val EventEmitter =
+            kyo.internal.PlatformJs.nodeBuiltin(
+                "node:events"
+            ).getOrElse(throw new IllegalStateException("this suite needs node:events")).EventEmitter
+        val sock = sjs.Dynamic.newInstance(EventEmitter)()
         sock.destroyed = false
         sock
     end mockSocket

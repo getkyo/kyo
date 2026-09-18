@@ -36,13 +36,16 @@ class JsTransportTlsTest extends Test:
 
     private val localhostKeyPem: String = TlsTestCertShared.keyPem
 
-    // Lazy, not eager: `require` is a bare identifier read with no binding in a page, and a field initialized in the class body runs
-    // when the suite is constructed, which is before any host filter can cancel a leaf. Forced only from a leaf body, the filter below
-    // means a page never reaches them.
-    private lazy val tls      = sjs.Dynamic.global.require("tls")
-    private lazy val fs       = sjs.Dynamic.global.require("fs")
-    private lazy val os       = sjs.Dynamic.global.require("os")
-    private lazy val nodePath = sjs.Dynamic.global.require("path")
+    // Node's own modules, reached through `process.getBuiltinModule` at the call, as JsIoDriverTest does. Not
+    // `sjs.Dynamic.global.require`: that is a bare identifier read, absent under the ESModule kind the Wasm row
+    // links, where it resolves only because the sbt harness injects one. A def, so a page never evaluates it.
+    private def builtin(id: String): sjs.Dynamic =
+        kyo.internal.PlatformJs.nodeBuiltin(id).getOrElse(throw new IllegalStateException(s"this suite needs $id"))
+
+    private def tls      = builtin("node:tls")
+    private def fs       = builtin("node:fs")
+    private def os       = builtin("node:os")
+    private def nodePath = builtin("node:path")
 
     private def writeTempPem(content: String, name: String): String =
         val dir  = os.tmpdir().asInstanceOf[String]
@@ -256,8 +259,8 @@ class JsTransportTlsTest extends Test:
         end for
     }
 
-    // Lazy for the same reason as the modules above, and this one is why they were not enough on their own: an eager field here forces
-    // localhostCertPath, which writes a pem through `fs`, which forces `require` while the suite is still being constructed.
+    // Lazy: an eager field would force localhostCertPath, which writes a pem to a temp directory, while the suite is still being
+    // constructed, which is before any host filter can cancel a leaf.
     private lazy val serverTlsMaterial = NetTlsConfig(
         certChainPath = Present(localhostCertPath),
         privateKeyPath = Present(localhostKeyPath)

@@ -1145,8 +1145,9 @@ lazy val `kyo-ffi-it` =
             ffiKoffiJsBootstrap("kyo-ffi-it-js-test"),
             // A JVM-and-JS fixture for kyo-ffi's own tests; it has no Wasm row.
             kyoWasmRow := false,
-            // Loads its bundled library through koffi, which needs a Node-like `process` global. Every leaf calls into
-            // a real compiled library, so there is no environment-neutral body here for a page to run. No browser row.
+            // Loads its bundled library through koffi, which needs a Node-like `process` global. The module exists to
+            // exercise a real compiled library's ABI end to end, so a page has essentially no body here to run.
+            // No browser row.
             kyoBrowserRow := false
         )
 
@@ -1497,8 +1498,9 @@ lazy val `kyo-stats-machine` =
             // The CommonJS linker setting above stays in this .jsSettings block: the plugin is a Scala 2.12
             // sbt plugin with no sbt-scalajs dependency, so it cannot carry a scalaJSLinkerConfig setting.
             // The browser row runs here. Reading the machine needs node:os and node:fs, which a page has not, but
-            // that is the subject of two leaves, not of the module: the decoders the rest of the suites exercise
-            // take their /proc and sysctl text as fixtures. The two leaves carry their own NotBrowser filter.
+            // that is the subject of eight leaves, not of the module: the decoders the rest of the suites exercise
+            // take their /proc and sysctl text as fixtures. Those eight carry their own NotBrowser filter, six of
+            // them for staging a file through Path.tempDir to drive the production read.
             ffiKoffiJsBootstrap("kyo-stats-machine-js-test")
         )
 
@@ -1924,8 +1926,9 @@ lazy val `kyo-net` =
             kyoJsTestNatives,
             // The browser row runs here. The backend probe selects no candidate in a page (node, epoll, kqueue and
             // io_uring all need a host), which is what NetPlatform's scaladoc promises, and kyo.net.Test already
-            // registers a leaf per backend and cancels the unavailable ones with a reason naming the host. The
-            // suites that reach NetPlatform.transport without going through that fan-out carry their own filter.
+            // registers a leaf per backend and cancels the unavailable ones with a reason naming that backend. The
+            // suites that reach NetPlatform.transport without going through that fan-out carry their own filter, and
+            // DeferredTransportTest asserts in a page what an operation through it actually returns.
             Test / compile := (Test / compile).dependsOn(kyoNetKoffiInstall).value
         )
 
@@ -2058,8 +2061,9 @@ lazy val `kyo-aeron` =
                 }
             }).value,
             // The Aeron media driver runs over UDP and shared-memory IPC, neither of which a page has, and the JS
-            // bindings load through koffi, which needs a Node-like `process` global. The seven leaves that need no
-            // driver (exception messages, the C symbol-name list) are host-invariant. No browser row.
+            // bindings load through koffi, which needs a Node-like `process` global. The leaves that need no driver
+            // (exception messages, constant comparisons, the C symbol-name list) are host-invariant, so a page would
+            // run the same answers Node already gives. No browser row.
             kyoBrowserRow := false
         )
 

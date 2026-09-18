@@ -12,7 +12,7 @@ class FfiLoadErrorTest extends Test:
     // binding was ever looked up. That path is asserted in BrowserDetectionTest's browser group; this leaf is about the other one.
     "Ffi.load failure message names both the binding trait and the impl class".notBrowser in {
         val ex = intercept[Throwable](Ffi.load[FfiLoadErrorTest.MissingBindings])
-        // The exception type differs slightly per platform (IllegalStateException everywhere). What matters: the binding trait FQN appears.
+        // The exception type is the same on every platform that admits the load. What matters: the binding trait FQN appears.
         val msg = ex.getMessage
         assert(msg != null)
         // The fix introduces an explicit `for binding ...` (or equivalent) phrase that names the trait's

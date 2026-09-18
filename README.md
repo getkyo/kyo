@@ -310,9 +310,9 @@ A mark in a Browser column means those suites run in Chrome, not that every surf
 
 | Module                    | Marked, and in a page                                                                                                                                                  |
 | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| kyo-net                   | No sockets. Every transport candidate (Node, epoll, kqueue, io_uring) needs a host, so the backend probe selects none and reports `NetBackendUnavailableException`. The per-backend suites cancel in a page naming the host, and the pure pump, codec and registry suites run.  |
+| kyo-net                   | No sockets. Every transport candidate (Node, epoll, kqueue, io_uring) needs a host, so the backend probe selects none and reports `NetBackendUnavailableException`. The per-backend suites cancel in a page, a browser leaf asserts the typed failure, and the pure pump, registry and buffer suites run.  |
 | kyo-ffi                   | koffi loads a native library through a Node-like `process`. The module's own gate answers every call in a page with `FfiLoadError.Unsupported` rather than failing late, which a browser leaf asserts against the page itself rather than a simulated one. |
-| kyo-stats-machine         | Reads the machine through `node:os` and `node:fs`. The factory registers no exporter in a page rather than one that reports nothing, and a browser leaf asserts that the registry stays empty there. |
+| kyo-stats-machine         | Reads the machine through `node:os` and `node:fs`. The factory registers no exporter in a page rather than one that reports nothing, and a browser leaf asserts that no machine factory is registered there. |
 
 The modules below have no mark in their Browser columns: their suites run on Node only. For each, what a page lacks is named, so the distinction between "cannot" and "not yet" stays visible.
 
