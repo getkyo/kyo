@@ -304,20 +304,17 @@ These modules work on Windows with a documented limitation, and are marked with 
 
 The JS column covers one Scala.js artifact, and that artifact runs in two places: a Node process and a browser page. They are not the same environment. A page has no sockets, no file system, no process table, no argv, and no native library loader, so a module can be fully supported on JS and still have nothing to offer inside a page.
 
-Every module's test suites run in Chrome on every build, as their own rows (`BrowserTest` for the JS link and `BrowserWasmTest` for the WebAssembly one, see `project/KyoJsRows.scala`), which is what makes the page a supported environment rather than an assumption.
+A module marked under Browser runs its test suites in Chrome on every build, as their own rows (`BrowserTest` for the JS link and `BrowserWasmTest` for the WebAssembly one, see `project/KyoJsRows.scala`), which is what makes the page a supported environment rather than an assumption.
 
-A mark in a Browser column means those suites run in Chrome, not that every surface works there. Three modules are marked whose central subject a page cannot offer at all, and the mark is what makes their page behavior a checked fact rather than a claim: each states what a page gets, and a leaf in a real browser asserts it.
+The modules below have no mark in their Browser columns, because a page cannot offer what they do. For each, what a page lacks is named, so the distinction between "cannot" and "not yet" stays visible.
 
-| Module                    | Marked, and in a page                                                                                                                                                  |
-| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| kyo-net                   | No sockets. Every transport candidate (Node, epoll, kqueue, io_uring) needs a host, so the backend probe selects none and reports `NetBackendUnavailableException`. The per-backend suites cancel in a page, a browser leaf asserts the typed failure, and the pure pump, registry and buffer suites run.  |
-| kyo-ffi                   | koffi loads a native library through a Node-like `process`. The module's own gate answers every call in a page with `FfiLoadError.Unsupported` rather than failing late, which a browser leaf asserts against the page itself rather than a simulated one. |
-| kyo-stats-machine         | Reads the machine through `node:os` and `node:fs`. The factory registers no exporter in a page rather than one that reports nothing, and a browser leaf asserts that no machine factory is registered there. |
-
-The modules below have no mark in their Browser columns: their suites run on Node only. For each, what a page lacks is named, so the distinction between "cannot" and "not yet" stays visible.
+Three of them (kyo-net, kyo-ffi, kyo-stats-machine) nonetheless run their suites in Chrome. Not to claim the module works there, which it does not, but because each states in its own documentation what a page gets instead, and a row is what turns that from a claim into a checked fact: a leaf in a real browser asserts the typed failure, and the suites whose subject needs a host cancel there naming what they needed.
 
 | Module                    | In a page                                                                                                                                                              |
 | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| kyo-net                   | No sockets. Every transport candidate (Node, epoll, kqueue, io_uring) needs a host, so the backend probe selects none and every operation fails `NetBackendUnavailableException`, which a browser leaf asserts. |
+| kyo-ffi                   | koffi loads a native library through a Node-like `process`. The module's own gate answers every call with `FfiLoadError.Unsupported` rather than failing late, which a browser leaf asserts against the page itself rather than a simulated one. |
+| kyo-stats-machine         | Reads the machine through `node:os` and `node:fs`. The factory registers no exporter rather than one that reports nothing, and a browser leaf asserts that no machine factory is registered there. |
 | kyo-sql                   | A database connection is a socket. The SQL AST and the typed DSL are pure and link in a page; what is missing is a driver a page could run.                              |
 | kyo-sql-postgres          | Speaks the wire protocol over kyo-net, so it needs the socket kyo-net cannot offer.                                                                                     |
 | kyo-sql-mysql             | The same: the wire protocol over kyo-net.                                                                                                                              |
@@ -412,8 +409,8 @@ Domain-shaped modules: parsing, durable workflows, container management, low-lat
 | [kyo-lsp](kyo-lsp/README.md)           | ✅   | ✅       | ✅          | ✅      | ✅         | ✅            | Language Server Protocol 3.17 servers and clients with typed handlers, documents, progress, and cancel       |
 | [kyo-compiler](kyo-compiler/README.md) | ✅   |         |            |        |           |              | Scala 3 presentation compiler pool for diagnostics, completions, hover, signatures, and symbols              |
 | [kyo-aeron](kyo-aeron/README.md)       | ✅   | ✅       |            | ✅      | ✅         |              | Typed pub/sub on Aeron: shared-memory IPC, UDP unicast, UDP multicast through one `Topic` API                |
-| [kyo-net](kyo-net/README.md)†          | ✅   | ✅       | ✅          | ✅      | ✅         | ✅            | TCP, Unix sockets, stdio, and TLS on one C transport: io_uring, epoll, kqueue, NIO, Node, BoringSSL          |
-| [kyo-ffi](kyo-ffi/README.md)           | ✅   | ✅       | ✅          | ✅      | ✅         | ✅            | Bind a C library once with typed Scala signatures; safe calls from JVM (Panama), JS/WASM (koffi), and Native |
+| [kyo-net](kyo-net/README.md)†          | ✅   | ✅       |            | ✅      | ✅         |              | TCP, Unix sockets, stdio, and TLS on one C transport: io_uring, epoll, kqueue, NIO, Node, BoringSSL          |
+| [kyo-ffi](kyo-ffi/README.md)           | ✅   | ✅       |            | ✅      | ✅         |              | Bind a C library once with typed Scala signatures; safe calls from JVM (Panama), JS/WASM (koffi), and Native |
 | [kyo-tasty](kyo-tasty/README.md)       | ✅   | ✅       | ✅          | ✅      | ✅         | ✅            | Cross-platform TASTy reflection over a pure sealed model; Scala 3 reflection without a live JVM              |
 
 ### Observability
@@ -424,7 +421,7 @@ In-process metrics and tracing registry, OTLP exporter that activates from `OTEL
 | -------------------------------------------------- | --- | ------- | ---------- | ------ | --------- | ------------ | ------------------------------------------------------------------------------------------------------------ |
 | [kyo-stats-registry](kyo-stats-registry/README.md) | ✅   | ✅       | ✅          | ✅      | ✅         | ✅            | Process-global registry; counters / gauges / counter-gauges / histograms; `TraceExporter` SPI                |
 | [kyo-stats-otlp](kyo-stats-otlp/README.md)         | ✅   | ✅       | ✅          | ✅      | ✅         | ✅            | Zero-code OTLP/HTTP+JSON exporter; W3C `traceparent` propagation auto-installed on kyo-http                  |
-| [kyo-stats-machine](kyo-stats-machine/README.md)†  | ✅   | ✅       | ✅          | ✅      | ✅         | ✅            | Zero-code host metrics (CPU, memory, swap, disk, load, cgroup, PSI) into `kyo.Stat`; auto-loads on classpath |
+| [kyo-stats-machine](kyo-stats-machine/README.md)†  | ✅   | ✅       |            | ✅      | ✅         |              | Zero-code host metrics (CPU, memory, swap, disk, load, cgroup, PSI) into `kyo.Stat`; auto-loads on classpath |
 | [kyo-logging-jpl](kyo-logging-jpl/README.md)       | ✅   |         |            |        |           |              | Bridge `kyo.Log` to `java.lang.System.Logger` (JEP 264, JDK 9+); zero third-party deps                       |
 | [kyo-logging-slf4j](kyo-logging-slf4j/README.md)   | ✅   |         |            |        |           |              | Bridge `kyo.Log` to any SLF4J binding the host application already configures (Logback, Log4j 2, etc.)       |
 
