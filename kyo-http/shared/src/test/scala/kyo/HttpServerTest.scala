@@ -3947,4 +3947,33 @@ class HttpServerTest extends BaseHttpTest:
         }
     }
 
+    "init under interruption" - {
+        // `HttpServer.init` binds the listener in the step that starts the listen fiber and registers its release
+        // only once the join returns, so an interrupt landing at that join leaves the listener bound with nobody to
+        // close it. Each round takes a port the OS hands out, closes that probe so the port is free by number, runs
+        // an init on it interrupted at a small staggered delay, and then waits, bounded, for a bind on the same
+        // port to succeed: a release still in flight frees the port within the bound, a listener nobody registered
+        // holds it for good.
+        "an interrupt landing as the listener binds leaves no listener behind" in {
+            val route   = HttpRoute.getRaw("test").response(_.bodyText)
+            val handler = route.handler(_ => HttpResponse.ok("hello"))
+            val rounds  = 40
+            def bind(port: Int): Boolean < Async =
+                Abort.run[HttpBindException](Scope.run(HttpServer.init(port, "127.0.0.1")(handler).unit)).map(_.isSuccess)
+            Loop.indexed { i =>
+                if i >= rounds then Loop.done(succeed)
+                else
+                    for
+                        port  <- Scope.run(HttpServer.init(0, "127.0.0.1")(handler).map(_.port))
+                        fiber <- Fiber.initUnscoped(Scope.run(HttpServer.init(port, "127.0.0.1")(handler).andThen(Async.never)))
+                        _     <- Async.delay((i % 3).millis)(fiber.interrupt)
+                        _     <- fiber.getResult
+                        free  <- Abort.run[Timeout](Async.timeout(2.seconds)(assertEventually(bind(port))))
+                    yield
+                        assert(free.isSuccess, s"round $i: port $port is still held by a listener the interrupted init left behind")
+                        Loop.continue
+            }
+        }
+    }
+
 end HttpServerTest

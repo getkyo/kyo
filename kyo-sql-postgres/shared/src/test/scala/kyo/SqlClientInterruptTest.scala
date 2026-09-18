@@ -2,6 +2,7 @@ package kyo
 
 import kyo.*
 import kyo.Test
+import kyo.internal.SqlTestContainers
 import kyo.net.Connection
 
 /** Pins the two ways a caller stops a statement that is taking too long.
@@ -124,6 +125,88 @@ class SqlClientInterruptTest extends SqlContainerTest:
                 assert(r.isSuccess, s"cycle $i: the client's close waited on a permit the interrupted lease never gave back: $r")
             }
         }.andThen(succeed)
+    }
+
+    /** The shared Postgres container's URL, with `application_name` set so the sessions a leaf opens are its own in `pg_stat_activity`.
+      * kyo-pod's HttpClient is scoped to the call so the container lookup leaves no pooled socket behind.
+      */
+    private def containerUrl[A](appName: String)(f: String => A < (Async & Abort[SqlException] & Scope))(using
+        Frame
+    ): A < (Async & Abort[SqlException | ContainerException] & Scope) =
+        val cfg = ContainerPredef.Postgres.Config.default
+        HttpClient.init().flatMap { httpClient =>
+            HttpClient.let(httpClient) {
+                SqlTestContainers.getOrInit(SqlTestContainers.containers, "postgres")(
+                    SqlTestContainers.initSingleton(ContainerPredef.Postgres.buildContainerConfig(cfg), "postgres")
+                ).flatMap { container =>
+                    container.mappedPort(cfg.port).flatMap { port =>
+                        f(s"postgres://${cfg.username}:${cfg.password}@${container.host}:$port/${cfg.database}?application_name=$appName")
+                    }
+                }
+            }
+        }
+    end containerUrl
+
+    /** `Runtime.init` warms the pool under an inner `Scope.run` whose finalizer closes the pool only on a failure edge; the clean edge hands
+      * the pool on through that run's drain await and two more steps before `openScoped` registers the client's close. An interrupt on any
+      * of those leaves a pool holding `minConnections` established sessions that nothing closes. The sessions are counted on the server by
+      * the `application_name` the URL sets: a close still in flight drains within the bound, a leaked pool's sessions never go away.
+      */
+    "an interrupt landing as the warmed pool is handed over strands no session" in {
+        val rounds = 30
+        val warm   = SqlConfig(maxConnections = 2, minConnections = 2, acquireTimeout = 10.seconds, queryTimeout = 10.seconds)
+        containerUrl("kyo-sql-warm-orphan") { url =>
+            SqlClient.init(url.replace("kyo-sql-warm-orphan", "kyo-sql-warm-probe"), config).map { probe =>
+                def sessions: Int < (Async & Abort[SqlException]) =
+                    probe.query("SELECT count(*)::int FROM pg_stat_activity WHERE application_name = 'kyo-sql-warm-orphan'")
+                        .map(rows => rows(0).decode[Int](0))
+                Loop.indexed { i =>
+                    if i >= rounds then Loop.done(succeed)
+                    else
+                        for
+                            fiber <-
+                                Fiber.initUnscoped(Abort.run[SqlException](Scope.run(SqlClient.init(url, warm).andThen(Async.never[Unit]))))
+                            _    <- Async.delay(i.millis)(fiber.interrupt)
+                            _    <- fiber.getResult
+                            gone <- Abort.run[Timeout](Async.timeout(5.seconds)(assertEventually(sessions.map(_ == 0))))
+                        yield
+                            assert(gone.isSuccess, s"round $i: sessions of the interrupted client are still open on the server")
+                            Loop.continue
+                }
+            }
+        }
+    }
+
+    /** `withAdvisoryLock` takes the lock in a server round trip and registers its release in the step after the reply lands. An interrupt
+      * landing between the grant and that step leaves the lock on the pooled session, which the pool reclaims and hands to the next
+      * borrower still locked. The lock is read back from `pg_locks` through a second client once the interrupted fiber has settled: a
+      * release still in flight clears it within the bound, a lock nobody registered stays for the session's life.
+      */
+    "an interrupt landing as the advisory lock is granted strands no lock" in {
+        val rounds = 40
+        val key    = 7340031L
+        val one    = SqlConfig(maxConnections = 1, minConnections = 0, acquireTimeout = 10.seconds, queryTimeout = 10.seconds)
+        containerUrl("kyo-sql-lock-orphan") { url =>
+            SqlClient.init(url, one).map { locker =>
+                SqlClient.init(url.replace("kyo-sql-lock-orphan", "kyo-sql-lock-probe"), config).map { probe =>
+                    def held: Int < (Async & Abort[SqlException]) =
+                        probe.query(s"SELECT count(*)::int FROM pg_locks WHERE locktype = 'advisory' AND classid = 0 AND objid = $key")
+                            .map(rows => rows(0).decode[Int](0))
+                    Loop.indexed { i =>
+                        if i >= rounds then Loop.done(succeed)
+                        else
+                            for
+                                fiber <- Fiber.initUnscoped(Abort.run[SqlException](locker.withAdvisoryLock(key)(Async.never[Unit])))
+                                _     <- Async.delay((i % 4).millis)(fiber.interrupt)
+                                _     <- fiber.getResult
+                                gone  <- Abort.run[Timeout](Async.timeout(5.seconds)(assertEventually(held.map(_ == 0))))
+                            yield
+                                assert(gone.isSuccess, s"round $i: the advisory lock is still held on the pooled session")
+                                Loop.continue
+                    }
+                }
+            }
+        }
     }
 
 end SqlClientInterruptTest

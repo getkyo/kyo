@@ -446,4 +446,36 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
         end for
     }
 
+    // A remainder handed out by a peel (`Emit.runFirst`) carries the regions the peeled body had installed. Handed
+    // to a child fiber and run there while the peeling scope ends, the resource stays with the child's run: the
+    // child either completes its use with the resource still held, releasing it at its own exit, or is refused
+    // with Closed. What must never happen is the peeling scope releasing the resource under a use in flight.
+    "a peeled remainder running on a child fiber is not released under it when the peeling scope ends" in {
+        for
+            released <- AtomicBoolean.init(false)
+            entered  <- Latch.init(1)
+            gate     <- Latch.init(1)
+            child <- Scope.run {
+                Emit.runFirst[Int] {
+                    Sync.ensure(released.set(true)) {
+                        Emit.value(1).andThen(entered.release).andThen(gate.await).andThen(released.get)
+                    }
+                }.map { case (_, rest) =>
+                    Fiber.initUnscoped(Abort.run[Closed](Emit.run[Int](rest(())).map(_._2))).map { child =>
+                        entered.await.andThen(child)
+                    }
+                }
+            }
+            _      <- gate.release
+            result <- child.getResult
+        yield result match
+            case Result.Success(Result.Success(true)) =>
+                fail("the child ran its use after the peeling scope released the resource under it")
+            case Result.Success(Result.Success(false)) | Result.Success(Result.Failure(_: Closed)) | Result.Panic(_: Closed) =>
+                succeed
+            case other =>
+                fail(s"unexpected outcome $other")
+        end for
+    }
+
 end ScopeInterruptTest

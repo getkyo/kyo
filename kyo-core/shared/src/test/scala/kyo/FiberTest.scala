@@ -1252,6 +1252,21 @@ class FiberTest extends kyo.test.Test[Any]:
                 assert(!res)
                 assert(value == 42)
         }
+
+        "a fatal thrown in the body releases the fiber's finalizers before the promise settles with the panic" in {
+            for
+                released <- AtomicBoolean.init(false)
+                fiber <- Fiber.initUnscoped {
+                    Sync.ensure(released.set(true))(Sync.defer((throw new StackOverflowError("thrown on purpose")): Int))
+                }
+                result <- fiber.getResult
+                freed  <- released.get
+            yield
+                result match
+                    case Result.Panic(_: StackOverflowError) => succeed
+                    case other                               => fail(s"expected a panic carrying the fatal, got $other")
+                assert(freed, "the finalizer did not run for a fatal")
+        }
     }
 
     "deferred completion" - {

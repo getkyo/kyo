@@ -61,6 +61,53 @@ Findings were re-checked against the tree and, where a deterministic leaf could 
 - D15 (PubSub): not reproduced. `PubSubTest`, "a subscriber interrupted at the subscribe reply is not left in the set", samples the window in 200 rounds and stays green; the interrupt requested as soon as the actor reports the subscriber lands after the subscriber's fiber has resumed. The finding stands by reading; a seam on the reply promise would be needed to land the interrupt inside the window.
 - D18 (`Command.spawn`): reproduced. `CommandTest`, "an interrupt landing during spawn does not orphan the process", pending: 8 of 40 rounds, interrupted at staggered delays around the fork, left a `sleep` process behind (killed by the leaf afterwards).
 - DOC1: fixed in `kyo-kernel/CONTRIBUTING.md`, rewritten to the current walk.
+- T6 (`KyoApp.runAndBlock`): reproduced. `KyoAppTest`, "runAndBlock's timeout does not leave the forked computation running", pending: the forked fiber stays parked on its gate after the block reported `Timeout`.
+- T10 (`Hub.listen`): not reproduced. `HubTest`, "a listener whose registration is abandoned is not left in the set", samples the poll between the add and the registration in 100 rounds and stays green; the probe through a live listener would stall on a leaked one-slot listener.
+- T5 (`Hub.initUnscopedWith`): no leaf. An orphaned publisher fiber parks on a channel nothing else references, so nothing in the API can observe it.
+- T12 (`Channel.takeWith`): pinned green. `ChannelTest`, "takeWith registers a release for the element it delivers under a pending interrupt": in 100 rounds every delivered element was released, and the rest were handed back to the channel.
+- T27: pinned green. `FiberTest`, "a fatal thrown in the body releases the fiber's finalizers before the promise settles with the panic".
+- T2 (K2): not reproduced. `EvalTest`, "a double abandonment reaches an ensuring region stopped in its first step once": the region is entered before its body's first step, so the park carries the entered cell and the second walk finds it run. The per-walk shape the finding describes needs a region the walk reaches unentered, which the raw-hook leaf beside it shows for a plain context region.
+- T1 (K1), core companion: not reproduced. `ScopeInterruptTest`, "a peeled remainder running on a child fiber is not released under it when the peeling scope ends", is green: an `Emit.runFirst` remainder holding a `Sync.ensure` region, handed to a child fiber and parked inside its use while the peeling `Scope.run` ends, completes with the resource still held. The kernel-level shape in the spec (a nested `Eval.partial` on one thread) was not written.
+- D11, server half: not a defect. `HttpServer.init` wraps the join in `Scope.acquireRelease`, which registers through `ensureMap` in the step the value arrives (`Scope.scala`, the comment on `acquireRelease`), so no poll separates the listener from its release. `HttpServerTest`, "an interrupt landing as the listener binds leaves no listener behind", pins it green over 40 rounds. The client half (`poolWithImpl`, `connectWebSocket`, `connectRaw`) has no leaf: a leaked client connection is observable from neither side without a seam.
+- D3 (`Runtime.init` warm-up handover): not reproduced. `SqlClientInterruptTest` (kyo-sql-postgres, real container), "an interrupt landing as the warmed pool is handed over strands no session", 30 rounds interrupting at 0 to 29 ms, every session gone from `pg_stat_activity` within the bound.
+- D4 (advisory lock): not reproduced. Same suite, "an interrupt landing as the advisory lock is granted strands no lock", 40 rounds, `pg_locks` clear after each. The window is the one park between the grant's reply and the registration; the rounds sample it, a seam on the reply would land in it.
+- D16 (`SpawnBackend.init`): reproduced. `SpawnBackendTest`, "an interrupt landing before the kill is armed does not orphan the worker JVM", pending: an interrupt 4 ms after the init started left a worker JVM running past a 10 s bound (the leaf kills it afterwards).
+- D1, D2, D5 to D8, D9, D10, D12, D14, D17: no leaf. Each window is one park inside code with no observation point or seam (a ring drain, a custody take, Chrome and CDP replies, aeron native handles, http fiber trios, the jsonrpc engine, the flow poll loop); the report keeps them as findings by reading.
+
+## Why the kyo-test leak check does not catch these
+
+The end-of-run probes live in `kyo-test/runner/jvm/src/main/scala/kyo/test/runner/internal/LeakCheck.scala` and
+`StrandedOpCheck.scala`, wired from `SbtRunner.runEndOfRunChecks`. What they can see, and where each finding above falls:
+
+- **When and where they run.** Once per forked test JVM, at sbt's `done()` after every suite in the fork has finished, and only in a
+  fork. They are JVM-only: the JS and Native legs have no probe at all. The descriptor probe reads `/proc/self/fd`, so it is a no-op
+  on macOS and Windows; on this machine every local run is unprobed, and only the Linux CI legs carry it.
+- **What they sample.** Three process-global resources: open descriptors (diffed against a baseline taken at construction, benign and
+  allowlisted targets removed, re-sampled for up to 30s so a close still in flight drains), the scheduler (`loadAvg`, busy workers), and
+  non-daemon threads. `StrandedOpCheck` adds a per-driver lost-wakeup classifier from kyo-net's `Diagnostics` (a loop whose pending work
+  survives with a frozen cycle counter).
+- **Parked fibers are invisible by design.** The fiber probe reports a scheduler that stays busy, that is a fiber running or repeatedly
+  rescheduling. A fiber parked on a promise, latch, or channel is off-scheduler; the header of `LeakCheck` says so ("catching that
+  would need a core registry"). This is the class most of the findings fall in: the `Kyo.async` orphan (C2), `runAndBlock`'s forked
+  computation (C2, T6), `Hub`'s publisher and a listener left in its set (C2, T5 and T10), `PubSub`'s subscriber (D15), the pool permit
+  stranded by the stream lease, the abandoned drain in the `take` finalizer, and the values `Scope.run` (C1) and `Sync.ensure` (K3)
+  hand to nobody. None of them holds a descriptor or a thread, so the fork looks clean.
+- **In-memory and server-side state is not a probe surface.** A registration missing from a set, a slot never given back, an advisory
+  lock left on a pooled session (D4) or warmed sessions on the server (D3) are visible only to a test that reads that state, which is what
+  the leaves added here do.
+- **The descriptor-visible leaks never happened in the suite.** A listener nobody registered (D11, D13), a child process abandoned during
+  its fork (D18), or an aeron client abandoned at its connect join (D10, D16) does hold descriptors, and the Linux probe would report
+  them. Each needs a stop delivered inside a window one park wide, between the step that produces the resource and the step that
+  registers its release. No existing leaf interrupted inside such a window, so the fork ended with nothing to report. The leaves added
+  here are the first to land there, which is also why they must be run under the Linux probe before the branch goes to CI: a pending leaf
+  whose body leaks a listener trips the fork-wide descriptor check in that module's JVM leg, regardless of its own pending status. A
+  per-suite `leakCheckSockets(false)` does not help: each category is enabled fork-wide when any suite in the fork enables it.
+- **A note on the runner's comments.** `SbtRunner` and `LeakCheckTest` say `BaseHttpTest` disables the socket category. It does not:
+  no suite in kyo-http, kyo-net, kyo-jsonrpc, or kyo-system overrides `leakCheckSockets`, so those forks check sockets on Linux. The
+  suites that do exempt sockets are kyo-browser, kyo-ui, kyo-pod, kyo-flow's `FlowApiTest`, kyo-slack's live suites, and kyo-stats-otlp.
+- **The check reads the wrong moment for a window this narrow.** Even for a descriptor leak, one sample at the end of the fork cannot say
+  which leaf leaked; `KYO_TEST_LEAK_DEBUG=1` runs leaves serially and attributes descriptors to leaves, which is a debugging mode, not the
+  CI configuration.
 
 ## 2. Kernel rules, verified against the code
 

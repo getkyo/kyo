@@ -833,6 +833,25 @@ class EvalTest extends AnyFreeSpec:
             assert(log.toList == List("release cfg 1", "release cfg 1"))
         }
 
+        // The region an `ensuring` installs from the start is entered before its body's first step runs, so the park
+        // taken in that step carries the entered cell, and the second walk finds it already run. This is the
+        // exactly-once shape the raw-hook leaf above shows is not shared by a plain context region.
+        "a double abandonment reaches an ensuring region stopped in its first step once" in {
+            val seen = ListBuffer[Maybe[Throwable]]()
+            val v: Int < Any =
+                Bracket.ensuring(o => discard(seen += o)) {
+                    Effect.defer {
+                        requestStop()
+                        Effect.defer(1)
+                    }
+                }
+            val p = Eval.partial(v)
+            assert(p.evalNow.isEmpty)
+            Eval.release(p, Boom)
+            Eval.release(p, Boom)
+            assert(seen.toList.map(_.exists(_ eq Boom)) == List(true), s"expected the release exactly once, saw $seen")
+        }
+
         "release of a settled value or an obligation-free computation owes nothing" in {
             Eval.release(42: Int < Any, Boom)
             var ran = false

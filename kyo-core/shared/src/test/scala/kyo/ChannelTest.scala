@@ -2158,4 +2158,40 @@ class ChannelTest extends kyo.test.Test[Any]:
         end for
     end verifyRaceDrainWithClose
 
+    "take under interruption" - {
+        // `takeWith` applies its function in the step that delivers the element, so a release registered inside it
+        // is owed by the taker's scope even when a stop is pending against the taker. The interrupt here is
+        // requested right after the put that wakes the parked taker, so it lands around the resumed slice. Two
+        // outcomes are correct: the element was delivered and its release ran, or the abandoned take handed it back
+        // to the channel. Delivered and never released is the one the leaf refuses.
+        "takeWith registers a release for the element it delivers under a pending interrupt" in {
+            val rounds = 100
+            Loop.indexed { i =>
+                if i >= rounds then Loop.done
+                else
+                    for
+                        c        <- Channel.init[Int](1)
+                        released <- AtomicInt.init(0)
+                        taker <- Fiber.initUnscoped {
+                            Scope.run {
+                                c.takeWith(v => Scope.acquireRelease(v)(_ => released.incrementAndGet.unit)).andThen(Async.never)
+                            }
+                        }
+                        _ <- assertEventually(c.pendingTakes.map(_ == 1))
+                        _ <- c.put(i)
+                        _ <- taker.interrupt
+                        _ <- taker.getResult
+                        settled <- Abort.run[Timeout](Async.timeout(2.seconds)(assertEventually(
+                            released.get.map(r => c.size.map(s => r == 1 || s == 1))
+                        )))
+                        rel  <- released.get
+                        left <- c.size
+                    yield
+                        assert(settled.isSuccess, s"round $i: the element was delivered to the taker and never released")
+                        assert((rel == 1 && left == 0) || (rel == 0 && left == 1), s"round $i: released=$rel left=$left")
+                        Loop.continue
+            }
+        }
+    }
+
 end ChannelTest

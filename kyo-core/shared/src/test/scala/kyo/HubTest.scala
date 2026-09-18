@@ -561,4 +561,38 @@ class HubTest extends kyo.test.Test[Any]:
             }
         }
     }
+    "listen under interruption" - {
+        // `listen` adds the listener to the hub's set in one step and registers its release in the next, behind a
+        // poll of the hub's closed flag. An interrupt landing on that poll abandons the registration: the listener
+        // stays in the set with nobody to close it, and once its one-slot buffer fills the publisher parks on it
+        // and no later value reaches the listeners that are alive. The interrupt is requested at a small staggered
+        // delay after the fiber starts, so the rounds sample that poll. The probe afterwards publishes two values
+        // through a live listener; a leaked listener holds the first and stalls the publisher on the second.
+        "a listener whose registration is abandoned is not left in the set" in {
+            val rounds = 100
+            Hub.initWith[Int](8) { hub =>
+                Loop.indexed { i =>
+                    if i >= rounds then Loop.done
+                    else
+                        for
+                            fiber <- Fiber.initUnscoped(Scope.run(hub.listen(1).andThen(Async.never)))
+                            _     <- Async.delay((i % 3).millis)(fiber.interrupt)
+                            _     <- fiber.getResult
+                        yield Loop.continue
+                }.andThen {
+                    hub.listen(8).map { live =>
+                        Abort.run[Timeout] {
+                            Async.timeout(2.seconds) {
+                                hub.put(1).andThen(hub.put(2)).andThen(live.take.map(a => live.take.map(b => (a, b))))
+                            }
+                        }.map {
+                            case Result.Success((1, 2)) => succeed
+                            case other                  => fail(s"a leaked listener stalled the hub's publisher: $other")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
 end HubTest
