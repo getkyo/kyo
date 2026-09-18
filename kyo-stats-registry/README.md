@@ -390,11 +390,11 @@ val ok2: Attributes = Attributes.add("name", "alice") // String
 
 ## Cross-platform behavior
 
-The module compiles for JVM, Scala.js, and Scala Native from the same `shared/` sources. The hot-path API is identical across all three. The one behavior that differs is the registry's weak-reference eviction.
+The module compiles for JVM, Scala.js, Scala Native, and Wasm from the same `shared/` sources. The hot-path API is identical across all four. The one behavior that differs is the registry's weak-reference eviction.
 
-On JVM, instruments are held in `java.lang.ref.WeakReference` and are evicted under GC pressure when no strong reference remains. On JS and Native, `WeakReference` is a polyfill that holds the value *strongly*. Instruments minted on those platforms are pinned for the life of the process; the eviction-and-fresh-instrument scenario described under "Singleton-per-path" cannot occur there.
+On JVM and Native, instruments are held in `java.lang.ref.WeakReference` and are evicted under GC pressure when no strong reference remains. On JS and Wasm, `WeakReference` is a polyfill that holds the value *strongly*. Instruments minted on those platforms are pinned for the life of the process; the eviction-and-fresh-instrument scenario described under "Singleton-per-path" cannot occur there.
 
-The application-level consequence is small in practice: code that holds instruments in a `val` on a long-lived object behaves identically across platforms. Code that relies on eviction to drop instruments (none of the in-tree kyo modules do this) is JVM-only behavior.
+The application-level consequence is small in practice: code that holds instruments in a `val` on a long-lived object behaves identically across platforms. Code that relies on eviction to drop instruments (none of the in-tree kyo modules do this) is supported on JVM and Native.
 
 ## Putting it together
 
