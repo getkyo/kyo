@@ -8,13 +8,20 @@ import java.util.concurrent.atomic.AtomicReference
   * ([[offer]], multi-producer) and the single change-worker fiber drains them ([[poll]], single-consumer). A
   * `ConcurrentLinkedQueue[java.lang.Long]` would box each command on every enqueue (a `java.lang.Long` allocation per offer, which a JFR
   * alloc profile of the poller pinpointed as the dominant boxing source on the hot path); this queue stores the raw `long` in a node and
-  * recycles drained nodes through a free list, so after warm-up neither an enqueue nor a dequeue allocates.
+  * reuses drained nodes through a slot pool, so after warm-up neither an enqueue nor a dequeue allocates.
   *
   * Algorithm: Vyukov's intrusive MPSC linked queue. Producers publish a node by a single atomic swap of the tail (`getAndSet`) then link the
   * previous tail to it; the consumer walks `next` pointers from the head. A one-node "stub" separates head from tail so the empty state needs
-  * no special casing. Dequeued nodes are pushed onto a Treiber free-list (`freeList`) and reused by the next `offer`, bounding steady-state
-  * allocation to zero. The free-list pop is itself lock-free (a CAS loop), so a producer that loses the pop race simply allocates a fresh node
-  * that later returns to the pool.
+  * no special casing.
+  *
+  * Node reuse: drained nodes go into [[freePool]], a fixed array of single-node slots. The consumer publishes a node into an empty slot and a
+  * producer claims one with `getAndSet(null)`, so every transfer is a single unconditional atomic operation on one slot and no participant
+  * ever reads a "next free" link that another thread could invalidate. A stack would be the obvious pool here and is the wrong choice: its pop
+  * reads the head node and that node's successor, then compare-and-swaps the head, and between the successor read and the swap the head node
+  * can be claimed, enqueued, drained and recycled by other threads, after which the swap installs a successor that is stale. That stale
+  * successor is a node already linked into the FIFO, so the next claim hands a live node to a producer, which resets its `next` pointer and
+  * severs the chain behind it: every value linked after the cut is lost and the consumer polls empty forever. The slot pool has no such link
+  * to go stale.
   *
   * Memory ordering: `getAndSet` on `tail` and the `next` `AtomicReference` writes/reads carry the JMM happens-before edges the producers and
   * the consumer need; a value stored before [[offer]] is visible to the consumer that dequeues it (the same publication guarantee a
@@ -30,9 +37,13 @@ final private[kyo] class MpscLongQueue:
     private val stub                 = new Node(0L)
     private val tail                 = new AtomicReference[Node](stub)
     @volatile private var head: Node = stub
-    private val freeList             = new AtomicReference[Node](null)
 
-    /** Append `value` to the tail. Safe from any number of producer threads/fibers. Allocation-free once the free list is warm. */
+    // The node pool: each slot holds at most one reusable node. Sized so a burst of concurrent producers mostly finds one, and bounded so a
+    // queue that peaks deep and then idles does not retain a node per peak entry (a stack pool would).
+    private val freePool: Array[AtomicReference[Node]] =
+        Array.fill(FreeSlots)(new AtomicReference[Node](null))
+
+    /** Append `value` to the tail. Safe from any number of producer threads/fibers. Allocation-free once the pool is warm. */
     def offer(value: Long): Unit =
         val node = acquireNode(value)
         // Single linearization point: atomically make `node` the new tail and read the previous tail. The window between this swap and the
@@ -67,32 +78,39 @@ final private[kyo] class MpscLongQueue:
     def peekNonEmpty(): Boolean =
         head.next.get() ne null
 
+    /** Take a node from the pool, or build one when every slot is empty.
+      *
+      * `getAndSet(null)` is what makes a claim safe from any number of producers: it hands the slot's node to exactly one caller and leaves
+      * the slot empty, with no read of pool state that a concurrent claim could invalidate between the read and the write.
+      */
     private def acquireNode(value: Long): Node =
-        @scala.annotation.tailrec
-        def loop(): Node =
-            val free = freeList.get()
-            if free eq null then new Node(value)
-            else if freeList.compareAndSet(free, free.freeNext) then
-                free.freeNext = null
-                free.next.set(null)
-                free.value = value
-                free
-            else loop()
-            end if
-        end loop
-        loop()
+        var i      = 0
+        var result = null: Node
+        while (result eq null) && i < FreeSlots do
+            // The plain read skips the atomic on an empty slot, which is the common case once producers outrun the consumer.
+            if freePool(i).get() ne null then result = freePool(i).getAndSet(null)
+            i += 1
+        end while
+        if result eq null then new Node(value)
+        else
+            result.next.set(null)
+            result.value = value
+            result
+        end if
     end acquireNode
 
+    /** Offer a drained node back to the pool, dropping it when every slot is taken.
+      *
+      * Only the consumer publishes, and only into a slot it has observed empty, so a node is never in two slots and a full pool costs nothing
+      * beyond letting the node be collected.
+      */
     private def recycleNode(node: Node): Unit =
-        // The drained node is reset and pushed onto the Treiber free list. `next`/`value` are re-initialized in acquireNode before reuse, so
-        // a stale `next` here is harmless. Bounding the free list is unnecessary: it can hold at most the queue's peak depth.
-        @scala.annotation.tailrec
-        def loop(): Unit =
-            val free = freeList.get()
-            node.freeNext = free
-            if !freeList.compareAndSet(free, node) then loop()
-        end loop
-        loop()
+        var i    = 0
+        var done = false
+        while !done && i < FreeSlots do
+            if freePool(i).get() eq null then done = freePool(i).compareAndSet(null, node)
+            i += 1
+        end while
     end recycleNode
 
 end MpscLongQueue
@@ -104,12 +122,16 @@ private[kyo] object MpscLongQueue:
       */
     final val Empty: Long = Long.MinValue
 
-    /** Intrusive queue node holding one `long`. `next` links the FIFO order (read by the consumer, written by producers); `freeNext` links the
-      * recycle free list (a separate chain so a node can sit on the free list without disturbing FIFO `next`).
+    /** Number of single-node slots in a queue's reuse pool. Small enough that a claim scanning every slot stays cheap on the poller's hot
+      * path, and wide enough that concurrent producers do not all contend for one slot.
+      */
+    final private val FreeSlots: Int = 8
+
+    /** Intrusive queue node holding one `long`. `next` links the FIFO order: written by the producer that appends the successor, read by the
+      * consumer.
       */
     final private class Node(@volatile var value: Long):
         val next: AtomicReference[Node] = new AtomicReference[Node](null)
-        @volatile var freeNext: Node    = null
     end Node
 
 end MpscLongQueue

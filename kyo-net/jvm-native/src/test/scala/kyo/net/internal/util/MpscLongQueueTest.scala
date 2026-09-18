@@ -100,10 +100,13 @@ class MpscLongQueueTest extends Test:
         java.util.Arrays.fill(lastSeen, -1L)
         @volatile var orderViolation = false
         @volatile var duplicate      = false
+        val producersDone            = new java.util.concurrent.atomic.AtomicInteger(0)
 
         val consumer = new Thread(() =>
             var drained = 0
-            while drained < total do
+            var idle    = 0L
+            var lost    = false
+            while drained < total && !lost do
                 val v = q.poll()
                 if v != MpscLongQueue.Empty then
                     val idx = v.toInt
@@ -112,7 +115,13 @@ class MpscLongQueueTest extends Test:
                     if v <= lastSeen(p) then orderViolation = true
                     lastSeen(p) = v
                     drained += 1
+                    idle = 0L
                     discard(seenCount.incrementAndGet())
+                else
+                    // Every producer has returned, so a long run of empty polls means values were lost rather than still in flight. Stopping
+                    // here makes that a counted failure below; without it the drain loop spins until the suite timeout and reports nothing.
+                    idle += 1L
+                    if idle > 20000000L && producersDone.get() == producers then lost = true
                 end if
             end while
         )
@@ -125,6 +134,7 @@ class MpscLongQueueTest extends Test:
                 while j < perProducer do
                     q.offer(base + j)
                     j += 1
+                discard(producersDone.incrementAndGet())
             )
             t.start()
             t
@@ -135,6 +145,72 @@ class MpscLongQueueTest extends Test:
         assert(seenCount.get() == total, s"consumer must drain all $total values, got ${seenCount.get()}")
         assert(!duplicate, "no value may be dequeued twice")
         assert(!orderViolation, "each producer's values must stay in FIFO order in the consumer's stream")
+        var i      = 0
+        var allHit = true
+        while i < total do
+            if !seen.get(i) then allHit = false
+            i += 1
+        assert(allHit, "every offered value must be dequeued exactly once")
+        succeed
+    }
+
+    "a warm node pool never hands the same node to two producers" in {
+        // The leaf above starts with an empty pool, so most claims allocate and the reuse path is barely exercised. Warming the pool first
+        // makes every offer claim a recycled node, which is where a pool that can hand one node to two producers, or hand out a node still
+        // linked in the FIFO, corrupts the chain: the symptom is a lost or duplicated value here.
+        val producers   = 16
+        val perProducer = 20000
+        val total       = producers * perProducer
+
+        val q = new MpscLongQueue()
+        var w = 0
+        while w < 64 do
+            q.offer(w.toLong)
+            w += 1
+        w = 0
+        while w < 64 do
+            discard(q.poll())
+            w += 1
+
+        val seen                = new java.util.concurrent.atomic.AtomicReferenceArray[Boolean](total)
+        val producersDone       = new java.util.concurrent.atomic.AtomicInteger(0)
+        @volatile var duplicate = false
+        var drained             = 0
+
+        val consumer = new Thread(() =>
+            var idle = 0L
+            var lost = false
+            while drained < total && !lost do
+                val v = q.poll()
+                if v != MpscLongQueue.Empty then
+                    if seen.getAndSet(v.toInt, true) then duplicate = true
+                    drained += 1
+                    idle = 0L
+                else
+                    idle += 1L
+                    if idle > 20000000L && producersDone.get() == producers then lost = true
+                end if
+            end while
+        )
+        consumer.start()
+
+        val producerThreads = (0 until producers).map { p =>
+            val t = new Thread(() =>
+                val base = p.toLong * perProducer
+                var j    = 0
+                while j < perProducer do
+                    q.offer(base + j)
+                    j += 1
+                discard(producersDone.incrementAndGet())
+            )
+            t.start()
+            t
+        }
+        producerThreads.foreach(_.join())
+        consumer.join()
+
+        assert(drained == total, s"consumer must drain all $total values from a warm pool, got $drained")
+        assert(!duplicate, "no value may be dequeued twice")
         var i      = 0
         var allHit = true
         while i < total do
