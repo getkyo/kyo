@@ -40,6 +40,11 @@
 # from the output gives back NetEcho 3,284,013, HttpGet 5,418,151 and AiHttp 7,255,534: the single-module sizes
 # above, plus the two classes that defer the load. Gzipped, the names cost NetEcho 537,102 against 475,703,
 # HttpGet 868,466 against 769,498, AiHttp 1,090,002 against 982,979. A minifying bundler renames them.
+#
+# Measured when AiAuto was added, the provider-auto-detect path (#1836 W5):
+#   JS 1,912,356   Wasm 937,884
+# It resolves a config and prints, reaching no client, so it links no network stack: one module, and its JS-initial
+# equals its JS. It is a fifth of AiHttp because it names no completion; what it is for is that it stays that way.
 
 JS   CoreMin 1,010,000
 JS   CoreLog 1,175,000
@@ -56,10 +61,12 @@ Wasm SystemPath   1,195,000
 Wasm NetEcho      1,620,000
 JS   HttpGet      7,735,000
 JS   AiHttp      10,055,000
+JS   AiAuto       2,105,000
 JS   MachineStats 2,515,000
 Wasm CoreApp        965,000
 Wasm HttpGet      2,455,000
 Wasm AiHttp       3,330,000
+Wasm AiAuto       1,032,000
 Wasm MachineStats 1,220,000
 JS-initial CoreMin      1,010,000
 JS-initial CoreLog      1,175,000
@@ -70,4 +77,5 @@ JS-initial SystemPath   2,415,000
 JS-initial NetEcho      2,695,000
 JS-initial HttpGet      3,255,000
 JS-initial AiHttp       6,600,000
+JS-initial AiAuto       2,105,000
 JS-initial MachineStats 2,515,000

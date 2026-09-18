@@ -118,6 +118,16 @@ object LinkCheck {
             absent = Seq("node:child_process"),
             hostChunks = true
         ),
+        // The same rule on the path that names no provider: auto-detect probes every candidate for its key, and the candidate
+        // list names both CLI harnesses. Probing for a key is not spawning a process, so this program must not carry one either.
+        Program(
+            "AiAuto",
+            "kyo-link-check-ai",
+            "linkcheck.AiAuto",
+            "auto".r,
+            "auto".r,
+            absent = Seq("node:child_process")
+        ),
         // The machine-stats factory registers itself at module load, and registering starts a sampler that reads the
         // machine through Node's own modules. A host with no machine to read registers nothing, which is the difference
         // between these two lines.

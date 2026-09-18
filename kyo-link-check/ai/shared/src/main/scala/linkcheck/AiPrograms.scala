@@ -19,3 +19,17 @@ object AiHttp extends KyoApp:
         Abort.run[Any](LLM.run(config)(AI.gen[String]("hello"))).map(result => Console.printLine(Report(result)))
     }
 end AiHttp
+
+/** A program that names no provider and lets `Config.default` choose one, which is what an application does when it sets no
+  * `kyo.ai.provider`.
+  *
+  * [[AiHttp]] holds the rule that a program with no use for a process must not carry `node:child_process`, but it holds it on the path
+  * where the provider is named at the call site. This is the other path: auto-detect probes `Provider.defaultCandidates`, and that list
+  * names the two CLI harnesses ahead of every API provider. Naming a provider to probe for its key is not using its completion, so the
+  * same rule applies here, and this is the path where it is easy to lose.
+  */
+object AiAuto extends KyoApp:
+    run {
+        Abort.run[Any](Config.default.map(_ => "auto")).map(result => Console.printLine(Report(result)))
+    }
+end AiAuto
