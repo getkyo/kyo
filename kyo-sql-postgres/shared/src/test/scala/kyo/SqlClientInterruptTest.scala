@@ -95,4 +95,35 @@ class SqlClientInterruptTest extends SqlContainerTest:
         }.andThen(succeed)
     }
 
+    /** The scoped lease behind `streamQuery` takes its permit through the same forked, timeout-bounded take as a statement, so a caller
+      * interrupted on that take's join must leave the permit owned by the give-back registered before the take. A stranded permit is
+      * observable through `close`: it waits its whole `closeGrace` for a permit that never comes back, so each cycle, close included, is
+      * bounded well under that grace and a leak fails the cycle by name rather than by the suite timeout.
+      */
+    "an interrupted stream lease strands no permit" in {
+        Kyo.foreachDiscard(Chunk.from(1 to 20)) { i =>
+            Abort.run[Timeout] {
+                Async.timeout(10.seconds) {
+                    Scope.run {
+                        withSilentClient { client =>
+                            Latch.initWith(1) { started =>
+                                Fiber.initUnscoped(
+                                    started.release.andThen(Abort.run[SqlException](Scope.run(client.streamQuery("SELECT 1").run)))
+                                ).flatMap { fiber =>
+                                    started.await.andThen {
+                                        fiber.interrupt.map { interrupted =>
+                                            assert(interrupted, "each cycle must genuinely interrupt an in-flight stream lease")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }.map { r =>
+                assert(r.isSuccess, s"cycle $i: the client's close waited on a permit the interrupted lease never gave back: $r")
+            }
+        }.andThen(succeed)
+    }
+
 end SqlClientInterruptTest
