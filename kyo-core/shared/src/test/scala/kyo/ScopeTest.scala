@@ -165,6 +165,19 @@ class ScopeTest extends kyo.test.Test[Any]:
                 }
         }
 
+        "acquire aborts" in {
+            for
+                released <- AtomicInt.init(0)
+                result <- Abort.run[String] {
+                    Scope.run(Scope.acquireRelease(Abort.fail("acquisition failure"))(_ => released.incrementAndGet.unit))
+                }
+                count <- released.get
+            yield
+                assert(result.failure.contains("acquisition failure"))
+                assert(count == 0, s"a release was registered for an acquisition that failed: $count")
+            end for
+        }
+
         "release fails" in {
             var acquired = false
             var released = false
@@ -206,6 +219,7 @@ class ScopeTest extends kyo.test.Test[Any]:
         }
 
         "a resource acquired after the scope closed is released rather than leaked" in {
+            val scopeFrame = summon[Frame]
             for
                 acquired <- AtomicInt.init(0)
                 released <- AtomicInt.init(0)
@@ -216,7 +230,7 @@ class ScopeTest extends kyo.test.Test[Any]:
                             Scope.acquireRelease(acquired.incrementAndGet)(_ => released.incrementAndGet.unit)
                         )
                     )
-                }
+                }(using scopeFrame)
                 // The gate opens only once Scope.run has returned, so the acquisition below is guaranteed to find the scope closed.
                 _      <- gate.release
                 result <- fiber.getResult
@@ -230,11 +244,50 @@ class ScopeTest extends kyo.test.Test[Any]:
                 }
             yield
                 // One acquisition, one release. Comparing the counters to each other would hold at zero
-                // before the fiber has acquired anything.
+                // before the fiber has acquired anything. The refusal names the scope that closed, so the
+                // escaping fiber can be traced to the `Scope.run` it outlived.
+                assert(result.panic.exists(_.isInstanceOf[Closed]), s"registering on a closed scope must panic Closed: $result")
                 assert(
-                    result.isSuccess || result.panic.exists(_.isInstanceOf[Closed]),
-                    s"registering on a closed scope must either succeed or panic Closed: $result"
+                    result.panic.exists(_.getMessage.contains(s"Finalizer created at ${scopeFrame.position.show} is closed.")),
+                    s"the Closed must name the scope's creation frame: ${result.panic.map(_.getMessage)}"
                 )
+            end for
+        }
+
+        "a rejected release that suspends and fails still runs once, and the caller still sees Closed" in {
+            val failure = new RuntimeException("release failure")
+            for
+                start    <- Latch.init(1)
+                gate     <- Latch.init(1)
+                entered  <- Latch.init(1)
+                finished <- Latch.init(1)
+                released <- AtomicInt.init(0)
+                fiber <- Scope.run {
+                    Fiber.initUnscoped {
+                        start.await.andThen {
+                            Scope.acquireRelease("token") { _ =>
+                                // The refused release runs detached: it may suspend, and its own failure is logged, not
+                                // delivered, so the acquiring fiber's error stays the refusal.
+                                Sync.ensure(finished.release) {
+                                    entered.release.andThen(gate.await).andThen {
+                                        released.incrementAndGet.andThen(Abort.fail(failure))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                _      <- start.release
+                result <- fiber.getResult
+                _      <- entered.await
+                before <- released.get
+                _      <- gate.release
+                _      <- finished.await
+                after  <- released.get
+            yield
+                assert(result.panic.exists(_.isInstanceOf[Closed]), s"the caller must see the refusal, got $result")
+                assert(before == 0, "the release ran to its end before the gate opened")
+                assert(after == 1, s"the refused release ran $after times")
             end for
         }
 
