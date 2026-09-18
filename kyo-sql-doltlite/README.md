@@ -43,11 +43,16 @@ The engine is a compiled library rather than C source, so it ships per platform:
 | macOS | ✅ | ✅ |
 | Linux (glibc) | ✅ | ✅ |
 | Linux (musl) | ✅ | ✅ |
-| Windows | ✅ | ❌ |
+| Windows | ❌ | ❌ |
 
-Windows on ARM is the one gap, and it is upstream's rather than a packaging choice here: DoltLite publishes no
-`win-arm64` build, and its autoconf build runs through MSYS2/MinGW, which that platform has no native toolchain
-for. Opening a `doltlite://` URL there fails with `DoltLiteEngineUnavailableException`, naming the platform and
+Windows is the one gap, and it is upstream's rather than a packaging choice here. There is no `win-arm64` build
+at all, and its autoconf build runs through MSYS2/MinGW, which that platform has no native toolchain for. The
+`win-x64` release does exist, but it carries `doltlite.h` and `libdoltlite.dll` and nothing else: no static
+archive, and no import library. This driver links the archive INTO its shim so the engine travels with it, and
+a DLL cannot stand in, because the shim is extracted to a temp directory the DLL is not in and the link then
+fails at run time rather than at build time.
+
+Opening a `doltlite://` URL on Windows fails with `DoltLiteEngineUnavailableException`, naming the platform and
 where the loader looked, rather than failing deep inside a native call.
 
 [kyo-sql-sqlite](../kyo-sql-sqlite/README.md) is the embedded engine that does run everywhere. It compiles from C

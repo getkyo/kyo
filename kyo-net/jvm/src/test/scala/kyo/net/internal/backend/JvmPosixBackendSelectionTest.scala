@@ -6,6 +6,7 @@ import kyo.net.NetConfig
 import kyo.net.Test
 import kyo.net.internal.posix.PosixConstants
 import kyo.net.internal.posix.PosixTransport
+import kyo.net.internal.transport.TransportImpl
 
 /** JVM backend-selection tests for the unified transport wiring. They confirm the production `IoBackendPlatform.transport` selects the
   * OS-appropriate posix backend (kqueue on this macOS/BSD host, io_uring/epoll on Linux) over the always-available `NioBackend` floor, that
@@ -23,6 +24,17 @@ class JvmPosixBackendSelectionTest extends Test:
     given Frame = Frame.internal
 
     private val transportConfig = NetConfig.default
+
+    /** Close every driver of a transport a leaf built, at leaf-scope exit. An owned transport's poll loops never exit by themselves and each
+      * holds a scheduler worker until closed. A transport has no close of its own, so this walks the pool: `size` round-robin `next()` calls
+      * visit each driver once, given nothing else draws from the pool after the leaf's listener and connection have closed.
+      */
+    private def closeDriversAtScopeExit(transport: kyo.net.Transport)(using Frame, kyo.test.AssertScope): Unit < (Sync & Scope) =
+        transport match
+            case impl: TransportImpl[?] =>
+                Scope.ensure(Sync.defer((0 until impl.pool.size).foreach(_ => impl.pool.next().close())))
+            case other =>
+                fail(s"cannot close the drivers of ${other.getClass.getSimpleName}: it is not a TransportImpl")
 
     /** Drive a real loopback echo through `transport`: listen on an ephemeral port whose handler echoes one inbound chunk, connect, write the
       * payload, and read the echoed bytes back. Returns the bytes received by the client.
@@ -80,10 +92,15 @@ class JvmPosixBackendSelectionTest extends Test:
         // forced-backend CI legs) has deliberately removed the thing under test; cancel rather than report a failure the run itself caused.
         if IoBackendPlatform.selected.name == "nio" then cancel("nio is forced; this leaf asserts posix wins selection")
         val unsafe = IoBackendPlatform.transport()
-        assert(unsafe.isInstanceOf[PosixTransport], s"production transport is ${unsafe.getClass.getSimpleName}, expected PosixTransport")
-        val payload = "posix-echo".getBytes
-        echoRoundTrip(unsafe, payload).map { got =>
-            assert(got.toList == payload.toList, s"round-trip got ${new String(got)}")
+        closeDriversAtScopeExit(unsafe).andThen {
+            assert(
+                unsafe.isInstanceOf[PosixTransport],
+                s"production transport is ${unsafe.getClass.getSimpleName}, expected PosixTransport"
+            )
+            val payload = "posix-echo".getBytes
+            echoRoundTrip(unsafe, payload).map { got =>
+                assert(got.toList == payload.toList, s"round-trip got ${new String(got)}")
+            }
         }
     }
 
@@ -100,10 +117,12 @@ class JvmPosixBackendSelectionTest extends Test:
         assert(forced.name == "nio", s"forced selected=${forced.name}")
         // The forced floor must build the NioTransport, not a PosixTransport, and that floor must round-trip as production.
         val unsafe = forced.build()
-        assert(!unsafe.isInstanceOf[PosixTransport], "forced-nio transport is a PosixTransport, expected NioTransport")
-        val payload = "nio-floor-echo".getBytes
-        echoRoundTrip(unsafe, payload).map { got =>
-            assert(got.toList == payload.toList, s"forced-nio round-trip got ${new String(got)}")
+        closeDriversAtScopeExit(unsafe).andThen {
+            assert(!unsafe.isInstanceOf[PosixTransport], "forced-nio transport is a PosixTransport, expected NioTransport")
+            val payload = "nio-floor-echo".getBytes
+            echoRoundTrip(unsafe, payload).map { got =>
+                assert(got.toList == payload.toList, s"forced-nio round-trip got ${new String(got)}")
+            }
         }
     }
 

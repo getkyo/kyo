@@ -290,6 +290,7 @@ These modules work on Windows with a documented limitation, and are marked with 
 | kyo-stats-machine | `machine.memory.free` is not reported (Windows draws no distinction between free and available memory), and `machine.cpu.system.rate` is derived as kernel time minus idle.      |
 | kyo-pod           | Container operations require a container runtime configured for the images you run; a daemon in Windows-containers mode cannot run Linux images.                                 |
 | kyo-browser       | Chrome auto-download covers Windows x86_64 but not Windows ARM, for which Google publishes no build; pass a `Browser.LaunchConfig` naming a system-installed Chromium instead.   |
+| kyo-sql-doltlite  | The embedded engine does not run on Windows: upstream ships no `win-arm64` build and a `win-x64` DLL with no archive to link. A `doltlite://` URL fails with a typed `DoltLiteEngineUnavailableException`; use [kyo-sql-sqlite](kyo-sql-sqlite/README.md) for an embedded engine that runs everywhere, or `kyo-sql-dolt` against a server. |
 
 ## Modules
 
@@ -321,7 +322,7 @@ The vertical an application developer assembles: HTTP services and clients, SQL 
 | [kyo-sql-mysql](kyo-sql-mysql/README.md)     | ✅  | ✅  | ✅     | ✅   | MySQL driver speaking the wire protocol on kyo-net, plus `LOAD DATA LOCAL INFILE`                          |
 | [kyo-sql-sqlite](kyo-sql-sqlite/README.md)   | ✅  | ✅  | ✅     | ✅   | SQLite driver over the C library through kyo-ffi, an embedded file or in-memory database, no server        |
 | [kyo-sql-dolt](kyo-sql-dolt/README.md)       | ✅  | ✅  | ✅     | ✅   | Dolt driver on the MySQL wire, plus branches, commits, merges and diffs over the data itself                |
-| [kyo-sql-doltlite](kyo-sql-doltlite/README.md) | ✅  | ✅  | ✅     | ✅   | Dolt's version control embedded: one file carrying branches, commits, merges and diffs, no server           |
+| [kyo-sql-doltlite](kyo-sql-doltlite/README.md)† | ✅  | ✅  | ✅     | ✅   | Dolt's version control embedded: one file carrying branches, commits, merges and diffs, no server           |
 | [kyo-schema](kyo-schema/README.md)           | ✅  | ✅  | ✅     | ✅   | One `derives Schema` powers validation, lenses, diffs, builders, and structural conversion; codecs plug in |
 | [kyo-schema-json](kyo-schema-json/README.md) | ✅  | ✅  | ✅     | ✅   | JSON codec, JSON Schema generation, pure `Json.Lines` framing, and effectful `Jsonl` streams and files    |
 | [kyo-schema-protobuf](kyo-schema-protobuf/README.md) | ✅  | ✅  | ✅     | ✅   | Protocol Buffers codec for kyo-schema: `Protobuf.encode`/`decode` binary plus `.proto` schema export       |
