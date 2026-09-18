@@ -13,8 +13,10 @@
 # build-boringssl.sh and build-aeron.sh are called: a macOS runner produces both Mac targets from one
 # checkout, and staging only the host leaves the cross compile with nothing to link.
 #
-# Requires curl + unzip + shasum on PATH, and additionally git + cc + make + tcl on a platform with no
-# published library.
+# Requires curl, plus any one of shasum/sha256sum/openssl for the checksum and any one of
+# unzip/bsdtar/7z to extract, because the Windows runners carry neither shasum nor unzip reliably;
+# every other platform has the first of each. Additionally git + cc + make + tcl on a platform with
+# no published library.
 set -euo pipefail
 
 DOLTLITE_VERSION="0.50.10"
@@ -145,7 +147,20 @@ url="https://github.com/dolthub/doltlite/releases/download/v$DOLTLITE_VERSION/$d
 echo "[kyo-sql-doltlite] fetching $url"
 curl -fsSL --retry 3 -o "$zip" "$url"
 
-actual="$(shasum -a 256 "$zip" | awk '{print $1}')"
+# Whichever of the three this platform has. Checked rather than assumed: a missing tool would
+# otherwise make `actual` empty, which compares unequal and reports a checksum mismatch, sending a
+# reader after a corrupt download that never happened. The Windows runners carry none of shasum.
+if command -v shasum >/dev/null 2>&1; then
+    actual="$(shasum -a 256 "$zip" | awk '{print $1}')"
+elif command -v sha256sum >/dev/null 2>&1; then
+    actual="$(sha256sum "$zip" | awk '{print $1}')"
+elif command -v openssl >/dev/null 2>&1; then
+    actual="$(openssl dgst -sha256 "$zip" | awk '{print $NF}')"
+else
+    echo "[kyo-sql-doltlite] no sha256 tool found (tried shasum, sha256sum, openssl)." >&2
+    echo "Install one, or stage $staged by hand from $url." >&2
+    exit 1
+fi
 if [[ "$actual" != "$sha256" ]]; then
     echo "[kyo-sql-doltlite] checksum mismatch for $dist.zip" >&2
     echo "  expected $sha256" >&2
@@ -154,7 +169,18 @@ if [[ "$actual" != "$sha256" ]]; then
     exit 1
 fi
 
-unzip -o -q "$zip" -d "$work"
+# bsdtar (the `tar` Windows 10+ and macOS ship) extracts zip, which is what makes the Windows
+# runners work without unzip. 7z is the last resort, preinstalled on GitHub's Windows images.
+if command -v unzip >/dev/null 2>&1; then
+    unzip -o -q "$zip" -d "$work"
+elif tar --version 2>/dev/null | grep -qi bsdtar; then
+    (cd "$work" && tar -xf "$zip")
+elif command -v 7z >/dev/null 2>&1; then
+    7z x -y -o"$work" "$zip" >/dev/null
+else
+    echo "[kyo-sql-doltlite] no zip extractor found (tried unzip, bsdtar, 7z)." >&2
+    exit 1
+fi
 cp "$work/$dist/doltlite.h" "$staged/doltlite.h"
 cp "$work/$dist/libdoltlite.a" "$staged/libdoltlite.a"
 # The shared library is staged too: the JVM and Node load it at run time rather than linking it.
