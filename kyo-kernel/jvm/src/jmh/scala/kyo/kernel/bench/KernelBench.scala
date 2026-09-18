@@ -1,17 +1,20 @@
 package kyo.kernel.bench
 
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import kyo.Chunk
 import kyo.Frame
 import kyo.Kyo
 import kyo.Maybe
 import kyo.Tag
+import kyo.discard
 import kyo.kernel.Arrow
 import kyo.kernel.Loop
 import kyo.kernel.*
 import kyo.kernel.internal.Eval
 import kyo.kernel.internal.Nested
 import org.openjdk.jmh.annotations.*
+import scala.util.control.NoStackTrace
 
 @State(Scope.Benchmark)
 @BenchmarkMode(Array(Mode.AverageTime))
@@ -128,20 +131,24 @@ class KernelBench:
         loop(seed - 1).eval
     end deepRecursionPaysRescuesOnly
 
+    /** Recursion that stays within one safepoint period (256 nested strict applications), so the chain is never
+      * reified: no rescue.
+      */
     @Benchmark
     def deepRecursionNoRescue: Int =
         def loop(i: Int): Int < Any =
             ((): Unit < Any).map { _ =>
-                if i > 400 then i else loop(i + 1)
+                if i > ShallowDepth then i else loop(i + 1)
             }
         loop(seed - 1).eval
     end deepRecursionNoRescue
 
+    /** Recursion crossing the period exactly once, so one rescue reifies the chain and the rest runs strictly. */
     @Benchmark
     def deepRecursionOneRescue: Int =
         def loop(i: Int): Int < Any =
             ((): Unit < Any).map { _ =>
-                if i > 600 then i else loop(i + 1)
+                if i > OneRescueDepth then i else loop(i + 1)
             }
         loop(seed - 1).eval
     end deepRecursionOneRescue
@@ -180,6 +187,107 @@ class KernelBench:
             a => a
         )(b => b + 1).eval
     end handleLoopFusesContinuation
+
+    /** The continuation in hand, applied exactly once per occurrence: suspensionBaseline's loop answered by handleCont
+      * rather than in place.
+      */
+    @Benchmark
+    def handleContResumesOnce: Int =
+        def loop(i: Int): Int < Ask =
+            if i > Depth then i
+            else ArrowEffect.suspend[Any](Tag[Ask], ()).map(a => loop(i + a))
+        ArrowEffect.handleCont(Tag[Ask], loop(seed - 1))([C] => (_, cont) => cont(1), a => a).eval
+    end handleContResumesOnce
+
+    /** The continuation applied twice per occurrence, the second shot's result kept, under a region installed per
+      * round so the replayed remainder is one map.
+      */
+    @Benchmark
+    def handleContResumesTwice: Int =
+        def loop(i: Int, acc: Int): Int < Any =
+            if i > NarrowDepth then acc
+            else
+                (ArrowEffect.handleCont(Tag[Ask], ArrowEffect.suspend[Any](Tag[Ask], ()).map(a => acc + a))(
+                    [C] => (_, cont) => cont(1).map(_ => cont(2)),
+                    a => a
+                ): Int < Any).map(v => loop(i + 1, v))
+        loop(0, seed).eval
+    end handleContResumesTwice
+
+    /** A short-circuit: a clause that never resumes, dropping a remainder that holds a bracket and a binding, so both
+      * regions unwind and the bracket releases with the discard signal.
+      */
+    @Benchmark
+    def abortUnwindsThroughRegions: Int =
+        def loop(i: Int, acc: Int): Int < Any =
+            if i > NarrowDepth then acc
+            else
+                (ArrowEffect.handleCont(
+                    Tag[Ask],
+                    Bracket(())(_ =>
+                        ContextEffect.handleInheritable(Tag[Cfg], acc)(ArrowEffect.suspend[Any](Tag[Ask], ()).map(a => a + 1))
+                    )((_, _) => ())
+                )([C] => (_, _) => acc + 1, a => a): Int < Any).map(v => loop(i + 1, v))
+        loop(0, seed).eval
+    end abortUnwindsThroughRegions
+
+    /** A throw raised after an answer and recovered by the region's own recover arm, so the unwind is one walk that
+      * ends at the region that answered.
+      */
+    @Benchmark
+    def recoverAnswersThrow: Int =
+        def loop(i: Int, acc: Int): Int < Any =
+            if i > NarrowDepth then acc
+            else
+                (ArrowEffect.handleLoop(Tag[Ask], ArrowEffect.suspend[Any](Tag[Ask], ()).map(a => if a > 0 then throw Boom else a))(
+                    [C] => _ => Loop.continue(1),
+                    a => a,
+                    _ => Maybe(acc + 1)
+                ): Int < Any).map(v => loop(i + 1, v))
+        loop(0, seed).eval
+    end recoverAnswersThrow
+
+    /** The first occurrence peeled: the region ends at it and hands the remainder out as a value, resumed once below
+      * the region under the outer handler.
+      */
+    @Benchmark
+    def handleFirstPeelsRemainder: Int =
+        def loop(i: Int, acc: Int): Int < Ask =
+            if i > NarrowDepth then acc
+            else
+                (ArrowEffect.handleFirst(Tag[Ask], ArrowEffect.suspend[Any](Tag[Ask], ()).map(a => acc + a))(
+                    [C] => (_, cont) => cont(1),
+                    a => a
+                ): Int < Ask).map(v => loop(i + 1, v))
+        ArrowEffect.handleLoop(Tag[Ask], loop(0, seed))([C] => _ => Loop.continue(1), a => a).eval
+    end handleFirstPeelsRemainder
+
+    /** A masked operation tunnels past an inner handler of its tag to the outer one: a masking region, the idle inner
+      * handler, and Mask.run's re-raise per round.
+      */
+    @Benchmark
+    def maskTunnelsPastInnerHandler: Int =
+        def loop(i: Int, acc: Int): Int < Ask =
+            if i > NarrowDepth then acc
+            else
+                ArrowEffect.Mask.run[Ask](
+                    ArrowEffect.handleLoop(Tag[Ask], ArrowEffect.Mask[Ask](ArrowEffect.suspend[Any](Tag[Ask], ()).map(a => acc + a)))(
+                        [C] => _ => Loop.continue(0),
+                        a => a
+                    )
+                ).map(v => loop(i + 1, v))
+        ArrowEffect.handleLoop(Tag[Ask], loop(0, seed))([C] => _ => Loop.continue(1), a => a).eval
+    end maskTunnelsPastInnerHandler
+
+    /** Two handlers of one tag nested, the inner answering every occurrence and the outer shadowed. */
+    @Benchmark
+    def sameTagInnerHandlerAnswers: Int =
+        def loop(i: Int): Int < Ask =
+            if i > Depth then i
+            else ArrowEffect.suspend[Any](Tag[Ask], ()).map(a => loop(i + a))
+        val inner: Int < Ask = ArrowEffect.handleLoop(Tag[Ask], loop(seed - 1))([C] => _ => Loop.continue(1), a => a)
+        ArrowEffect.handleLoop(Tag[Ask], inner)([C] => _ => Loop.continue(0), a => a).eval
+    end sameTagInnerHandlerAnswers
 
     @Benchmark
     def nestedPayloadsUnwrapInMaps: Int =
@@ -453,6 +561,9 @@ class KernelBench:
         ArrowEffect.handleLoop(Tag[Ask], step(seed - 1))([C] => _ => Loop.continue(1), a => a).eval
     end effectfulIterationViaArrow
 
+    /** A read resolved against the outermost of three nested bindings, the scan walking past an idle handler and the
+      * two inner bindings first.
+      */
     @Benchmark
     def contextReadsUnderBindings: Int =
         def loop(i: Int): Int < Cfg3 =
@@ -477,6 +588,29 @@ class KernelBench:
         loop(seed - 1).eval
     end contextRegionsPayEntryExit
 
+    /** A binding installed per round that derives its value from the enclosing one, the layering `Local.let` and
+      * `Env.run` are built on.
+      */
+    @Benchmark
+    def contextRegionsDeriveFromOuter: Int =
+        def loop(i: Int): Int < Cfg =
+            if i > NarrowDepth then i
+            else
+                ContextEffect.handle(Tag[Cfg], 0, x => x + 1, x => x, (p, _, _) => p)(ContextEffect.suspend(Tag[Cfg]))
+                    .map(c => loop(i + c))
+        ContextEffect.handleInheritable(Tag[Cfg], 0)(loop(seed - 1)).eval
+    end contextRegionsDeriveFromOuter
+
+    /** The state half of an execution boundary without the boundary: the context regions captured, forked into a
+      * parked run, and joined back, once per round.
+      */
+    @Benchmark
+    def isolateCrossingPerRound: Int =
+        def loop(i: Int): Int < Cfg =
+            if i > NarrowDepth then i
+            else cfgCrossing.run(ContextEffect.suspend(Tag[Cfg])).map(c => loop(i + c))
+        ContextEffect.handleInheritable(Tag[Cfg], 1)(loop(seed - 1)).eval
+    end isolateCrossingPerRound
 
     /** The same loop with the answer installed as a bound value rather than by a handler. */
     @Benchmark
@@ -496,15 +630,19 @@ class KernelBench:
         ContextEffect.handleInheritable(Tag[Cfg2], 1)(loop(seed - 1)).eval
     end suspensionBaselineAltEnv
 
-    /** The stateful loop with the state threaded through a cell rather than the handler's state. */
+    /** The stateful loop with the successor kept in a shared atomic cell rather than in the handler's state: the
+      * clause answers 1 and advances the cell.
+      */
     @Benchmark
     def statefulAnswersPaySuccessorAltRef: Int =
         def loop(i: Int): Int < Ask =
             if i > Depth then i
             else ArrowEffect.suspend[Any](Tag[Ask], ()).map(a => loop(i + a))
-        ArrowEffect.handleLoop(Tag[Ask], loop(seed - 1))([C] => _ => Loop.continue(1), a => a).eval
+        ArrowEffect.handleLoop(Tag[Ask], loop(seed - 1))(
+            [C] => _ => { discard(cell.incrementAndGet()); Loop.continue(1) },
+            a => a
+        ).eval
     end statefulAnswersPaySuccessorAltRef
-
 
     /** A resource bound and released once per round, so the round pays a region install and discharge. */
     @Benchmark
@@ -560,6 +698,12 @@ object KernelBench:
     inline def FusedDepth     = 32
     inline def FusedWideDepth = 8
 
+    /** Below the safepoint period of 256 nested strict applications, so deepRecursionNoRescue never reifies. */
+    inline def ShallowDepth = 200
+
+    /** Between one and two periods, so deepRecursionOneRescue reifies exactly once. */
+    inline def OneRescueDepth = 400
+
     val elements: Chunk[Int] = Chunk.from(0 until NarrowDepth)
 
     final case class Box(value: Int)
@@ -580,5 +724,16 @@ object KernelBench:
     sealed trait Cfg2 extends ContextEffect[Int]
 
     sealed trait Cfg3 extends ContextEffect[Int]
+
+    /** The shared cell of statefulAnswersPaySuccessorAltRef; it accumulates across runs, as the other ports' cells do. */
+    val cell: AtomicInteger = new AtomicInteger(0)
+
+    /** The failure recoverAnswersThrow raises: allocated once and without a stack trace, so the row measures the unwind. */
+    object Boom extends Exception with NoStackTrace
+
+    /** The crossing a spawn composes in front of its isolate: `derive` yields the pass-through instance for a lone context
+      * effect, and `crossing` adds the context half that forks and joins the bindings.
+      */
+    val cfgCrossing: Isolate[Cfg, Any, Cfg] = Isolate.derive[Cfg, Any, Cfg].crossing
 
 end KernelBench

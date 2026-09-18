@@ -1,26 +1,42 @@
 package kyo.kernel.bench.cross
 
 import cats.effect.IO
-import cats.syntax.all.*
 import cats.effect.IOLocal
 import cats.effect.kernel.Ref
-import cats.effect.unsafe.implicits.global
+import cats.effect.unsafe.IORuntime
+import cats.effect.unsafe.IORuntimeConfig
+import cats.syntax.all.*
 import java.util.concurrent.TimeUnit
 import org.openjdk.jmh.annotations.*
+import scala.concurrent.ExecutionContext
+import scala.util.control.NoStackTrace
 
 /** cats-effect port of the KernelBench rows; row names match KernelBench's so tables join by name.
   *
-  * Run entry is `unsafeRunSync()` on the global IORuntime: an ArrayBlockingQueue allocation, a
-  * fiber scheduled onto the work-stealing pool, and the calling thread parked until the pool hands
-  * the result back, so a thread handoff per operation. That cost is measured, not factored out;
-  * entryFloorBatch makes it visible. Fiber tracing stays at its default (cached); the tracing-off
+  * Run entry is `unsafeRunSync()` on an IORuntime whose compute pool is the parasitic execution
+  * context: the fiber runs on the calling thread and the result queue is already filled when the
+  * caller polls it, so no thread handoff is paid, as with kyo's `eval` and ZIO's `unsafe.run`. On the
+  * global work-stealing runtime the same call schedules the fiber onto the pool and parks the caller,
+  * a handoff per run that kyo's rows never make. The entry still allocates the fiber and the queue;
+  * entryFloorBatch makes that visible. Fiber tracing stays at its default (cached); the tracing-off
   * variant is a separate sensitivity run.
   *
   * Tier B substitution: kyo's Ask suspension answered by an installed handler becomes an
   * `IOLocal.get`, whose constructor default is what a fresh fiber reads, so no per-run install is
   * paid. The stateful row uses `IOLocal.modify`, fiber-local state threading like kyo's stateful
-  * region. Rows suffixed `Alt` record the alternatives (the per-run `set`, `Ref[IO]`'s shared
-  * atomic CAS) and are excluded from the headline tables.
+  * region. A kyo region installed for an extent becomes the scoped install `IOLocal#asLocal` spells
+  * as `local`: the modify and its restore bracketed. Rows suffixed `Alt` record the alternatives
+  * (the per-run scoped install, `Ref[IO]`'s shared atomic CAS) and are excluded from the headline
+  * tables.
+  *
+  * Rows with no cats-effect counterpart are absent rather than approximated: a continuation captured
+  * and resumed by a handler (foreignCrossingsPayRotation, handleContResumesOnce,
+  * handleContResumesTwice, handleFirstPeelsRemainder), a handler clause that performs another effect
+  * (emittingClausesPayRegionRebuild), a suspension with its continuation fused into the node
+  * (suspensionFusesContinuation), a region with the following map fused into it
+  * (handleLoopFusesContinuation), a preemptible run distinct from the plain one
+  * (partialSuspensionBaseline: the fiber always auto-yields), masking (maskTunnelsPastInnerHandler)
+  * and the isolate state crossing without a fiber (isolateCrossingPerRound).
   */
 @State(Scope.Benchmark)
 @BenchmarkMode(Array(Mode.AverageTime))
@@ -149,24 +165,16 @@ class CatsEffectBench:
         runSync(loop(seed - 1))
     end suspensionBaseline
 
-    /** Recorded alternative: the per-run install (`set` before the loop). */
+    /** Recorded alternative: the per-run scoped install. */
     @Benchmark
     def suspensionBaselineAltInstall: Int =
         def loop(i: Int): IO[Int] =
             if i > Depth then IO.pure(i)
             else ask.get.flatMap(a => loop(i + a))
-        runSync(ask.set(1).flatMap(_ => loop(seed - 1)))
+        runSync(locally(ask, 1)(loop(seed - 1)))
     end suspensionBaselineAltInstall
 
-    /** IOLocal has no distinct read-with-cont spelling, so the row is expected to equal suspensionBaseline. */
-    @Benchmark
-    def suspensionFusesContinuation: Int =
-        def loop(i: Int): IO[Int] =
-            if i > Depth then IO.pure(i)
-            else ask.get.flatMap(a => loop(i + a))
-        runSync(loop(seed - 1))
-    end suspensionFusesContinuation
-
+    /** Sixteen call sites, so the read's continuation is a different class at each. */
     @Benchmark
     def sharedHandlerPaysDispatch: Int =
         def s0(i: Int): IO[Int]  = if i > Depth then IO.pure(i) else ask.get.flatMap(a => s1(i + a))
@@ -222,8 +230,8 @@ class CatsEffectBench:
         runSync(loop(0, seed))
     end fusionAfterSuspension
 
-    /** The one row where the per-run install is the substance: the ambient is installed but
-      * never read.
+    /** The one row where the per-run install is the substance: the ambient is installed for the
+      * extent but never read.
       */
     @Benchmark
     def idleHandlerAddsNothing: Int =
@@ -236,7 +244,7 @@ class CatsEffectBench:
                     .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
                     .map(v => (v + 1) & 63)
                     .flatMap(v => loop(i + 1, v))
-        runSync(ask.set(1).flatMap(_ => loop(0, seed)))
+        runSync(locally(ask, 1)(loop(0, seed)))
     end idleHandlerAddsNothing
 
     @Benchmark
@@ -264,17 +272,6 @@ class CatsEffectBench:
         runSync(loop(seed - 1))
     end trailingMapsStayLinear
 
-    /** Two IOLocals are two keys in one fiber-local map, not two nested handler regions, so
-      * nothing is crossed or re-attached: the row measures two ambient reads per level.
-      */
-    @Benchmark
-    def foreignCrossingsPayRotation: Int =
-        def loop(i: Int): IO[Int] =
-            if i > Depth then IO.pure(i)
-            else ask.get.flatMap(a => ask2.get.flatMap(t => loop(i + a + t)))
-        runSync(loop(seed - 1))
-    end foreignCrossingsPayRotation
-
     /** Dynamic single-link application: NarrowDepth map links attached in a runtime loop, then
       * one run. IO reifies a Map node per link, so the row measures node build plus the
       * interpreter over a thousand stored nodes. Shape taken from zio-blocks' AsyncChainBench.
@@ -300,20 +297,19 @@ class CatsEffectBench:
         runSync(fa)
     end dynamicChainOfBindsStaysLinear
 
-
-    /** Recursion shallow enough to stay within one evaluation slice. */
+    /** Recursion shallow enough to stay within one of kyo's safepoint periods. */
     @Benchmark
     def deepRecursionNoRescue: Int =
         def loop(i: Int): IO[Int] =
-            IO.unit.flatMap(_ => if i > 400 then IO.pure(i) else loop(i + 1))
+            IO.unit.flatMap(_ => if i > ShallowDepth then IO.pure(i) else loop(i + 1))
         runSync(loop(seed - 1))
     end deepRecursionNoRescue
 
-    /** Recursion deep enough to cross the slice boundary once. */
+    /** Recursion deep enough to cross one of kyo's safepoint periods once. */
     @Benchmark
     def deepRecursionOneRescue: Int =
         def loop(i: Int): IO[Int] =
-            IO.unit.flatMap(_ => if i > 600 then IO.pure(i) else loop(i + 1))
+            IO.unit.flatMap(_ => if i > OneRescueDepth then IO.pure(i) else loop(i + 1))
         runSync(loop(seed - 1))
     end deepRecursionOneRescue
 
@@ -346,16 +342,13 @@ class CatsEffectBench:
     def deferBindUnderIdleHandler: Int =
         def loop(i: Int): IO[Int] =
             if i > NarrowDepth then IO.pure(i) else IO.defer(IO.pure(i + 1)).flatMap(loop)
-        runSync(ask.set(1).flatMap(_ => loop(seed - 1)))
+        runSync(locally(ask, 1)(loop(seed - 1)))
     end deferBindUnderIdleHandler
 
-
-    /** Iteration expressed as a loop rather than open recursion. */
+    /** Iteration expressed through the library's loop combinator rather than open recursion. */
     @Benchmark
     def pureIterationViaLoop: Int =
-        def go(i: Int): IO[Int] =
-            if i > Depth then IO.pure(i) else IO.pure(i + 1).flatMap(go)
-        runSync(go(seed - 1))
+        runSync(IO.asyncForIO.iterateWhileM(seed - 1)(i => IO.pure(i + 1))(_ <= Depth))
     end pureIterationViaLoop
 
     /** Iteration through a step held as a value, so the loop body outlives the expression that built it. */
@@ -366,12 +359,10 @@ class CatsEffectBench:
         runSync(step(seed - 1))
     end pureIterationViaArrow
 
-    /** Iteration whose every round performs an operation, expressed as a loop. */
+    /** Iteration whose every round performs an operation, through the library's loop combinator. */
     @Benchmark
     def effectfulIterationViaLoop: Int =
-        def go(i: Int): IO[Int] =
-            if i > Depth then IO.pure(i) else ask.get.flatMap(a => go(i + a))
-        runSync(go(seed - 1))
+        runSync(IO.asyncForIO.iterateWhileM(seed - 1)(i => ask.get.map(a => i + a))(_ <= Depth))
     end effectfulIterationViaLoop
 
     /** Iteration whose every round performs an operation, driven by a step held as a value. */
@@ -424,12 +415,14 @@ class CatsEffectBench:
         runSync(loop(seed - 1))
     end inlineLimitCostsTimeNotAllocation
 
-    /** A computation carried as a value and flattened each round, measuring the wrap and unwrap. */
+    /** A suspension carried as a payload through a bind and never run, as kyo boxes a pending value
+      * it carries as data; the payload is a fresh read node per round, as kyo's is a fresh suspension.
+      */
     @Benchmark
     def nestedPayloadsUnwrapInMaps: Int =
         def loop(i: Int, acc: Int): IO[Int] =
             if i > NarrowDepth then IO.pure(acc)
-            else IO.pure(IO.pure(acc)).flatten.flatMap(_ => loop(i + 1, acc + i))
+            else IO.pure(ask.get).flatMap(_ => loop(i + 1, acc + i))
         runSync(loop(0, seed))
     end nestedPayloadsUnwrapInMaps
 
@@ -439,13 +432,14 @@ class CatsEffectBench:
         runSync(IO.pure(seed).map(_ + 1))
     end evalFixedOverhead
 
-
-    /** A read resolved against the innermost of three nested bindings. */
+    /** A read of the outermost of three nested bindings, under an idle binding innermost, as in the
+      * kyo row; an IOLocal read is a map lookup, so the nesting is carried for shape, not cost.
+      */
     @Benchmark
     def contextReadsUnderBindings: Int =
         def loop(i: Int): IO[Int] =
-            if i > NarrowDepth then IO.pure(i) else st.get.flatMap(c => loop(i + c))
-        runSync(ask.set(3).flatMap(_ => ask2.set(2)).flatMap(_ => st.set(1)).flatMap(_ => loop(seed - 1)))
+            if i > NarrowDepth then IO.pure(i) else cfg3.get.flatMap(c => loop(i + c))
+        runSync(locally(cfg3, 1)(locally(cfg2, 2)(locally(cfg, 3)(locally(ask, 1)(loop(seed - 1))))))
     end contextReadsUnderBindings
 
     /** A binding installed and torn down once per round, so the round pays entry and exit. */
@@ -453,9 +447,18 @@ class CatsEffectBench:
     def contextRegionsPayEntryExit: Int =
         def loop(i: Int): IO[Int] =
             if i > NarrowDepth then IO.pure(i)
-            else st.getAndSet(1).flatMap(prev => st.get.flatMap(c => st.set(prev).flatMap(_ => loop(i + c))))
+            else locally(cfg, 1)(cfg.get).flatMap(c => loop(i + c))
         runSync(loop(seed - 1))
     end contextRegionsPayEntryExit
+
+    /** A binding installed per round that derives its value from the enclosing one. */
+    @Benchmark
+    def contextRegionsDeriveFromOuter: Int =
+        def loop(i: Int): IO[Int] =
+            if i > NarrowDepth then IO.pure(i)
+            else locallyWith(cfg, _ + 1)(cfg.get).flatMap(c => loop(i + c))
+        runSync(locally(cfg, 0)(loop(seed - 1)))
+    end contextRegionsDeriveFromOuter
 
     /** Every occurrence answered where it stands, without the remainder being handed over. */
     @Benchmark
@@ -465,22 +468,13 @@ class CatsEffectBench:
         runSync(loop(seed - 1))
     end handleLoopAnswersInPlace
 
-    /** The same, with what follows the region folded into the answer. */
+    /** Two bindings of one local nested, the inner shadowing the outer for every read. */
     @Benchmark
-    def handleLoopFusesContinuation: Int =
+    def sameTagInnerHandlerAnswers: Int =
         def loop(i: Int): IO[Int] =
             if i > Depth then IO.pure(i) else ask.get.flatMap(a => loop(i + a))
-        runSync(loop(seed - 1).map(b => b + 1))
-    end handleLoopFusesContinuation
-
-    /** An answer that itself performs a second operation, so the region is rebuilt around it. */
-    @Benchmark
-    def emittingClausesPayRegionRebuild: Int =
-        def loop(i: Int): IO[Int] =
-            if i > NarrowDepth then IO.pure(i)
-            else ask.get.flatMap(a => ask2.get.flatMap(_ => loop(i + a)))
-        runSync(loop(seed - 1))
-    end emittingClausesPayRegionRebuild
+        runSync(locally(ask, 0)(locally(ask, 1)(loop(seed - 1))))
+    end sameTagInnerHandlerAnswers
 
     /** Two operations interleaved, the inner one answered without displacing the outer. */
     @Benchmark
@@ -491,23 +485,37 @@ class CatsEffectBench:
         runSync(loop(seed - 1))
     end foreignCrossingsAnsweredInPlace
 
-    /** A computation run to its first suspension rather than to completion. */
+    /** A failure raised under a bracket and a binding, unwinding both to the handler outside. */
     @Benchmark
-    def partialSuspensionBaseline: Int =
-        def loop(i: Int): IO[Int] =
-            if i > Depth then IO.pure(i) else ask.get.flatMap(a => loop(i + a))
-        runSync(IO.defer(loop(seed - 1)))
-    end partialSuspensionBaseline
+    def abortUnwindsThroughRegions: Int =
+        def loop(i: Int, acc: Int): IO[Int] =
+            if i > NarrowDepth then IO.pure(acc)
+            else
+                IO.unit.bracket(_ => locally(cfg, acc)(IO.raiseError[Int](Boom)))(_ => IO.unit)
+                    .handleErrorWith(_ => IO.pure(acc + 1))
+                    .flatMap(v => loop(i + 1, v))
+        runSync(loop(0, seed))
+    end abortUnwindsThroughRegions
 
+    /** A throw raised after a read and recovered by the handler around it. */
+    @Benchmark
+    def recoverAnswersThrow: Int =
+        def loop(i: Int, acc: Int): IO[Int] =
+            if i > NarrowDepth then IO.pure(acc)
+            else
+                ask.get.flatMap(a => IO(if a > 0 then throw Boom else a))
+                    .handleErrorWith(_ => IO.pure(acc + 1))
+                    .flatMap(v => loop(i + 1, v))
+        runSync(loop(0, seed))
+    end recoverAnswersThrow
 
     /** The same loop reading a value bound for the whole extent rather than answered per occurrence. */
     @Benchmark
     def suspensionBaselineAltEnv: Int =
         def loop(i: Int): IO[Int] =
             if i > Depth then IO.pure(i) else ask2.get.flatMap(a => loop(i + a))
-        runSync(ask2.set(1).flatMap(_ => loop(seed - 1)))
+        runSync(locally(ask2, 1)(loop(seed - 1)))
     end suspensionBaselineAltEnv
-
 
     /** A resource bound and released once per round, so the round pays a region install and discharge. */
     @Benchmark
@@ -546,10 +554,12 @@ class CatsEffectBench:
         runSync(elements.foldLeftM(seed)((acc, a) => IO.pure(acc + a)))
     end foldOverCollection
 
-    /** A fold that keeps only part of the collection, so each element decides whether it contributes. */
+    /** A fold that keeps only part of the collection, so each element decides whether it contributes:
+      * cats' single-pass `traverseFilter`, the counterpart of kyo's `collect`.
+      */
     @Benchmark
     def collectOverCollection: Int =
-        runSync(elements.traverse(a => IO.pure(if (a & 1) == 0 then Some(a) else None)).map(_.flatten.sum + seed))
+        runSync(elements.traverseFilter(a => IO.pure(if (a & 1) == 0 then Some(a) else None)).map(_.sum + seed))
     end collectOverCollection
 
 end CatsEffectBench
@@ -558,19 +568,51 @@ object CatsEffectBench:
 
     val elements: List[Int] = (0 until NarrowDepth).toList
 
-    inline def Depth       = 10000
-    inline def NarrowDepth = 1000
-    inline def FusedDepth  = 32
+    inline def Depth          = 10000
+    inline def NarrowDepth    = 1000
+    inline def FusedDepth     = 32
     inline def FusedWideDepth = 8
+    inline def ShallowDepth   = 200
+    inline def OneRescueDepth = 400
 
     final case class Box(value: Int)
+
+    /** One runtime for the whole class, running fibers on the calling thread: the parasitic execution
+      * context executes a submitted fiber inline and trampolines its auto-yield resubmissions, so
+      * `unsafeRunSync` never parks. The blocking pool and the scheduler are the defaults, both idle here.
+      */
+    implicit val runtime: IORuntime =
+        IORuntime(
+            ExecutionContext.parasitic,
+            IORuntime.createDefaultBlockingExecutionContext()._1,
+            IORuntime.createDefaultScheduler()._1,
+            () => (),
+            IORuntimeConfig()
+        )
 
     /** The ambient answer: a fresh fiber reads the constructor default, so constructing it is the install. */
     val ask: IOLocal[Int]  = IOLocal(1).unsafeRunSync()
     val ask2: IOLocal[Int] = IOLocal(0).unsafeRunSync()
     val st: IOLocal[Int]   = IOLocal(0).unsafeRunSync()
+    val cfg: IOLocal[Int]  = IOLocal(0).unsafeRunSync()
+    val cfg2: IOLocal[Int] = IOLocal(0).unsafeRunSync()
+    val cfg3: IOLocal[Int] = IOLocal(0).unsafeRunSync()
 
+    /** The shared cell of statefulAnswersPaySuccessorAltRef; it accumulates across runs. */
     val stRef: Ref[IO, Int] = Ref.unsafe[IO, Int](0)
+
+    /** The failure recoverAnswersThrow raises: allocated once and without a stack trace. */
+    object Boom extends Exception with NoStackTrace
+
+    /** A binding for the extent of `body`: what `IOLocal#asLocal` spells as `local`, the modify and its restore
+      * bracketed, so the region is entered and left the way a kyo binding region is.
+      */
+    def locally[A](local: IOLocal[Int], value: Int)(body: IO[A]): IO[A] =
+        local.modify(prev => (value, prev)).bracket(_ => body)(prev => local.set(prev))
+
+    /** As [[locally]], with the value derived from the enclosing one. */
+    def locallyWith[A](local: IOLocal[Int], f: Int => Int)(body: IO[A]): IO[A] =
+        local.modify(prev => (f(prev), prev)).bracket(_ => body)(prev => local.set(prev))
 
     def runSync[A](io: IO[A]): A = io.unsafeRunSync()
 
