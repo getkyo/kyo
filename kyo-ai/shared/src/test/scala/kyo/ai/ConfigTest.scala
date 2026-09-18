@@ -230,6 +230,31 @@ class ConfigTest extends kyo.test.Test[Any]:
         assert(Config.Codex.completion eq Completion.codex)
     }
 
+    "every catalog entry carries no decider, and every decider provider's entries are pure" in {
+        // The decider catalog rides the same invariants as the completion catalog: a catalog Config
+        // decides through its own completion (no decider set), and a DeciderConfig entry leaves its key
+        // absent, its endpoint at the provider's base URL, and its transport settings inherited.
+        Config.Provider.all.foreach { p =>
+            p.entries.foreach { entry =>
+                assert(entry.decider.isEmpty, s"${p.name}/${entry.modelName}: a catalog entry decides through its own completion")
+            }
+        }
+        assert(DeciderConfig.Provider.all.map(_.name) == Chunk("typesafe"))
+        DeciderConfig.Provider.all.foreach { p =>
+            assert(p.entries.exists(_ eq p.default), s"${p.name}: the default is one of the listed entries")
+            p.entries.foreach { entry =>
+                assert(entry.provider eq p)
+                assert(entry.apiKey.isEmpty, s"${p.name}/${entry.modelName}: key absent, filled at use")
+                assert(entry.apiUrl == p.baseUrl)
+                assert(
+                    entry.timeout.isEmpty && entry.meter.isEmpty && entry.retrySchedule.isEmpty,
+                    s"${p.name}/${entry.modelName}: transport inherited"
+                )
+            }
+        }
+        succeed
+    }
+
     "default auto-selects the keyed provider via kyo.System and fills its key" in {
         val customSystem = System(new TestUnsafeSystem(properties = Map("OPENAI_API_KEY" -> "key")))
         System.let(customSystem)(Config.default).map { cfg =>

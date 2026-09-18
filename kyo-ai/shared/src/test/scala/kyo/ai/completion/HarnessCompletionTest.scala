@@ -104,7 +104,7 @@ class HarnessCompletionTest extends kyo.test.Test[Any]:
         // provider failures (the provider/account is the problem)
         assert(AIRateLimitException("p", "429").isInstanceOf[AIProviderException])
         assert(AIProviderAuthException("p", "401").isInstanceOf[AIProviderException])
-        assert(AIMissingApiKeyException("m").isInstanceOf[AIProviderException])
+        assert(AIMissingApiKeyException("m", "M_API_KEY").isInstanceOf[AIProviderException])
         assert(AIProviderUnavailableException("p", "503").isInstanceOf[AIProviderException])
         // the transient subset also refines AITransientException (retried by LLM.gen)
         assert(AIProviderUnavailableException("p", "503").isInstanceOf[AITransientException])

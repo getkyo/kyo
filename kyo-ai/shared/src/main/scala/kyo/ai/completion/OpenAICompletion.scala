@@ -141,7 +141,7 @@ private[completion] object OpenAICompletion extends Completion:
     private def fetch(config: Config, req: Request)(using Frame): Response < (LLM & Async & Abort[HttpException | AIGenException]) =
         config.apiKey match
             case Absent =>
-                Abort.fail(AIMissingApiKeyException(config.modelName))
+                Abort.fail(AIMissingApiKeyException(config.modelName, config.provider.keyName))
             case Present(key) =>
                 val headers =
                     Seq("content-type" -> "application/json", "Authorization" -> s"Bearer $key") ++
@@ -153,7 +153,7 @@ private[completion] object OpenAICompletion extends Completion:
                 // Trace, not debug: the body carries the conversation.
                 Log.trace(s"kyo-ai request ${config.provider.name} $url ${Completion.elideBody(body)}").andThen {
                     HttpClient.withConfig(_.timeout(config.timeout)) {
-                        HttpClient.postText(url, body, headers)
+                        Completion.post(config, url, body, headers)
                             .map(replyBody =>
                                 // Trace, not debug: the reply pairs with its request.
                                 Log.trace(s"kyo-ai reply ${config.provider.name} $url ${Completion.elideBody(replyBody)}").andThen {
@@ -231,7 +231,7 @@ private[completion] object OpenAICompletion extends Completion:
             case Absent =>
                 // Fail typed like `fetch`: a missing key sends no HTTP request and surfaces as the same
                 // typed missing-key failure the Anthropic streaming path raises.
-                Abort.fail(AIMissingApiKeyException(config.modelName))
+                Abort.fail(AIMissingApiKeyException(config.modelName, config.provider.keyName))
             case Present(key) =>
                 val headers =
                     Seq("content-type" -> "application/json", "Authorization" -> s"Bearer $key") ++
