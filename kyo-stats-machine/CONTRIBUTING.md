@@ -72,6 +72,12 @@ The sampler starts with zero explicit user call, mirroring
    `@JSExportTopLevel`-annotated registration object, which calls
    `JSServiceLoaderRegistry.register`
    (`js/src/main/scala/kyo/stats/machine/MachineRegistration.scala:13-19`).
+   The JS registration is host-gated: a page has no machine to read, so it
+   registers nothing there. The module runs the browser rows, and
+   `MachineRegistrationTest` asserts both halves on the host each is about, the
+   page half in a real browser: the export still fires, and the registry stays
+   empty. What is under test there is the gate inside the initializer, not
+   whether the initializer ran.
 2. Construction reads the opt-out once and, unless suppressed, starts exactly
    one sampler via a CAS-gated `AtomicBoolean`
    (`MachineStatFactory.started`, `shared/src/main/scala/kyo/stats/machine/MachineStatFactory.scala:39,82-94`).

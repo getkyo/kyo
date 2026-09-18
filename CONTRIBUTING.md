@@ -1144,6 +1144,34 @@ Reach for a host gate only for what the host genuinely cannot do. A leaf that a 
 happen to be staged through something a page lacks, is a fixture to fix: kyo-tasty's suites were cancelled for a
 temp directory that was only moving bytes from one part of the test binary to another.
 
+### The browser rows, and what a host gate cannot save
+
+The rows themselves are per module: `kyoBrowserRow` (`project/KyoJsRows.scala`) is on by default, and a module turns
+it off in its `jsSettings` with a comment saying what a page lacks. Turn it off when the module has no
+environment-neutral leaf at all, so the row would link a bundle and launch Chrome to report only cancellations, or
+when nothing would ever link the module into a page and so the page proves nothing about a host anybody uses. Most
+of a module being host-bound is not itself a reason: that is what the gates above are for, and a module whose whole
+subject a page cannot offer can still be worth the row when it states a browser behavior the row can check.
+
+A host gate decides whether a leaf BODY runs. It cannot save a suite that fails while being built, and a field
+initialized in the class body runs when the suite is constructed, before any filter is consulted:
+
+```scala
+private val fs = js.Dynamic.global.require("fs")   // throws in a page; the whole suite reports one <constructor> failure
+private lazy val fs = js.Dynamic.global.require("fs")   // forced from a leaf body, which the filter has already cancelled
+```
+
+Laziness only helps if nothing eager reaches through it. A `val` holding a config built from a lazy path that writes
+a file forces the whole chain at construction just the same, so check what a suite's eager fields transitively touch,
+not only what they name.
+
+Reading a host global is the other half of the same trap. `js.Dynamic.global.process` compiles to a bare identifier
+read and throws `ReferenceError` on a host that does not declare it, before any `isUndefined` check beside it can
+run. Read through `globalThis` (`PlatformJs.jsGlobal`, or `sjs.Dynamic.global.globalThis.selectDynamic(name)` in a
+test), which evaluates to `undefined` instead. A fixture that deletes a global to simulate a page should restore only
+what it actually stashed, so that in a real page, where there was nothing to stash, the leaf asserts the host's own
+behavior rather than fabricating it.
+
 ### Decorators
 
 Decorators chain on a leaf name before `in`:

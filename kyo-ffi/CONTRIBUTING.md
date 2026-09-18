@@ -156,6 +156,11 @@ leaf is used only when a platform primitive has no cross-platform Kyo wrapper:
   `process.getBuiltinModule` at the call (`NodeFs.module`), and koffi from
   `PlatformJs.moduleRequire` (`KoffiFacade`), so a bundle that links kyo-ffi still
   loads in a browser, where `NativeLoader` rejects the load with a typed error.
+  The module runs the browser rows, and `BrowserDetectionTest`'s `.onlyBrowser`
+  group asserts that rejection in a page with no global deleted, including that
+  `Ffi.load` leaves the impl's construction counter untouched. Only a page
+  establishes that: deleting `process` on Node leaves the impl's companion, where
+  a generated binding loads koffi, perfectly loadable.
   **The resolution rule for an npm package or a file on a synchronous path:**
   `PlatformJs.moduleRequire`, and nothing else. `Ffi.load` is synchronous, and an
   `import()` result is never synchronously observable, so koffi cannot come from
