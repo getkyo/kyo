@@ -21,7 +21,7 @@ object Main extends KyoApp:
                 }
             }
             tls <- Abort.run[Any] {
-                NetPlatform.transport.connect("127.0.0.1", listener.port, NetTlsConfig(trustAll = true)).safe.get.map { conn =>
+                NetPlatform.transport.connectTls("127.0.0.1", listener.port, NetTlsConfig(trustAll = true)).safe.get.map { conn =>
                     conn.close()
                     "connected"
                 }

@@ -1,0 +1,6 @@
+# With kyo-ffi-plugin wired as kyo-net's README says, the plugin finds this machine's OpenSSL from the declaration in
+# kyo-net's jar, enables the TLS shim, and links it: a TLS round trip succeeds. The fixture's certificate is kyo-net's
+# self-signed localhost test certificate. Needs OpenSSL development files on the machine (libssl-dev, Homebrew openssl@3).
+> show ffiNativeSystemLibraries
+> nativeLink
+$ exec sh -c 'set -eu; bin=$(find target -type f -perm -u+x -name consumer | head -n1); [ -n "$bin" ] || { echo "no consumer binary under target/" >&2; exit 1; }; "$bin" > out.txt 2>&1 || { cat out.txt; exit 1; }; cat out.txt; grep -q "CONSUMER tls=hello" out.txt'

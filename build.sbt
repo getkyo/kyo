@@ -1416,9 +1416,8 @@ lazy val `kyo-system-doltfs` =
             nativeConfig := {
                 val base         = nativeConfig.value
                 val cp           = (Test / dependencyClasspath).value
-                val linkExtra    = readFfiNativeManifest(cp, KyoFfiPlugin.ffiNativeLinkFlagsDir, KyoFfiPlugin.ffiNativeInBuildLinkFlagsDir)
-                val compileExtra =
-                    readFfiNativeManifest(cp, KyoFfiPlugin.ffiNativeCompileFlagsDir, KyoFfiPlugin.ffiNativeInBuildCompileFlagsDir)
+                val linkExtra    = readFfiNativeManifest(cp, KyoFfiPlugin.ffiNativeInBuildLinkFlagsDir)
+                val compileExtra = readFfiNativeManifest(cp, KyoFfiPlugin.ffiNativeInBuildCompileFlagsDir)
                 // The engine archive as well: the shim compiled into this binary calls sqlite3_*, and the only
                 // copy of those is the prebuilt DoltLite the sibling module staged.
                 val archive = doltLiteNativeArchive(baseDirectory.value / ".." / ".." / "kyo-sql-doltlite")
@@ -2179,6 +2178,28 @@ def hostOsArch: String = ffiHostOsArch
 // absence is an errno rather than a missing symbol.
 def kyoNetBoringSslOsTargets: Seq[String] = Seq("linux", "linux-musl", "darwin")
 
+// What a Scala Native consumer's build looks for to back kyo-net's TLS and io_uring shims with its own machine's
+// libraries (see FfiSystemLibrary). OpenSSL 3 is keg-only in Homebrew and MacPorts installs under /opt/local, so
+// macOS names those prefixes; Linux distributions install into the compiler's default paths. io_uring links
+// statically, as the JVM shared library does, so a consumer binary carries no runtime liburing dependency.
+def kyoNetSystemOpenssl: FfiSystemLibrary =
+    FfiSystemLibrary(
+        headers = Seq("openssl/ssl.h"),
+        linkLibs = Seq("ssl", "crypto"),
+        prefixesByOs = Map(
+            "darwin" -> Seq(
+                "/opt/homebrew/opt/openssl@3",
+                "/usr/local/opt/openssl@3",
+                "/opt/homebrew/opt/openssl",
+                "/usr/local/opt/openssl",
+                "/opt/local"
+            )
+        )
+    )
+
+def kyoNetSystemUring: FfiSystemLibrary =
+    FfiSystemLibrary(headers = Seq("liburing.h"), linkLibsByOs = Map("linux" -> Seq("uring")), staticLink = true)
+
 // The staged BoringSSL tree for the host os-arch, present only after build-boringssl.sh ran.
 def boringSslStagedDir(baseDir: File): File =
     baseDir / "build" / "boringssl" / "staged" / hostOsArch
@@ -2504,7 +2525,8 @@ lazy val `kyo-net` =
                 // defines KYO_FFI_LINKED_KYONET_OPENSSL. This build defines it by declaring linkLibs wherever it can link an
                 // OpenSSL: the system one when its headers are here, or the staged BoringSSL, which provides the same names
                 // (the plugin then links no second -lssl, and the shim compiles against the staged headers that precede the
-                // system ones). `includeDirs` only steers this host's compile toward a non-default OpenSSL prefix.
+                // system ones). `includeDirs` only steers this host's compile toward a non-default OpenSSL prefix. `system`
+                // is what a consumer's build looks for on its own machine, independent of what this host has.
                 // On the JVM (where BoringSslProvider over the JDK SSLEngine floor covers TLS and no code path loads it) it
                 // is still declared as a STUB with no C sources, so no static OpenSSL blob is bundled. The stub still declares
                 // the library id, so the FFI codegen's library-id validation passes for the always-present OpenSslBindings
@@ -2517,7 +2539,8 @@ lazy val `kyo-net` =
                             cSources = (sharedBase / "src" / "main" / "c-openssl" ** "*.c").get,
                             cHeaders = (sharedBase / "src" / "main" / "c-openssl" ** "*.h").get,
                             includeDirs = systemIncludes,
-                            linkLibs = if (staged || systemIncludes.nonEmpty) Seq("ssl", "crypto") else Nil
+                            linkLibs = if (staged || systemIncludes.nonEmpty) Seq("ssl", "crypto") else Nil,
+                            system = Some(kyoNetSystemOpenssl)
                         )
                     } else
                         FfiLibrary(id = "kyonet_openssl", cSources = Nil)
@@ -2527,7 +2550,8 @@ lazy val `kyo-net` =
                         cSources = (sharedBase / "src" / "main" / "c" ** "*.c").get,
                         cHeaders = (sharedBase / "src" / "main" / "c" ** "*.h").get,
                         linkLibsByOs = Map("linux" -> Seq("uring")),
-                        staticLink = true
+                        staticLink = true,
+                        system = Some(kyoNetSystemUring)
                     ),
                     boringSsl,
                     openSsl
@@ -3879,19 +3903,16 @@ lazy val `openssl-native-settings` = Seq(
     }
 )
 
-// Reads the FFI native-flag manifests KyoFfiPlugin writes per FFI dependency (one `<module>-<os>.flags` file
-// per module under `relDir`), one flag per line, deduped first-seen so a BoringSSL `-I` precedes a later system
-// include. A downstream Native module folds a dependency's flags in so the dep's bundled C compiles and links
-// the way it does in the owning module (see `native-settings`).
+// Reads the in-build FFI native-flag manifests KyoFfiPlugin writes per FFI dependency (one `<module>-<os>.flags`
+// file per module under `inBuildRelDir`), one flag per line, deduped first-seen so a BoringSSL `-I` precedes a
+// later system include. A downstream Native module folds a dependency's flags in so the dep's bundled C compiles
+// and links the way it does in the owning module (see `native-settings`).
 //
-// Only THIS target's OS is read. The manifests ride a classpath that also carries published artifacts, and a
-// flag set produced for another OS does not merely fail to help: `-luring` and the GNU-ld options ld64 rejects
-// break a Darwin link outright.
-// Delegates to KyoFfiPlugin, which owns the manifest layout and the in-build / packaged precedence. This build
+// Delegates to KyoFfiPlugin, which owns the manifest layout and reads only this target OS's files. This build
 // reads them here because `native-settings` applies to every Native module, including the many that do not enable
 // KyoFfiPlugin and so have no `ffiNativeDependencyLinkingOptions` of their own.
-def readFfiNativeManifest(cp: Seq[Attributed[File]], relDir: Seq[String], inBuildRelDir: Seq[String]): Seq[String] =
-    KyoFfiPlugin.readNativeFlagManifests(cp.map(_.data), relDir, inBuildRelDir, KyoFfiPlugin.ffiManifestTargetOs)
+def readFfiNativeManifest(cp: Seq[Attributed[File]], inBuildRelDir: Seq[String]): Seq[String] =
+    KyoFfiPlugin.readNativeFlagManifests(cp.map(_.data), inBuildRelDir, KyoFfiPlugin.ffiManifestTargetOs)
 
 // Everything a Native row needs that does not assume the project is itself a Scala Native module, so
 // the kyoNative aggregate (which has no native sources, hence no Test / nativeLink to transform) can
@@ -3924,13 +3945,13 @@ lazy val `native-settings-base` = Seq(
     nativeConfig := {
         val base                = nativeConfig.value
         val cp                  = (Compile / dependencyClasspath).value
-        val dependencyLinkExtra = readFfiNativeManifest(cp, KyoFfiPlugin.ffiNativeLinkFlagsDir, KyoFfiPlugin.ffiNativeInBuildLinkFlagsDir)
+        val dependencyLinkExtra = readFfiNativeManifest(cp, KyoFfiPlugin.ffiNativeInBuildLinkFlagsDir)
         // Scala Native 0.5.12 omits GNU-stack notes in its safepoint assembly (upstream #4956).
         // Mark Linux binaries' stacks non-executable until a release carries those notes.
         val triple       = base.targetTriple.getOrElse(scala.scalanative.build.Discover.targetTriple(base))
         val isLinux      = triple.split("-").contains("linux")
         val linkExtra    = dependencyLinkExtra ++ (if (isLinux) Seq("-Wl,-z,noexecstack") else Nil)
-        val compileExtra = readFfiNativeManifest(cp, KyoFfiPlugin.ffiNativeCompileFlagsDir, KyoFfiPlugin.ffiNativeInBuildCompileFlagsDir)
+        val compileExtra = readFfiNativeManifest(cp, KyoFfiPlugin.ffiNativeInBuildCompileFlagsDir)
         val withLink     = if (linkExtra.isEmpty) base else base.withLinkingOptions(base.linkingOptions ++ linkExtra)
         if (compileExtra.isEmpty) withLink else withLink.withCompileOptions(withLink.compileOptions ++ compileExtra)
     }

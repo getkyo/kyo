@@ -94,6 +94,10 @@ import sbt._
   *   order C compilation so a library that `#include`s another's header (or
   *   links against its symbols) is built afterwards. Unknown ids are errors;
   *   cycles are errors.
+  * @param system
+  *   the library a Scala Native consumer's machine may provide for this one's C, published with the Native
+  *   artifact and resolved in the consumer's build (see [[FfiSystemLibrary]]). Independent of `linkLibs`, which
+  *   say what THIS build links: an unstaged or header-less build host must not decide what a consumer can use.
   */
 final case class FfiLibrary(
     id: String,
@@ -109,7 +113,8 @@ final case class FfiLibrary(
     dependsOn: Seq[String] = Nil,
     compilerByOs: Map[String, String] = Map.empty,
     osTargets: Seq[String] = Nil,
-    osArchTargets: Seq[String] = Nil
+    osArchTargets: Seq[String] = Nil,
+    system: Option[FfiSystemLibrary] = None
 ) {
 
     /** Whether this library's shared library is built and bundled on `os` (the resolved TARGET os).
@@ -169,8 +174,7 @@ final case class FfiLibrary(
       * consumer never wrote. The macro is emitted by the same build that emits the link flags, so the
       * two cannot disagree, and a build that emits neither compiles the stub and links.
       */
-    def linkedDefine: String =
-        "KYO_FFI_LINKED_" + id.map(c => if (c.isLetterOrDigit) c.toUpper else '_')
+    def linkedDefine: String = FfiLibrary.linkedDefineFor(id)
 
     /** `-D<linkedDefine>` when this library declares link libraries for `os`, empty otherwise. */
     def linkedDefineFlags(os: String): Seq[String] =
@@ -186,4 +190,11 @@ final case class FfiLibrary(
         val key = if (os == "linux-musl") "linux" else os
         compilerByOs.get(key)
     }
+}
+
+object FfiLibrary {
+
+    /** [[FfiLibrary.linkedDefine]] for a library known only by `id`, as a consumer reading a published declaration knows it. */
+    def linkedDefineFor(id: String): String =
+        "KYO_FFI_LINKED_" + id.map(c => if (c.isLetterOrDigit) c.toUpper else '_')
 }
