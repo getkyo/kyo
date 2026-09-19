@@ -8,7 +8,7 @@ That makes this module a monitoring contract, not an API. Three things describe 
 
 ```scala
 // build.sbt
-// libraryDependencies += "org.getkyo" %% "kyo-stats-machine" % "<version>"
+// libraryDependencies += "io.getkyo" %% "kyo-stats-machine" % "<version>"
 ```
 
 That line is the entire integration for a `kyo.KyoApp`. There is no import to add and no method to call: the application entrypoint reaches `kyo.Stat` before running your code, the service loader discovers `MachineStatFactory`, and constructing that factory starts the sampler.

@@ -267,14 +267,23 @@ Global / onLoad := {
         )
     }
 
-    // Guards publishability of the sbt plugins, which ship only by virtue of being aggregated here.
-    // A scripted suite cannot cover this: scriptedDependencies publishLocals the plugin project
+    // Guards publishability of the projects that are not cross-projects (the sbt plugins and the
+    // codegen the FFI plugin resolves at task time), which ship only by virtue of being aggregated
+    // here. A scripted suite cannot cover this: scriptedDependencies publishLocals the plugin project
     // directly and passes whether or not any aggregate contains it.
     locally {
         // The expected type picks ProjectDefinition.aggregate over Project.aggregate(refs*).
         val refs: Seq[ProjectReference] = kyoJVM.aggregate
         val aggregated                  = refs.collect { case LocalProject(id) => id }.toSet
-        val missing                     = Set("kyo-test-sbt", "kyo-test-sbt-publish").diff(aggregated)
+        val published = Set(
+            "kyo-test-sbt",
+            "kyo-test-sbt-publish",
+            "kyo-ffi-plugin",
+            "kyo-ffi-codegen",
+            "kyo-doctest-plugin",
+            "kyo-compat-plugin"
+        )
+        val missing = published.diff(aggregated)
         if (missing.nonEmpty) {
             throw new IllegalStateException(
                 s"kyoJVM must aggregate ${missing.toList.sorted.mkString(", ")}; " +
@@ -1737,9 +1746,7 @@ lazy val `kyo-ffi-plugin` =
                     Def.task(streams.value.log.info("scripted skipped on Windows (sbt#6777 boot-server named-pipe flake)"))
                 else
                     Def.task((scripted.toTask("")).value)
-            }).value,
-            publish   := {},
-            publishM2 := {}
+            }).value
         )
 
 // JMH benchmarks for kyo-ffi. Separate from kyo-bench because Panama requires
