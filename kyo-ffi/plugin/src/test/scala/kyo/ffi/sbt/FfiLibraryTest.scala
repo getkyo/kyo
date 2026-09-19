@@ -150,6 +150,13 @@ class FfiLibraryTest extends AnyFunSuite with Matchers {
         FfiLibrary(id = "kyonet_boringssl", cSources = Nil).linkedDefineFlags("linux") shouldBe empty
     }
 
+    test("a library that links an archive by path gets the define on every OS") {
+        // kyo_doltlite links its prebuilt engine as `<staged>/libdoltlite.a` in linkFlags, with no linkLibs at all.
+        val l = FfiLibrary(id = "kyo_doltlite", cSources = Nil, linkFlags = Seq("/staged/libdoltlite.a"))
+        l.linkedDefineFlags("linux") shouldBe Seq("-DKYO_FFI_LINKED_KYO_DOLTLITE")
+        l.linkedDefineFlags("darwin") shouldBe Seq("-DKYO_FFI_LINKED_KYO_DOLTLITE")
+    }
+
     test("different OS keys are honored independently") {
         val l = lib(byOs = Map("linux" -> Seq("uring"), "windows" -> Seq("ws2_32")))
         l.resolvedLinkLibs("linux") shouldBe Seq("uring")

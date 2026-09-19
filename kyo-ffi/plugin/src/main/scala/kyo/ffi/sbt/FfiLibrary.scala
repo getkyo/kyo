@@ -176,9 +176,11 @@ final case class FfiLibrary(
       */
     def linkedDefine: String = FfiLibrary.linkedDefineFor(id)
 
-    /** `-D<linkedDefine>` when this library declares link libraries for `os`, empty otherwise. */
+    /** `-D<linkedDefine>` when this library declares anything to link for `os`, empty otherwise. That is link
+      * libraries, or link flags: an archive named by path in `linkFlags` is on the link as surely as a `-l`.
+      */
     def linkedDefineFlags(os: String): Seq[String] =
-        if (resolvedLinkLibs(os).nonEmpty) Seq(s"-D$linkedDefine") else Nil
+        if (resolvedLinkLibs(os).nonEmpty || linkFlags.nonEmpty) Seq(s"-D$linkedDefine") else Nil
 
     /** The C compiler this library requires for the OS being built, overriding the global
       * `ffiCCompiler` for that OS only. `linux-musl` resolves the `linux` key. Absent (the default,

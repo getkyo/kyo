@@ -146,12 +146,18 @@ object DoltLite:
         ) {
             Sync.Unsafe.defer {
                 val loaded = Ffi.load[DoltLiteBindings]
-                val _      = loaded.libversionNumber()
-                loaded
+                (loaded, loaded.libversionNumber())
             }
-        }.flatMap { bindings =>
-            val factory = new DoltLiteConnectionFactory(new SqliteConnectionFactory(bindings))
-            Runtime.init(url, config, factory).map(rt => new DoltLiteClient(rt))
+        }.flatMap { case (bindings, version) =>
+            // On Scala Native this module's C compiles in the build that links the binary, and a build without the
+            // engine on its link compiles stubs reporting version 0, which no SQLite release reports.
+            if version == 0 then
+                Abort.fail(DoltLiteEngineUnavailableException(
+                    "this Scala Native binary was linked without it. The kyo-sql-doltlite artifact carries the driver's C but not the engine."
+                ))
+            else
+                val factory = new DoltLiteConnectionFactory(new SqliteConnectionFactory(bindings))
+                Runtime.init(url, config, factory).map(rt => new DoltLiteClient(rt))
         }
 
     /** Registers the DoltLite backend so runtime discovery resolves a computed `doltlite://` URL, the explicit

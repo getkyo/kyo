@@ -933,7 +933,7 @@ ffiLibraries := Seq(
 
 #### Native: gate a shim on its link, and declare what a consumer can link
 
-On Scala Native a module's C ships as source and compiles in whichever build links the binary, including a consumer's that has none of your `linkLibs`. A shim whose C calls into an external library therefore gates that code on `KYO_FFI_LINKED_<ID>` (the library id upper-cased, every other character `_`), which the plugin defines exactly where it links the library: in the JVM and JS `cc` command and in `ffiNativeCompileOptions`. The `#else` branch defines the same entry points as stubs, so a build that links nothing still links, and the binding reports the library unavailable at run time:
+On Scala Native a module's C ships as source and compiles in whichever build links the binary, including a consumer's that has none of your `linkLibs`. A shim whose C calls into an external library therefore gates that code on `KYO_FFI_LINKED_<ID>` (the library id upper-cased, every other character `_`), which the plugin defines exactly where it links the library (where it declares `linkLibs` or `linkFlags` for the target OS): in the JVM and JS `cc` command and in `ffiNativeCompileOptions`. The `#else` branch defines the same entry points as stubs, so a build that links nothing still links, and the binding reports the library unavailable at run time:
 
 ```c
 #if defined(KYO_FFI_LINKED_MY_TLS)

@@ -59,6 +59,12 @@ search detail, the platform it looked for and every path it tried, on the runtim
 [kyo-sql-sqlite](../kyo-sql-sqlite/README.md) is the embedded engine that does run everywhere. It compiles from C
 source, so it has no per-platform artifact and no such gap. What it does not have is version control.
 
+Scala Native is a gap as well. The Native artifact carries the driver's C, which compiles in the application's
+build, but not the engine. The application links, and opening a `doltlite://` URL fails with
+`DoltLiteEngineUnavailableException`, whose message says the binary was linked without the engine. One Native
+binary cannot hold both this artifact and kyo-sql-sqlite: each defines the `sqlite3_*` functions, so the link
+fails on duplicate symbols.
+
 ## Opening a database
 
 The URL is a file path, or `:memory:` for a database that lives only as long as the connection:

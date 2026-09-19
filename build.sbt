@@ -1319,7 +1319,10 @@ lazy val `kyo-sql-doltlite` =
                         // run time with "Cannot open library", because the shim is extracted to a temp directory
                         // where libdoltlite.dylib is not.
                         linkFlags = Seq((staged / "libdoltlite.a").getAbsolutePath),
-                        cFlags = Seq("-DKYO_SQLITE_HEADER=\"doltlite.h\""),
+                        // KYO_SQLITE_DOLTLITE makes the shim's engine calls conditional on KYO_FFI_LINKED_KYO_DOLTLITE,
+                        // which the plugin emits here because linkFlags names the archive. These two reach the Native
+                        // jar's descriptor and the linked define never does, so a consumer's build compiles the stubs.
+                        cFlags = Seq("-DKYO_SQLITE_HEADER=\"doltlite.h\"", "-DKYO_SQLITE_DOLTLITE"),
                         staticLink = false,
                         osArchTargets = kyoSqlDoltLiteOsArchTargets
                     )
@@ -1346,9 +1349,13 @@ lazy val `kyo-sql-doltlite` =
         .nativeSettings(
             `native-settings`,
             `openssl-native-settings`,
+            // ffiNativeCompileOptions carries KYO_FFI_LINKED_KYO_DOLTLITE, without which the shim compiles its stubs
+            // and every suite reports the engine unavailable.
             nativeConfig := {
                 val base = nativeConfig.value
-                base.withLinkingOptions(base.linkingOptions :+ doltLiteNativeArchive(baseDirectory.value / ".."))
+                base
+                    .withLinkingOptions(base.linkingOptions :+ doltLiteNativeArchive(baseDirectory.value / ".."))
+                    .withCompileOptions(base.compileOptions ++ ffiNativeCompileOptions.value)
             }
         )
         .wasmSettings(
@@ -2449,7 +2456,7 @@ lazy val `kyo-net` =
                 // BoringSSL (kyonet_boringssl): the kyo_net_boringssl.c shim insulates the raw SSL_* ABI (RI-006), linking
                 // the staged static archives (JVM: loadable lib via Panama; Native: archive-linked). The same file compiles
                 // either way: its real branch is gated on the KYO_FFI_LINKED_KYONET_BORINGSSL define the plugin emits only
-                // when linkLibs are declared, so an unstaged build compiles its stub branch (probe_available -> 0, so
+                // when the library declares something to link, so an unstaged build compiles its stub branch (probe_available -> 0, so
                 // BoringSslProvider.isAvailable is false and TLS falls back).
                 val staged       = boringSslStaged(kyoNetBase)
                 val stagedDir    = boringSslStagedDir(kyoNetBase)

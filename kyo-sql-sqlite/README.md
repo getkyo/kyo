@@ -103,6 +103,10 @@ The module builds for the JVM, Scala Native, Node, and Wasm from one shared sour
 browser: the library is loaded through kyo-ffi, which refuses a host with neither `process` nor `require`, and a
 platform with no filesystem has no database file for two connections to share in any case.
 
+On Scala Native the engine compiles into the application binary, and that binary cannot also hold
+[kyo-sql-doltlite](../kyo-sql-doltlite/README.md): both define the `sqlite3_*` functions, so the link fails on
+duplicate symbols.
+
 ## Opening a database
 
 `DB.run` takes a URL, opens a pool for it, and supplies the `DB` effect to everything inside. The pool belongs
