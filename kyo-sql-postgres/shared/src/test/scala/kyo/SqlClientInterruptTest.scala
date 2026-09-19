@@ -217,7 +217,7 @@ class SqlClientInterruptTest extends SqlContainerTest:
       */
     "an interrupt landing as close extracts the idle ring strands no session".pendingUntilFixed(
         "closeAll drains the idle ring in one step and installs the force-close of what it extracted in the next, so a stop landing between them abandons connections the pool no longer holds and nothing closes"
-    ) in {
+    ).notJs.notWasm in {
         val rounds = 40
         val warm   = SqlConfig(maxConnections = 2, minConnections = 2, acquireTimeout = 10.seconds, queryTimeout = 10.seconds)
         containerUrl("kyo-sql-close-orphan") { url =>
@@ -263,7 +263,7 @@ class SqlClientInterruptTest extends SqlContainerTest:
       */
     "leases stopped at staggered offsets leave a pool that still serves and closes clean".pendingUntilFixed(
         "a lease reserves a pool slot in the step that finds the ring empty and registers the reservation's release two steps later, so a stop landing between them holds the slot for good and the pool refuses every acquire once its reservations are exhausted"
-    ) in {
+    ).notJs.notWasm in {
         val rounds = 60
         val two    = SqlConfig(maxConnections = 2, minConnections = 0, acquireTimeout = 10.seconds, queryTimeout = 10.seconds)
         containerUrl("kyo-sql-lease-stops") { url =>

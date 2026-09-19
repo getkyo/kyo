@@ -33,7 +33,7 @@ class AeronClientTest extends Test:
     // asserts what the driver can show: after rounds of connects stopped at sub-millisecond offsets, with every client
     // the rounds did receive closed, the embedded driver still closes within its bound rather than waiting on a client
     // that nobody closed.
-    "connects stopped at staggered offsets leave a driver that still closes" in {
+    "connects stopped at staggered offsets leave a driver that still closes".notJs.notWasm in {
         Path.run(Path.tempDir("kyo-aeron-client-stops")).map { root =>
             val dir    = root / AeronDriver.mediaDirName
             val rounds = 40

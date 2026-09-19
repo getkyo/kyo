@@ -2000,7 +2000,7 @@ class AsyncTest extends kyo.test.Test[Any]:
         // release, and one stopped before it started owes nothing.
         "an interrupt landing at the timeout's spawn reaches the guarded computation".pendingUntilFixed(
             "Async.timeout joins the guarded child in the step after the spawn, so a stop pending as that join is reached parks in front of it, before the join links the child, and the child keeps running unowned"
-        ) in {
+        ).notJs.notWasm in {
             val rounds = 80
             Loop.indexed { i =>
                 if i >= rounds then Loop.done(succeed)

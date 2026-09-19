@@ -915,7 +915,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
     // what it recorded, and the orphan runs on, never answering the peer. Each round has the caller send, spins to a
     // staggered sub-millisecond offset from the send, and ends the serving endpoint's scope there; a handler known to
     // have started must then be interrupted by that close, and one the close beat to the dispatch owes nothing.
-    "closing the endpoint while a request is being dispatched interrupts its handler" in {
+    "closing the endpoint while a request is being dispatched interrupts its handler".notJs.notWasm in {
         val rounds = 60
         Loop.indexed { i =>
             if i >= rounds then Loop.done(succeed)

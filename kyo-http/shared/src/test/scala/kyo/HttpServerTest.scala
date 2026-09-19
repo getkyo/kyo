@@ -4014,7 +4014,7 @@ class HttpServerTest extends BaseHttpTest:
                         else
                             val requesting = new java.util.concurrent.atomic.AtomicBoolean(false)
                             for
-                                _ <- Scope.run {
+                                closed <- Abort.run[Throwable](Scope.run {
                                     HttpClient.init(maxConnectionsPerHost = 2).map { client =>
                                         Fiber.initUnscoped(HttpClient.let(client) {
                                             Sync.defer(requesting.set(true)).andThen(Abort.run[HttpException](HttpClient.getText(url)))
@@ -4025,12 +4025,13 @@ class HttpServerTest extends BaseHttpTest:
                                                 val target = java.lang.System.nanoTime() + (i % 40) * 50_000L
                                                 while java.lang.System.nanoTime() < target do ()
                                                 discard(fiber.unsafe.interrupt())
-                                            }.andThen(fiber.getResult)
+                                            }.andThen(Abort.run[Throwable](fiber.getResult))
                                         }
                                     }
-                                }
+                                })
                                 gone <- Abort.run[Timeout](Async.timeout(2.seconds)(assertEventually(connectedTo(port).map(_ == 0))))
                             yield
+                                assert(closed.isSuccess, s"round $i: the client's scope did not close cleanly after the stopped request: $closed")
                                 assert(
                                     gone.isSuccess,
                                     s"round $i: a connection to port $port is still established after the client's scope closed"

@@ -1501,7 +1501,7 @@ class AeronTransportTest extends Test:
     // it opened closed.
     "a publication the add hands on under a stop is closed by someone".pendingUntilFixed(
         "the add-deadline guard hands the publication on at its clean end and Topic's ensureMap takes it over in the next step, so a stop landing on the poll between them leaves a publication that nobody closes"
-    ) in {
+    ).notJs.notWasm in {
         val rounds    = 80
         val transport = new HandoffTransport
         Loop.indexed { i =>

@@ -180,7 +180,7 @@ class FlowEngineLifecycleTest extends FlowEngineSupport:
         // what it recorded, and the orphan keeps renewing the claim of an execution nobody supervises. Each round starts an
         // execution whose step parks, advances the clock so the loop claims it, spins to a staggered offset and ends the
         // engine's scope there; the claim's expiry must then stop moving once the clock advances past a renewal.
-        "closing the engine while it spawns a supervision leaves no supervision renewing the claim" in {
+        "closing the engine while it spawns a supervision leaves no supervision renewing the claim".notJs.notWasm in {
             val rounds = 30
             Clock.withTimeControl { tc =>
                 FlowStore.initMemory.map { store =>

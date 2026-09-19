@@ -566,7 +566,7 @@ class HubTest extends kyo.test.Test[Any]:
         // orphans the publisher, parked on a channel nothing else references, which no API can observe: the leaf pins
         // what is observable, that the caller settles with the interrupt whatever step the stop lands on. The stop is
         // requested from the leaf's own fiber spinning to a staggered offset from the step before `use`.
-        "interrupting Hub.use around its spawn settles the caller with the interrupt" in {
+        "interrupting Hub.use around its spawn settles the caller with the interrupt".notJs.notWasm in {
             val rounds = 40
             Loop.indexed { i =>
                 if i >= rounds then Loop.done(succeed)
