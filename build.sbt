@@ -1205,16 +1205,11 @@ lazy val `kyo-sql-sqlite` =
             }
         )
         .jvmSettings(
-            mimaCheck(false),
-            // Publish the compiled engine per platform, so a consumer needs no C toolchain.
-            kyoSqlSqliteClassifierArtifacts := ffiClassifierArtifacts(
-                "kyo-sql-sqlite",
-                (Compile / managedResources).value,
-                version.value,
-                crossTarget.value
-            ),
-            // Project-scoped `packagedArtifacts` is what publish/ci-release uploads.
-            packagedArtifacts ++= kyoSqlSqliteClassifierArtifacts.value
+            // The engine's natives for every platform ride in the main jar and no per-platform classifier jars are published.
+            // Unlike kyo-net, which falls back to pure-JVM NIO and JDK TLS, this module has no floor without its native, so a
+            // slim main jar would break every consumer that did not add a classifier, and a classifier beside a full main jar
+            // only duplicates it.
+            mimaCheck(false)
         )
         .jsSettings(
             `js-settings`,
@@ -1332,16 +1327,9 @@ lazy val `kyo-sql-doltlite` =
             }
         )
         .jvmSettings(
-            mimaCheck(false),
-            // Publish the linked engine per platform. DoltLite ships prebuilt libraries, so unlike the vendored
-            // build beside it there is no compile step a consumer could fall back on.
-            kyoSqlDoltLiteClassifierArtifacts := ffiClassifierArtifacts(
-                "kyo-sql-doltlite",
-                (Compile / managedResources).value,
-                version.value,
-                crossTarget.value
-            ),
-            packagedArtifacts ++= kyoSqlDoltLiteClassifierArtifacts.value
+            // The linked engine for every platform rides in the main jar, for the reason given on kyo-sql-sqlite: there is no
+            // pure-JVM floor to fall back on without it.
+            mimaCheck(false)
         )
         .jsSettings(
             `js-settings`,
@@ -2428,41 +2416,9 @@ val kyoNetNativeClassifierGuard = taskKey[Unit](
     "Assert every library-state `native`/`prebuilt` id has a real native artifact in the resource layout, and no `stub` ships."
 )
 
-// P2b classifier slice: the per-os-arch native classifier jars + the all-natives aggregator, appended to
+// P2b classifier slice: kyo-net's per-os-arch native classifier jars + the all-natives aggregator, appended to
 // `Compile / packagedArtifacts` (via `++=`, never a self-referential `:=`). Separate task so the extension is
 // non-cyclic. DECISION-P2b-classifier.md Decisions 1 + 3.
-/** Slices an FFI module's compiled natives into per-os-arch classifier jars plus an `all-natives` aggregator.
-  *
-  * The plugin already writes each library to `META-INF/native/<os-arch>/lib<id>.<ext>` in the managed resources; what
-  * this adds is publishing them as their own artifacts, so a consumer gets a prebuilt library for their platform
-  * instead of needing a C toolchain. kyo-net does the same thing with its own task, which carries extra rules about
-  * which library families earn a classifier; a module with a single library needs none of that, so the shared shape
-  * lives here and kyo-net keeps its own.
-  */
-def ffiClassifierArtifacts(base: String, resources: Seq[File], version: String, out: File): Map[Artifact, File] = {
-    val natives = resources.filter { f =>
-        (f.getName.endsWith(".so") || f.getName.endsWith(".dylib") || f.getName.endsWith(".dll")) &&
-        f.getParentFile.getParentFile.getName == "native"
-    }
-    def sliceJar(classifier: String, files: Seq[File]): (Artifact, File) = {
-        val jar     = out / s"$base-$version-$classifier-natives.jar"
-        val entries = files.map(f => f -> s"META-INF/native/${f.getParentFile.getName}/${f.getName}")
-        IO.zip(entries, jar, None)
-        Artifact(base).withType("jar").withExtension("jar").withClassifier(Some(classifier)) -> jar
-    }
-    val perOsArch = natives.groupBy(_.getParentFile.getName).map { case (osArch, files) => sliceJar(osArch, files) }
-    val all       = if (natives.nonEmpty) Map(sliceJar("all-natives", natives)) else Map.empty[Artifact, File]
-    perOsArch ++ all
-}
-
-val kyoSqlSqliteClassifierArtifacts = taskKey[Map[Artifact, File]](
-    "Per-os-arch native classifier jars for the vendored SQLite build, plus the `all-natives` aggregator."
-)
-
-val kyoSqlDoltLiteClassifierArtifacts = taskKey[Map[Artifact, File]](
-    "Per-os-arch native classifier jars for the linked DoltLite build, plus the `all-natives` aggregator."
-)
-
 val kyoNetClassifierArtifacts = taskKey[Map[Artifact, File]](
     "Per-os-arch native classifier jars (transport-native `<os-arch>`, vendored-BoringSSL `<os-arch>-boringssl`) + the `all-natives` aggregator."
 )
@@ -3870,7 +3826,7 @@ lazy val `kyo-test-readme` =
 lazy val consumerCheckModules: Seq[ProjectReference] =
     Seq(`kyo-net`, `kyo-aeron`, `kyo-sql-sqlite`, `kyo-sql-doltlite`, `kyo-stats-machine`)
         .flatMap(m => Seq[ProjectReference](m.jvm, m.js, m.native)) ++
-        Seq[ProjectReference](`kyo-ffi-plugin`, `kyo-ffi-codegen`)
+        Seq[ProjectReference](`kyo-ffi-plugin`, `kyo-ffi-codegen`, `kyo-doctest-plugin`, `kyo-doctest`.jvm)
 
 lazy val `kyo-consumer-check` =
     project
@@ -3888,7 +3844,9 @@ lazy val `kyo-consumer-check` =
                 // stale Scala cannot read their TASTy, and a stale Scala.js or Scala Native plugin cannot read their IR.
                 "-Dkyo.scalaVersion=" + scala39Version,
                 "-Dscalajs.version=" + scalaJSVersion,
-                "-Dscalanative.version=" + nativeVersion
+                "-Dscalanative.version=" + nativeVersion,
+                // The classifier a JVM consumer on this host adds for kyo-net's per-platform natives.
+                "-Dkyo.hostOsArch=" + ffiHostOsArch
             ),
             scriptedDependencies := {
                 val published = publishLocal.all(ScopeFilter(consumerCheckModules.map(inDependencies(_)).reduce(_ || _))).value
@@ -4072,6 +4030,13 @@ lazy val `kyo-doctest-plugin` = (project in file("kyo-doctest/plugin"))
         // scalafmt-dynamic powers the `doctestFormat` task (rewrite-in-place of README scala
         // blocks using the repo's .scalafmt.conf). Pinned to the .scalafmt.conf version.
         libraryDependencies += "org.scalameta" %% "scalafmt-dynamic" % "3.11.5",
+        // Bake this plugin's version into a resource so the default doctestExtraClasspath resolves the
+        // matching kyo-doctest from the user's resolvers, as kyo-ffi-plugin resolves kyo-ffi-codegen.
+        Compile / resourceGenerators += Def.task {
+            val versionFile = (Compile / resourceManaged).value / "kyo-doctest-plugin" / "version.txt"
+            IO.write(versionFile, version.value)
+            Seq(versionFile)
+        }.taskValue,
         scriptedLaunchOpts                     := Seq(
             "-Xmx1024M",
             "-Dplugin.version=" + version.value,

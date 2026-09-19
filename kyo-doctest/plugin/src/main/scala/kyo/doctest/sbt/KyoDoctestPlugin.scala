@@ -100,14 +100,18 @@ object KyoDoctestPlugin extends AutoPlugin {
             "JVM options forwarded to the forked doctest driver (default: -Xmx8G -Xss10M)."
         )
 
-        /** Extra jars appended to the doctest fork's classpath, used to inject the kyo-doctest library without going through
+        /** Extra jars appended to the doctest fork's classpath: the kyo-doctest library the fork runs, kept off
           * `Test / unmanagedJars` (which would leak onto Test compile and crash dotty on Scala 3 LTS fallback modules).
+          *
+          * Defaults to `io.getkyo:kyo-doctest_3` at this plugin's own version and its dependencies (kyo-core, the Scala 3
+          * compiler), resolved from the build's resolvers, so adding the plugin is the whole setup. A build that supplies
+          * the library another way (the kyo build hands over its own compiled classpath) sets this instead.
           *
           * When an entry here contributes a `scala3-library_3-*.jar`, the plugin drops mismatched copies coming from
           * `Test / fullClasspath` so the fork sees exactly one scala3-library, matching the dotty driver inside this classpath.
           */
         val doctestExtraClasspath: TaskKey[Seq[File]] = taskKey[Seq[File]](
-            "Extra jars appended to the doctest fork's classpath (default: empty)."
+            "Extra jars appended to the doctest fork's classpath (default: kyo-doctest at this plugin's version, resolved)."
         )
 
         /** Run validation; exit 1 on any block failure. Writes the cache. */
@@ -186,6 +190,21 @@ object KyoDoctestPlugin extends AutoPlugin {
 
     private val scala3LibPattern = """^scala3-library_3-.*\.jar$""".r
 
+    /** This plugin's published version, baked into `kyo-doctest-plugin/version.txt` by its build. Absent when the plugin is
+      * compiled from source into another build's meta-build, as kyo's own is, where every project sets
+      * `doctestExtraClasspath` itself and the default that reads this never runs.
+      */
+    private[sbt] def pluginVersion: String = {
+        val in = getClass.getResourceAsStream("/kyo-doctest-plugin/version.txt")
+        if (in == null)
+            sys.error(
+                "[kyo-doctest] version.txt missing from the plugin; set doctestExtraClasspath to the kyo-doctest runner classpath."
+            )
+        else
+            try new String(IO.readBytes(in), java.nio.charset.StandardCharsets.UTF_8).trim
+            finally in.close()
+    }
+
     /** Merges `base` (project's Test/fullClasspath) with `extra` (doctest framework classpath). When both bring a
       * `scala3-library_3-*.jar` at different versions, only `extra`'s is kept (the dotty driver inside `extra` was compiled
       * against it).
@@ -201,7 +220,31 @@ object KyoDoctestPlugin extends AutoPlugin {
     }
 
     override lazy val projectSettings: Seq[Setting[?]] = Seq(
-        doctestExtraClasspath := Seq.empty,
+        doctestExtraClasspath := {
+            val log     = streams.value.log
+            val depRes  = dependencyResolution.value
+            val version = pluginVersion
+            val library = "io.getkyo" % "kyo-doctest_3" % version
+            val descriptor = depRes.moduleDescriptor(
+                sbt.librarymanagement.ModuleDescriptorConfiguration(
+                    "io.getkyo" % "kyo-doctest-resolver" % version,
+                    sbt.librarymanagement.ModuleInfo("kyo-doctest-resolver")
+                ).withDependencies(Vector(library))
+                    .withConfigurations(Vector(sbt.librarymanagement.Configurations.Compile))
+                    .withScalaModuleInfo(None)
+            )
+            val files = depRes.update(
+                descriptor,
+                sbt.librarymanagement.UpdateConfiguration().withLogging(sbt.librarymanagement.UpdateLogging.Quiet),
+                sbt.librarymanagement.UnresolvedWarningConfiguration(),
+                log
+            ) match {
+                case Right(report) => report.allFiles.distinct
+                case Left(warn)    => throw warn.resolveException
+            }
+            if (files.isEmpty) sys.error(s"[kyo-doctest] resolved no artifacts for io.getkyo:kyo-doctest_3:$version")
+            files
+        },
         doctestSources        := {
             val base   = baseDirectory.value
             val direct = base / "README.md"
