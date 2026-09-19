@@ -50,7 +50,7 @@ class McpServerEarlyRequestTest extends Test:
         McpHandler.tool[Query]("run_select", "Run a query")(q => Rows(q.sql.length))
 
     /** Queues the whole burst, starts the server, and returns the responses it sent back. */
-    private def burst(using Frame): Chunk[JsonRpcResponse] < (Async & Scope & Abort[Closed | McpException]) =
+    private def burst(using Frame): Chunk[JsonRpcResponse] < (Async & Scope & Abort[Closed | McpException | JsonRpcError]) =
         JsonRpcTransport.inMemory.flatMap { (serverSide, clientSide) =>
             for
                 // Pipelined, with no wait for the initialize response: the burst is already sitting on

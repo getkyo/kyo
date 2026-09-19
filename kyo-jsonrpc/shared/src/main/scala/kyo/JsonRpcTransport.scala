@@ -22,7 +22,16 @@ import kyo.net.NetPlatform
   * @see [[JsonRpcHandler]]
   */
 trait JsonRpcTransport:
-    def send(env: JsonRpcEnvelope)(using Frame): Unit < (Async & Abort[Closed])
+    /** Transmits `env` to the peer.
+      *
+      * Aborts `Closed` when the connection is gone, and [[JsonRpcError]] when the envelope cannot be
+      * put on the wire at all: a [[JsonRpcMalformedMessage]], which only ever comes from decoding a
+      * peer's garbage and so is unsendable by construction, or extras carrying a reserved key. Both
+      * are failures of the value handed in rather than of the connection, and neither can be
+      * retried, but both are reachable from runtime data, so they are reported rather than silently
+      * dropped.
+      */
+    def send(env: JsonRpcEnvelope)(using Frame): Unit < (Async & Abort[Closed | JsonRpcError])
     def incoming(using Frame): Stream[JsonRpcEnvelope, Async & Abort[Closed]]
     def close(using Frame): Unit < Async
 end JsonRpcTransport
