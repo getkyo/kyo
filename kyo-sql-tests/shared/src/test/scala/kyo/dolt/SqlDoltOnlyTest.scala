@@ -217,9 +217,9 @@ class SqlDoltOnlyTest extends SqlContainerTest:
         Scope.run {
             withDolt(SqlConfig(maxConnections = 1)) { dolt =>
                 for
-                    _ <- seeded(dolt)
-                    _ <- dolt.createBranch("outer")
-                    _ <- dolt.createBranch("inner")
+                    _      <- seeded(dolt)
+                    _      <- dolt.createBranch("outer")
+                    _      <- dolt.createBranch("inner")
                     nested <- dolt.onBranch("outer") {
                         dolt.onBranch("inner")(dolt.query("SELECT active_branch()").map(rows => rows(0).decode[String](0))).map { deep =>
                             dolt.query("SELECT active_branch()").map(rows => rows(0).decode[String](0)).map(back => (deep, back))
@@ -366,8 +366,8 @@ class SqlDoltOnlyTest extends SqlContainerTest:
         Scope.run {
             withDolt() { dolt =>
                 for
-                    _ <- seeded(dolt)
-                    _ <- dolt.createBranch("feature")
+                    _      <- seeded(dolt)
+                    _      <- dolt.createBranch("feature")
                     wanted <- dolt.onBranch("feature") {
                         dolt.executeRaw("INSERT INTO person VALUES (2, 'bob')").andThen(dolt.commit("add bob"))
                     }

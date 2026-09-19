@@ -1483,7 +1483,7 @@ object KyoFfiPlugin extends AutoPlugin {
             stagedPrebuilts(ffiPrebuiltDir.value, ffiPrebuiltPool.value, libs.map(_.id).toSet).map(_.libraryId).toSet
         val resManaged = (Compile / resourceManaged).value
         val moduleName = name.value
-        val targetTag = CCompiler.resolveTargetOsArch(ffiTargetOsArch.value) match {
+        val targetTag  = CCompiler.resolveTargetOsArch(ffiTargetOsArch.value) match {
             case (os, arch) => s"$os-$arch"
         }
         if (platform == "Native") Seq.empty[File]

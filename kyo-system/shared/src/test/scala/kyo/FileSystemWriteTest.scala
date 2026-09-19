@@ -35,8 +35,8 @@ abstract class FileSystemWriteTest[S >: Async] extends kyo.test.Test[Any]:
             val first  = root / "first.txt"
             val second = root / "second.txt"
             for
-                gate <- Latch.init(1)
-                left <- Fiber.initUnscoped(gate.await.andThen(fileSystem.write(first, "left", Path.WriteOptions())))
+                gate  <- Latch.init(1)
+                left  <- Fiber.initUnscoped(gate.await.andThen(fileSystem.write(first, "left", Path.WriteOptions())))
                 right <-
                     Fiber.initUnscoped(gate.await.andThen(fileSystem.write(second, "right", Path.WriteOptions())))
                 _      <- gate.release

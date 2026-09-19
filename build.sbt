@@ -1258,7 +1258,7 @@ lazy val `kyo-sql-doltlite` =
             // In-build codegen: feeds the plugin the codegen project's own classpath, so nothing has to be
             // resolved or publishLocal'd. Every other FFI module in this build does the same.
             ffiCodegenClasspath := (LocalProject("kyo-ffi-codegen") / Compile / fullClasspath).value.map(_.data),
-            ffiLibraries := {
+            ffiLibraries        := {
                 // baseDirectory is the per-platform dir for a cross-project, so the staged library and the
                 // sibling module's shim are both reached from one level up.
                 val moduleBase = baseDirectory.value / ".."
@@ -1372,9 +1372,9 @@ lazy val `kyo-system-doltfs` =
             // "library 'kyo_doltlite' not found". Compile scope stays clean, keeping this filesystem independent of
             // either engine.
             nativeConfig := {
-                val base      = nativeConfig.value
-                val cp        = (Test / dependencyClasspath).value
-                val linkExtra = readFfiNativeManifest(cp, KyoFfiPlugin.ffiNativeLinkFlagsDir, KyoFfiPlugin.ffiNativeInBuildLinkFlagsDir)
+                val base         = nativeConfig.value
+                val cp           = (Test / dependencyClasspath).value
+                val linkExtra    = readFfiNativeManifest(cp, KyoFfiPlugin.ffiNativeLinkFlagsDir, KyoFfiPlugin.ffiNativeInBuildLinkFlagsDir)
                 val compileExtra =
                     readFfiNativeManifest(cp, KyoFfiPlugin.ffiNativeCompileFlagsDir, KyoFfiPlugin.ffiNativeInBuildCompileFlagsDir)
                 // The engine archive as well: the shim compiled into this binary calls sqlite3_*, and the only
@@ -2298,7 +2298,7 @@ val kyoDoltLiteKoffiInstall: Def.Initialize[Task[Unit]] = Def.task {
     // is staged at, because the two transports must be the same engine for the suites to mean anything when they
     // run over either one.
     val wasmVersion = "0.50.10"
-    val pjContent =
+    val pjContent   =
         s"""{"name":"kyo-doltlite-node-test","private":true,"dependencies":{"koffi":"$koffiRange","@dolthub/doltlite-wasm":"$wasmVersion"}}"""
     val pj = targetBase / "package.json"
     if (!pj.exists() || IO.read(pj) != pjContent) {
