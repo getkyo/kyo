@@ -9,6 +9,7 @@ class AIExceptionTest extends kyo.test.Test[Any]:
             summon[AIEvalExhaustedException <:< AIGenException]
             summon[AIInvalidThoughtException <:< AIGenException]
             summon[AIDecodeException <:< AIGenException]
+            summon[AIInvalidQuestionException <:< AIGenException]
             summon[AIStreamDeltaException <:< AIStreamException]
             summon[AIStreamIncompleteException <:< AIStreamException]
             succeed
@@ -19,16 +20,24 @@ class AIExceptionTest extends kyo.test.Test[Any]:
             summon[AIMissingApiKeyException <:< AIStreamException]
             summon[AITransportException <:< AIGenException]
             summon[AITransportException <:< AIStreamException]
-            val shared: AIGenException & AIStreamException = AIMissingApiKeyException("gpt-4")
+            val shared: AIGenException & AIStreamException = AIMissingApiKeyException("gpt-4", "OPENAI_API_KEY")
             assert(shared.isInstanceOf[AIGenException] && shared.isInstanceOf[AIStreamException])
         }
     }
     "leaves" - {
         "messages are built from typed fields" in {
-            assert(AIMissingApiKeyException("gpt-4").getMessage.contains("gpt-4"))
+            assert(AIMissingApiKeyException("gpt-4", "OPENAI_API_KEY").getMessage.contains("gpt-4"))
+            assert(AIMissingApiKeyException("gpt-4", "OPENAI_API_KEY").getMessage.contains("set OPENAI_API_KEY"))
+            assert(AIRateLimitException("p", "429", Present(2.seconds)).retryAfter == Present(2.seconds))
+            assert(AIRateLimitException("p", "429").retryAfter == Absent)
             assert(AIInvalidThoughtException("Reflect").getMessage.contains("Reflect"))
             assert(AIStreamDeltaException("not-json").getMessage.contains("not-json"))
             assert(AIEvalExhaustedException(8).getMessage.contains("8"))
+            assert(AIInvalidQuestionException("question 2: too many").getMessage.contains("question 2: too many"))
+        }
+        "the decider leaf is a generation failure only, and not transient" in {
+            val invalid: AIException = AIInvalidQuestionException("x")
+            assert(!invalid.isInstanceOf[AIStreamException] && !invalid.isInstanceOf[AITransientException])
         }
         "the transport leaf carries the HttpException cause" in {
             val http = HttpConnectException("localhost", 80, new RuntimeException("refused"))

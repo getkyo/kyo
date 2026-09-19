@@ -64,7 +64,7 @@ class McpProgressMonotonicTest extends Test:
 
     "extractRequestToken: handles nested _meta with additional fields" in {
         val params = Structure.Value.Record(Chunk(
-            "arg" -> Structure.Value.Str("val"),
+            "arg"   -> Structure.Value.Str("val"),
             "_meta" -> Structure.Value.Record(Chunk(
                 "other"         -> Structure.Value.Str("x"),
                 "progressToken" -> Structure.Value.Integer(42L)

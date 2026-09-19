@@ -44,7 +44,7 @@ class PreludeTest extends kyo.test.Test[Any]:
         "nested environments" in {
             val effect =
                 direct {
-                    val outer = Env.get[String].now
+                    val outer    = Env.get[String].now
                     val combined = Env.run(42) {
                         direct {
                             val inner = Env.get[Int].now
@@ -97,7 +97,7 @@ class PreludeTest extends kyo.test.Test[Any]:
         "nested vars" in {
             val effect =
                 direct {
-                    val outer = Var.get[Int].now
+                    val outer  = Var.get[Int].now
                     val nested = Var.run(outer * 2) {
                         direct {
                             val inner = Var.get[Int].now
@@ -142,7 +142,7 @@ class PreludeTest extends kyo.test.Test[Any]:
     "memo" - {
         "basic memoization" in {
             var count = 0
-            val f = Memo[Int, Int, Any] { x =>
+            val f     = Memo[Int, Int, Any] { x =>
                 count += 1
                 x * 2
             }
@@ -165,7 +165,7 @@ class PreludeTest extends kyo.test.Test[Any]:
 
         "memo with other effects" in {
             var count = 0
-            val f = Memo[Int, Int, Env[Int]] { x =>
+            val f     = Memo[Int, Int, Env[Int]] { x =>
                 count += 1
                 Env.use[Int](_ + x)
             }
@@ -337,7 +337,7 @@ class PreludeTest extends kyo.test.Test[Any]:
         "stream with other effects" in {
             val effect =
                 direct {
-                    val env = Env.get[Int].now
+                    val env    = Env.get[Int].now
                     val stream = Stream.init(1 to 3)
                         .map { x =>
                             direct {
@@ -382,7 +382,7 @@ class PreludeTest extends kyo.test.Test[Any]:
         val v: Int < Choice =
             direct {
                 val xx = x.now
-                val r =
+                val r  =
                     xx + (
                         if xx > 0 then y.now.length * x.now
                         else y.now.length

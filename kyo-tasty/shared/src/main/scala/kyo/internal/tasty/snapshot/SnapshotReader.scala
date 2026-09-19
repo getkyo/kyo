@@ -434,7 +434,7 @@ object SnapshotReader:
             val partial                  = symsArray(si)
             val tpIds: Chunk[SymbolId]   = typeParamsByIdx(si)
             val declIds: Chunk[SymbolId] = declarationsByIdx(si)
-            val d = new SymbolDescriptor(
+            val d                        = new SymbolDescriptor(
                 id = partial.id.value,
                 kind = partial.kind,
                 flags = partial.flags,
@@ -478,7 +478,7 @@ object SnapshotReader:
                 paramListIds = paramListsByIdx(si),
                 permittedSubclassIds = permittedByIdx(si) match
                     case kyo.Maybe.Present(ids) => kyo.Maybe(ids)
-                    case kyo.Maybe.Absent =>
+                    case kyo.Maybe.Absent       =>
                         kyo.Maybe.Absent
                 ,
                 annotations = annotationsByIdx(si),
@@ -945,7 +945,7 @@ object SnapshotReader:
             val partial                  = symsArray(j)
             val tpIds: Chunk[SymbolId]   = typeParamsByIdx(j)
             val declIds: Chunk[SymbolId] = declarationsByIdx(j)
-            val d = new SymbolDescriptor(
+            val d                        = new SymbolDescriptor(
                 id = partial.id.value,
                 kind = partial.kind,
                 flags = partial.flags,
@@ -989,7 +989,7 @@ object SnapshotReader:
                 paramListIds = paramListsByIdxM(j),
                 permittedSubclassIds = permittedByIdxM(j) match
                     case kyo.Maybe.Present(ids) => kyo.Maybe(ids)
-                    case kyo.Maybe.Absent =>
+                    case kyo.Maybe.Absent       =>
                         kyo.Maybe.Absent
                 ,
                 annotations = annotationsByIdxM(j),
@@ -1082,11 +1082,10 @@ object SnapshotReader:
     end deserializeMapped
 
     /** Read an Int32 LE from the ByteView at the given absolute byte offset, without advancing the cursor. */
-    private def readInt32LEFromView(view: ByteView, at: Int): Int =
-        (view.peekByte(at) & 0xff) |
-            ((view.peekByte(at + 1) & 0xff) << 8) |
-            ((view.peekByte(at + 2) & 0xff) << 16) |
-            ((view.peekByte(at + 3) & 0xff) << 24)
+    private def readInt32LEFromView(view: ByteView, at: Int): Int = (view.peekByte(at) & 0xff) |
+        ((view.peekByte(at + 1) & 0xff) << 8) |
+        ((view.peekByte(at + 2) & 0xff) << 16) |
+        ((view.peekByte(at + 3) & 0xff) << 24)
 
     /** Copy bytes from a ByteView range [from, until) into a new heap Array[Byte]. Does not advance the view cursor. */
     private def copyViewRange(view: ByteView, from: Int, until: Int): Array[Byte] =
@@ -1143,8 +1142,8 @@ object SnapshotReader:
             i += 1
         end while
 
-        val depth   = new Array[Int](count)
-        val visited = new Array[Boolean](count)
+        val depth                       = new Array[Int](count)
+        val visited                     = new Array[Boolean](count)
         def computeDepth(idx: Int): Int =
             if visited(idx) then depth(idx)
             else
@@ -1164,9 +1163,9 @@ object SnapshotReader:
 
         // Create partial Symbols with basic fields; relational fields filled by the caller.
         for idx <- order do
-            val raw   = raws(idx)
-            val kind  = kindFromOrd(raw.kindOrd)
-            val flags = Tasty.Flags.fromBits(raw.flagBits)
+            val raw              = raws(idx)
+            val kind             = kindFromOrd(raw.kindOrd)
+            val flags            = Tasty.Flags.fromBits(raw.flagBits)
             val name: Tasty.Name =
                 if raw.nameId >= 0 && raw.nameId < namePool.length then Tasty.Name(namePool(raw.nameId))
                 else Tasty.Name("")
@@ -1472,8 +1471,8 @@ object SnapshotReader:
         // Pass 2: create symbols in topological order.
         // For each index, compute depth (root = depth 0, child = parent depth + 1).
         // Process in increasing depth order so parents are always created before children.
-        val depth   = new Array[Int](count)
-        val visited = new Array[Boolean](count)
+        val depth                       = new Array[Int](count)
+        val visited                     = new Array[Boolean](count)
         def computeDepth(idx: Int): Int =
             if visited(idx) then depth(idx)
             else
@@ -1497,9 +1496,9 @@ object SnapshotReader:
         // Create partial Symbols with basic fields; deserialize() fills in
         // parentTypes / typeParamIds / declarationIds and rebuilds final immutable Symbols.
         for idx <- order do
-            val raw   = raws(idx)
-            val kind  = kindFromOrd(raw.kindOrd)
-            val flags = Tasty.Flags.fromBits(raw.flagBits)
+            val raw              = raws(idx)
+            val kind             = kindFromOrd(raw.kindOrd)
+            val flags            = Tasty.Flags.fromBits(raw.flagBits)
             val name: Tasty.Name =
                 if raw.nameId >= 0 && raw.nameId < namePool.length then Tasty.Name(namePool(raw.nameId))
                 else Tasty.Name("")
@@ -1721,9 +1720,9 @@ object SnapshotReader:
                     pos += 1
                     j += 1
                 end while
-                val tag: String = new String(tagBytes, java.nio.charset.StandardCharsets.UTF_8)
+                val tag: String     = new String(tagBytes, java.nio.charset.StandardCharsets.UTF_8)
                 val err: TastyError = tag match
-                    case "FileNotFound" => TastyError.FileNotFound(readStr())
+                    case "FileNotFound"  => TastyError.FileNotFound(readStr())
                     case "CorruptedFile" =>
                         val p = readStr(); val at = readLong(); val r = readStr()
                         TastyError.CorruptedFile(p, at, r)
@@ -1734,32 +1733,32 @@ object SnapshotReader:
                         val f = readStr(); val e = readUUID(); val fd = readUUID()
                         TastyError.InconsistentClasspath(f, e, fd)
                     case "FullNameCollisionError" => TastyError.FullNameCollisionError(readStr())
-                    case "MalformedSection" =>
+                    case "MalformedSection"       =>
                         val n = readStr(); val r = readStr(); val at = readLong()
                         TastyError.MalformedSection(n, r, at)
-                    case "SymbolNotFound" => TastyError.SymbolNotFound(readStr())
-                    case "NotFound"       => TastyError.NotFound(readStr())
+                    case "SymbolNotFound"       => TastyError.SymbolNotFound(readStr())
+                    case "NotFound"             => TastyError.NotFound(readStr())
                     case "ClassfileFormatError" =>
                         val p = readStr(); val r = readStr(); val at = readLong()
                         TastyError.ClassfileFormatError(p, r, at)
-                    case "ClasspathClosed"   => TastyError.ClasspathClosed(readStr())
-                    case "ClasspathBuilding" => TastyError.ClasspathBuilding(readStr())
+                    case "ClasspathClosed"     => TastyError.ClasspathClosed(readStr())
+                    case "ClasspathBuilding"   => TastyError.ClasspathBuilding(readStr())
                     case "SnapshotFormatError" =>
                         val p = readStr(); val r = readStr(); val at = readLong()
                         TastyError.SnapshotFormatError(p, r, at)
                     case "SnapshotVersionMismatch" =>
                         val f = readVersion(); val s = readVersion()
                         TastyError.SnapshotVersionMismatch(f, s)
-                    case "SnapshotIoError"     => TastyError.SnapshotIoError(readStr())
-                    case "NotImplemented"      => TastyError.NotImplemented(readStr())
-                    case "UnsupportedPlatform" => TastyError.UnsupportedPlatform(readStr())
+                    case "SnapshotIoError"      => TastyError.SnapshotIoError(readStr())
+                    case "NotImplemented"       => TastyError.NotImplemented(readStr())
+                    case "UnsupportedPlatform"  => TastyError.UnsupportedPlatform(readStr())
                     case "UnknownTagInPosition" =>
                         val t = readInt(); val p = readStr()
                         TastyError.UnknownTagInPosition(t, p)
                     case "InvalidFullName" =>
                         val fullName = readStr(); val reason = readStr()
                         TastyError.InvalidFullName(fullName, reason)
-                    case "InvalidUuid" => TastyError.InvalidUuid(readStr())
+                    case "InvalidUuid"    => TastyError.InvalidUuid(readStr())
                     case "DigestMismatch" =>
                         val exp = readStr(); val act = readStr()
                         TastyError.DigestMismatch(exp, act)

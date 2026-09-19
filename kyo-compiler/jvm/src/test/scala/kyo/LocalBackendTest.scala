@@ -21,7 +21,7 @@ class LocalBackendTest extends kyo.test.Test[Any]:
         val pcClasspath = Seq(findJar("scala3-library"), findJar("scala-library"))
         Compiler.Config(
             toolchain = Compiler.Toolchain(
-                scalaVersion = "3.8.4",
+                scalaVersion = CompilerPool.ownVersion,
                 compilerClasspath = Chunk.from(pcClasspath.map(Path(_)))
             ),
             classpath = Chunk.from(
@@ -181,7 +181,7 @@ class LocalBackendTest extends kyo.test.Test[Any]:
         pkgDir.toFile.deleteOnExit()
         defsFile.toFile.deleteOnExit()
 
-        val uri = Compiler.Uri("Probe.scala")
+        val uri  = Compiler.Uri("Probe.scala")
         val text =
             """object Probe:
               |  val n = myroot.Defs.magicNumber""".stripMargin
@@ -291,7 +291,7 @@ class LocalBackendTest extends kyo.test.Test[Any]:
 
             badConfig = Compiler.Config(
                 toolchain = Compiler.Toolchain(
-                    scalaVersion = "3.8.4",
+                    scalaVersion = CompilerPool.ownVersion,
                     compilerClasspath = Chunk.empty
                 ),
                 classpath = Chunk(Path("/nonexistent/does/not/exist.jar")),

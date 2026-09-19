@@ -40,7 +40,7 @@ class ShiftTest extends kyo.test.Test[Any]:
 
     "valid nested" in {
         val x1: Seq[Int < Any] = Seq[Int < Any](1, 2, 3)
-        val x2 = direct:
+        val x2                 = direct:
             x1.map(x =>
                 def innerF(i: Int) = i + 1
                 innerF(x.now)
@@ -55,7 +55,7 @@ class ShiftTest extends kyo.test.Test[Any]:
     }
 
     "val binding inside async-shifted lambda body" in {
-        val x: Seq[Int < Any] = Seq[Int < Any](1, 2, 3)
+        val x: Seq[Int < Any]  = Seq[Int < Any](1, 2, 3)
         val x2: Seq[Int] < Any = direct:
             x.map { e =>
                 val v = e.now
@@ -75,7 +75,7 @@ class ShiftMethodSupportTest extends kyo.test.Test[Any]:
 
         "filter" in {
             def f(i: Int): Boolean < Any = i < 3
-            val d = direct:
+            val d                        = direct:
                 y.filter(i => f(i).now)
 
             assert(d.eval == Option(1))
@@ -90,7 +90,7 @@ class ShiftMethodSupportTest extends kyo.test.Test[Any]:
 
         "getOrElse" in {
             val w: Int < Any = 3
-            val d = direct:
+            val d            = direct:
                 z.now.getOrElse(w.now)
 
             assert(d.eval == 3)
@@ -113,7 +113,7 @@ class ShiftMethodSupportTest extends kyo.test.Test[Any]:
 
         "filter" in {
             def f(i: Int): Boolean < Any = i < 3
-            val d = direct:
+            val d                        = direct:
                 y.filter(i => f(i).now)
 
             assert(d.eval == Try(1))
@@ -130,7 +130,7 @@ class ShiftMethodSupportTest extends kyo.test.Test[Any]:
 
         "getOrElse" in {
             val default: Int < Any = 2
-            val d = direct:
+            val d                  = direct:
                 z.getOrElse(default.now)
 
             assert(d.eval == 2)
@@ -165,7 +165,7 @@ class ShiftMethodSupportTest extends kyo.test.Test[Any]:
 
         "filter" in {
             def f(i: Int): Boolean < Any = i < 3
-            val d = direct:
+            val d                        = direct:
                 yMaybe.filter(i => f(i).now)
 
             assert(d.eval == Maybe(1))
@@ -173,7 +173,7 @@ class ShiftMethodSupportTest extends kyo.test.Test[Any]:
 
         "filterNot" in {
             def f(i: Int): Boolean < Any = i < 3
-            val d = direct:
+            val d                        = direct:
                 yMaybe.filterNot(i => f(i).now)
 
             assert(d.eval == Maybe.empty)
@@ -181,7 +181,7 @@ class ShiftMethodSupportTest extends kyo.test.Test[Any]:
 
         "exists" in {
             def f(i: Int): Boolean < Any = i < 3
-            val d = direct:
+            val d                        = direct:
                 yMaybe.exists(i => f(i).now)
 
             assert(d.eval)
@@ -189,7 +189,7 @@ class ShiftMethodSupportTest extends kyo.test.Test[Any]:
 
         "forall" in {
             def f(i: Int): Boolean < Any = i < 3
-            val d = direct:
+            val d                        = direct:
                 yMaybe.forall(i => f(i).now)
 
             assert(d.eval)
@@ -217,7 +217,7 @@ class ShiftMethodSupportTest extends kyo.test.Test[Any]:
 
         "fold" in {
             def identity(i: Int): Int < Any = i
-            val d = direct:
+            val d                           = direct:
                 yMaybe.fold(0)(i => identity(i).now)
 
             assert(d.eval == 1)
@@ -225,7 +225,7 @@ class ShiftMethodSupportTest extends kyo.test.Test[Any]:
 
         "getOrElse" in {
             val default: Int < Any = 2
-            val d = direct:
+            val d                  = direct:
                 zMaybe.getOrElse(default.now)
 
             assert(d.eval == 2)
@@ -263,7 +263,7 @@ class ShiftMethodSupportTest extends kyo.test.Test[Any]:
 
         "filter" in {
             def f(i: Int): Boolean < Any = i < 3
-            val d = direct:
+            val d                        = direct:
                 yResult.filter(i => f(i).now)
 
             assert(d.eval == Result(1))
@@ -271,7 +271,7 @@ class ShiftMethodSupportTest extends kyo.test.Test[Any]:
 
         "exists" in {
             def f(i: Int): Boolean < Any = i < 3
-            val d = direct:
+            val d                        = direct:
                 yResult.exists(i => f(i).now)
 
             assert(d.eval)
@@ -279,7 +279,7 @@ class ShiftMethodSupportTest extends kyo.test.Test[Any]:
 
         "forall" in {
             def f(i: Int): Boolean < Any = i < 3
-            val d = direct:
+            val d                        = direct:
                 yResult.forall(i => f(i).now)
 
             assert(d.eval)
@@ -287,7 +287,7 @@ class ShiftMethodSupportTest extends kyo.test.Test[Any]:
 
         "foreach" in {
             def f(i: Int): Unit < Var[Int] = Var.setDiscard(i)
-            val d = direct:
+            val d                          = direct:
                 yResult.foreach(i => f(i).now)
 
             Var.runTuple(0)(d).map((v, _) => assert(v == 1))
@@ -295,7 +295,7 @@ class ShiftMethodSupportTest extends kyo.test.Test[Any]:
 
         "fold" in {
             def identity(i: Int): Int < Any = i
-            val d = direct:
+            val d                           = direct:
                 yResult.fold(i => identity(i).now, x => 0, _ => -1)
 
             assert(d.eval == 1)
@@ -303,7 +303,7 @@ class ShiftMethodSupportTest extends kyo.test.Test[Any]:
 
         "getOrElse" in {
             val default: Int < Any = 2
-            val d = direct:
+            val d                  = direct:
                 zResult.getOrElse(default.now)
 
             assert(d.eval == 2)

@@ -5,7 +5,7 @@ import sbtcrossproject.CrossType
 import org.scalajs.sbtplugin.ScalaJSPlugin.autoImport._
 import org.scalajs.linker.interface.ModuleKind
 
-ThisBuild / scalaVersion := "3.8.3"
+ThisBuild / scalaVersion := sys.props("kyo.scalaVersion")
 ThisBuild / version      := "0.1.0-SNAPSHOT"
 
 lazy val buildCpeLib = taskKey[File]("Compile cpe_lib.c into libcpe_lib.{dylib,so,dll} and return its directory.")

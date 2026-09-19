@@ -57,7 +57,7 @@ private[kyo] object Validate:
 
         def validAsyncShift(select: Select): Boolean =
             val Select(qualifier, methodName) = select
-            inline def validType =
+            inline def validType              =
                 qualifier.tpe <:< TypeRepr.of[Iterable[?]] |
                     qualifier.tpe <:< TypeRepr.of[IterableOps[?, ?, ?]] |
                     qualifier.tpe <:< TypeRepr.of[Option[?]] |
@@ -174,7 +174,7 @@ private[kyo] object Validate:
                             )
                         else
                             body match
-                                case DirectBlock() =>
+                                case DirectBlock()                                       =>
                                 case x @ Apply(TypeApply(Ident("later"), _), List(qual)) =>
                                     Trees.Step.goto(x)
 

@@ -145,21 +145,21 @@ private[kyo] object McpContentSchema:
             end while
             reader.objectEnd()
             typeTag match
-                case "text"  => McpContent.Text(text, annotations)
-                case "image" => McpContent.Image(data, mimeType, annotations)
-                case "audio" => McpContent.Audio(data, mimeType, annotations)
+                case "text"     => McpContent.Text(text, annotations)
+                case "image"    => McpContent.Image(data, mimeType, annotations)
+                case "audio"    => McpContent.Audio(data, mimeType, annotations)
                 case "resource" =>
                     resource match
                         case Present(rc) => McpContent.EmbeddedResource(rc, annotations)
-                        case Absent =>
+                        case Absent      =>
                             throw TypeMismatchException(Seq("resource"), "McpHandler.ResourceContents", "absent")
                 case "resource_link" => McpContent.ResourceLink(uri, name, description, resourceLinkMimeType, annotations)
-                case other =>
+                case other           =>
                     throw TypeMismatchException(Seq.empty, "text|image|audio|resource|resource_link", other)
             end match
         end serializeRead
 
-        @publicInBinary private[kyo] def getter(value: McpContent): Maybe[Any] = Maybe(value)
+        @publicInBinary private[kyo] def getter(value: McpContent): Maybe[Any]            = Maybe(value)
         @publicInBinary private[kyo] def setter(value: McpContent, next: Any): McpContent =
             next match
                 case c: McpContent => c
@@ -174,7 +174,7 @@ private[kyo] object McpContentSchema:
             : Result[DecodeException, McpContent] =
             sv match
                 case Structure.Value.Record(fields) =>
-                    val m = fields.iterator.toMap
+                    val m                                                                  = fields.iterator.toMap
                     val annotationsResult: Result[DecodeException, McpContent.Annotations] =
                         m.get("annotations") match
                             case Some(annSv) =>
@@ -216,21 +216,21 @@ private[kyo] object McpContentSchema:
                         case Some(Structure.Value.Str("resource_link")) =>
                             val uriResult = m.get("uri") match
                                 case Some(uriSv) => summon[Schema[McpResourceUri]].fromStructureValue(uriSv)
-                                case scala.None =>
+                                case scala.None  =>
                                     Result.Failure(TypeMismatchException(Seq("uri"), "McpResourceUri", "absent"))
                             val nameResult = m.get("name") match
                                 case Some(Structure.Value.Str(n)) => Result.Success(n)
-                                case _ =>
+                                case _                            =>
                                     Result.Failure(TypeMismatchException(Seq("name"), "String", m.get("name").fold("absent")(_.toString)))
                             val descriptionResult: Result[DecodeException, Maybe[String]] = m.get("description") match
                                 case Some(Structure.Value.Str(d))            => Result.Success(Present(d))
                                 case Some(Structure.Value.Null) | scala.None => Result.Success(Absent)
-                                case Some(other) =>
+                                case Some(other)                             =>
                                     Result.Failure(TypeMismatchException(Seq("description"), "String", other.toString))
                             val rlMimeTypeResult: Result[DecodeException, Maybe[McpMimeType]] = m.get("mimeType") match
                                 case Some(Structure.Value.Str(mt))           => Result.Success(Present(McpMimeType.fromWire(mt)))
                                 case Some(Structure.Value.Null) | scala.None => Result.Success(Absent)
-                                case Some(other) =>
+                                case Some(other)                             =>
                                     Result.Failure(TypeMismatchException(Seq("mimeType"), "String", other.toString))
                             for
                                 u    <- uriResult
@@ -318,12 +318,12 @@ private[kyo] object McpContentSchema:
             typeTag match
                 case "text" => McpHandler.ResourceContents.Text(uri, mimeType, text)
                 case "blob" => McpHandler.ResourceContents.Blob(uri, mimeType, blob)
-                case other =>
+                case other  =>
                     throw TypeMismatchException(Seq.empty, "text|blob", other)
             end match
         end serializeRead
 
-        @publicInBinary private[kyo] def getter(value: McpHandler.ResourceContents): Maybe[Any] = Maybe(value)
+        @publicInBinary private[kyo] def getter(value: McpHandler.ResourceContents): Maybe[Any]                             = Maybe(value)
         @publicInBinary private[kyo] def setter(value: McpHandler.ResourceContents, next: Any): McpHandler.ResourceContents =
             next match
                 case rc: McpHandler.ResourceContents => rc
@@ -337,15 +337,15 @@ private[kyo] object McpContentSchema:
             : Result[DecodeException, McpHandler.ResourceContents] =
             sv match
                 case Structure.Value.Record(fields) =>
-                    val m = fields.iterator.toMap
+                    val m         = fields.iterator.toMap
                     val uriResult = m.get("uri") match
                         case Some(uriSv) => summon[Schema[McpResourceUri]].fromStructureValue(uriSv)
-                        case scala.None =>
+                        case scala.None  =>
                             Result.Failure(TypeMismatchException(Seq("uri"), "McpResourceUri", "absent"))
                     val mimeTypeResult: Result[DecodeException, Maybe[McpMimeType]] = m.get("mimeType") match
                         case Some(Structure.Value.Str(mt))           => Result.Success(Present(McpMimeType.fromWire(mt)))
                         case Some(Structure.Value.Null) | scala.None => Result.Success(Absent)
-                        case Some(other) =>
+                        case Some(other)                             =>
                             Result.Failure(TypeMismatchException(Seq("mimeType"), "String", other.toString))
                     m.get("type") match
                         case Some(Structure.Value.Str("text")) =>

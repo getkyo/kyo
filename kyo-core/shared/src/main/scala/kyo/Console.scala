@@ -137,7 +137,7 @@ object Console:
       */
     def withIn[A, S](lines: Iterable[String])(v: A < S)(using Frame): A < (Sync & S) =
         Sync.withLocal(local) { console =>
-            val it = lines.iterator
+            val it    = lines.iterator
             val proxy =
                 new Proxy(console.unsafe):
                     override def readLine()(using AllowUnsafe) =
@@ -170,7 +170,7 @@ object Console:
         Sync.withLocal(local) { console =>
             val stdOut = new StringBuffer
             val stdErr = new StringBuffer
-            val proxy =
+            val proxy  =
                 new Proxy(console.unsafe):
                     override def print(s: String)(using AllowUnsafe) =
                         stdOut.append(s)

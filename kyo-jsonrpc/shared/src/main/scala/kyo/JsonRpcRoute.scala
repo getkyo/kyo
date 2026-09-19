@@ -166,7 +166,7 @@ object JsonRpcRoute:
         Abort.run[Any](body).map:
             case Result.Success(a)                          => a
             case Result.Failure(halt: JsonRpcResponse.Halt) => Abort.fail(halt)
-            case Result.Failure(err) =>
+            case Result.Failure(err)                        =>
                 mappings.iterator.find(_.matches(err)) match
                     case Some(mapping) =>
                         Abort.fail(JsonRpcCustomError(
@@ -177,7 +177,7 @@ object JsonRpcRoute:
                     case None =>
                         err match
                             case e: JsonRpcError => Abort.fail(e)
-                            case other =>
+                            case other           =>
                                 Abort.fail(JsonRpcInternalError(
                                     JsonRpcInternalError.Operation.Other,
                                     new RuntimeException(s"unmapped handler error in '$routeName': $other")

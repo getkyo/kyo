@@ -149,7 +149,7 @@ private[kyo] object MachineSampler:
             sampler  <- Sync.Unsafe.defer(new MachineSampler(handles))
             machine  <- buildMachine(sampler)
             diskExec <- Sync.Unsafe.defer(new DiskExecutor)
-            _ <- Scope.ensure(Sync.Unsafe.defer {
+            _        <- Scope.ensure(Sync.Unsafe.defer {
                 machine.close()
                 sampler.closeHandles()
                 diskExec.close()

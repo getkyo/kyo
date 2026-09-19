@@ -76,7 +76,7 @@ class SnapshotGoldenTest extends AsyncFreeSpec with NonImplicitAssertions:
       */
     private def panickingYamlCodec(): Codec =
         new Codec:
-            def newWriter(): Codec.Writer = Yaml().newWriter()
+            def newWriter(): Codec.Writer                                   = Yaml().newWriter()
             def newReader(input: Span[Byte])(using kyo.Frame): Codec.Reader =
                 throw GoldenDecodePanic("golden decode panic")
 
@@ -118,7 +118,7 @@ class SnapshotGoldenTest extends AsyncFreeSpec with NonImplicitAssertions:
         val dir = tmpDir()
         installContexts()
         val fixture = new GoldenFixture(dir, update = false)
-        val ex = intercept[AssertionFailed] {
+        val ex      = intercept[AssertionFailed] {
             fixture.golden[Event]("event")
         }
         assert(ex.diagram.contains("SnapshotNotFound"), s"Expected a SnapshotNotFound diagram, got: ${ex.diagram}")
@@ -156,7 +156,7 @@ class SnapshotGoldenTest extends AsyncFreeSpec with NonImplicitAssertions:
         val writer = new GoldenFixture(dir, update = true)
         writer.golden[Event]("event")
 
-        val path = s"$dir/GoldenFixture/event.golden.yaml"
+        val path     = s"$dir/GoldenFixture/event.golden.yaml"
         val original = SnapshotStore.read(path) match
             case Maybe.Present(content) => content
             case Maybe.Absent           => fail(s"expected the update-mode write to produce $path")
@@ -183,7 +183,7 @@ class SnapshotGoldenTest extends AsyncFreeSpec with NonImplicitAssertions:
 
         installContexts()
         val reader = new GoldenFixture(dir, update = false)
-        val ex = intercept[AssertionFailed] {
+        val ex     = intercept[AssertionFailed] {
             reader.golden[Event]("event")
         }
         assert(ex.diagram.contains("changed fields:"), s"Expected 'changed fields:' in the diagram, got: ${ex.diagram}")
@@ -204,7 +204,7 @@ class SnapshotGoldenTest extends AsyncFreeSpec with NonImplicitAssertions:
 
         installContexts()
         val reader = new GoldenFixture(dir, update = false)
-        val ex = intercept[AssertionFailed] {
+        val ex     = intercept[AssertionFailed] {
             reader.golden[Event]("event")
         }
         assert(ex.diagram.contains("sample[4]"), s"Expected the literal token 'sample[4]', got: ${ex.diagram}")
@@ -220,7 +220,7 @@ class SnapshotGoldenTest extends AsyncFreeSpec with NonImplicitAssertions:
 
         installContexts()
         val fixture = new GoldenFixture(dir, update = false)
-        val ex = intercept[AssertionFailed] {
+        val ex      = intercept[AssertionFailed] {
             fixture.golden[Event]("event")
         }
         assert(ex.diagram.contains("SnapshotSchemaEvolution:"), s"Expected the SnapshotSchemaEvolution prefix, got: ${ex.diagram}")
@@ -237,7 +237,7 @@ class SnapshotGoldenTest extends AsyncFreeSpec with NonImplicitAssertions:
 
         installContexts()
         val reader = new GoldenFixture(dir, update = false, panicCodec)
-        val ex = intercept[GoldenDecodePanic] {
+        val ex     = intercept[GoldenDecodePanic] {
             reader.golden[Event]("event")
         }
         assert(ex.getMessage == "golden decode panic", s"Expected message 'golden decode panic', got: ${ex.getMessage}")
@@ -315,7 +315,7 @@ class SnapshotGoldenTest extends AsyncFreeSpec with NonImplicitAssertions:
         val dir = tmpDir()
         installContexts()
         val fixture = new GoldenFixture(dir, update = false)
-        val ex = intercept[IllegalArgumentException] {
+        val ex      = intercept[IllegalArgumentException] {
             fixture.golden[Event]("event", _.sampleCount(0))
         }
         assert(ex.getMessage.contains("0"), s"Expected the message to name the invalid count, got: ${ex.getMessage}")
@@ -329,7 +329,7 @@ class SnapshotGoldenTest extends AsyncFreeSpec with NonImplicitAssertions:
         intercept[IllegalArgumentException] {
             fixture.golden[Event]("event", _.sampleCount(0))
         }
-        val path = s"$dir/GoldenFixture/event.golden.yaml"
+        val path   = s"$dir/GoldenFixture/event.golden.yaml"
         val result = SnapshotStore.read(path) match
             case Maybe.Absent     => succeed
             case Maybe.Present(_) => fail(s"expected no golden file at $path after the sampleCount guard throws")
@@ -344,7 +344,7 @@ class SnapshotGoldenTest extends AsyncFreeSpec with NonImplicitAssertions:
 
         installContexts()
         val reader = new GoldenFixture(dir, update = false)
-        val ex = intercept[AssertionFailed] {
+        val ex     = intercept[AssertionFailed] {
             reader.golden[Event]("event", _.sampleCount(25))
         }
         assert(ex.diagram.contains("20") && ex.diagram.contains("25"), s"Expected the message to name both counts, got: ${ex.diagram}")
@@ -359,7 +359,7 @@ class SnapshotGoldenTest extends AsyncFreeSpec with NonImplicitAssertions:
 
         installContexts()
         val reader = new GoldenFixture(dir, update = false)
-        val ex = intercept[AssertionFailed] {
+        val ex     = intercept[AssertionFailed] {
             reader.golden[Event]("event", _.sampleCount(25))
         }
         assert(!ex.diagram.contains("sample["), s"Expected no per-sample changed-path token, got: ${ex.diagram}")

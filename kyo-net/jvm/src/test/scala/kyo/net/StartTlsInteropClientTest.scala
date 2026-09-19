@@ -64,7 +64,6 @@ class StartTlsInteropClientTest extends Test:
 
         TlsTestCertShared.writePems.flatMap { case (certPath, keyPath) =>
             Sync.defer(uringEntry.transport).flatMap { transport =>
-
                 val serverOutput = new ConcurrentLinkedQueue[String]()
                 val serverReady  = new AtomicBoolean(false)
 

@@ -196,7 +196,7 @@ class ParamListsHelperTest extends kyo.test.Test[Any]:
         val typeParamB = makeTypeParam(id = 0, name = "B", ownerId = 3)
         val paramSelf  = makeParameter(id = 1, name = "self", ownerId = 3)
         val paramF     = makeParameter(id = 2, name = "f", ownerId = 3)
-        val method = makeMethod(
+        val method     = makeMethod(
             id = 3,
             name = "map",
             ownerId = 0,

@@ -280,14 +280,48 @@ def shape(client: kyo.SqlClient)(using kyo.Frame): kyo.Chunk[NoSchema2] < (kyo.A
             }
         }
 
-    "transaction { Q.run } runs on the transaction's connection, not a pooled one" - forEachBackend() { (backend, client, schema) =>
+    "transaction { Q.run } runs on the transaction's connection, not a pooled one" - forEachBackend(
+        where = _.sessionIdSql.nonEmpty
+    ) { (backend, client, schema) =>
         // The SQL expression yielding the server's own session id has no cross-engine spelling, so the descriptor
         // names it through `backend.sessionIdSql`. `observer` is a second client with its own pool, opened from the
         // same fresh schema, so its reads cannot land on the transaction's pinned connection.
-        val sessionIdSql = backend.sessionIdSql
+        val sessionIdSql = backend.sessionIdSql.getOrElse(throw new AssertionError(s"${backend.label} has no session id"))
         SqlClient.init(schema.url).flatMap { observer =>
             client.executeRaw("CREATE TABLE probe (pid BIGINT NOT NULL)").andThen {
                 assertRunUsesPinnedConnection(client, observer, sessionIdSql)
+            }
+        }
+    }
+
+    /** The same property on an engine with no per-session identifier to compare against.
+      *
+      * Asking the server which session it is cannot work where there is no such value, and a constant would pass no matter which session
+      * ran the statement. What can still be observed is VISIBILITY, and it is the half that actually matters: an uncommitted row is
+      * readable through the transaction and invisible to every other session, which is only true if `Q.run` went to the transaction's own
+      * connection rather than to a second one from the pool.
+      */
+    "transaction { Q.run } reads its own uncommitted write, which no other session can see" - forEachBackend(
+        where = _.sessionIdSql.isEmpty
+    ) { (_, client, schema) =>
+        SqlClient.init(schema.url).flatMap { observer =>
+            client.executeRaw("CREATE TABLE probe (pid BIGINT NOT NULL)").andThen {
+                client.transaction {
+                    client.executeRaw("INSERT INTO probe VALUES (7)").andThen {
+                        Sql.from[Probe]("p").select(c => c.p.pid).run.flatMap { seen =>
+                            SqlClient.txLocal.let(Absent)(observer.query("SELECT pid FROM probe")).map { outside =>
+                                assert(
+                                    seen == Chunk(7L),
+                                    s"Q.run must read the row the transaction's own session wrote, it read $seen"
+                                )
+                                assert(
+                                    outside.isEmpty,
+                                    s"the row must stay invisible to any other session while the transaction is open, one saw ${outside.size}"
+                                )
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -304,7 +338,7 @@ def shape(client: kyo.SqlClient)(using kyo.Frame): kyo.Chunk[NoSchema2] < (kyo.A
             val first  = "first"
             val second = "second"
             for
-                _ <- DB.executeRaw(s"CREATE TABLE note (body ${backend.textColumnType} NOT NULL)")
+                _        <- DB.executeRaw(s"CREATE TABLE note (body ${backend.textColumnType} NOT NULL)")
                 affected <- DB.transaction {
                     sql"INSERT INTO note (body) VALUES ($first)".execute.flatMap { one =>
                         sql"INSERT INTO note (body) VALUES ($second)".execute.map(_ + one)
@@ -323,7 +357,7 @@ def shape(client: kyo.SqlClient)(using kyo.Frame): kyo.Chunk[NoSchema2] < (kyo.A
     "DB.transaction rolls back its body's writes when the body aborts" - forEachBackend() { (backend, _, _) =>
         val doomed = "doomed"
         for
-            _ <- DB.executeRaw(s"CREATE TABLE note (body ${backend.textColumnType} NOT NULL)")
+            _       <- DB.executeRaw(s"CREATE TABLE note (body ${backend.textColumnType} NOT NULL)")
             outcome <- Abort.run[SqlException] {
                 DB.transaction {
                     // The second statement names a column the table does not have, so the server rejects it and the

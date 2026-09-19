@@ -22,8 +22,8 @@ private[kyo] object FlowRender:
         toMermaid(FlowGraph.build(flow))
 
     def renderMermaid(flow: Flow[?, ?, ?], progress: FlowEngine.Progress): String =
-        val graph = FlowGraph.build(flow, progress)
-        val base  = toMermaid(graph)
+        val graph  = FlowGraph.build(flow, progress)
+        val base   = toMermaid(graph)
         val styles = graph.nodes.flatMap { node =>
             if node.status.nonEmpty && node.name.nonEmpty then
                 val color = statusColorFromName(node.status)
@@ -49,7 +49,7 @@ private[kyo] object FlowRender:
             case "dispatch"      => Some(s"    ${n.id}{${n.name}}")
             case "join-dispatch" => Some(s"    ${n.id}(( ))")
             case "loop"          => Some(s"    ${n.id}{{${n.name}}}")
-            case "foreach" =>
+            case "foreach"       =>
                 val label = n.concurrency match
                     case Present(c) if c < Int.MaxValue => s"${n.name} [x$c]"
                     case _                              => n.name
@@ -75,7 +75,7 @@ private[kyo] object FlowRender:
         toDot(FlowGraph.build(flow))
 
     def renderDot(flow: Flow[?, ?, ?], progress: FlowEngine.Progress): String =
-        val graph = FlowGraph.build(flow, progress)
+        val graph      = FlowGraph.build(flow, progress)
         val colorAttrs = graph.nodes.flatMap { node =>
             if node.status.nonEmpty && node.name.nonEmpty then
                 val color = statusColorFromName(node.status)
@@ -101,7 +101,7 @@ private[kyo] object FlowRender:
             case "dispatch"      => Some(s"""    ${n.id} [label="${n.name}" shape=diamond]""")
             case "join-dispatch" => Some(s"""    ${n.id} [label="" shape=diamond width=0.3 height=0.3]""")
             case "loop"          => Some(s"""    ${n.id} [label="${n.name}" shape=hexagon]""")
-            case "foreach" =>
+            case "foreach"       =>
                 val label = n.concurrency match
                     case Present(c) if c < Int.MaxValue => s"${n.name} [x$c]"
                     case _                              => n.name
@@ -193,7 +193,7 @@ private[kyo] object FlowRender:
     end toJson
 
     private def jsonNodeStr(n: FlowGraph.Node, withStatus: Boolean): String =
-        val base = s""""id":"${n.id}","name":"${escapeJson(n.name)}","type":"${n.nodeType}""""
+        val base    = s""""id":"${n.id}","name":"${escapeJson(n.name)}","type":"${n.nodeType}""""
         val tagPart = n.tag match
             case Present(t) => s""","tag":"${escapeJson(t)}""""
             case _          => ""

@@ -56,7 +56,7 @@ class SqlValueDomainConformanceTest extends SqlBackendTest:
 
     "a string containing a NUL byte is stored exactly or refused" - {
         forEachBackend() { (backend, client, _) =>
-            val value = "a" + 0.toChar + "b"
+            val value                             = "a" + 0.toChar + "b"
             def roundTrip(v: String)(using Frame) =
                 Sql.insert[Label].values(Label(v)).run
                     .andThen(Sql.from[Label]("l").run.map(_.head.v))
@@ -99,7 +99,7 @@ class SqlValueDomainConformanceTest extends SqlBackendTest:
       */
     "a duration longer than one engine's time column is stored exactly or refused" - {
         forEachBackend() { (backend, client, _) =>
-            val value = java.time.Duration.ofHours(1000)
+            val value                                         = java.time.Duration.ofHours(1000)
             def roundTrip(v: java.time.Duration)(using Frame) =
                 Sql.insert[Elapsed].values(Elapsed(v)).run
                     .andThen(Sql.from[Elapsed]("e").run.map(_.head.v))
@@ -118,12 +118,20 @@ class SqlValueDomainConformanceTest extends SqlBackendTest:
       * otherwise. Pinned so a mode change shows up here.
       */
     "a string longer than its column is refused by every backend" in {
-        agreeAcrossBackends(expected = Present("refused with SqlServerErrorException")) { (_, client, _) =>
+        // The DDL comes from the descriptor because the spelling differs and the behaviour does not: an engine whose declared width is
+        // advisory carries a CHECK instead and refuses the same write.
+        //
+        // The answer is the refusal itself rather than the exception class, which the engines classify differently and legitimately: a
+        // declared-width overflow is a data exception and a CHECK is a constraint violation. What a caller depends on is that the row is
+        // refused rather than silently shortened.
+        agreeAcrossBackends(expected = Present("the over-long value was refused")) { (backend, client, _) =>
             for
-                _    <- client.executeRaw("CREATE TABLE narrow (v VARCHAR(4) NOT NULL)")
-                _    <- Sql.insert[Narrow].values(Narrow("abcdefgh")).run
-                rows <- Sql.from[Narrow]("n").run
-            yield s"eight characters in a four-character column read back as ${rows.head.v}"
+                _       <- client.executeRaw(s"CREATE TABLE narrow (${backend.boundedTextColumn("v", 4)})")
+                outcome <- Abort.run[SqlException](Sql.insert[Narrow].values(Narrow("abcdefgh")).run)
+                stored  <- Sql.from[Narrow]("n").run
+            yield
+                if outcome.isFailure then "the over-long value was refused"
+                else s"the over-long value was stored as ${stored.head.v}"
             end for
         }
     }

@@ -60,8 +60,8 @@ class YamlCstTest extends kyo.test.Test[Any]:
         }
 
         "constructs canonical scalar documents" in {
-            val mark = Yaml.Mark(0, 1, 1)
-            val span = Yaml.Cst.SourceSpan(mark, mark)
+            val mark   = Yaml.Mark(0, 1, 1)
+            val span   = Yaml.Cst.SourceSpan(mark, mark)
             val scalar =
                 Yaml.Cst.Node.Scalar(
                     "Alice",
@@ -86,7 +86,7 @@ class YamlCstTest extends kyo.test.Test[Any]:
                 Yaml.Cst.fromEvents(collectEvents(yaml)).getOrThrow
 
             val rendered = doc.render(using Yaml.WriterConfig.Default)
-            val mapping =
+            val mapping  =
                 doc.root match
                     case Present(Yaml.Cst.Node.Mapping(entries, syntax, _, _, source)) =>
                         (
@@ -552,7 +552,7 @@ class YamlCstTest extends kyo.test.Test[Any]:
         }
 
         "fails to build CST from a second document in an event stream" in {
-            val mark = Yaml.Mark(0, 1, 1)
+            val mark   = Yaml.Mark(0, 1, 1)
             val events = Chunk(
                 Yaml.Events.Event.StreamStart(mark),
                 Yaml.Events.Event.DocumentStart(mark),
@@ -567,7 +567,7 @@ class YamlCstTest extends kyo.test.Test[Any]:
         }
 
         "fails to build CST when a document ends before a collection is closed" in {
-            val mark = Yaml.Mark(0, 1, 1)
+            val mark   = Yaml.Mark(0, 1, 1)
             val events = Chunk(
                 Yaml.Events.Event.StreamStart(mark),
                 Yaml.Events.Event.DocumentStart(mark),
@@ -581,7 +581,7 @@ class YamlCstTest extends kyo.test.Test[Any]:
         }
 
         "fails to build CST when a node appears after document end" in {
-            val mark = Yaml.Mark(0, 1, 1)
+            val mark   = Yaml.Mark(0, 1, 1)
             val events = Chunk(
                 Yaml.Events.Event.StreamStart(mark),
                 Yaml.Events.Event.DocumentStart(mark),
@@ -609,7 +609,7 @@ class YamlCstTest extends kyo.test.Test[Any]:
                     assert(entries.size == 2)
                     entries(0).value match
                         case Yaml.Cst.Node.Mapping(_, Yaml.Cst.MappingSyntax.Canonical, _, _, Absent) =>
-                        case other =>
+                        case other                                                                    =>
                             fail(s"Expected canonical mapping entry, found $other")
                     end match
                 case other =>
@@ -687,9 +687,9 @@ class YamlCstTest extends kyo.test.Test[Any]:
         }
 
         "renders canonical streams with leading empty documents" in {
-            val mark     = Yaml.Mark(0, 1, 1)
-            val span     = Yaml.Cst.SourceSpan(mark, mark)
-            val emptyDoc = Yaml.Cst.Document(Absent, Chunk.empty, Chunk.empty, span, Absent)
+            val mark      = Yaml.Mark(0, 1, 1)
+            val span      = Yaml.Cst.SourceSpan(mark, mark)
+            val emptyDoc  = Yaml.Cst.Document(Absent, Chunk.empty, Chunk.empty, span, Absent)
             val scalarDoc =
                 Yaml.Cst.Document(
                     Maybe(Yaml.Cst.Node.Scalar(
@@ -712,9 +712,9 @@ class YamlCstTest extends kyo.test.Test[Any]:
         }
 
         "renders canonical streams once with start document markers" in {
-            val mark     = Yaml.Mark(0, 1, 1)
-            val span     = Yaml.Cst.SourceSpan(mark, mark)
-            val emptyDoc = Yaml.Cst.Document(Absent, Chunk.empty, Chunk.empty, span, Absent)
+            val mark      = Yaml.Mark(0, 1, 1)
+            val span      = Yaml.Cst.SourceSpan(mark, mark)
+            val emptyDoc  = Yaml.Cst.Document(Absent, Chunk.empty, Chunk.empty, span, Absent)
             val scalarDoc =
                 Yaml.Cst.Document(
                     Maybe(Yaml.Cst.Node.Scalar(
@@ -739,9 +739,9 @@ class YamlCstTest extends kyo.test.Test[Any]:
         }
 
         "renders canonical streams once with start and end document markers" in {
-            val mark     = Yaml.Mark(0, 1, 1)
-            val span     = Yaml.Cst.SourceSpan(mark, mark)
-            val emptyDoc = Yaml.Cst.Document(Absent, Chunk.empty, Chunk.empty, span, Absent)
+            val mark      = Yaml.Mark(0, 1, 1)
+            val span      = Yaml.Cst.SourceSpan(mark, mark)
+            val emptyDoc  = Yaml.Cst.Document(Absent, Chunk.empty, Chunk.empty, span, Absent)
             val scalarDoc =
                 Yaml.Cst.Document(
                     Maybe(Yaml.Cst.Node.Scalar(
@@ -766,9 +766,9 @@ class YamlCstTest extends kyo.test.Test[Any]:
         }
 
         "renders canonical streams with consecutive empty documents" in {
-            val mark = Yaml.Mark(0, 1, 1)
-            val span = Yaml.Cst.SourceSpan(mark, mark)
-            val meta = Yaml.ScalarMeta(Absent, Absent, Yaml.ScalarStyle.Plain, mark)
+            val mark                                        = Yaml.Mark(0, 1, 1)
+            val span                                        = Yaml.Cst.SourceSpan(mark, mark)
+            val meta                                        = Yaml.ScalarMeta(Absent, Absent, Yaml.ScalarStyle.Plain, mark)
             def scalarDoc(value: String): Yaml.Cst.Document =
                 Yaml.Cst.Document(
                     Maybe(Yaml.Cst.Node.Scalar(value, Yaml.Cst.ScalarSyntax.Canonical, meta, span, Absent)),
@@ -779,7 +779,7 @@ class YamlCstTest extends kyo.test.Test[Any]:
                 )
             end scalarDoc
             val emptyDoc = Yaml.Cst.Document(Absent, Chunk.empty, Chunk.empty, span, Absent)
-            val stream = Yaml.Cst.Stream(
+            val stream   = Yaml.Cst.Stream(
                 Chunk(scalarDoc("Alice"), emptyDoc, emptyDoc, scalarDoc("Bob")),
                 Chunk.empty,
                 Chunk.empty,
@@ -793,8 +793,8 @@ class YamlCstTest extends kyo.test.Test[Any]:
         }
 
         "renders canonical streams with trailing empty documents" in {
-            val mark = Yaml.Mark(0, 1, 1)
-            val span = Yaml.Cst.SourceSpan(mark, mark)
+            val mark      = Yaml.Mark(0, 1, 1)
+            val span      = Yaml.Cst.SourceSpan(mark, mark)
             val scalarDoc =
                 Yaml.Cst.Document(
                     Maybe(Yaml.Cst.Node.Scalar(
@@ -995,7 +995,7 @@ class YamlCstTest extends kyo.test.Test[Any]:
                          |    ports: [8080]
                          |""".stripMargin
             val replacement = scalar("app:v2")
-            val edited =
+            val edited      =
                 Yaml.cst(yaml).getOrThrow.replace(Yaml.Cst.Path.root / "services" / "api" / "image", replacement).getOrThrow
             val rendered = edited.render(using Yaml.WriterConfig.Default)
             val expected = """# app
@@ -1020,7 +1020,8 @@ class YamlCstTest extends kyo.test.Test[Any]:
                                         case _                                                             => false)
                                     assert(apiEntries(1) match
                                         case (Yaml.Node.Scalar("ports", _), Yaml.Node.Sequence(ports, _)) =>
-                                            ports.size == 1 && (ports(0) match
+                                            ports.size == 1 &&
+                                            (ports(0) match
                                                 case Yaml.Node.Scalar("8080", _) => true
                                                 case _                           => false)
                                         case _ =>
@@ -1128,7 +1129,7 @@ class YamlCstTest extends kyo.test.Test[Any]:
         "escapes control characters when rendering changed documents with comments" in {
             val yaml        = "value: old # keep\n"
             val replacement = scalar("a" + 1.toChar + "b")
-            val edited =
+            val edited      =
                 Yaml.cst(yaml).getOrThrow.replace(Yaml.Cst.Path.root / "value", replacement).getOrThrow
             val rendered = edited.render(using Yaml.WriterConfig.Default)
 
@@ -1137,7 +1138,7 @@ class YamlCstTest extends kyo.test.Test[Any]:
         }
 
         "respects disabled trailing newline when rendering changed documents with comments" in {
-            val yaml = "# keep\nvalue: old\n"
+            val yaml   = "# keep\nvalue: old\n"
             val edited =
                 Yaml.cst(yaml).getOrThrow.replace(Yaml.Cst.Path.root / "value", scalar("new")).getOrThrow
             val rendered = edited.render(using Yaml.WriterConfig.Default.copy(trailingNewline = false))
@@ -1226,8 +1227,8 @@ class YamlCstTest extends kyo.test.Test[Any]:
         }
 
         "renders complex collection keys as valid flow in the trivia path" in {
-            val mark = Yaml.Mark(0, 1, 1)
-            val span = Yaml.Cst.SourceSpan(mark, mark)
+            val mark   = Yaml.Mark(0, 1, 1)
+            val span   = Yaml.Cst.SourceSpan(mark, mark)
             val seqKey =
                 Yaml.Cst.Node.Sequence(
                     Chunk(
@@ -1252,8 +1253,8 @@ class YamlCstTest extends kyo.test.Test[Any]:
         }
 
         "fails editing through an ambiguous duplicate mapping key" in {
-            val mark = Yaml.Mark(0, 1, 1)
-            val span = Yaml.Cst.SourceSpan(mark, mark)
+            val mark      = Yaml.Mark(0, 1, 1)
+            val span      = Yaml.Cst.SourceSpan(mark, mark)
             val duplicate =
                 Yaml.Cst.Document(
                     Maybe(mapping("name" -> scalar("a"), "name" -> scalar("b"))),
@@ -1295,7 +1296,7 @@ class YamlCstTest extends kyo.test.Test[Any]:
         }
 
         "replaces root and renders the new node" in {
-            val base = Yaml.cst("name: Alice\n").getOrThrow
+            val base   = Yaml.cst("name: Alice\n").getOrThrow
             val edited =
                 base.replace(Yaml.Cst.Path.root, mapping("name" -> scalar("Bob"))).getOrThrow
             val rendered = edited.render(using Yaml.WriterConfig.Default)
@@ -1517,8 +1518,8 @@ class YamlCstTest extends kyo.test.Test[Any]:
         }
 
         "renders an edited document whose root is a scalar an alias or a block scalar" in {
-            val mark = Yaml.Mark(0, 1, 1)
-            val span = Yaml.Cst.SourceSpan(mark, mark)
+            val mark       = Yaml.Mark(0, 1, 1)
+            val span       = Yaml.Cst.SourceSpan(mark, mark)
             val scalarRoot =
                 Yaml.cst("# c\nhello\n").getOrThrow
                     .replace(Yaml.Cst.Path.root, scalar("world"))

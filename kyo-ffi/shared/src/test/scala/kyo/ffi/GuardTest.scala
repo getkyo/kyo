@@ -35,7 +35,7 @@ class GuardTest extends Test:
     "Ffi.Guard.use" - {
         "runs the block, returns its value, and closes the guard" in {
             var inside: Ffi.Guard = null
-            val result = Ffi.Guard.use[Int] { g =>
+            val result            = Ffi.Guard.use[Int] { g =>
                 inside = g
                 42
             }

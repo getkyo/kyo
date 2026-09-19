@@ -42,7 +42,7 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || '' }}
-      - uses: coursier/setup-action@v3.0.2
+      - uses: coursier/setup-action@v3.0.3
         with:
           jvm: corretto:25
           apps: sbt
@@ -61,6 +61,7 @@ jobs:
           bash kyo-net/build/boringssl/build-boringssl.sh darwin-x86_64
           bash kyo-aeron/scripts/build-aeron.sh darwin-aarch64
           bash kyo-aeron/scripts/build-aeron.sh darwin-x86_64
+          bash kyo-sql-sqlite/scripts/build-sqlite.sh
       # ONE compile for every FFI module. The plugin knows which projects declare ffiLibraries, so the
       # workflow does not enumerate them: adding an FFI module needs no edit here. Previously this job
       # carried a hand-written block per module (compile, collect, upload), which is how a module ends up
@@ -116,7 +117,7 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || '' }}
-      - uses: coursier/setup-action@v3.0.2
+      - uses: coursier/setup-action@v3.0.3
         with:
           jvm: corretto:25
           apps: sbt
@@ -132,6 +133,7 @@ jobs:
         run: |
           bash kyo-net/build/boringssl/build-boringssl.sh linux-x86_64
           bash kyo-aeron/scripts/build-aeron.sh linux-x86_64
+          bash kyo-sql-sqlite/scripts/build-sqlite.sh
           sbt -Dplatform=JVM ffiCompileAll
           mkdir -p natives-out
           find . -path '*/target/ffi/lib*-linux-x86_64.so' -exec cp -n {} natives-out/ \;
@@ -150,6 +152,7 @@ jobs:
             export PATH="/opt/sbt/bin:$PATH"
             bash kyo-net/build/boringssl/build-boringssl.sh linux-musl-x86_64
             bash kyo-aeron/scripts/build-aeron.sh linux-musl-x86_64
+            bash kyo-sql-sqlite/scripts/build-sqlite.sh
             sbt -Dplatform=JVM ffiCompileAll
             mkdir -p natives-out
             find . -path "*/target/ffi/lib*-linux-musl-x86_64.so" -exec cp -n {} natives-out/ \;
@@ -188,7 +191,7 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || '' }}
-      - uses: coursier/setup-action@v3.0.2
+      - uses: coursier/setup-action@v3.0.3
         with:
           jvm: corretto:25
           apps: sbt
@@ -204,6 +207,7 @@ jobs:
         run: |
           bash kyo-net/build/boringssl/build-boringssl.sh linux-aarch64
           bash kyo-aeron/scripts/build-aeron.sh linux-aarch64
+          bash kyo-sql-sqlite/scripts/build-sqlite.sh
           sbt -Dplatform=JVM ffiCompileAll
           mkdir -p natives-out
           find . -path '*/target/ffi/lib*-linux-aarch64.so' -exec cp -n {} natives-out/ \;
@@ -218,6 +222,7 @@ jobs:
             export PATH="/opt/sbt/bin:$PATH"
             bash kyo-net/build/boringssl/build-boringssl.sh linux-musl-aarch64
             bash kyo-aeron/scripts/build-aeron.sh linux-musl-aarch64
+            bash kyo-sql-sqlite/scripts/build-sqlite.sh
             sbt -Dplatform=JVM ffiCompileAll
             mkdir -p natives-out
             find . -path "*/target/ffi/lib*-linux-musl-aarch64.so" -exec cp -n {} natives-out/ \;
@@ -265,13 +270,18 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || '' }}
-      - uses: coursier/setup-action@v3.0.2
+      - uses: coursier/setup-action@v3.0.3
         with:
           jvm: corretto:25
           apps: sbt
       - uses: ./.github/actions/windows-native-setup
         with:
           os-arch: windows-x86_64
+      # SQLite stages one C source, which every target compiles for itself.
+      - name: Stage vendored natives (windows-x86_64)
+        shell: bash
+        run: |
+          bash kyo-sql-sqlite/scripts/build-sqlite.sh
       - name: Compile every module's windows-x86_64 natives
         shell: bash
         run: sbt -Dplatform=JVM ffiCompileAll
@@ -315,6 +325,11 @@ jobs:
       - uses: ./.github/actions/windows-native-setup
         with:
           os-arch: windows-aarch64
+      # SQLite stages C source, which the ARM64 MSVC toolchain compiles like any other target.
+      - name: Stage vendored natives (windows-aarch64)
+        shell: bash
+        run: |
+          bash kyo-sql-sqlite/scripts/build-sqlite.sh
       - name: Compile every module's windows-aarch64 natives
         shell: bash
         run: sbt -Dplatform=JVM ffiCompileAll

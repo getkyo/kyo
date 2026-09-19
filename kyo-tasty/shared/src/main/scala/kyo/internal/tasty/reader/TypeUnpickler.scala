@@ -93,7 +93,7 @@ object TypeUnpickler:
             val addrCache     = new mutable.HashMap[Int, Tasty.Type]()
             val inProgressRec = new mutable.HashMap[Int, Tasty.Type.Rec]()
             val binderAddrMap = new mutable.HashMap[Int, Chunk[LoadingSymbol.Materialising]]()
-            val ctx =
+            val ctx           =
                 DecodeCtx(
                     names,
                     addrMap,
@@ -145,7 +145,7 @@ object TypeUnpickler:
         // via the classpath, instead of collapsing it to the untracked -1 sentinel.
         val unresolvedIdToFullName: mutable.HashMap[Int, String] = new mutable.HashMap()
         private var _unresolvedIdCounter: Int                    = -2
-        def nextUnresolvedId(): Int =
+        def nextUnresolvedId(): Int                              =
             val id = _unresolvedIdCounter
             _unresolvedIdCounter -= 1
             id
@@ -172,7 +172,7 @@ object TypeUnpickler:
                     // Cache miss: re-decode the type at the section-relative address from the full section bytes.
                     // address is section-relative; absAddr = sectionOffset + address is the absolute position.
                     val forkView = ByteView(session.sectionBytes, absAddr, session.sectionBytes.length)
-                    val forkCtx = DecodeCtx(
+                    val forkCtx  = DecodeCtx(
                         session.names,
                         session.addrMap,
                         session.arena,
@@ -337,7 +337,7 @@ object TypeUnpickler:
         // These are never placed in allSyms; their ids only need to be unique within this DecodeCtx.
         // Using large positive values avoids collision with Phase-B address-offset or final ids.
         private var _localIdCounter: Int = Int.MaxValue
-        def nextLocalId(): Int =
+        def nextLocalId(): Int           =
             val id = _localIdCounter
             _localIdCounter -= 1
             id
@@ -397,7 +397,7 @@ object TypeUnpickler:
                             // rather than the unresolved sentinel. Without this, @Child annotation type args
                             // decoded via SHAREDtype back-references lose their cross-file fully-qualified name tracking.
                             val forkView = ByteView(ctx.sectionBytes, absRef, ctx.sectionBytes.length)
-                            val forkCtx = DecodeCtx(
+                            val forkCtx  = DecodeCtx(
                                 ctx.names,
                                 ctx.addrMap,
                                 ctx.arena,
@@ -492,7 +492,7 @@ object TypeUnpickler:
                 // Look for the in-progress Rec node; if not found, use addrCache.
                 ctx.inProgressRec.get(recAddr) match
                     case Some(recNode) => Tasty.Type.RecThis(recNode)
-                    case None =>
+                    case None          =>
                         ctx.addrCache.get(recAddr) match
                             case Some(recNode) => Tasty.Type.RecThis(recNode)
                             case None          =>
@@ -633,9 +633,9 @@ object TypeUnpickler:
             // ── Category 5 (tag + Length + payload) ──────────────────────────────
 
             case TastyFormat.APPLIEDtype =>
-                val end   = view.readEnd()
-                val tycon = readTypeNode(view, ctx)
-                val args  = readTypesUntil(view, end, ctx)
+                val end                         = view.readEnd()
+                val tycon                       = readTypeNode(view, ctx)
+                val args                        = readTypesUntil(view, end, ctx)
                 val fullNameHint: Maybe[String] = tycon match
                     case Tasty.Type.Named(id) =>
                         import kyo.Tasty.SymbolId.value
@@ -675,7 +675,7 @@ object TypeUnpickler:
                         // Intermediate annotation: annotationFullName placeholder set to empty; finalizeMerge resolves.
                         Tasty.Annotation(annotationType, Chunk.empty, Tasty.Name(""))
                     else
-                        val pickle = java.util.Arrays.copyOfRange(ctx.sectionBytes, termStart, endInt)
+                        val pickle                       = java.util.Arrays.copyOfRange(ctx.sectionBytes, termStart, endInt)
                         val maybeTree: Maybe[Tasty.Tree] =
                             try
                                 Maybe(kyo.internal.tasty.reader.TreeUnpickler.decodeAnnotationTerm(
@@ -1062,7 +1062,7 @@ object TypeUnpickler:
                     val tpEnd   = view.readEnd()
                     val nameRef = view.readNat()
                     val symName = nameAt(ctx.names, nameRef)
-                    val symbol = InternalSymbol.makeSymbol(
+                    val symbol  = InternalSymbol.makeSymbol(
                         id = ctx.nextLocalId(),
                         kind = SymbolKind.TypeParam,
                         flags = Tasty.Flags.empty,
@@ -1350,11 +1350,10 @@ object TypeUnpickler:
     private def isVarianceTag(tag: Int): Boolean =
         tag == TastyFormat.STABLE || tag == TastyFormat.COVARIANT || tag == TastyFormat.CONTRAVARIANT
 
-    private def isModifierOrVarianceTag(tag: Int): Boolean =
-        (tag >= 1 && tag <= 59) ||
-            tag == TastyFormat.PRIVATEqualified ||
-            tag == TastyFormat.PROTECTEDqualified ||
-            tag == TastyFormat.ANNOTATION
+    private def isModifierOrVarianceTag(tag: Int): Boolean = (tag >= 1 && tag <= 59) ||
+        tag == TastyFormat.PRIVATEqualified ||
+        tag == TastyFormat.PROTECTEDqualified ||
+        tag == TastyFormat.ANNOTATION
 
     /** Decode a METHODtype lambda, consuming the tag byte.
       *
@@ -1369,7 +1368,7 @@ object TypeUnpickler:
     private[reader] def decodeMethodType(view: ByteView, session: DecodeSession)(using frame: Frame)(using AllowUnsafe): Tasty.Type =
         discard(view.readByte()) // consume METHODtype tag
         val startAddr = view.positionInt - 1
-        val ctx = DecodeCtx(
+        val ctx       = DecodeCtx(
             session.names,
             session.liveAddrMap,
             session.arena,
@@ -1403,7 +1402,7 @@ object TypeUnpickler:
     private[reader] def decodePolyType(view: ByteView, session: DecodeSession)(using frame: Frame)(using AllowUnsafe): Tasty.Type =
         discard(view.readByte()) // consume POLYtype tag
         val startAddr = view.positionInt - 1
-        val ctx = DecodeCtx(
+        val ctx       = DecodeCtx(
             session.names,
             session.liveAddrMap,
             session.arena,

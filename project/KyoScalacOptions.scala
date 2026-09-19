@@ -2,7 +2,7 @@ package kyo.build
 
 /** Version-aware scalac option helpers for build.sbt. Each option carries the Scala version range
   * that supports it; `ScalacOptions.tokensForVersion` filters a proposed set down to the tokens
-  * valid for the version being compiled, so cross-built modules (Scala 2.13 and 3 LTS rows) get
+  * valid for the version being compiled, so cross-built modules (Scala 2.13 and 3.3 rows) get
   * only the flags their compiler understands. Only the options build.sbt references are modeled.
   */
 final case class ScalacOption(

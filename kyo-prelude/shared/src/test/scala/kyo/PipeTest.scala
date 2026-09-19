@@ -152,7 +152,7 @@ class PipeTest extends kyo.test.Test[Any]:
 
             "with effects" in {
                 val stream = Stream.init(Seq(1, 2, 3, 4, 5))
-                val taken = stream.into(Pipe.takeWhile[Int] { v =>
+                val taken  = stream.into(Pipe.takeWhile[Int] { v =>
                     Var.update[Int](_ + 1).map(_ < 4)
                 }).run
                 assert(Var.runTuple(0)(taken).eval == (4, Seq(1, 2, 3)))
@@ -232,7 +232,7 @@ class PipeTest extends kyo.test.Test[Any]:
             }
 
             "with effects" in {
-                val stream = Stream.init(Seq(1, 2, 3, 4, 5))
+                val stream  = Stream.init(Seq(1, 2, 3, 4, 5))
                 val dropped = stream.into(Pipe.dropWhile[Int] { v =>
                     Var.update[Int](_ + 1).map(_ < 3)
                 }).run
@@ -459,7 +459,7 @@ class PipeTest extends kyo.test.Test[Any]:
             }
 
             "with effects" in {
-                val stream = Stream.init(Seq(1, 2, 3, 4, 5))
+                val stream    = Stream.init(Seq(1, 2, 3, 4, 5))
                 val collected = stream.into(Pipe.collectWhile[Int] { v =>
                     Var.update[Boolean](!_).map(if _ then Present(v * 2) else Absent)
                 }).run
@@ -596,7 +596,7 @@ class PipeTest extends kyo.test.Test[Any]:
             }
             "produce until" in {
                 var counter = 0
-                val result =
+                val result  =
                     Stream
                         .init(0 until 100)
                         .into(Pipe.map[Int](_ => counter += 1))
@@ -630,7 +630,7 @@ class PipeTest extends kyo.test.Test[Any]:
             }
             "produce until" in {
                 var counter = 0
-                val result =
+                val result  =
                     Stream
                         .init(0 until 100)
                         .into(Pipe.mapPure[Int](_ => counter += 1))
@@ -676,7 +676,7 @@ class PipeTest extends kyo.test.Test[Any]:
             }
             "produce until" in {
                 var counter = 0
-                val result =
+                val result  =
                     Stream
                         .init(0 until 100)
                         .into(Pipe.mapChunk[Int](_.map(_ => counter += 1)))
@@ -710,7 +710,7 @@ class PipeTest extends kyo.test.Test[Any]:
             }
             "produce until" in {
                 var counter = 0
-                val result =
+                val result  =
                     Stream
                         .init(0 until 100)
                         .into(Pipe.mapChunkPure[Int](_.map(_ => counter += 1)))

@@ -88,7 +88,7 @@ class CancelExchangeTlsTest extends kyo.Test:
 
         def loop(carry: Chunk[Byte]): Unit < Async =
             readMessage(conn, carry).flatMap {
-                case Absent => report("closed")
+                case Absent                   => report("closed")
                 case Present((message, rest)) =>
                     val event = describe(message)
                     report(event).andThen {
@@ -122,15 +122,15 @@ class CancelExchangeTlsTest extends kyo.Test:
 
     /** Binds a fake server answering `sslAnswer` and runs `f` against its address and event channel. */
     private def againstServer[A](sslAnswer: Maybe[Byte])(
-        f: (SqlConfig.Address, Channel[String]) => A < (Async & Abort[SqlException])
+        f: (SqlConfig.Address.Network, Channel[String]) => A < (Async & Abort[SqlException])
     )(using Frame): A < (Async & Scope & Abort[SqlException] & Abort[kyo.net.NetException]) =
         Channel.initUnscoped[String](16).flatMap { events =>
             FakeServer.listenPort(serve(events, sslAnswer)).flatMap { listener =>
-                f(SqlConfig.Address("postgres", "127.0.0.1", listener.port, "probe", Present("probe")), events)
+                f(SqlConfig.Address.Network("postgres", "127.0.0.1", listener.port, "probe", Present("probe")), events)
             }
         }
 
-    private def cancel(address: SqlConfig.Address, tlsMode: TlsMode, tls: Maybe[NetTlsConfig])(using
+    private def cancel(address: SqlConfig.Address.Network, tlsMode: TlsMode, tls: Maybe[NetTlsConfig])(using
         Frame
     ): Result[SqlException, Unit] < Async =
         Abort.run[SqlException](CancelExchange.cancel(address, tlsMode, tls, ProcessId, SecretKey))
@@ -149,7 +149,7 @@ class CancelExchangeTlsTest extends kyo.Test:
                         report(events, 3).map { seen =>
                             outcome match
                                 case Result.Failure(_: SqlConnectionTlsNotAdvertisedException) => line(mode, seen)
-                                case other =>
+                                case other                                                     =>
                                     fail(
                                         s"under ${mode.sslMode} the cancel must report that the server did not advertise TLS, got $other"
                                     )
@@ -265,7 +265,7 @@ class CancelExchangeTlsTest extends kyo.Test:
                                 )
                                 outcome match
                                     case Result.Failure(_: SqlConnectionClosedException) => line(mode, seen)
-                                    case other =>
+                                    case other                                           =>
                                         fail(
                                             s"under ${mode.sslMode} a silent server must fail the cancel on the SSLRequest read, got $other"
                                         )

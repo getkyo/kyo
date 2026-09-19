@@ -1,6 +1,7 @@
 package kyo.db
 
 import kyo.*
+import kyo.internal.network
 
 /** Contract tests for [[Runtime]]: assembly via [[Runtime.init]] (merge, warm-up, the failure bracket), the dedicated-session door
   * [[Runtime.openDedicated]], the carrier's close state, and the policy split between the lease entries.
@@ -75,8 +76,8 @@ class RuntimeTest extends Test:
         def rollbackIfOpenTransaction(using Frame): Unit < (Async & Abort[SqlException]) = ()
         def drainToIdle(using Frame): Boolean < (Async & Abort[SqlException])            = true
 
-        def isOpen(using Frame): Boolean < Sync = Sync.Unsafe.defer(!closedFlag.get())
-        def close(using Frame): Unit < Async    = Sync.Unsafe.defer(closedFlag.set(true))
+        def isOpen(using Frame): Boolean < Sync      = Sync.Unsafe.defer(!closedFlag.get())
+        def close(using Frame): Unit < Async         = Sync.Unsafe.defer(closedFlag.set(true))
         def closeNow(using Frame, AllowUnsafe): Unit =
             closedFlag.set(true)
     end StubSession
@@ -96,7 +97,11 @@ class RuntimeTest extends Test:
             Sync.Unsafe.defer {
                 val recorded = callsRef.updateAndGet(_.append((address, password, config)))
                 if recorded.size > failingFrom then
-                    Abort.fail[SqlException](SqlConnectionConnectFailedException(address.host, address.port, new Exception("stub refusal")))
+                    Abort.fail[SqlException](SqlConnectionConnectFailedException(
+                        address.network.host,
+                        address.network.port,
+                        new Exception("stub refusal")
+                    ))
                 else
                     val session = new StubSession(recorded.size)
                     discard(openedRef.updateAndGet(_.append(session)))
@@ -105,7 +110,7 @@ class RuntimeTest extends Test:
             }
     end StubFactory
 
-    private val address = SqlConfig.Address("stub", "localhost", 5432, "app", Present("alice"))
+    private val address = SqlConfig.Address.Network("stub", "localhost", 5432, "app", Present("alice"))
 
     private def urlOf(options: SqlConfig.Url.Options = SqlConfig.Url.Options.default): SqlConfig.Url =
         SqlConfig.Url(address, Present("secret"), options)
@@ -302,7 +307,7 @@ class RuntimeTest extends Test:
         val attempts = AtomicInt.Unsafe.init(0)
         Runtime.init(urlOf(), SqlConfig(minConnections = 1), factory).map { runtime =>
             val retrying = SqlConfig(retrySchedule = Present(Schedule.fixed(Duration.Zero).take(3)))
-            val leased = runtime.lease(retrying) { _ =>
+            val leased   = runtime.lease(retrying) { _ =>
                 Sync.Unsafe.defer {
                     discard(attempts.incrementAndGet())
                     Abort.fail[SqlException](SqlConnectionConnectFailedException("localhost", 5432, new Exception("transient")))

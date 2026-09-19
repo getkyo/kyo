@@ -349,8 +349,8 @@ object Changeset:
         else
             value match
                 case Structure.Value.Record(fields) =>
-                    val key  = fieldPath.head
-                    val rest = fieldPath.tail
+                    val key     = fieldPath.head
+                    val rest    = fieldPath.tail
                     val updated = fields.map { case (n, v) =>
                         if n == key then (n, modifyAtPath(v, rest)(f))
                         else (n, v)

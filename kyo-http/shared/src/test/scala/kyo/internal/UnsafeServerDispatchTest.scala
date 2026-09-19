@@ -120,7 +120,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
         "dispatch with path captures" in {
             import HttpPath./
-            val route = HttpRoute.getRaw("users" / HttpPath.Capture[String]("id")).response(_.bodyText)
+            val route   = HttpRoute.getRaw("users" / HttpPath.Capture[String]("id")).response(_.bodyText)
             val handler = route.handler { req =>
                 val userId = req.fields.id
                 HttpResponse.ok(userId)
@@ -142,7 +142,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
         }
 
         "dispatch POST with body" in {
-            val route = HttpRoute.postRaw("echo").request(_.bodyText).response(_.bodyText)
+            val route   = HttpRoute.postRaw("echo").request(_.bodyText).response(_.bodyText)
             val handler = route.handler { req =>
                 val body = req.fields.body
                 HttpResponse.ok(body)
@@ -242,7 +242,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
         }
 
         "body fits in header chunk" in {
-            val route = HttpRoute.postRaw("echo").request(_.bodyText).response(_.bodyText)
+            val route   = HttpRoute.postRaw("echo").request(_.bodyText).response(_.bodyText)
             val handler = route.handler { req =>
                 HttpResponse.ok(req.fields.body)
             }
@@ -265,7 +265,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
         }
 
         "body split across two chunks" in {
-            val route = HttpRoute.postRaw("echo").request(_.bodyText).response(_.bodyText)
+            val route   = HttpRoute.postRaw("echo").request(_.bodyText).response(_.bodyText)
             val handler = route.handler { req =>
                 HttpResponse.ok(req.fields.body)
             }
@@ -296,7 +296,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
         }
 
         "body split across many chunks" in {
-            val route = HttpRoute.postRaw("echo").request(_.bodyText).response(_.bodyText)
+            val route   = HttpRoute.postRaw("echo").request(_.bodyText).response(_.bodyText)
             val handler = route.handler { req =>
                 HttpResponse.ok(req.fields.body)
             }
@@ -330,7 +330,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
         }
 
         "body arrives after delay" in {
-            val route = HttpRoute.postRaw("echo").request(_.bodyText).response(_.bodyText)
+            val route   = HttpRoute.postRaw("echo").request(_.bodyText).response(_.bodyText)
             val handler = route.handler { req =>
                 HttpResponse.ok(req.fields.body)
             }
@@ -359,7 +359,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
         }
 
         "exact Content-Length match" in {
-            val route = HttpRoute.postRaw("echo").request(_.bodyText).response(_.bodyText)
+            val route   = HttpRoute.postRaw("echo").request(_.bodyText).response(_.bodyText)
             val handler = route.handler { req =>
                 HttpResponse.ok(req.fields.body)
             }
@@ -384,7 +384,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
         }
 
         "body with leftover for next request" in {
-            val postRoute = HttpRoute.postRaw("echo").request(_.bodyText).response(_.bodyText)
+            val postRoute   = HttpRoute.postRaw("echo").request(_.bodyText).response(_.bodyText)
             val postHandler = postRoute.handler { req =>
                 HttpResponse.ok(req.fields.body)
             }
@@ -417,7 +417,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
         }
 
         "zero Content-Length" in {
-            val route = HttpRoute.postRaw("echo").request(_.bodyText).response(_.bodyText)
+            val route   = HttpRoute.postRaw("echo").request(_.bodyText).response(_.bodyText)
             val handler = route.handler { req =>
                 val body = req.fields.body
                 // Empty body should produce empty string
@@ -440,7 +440,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
         }
 
         "very large body" in {
-            val route = HttpRoute.postRaw("echo").request(_.bodyText).response(_.bodyText)
+            val route   = HttpRoute.postRaw("echo").request(_.bodyText).response(_.bodyText)
             val handler = route.handler { req =>
                 HttpResponse.ok(s"size=${req.fields.body.length}")
             }
@@ -474,7 +474,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
         }
 
         "inbound channel closed mid-body" in {
-            val route = HttpRoute.postRaw("echo").request(_.bodyText).response(_.bodyText)
+            val route   = HttpRoute.postRaw("echo").request(_.bodyText).response(_.bodyText)
             val handler = route.handler { req =>
                 HttpResponse.ok(req.fields.body)
             }
@@ -589,7 +589,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
         }
 
         "Content-Length at limit accepted" in {
-            val route = HttpRoute.postRaw("echo").request(_.bodyText).response(_.bodyText)
+            val route   = HttpRoute.postRaw("echo").request(_.bodyText).response(_.bodyText)
             val handler = route.handler { req =>
                 HttpResponse.ok(req.fields.body)
             }
@@ -613,7 +613,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
         }
 
         "Content-Length below limit accepted" in {
-            val route = HttpRoute.postRaw("echo").request(_.bodyText).response(_.bodyText)
+            val route   = HttpRoute.postRaw("echo").request(_.bodyText).response(_.bodyText)
             val handler = route.handler { req =>
                 HttpResponse.ok(req.fields.body)
             }
@@ -668,7 +668,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
         }
 
         "Expect: 100-continue sends 100 before body read" in {
-            val route = HttpRoute.postRaw("echo").request(_.bodyText).response(_.bodyText)
+            val route   = HttpRoute.postRaw("echo").request(_.bodyText).response(_.bodyText)
             val handler = route.handler { req =>
                 HttpResponse.ok(req.fields.body)
             }
@@ -677,7 +677,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             val inbound  = Channel.Unsafe.init[Span[Byte]](16)
             val outbound = Channel.Unsafe.init[Span[Byte]](16)
 
-            val body = "continued body"
+            val body    = "continued body"
             val headers =
                 s"POST /echo HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Length: ${body.length}\r\nExpect: 100-continue\r\n\r\n"
             discard(inbound.offer(Span.fromUnsafe(headers.getBytes(StandardCharsets.US_ASCII))))
@@ -719,7 +719,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
         }
 
         "no Expect header skips 100 response" in {
-            val route = HttpRoute.postRaw("echo").request(_.bodyText).response(_.bodyText)
+            val route   = HttpRoute.postRaw("echo").request(_.bodyText).response(_.bodyText)
             val handler = route.handler { req =>
                 HttpResponse.ok(req.fields.body)
             }
@@ -745,8 +745,8 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             // Both Content-Length and Transfer-Encoding is the CL.TE request-smuggling shape (RFC 9112 section 6.1).
             // The parser refuses it rather than pick a framing, so the dispatch answers 400 Connection: close and
             // tears down: the body is never dechunked, routed, or handled, and the over-limit 413 is never reached.
-            val route  = HttpRoute.postRaw("echo").request(_.bodyText).response(_.bodyText)
-            val served = new AtomicBoolean(false)
+            val route   = HttpRoute.postRaw("echo").request(_.bodyText).response(_.bodyText)
+            val served  = new AtomicBoolean(false)
             val handler = route.handler { req =>
                 discard(served.set(true))
                 HttpResponse.ok(req.fields.body)
@@ -776,7 +776,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
         "chunked body exceeding max returns 413" in {
             // A chunked body on a buffered route is dechunked bounded by maxContentLength; a body decoding to more
             // than the limit is answered 413, not buffered without limit (CWE-400, RFC 9112 section 6.1).
-            val route = HttpRoute.postRaw("echo").request(_.bodyText).response(_.bodyText)
+            val route   = HttpRoute.postRaw("echo").request(_.bodyText).response(_.bodyText)
             val handler = route.handler { req =>
                 HttpResponse.ok(req.fields.body)
             }
@@ -788,9 +788,9 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
             // Send a chunked request whose decoded body (15 bytes) exceeds maxContentLength (10).
             // Chunk format: hex-size\r\ndata\r\n ... 0\r\n\r\n
-            val chunk1 = "a\r\n0123456789\r\n" // 10 bytes (at limit)
-            val chunk2 = "5\r\nABCDE\r\n"      // 5 more bytes (over limit)
-            val end    = "0\r\n\r\n"
+            val chunk1  = "a\r\n0123456789\r\n" // 10 bytes (at limit)
+            val chunk2  = "5\r\nABCDE\r\n"      // 5 more bytes (over limit)
+            val end     = "0\r\n\r\n"
             val request =
                 s"POST /echo HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n$chunk1$chunk2$end"
             discard(inbound.offer(Span.fromUnsafe(request.getBytes(StandardCharsets.US_ASCII))))
@@ -931,7 +931,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
           * throws if channel is closed before headers complete.
           */
         def collectWsUpgradeResponse(outbound: Channel.Unsafe[Span[Byte]])(using Frame): String < Async =
-            val sb = new StringBuilder
+            val sb                                           = new StringBuilder
             def readMore(): String < (Async & Abort[Closed]) =
                 outbound.safe.take.map { span =>
                     sb.append(new String(span.toArray, StandardCharsets.US_ASCII))
@@ -1085,7 +1085,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             Latch.initWith(1) { handlerDone =>
                 val received = new AtomicBoolean(false)
                 val config   = HttpWebSocket.Config(maxFrameSize = 4)
-                val handler = HttpHandler.webSocket("ws", config) { (_, ws) =>
+                val handler  = HttpHandler.webSocket("ws", config) { (_, ws) =>
                     Abort.run[Closed](ws.take()).map {
                         case Result.Success(_) =>
                             discard(received.set(true))
@@ -1396,7 +1396,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             val router  = HttpRouter(Seq(handler), Absent)
 
             // Set up 3 independent connections, each with separate channel pairs
-            val n = 3
+            val n     = 3
             val pairs = (0 until n).map { _ =>
                 val in  = Channel.Unsafe.init[Span[Byte]](64)
                 val out = Channel.Unsafe.init[Span[Byte]](64)
@@ -1468,7 +1468,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
         }
 
         "concurrent keep-alive requests with bodies" in {
-            val route = HttpRoute.postRaw("echo").request(_.bodyText).response(_.bodyText)
+            val route   = HttpRoute.postRaw("echo").request(_.bodyText).response(_.bodyText)
             val handler = route.handler { req =>
                 HttpResponse.ok(req.fields.body)
             }
@@ -1797,7 +1797,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
         "idle timeout with streaming response" in {
             // A streaming endpoint — data is sent as chunked transfer encoding
-            val route = HttpRoute.getRaw("stream").response(_.bodyText)
+            val route   = HttpRoute.getRaw("stream").response(_.bodyText)
             val handler = route.handler { _ =>
                 HttpResponse.ok("streamed data")
             }

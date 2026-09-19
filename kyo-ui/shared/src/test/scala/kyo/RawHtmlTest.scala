@@ -79,7 +79,7 @@ class RawHtmlTest extends kyo.test.Test[Any]:
     "rawHtml pattern-matches as Ast.RawHtml (AST access)" in {
         // UI.rawHtml returns Ast.RawHtml; case-class equality holds.
         val node: UI = rawHtml("x")
-        val matched = node match
+        val matched  = node match
             case Ast.RawHtml("x") => true
             case _                => false
         assert(matched)

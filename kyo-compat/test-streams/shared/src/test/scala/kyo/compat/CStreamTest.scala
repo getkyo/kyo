@@ -273,7 +273,7 @@ class CStreamTest extends CompatTest:
     }
 
     "deep flatMap chains do not stack-overflow (1000 levels)" in run {
-        val n = 1000
+        val n    = 1000
         val deep = (1 to n).foldLeft(CStream.init(Seq(0))) { (acc, _) =>
             acc.flatMap(prev => CStream.init(Seq(prev + 1)))
         }
@@ -396,7 +396,7 @@ class CStreamTest extends CompatTest:
     "deep flatMap chains do not stack-overflow (10000 levels)" in {
         pending
         run {
-            val n = 10000
+            val n    = 10000
             val deep = (1 to n).foldLeft(CStream.init(Seq(0))) { (acc, _) =>
                 acc.flatMap(prev => CStream.init(Seq(prev + 1)))
             }

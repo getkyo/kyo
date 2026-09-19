@@ -7,7 +7,7 @@ class UnsafeGauge(run: () => Double) extends Serializable {
 }
 
 class UnsafeCounterGauge(run: () => Long) extends Serializable {
-    private var last = 0L
+    private var last                               = 0L
     def collect()(implicit _au: AllowUnsafe): Long = {
         val value = run()
         if (value < 0) {

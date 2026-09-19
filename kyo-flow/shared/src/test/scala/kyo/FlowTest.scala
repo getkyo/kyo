@@ -118,7 +118,7 @@ class FlowTest extends kyo.test.Test[Any]:
 
         "invoke with child flow" in {
             val child = Flow.input[Int]("a").output("b")(ctx => ctx.a * 10)
-            val flow = Flow.input[Int]("x")
+            val flow  = Flow.input[Int]("x")
                 .subflow("result", child)(ctx => "a" ~ ctx.x)
             succeed("AST construction compiles without error")
         }
@@ -288,7 +288,7 @@ class FlowTest extends kyo.test.Test[Any]:
     "fold" - {
 
         "visits output and input" in {
-            val flow = Flow.input[Int]("x").output("y")(ctx => ctx.x + 1)
+            val flow  = Flow.input[Int]("x").output("y")(ctx => ctx.x + 1)
             val names = FlowFold(flow)(new FlowVisitorCollect[Chunk[String]](Chunk.empty, _ ++ _):
                 override def onInput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Schema[V])  = Chunk(s"input:$name")
                 override def onOutput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Schema[V]) = Chunk(s"output:$name"))
@@ -297,7 +297,7 @@ class FlowTest extends kyo.test.Test[Any]:
         }
 
         "visits step" in {
-            val flow = Flow.input[Int]("x").step("sideEffect")(ctx => ())
+            val flow  = Flow.input[Int]("x").step("sideEffect")(ctx => ())
             val names = FlowFold(flow)(new FlowVisitorCollect[Chunk[String]](Chunk.empty, _ ++ _):
                 override def onStep(name: String, frame: Frame, meta: Flow.Meta) = Chunk(s"step:$name"))
             assert(names.toSeq.contains("step:sideEffect"))
@@ -352,7 +352,7 @@ class FlowTest extends kyo.test.Test[Any]:
         }
 
         "traversal order" in {
-            val flow = Flow.input[Int]("a").output("b")(ctx => ctx.a).step("c")(ctx => ()).sleep("d", 1.second)
+            val flow  = Flow.input[Int]("a").output("b")(ctx => ctx.a).step("c")(ctx => ()).sleep("d", 1.second)
             val names = FlowFold(flow)(new FlowVisitorCollect[Chunk[String]](Chunk.empty, _ ++ _):
                 override def onInput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Schema[V])  = Chunk(name)
                 override def onOutput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Schema[V]) = Chunk(name)
@@ -362,7 +362,7 @@ class FlowTest extends kyo.test.Test[Any]:
         }
 
         "counts all nodes" in {
-            val flow = Flow.input[Int]("x").output("y")(ctx => ctx.x + 1).step("log")(ctx => ()).sleep("wait", 1.second)
+            val flow  = Flow.input[Int]("x").output("y")(ctx => ctx.x + 1).step("log")(ctx => ()).sleep("wait", 1.second)
             val count = FlowFold(flow)(new FlowVisitorCollect[Int](0, _ + _):
                 override def onInput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Schema[V])  = 1
                 override def onOutput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Schema[V]) = 1
@@ -412,7 +412,7 @@ class FlowTest extends kyo.test.Test[Any]:
             FlowFold(flow)(new FlowVisitorCollect[Int](0, _ + _):
                 override def onInput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Schema[V])  = 1
                 override def onOutput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Schema[V]) = 1
-                override def onGather(results: Seq[Int], frame: Frame) =
+                override def onGather(results: Seq[Int], frame: Frame)                                         =
                     gatherCount = results.length; results.sum)
             assert(gatherCount == 2)
         }
@@ -466,7 +466,7 @@ class FlowTest extends kyo.test.Test[Any]:
 
         "invoke child result accessible downstream" in {
             val child = Flow.input[Int]("a").output("b")(ctx => ctx.a * 10)
-            val flow = Flow.input[Int]("x")
+            val flow  = Flow.input[Int]("x")
                 .subflow("result", child)(ctx => "a" ~ ctx.x)
                 .output("final")(ctx => ctx.result.b)
             succeed("downstream access to child result field verified at compile time")

@@ -83,7 +83,7 @@ class PropertyMaybeTestSuite extends TestBase[Any]:
     }
 
     "tryFirstFailing returns Present with first failing element" in {
-        val pt = makeHarness()
+        val pt                                                           = makeHarness()
         val body: Int => Unit < (Any & Async & Abort[Throwable] & Scope) =
             n => if n >= 2 then Abort.fail(new RuntimeException(s"n=$n >= 2")) else ()
         pt.tryFirstFailing(Chunk(1, 2, 3), body).map {

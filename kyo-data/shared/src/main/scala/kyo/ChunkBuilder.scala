@@ -35,7 +35,7 @@ sealed class ChunkBuilder[A] extends ReusableBuilder[A, Chunk.Indexed[A]] with S
             case elems: Chunk[A] =>
                 elems.foreach(addOne)
             case _ =>
-                val it = elems.iterator
+                val it                    = elems.iterator
                 @tailrec def loop(): Unit =
                     if it.hasNext then
                         addOne(it.next())

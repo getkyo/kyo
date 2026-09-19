@@ -62,8 +62,8 @@ class CompilerPoolTest extends kyo.test.Test[Any]:
 
     "one instance per config: two concurrent ops on the same config reuse it; eviction triggers recreate" in {
         Scope.run {
-            val cfg = minConfig("one-instance")
-            val uri = Compiler.Uri("Test.scala")
+            val cfg      = minConfig("one-instance")
+            val uri      = Compiler.Uri("Test.scala")
             val settings =
                 Compiler.Pool.Settings(isolate = false, maxConcurrentCompiles = 4, maxLiveCompilers = 2, idleEviction = Duration.Zero)
 
@@ -133,7 +133,7 @@ class CompilerPoolTest extends kyo.test.Test[Any]:
                             makePool(settings, instances).map { pool =>
                                 val N = 4
                                 for
-                                    gate <- Latch.init(1)
+                                    gate   <- Latch.init(1)
                                     fibers <- Kyo.fill(N) {
                                         Fiber.initUnscoped {
                                             gate.await.andThen {
@@ -212,7 +212,7 @@ class CompilerPoolTest extends kyo.test.Test[Any]:
             val overlapCount = new java.util.concurrent.atomic.AtomicInteger(0)
             val maxOverlap   = new java.util.concurrent.atomic.AtomicInteger(0)
             val cfg          = minConfig("serialize")
-            val settings =
+            val settings     =
                 Compiler.Pool.Settings(isolate = false, maxConcurrentCompiles = 4, maxLiveCompilers = 16, idleEviction = Duration.Zero)
 
             Channel.initUnscoped[Unit](2).map { parkCh =>
@@ -277,7 +277,7 @@ class CompilerPoolTest extends kyo.test.Test[Any]:
         Scope.run {
             val inFlight    = new java.util.concurrent.atomic.AtomicInteger(0)
             val maxInFlight = new java.util.concurrent.atomic.AtomicInteger(0)
-            val settings =
+            val settings    =
                 Compiler.Pool.Settings(isolate = false, maxConcurrentCompiles = 2, maxLiveCompilers = 16, idleEviction = Duration.Zero)
             val cfgA = minConfig("capA")
             val cfgB = minConfig("capB")
@@ -356,8 +356,8 @@ class CompilerPoolTest extends kyo.test.Test[Any]:
 
     "pool isolation: a failure on config A does not affect config B" in {
         Scope.run {
-            val cfgA = minConfig("iso-a")
-            val cfgB = minConfig("iso-b")
+            val cfgA     = minConfig("iso-a")
+            val cfgB     = minConfig("iso-b")
             val settings =
                 Compiler.Pool.Settings(isolate = false, maxConcurrentCompiles = 4, maxLiveCompilers = 16, idleEviction = Duration.Zero)
 
@@ -434,7 +434,7 @@ class CompilerPoolTest extends kyo.test.Test[Any]:
     "cross-config parallelism: two ops on distinct configs run in the backend simultaneously" in {
         Scope.run {
             val maxConcurrent = new java.util.concurrent.atomic.AtomicInteger(0)
-            val settings =
+            val settings      =
                 Compiler.Pool.Settings(isolate = false, maxConcurrentCompiles = 4, maxLiveCompilers = 16, idleEviction = Duration.Zero)
             val cfgA = minConfig("par-a")
             val cfgB = minConfig("par-b")
@@ -491,7 +491,7 @@ class CompilerPoolTest extends kyo.test.Test[Any]:
 
                                                     // Both must be in the backend at the same time.
                                                     snapshot = inFlight.get()
-                                                    _ = assert(
+                                                    _        = assert(
                                                         snapshot == 2,
                                                         s"expected 2 concurrent ops on distinct configs, got $snapshot"
                                                     )
@@ -520,7 +520,7 @@ class CompilerPoolTest extends kyo.test.Test[Any]:
         Scope.run {
             val createCount = new java.util.concurrent.atomic.AtomicInteger(0)
             val cfg         = minConfig("lazy", version = CompilerPool.ownVersion)
-            val settings =
+            val settings    =
                 Compiler.Pool.Settings(isolate = false, maxConcurrentCompiles = 4, maxLiveCompilers = 16, idleEviction = Duration.Zero)
 
             Cache.initWithFinalizer[Compiler.Config, Promise[Instance, Abort[CompilerException]]](
@@ -546,24 +546,29 @@ class CompilerPoolTest extends kyo.test.Test[Any]:
         }
     }
 
+    /** Overflowing `maxLiveCompilers` closes the evicted instance through the cache finalizer, and the survivor keeps serving.
+      *
+      * Which of the two instances is evicted is the cache's CLOCK policy, not the pool's: both carry the accessed flag (A from its op,
+      * B from its insert), so the victim is whichever slot the hand reaches first, and the slots follow `Config.hashCode`, which includes
+      * the toolchain's Scala version. The leaf therefore asserts the property the pool owns, closing exactly the evicted instance, for
+      * either victim.
+      */
     "pool eviction closes the Instance via the Cache finalizer" in {
         Scope.run {
             Channel.initUnscoped[String](4).map { closedCh =>
-                val cfgA = minConfig("evict-a")
-                val cfgB = minConfig("evict-b")
+                val cfgA     = minConfig("evict-a")
+                val cfgB     = minConfig("evict-b")
                 val settings =
                     Compiler.Pool.Settings(isolate = false, maxConcurrentCompiles = 4, maxLiveCompilers = 1, idleEviction = Duration.Zero)
 
-                val backendA = new Backend:
+                def closeSignalingBackend(tag: String): Backend = new Backend:
                     def run(request: Request)(using Frame): Response < (Async & Abort[CompilerException]) =
                         Response.Diagnostics(Chunk.empty)
                     def close(using Frame): Unit < (Async & Abort[Throwable]) =
-                        Abort.run[Closed](closedCh.put("A")).map(_ => ())
+                        Abort.run[Closed](closedCh.put(tag)).map(_ => ())
 
-                val backendB = new Backend:
-                    def run(request: Request)(using Frame): Response < (Async & Abort[CompilerException]) =
-                        Response.Diagnostics(Chunk.empty)
-                    def close(using Frame): Unit < (Async & Abort[Throwable]) = ()
+                val backendA = closeSignalingBackend("A")
+                val backendB = closeSignalingBackend("B")
 
                 Cache.initWithFinalizer[Compiler.Config, Promise[Instance, Abort[CompilerException]]](
                     settings.maxLiveCompilers,
@@ -582,19 +587,30 @@ class CompilerPoolTest extends kyo.test.Test[Any]:
                                 cA <- pool.compiler(cfgA)
                                 _  <- Abort.run[CompilerException](cA.compile(uri, "object A"))
 
-                                // Insert B into the cache (maxLiveCompilers = 1 forces A's eviction).
+                                // Insert B into the cache: maxLiveCompilers = 1 forces one of the two out.
                                 _ <- instances.add(cfgB, completed(Instance(backendB, mB)))
 
-                                // Await the close signal: the cache finalizer calls backendA.close.
+                                // Await the close signal: the cache finalizer closes the evicted instance's backend.
                                 closedTag <- closedCh.take
-                                _ = assert(closedTag == "A", s"expected close of A, got '$closedTag'")
+                                (evictedCfg, survivorCfg) = closedTag match
+                                    case "A" => (cfgA, cfgB)
+                                    case _   => (cfgB, cfgA)
+                                _ = assert(closedTag == "A" || closedTag == "B", s"expected the close of A or B, got '$closedTag'")
 
-                                // B still serves normally after A was evicted.
-                                cB   <- pool.compiler(cfgB)
-                                resB <- Abort.run[CompilerException](cB.compile(uri, "object B"))
-                                _ = resB match
+                                // Exactly the evicted instance left the cache; the survivor is still live and was not closed.
+                                evicted  <- instances.get(evictedCfg)
+                                survivor <- instances.get(survivorCfg)
+                                _ = assert(evicted.isEmpty, s"the closed instance ($closedTag) must no longer be cached")
+                                _ = assert(survivor.nonEmpty, s"the instance that was not closed must still be cached")
+                                extraClose <- closedCh.poll
+                                _ = assert(extraClose.isEmpty, s"only the evicted instance may be closed, also got $extraClose")
+
+                                // The survivor still serves normally after the eviction.
+                                cSurvivor   <- pool.compiler(survivorCfg)
+                                resSurvivor <- Abort.run[CompilerException](cSurvivor.compile(uri, "object Survivor"))
+                                _ = resSurvivor match
                                     case Result.Success(_) => ()
-                                    case other             => assert(false, s"B should succeed after eviction of A; got $other")
+                                    case other             => assert(false, s"the survivor should serve after the eviction; got $other")
                             yield ()
                         }
                 }
@@ -607,7 +623,7 @@ class CompilerPoolTest extends kyo.test.Test[Any]:
             Channel.initUnscoped[String](4).map { closedCh =>
                 val cfg          = minConfig("stuck")
                 val stuckTimeout = 500.millis
-                val settings =
+                val settings     =
                     Compiler.Pool.Settings(isolate = false, maxConcurrentCompiles = 4, maxLiveCompilers = 16, idleEviction = Duration.Zero)
 
                 // A backend whose op never returns: only the leg-3 timeout can end it. Its close-on-evict

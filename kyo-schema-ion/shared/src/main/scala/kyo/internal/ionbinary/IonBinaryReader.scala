@@ -211,7 +211,7 @@ final class IonBinaryReader private (
         value match
             case DecimalValue(v) => v
             case IntValue(v)     => BigDecimal(v)
-            case FloatValue(v) =>
+            case FloatValue(v)   =>
                 if v.isNaN || v.isInfinite then mismatch("finite decimal", FloatValue(v))
                 else BigDecimal(v)
             case other => mismatch("decimal", other)
@@ -266,7 +266,7 @@ final class IonBinaryReader private (
                 case SymbolValue(s)    => Structure.Value.Str(s)
                 case BlobValue(b)      => Structure.Value.Bytes(b)
                 case ClobValue(_)      => throw ParseException(IonBinary(), "clob", "Structure.Value")(using _frame)
-                case ListValue(vs) =>
+                case ListValue(vs)     =>
                     checkDepth()
                     checkCollectionSize(vs.size)
                     val out = Structure.Value.Sequence(Chunk.from(vs.map(toValue)))
@@ -478,7 +478,7 @@ object IonBinaryReader:
             val hour   = readRequiredVarUInt(end, "hour").toInt
             val minute = readRequiredVarUInt(end, "minute").toInt
             val second = readRequiredVarUInt(end, "second").toInt
-            val nanos =
+            val nanos  =
                 if pos < end then
                     readDecimal(end - pos, end) match
                         case DecimalValue(d) =>
@@ -504,7 +504,7 @@ object IonBinaryReader:
         end readSymbol
 
         private def readList(len: Int, limit: Int): IonBinaryValue =
-            val end = checkedEnd(len, limit)
+            val end                                                                = checkedEnd(len, limit)
             @tailrec def loop(acc: Vector[IonBinaryValue]): Vector[IonBinaryValue] =
                 skipNops(end)
                 if pos == end then acc
@@ -515,7 +515,7 @@ object IonBinaryReader:
         end readList
 
         private def readStruct(len: Int, limit: Int): IonBinaryValue =
-            val end = checkedEnd(len, limit)
+            val end                                                                                    = checkedEnd(len, limit)
             @tailrec def loop(acc: Vector[(String, IonBinaryValue)]): Vector[(String, IonBinaryValue)] =
                 skipNops(end)
                 if pos == end then acc

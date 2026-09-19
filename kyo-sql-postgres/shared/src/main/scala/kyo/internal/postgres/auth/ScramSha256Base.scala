@@ -153,7 +153,7 @@ abstract private[kyo] class ScramSha256Base(username: String, clientNonce: Strin
                             // Parsed as a Long so a count above Int.MaxValue is refused for being too high rather than
                             // for being unparseable, and so no unreadable field turns into a numeric stand-in.
                             Maybe.fromOption(i.toLongOption) match
-                                case Absent => Result.fail(SqlDecodeScramFormatException("i", i))
+                                case Absent        => Result.fail(SqlDecodeScramFormatException("i", i))
                                 case Present(iter) =>
                                     if iter <= 0 then Result.fail(SqlDecodeScramFormatException("i", i))
                                     else if iter > ScramSha256Base.MaxIterations then

@@ -8,7 +8,7 @@ class STMSerializationJvmTest extends kyo.test.Test[Any]:
 
         "serializes and deserializes preserving the committed value" in {
             for
-                ref0 <- TRef.init(42)
+                ref0  <- TRef.init(42)
                 bytes <- Sync.defer {
                     val baos = new java.io.ByteArrayOutputStream()
                     val oos  = new java.io.ObjectOutputStream(baos)

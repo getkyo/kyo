@@ -396,7 +396,7 @@ object ScramPlusIntegrationTest:
     ): A < (S & Async & Abort[ContainerException]) =
         tlsRef.use {
             case Maybe.Present(p) => p.get.flatMap(f)
-            case Maybe.Absent =>
+            case Maybe.Absent     =>
                 Promise.init[TlsCtx, Abort[ContainerException]].flatMap { p =>
                     tlsRef.compareAndSet(Maybe.empty, Maybe.Present(p)).flatMap {
                         case false =>

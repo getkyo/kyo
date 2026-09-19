@@ -34,7 +34,7 @@ private[kyo] object McpEnumSchema:
       */
     def closed[E](pairs: (String, E)*)(using CanEqual[E, E]): Schema[E] =
         val toCase: Map[String, E] = pairs.toMap
-        val toWire: E => String =
+        val toWire: E => String    =
             val byCase = pairs.map((w, e) => (e, w)).toMap
             e => byCase(e)
         val expected = pairs.iterator.map(_._1).mkString("|")

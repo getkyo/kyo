@@ -42,7 +42,7 @@ final private[kyo] case class PostgresRowCodec(format: Format) extends SqlPositi
         PostgresRowCodec.nameOf(typeToken)
 
     /** A `float4` column is the narrower of the two widths this backend maps to one kind. */
-    override private[kyo] def isSingleWidthFloat(typeToken: Int): Boolean =
+    override def isSingleWidthFloat(typeToken: Int): Boolean =
         typeToken == PostgresRowCodec.float4Token
 
     /** Reads a column into the neutral value it holds, under BOTH wire formats.
@@ -107,7 +107,7 @@ final private[kyo] case class PostgresRowCodec(format: Format) extends SqlPositi
       * holds one.
       */
     private lazy val arrayValue: PostgresDecoder[SqlValue] = new PostgresDecoder[SqlValue]:
-        val oids: Set[Int] = Set.empty
+        val oids: Set[Int]                                                                        = Set.empty
         def read(format: Format, bytes: Span[Byte], columnOid: Int)(using frame: Frame): SqlValue =
             val arr   = new PostgresArrayReader(bytes, format, frame)
             val count = arr.openArray()

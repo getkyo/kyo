@@ -89,7 +89,7 @@ class PosixHandleWriteTailBoundTest extends Test:
     private def issueUntilBoundedOrGrown(driver: IoDriver[PosixHandle], handle: PosixHandle)(using
         Frame
     ): (Boolean, Int) < (Abort[Closed] & Async) =
-        def payload(): Span[Byte] = Span.fromUnsafe(Array.fill[Byte](perWrite)(7.toByte))
+        def payload(): Span[Byte]                                             = Span.fromUnsafe(Array.fill[Byte](perWrite)(7.toByte))
         def loop(k: Int, peak: Int): (Boolean, Int) < (Abort[Closed] & Async) =
             if k >= writes then (false, peak)
             else

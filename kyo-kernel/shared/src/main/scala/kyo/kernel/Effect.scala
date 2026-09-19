@@ -42,7 +42,7 @@ object Effect:
             (v: @unchecked) match
                 case kyo: KyoSuspend[IX, OX, EX, Any, B, S & S2] @unchecked =>
                     new KyoContinue[IX, OX, EX, Any, B, S & S2](kyo):
-                        def frame = _frame
+                        def frame                                                = _frame
                         def apply(v: OX[Any], context: Context)(using Safepoint) =
                             try catchingLoop(kyo(v, context))
                             catch
@@ -67,7 +67,7 @@ object Effect:
     @nowarn("msg=anonymous")
     private[kyo] inline def deferInline[A, S](inline f: Safepoint ?=> A < S)(using inline _frame: Frame): A < S =
         new KyoDefer[A, S]:
-            def frame = _frame
+            def frame                                             = _frame
             def apply(v: Unit, context: Context)(using Safepoint) =
                 f
 end Effect

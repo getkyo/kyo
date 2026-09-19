@@ -45,9 +45,9 @@ final class StatTestExporterFactory extends ExporterFactory:
 end StatTestExporterFactory
 
 object StatTestExporterFactory:
-    val constructions: AtomicInteger                           = new AtomicInteger(0)
-    val exporterConstructions: AtomicInteger                   = new AtomicInteger(0)
-    val constructed: java.util.concurrent.atomic.AtomicBoolean = new java.util.concurrent.atomic.AtomicBoolean(false)
+    val constructions: AtomicInteger                                  = new AtomicInteger(0)
+    val exporterConstructions: AtomicInteger                          = new AtomicInteger(0)
+    val constructed: java.util.concurrent.atomic.AtomicBoolean        = new java.util.concurrent.atomic.AtomicBoolean(false)
     val kyoScopeWasNonNull: java.util.concurrent.atomic.AtomicBoolean =
         new java.util.concurrent.atomic.AtomicBoolean(false)
 end StatTestExporterFactory

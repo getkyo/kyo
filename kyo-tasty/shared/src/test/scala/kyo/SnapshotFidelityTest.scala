@@ -118,7 +118,8 @@ class SnapshotFidelityTest extends kyo.test.Test[Any]:
                             val warmMeta = warmSym.javaMetadata.get
                             assert(
                                 ((warmMeta.accessFlags & 0x0001) != 0) == ((coldMeta.accessFlags & 0x0001) != 0),
-                                s"isJvmPublic differs for $fullName: cold=${(coldMeta.accessFlags & 0x0001) != 0} warm=${(warmMeta.accessFlags & 0x0001) != 0}"
+                                s"isJvmPublic differs for $fullName: cold=${(coldMeta.accessFlags & 0x0001) !=
+                                        0} warm=${(warmMeta.accessFlags & 0x0001) != 0}"
                             )
                             assert(
                                 warmMeta.accessFlags == coldMeta.accessFlags,

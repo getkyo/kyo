@@ -39,7 +39,7 @@ class RsaOaepTest extends kyo.Test:
     private def seeded(seed: Long): SecureRandom =
         SecureRandom(
             new SecureRandom.Unsafe:
-                private val jr = new java.util.Random(seed)
+                private val jr                                            = new java.util.Random(seed)
                 def nextBytes(length: Int)(using AllowUnsafe): Span[Byte] =
                     val arr = new Array[Byte](length)
                     jr.nextBytes(arr)
@@ -167,7 +167,7 @@ FwIDAQAB
         // Vector 1: MGF1(seed=00 00 00 00, maskLen=20)
         // SHA-1(00 00 00 00 || 00 00 00 00) = 05fe405753166f125559e7c9ac558654f107c7e9
         // Verified independently with Python hashlib.
-        val seed1 = Array[Byte](0x00, 0x00, 0x00, 0x00)
+        val seed1     = Array[Byte](0x00, 0x00, 0x00, 0x00)
         val expected1 = Array[Byte](
             0x05.toByte,
             0xfe.toByte,

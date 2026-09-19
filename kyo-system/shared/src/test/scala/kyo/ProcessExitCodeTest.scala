@@ -135,7 +135,7 @@ class ProcessExitCodeTest extends kyo.test.Test[Any]:
     "import ExitCode.* enables named signal pattern matching" in {
         import ExitCode.*
         val code: ExitCode = ExitCode.Signaled(15)
-        val matched = code match
+        val matched        = code match
             case SIGTERM     => "sigterm"
             case Signaled(n) => s"other signal: $n"
             case _           => "other"
@@ -145,7 +145,7 @@ class ProcessExitCodeTest extends kyo.test.Test[Any]:
     "Signaled(n) matches unknown signal numbers" in {
         import ExitCode.*
         val code: ExitCode = ExitCode.Signaled(42)
-        val matched = code match
+        val matched        = code match
             case SIGTERM     => "sigterm"
             case Signaled(n) => s"signal $n"
             case _           => "other"

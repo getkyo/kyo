@@ -158,7 +158,7 @@ class TChunkTest extends kyo.test.Test[Any]:
 
         "rollback on failure" in {
             for
-                chunk <- TChunk.init(1, 2, 3)
+                chunk  <- TChunk.init(1, 2, 3)
                 result <- Abort.run {
                     STM.run {
                         for
@@ -178,7 +178,7 @@ class TChunkTest extends kyo.test.Test[Any]:
             for
                 chunk <- TChunk.init(1, 2, 3)
                 _     <- STM.run(chunk.compact)
-                _ <- STM.run {
+                _     <- STM.run {
                     for
                         _ <- chunk.append(4)
                         _ <- chunk.append(5)
@@ -214,7 +214,7 @@ class TChunkTest extends kyo.test.Test[Any]:
             (for
                 size  <- Choice.eval(1, 10, 100)
                 chunk <- TChunk.init[Int]()
-                _ <- STM.run {
+                _     <- STM.run {
                     Kyo.foreachDiscard((1 to size))(i => chunk.append(i))
                 }
                 _ <- Async.fill(5, 5)(
@@ -234,7 +234,7 @@ class TChunkTest extends kyo.test.Test[Any]:
             (for
                 size  <- Choice.eval(1, 10, 100)
                 chunk <- TChunk.init[Int]()
-                _ <- STM.run {
+                _     <- STM.run {
                     Kyo.foreachDiscard((1 to size))(i => chunk.append(i))
                 }
                 _ <- Async.fill(5, 5)(
@@ -259,7 +259,7 @@ class TChunkTest extends kyo.test.Test[Any]:
             (for
                 size  <- Choice.eval(1, 10, 100)
                 chunk <- TChunk.init[Int]()
-                _ <- STM.run {
+                _     <- STM.run {
                     Kyo.foreachDiscard((1 to size))(i => chunk.append(i))
                 }
                 _ <- Async.fill(5, 5)(
@@ -385,7 +385,7 @@ class TChunkTest extends kyo.test.Test[Any]:
             }
 
             "non-identity lambda with effectful S returns B in Sync & S" in {
-                val initial = Chunk(1, 2, 3)
+                val initial                                                              = Chunk(1, 2, 3)
                 val program: String < (Sync & Async & Abort[String | FailedTransaction]) =
                     TChunk.initWith(initial) { tc =>
                         STM.run(tc.snapshot).map { snap =>
@@ -396,7 +396,7 @@ class TChunkTest extends kyo.test.Test[Any]:
             }
 
             "combines init and first op in single transaction" in {
-                val initial = Chunk(1, 2, 3)
+                val initial                                                          = Chunk(1, 2, 3)
                 val r: (Int, Chunk[Int]) < (Sync & Async & Abort[FailedTransaction]) =
                     TChunk.initWith(initial) { tc =>
                         STM.run {
@@ -416,7 +416,7 @@ class TChunkTest extends kyo.test.Test[Any]:
             }
 
             "observable atomicity (writes inside f visible without external commit boundary)" in {
-                val initial = Chunk(1, 2, 3)
+                val initial                                                         = Chunk(1, 2, 3)
                 val program: Chunk[Int] < (Sync & Async & Abort[FailedTransaction]) =
                     TChunk.initWith(initial) { tc =>
                         STM.run {
@@ -452,7 +452,7 @@ class TChunkTest extends kyo.test.Test[Any]:
             }
 
             "preserves S effect across return-type boundary" in {
-                val expected: Chunk[Int] = Chunk(1, 2, 3)
+                val expected: Chunk[Int]                   = Chunk(1, 2, 3)
                 val a: Chunk[Int] < (Sync & Abort[String]) =
                     TChunk.initWith(expected)(_ => Abort.fail("S=Abort"))
                 val b: Chunk[Int] < (Sync & Async & Var[Int] & Abort[FailedTransaction]) =
@@ -594,7 +594,7 @@ class TChunkTest extends kyo.test.Test[Any]:
                 val baseline = Chunk(1, 2, 3)
                 for
                     chunk <- TChunk.init(baseline)
-                    res <- Abort.run {
+                    res   <- Abort.run {
                         STM.run {
                             chunk.use(c => Abort.fail(s"saw size=${c.length}"))
                         }
@@ -609,7 +609,7 @@ class TChunkTest extends kyo.test.Test[Any]:
             "effectful f (Abort.fail) rolls back surrounding STM updates" in {
                 for
                     chunk <- TChunk.init(1, 2, 3)
-                    r <- Abort.run {
+                    r     <- Abort.run {
                         STM.run {
                             for
                                 _   <- chunk.append(99)
@@ -629,7 +629,7 @@ class TChunkTest extends kyo.test.Test[Any]:
             "f that throws surfaces panic and rolls back" in {
                 for
                     chunk <- TChunk.init(1, 2, 3)
-                    r <- Abort.run[Throwable] {
+                    r     <- Abort.run[Throwable] {
                         STM.run {
                             for
                                 _   <- chunk.append(99)
@@ -689,7 +689,7 @@ class TChunkTest extends kyo.test.Test[Any]:
             "preserves order under interleaved sub-transaction rollbacks inside a successful outer transaction" in {
                 for
                     chunk <- TChunk.init[Int]
-                    _ <- STM.run {
+                    _     <- STM.run {
                         for
                             _ <- chunk.append(1)
                             _ <- Abort.run(STM.run(chunk.append(2).andThen(Abort.fail("nope"))))
@@ -716,8 +716,8 @@ class TChunkTest extends kyo.test.Test[Any]:
 
             "two TChunks created in the same STM.run are independent" in {
                 for
-                    a <- TChunk.init(1, 2)
-                    b <- TChunk.init(10, 20)
+                    a     <- TChunk.init(1, 2)
+                    b     <- TChunk.init(10, 20)
                     snaps <- STM.run {
                         for
                             _ <- a.append(3)
@@ -756,7 +756,7 @@ class TChunkTest extends kyo.test.Test[Any]:
             "rolls back on STM failure" in {
                 for
                     chunk <- TChunk.init(1, 2, 3, 4, 5)
-                    r <- Abort.run {
+                    r     <- Abort.run {
                         STM.run(chunk.take(2).andThen(Abort.fail("nope")))
                     }
                     snap <- STM.run(chunk.snapshot)
@@ -786,7 +786,7 @@ class TChunkTest extends kyo.test.Test[Any]:
             "rolls back on STM failure" in {
                 for
                     chunk <- TChunk.init(1, 2, 3, 4, 5)
-                    r <- Abort.run {
+                    r     <- Abort.run {
                         STM.run(chunk.drop(2).andThen(Abort.fail("nope")))
                     }
                     snap <- STM.run(chunk.snapshot)
@@ -816,7 +816,7 @@ class TChunkTest extends kyo.test.Test[Any]:
             "rolls back on STM failure" in {
                 for
                     chunk <- TChunk.init(1, 2, 3, 4, 5)
-                    r <- Abort.run {
+                    r     <- Abort.run {
                         STM.run(chunk.dropRight(2).andThen(Abort.fail("nope")))
                     }
                     snap <- STM.run(chunk.snapshot)
@@ -854,7 +854,7 @@ class TChunkTest extends kyo.test.Test[Any]:
             "rolls back on STM failure" in {
                 for
                     chunk <- TChunk.init(1, 2, 3, 4, 5)
-                    r <- Abort.run {
+                    r     <- Abort.run {
                         STM.run(chunk.slice(1, 4).andThen(Abort.fail("nope")))
                     }
                     snap <- STM.run(chunk.snapshot)
@@ -869,7 +869,7 @@ class TChunkTest extends kyo.test.Test[Any]:
                 for
                     chunk <- TChunk.init[Int]()
                     _     <- STM.run(Kyo.foreachDiscard(1 to size)(i => chunk.append(i)))
-                    _ <- Async.fill(5, 5)(STM.run(retrySchedule) {
+                    _     <- Async.fill(5, 5)(STM.run(retrySchedule) {
                         for
                             m <- chunk.size.map(_ / 2)
                             _ <- chunk.slice(0, m)
@@ -928,7 +928,7 @@ class TChunkTest extends kyo.test.Test[Any]:
             "self-concat using snapshot doubles the chunk" in {
                 for
                     chunk <- TChunk.init(1, 2, 3)
-                    _ <- STM.run {
+                    _     <- STM.run {
                         for
                             snap <- chunk.snapshot
                             _    <- chunk.concat(snap)
@@ -941,7 +941,7 @@ class TChunkTest extends kyo.test.Test[Any]:
             "rolls back on STM failure" in {
                 for
                     chunk <- TChunk.init(1, 2, 3)
-                    r <- Abort.run {
+                    r     <- Abort.run {
                         STM.run(chunk.concat(Chunk(4, 5, 6)).andThen(Abort.fail("nope")))
                     }
                     snap <- STM.run(chunk.snapshot)
@@ -968,7 +968,7 @@ class TChunkTest extends kyo.test.Test[Any]:
             "effectful predicate aborting leaves chunk unchanged" in {
                 for
                     chunk <- TChunk.init(1, 2, 3, 4, 5)
-                    r <- Abort.run {
+                    r     <- Abort.run {
                         STM.run {
                             chunk.filter[Abort[String]] { i =>
                                 if i == 3 then Abort.fail("hit 3") else (i % 2 == 0)
@@ -1015,7 +1015,7 @@ class TChunkTest extends kyo.test.Test[Any]:
             "predicate that throws rolls back chunk" in {
                 for
                     chunk <- TChunk.init((1 to 10)*)
-                    r <- Abort.run[Throwable] {
+                    r     <- Abort.run[Throwable] {
                         STM.run {
                             chunk.filter { i => if i == 5 then throw FilterBoom(i) else i % 2 == 0 }
                         }
@@ -1057,7 +1057,7 @@ class TChunkTest extends kyo.test.Test[Any]:
                 for
                     counter <- AtomicInt.init(0)
                     chunk   <- TChunk.init((1 to n)*)
-                    _ <- STM.run {
+                    _       <- STM.run {
                         chunk.filter(_ => counter.incrementAndGet.map(_ => true))
                     }
                     c    <- counter.get
@@ -1071,7 +1071,7 @@ class TChunkTest extends kyo.test.Test[Any]:
             "predicate panic mid-iteration rolls back without partial removals" in {
                 for
                     chunk <- TChunk.init((1 to 10)*)
-                    r <- Abort.run[Throwable] {
+                    r     <- Abort.run[Throwable] {
                         STM.run {
                             chunk.filter { i =>
                                 if i == 5 then throw MidFilterBoom() else i % 2 == 0
@@ -1119,7 +1119,7 @@ class TChunkTest extends kyo.test.Test[Any]:
                     preCompactSnap  <- STM.run(chunk.snapshot)
                     _               <- STM.run(chunk.compact)
                     postCompactSnap <- STM.run(chunk.snapshot)
-                    checkSnap <-
+                    checkSnap       <-
                         val arr: Array[Int] = postCompactSnap.toArray
                         arr(0) = -99
                         STM.run(chunk.snapshot)
@@ -1136,7 +1136,7 @@ class TChunkTest extends kyo.test.Test[Any]:
                     chunk   <- TChunk.init(1, 2, 3)
                     _       <- STM.run(chunk.slice(0, 2))
                     preSnap <- STM.run(chunk.snapshot)
-                    r <- Abort.run {
+                    r       <- Abort.run {
                         STM.run(chunk.compact.andThen(Abort.fail("nope")))
                     }
                     postSnap <- STM.run(chunk.snapshot)
@@ -1214,7 +1214,7 @@ class TChunkTest extends kyo.test.Test[Any]:
             "sees writes made earlier in the same transaction" in {
                 for
                     chunk <- TChunk.init(1, 2, 3)
-                    out <- STM.run {
+                    out   <- STM.run {
                         for
                             _     <- chunk.append(4)
                             mid   <- chunk.snapshot
@@ -1233,7 +1233,7 @@ class TChunkTest extends kyo.test.Test[Any]:
 
         "transaction isolation" - {
             "take / drop / dropRight / slice / concat / filter / compact each roll back individually" in {
-                val initialA = Chunk(1, 2, 3, 4, 5)
+                val initialA                                       = Chunk(1, 2, 3, 4, 5)
                 val ops: List[(String, TChunk[Int] => Unit < STM)] = List(
                     "take"      -> (_.take(2)),
                     "drop"      -> (_.drop(2)),
@@ -1304,7 +1304,7 @@ class TChunkTest extends kyo.test.Test[Any]:
             "append then take then snapshot in one transaction" in {
                 for
                     chunk <- TChunk.init(1, 2, 3)
-                    snap <- STM.run {
+                    snap  <- STM.run {
                         for
                             _    <- chunk.append(4)
                             _    <- chunk.append(5)
@@ -1320,7 +1320,7 @@ class TChunkTest extends kyo.test.Test[Any]:
             "compose inside one outer STM.run without nested STM.run" in {
                 for
                     chunk <- TChunk.init(1, 2, 3, 4, 5)
-                    out <- STM.run {
+                    out   <- STM.run {
                         for
                             sz    <- chunk.size
                             _     <- chunk.append(sz + 1)

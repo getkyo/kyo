@@ -73,7 +73,7 @@ class LocalInfileIntegrationTest extends SqlContainerTest:
                     // 10 MB CSV: 10000 rows, each ~1 KB of data
                     val rowCount = 10000
                     val rows     = (1 to rowCount).map(i => s"$i,${("x" * 1020)}\n")
-                    val sql =
+                    val sql      =
                         s"LOAD DATA LOCAL INFILE 'data.csv' INTO TABLE $tbl FIELDS TERMINATED BY ',' LINES TERMINATED BY '\\n' (id, name)"
                     client.loadLocalInfile(sql, csvStream(rows)).flatMap { affected =>
                         assert(affected == rowCount.toLong, s"Expected $rowCount affected rows, got $affected")
@@ -266,7 +266,7 @@ class LocalInfileIntegrationTest extends SqlContainerTest:
                     // MaxPayload = 16777215 bytes (~16 MB), so 50 MB forces 4 packets
                     val rowCount = 50000
                     val rows     = (1 to rowCount).map(i => s"$i,${("y" * 1020)}\n")
-                    val sql =
+                    val sql      =
                         s"LOAD DATA LOCAL INFILE 'big.csv' INTO TABLE $tbl FIELDS TERMINATED BY ',' LINES TERMINATED BY '\\n' (id, name)"
                     client.loadLocalInfile(sql, csvStream(rows)).flatMap { affected =>
                         assert(affected == rowCount.toLong, s"Expected $rowCount affected rows for 50 MB upload, got $affected")
@@ -289,7 +289,7 @@ class LocalInfileIntegrationTest extends SqlContainerTest:
                 withLoadTable(client) { tbl =>
                     // Build an effectively-infinite stream: repeated 1 MB chunks.
                     // The upload will never finish on its own.
-                    val oneMB = Chunk.fill(1024 * 1024)(0x41.toByte) // 1 MB of 'A'
+                    val oneMB                        = Chunk.fill(1024 * 1024)(0x41.toByte) // 1 MB of 'A'
                     val infStream: Stream[Byte, Any] = Stream[Byte, Any](Loop.foreach {
                         Emit.valueWith(oneMB)(Loop.continue)
                     })
@@ -311,7 +311,7 @@ class LocalInfileIntegrationTest extends SqlContainerTest:
                         val checkTimeout: Unit < (Sync & Async) =
                             result match
                                 case Result.Failure(_: Timeout) => Kyo.unit
-                                case Result.Failure(e) =>
+                                case Result.Failure(e)          =>
                                     Sync.defer(assert(false, s"Expected Timeout but got ${e.getClass.getSimpleName}: $e")).unit
                                 case Result.Success(_) =>
                                     Sync.defer(assert(false, "Expected Timeout but upload succeeded")).unit
@@ -417,7 +417,7 @@ class LocalInfileIntegrationTest extends SqlContainerTest:
                 withLoadTable(client) { tbl =>
                     // Build a stream that emits one row then fails.
                     case class MidFailure(msg: String)
-                    val headerBytes = "1,test\n".getBytes(java.nio.charset.StandardCharsets.UTF_8)
+                    val headerBytes                                    = "1,test\n".getBytes(java.nio.charset.StandardCharsets.UTF_8)
                     val failingStream: Stream[Byte, Abort[MidFailure]] =
                         Stream.init[Byte, Abort[MidFailure]](Chunk.from(headerBytes).toSeq)
                             .concat(Stream[Byte, Abort[MidFailure]](Abort.fail(MidFailure("mid-stream failure"))))
@@ -486,7 +486,7 @@ object LocalInfileIntegrationTest:
     ): A < (S & Async & Abort[ContainerException]) =
         ref.use {
             case Maybe.Present(p) => p.get.flatMap(f)
-            case Maybe.Absent =>
+            case Maybe.Absent     =>
                 Promise.init[MysqlCtx, Abort[ContainerException]].flatMap { p =>
                     ref.compareAndSet(Maybe.empty, Maybe.Present(p)).flatMap {
                         case false =>

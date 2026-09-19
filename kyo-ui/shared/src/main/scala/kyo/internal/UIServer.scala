@@ -205,7 +205,7 @@ private[kyo] object UIServer:
                     case Result.Failure(_) =>
                         Json.decode[DragProtocol.ClientMessage](data) match
                             case Result.Success(DragProtocol.ClientMessage.Event(event)) => dispatch(event)
-                            case Result.Success(message) =>
+                            case Result.Success(message)                                 =>
                                 DragProtocol.validate(message, DragProtocol.Limits.default) match
                                     case Result.Success(validated) => files.deliver(validated)
                                     case _                         => ()

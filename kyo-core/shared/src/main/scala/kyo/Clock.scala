@@ -233,9 +233,9 @@ object Clock:
             Sync.Unsafe.withLocal(local) { clock =>
                 val shifted =
                     new Unsafe:
-                        val underlying  = clock.unsafe
-                        val start       = underlying.now()
-                        val sleepFactor = (1.toDouble / factor)
+                        val underlying                        = clock.unsafe
+                        val start                             = underlying.now()
+                        val sleepFactor                       = (1.toDouble / factor)
                         def nowMonotonic()(using AllowUnsafe) =
                             now().toDuration
                         def now()(using AllowUnsafe) =
@@ -344,7 +344,7 @@ object Clock:
                                 def nowMonotonic()(using AllowUnsafe) = current.toDuration
 
                                 def sleep(duration: Duration): Fiber.Unsafe[Unit, Any] =
-                                    val task = new Task(current + duration)
+                                    val task     = new Task(current + duration)
                                     val toSignal =
                                         queue.synchronized {
                                             queue.enqueue(task)
@@ -587,7 +587,7 @@ object Clock:
                 Loop(state, delaySchedule) { (state, schedule) =>
                     clock.now.map { now =>
                         schedule.next(now) match
-                            case Absent => Loop.done(state)
+                            case Absent                            => Loop.done(state)
                             case Present((duration, nextSchedule)) =>
                                 clock.sleep(duration).map(_.use(_ => f(state).map(Loop.continue(_, nextSchedule))))
                     }
@@ -728,7 +728,7 @@ object Clock:
                     Loop(now, state, intervalSchedule) { (lastExecution, state, period) =>
                         clock.now.map { now =>
                             period.next(now) match
-                                case Absent => Loop.done(state)
+                                case Absent                            => Loop.done(state)
                                 case Present((duration, nextSchedule)) =>
                                     val nextExecution = lastExecution + duration
                                     clock.sleep(duration).map(_.use(_ => f(state).map(Loop.continue(nextExecution, _, nextSchedule))))
@@ -761,10 +761,10 @@ object Clock:
             new Unsafe:
                 def now()(using AllowUnsafe)          = Instant.fromJava(java.time.Instant.now())
                 def nowMonotonic()(using AllowUnsafe) = java.lang.System.nanoTime().nanos
-                def sleep(duration: Duration) =
+                def sleep(duration: Duration)         =
                     Promise.Unsafe.fromIOPromise {
                         new IOPromise[Any, Unit < Any] with Callable[Unit]:
-                            val task = executor.schedule(this, duration.toNanos, TimeUnit.NANOSECONDS)
+                            val task                    = executor.schedule(this, duration.toNanos, TimeUnit.NANOSECONDS)
                             override def preInterrupt() =
                                 discard(task.cancel(true))
                                 true

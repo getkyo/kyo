@@ -155,7 +155,7 @@ class PollerIoDriverTlsStagingAliasTest extends Test:
                             // buffer. The distinct per-record / per-index pattern makes any aliasing corruption or reorder a concrete byte
                             // mismatch. Small records coalesce into one recv (a single feed) and would not exercise the staging-overwrite window.
                             val recordSize = 16000
-                            val records =
+                            val records    =
                                 Array.tabulate(n)(k => Array.tabulate[Byte](recordSize)(i => ((k * 31 + i) % 251).toByte))
                             val expectedPlain = records.foldLeft(Array.emptyByteArray)(_ ++ _)
                             // Encrypt each record on the FIFO and concatenate the ciphertext, then blast it all back-to-back from the client so
@@ -179,7 +179,7 @@ class PollerIoDriverTlsStagingAliasTest extends Test:
                                         Abort.run[Timeout | Closed](Async.timeout(15.seconds)(done.safe.get)).map { outcome =>
                                             import scala.jdk.CollectionConverters.*
                                             val feedBufs = recordingServer.feedBufs.iterator().asScala.toList
-                                            val staging =
+                                            val staging  =
                                                 acceptedH.recvStaging.getOrElse(fail("recvStaging must be Present after TLS reads"))
                                             val maxIn = recordingServer.maxInFlight.get()
                                             driver.submitEngineOp(() => clientEngine.free())

@@ -64,7 +64,7 @@ private[kyo] object UnsafeBufferPlatform:
         mmapImpl(path, offset, size, readOnly = false)
 
     private def mmapImpl(path: String, offset: Long, size: Long, readOnly: Boolean): UnsafeBuffer =
-        val jpath = Path.of(path)
+        val jpath       = Path.of(path)
         val openOptions =
             if readOnly then Array(StandardOpenOption.READ)
             else Array(StandardOpenOption.READ, StandardOpenOption.WRITE)
@@ -76,9 +76,9 @@ private[kyo] object UnsafeBufferPlatform:
                 val closer: () => Unit = () => channel.close()
                 new JvmUnsafeBuffer(MemorySegment.NULL, 0L, closer)
             else
-                val mode = if readOnly then FileChannel.MapMode.READ_ONLY else FileChannel.MapMode.READ_WRITE
-                val mbb  = channel.map(mode, offset, mapSize)
-                val seg  = MemorySegment.ofBuffer(mbb)
+                val mode               = if readOnly then FileChannel.MapMode.READ_ONLY else FileChannel.MapMode.READ_WRITE
+                val mbb                = channel.map(mode, offset, mapSize)
+                val seg                = MemorySegment.ofBuffer(mbb)
                 val closer: () => Unit =
                     if readOnly then
                         channel.close()

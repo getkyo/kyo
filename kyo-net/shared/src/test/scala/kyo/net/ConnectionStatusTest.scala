@@ -34,7 +34,7 @@ class ConnectionStatusTest extends Test:
         (transport, serverTls, clientTls) =>
             for
                 serverConnCh <- Channel.init[Connection](1)
-                listener <- transport.listenTls("127.0.0.1", 0, 16, serverTls) { serverConn =>
+                listener     <- transport.listenTls("127.0.0.1", 0, 16, serverTls) { serverConn =>
                     discard(Sync.Unsafe.evalOrThrow {
                         Fiber.initUnscoped {
                             Abort.run[Closed](serverConnCh.put(serverConn)).map(_ => ())
@@ -78,7 +78,7 @@ class ConnectionStatusTest extends Test:
         (transport, serverTls, clientTls) =>
             for
                 serverConnCh <- Channel.init[Connection](1)
-                listener <- transport.listenTls("127.0.0.1", 0, 16, serverTls) { serverConn =>
+                listener     <- transport.listenTls("127.0.0.1", 0, 16, serverTls) { serverConn =>
                     discard(Sync.Unsafe.evalOrThrow {
                         Fiber.initUnscoped {
                             Abort.run[Closed](serverConnCh.put(serverConn)).map(_ => ())

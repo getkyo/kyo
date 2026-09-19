@@ -139,7 +139,7 @@ class CheckTest extends kyo.test.Test[Any]:
         "combines failures from isolated and outer scopes" in {
             val result = Check.runChunk {
                 for
-                    _ <- Check.require(false, "Outer failure 1")
+                    _        <- Check.require(false, "Outer failure 1")
                     isolated <- Isolate[Check, Any, Check].run {
                         for
                             _ <- Check.require(false, "Inner failure 1")
@@ -163,10 +163,10 @@ class CheckTest extends kyo.test.Test[Any]:
         "proper state restoration after nested isolations" in {
             val result = Check.runChunk {
                 for
-                    _ <- Check.require(false, "Start failure")
+                    _  <- Check.require(false, "Start failure")
                     v1 <- Isolate[Check, Any, Check].run {
                         for
-                            _ <- Check.require(false, "Inner failure 1")
+                            _  <- Check.require(false, "Inner failure 1")
                             v2 <- Isolate[Check, Any, Check].run {
                                 Check.require(false, "Nested failure").map(_ => "nested-result")
                             }

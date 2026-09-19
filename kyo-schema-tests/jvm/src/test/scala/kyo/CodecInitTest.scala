@@ -40,10 +40,10 @@ class CodecInitTest extends kyo.test.Test[Any]:
     private val TrialDeadline = 20L
 
     private def classpathUrls: Array[java.net.URL] =
-        val entries = java.lang.System.getProperty("java.class.path").split(File.pathSeparator).filter(_.nonEmpty)
+        val entries  = java.lang.System.getProperty("java.class.path").split(File.pathSeparator).filter(_.nonEmpty)
         val expanded =
             if entries.length == 1 && entries(0).endsWith(".jar") then
-                val jar = new JarFile(entries(0))
+                val jar      = new JarFile(entries(0))
                 val manifest =
                     try jar.getManifest
                     finally jar.close()

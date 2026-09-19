@@ -210,7 +210,7 @@ class WorkflowSchemaTest extends kyo.test.Test[Any]:
 
         "child output field is present in schema" in {
             val child = Flow.input[Int]("a").output("b")(ctx => ctx.a * 10)
-            val flow = Flow.input[Int]("x")
+            val flow  = Flow.input[Int]("x")
                 .subflow("payment", child)(ctx => "a" ~ ctx.x)
                 .output("result")(ctx => ctx.payment.b)
 
@@ -223,7 +223,7 @@ class WorkflowSchemaTest extends kyo.test.Test[Any]:
 
         "child input field is present in schema" in {
             val child = Flow.input[Int]("a").output("b")(ctx => ctx.a)
-            val flow = Flow.input[Int]("x")
+            val flow  = Flow.input[Int]("x")
                 .subflow("s", child)(ctx => "a" ~ ctx.x)
                 .output("y")(ctx => 1)
 
@@ -252,7 +252,7 @@ class WorkflowSchemaTest extends kyo.test.Test[Any]:
 
         "child output field survives rebuild" in {
             val child = Flow.input[Int]("a").output("b")(ctx => ctx.a * 10)
-            val flow = Flow.input[Int]("x")
+            val flow  = Flow.input[Int]("x")
                 .subflow("payment", child)(ctx => "a" ~ ctx.x)
                 .output("result")(ctx => ctx.payment.b)
 

@@ -55,7 +55,7 @@ class TransportStartTlsCrossTailTest extends Test:
                 }.safe.get
                 _ <- Scope.ensure(Sync.defer(listener.close()))
                 // Latch(1): one release unblocks all N waiters simultaneously.
-                latch <- Latch.init(1)
+                latch  <- Latch.init(1)
                 fibers <- Kyo.foreach(Chunk.from(1 to concurrency)) { i =>
                     // Scope.run keeps this per-attempt: conn/tlsConn are closed as soon as THIS attempt finishes (success, a
                     // failed Abort, or the per-fiber Async.timeout interrupt below), rather than deferring 32-way to the

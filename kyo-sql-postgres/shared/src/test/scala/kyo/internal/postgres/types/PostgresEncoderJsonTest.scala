@@ -165,7 +165,7 @@ class PostgresEncoderJsonTest extends kyo.Test:
                 Json.decode[PostgresEncoderJsonPayload](text).getOrThrow
             )
         val column = summon[SqlSchema.Column[PostgresEncoderJsonPayload]]
-        val cases = Seq[PostgresEncoderJsonPayload](
+        val cases  = Seq[PostgresEncoderJsonPayload](
             PostgresEncoderJsonSuccess("ok"),
             PostgresEncoderJsonFailure(500, "boom")
         )

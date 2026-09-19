@@ -13,7 +13,7 @@ object Registry:
 
     def loadAll(): Seq[ArenaBench[?]] =
         val packageName = this.getClass.getPackage.getName
-        val classes =
+        val classes     =
             findClasses(packageName).sortBy(_.getSimpleName())
 
         classes.map(cls =>

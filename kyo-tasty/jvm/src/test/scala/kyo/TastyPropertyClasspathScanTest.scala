@@ -17,7 +17,7 @@ class TastyPropertyClasspathScanTest extends kyo.test.Test[Any]:
         val roots = discoverKyoClasspathRoots
         def go(remaining: List[String], violations: List[String]): List[String] < (Async & Scope & Abort[TastyError]) =
             remaining match
-                case Nil => violations
+                case Nil          => violations
                 case root :: rest =>
                     ClasspathOrchestrator.init(Seq(root), Tasty.ErrorMode.SoftFail, 1).map { classpath =>
                         val errs = classpath.errors.collect {

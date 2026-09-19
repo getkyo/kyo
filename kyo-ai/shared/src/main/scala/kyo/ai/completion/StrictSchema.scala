@@ -136,7 +136,7 @@ private[completion] object StrictSchema:
         examples: Chunk[Structure.Value]
     ): Structure.Value =
         val required = props.map(_._1)
-        val entries =
+        val entries  =
             Chunk(
                 "type"                 -> Structure.Value.Str("object"),
                 "properties"           -> Structure.Value.Record(props),

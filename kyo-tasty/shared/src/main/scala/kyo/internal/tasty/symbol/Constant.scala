@@ -54,7 +54,7 @@ object Constant:
             case TastyFormat.FALSEconst => Tasty.Constant.BooleanConst(false)
             case TastyFormat.TRUEconst  => Tasty.Constant.BooleanConst(true)
             case TastyFormat.NULLconst  => Tasty.Constant.NullConst
-            case TastyFormat.BYTEconst =>
+            case TastyFormat.BYTEconst  =>
                 val v = view.readNat()
                 Tasty.Constant.ByteConst(v.toByte)
             case TastyFormat.SHORTconst =>

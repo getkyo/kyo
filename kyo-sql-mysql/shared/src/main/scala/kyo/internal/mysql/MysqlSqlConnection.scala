@@ -29,7 +29,7 @@ import kyo.db.Idiom
 final private[kyo] class MysqlSqlConnection private[mysql] (
     private[kyo] val underlying: MysqlConnection,
     private val connectionId: Long,
-    private val address: SqlConfig.Address,
+    private val address: SqlConfig.Address.Network,
     private val password: Maybe[String],
     private val config: SqlConfig,
     private val options: SqlConfig.Url.Options,
@@ -330,27 +330,36 @@ private[kyo] object MysqlSqlConnection:
             def open(address: SqlConfig.Address, password: Maybe[String], config: SqlConfig)(using
                 Frame
             ): MysqlSqlConnection < (Async & Abort[SqlException]) =
-                connect(address, password, config, options).flatMap { conn =>
-                    conn.connectionId.get.flatMap { cid =>
-                        // Unsafe: three plain flags backing the in-flight window and the stream drain's
-                        // clean-boundary record; initialised before the connection is visible to any caller.
-                        Sync.Unsafe.defer(
-                            new MysqlSqlConnection(
-                                conn,
-                                cid,
-                                address,
-                                password,
-                                config,
-                                options,
-                                AtomicBoolean.Unsafe.init(false),
-                                AtomicBoolean.Unsafe.init(false),
-                                AtomicBoolean.Unsafe.init(false)
+                // Narrowed once, here: everything beneath takes a network address, so no layer below carries a host
+                // and port that might be absent. Unreachable in practice, the registry routing by scheme.
+                SqlConfig.Address.requireNetwork(address).flatMap { address =>
+                    connect(address, password, config, options).flatMap { conn =>
+                        conn.connectionId.get.flatMap { cid =>
+                            // Unsafe: three plain flags backing the in-flight window and the stream drain's
+                            // clean-boundary record; initialised before the connection is visible to any caller.
+                            Sync.Unsafe.defer(
+                                new MysqlSqlConnection(
+                                    conn,
+                                    cid,
+                                    address,
+                                    password,
+                                    config,
+                                    options,
+                                    AtomicBoolean.Unsafe.init(false),
+                                    AtomicBoolean.Unsafe.init(false),
+                                    AtomicBoolean.Unsafe.init(false)
+                                )
                             )
-                        )
+                        }
                     }
                 }
 
-    private[mysql] def connect(address: SqlConfig.Address, password: Maybe[String], config: SqlConfig, options: SqlConfig.Url.Options)(using
+    private[mysql] def connect(
+        address: SqlConfig.Address.Network,
+        password: Maybe[String],
+        config: SqlConfig,
+        options: SqlConfig.Url.Options
+    )(using
         Frame
     ): MysqlConnection < (Async & Abort[SqlException]) =
         // The handshake response carries the user name as a mandatory field, so it is resolved before any branch below
@@ -373,7 +382,7 @@ private[kyo] object MysqlSqlConnection:
                     )
                 case TlsMode.Allow =>
                     Abort.run[SqlException](plainConnect(address, user, password, config, Absent, readTimeout)).flatMap {
-                        case Result.Success(conn) => conn
+                        case Result.Success(conn)                            => conn
                         case Result.Failure(e) if requiresSecureTransport(e) =>
                             config.tls match
                                 case Present(_) =>
@@ -402,7 +411,7 @@ private[kyo] object MysqlSqlConnection:
     end connect
 
     private def plainConnect(
-        address: SqlConfig.Address,
+        address: SqlConfig.Address.Network,
         user: String,
         password: Maybe[String],
         config: SqlConfig,

@@ -172,10 +172,10 @@ class MeterTest extends kyo.test.Test[Any]:
 
             "close" in {
                 (for
-                    size    <- Choice.eval(1, 2, 3, 50, 100)
-                    meter   <- Meter.initSemaphore(size)
-                    latch   <- Latch.init(1)
-                    counter <- AtomicInt.init(0)
+                    size     <- Choice.eval(1, 2, 3, 50, 100)
+                    meter    <- Meter.initSemaphore(size)
+                    latch    <- Latch.init(1)
+                    counter  <- AtomicInt.init(0)
                     runFiber <- Fiber.initUnscoped(
                         latch.await.andThen(Async.fill(100, 100)(
                             Abort.run(meter.run(counter.incrementAndGet))
@@ -228,11 +228,11 @@ class MeterTest extends kyo.test.Test[Any]:
 
             "with interruptions".notJs.notWasm in {
                 (for
-                    size    <- Choice.eval(1, 2, 3, 50)
-                    meter   <- Meter.initSemaphore(size)
-                    started <- Latch.init(100)
-                    latch   <- Latch.init(1)
-                    counter <- AtomicInt.init(0)
+                    size      <- Choice.eval(1, 2, 3, 50)
+                    meter     <- Meter.initSemaphore(size)
+                    started   <- Latch.init(100)
+                    latch     <- Latch.init(1)
+                    counter   <- AtomicInt.init(0)
                     runFibers <- Kyo.foreach(1 to 100)(_ =>
                         Fiber.initUnscoped(started.release.andThen(latch.await.andThen(meter.run(counter.incrementAndGet))))
                     )
@@ -628,7 +628,7 @@ class MeterTest extends kyo.test.Test[Any]:
         "mutex" - {
             "reentrant by default" in {
                 for
-                    mutex <- Meter.initMutex
+                    mutex  <- Meter.initMutex
                     result <- mutex.run {
                         mutex.run {
                             mutex.run(42)
@@ -650,7 +650,7 @@ class MeterTest extends kyo.test.Test[Any]:
 
             "nested forked fiber can't reenter" in {
                 for
-                    meter <- Meter.initMutex
+                    meter             <- Meter.initMutex
                     (blocked, result) <- meter.run {
                         meter.run {
                             for
@@ -669,7 +669,7 @@ class MeterTest extends kyo.test.Test[Any]:
         "semaphore" - {
             "reentrant by default" in {
                 for
-                    sem <- Meter.initSemaphore(1)
+                    sem    <- Meter.initSemaphore(1)
                     result <- sem.run {
                         sem.run {
                             sem.run(42)
@@ -691,7 +691,7 @@ class MeterTest extends kyo.test.Test[Any]:
 
             "nested forked fiber can't reenter" in {
                 for
-                    meter <- Meter.initSemaphore(1)
+                    meter             <- Meter.initSemaphore(1)
                     (blocked, result) <- meter.run {
                         meter.run {
                             for
@@ -711,7 +711,7 @@ class MeterTest extends kyo.test.Test[Any]:
             "reentrant by default" in {
                 for
                     rateLimiter <- Meter.initRateLimiter(1, 60.seconds)
-                    result <- rateLimiter.run {
+                    result      <- rateLimiter.run {
                         rateLimiter.run {
                             rateLimiter.run(42)
                         }
@@ -732,7 +732,7 @@ class MeterTest extends kyo.test.Test[Any]:
 
             "nested forked fiber can't reenter" in {
                 for
-                    meter <- Meter.initRateLimiter(1, 60.seconds)
+                    meter             <- Meter.initRateLimiter(1, 60.seconds)
                     (blocked, result) <- meter.run {
                         meter.run {
                             for
@@ -755,7 +755,7 @@ class MeterTest extends kyo.test.Test[Any]:
                     sem         <- Meter.initSemaphore(1)
                     rateLimiter <- Meter.initRateLimiter(1, 60.seconds)
                     pipeline    <- Meter.pipeline(mutex, sem, rateLimiter)
-                    result <- pipeline.run {
+                    result      <- pipeline.run {
                         pipeline.run {
                             pipeline.run(42)
                         }
@@ -769,7 +769,7 @@ class MeterTest extends kyo.test.Test[Any]:
                     sem         <- Meter.initSemaphore(1, reentrant = false)
                     rateLimiter <- Meter.initRateLimiter(1, 60.seconds)
                     pipeline    <- Meter.pipeline(mutex, sem, rateLimiter)
-                    f <- Fiber.initUnscoped(pipeline.run {
+                    f           <- Fiber.initUnscoped(pipeline.run {
                         pipeline.run(42)
                     })
                     // the non-reentrant component blocks the inner run, which never completes
@@ -781,10 +781,10 @@ class MeterTest extends kyo.test.Test[Any]:
 
             "nested forked fiber can't reenter" in {
                 for
-                    mutex       <- Meter.initMutex
-                    sem         <- Meter.initSemaphore(1)
-                    rateLimiter <- Meter.initRateLimiter(1, 60.seconds)
-                    meter       <- Meter.pipeline(mutex, sem, rateLimiter)
+                    mutex             <- Meter.initMutex
+                    sem               <- Meter.initSemaphore(1)
+                    rateLimiter       <- Meter.initRateLimiter(1, 60.seconds)
+                    meter             <- Meter.pipeline(mutex, sem, rateLimiter)
                     (blocked, result) <- meter.run {
                         meter.run {
                             for

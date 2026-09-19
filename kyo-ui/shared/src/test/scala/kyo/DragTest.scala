@@ -255,7 +255,7 @@ class DragTest extends kyo.test.Test[Any]:
         }
 
         "checks file media type and size" in {
-            val file = Item.File(FileMeta("token", "card.bin", mediaType(" APPLICATION/X-CARD "), 65.kib, Instant.Epoch))
+            val file   = Item.File(FileMeta("token", "card.bin", mediaType(" APPLICATION/X-CARD "), 65.kib, Instant.Epoch))
             val accept = Accept(
                 mediaTypes = Set(mediaTypePattern("application/x-card")),
                 operations = AllowedOperations.copy,

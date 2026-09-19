@@ -22,7 +22,7 @@ class IoUringBindingsTest extends Test:
         val loaded =
             try Maybe(Ffi.load[IoUringBindings])
             catch case _: Throwable => Maybe.empty[IoUringBindings]
-        val b = loaded.getOrElse(cancel("kyonet_posix_uring shim not built/available (Linux gate)"))
+        val b         = loaded.getOrElse(cancel("kyonet_posix_uring shim not built/available (Linux gate)"))
         val available =
             try b.kyo_uring_probe_available(math.max(256, kyo.net.ioPoolSize() * 64))
             catch case _: Throwable => false

@@ -23,7 +23,7 @@ class SqlConfigTest extends Test:
 
     "SqlConfig retrySchedule Present is accessible" in {
         val schedule = Schedule.fixed(100.millis).take(2)
-        val cfg = SqlConfig(
+        val cfg      = SqlConfig(
             maxConnections = 5,
             acquireTimeout = 3.seconds,
             queryTimeout = 60.seconds,

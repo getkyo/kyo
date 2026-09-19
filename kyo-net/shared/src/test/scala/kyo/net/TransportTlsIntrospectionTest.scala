@@ -15,30 +15,31 @@ class TransportTlsIntrospectionTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
-    "after a TLS handshake the client reports the server leaf-cert SHA-256 (32 bytes, golden), idempotent, Absent after close" - eachBackendTls {
-        (transport, serverTls, clientTls) =>
-            for
-                listener <- transport.listenTls("127.0.0.1", 0, 16, serverTls)(_ => ()).safe.get
-                _        <- Scope.ensure(Sync.defer(listener.close()))
-                client   <- transport.connectTls("127.0.0.1", listener.port, clientTls).safe.get
-            yield
-                val hash      = client.serverCertificateHash
-                val hashAgain = client.serverCertificateHash
-                client.close()
-                val afterClose = client.serverCertificateHash
-                listener.close()
-                assert(hash.nonEmpty, "serverCertificateHash must be Present after a TLS handshake")
-                assert(
-                    hash.exists(sp => sp.toArray.length == 32 && sp.toArray.sameElements(TlsTestCertShared.certGoldenSha256)),
-                    s"serverCertificateHash must be the 32-byte golden leaf-cert SHA-256, got ${hash.map(_.toArray.length)} bytes"
-                )
-                assert(
-                    hash.exists(a => hashAgain.exists(b => a.toArray.sameElements(b.toArray))),
-                    "serverCertificateHash must be idempotent"
-                )
-                assert(afterClose.isEmpty, "serverCertificateHash must be Absent after close")
-            end for
-    }
+    "after a TLS handshake the client reports the server leaf-cert SHA-256 (32 bytes, golden), idempotent, Absent after close" -
+        eachBackendTls {
+            (transport, serverTls, clientTls) =>
+                for
+                    listener <- transport.listenTls("127.0.0.1", 0, 16, serverTls)(_ => ()).safe.get
+                    _        <- Scope.ensure(Sync.defer(listener.close()))
+                    client   <- transport.connectTls("127.0.0.1", listener.port, clientTls).safe.get
+                yield
+                    val hash      = client.serverCertificateHash
+                    val hashAgain = client.serverCertificateHash
+                    client.close()
+                    val afterClose = client.serverCertificateHash
+                    listener.close()
+                    assert(hash.nonEmpty, "serverCertificateHash must be Present after a TLS handshake")
+                    assert(
+                        hash.exists(sp => sp.toArray.length == 32 && sp.toArray.sameElements(TlsTestCertShared.certGoldenSha256)),
+                        s"serverCertificateHash must be the 32-byte golden leaf-cert SHA-256, got ${hash.map(_.toArray.length)} bytes"
+                    )
+                    assert(
+                        hash.exists(a => hashAgain.exists(b => a.toArray.sameElements(b.toArray))),
+                        "serverCertificateHash must be idempotent"
+                    )
+                    assert(afterClose.isEmpty, "serverCertificateHash must be Absent after close")
+                end for
+        }
 
     "a plaintext connection has no server certificate hash" - eachBackend { transport =>
         for

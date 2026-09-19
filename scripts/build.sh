@@ -29,6 +29,7 @@ set -uo pipefail
 #                     natives can only be produced on a genuine musl host.
 #   STAGE_BORINGSSL=1 build the vendored BoringSSL before the command (kyo-net TLS).
 #   STAGE_AERON=1     build the pinned Aeron C library before the command (kyo-aeron).
+#   STAGE_SQLITE=1    fetch the pinned SQLite C source before the command (kyo-sql-sqlite).
 #                     Both derive their os-arch from the container's own host, musl included.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -203,12 +204,12 @@ container_provision() {
     # file + binutils are not optional either: native_assert_arch reads a member of the staged archive
     # to prove it is really for the target architecture, and fails when either tool is missing.
     local apt_pkgs="curl ca-certificates patch liburing-dev libssl-dev openssl file binutils"
-    local node_pkgs="" native_pkgs="" bssl_pkgs="" aeron_pkgs=""
+    local node_pkgs="" native_pkgs="" bssl_pkgs="" aeron_pkgs="" sqlite_pkgs=""
     # Alpine equivalents, used when KYO_BUILD_IMAGE names a musl image. Alpine spells the OpenSSL and
     # libuuid development packages differently (openssl-dev, util-linux-dev) and has no separate
     # ca-certificates-for-curl split, so the lists are mapped rather than shared.
     local apk_pkgs="bash curl ca-certificates patch liburing-dev openssl-dev tar file binutils"
-    local apk_node_pkgs="" apk_native_pkgs="" apk_bssl_pkgs="" apk_aeron_pkgs=""
+    local apk_node_pkgs="" apk_native_pkgs="" apk_bssl_pkgs="" apk_aeron_pkgs="" apk_sqlite_pkgs=""
     # "all" provisions the union (raw sbt mode may run any platform's command in the container).
     case "$platform" in
         JS|Wasm|all) node_pkgs="nodejs npm"; apk_node_pkgs="nodejs npm" ;;
@@ -246,6 +247,11 @@ fi'
     # TLS tests run against real libssl/libcrypto instead of cancelling. Heavy, so off by default.
     [ "${STAGE_BORINGSSL:-}" = 1 ] && bssl_pkgs="cmake golang-go build-essential git clang libunwind-dev"
     [ "${STAGE_BORINGSSL:-}" = 1 ] && apk_bssl_pkgs="cmake go build-base git clang libunwind-dev linux-headers perl"
+    # SQLite staging fetches and unpacks one source zip, so it needs only curl + unzip, neither of which every base
+    # image carries. Far lighter than the two above, but opt-in for the same reason: only a command touching
+    # kyo-sql-sqlite needs it, and that module's ffiLibraries hard-errors without it rather than degrading.
+    [ "${STAGE_SQLITE:-}" = 1 ] && sqlite_pkgs="curl unzip"
+    [ "${STAGE_SQLITE:-}" = 1 ] && apk_sqlite_pkgs="curl unzip"
     # Aeron build toolchain (a C toolchain + git for the pinned clone), only when STAGE_AERON=1 stages the static Aeron C library so
     # kyo-aeron's shim has an archive to link. uuid-dev supplies the libuuid.so link target the driver needs and that no base image
     # preinstalls. The staged tree is gitignored, so any container command touching kyo-aeron needs this. Heavy, so off by default.
@@ -295,12 +301,12 @@ if command -v apt-get >/dev/null 2>&1; then
         done
     fi
     apt-get update -qq >/dev/null
-    apt-get install -y -qq -o Acquire::Retries=3 $apt_pkgs $node_pkgs $native_pkgs $bssl_pkgs $aeron_pkgs >/dev/null
+    apt-get install -y -qq -o Acquire::Retries=3 $apt_pkgs $node_pkgs $native_pkgs $bssl_pkgs $aeron_pkgs $sqlite_pkgs >/dev/null
 elif command -v apk >/dev/null 2>&1; then
     # musl path, reached via KYO_BUILD_IMAGE=<a musl jdk image>. Both staging scripts refuse a
     # cross-OS build, so the release builds its linux-musl-* natives on a genuine musl host; this is
     # how that leg is reproduced locally.
-    apk add --no-cache $apk_pkgs $apk_node_pkgs $apk_native_pkgs $apk_bssl_pkgs $apk_aeron_pkgs >/dev/null
+    apk add --no-cache $apk_pkgs $apk_node_pkgs $apk_native_pkgs $apk_bssl_pkgs $apk_aeron_pkgs $apk_sqlite_pkgs >/dev/null
 fi
 $node_setup
 export COURSIER_CACHE=/root/.cache/coursier
@@ -393,6 +399,9 @@ run_in_container() {
     # ffiCompile finds the staged archive instead of failing to link. Both staging scripts derive the os-arch from the container's
     # own host (musl included), so neither is passed one here: a hand-computed "linux-$(uname -m)" is wrong on an Alpine image.
     [ -n "${STAGE_AERON:-}" ] && envs+=(-e "STAGE_AERON=$STAGE_AERON")
+    # Forward the SQLite-staging flag; when set the container fetches the pinned SQLite source before the command, since
+    # kyo-sql-sqlite's ffiLibraries refuses to compile a stub and errors outright when the staged tree is empty.
+    [ -n "${STAGE_SQLITE:-}" ] && envs+=(-e "STAGE_SQLITE=$STAGE_SQLITE")
     # Forward the kyo-net per-backend test isolation flag (KYO_NET_ONLY=<backend>), the per-TLS-provider isolation flag
     # (KYO_NET_TLS_ONLY=<provider>), and the success-leaves-only flag (KYO_NET_SUCCESS_ONLY=1) so a podman run can
     # validate/sample a single (backend x provider) cell in isolation. Unset by default (all backends/providers), so a normal run is unaffected.
@@ -458,6 +467,7 @@ mkdir -p /work && cd /work && tar xf /build-input/src.tar \
     && if [ -s /build-input/changes.patch ]; then patch -p1 < /build-input/changes.patch; fi \
     && if [ \"\${STAGE_BORINGSSL:-}\" = 1 ]; then bash kyo-net/build/boringssl/build-boringssl.sh; fi \
     && if [ \"\${STAGE_AERON:-}\" = 1 ]; then bash kyo-aeron/scripts/build-aeron.sh; fi \
+    && if [ \"\${STAGE_SQLITE:-}\" = 1 ]; then bash kyo-sql-sqlite/scripts/build-sqlite.sh; fi \
     && if [ \"\${STAGE_JSDOM:-}\" = 1 ]; then npm install --no-save --no-fund --no-audit jsdom@^30; fi
 if $inner; then __rc=0; else __rc=\$?; fi
 if [ -d /output ]; then find . -type d \\( -name scoverage-report -o -name scoverage-data \\) -exec cp -r --parents {} /output/ \\; 2>/dev/null || true; fi

@@ -76,7 +76,7 @@ class MethodTypedAccessorsTest extends kyo.test.Test[Any]:
             paramListIds = Chunk(Chunk(SymbolId(0)), Chunk(SymbolId(1)))
         )
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(paramX, paramY, method)).map { classpath =>
-            given Tasty.Classpath = classpath
+            given Tasty.Classpath                           = classpath
             val lists: Chunk[Chunk[Tasty.Symbol.Parameter]] =
                 method.paramListIds.map(_.map(id =>
                     classpath.symbol(id) match
@@ -95,8 +95,8 @@ class MethodTypedAccessorsTest extends kyo.test.Test[Any]:
     "typeParams-typed: returns Chunk[TypeParam] size 2 names A,B" in {
         import Tasty.Name.asString
         // classpath.symbol(id) uses SymbolId as array index; tpA at 0, tpB at 1, method at 2
-        val tpA = makeTypeParam(id = 0, name = "A", ownerId = 2)
-        val tpB = makeTypeParam(id = 1, name = "B", ownerId = 2)
+        val tpA    = makeTypeParam(id = 0, name = "A", ownerId = 2)
+        val tpB    = makeTypeParam(id = 1, name = "B", ownerId = 2)
         val method = makeMethod(
             id = 2,
             name = "bar",
@@ -105,7 +105,7 @@ class MethodTypedAccessorsTest extends kyo.test.Test[Any]:
         )
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(tpA, tpB, method)).map { classpath =>
             given Tasty.Classpath = classpath
-            val tps = method.typeParamIds.map(id =>
+            val tps               = method.typeParamIds.map(id =>
                 classpath.symbol(id) match
                     case Maybe.Present(tp: Tasty.Symbol.TypeParam) => tp
                     case other                                     => fail(s"expected Symbol.TypeParam at $id, got $other")

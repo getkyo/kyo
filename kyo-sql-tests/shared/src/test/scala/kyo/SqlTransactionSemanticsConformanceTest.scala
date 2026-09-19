@@ -25,7 +25,7 @@ class SqlTransactionSemanticsConformanceTest extends SqlBackendTest:
     "a failed statement inside a transaction leaves nothing committed, and says so" - {
         forEachBackend() { (backend, client, _) =>
             for
-                _ <- createLedger(backend, client)
+                _       <- createLedger(backend, client)
                 outcome <- Abort.run[SqlException](
                     client.transaction {
                         for
@@ -48,7 +48,7 @@ class SqlTransactionSemanticsConformanceTest extends SqlBackendTest:
                 // only checked the rows would have called that engine conformant while it silently discarded work.
                 outcome match
                     case Result.Failure(_: SqlRequestTransactionFailedStatementException) => succeed
-                    case other =>
+                    case other                                                            =>
                         fail(s"${backend.label}: expected a typed failure naming the statement, got $other")
                 end match
         }
@@ -126,7 +126,7 @@ class SqlTransactionSemanticsConformanceTest extends SqlBackendTest:
     "a handled simpleQuery failure inside a transaction still stops the commit" - {
         forEachBackend() { (backend, client, _) =>
             for
-                _ <- createLedger(backend, client)
+                _       <- createLedger(backend, client)
                 outcome <- Abort.run[SqlException](
                     client.transaction {
                         for
@@ -154,7 +154,7 @@ class SqlTransactionSemanticsConformanceTest extends SqlBackendTest:
     "a nested transaction opened after a handled failure does not rescue the outer one" - {
         forEachBackend() { (backend, client, _) =>
             for
-                _ <- createLedger(backend, client)
+                _       <- createLedger(backend, client)
                 outcome <- Abort.run[SqlException](
                     client.transaction {
                         for
@@ -191,12 +191,12 @@ class SqlTransactionSemanticsConformanceTest extends SqlBackendTest:
                     txEnded   <- AtomicBoolean.init(false)
                     failedIn  <- AtomicBoolean.init(false)
                     forkedRef <- AtomicRef.init(Maybe.empty[Fiber[Unit, DB]])
-                    outcome <- Abort.run[SqlException](
+                    outcome   <- Abort.run[SqlException](
                         client.transaction {
                             for
                                 _       <- Sql.insert[Ledger].values(Ledger(1, "seed")).run
                                 started <- Latch.init(1)
-                                fiber <- Fiber.initUnscoped(
+                                fiber   <- Fiber.initUnscoped(
                                     started.release.andThen(
                                         // Same key as the seed, so the server refuses it. Recovered inside the fiber,
                                         // so nothing propagates out of the body: the flag is the only channel left.
@@ -218,7 +218,7 @@ class SqlTransactionSemanticsConformanceTest extends SqlBackendTest:
                     )
                     _      <- txEnded.set(true)
                     forked <- forkedRef.get
-                    _ <- forked match
+                    _      <- forked match
                         case Present(f) => Abort.run[Throwable](f.get).unit
                         case Absent     => Sync.defer(())
                     insideTx <- failedIn.get

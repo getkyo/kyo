@@ -46,7 +46,7 @@ class AnthropicCompletionTest extends kyo.test.Test[Any]:
         // both HTTP backends, so it is pinned on both.
         TestCompletionServer.run { server =>
             val config = keyedConfig(server.baseUrl)
-            val body =
+            val body   =
                 """{"id":"msg-1","content":[{"type":"text","text":"fine"}],"model":"m","role":"assistant","stop_reason":"pause_turn","stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":1}}"""
             server.enqueueBody(body).andThen {
                 Abort.run[AIException](LLM.run(config)(AnthropicCompletion(
@@ -85,7 +85,7 @@ class AnthropicCompletionTest extends kyo.test.Test[Any]:
     "the outgoing request does head-is-system extraction and tail mapping" in {
         TestCompletionServer.run { server =>
             val config = keyedConfig(server.baseUrl)
-            val ctx = Context.empty
+            val ctx    = Context.empty
                 .systemMessage("you are X")
                 .userMessage("hello from user")
             server.enqueueBody(minimalAnthropicBody("ok")).andThen {
@@ -157,7 +157,7 @@ class AnthropicCompletionTest extends kyo.test.Test[Any]:
     "empty assistant text block is filtered before tool_use in the outgoing request" in {
         TestCompletionServer.run { server =>
             val config = keyedConfig(server.baseUrl)
-            val ctx = Context.empty
+            val ctx    = Context.empty
                 .userMessage("call a tool")
                 .assistantMessage("", Chunk(Call(CallId("c1"), "some_tool", "{}")))
                 .toolMessage(CallId("c1"), "tool result")
@@ -187,7 +187,7 @@ class AnthropicCompletionTest extends kyo.test.Test[Any]:
     "a ToolMessage serializes as a user-role tool_result in the outgoing request" in {
         TestCompletionServer.run { server =>
             val config = keyedConfig(server.baseUrl)
-            val ctx = Context.empty
+            val ctx    = Context.empty
                 .userMessage("call tool")
                 .assistantMessage("", Chunk(Call(CallId("c1"), "some_tool", "{}")))
                 .toolMessage(CallId("c1"), "result text")
@@ -213,8 +213,8 @@ class AnthropicCompletionTest extends kyo.test.Test[Any]:
 
     "heterogeneous tool_use.input in the real reply decodes via Structure.Value" in {
         TestCompletionServer.run { server =>
-            val config = keyedConfig(server.baseUrl)
-            val ctx    = Context.empty.userMessage("call tool")
+            val config                = keyedConfig(server.baseUrl)
+            val ctx                   = Context.empty.userMessage("call tool")
             val anthropicToolResponse =
                 """{"id":"msg-1","content":[{"type":"tool_use","id":"tu-1","name":"my_tool","input":{"x":1,"y":"a"}}],"model":"claude-sonnet-4-5-20250929","role":"assistant","stop_reason":"tool_use","stop_sequence":null,"usage":{"input_tokens":10,"output_tokens":5}}"""
             server.enqueueBody(anthropicToolResponse).andThen {
@@ -360,7 +360,7 @@ class AnthropicCompletionTest extends kyo.test.Test[Any]:
     "a non-head system message serializes as a system-reminder user message" in {
         TestCompletionServer.run { server =>
             val config = keyedConfig(server.baseUrl)
-            val ctx = Context.empty
+            val ctx    = Context.empty
                 .systemMessage("primary") // head -> top-level system
                 .userMessage("hi")
                 .systemMessage("a reminder") // non-head -> system-reminder user turn (Anthropic has no system tail)
@@ -387,7 +387,7 @@ class AnthropicCompletionTest extends kyo.test.Test[Any]:
         // this impl lifts the merged message into `system`. No <system-reminder> is produced for the second.
         TestCompletionServer.run { server =>
             val config = keyedConfig(server.baseUrl)
-            val ctx = Context.empty
+            val ctx    = Context.empty
                 .systemMessage("first instruction")
                 .systemMessage("second instruction")
                 .userMessage("hi")
@@ -437,7 +437,7 @@ class AnthropicCompletionTest extends kyo.test.Test[Any]:
                 case _ => Nil
         TestCompletionServer.run { server =>
             val config = keyedConfig(server.baseUrl)
-            val ctx = Context.empty
+            val ctx    = Context.empty
                 .userMessage("do two things")
                 .assistantMessage("", Chunk(Call(CallId("c1"), "tool_a", "{}"), Call(CallId("c2"), "tool_b", "{}")))
                 .toolMessage(CallId("c1"), "result a")
@@ -593,7 +593,7 @@ class AnthropicCompletionTest extends kyo.test.Test[Any]:
         // result schema is the same require-all envelope every backend advertises.
         TestCompletionServer.run { server =>
             val config = keyedConfig(server.baseUrl)
-            val body =
+            val body   =
                 """{"id":"m1","content":[{"type":"tool_use","id":"r1","name":"result_tool","input":{"resultValue":{"reasoning":"because","answer":42}}}],"model":"claude-sonnet-4-5-20250929","role":"assistant","stop_reason":"tool_use","stop_sequence":null,"usage":{"input_tokens":10,"output_tokens":5}}"""
             server.enqueueBody(body).andThen {
                 LLM.run(config)(AI.gen[MathAnswer]).andThen {
@@ -722,7 +722,7 @@ class AnthropicCompletionTest extends kyo.test.Test[Any]:
     "the thinking branch sends the require-all advisory schema without strict or tool_choice" in {
         TestCompletionServer.run { server =>
             val config = keyedConfig(server.baseUrl).reasoningBudget(4000)
-            val body =
+            val body   =
                 """{"id":"m1","content":[{"type":"tool_use","id":"r1","name":"result_tool","input":{"resultValue":{"reasoning":"because","answer":42}}}],"model":"claude-sonnet-4-5-20250929","role":"assistant","stop_reason":"tool_use","stop_sequence":null,"usage":{"input_tokens":10,"output_tokens":5}}"""
             server.enqueueBody(body).andThen {
                 LLM.run(config)(AI.gen[MathAnswer]).andThen {
@@ -811,7 +811,7 @@ class AnthropicCompletionTest extends kyo.test.Test[Any]:
         // cachedInputTokens is the cache_read side alone, and reasoning is never broken out.
         TestCompletionServer.run { server =>
             val config = keyedConfig(server.baseUrl)
-            val body =
+            val body   =
                 """{"id":"msg-1","content":[{"type":"text","text":"ok"}],"model":"m","role":"assistant","stop_reason":"end_turn","stop_sequence":null,""" +
                     """"usage":{"input_tokens":50,"output_tokens":7,"cache_read_input_tokens":30,"cache_creation_input_tokens":5}}"""
             server.enqueueBody(body).andThen {

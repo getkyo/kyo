@@ -160,8 +160,8 @@ class LayerTest extends kyo.test.Test[Any]:
     }
     "effects!" - {
         "Abort" in {
-            val shouldSucceed = Layer("A good string")
-            val shouldFail    = Layer("")
+            val shouldSucceed                                      = Layer("A good string")
+            val shouldFail                                         = Layer("")
             val maybeFail: Layer[Int, Env[String] & Abort[String]] =
                 Layer.from { (s: String) => Abort.when(s.length < 6)("Too short!").andThen(s.length) }
 

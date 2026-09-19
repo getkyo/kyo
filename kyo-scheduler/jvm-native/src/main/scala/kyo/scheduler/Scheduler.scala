@@ -157,9 +157,9 @@ final class Scheduler(
       * finished a cycle would immediately park again with the completions it produced queued behind it. Excluding the caller lets that carrier
       * drain those completions while a different one takes the next wait.
       *
-      * Placement is best effort, not a guarantee: the stride search skips the caller and unavailable workers, but the random fallback used when
-      * that search finds no candidate does not. A task that lands on a parked worker is not stranded, because a worker attempts a steal whenever
-      * its own queue empties and only goes idle when that steal also comes back empty.
+      * Placement is best effort, not a guarantee: the search skips the caller and unavailable workers, but the random placement used when no
+      * other worker is available does not. A task that lands on the caller is not stranded: the worker attempts a steal whenever its own queue
+      * empties and only goes idle when that steal also comes back empty, and while it stays parked past its slice the cycle drains its queue.
       *
       * @param task
       *   The task to schedule for execution
@@ -291,7 +291,8 @@ final class Scheduler(
       * Implements a work-stealing load balancing strategy:
       *   - If submitted by a worker, tries to execute on that worker first
       *   - Otherwise samples a subset of workers to find one with minimal load
-      *   - Falls back to random worker assignment if no suitable worker found
+      *   - Scans the remaining workers for any available one when the sample holds none
+      *   - Falls back to random worker assignment only when no worker is available
       */
     private def schedule(task: Task, submitter: Worker): Unit = {
         val nowMs          = clock.currentMillis()
@@ -305,8 +306,13 @@ final class Scheduler(
             val currentWorkers = this.currentWorkers
             var position       = XSRandom.nextInt(currentWorkers)
             var stride         = Math.min(currentWorkers, scheduleStride)
-            var minLoad        = Int.MaxValue
-            while (stride > 0 && minLoad != 0) {
+            // Samples `stride` workers for the least loaded available one. When the sample holds no available worker, the
+            // scan goes on over the remaining workers, so the random placement below is reached only when no worker at all
+            // is available: a task placed on an unavailable worker waits for that worker's task to yield, or for the cycle
+            // to drain it.
+            var remaining = currentWorkers
+            var minLoad   = Int.MaxValue
+            while (remaining > 0 && minLoad != 0 && (stride > 0 || (worker eq null))) {
                 val candidate = workers(position)
                 if (
                     (candidate ne null) &&
@@ -323,6 +329,7 @@ final class Scheduler(
                 if (position == currentWorkers)
                     position = 0
                 stride -= 1
+                remaining -= 1
             }
         }
         while (worker eq null)

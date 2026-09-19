@@ -94,7 +94,7 @@ class PollerIoDriverErrorEventTest extends Test:
                     // that dropped the event and left the read pending forever fails fast with a timeout rather than hanging.
                     readOutcome  <- Abort.run[Timeout | Closed](Async.timeout(5.seconds)(readPromise.safe.get))
                     writeOutcome <- Abort.run[Timeout | Closed](Async.timeout(5.seconds)(writePromise.safe.get))
-                    _ <- Sync.defer {
+                    _            <- Sync.defer {
                         driver.close()
                         // Close the accepted fd (driver.close does not close socket fds; closeHandle would, but it wasn't called here).
                         PosixTestSockets.closePeerForEof(spy, acceptedFd)
@@ -105,7 +105,7 @@ class PollerIoDriverErrorEventTest extends Test:
                         // The pending read is failed by the real error: either the error dispatch fails it Closed, or the recv itself reaps the
                         // errno and surfaces a typed receive failure (ReadOutcome.Failed). Both mean the read was failed, not stranded.
                         case Result.Success(ReadOutcome.Failed(_)) => succeed
-                        case Result.Failure(_: Timeout) =>
+                        case Result.Failure(_: Timeout)            =>
                             fail("error event dropped: the pending read was never failed and hung")
                         case other => fail(s"unexpected read outcome: $other")
                     end match
@@ -113,7 +113,7 @@ class PollerIoDriverErrorEventTest extends Test:
                         // A real reset fd is genuinely write-ready: the real kernel delivers the write bit and dispatchWritable completes
                         // the pending writable Success before the synthetic error-only entry can reach dispatchError. This is deterministic
                         // (200/200 in an empirical probe; structural guarantee from the append-last ordering in RecordingDecorators).
-                        case Result.Success(_) => succeed
+                        case Result.Success(_)         => succeed
                         case Result.Failure(_: Closed) =>
                             fail("a real reset fd is write-ready; the pending writable must complete Success, not Closed")
                         case Result.Failure(_: Timeout) =>
@@ -164,7 +164,7 @@ class PollerIoDriverErrorEventTest extends Test:
                     // The stale error-only event must NOT complete the read. Give the poll loop ample time to fire and (correctly) drop it;
                     // the bounded wait expiring with the read still pending is the PASS signal (a driver that mishandled the stale event would complete it Closed instead).
                     readOutcome <- Abort.run[Timeout | Closed](Async.timeout(2.seconds)(readPromise.safe.get))
-                    _ <- Sync.defer {
+                    _           <- Sync.defer {
                         driver.close()
                         PosixTestSockets.closePeerForEof(spy, clientFd)
                         PosixTestSockets.closePeerForEof(spy, acceptedFd)
@@ -172,7 +172,7 @@ class PollerIoDriverErrorEventTest extends Test:
                 yield
                     readOutcome match
                         case Result.Failure(_: Timeout) => succeed // event dropped: the read is still pending, as it must be.
-                        case Result.Failure(c: Closed) =>
+                        case Result.Failure(c: Closed)  =>
                             fail(s"stale error-only event (SO_ERROR=0) failed the live read: ${c.getMessage}")
                         case other => fail(s"unexpected read outcome: $other")
                     end match

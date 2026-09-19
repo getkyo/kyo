@@ -75,7 +75,7 @@ class BrowserCoreTest extends BrowserTest:
                 Browser.back
             }.map {
                 case Result.Failure(_: BrowserAlreadyAtHistoryStartException) => ()
-                case other =>
+                case other                                                    =>
                     fail(s"Expected BrowserAlreadyAtHistoryStartException but got $other")
             }
         }
@@ -768,7 +768,7 @@ class BrowserCoreTest extends BrowserTest:
                 Abort.run[BrowserNavigationException] {
                     Browser.goto(url, failOnHttpError = false).unit
                 }.map {
-                    case Result.Success(_) => ()
+                    case Result.Success(_)                                   => ()
                     case Result.Failure(_: BrowserNavigationFailedException) =>
                         fail("expected goto(failOnHttpError=false) to succeed on a 4xx but got BrowserNavigationFailedException")
                     case other => fail(s"unexpected outcome: $other")
@@ -948,7 +948,7 @@ class BrowserCoreTest extends BrowserTest:
                     yield (targets.targetInfos.size, ctxs.browserContextIds.size)
                 for
                     baseline <- snapshot
-                    samples <- Kyo.foreach(Chunk.from(0 until Iterations)) { _ =>
+                    samples  <- Kyo.foreach(Chunk.from(0 until Iterations)) { _ =>
                         Browser.run(wsUrl) {
                             Browser.goto(page("<body>hello</body>")).andThen(Browser.url.unit)
                         }.andThen(snapshot)
@@ -1377,7 +1377,7 @@ class BrowserCoreTest extends BrowserTest:
                 Browser.evalJson[EvalJsonShape]("({ a: 1, b: 2 })")
             }.map {
                 case Result.Failure(_: BrowserDecodingException) => ()
-                case other =>
+                case other                                       =>
                     fail(s"Expected Result.Failure(BrowserDecodingException) for shape mismatch but got $other")
             }
         }
@@ -1483,7 +1483,7 @@ class BrowserCoreTest extends BrowserTest:
                     }
                 }.map {
                     case Result.Failure(_: BrowserProtocolErrorException) => ()
-                    case other =>
+                    case other                                            =>
                         fail(s"Expected Result.Failure(BrowserProtocolErrorException) but got $other")
                 }
             }
@@ -1621,7 +1621,7 @@ class BrowserCoreTest extends BrowserTest:
             }
         }.map {
             case Result.Failure(_: BrowserSetupFailedException) => ()
-            case other =>
+            case other                                          =>
                 fail(s"Expected Result.Failure(BrowserSetupFailedException) but got $other")
         }
     }
@@ -1641,7 +1641,7 @@ class BrowserCoreTest extends BrowserTest:
             }
         }.map {
             case Result.Failure(_: BrowserSetupFailedException) => ()
-            case other =>
+            case other                                          =>
                 fail(s"Expected Result.Failure(BrowserSetupFailedException) but got $other")
         }
     }
@@ -1661,7 +1661,7 @@ class BrowserCoreTest extends BrowserTest:
             }
         }.map {
             case Result.Failure(_: BrowserConnectionException | _: BrowserSetupException) => ()
-            case other =>
+            case other                                                                    =>
                 fail(s"Expected Abort.Failure(BrowserConnectionException or BrowserSetupException) but got $other")
         }
     }
@@ -1928,7 +1928,7 @@ class BrowserCoreTest extends BrowserTest:
     }
 
     "withLocalhostServer smoke" in {
-        val bytes = Span.fromUnsafe("<html><body><p id=\"x\">fixed-body</p></body></html>".getBytes("UTF-8"))
+        val bytes   = Span.fromUnsafe("<html><body><p id=\"x\">fixed-body</p></body></html>".getBytes("UTF-8"))
         val handler = HttpRoute.getRaw("/page").response(_.bodyBinary).handler { _ =>
             HttpResponse.ok(bytes).addHeader("Content-Type", "text/html; charset=utf-8")
         }
@@ -1976,7 +1976,7 @@ class BrowserCoreTest extends BrowserTest:
                         Browser.scrollToElement(Browser.Selector.id("no-such-element"))
                     }.map {
                         case Result.Failure(_: BrowserElementNotFoundException) => ()
-                        case other =>
+                        case other                                              =>
                             fail(s"Expected BrowserElementNotFoundException for missing selector but got $other")
                     }
                 }

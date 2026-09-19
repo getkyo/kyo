@@ -33,10 +33,10 @@ sealed abstract class HttpStatus(val code: Int) derives CanEqual:
     /** Human-readable name (e.g. "Not Found", "Internal Server Error"). */
     def name: String = this match
         case HttpStatus.Custom(c) => c.toString
-        case other =>
+        case other                =>
             val raw = other.toString
             // Insert space before each uppercase letter (except the first)
-            val sb = new StringBuilder(raw.length + 4)
+            val sb                          = new StringBuilder(raw.length + 4)
             @tailrec def loop(i: Int): Unit =
                 if i < raw.length then
                     val c = raw.charAt(i)

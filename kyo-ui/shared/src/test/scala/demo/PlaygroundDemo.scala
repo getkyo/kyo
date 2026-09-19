@@ -28,11 +28,11 @@ object PlaygroundDemo extends KyoApp:
     private def dataUrl(html: String): String =
         "data:text/html;charset=utf-8," + java.net.URLEncoder.encode(html, "UTF-8").replace("+", "%20")
 
-    private val pageStyle  = Style.padding(24.px).fontFamily(FontFamily.SansSerif).gap(12.px)
-    private val subtitle   = Style.color(Color.gray).fontSize(14.px)
-    private val columns    = Style.row.gap(16.px)
-    private val panel      = Style.column.gap(8.px).flexGrow(1).flexBasis(0.px)
-    private val panelTitle = Style.fontSize(15.px).bold
+    private val pageStyle   = Style.padding(24.px).fontFamily(FontFamily.SansSerif).gap(12.px)
+    private val subtitle    = Style.color(Color.gray).fontSize(14.px)
+    private val columns     = Style.row.gap(16.px)
+    private val panel       = Style.column.gap(8.px).flexGrow(1).flexBasis(0.px)
+    private val panelTitle  = Style.fontSize(15.px).bold
     private val editorStyle = Style.width(100.pct).height(360.px).padding(10.px).fontFamily(FontFamily.Monospace).fontSize(13.px)
         .rounded(8.px).border(1.px, Color.slate)
     private val previewStyle = Style.width(100.pct).height(360.px).rounded(8.px).border(1.px, Color.slate).bg(Color.white)

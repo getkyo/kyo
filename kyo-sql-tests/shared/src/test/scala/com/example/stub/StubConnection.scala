@@ -27,7 +27,7 @@ final class StubConnection extends Connection:
         inert("extendedExecute")
     def extendedExecuteInsert(sql: String, params: Chunk[BoundValue[?]])(using
         Frame
-    ): SqlClient.InsertOutcome < (Async & Abort[SqlException]) = inert("extendedExecuteInsert")
+    ): SqlClient.InsertOutcome < (Async & Abort[SqlException])                               = inert("extendedExecuteInsert")
     def simpleQuery(sql: String)(using Frame): Chunk[SqlRow] < (Async & Abort[SqlException]) = inert("simpleQuery")
     def simpleExecute(sql: String)(using Frame): Long < (Async & Abort[SqlException])        = inert("simpleExecute")
     def streamQuery(sql: String, params: Chunk[BoundValue[?]], batchSize: Int)(using
@@ -40,7 +40,7 @@ final class StubConnection extends Connection:
 
     def beginTransaction(isolation: Maybe[SqlClient.IsolationLevel], readOnly: Boolean)(using
         Frame
-    ): Unit < (Async & Abort[SqlException]) = inert("beginTransaction")
+    ): Unit < (Async & Abort[SqlException])                                                  = inert("beginTransaction")
     def commitTransaction(using Frame): Unit < (Async & Abort[SqlException])                 = inert("commitTransaction")
     def rollbackTransaction(using Frame): Unit < (Async & Abort[SqlException])               = inert("rollbackTransaction")
     def savepoint(name: String)(using Frame): Unit < (Async & Abort[SqlException])           = inert("savepoint")

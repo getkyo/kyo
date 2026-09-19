@@ -132,12 +132,11 @@ object Batch:
         // Captures the continuation in the `Item` objects for `ToExpand` and `Expanded` cases.
         def capture(v: Item < (Batch & S)): Item < S =
             ArrowEffect.handle(Tag[Batch], v) {
-                [C] =>
-                    (input, cont) =>
-                        val contAny = cont.asInstanceOf[ContAny[A, S]]
-                        input match
-                            case Call(v, source) => Expanded(v, source.asInstanceOf[SourceAny[S]], contAny)
-                            case Eval(v)         => ToExpand(v, contAny)
+                [C] => (input, cont) =>
+                    val contAny = cont.asInstanceOf[ContAny[A, S]]
+                    input match
+                        case Call(v, source) => Expanded(v, source.asInstanceOf[SourceAny[S]], contAny)
+                        case Eval(v)         => ToExpand(v, contAny)
             }
 
         // Expands any `Batch.eval` calls, capturing items for each element in the sequence.

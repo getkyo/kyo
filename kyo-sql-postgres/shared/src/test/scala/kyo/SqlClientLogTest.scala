@@ -163,7 +163,7 @@ class SqlClientLogTest extends SqlContainerTest:
             // terminator
             0x00
         )
-        val msgLen = 4 + body.length // length field (4) + body
+        val msgLen   = 4 + body.length // length field (4) + body
         val lenBytes = Array[Byte](
             ((msgLen >> 24) & 0xff).toByte,
             ((msgLen >> 16) & 0xff).toByte,
@@ -276,8 +276,11 @@ class SqlClientLogTest extends SqlContainerTest:
                 }.map { case (sink, _) =>
                     val logs = sink.captured
                     assert(
+                        // The endpoint is logged as one rendered address rather than as `host=` and `port=`, because an address is a
+                        // network endpoint OR a local path and the local one has neither. The host still has to appear in it: naming
+                        // which server the connection reached is the whole point of the line.
                         logs.exists { case (level, msg) =>
-                            level == Log.Level.debug && msg.contains("kyo.sql: opened connection") && msg.contains("host=127.0.0.1")
+                            level == Log.Level.debug && msg.contains("kyo.sql: opened connection") && msg.contains("127.0.0.1")
                         },
                         s"Expected 'kyo.sql: opened connection' debug log. Captured: ${logs.map(_._2).mkString(", ")}"
                     )
@@ -347,8 +350,8 @@ class SqlClientLogTest extends SqlContainerTest:
                         end if
                     }
                 }.flatMap { listener =>
-                    val port = listener.port
-                    val url  = fakeUrl(port)
+                    val port        = listener.port
+                    val url         = fakeUrl(port)
                     val retryConfig = logTestConfig(maxConns = 2, acquireTimeout = 10.seconds).copy(
                         queryTimeout = 10.seconds,
                         retrySchedule = Present(Schedule.fixed(Duration.Zero).take(3))
@@ -368,7 +371,7 @@ class SqlClientLogTest extends SqlContainerTest:
                             }
                         }
                     }.map { case (sink, _) =>
-                        val logs = sink.captured
+                        val logs      = sink.captured
                         val retryLogs = logs.filter { case (level, msg) =>
                             level == Log.Level.warn && msg.contains("kyo.sql: retrying") && msg.contains("attempt=")
                         }
@@ -420,7 +423,7 @@ class SqlClientLogTest extends SqlContainerTest:
                         }
                     }
                 }.map { case (sink, _) =>
-                    val logs = sink.captured
+                    val logs   = sink.captured
                     val txLogs = logs.filter { case (level, msg) =>
                         level == Log.Level.debug && (msg.contains("tx begin") || msg.contains("tx commit") || msg.contains("tx rollback"))
                     }
@@ -469,7 +472,7 @@ class SqlClientLogTest extends SqlContainerTest:
                         }
                     }
                 }.map { case (sink, _) =>
-                    val logs = sink.captured
+                    val logs            = sink.captured
                     val serverErrorLogs = logs.filter { case (_, msg) =>
                         msg.contains("kyo.sql: server error") && msg.contains("sqlState=")
                     }
@@ -544,7 +547,7 @@ class SqlClientLogTest extends SqlContainerTest:
                     // could be satisfied by any line the fixture happened to write.
                     blocked match
                         case Result.Failure(_: SqlConnectionAcquireTimeoutException) => ()
-                        case other =>
+                        case other                                                   =>
                             fail(s"the second statement must abort with SqlConnectionAcquireTimeoutException from takeSlot, got: $other")
                     end match
                     val logs = sink.captured
@@ -570,7 +573,7 @@ class SqlClientLogTest extends SqlContainerTest:
 
         Log.let(Log(silentSink)) {
             // Call debug and warn, they should be filtered by the sink's level.
-            Log.debug("kyo.sql: opened connection id=1 host=localhost port=5432 tls=false").andThen(
+            Log.debug("kyo.sql: opened connection id=1 address=postgres://localhost:5432/db tls=false").andThen(
                 Log.warn("kyo.sql: retrying after connection failure attempt=1 schedule=test")
             )
         }.map { _ =>
@@ -686,7 +689,7 @@ class SqlClientLogTest extends SqlContainerTest:
                         }
                     }
                 }.map { case (sink, _) =>
-                    val logs = sink.captured
+                    val logs       = sink.captured
                     val aboveDebug = logs.filter { case (level, _) =>
                         level == Log.Level.warn || level == Log.Level.error
                     }

@@ -149,7 +149,7 @@ object GenDerive:
         Type.of[T] match
             case '[scala.EmptyTuple] => Nil
             case '[h *: t]           => Type.of[h] :: collectTypes[t]
-            case _ =>
+            case _                   =>
                 report.errorAndAbort(s"GenDerive.collectTypes: unexpected type shape ${Type.show[T]}")
         end match
     end collectTypes

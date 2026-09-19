@@ -138,7 +138,7 @@ class PollerIoDriverTlsHalfCloseEtTest extends Test:
                             // arrive in the accepted side's kernel recv buffer before the reader below starts. On epoll, this guarantees
                             // EPOLLIN + EPOLLRDHUP will be co-reported in one poll event (the half-close path this guards).
                             val cipherBuf = Buffer.fromArray[Byte](cipher)
-                            val sendR =
+                            val sendR     =
                                 try sock.sendNow(client, cipherBuf, cipher.length.toLong, PosixConstants.MSG_NOSIGNAL)
                                 finally cipherBuf.close()
                             assert(sendR.value.toInt > 0, s"send failed: errno=${sendR.errorCode}")
@@ -223,7 +223,7 @@ class PollerIoDriverTlsHalfCloseEtTest extends Test:
                             r.start()
                             // Send data + half-close after the reader is registered, allowing an initial EAGAIN race.
                             val cipherBuf = Buffer.fromArray[Byte](cipher)
-                            val sendR =
+                            val sendR     =
                                 try sock.sendNow(client, cipherBuf, cipher.length.toLong, PosixConstants.MSG_NOSIGNAL)
                                 finally cipherBuf.close()
                             assert(sendR.value.toInt > 0, s"send failed: errno=${sendR.errorCode}")

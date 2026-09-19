@@ -81,7 +81,7 @@ class NioTransportTest extends Test:
             val port = serverSock.socket().getLocalPort
 
             // Accept in a background thread: hold the connection open until latch released
-            val acceptedRef = new java.util.concurrent.atomic.AtomicReference[java.nio.channels.SocketChannel](null)
+            val acceptedRef  = new java.util.concurrent.atomic.AtomicReference[java.nio.channels.SocketChannel](null)
             val acceptThread = new Thread(() =>
                 try
                     val accepted = serverSock.accept()
@@ -112,7 +112,7 @@ class NioTransportTest extends Test:
             val serverSock = java.nio.channels.ServerSocketChannel.open()
             serverSock.configureBlocking(true)
             serverSock.bind(new InetSocketAddress("127.0.0.1", 0))
-            val port = serverSock.socket().getLocalPort
+            val port         = serverSock.socket().getLocalPort
             val acceptThread = new Thread(() =>
                 try
                     val accepted = serverSock.accept()
@@ -147,7 +147,7 @@ class NioTransportTest extends Test:
                     serverSock.close()
                     second match
                         case Result.Failure(_: kyo.net.NetException) => succeed
-                        case Result.Failure(_: Timeout) =>
+                        case Result.Failure(_: Timeout)              =>
                             assert(false, "the re-upgrade hung instead of failing typed (the reject is missing)")
                         case other =>
                             assert(false, s"a second upgrade of an upgraded handle must fail typed; got $other")
@@ -231,7 +231,7 @@ class NioTransportTest extends Test:
         given Frame = Frame.internal
         mkTransport().map { transport =>
             // Latch the handler completes the instant it runs, so the test proceeds on the actual accept event rather than a guessed delay.
-            val accepted = Promise.Unsafe.init[Unit, Any]()
+            val accepted    = Promise.Unsafe.init[Unit, Any]()
             val listenFiber = transport.listen("127.0.0.1", 0, 50) { conn =>
                 accepted.completeDiscard(Result.succeed(()))
                 conn.close()
@@ -534,8 +534,8 @@ class NioTransportTest extends Test:
     "socket receive buffer is applied to the listen socket, per listen" in {
         val transport = NioTransport.init()
         Scope.ensure(Sync.defer { import kyo.AllowUnsafe.embrace.danger; transport.pool.next().close() }).andThen {
-            val smallReq = 16384
-            val largeReq = 262144
+            val smallReq                        = 16384
+            val largeReq                        = 262144
             def rcvOf(l: kyo.net.Listener): Int =
                 l.asInstanceOf[NioListener].serverChannel.getOption(java.net.StandardSocketOptions.SO_RCVBUF).intValue
             Abort.run[NetException | Closed] {
@@ -566,8 +566,8 @@ class NioTransportTest extends Test:
     "socket buffer sizes are applied per connect" in {
         val transport = NioTransport.init()
         Scope.ensure(Sync.defer { import kyo.AllowUnsafe.embrace.danger; transport.pool.next().close() }).andThen {
-            val smallReq = 16384
-            val largeReq = 262144
+            val smallReq                             = 16384
+            val largeReq                             = 262144
             def sndOf(conn: kyo.net.Connection): Int =
                 conn.asInstanceOf[kyo.net.internal.transport.Connection[NioHandle]].handle.channel
                     .getOption(java.net.StandardSocketOptions.SO_SNDBUF).intValue
@@ -701,7 +701,7 @@ class NioTransportTest extends Test:
                 }.safe.get
                 client   <- Sync.defer(new java.net.Socket("127.0.0.1", listener.port))
                 accepted <- acceptedP.asInstanceOf[Fiber.Unsafe[kyo.net.Connection, Abort[Closed]]].safe.get
-                _ <- Sync.defer {
+                _        <- Sync.defer {
                     client.getOutputStream.write(Array.fill[Byte](128)(1))
                     client.getOutputStream.flush()
                 }

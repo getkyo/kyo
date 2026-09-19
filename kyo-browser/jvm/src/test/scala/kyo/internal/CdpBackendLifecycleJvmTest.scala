@@ -241,7 +241,7 @@ class CdpBackendLifecycleJvmTest extends kyo.BaseBrowserTest:
                             // fallback: had it waited out the 10s server delay the send would have completed (Success).
                             slowResult match
                                 case Result.Success(Result.Failure(_: BrowserConnectionLostException)) => succeed
-                                case other =>
+                                case other                                                             =>
                                     fail(s"expected ConnectionLost on slow send after closeNow fallback, got $other")
                             end match
                     }
@@ -263,7 +263,7 @@ class CdpBackendLifecycleJvmTest extends kyo.BaseBrowserTest:
                     CdpBackend.initUnscoped(fixture.wsUrl, Browser.LaunchConfig.default).map { backend =>
                         Abort.run[BrowserConnectionException](CdpBackend.getTargets(backend)).map {
                             case Result.Failure(_: BrowserConnectionLostException) => succeed
-                            case other =>
+                            case other                                             =>
                                 fail(s"expected BrowserConnectionLostException, got $other")
                         }
                     }

@@ -44,7 +44,7 @@ final class DeclarationTable private (private val ref: AtomicRef.Unsafe[Maybe[Di
       */
     private[kyo] def storageKind(using AllowUnsafe): String =
         ref.get() match
-            case Absent => "empty"
+            case Absent        => "empty"
             case Present(dict) =>
                 if dict.size <= Dict.threshold then "flat-array"
                 else "hash-map"

@@ -48,7 +48,7 @@ class WireTest extends kyo.test.Test[Any]:
             ))),
             Response.Symbol(Absent),
             Response.Closed,
-            Response.Failed(CompilerWorkerReadyException("3.8.4", 30.seconds))
+            Response.Failed(CompilerWorkerReadyException("3.0.0", 30.seconds))
         )
         responses.foreach(resp => assert(roundTrip[Response](resp) == resp))
 
@@ -121,7 +121,7 @@ class WireTest extends kyo.test.Test[Any]:
 
         // Empty-line text: "x\n\ny" has lines [0]=>"x\n", [1]=>"\n", [2]=>"y"
         //   lineStarts = [0, 2, 3]; empty line 1 has only the newline at offset 2
-        val emptyLineText = "x\n\ny"
+        val emptyLineText                                                = "x\n\ny"
         def spanEmpty(sl: Int, sc: Int, el: Int, ec: Int): Compiler.Span =
             val range = new lsp4j.Range(new lsp4j.Position(sl, sc), new lsp4j.Position(el, ec))
             val d2    = new lsp4j.Diagnostic()
@@ -204,15 +204,15 @@ class WireTest extends kyo.test.Test[Any]:
         // A Left-side hover carries a list of String/MarkedString entries; the renderer reads that list,
         // never the absent Right (MarkupContent) side. This stub returns one plain String plus one
         // MarkedString with a language tag.
-        val plainElem  = LspEither.forLeft[String, lsp4j.MarkedString]("**Int**")
-        val ms         = new lsp4j.MarkedString("scala", "val x: Int")
-        val markedElem = LspEither.forRight[String, lsp4j.MarkedString](ms)
+        val plainElem    = LspEither.forLeft[String, lsp4j.MarkedString]("**Int**")
+        val ms           = new lsp4j.MarkedString("scala", "val x: Int")
+        val markedElem   = LspEither.forRight[String, lsp4j.MarkedString](ms)
         val leftContents = LspEither.forLeft[java.util.List[LspEither[String, lsp4j.MarkedString]], lsp4j.MarkupContent](JArrays.asList(
             plainElem,
             markedElem
         ))
         val hoverWithLeft = new lsp4j.Hover(leftContents.getLeft)
-        val leftStub = new scala.meta.pc.HoverSignature:
+        val leftStub      = new scala.meta.pc.HoverSignature:
             def toLsp(): lsp4j.Hover                                    = hoverWithLeft
             def signature(): Optional[String]                           = Optional.empty()
             def getRange(): Optional[lsp4j.Range]                       = Optional.empty()
@@ -230,7 +230,7 @@ class WireTest extends kyo.test.Test[Any]:
         // Right-side MarkupContent: getContents returns the MarkupContent side directly
         val mc             = new lsp4j.MarkupContent("markdown", "**String**")
         val hoverWithRight = new lsp4j.Hover(mc)
-        val rightStub = new scala.meta.pc.HoverSignature:
+        val rightStub      = new scala.meta.pc.HoverSignature:
             def toLsp(): lsp4j.Hover                                    = hoverWithRight
             def signature(): Optional[String]                           = Optional.empty()
             def getRange(): Optional[lsp4j.Range]                       = Optional.empty()

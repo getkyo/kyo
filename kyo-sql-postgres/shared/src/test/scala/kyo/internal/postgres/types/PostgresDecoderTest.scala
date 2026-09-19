@@ -228,7 +228,7 @@ class PostgresDecoderTest extends Test:
     }
 
     "int4Array still decodes the binary wire form" in {
-        val buf = new java.io.ByteArrayOutputStream
+        val buf                   = new java.io.ByteArrayOutputStream
         def int32BE(v: Int): Unit =
             buf.write((v >> 24) & 0xff)
             buf.write((v >> 16) & 0xff)
@@ -373,7 +373,7 @@ class PostgresDecoderTest extends Test:
     // adjusted exponent is below -6. Expectations read off PostgreSQL 16.
 
     private def numericBinaryBytes(digits: Seq[Int], weight: Int, sign: Int, dscale: Int): Span[Byte] =
-        val buf = new java.io.ByteArrayOutputStream
+        val buf                        = new java.io.ByteArrayOutputStream
         def writeInt16BE(v: Int): Unit =
             buf.write((v >> 8) & 0xff)
             buf.write(v & 0xff)

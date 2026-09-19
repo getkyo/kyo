@@ -55,7 +55,7 @@ abstract class Singleton[A <: AnyRef] {
             val key      = getClass.getName // Singleton object's class name as key
 
             val existing = sysProps.get(key).asInstanceOf[A]
-            val result =
+            val result   =
                 if (existing ne null) {
                     // Another classloader created the instance, use it
                     existing

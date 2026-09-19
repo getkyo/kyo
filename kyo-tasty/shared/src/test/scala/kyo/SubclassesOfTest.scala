@@ -21,7 +21,7 @@ class SubclassesOfTest extends kyo.test.Test[Any]:
         Sync.defer {
             val absFlags  = flagsOf(Tasty.Flag.Abstract)
             val concFlags = Tasty.Flags.empty
-            val a = Tasty.Symbol.Class(
+            val a         = Tasty.Symbol.Class(
                 SymbolId(0),
                 Tasty.Name("A"),
                 absFlags,
@@ -107,7 +107,7 @@ class SubclassesOfTest extends kyo.test.Test[Any]:
         Sync.defer {
             val absFlags  = flagsOf(Tasty.Flag.Abstract)
             val concFlags = Tasty.Flags.empty
-            val t = Tasty.Symbol.Trait(
+            val t         = Tasty.Symbol.Trait(
                 SymbolId(0),
                 Tasty.Name("T"),
                 absFlags,

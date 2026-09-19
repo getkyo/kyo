@@ -230,7 +230,7 @@ object StartupExchange:
                         case Authentication(AuthenticationKind.SASLContinue(data)) =>
                             val serverFirst = new String(data.toArray, StandardCharsets.UTF_8)
                             scram.clientFinalMessage(serverFirst, password) match
-                                case Result.Failure(err) => Abort.fail(err)
+                                case Result.Failure(err)                              => Abort.fail(err)
                                 case Result.Success((clientFinal, expectedServerSig)) =>
                                     val cfBytes = clientFinal.getBytes(StandardCharsets.UTF_8)
                                     // Step 3: Send SASLResponse (client-final-message).
@@ -275,7 +275,7 @@ object StartupExchange:
     private def expectAuthOk(channel: PostgresChannel)(using Frame): Unit < (Async & Abort[SqlException]) =
         channel.receive.flatMap {
             case Authentication(AuthenticationKind.Ok) => ()
-            case ErrorResponse(fields) =>
+            case ErrorResponse(fields)                 =>
                 Abort.fail(mkAuthError(fields))
             case other =>
                 Abort.fail(SqlConnectionUnexpectedMessageException("after password", "AuthenticationOk / ErrorResponse", other.toString))

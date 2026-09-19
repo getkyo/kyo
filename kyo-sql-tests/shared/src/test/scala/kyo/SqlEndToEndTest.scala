@@ -689,7 +689,7 @@ class SqlEndToEndTest extends SqlBackendTest:
     /** The nine values agree; what differs is how each goes wrong when the aggregate is typed as its operand. One engine's `SUM` over an `INT`
       * is an `int8` read as its high word, the other a `DECIMAL` arriving as ASCII read as a little-endian integer.
       */
-    "aggregates, division, and a rollup key all return the values their types promise" - {
+    "aggregates and division all return the values their types promise" - {
         forEachBackend() { (backend, client, _) =>
             val metrics = Sql.from[Metric]("m")
             for
@@ -706,7 +706,6 @@ class SqlEndToEndTest extends SqlBackendTest:
                 emptyTotal    <- metrics.where(c => c.m.amount > 1000).sum(_.m.amount).run
                 quotient      <- metrics.where(c => c.m.id == 1L).select(c => c.m.amount / c.m.divisor).run
                 truncated     <- metrics.where(c => c.m.id == 1L).select(c => c.m.amount.divideTruncating(c.m.divisor)).run
-                rolledUp      <- metrics.groupByRollup(c => c.m.region).select(v => (v.region, v.amount.sum)).to[RegionTotal].run
             yield
                 // SUM over an INT column is an int8 on one engine and a DECIMAL on the other. At type Int the first
                 // reads as the high word of an eight-byte value (zero) and the second as ASCII digits taken for a
@@ -731,13 +730,46 @@ class SqlEndToEndTest extends SqlBackendTest:
                 assert(quotient == Chunk(BigDecimal("2.5")), s"${backend.label}: 10 / 4 must be 2.5, got $quotient")
                 // And the truncating spelling is what keeps truncation expressible on both.
                 assert(truncated == Chunk(2), s"${backend.label}: 10 divideTruncating 4 must be 2, got $truncated")
-                // The ROLLUP subtotal row carries NULL for the key it is not grouping by.
-                val byRegion = rolledUp.toSeq.map(r => r.region -> r.total).toMap
-                assert(byRegion.size == 3, s"${backend.label}: ROLLUP must add one subtotal row to the two regions, got $rolledUp")
-                assert(byRegion(Present("north")) == 30L, s"${backend.label}: north total must be 30, got $rolledUp")
-                assert(byRegion(Present("south")) == 71L, s"${backend.label}: south total must be 71, got $rolledUp")
-                assert(byRegion(Absent) == 101L, s"${backend.label}: the subtotal row must carry Absent and 101, got $rolledUp")
             end for
+        }
+    }
+
+    /** The rollup half, split out because GROUP BY ROLLUP is not a feature every engine has.
+      *
+      * Gated on the dialect's own `supportsRollup` rather than on a descriptor flag: the refusal comes from the renderer, so the thing that
+      * decides whether this can run is the same thing that decides whether the statement can be built.
+      */
+    "a rollup key returns the values its type promises" - {
+        forEachBackend() { (backend, client, _) =>
+            if !client.dialect.supportsRollup then
+                // The other side, asserted rather than skipped: an engine without ROLLUP must REFUSE to render it. Returning some other
+                // grouping would answer a question the caller did not ask, and silently dropping the subtotal row is the shape that would
+                // go unnoticed.
+                Abort.run[SqlException] {
+                    Sql.from[Metric]("m").groupByRollup(c => c.m.region).select(v => (v.region, v.amount.sum)).to[RegionTotal].run
+                }.map { outcome =>
+                    assert(
+                        outcome.failure.exists(_.isInstanceOf[SqlUnsupportedDialectFeatureException]),
+                        s"${backend.label} has no GROUP BY ROLLUP, so rendering one must be refused, got $outcome"
+                    )
+                }
+            else
+                val metrics = Sql.from[Metric]("m")
+                for
+                    _ <- client.executeRaw(
+                        s"CREATE TABLE metric (id BIGINT PRIMARY KEY, region ${backend.textColumnType} NOT NULL, amount INT NOT NULL, " +
+                            "quantity BIGINT NOT NULL, divisor INT NOT NULL)"
+                    )
+                    _        <- client.executeRaw(s"INSERT INTO metric VALUES $metricRows")
+                    rolledUp <- metrics.groupByRollup(c => c.m.region).select(v => (v.region, v.amount.sum)).to[RegionTotal].run
+                yield
+                    // The ROLLUP subtotal row carries NULL for the key it is not grouping by.
+                    val byRegion = rolledUp.toSeq.map(r => r.region -> r.total).toMap
+                    assert(byRegion.size == 3, s"${backend.label}: ROLLUP must add one subtotal row to the two regions, got $rolledUp")
+                    assert(byRegion(Present("north")) == 30L, s"${backend.label}: north total must be 30, got $rolledUp")
+                    assert(byRegion(Present("south")) == 71L, s"${backend.label}: south total must be 71, got $rolledUp")
+                    assert(byRegion(Absent) == 101L, s"${backend.label}: the subtotal row must carry Absent and 101, got $rolledUp")
+                end for
         }
     }
 

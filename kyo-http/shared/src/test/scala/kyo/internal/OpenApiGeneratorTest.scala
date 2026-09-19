@@ -187,7 +187,7 @@ class OpenApiGeneratorTest extends kyo.BaseHttpTest:
                 .request(_.query[Boolean]("verbose"))
                 .response(_.bodyJson[String])
                 .metadata(_.operationId("getPet").summary("Get a pet"))
-            val h = route.handler(_ => HttpResponse.ok("cat"))
+            val h    = route.handler(_ => HttpResponse.ok("cat"))
             val spec = OpenApiGenerator.generate(
                 Seq(h),
                 OpenApiGenerator.Config(title = "Pet API", version = "1.0.0")
@@ -348,8 +348,8 @@ class OpenApiGeneratorTest extends kyo.BaseHttpTest:
             }
 
             "constraint fields are absent from JSON when empty" in {
-                val js  = Json.JsonSchema.Str()
-                val obj = OpenApiGenerator.jsonSchemaToHttpOpenApi(js)
+                val js   = Json.JsonSchema.Str()
+                val obj  = OpenApiGenerator.jsonSchemaToHttpOpenApi(js)
                 val spec = HttpOpenApi(
                     openapi = "3.0.0",
                     info = HttpOpenApi.Info("T", "1", None),
@@ -366,8 +366,8 @@ class OpenApiGeneratorTest extends kyo.BaseHttpTest:
             }
 
             "constraint fields appear in serialized JSON when set" in {
-                val js  = Json.JsonSchema.Str(minLength = Present(1), pattern = Present("[a-z]+"))
-                val obj = OpenApiGenerator.jsonSchemaToHttpOpenApi(js)
+                val js   = Json.JsonSchema.Str(minLength = Present(1), pattern = Present("[a-z]+"))
+                val obj  = OpenApiGenerator.jsonSchemaToHttpOpenApi(js)
                 val spec = HttpOpenApi(
                     openapi = "3.0.0",
                     info = HttpOpenApi.Info("T", "1", None),

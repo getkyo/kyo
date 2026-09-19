@@ -18,8 +18,8 @@ class KyoAppInterruptsTest extends kyo.test.Test[Any]:
 
     /** A runner that records what it would have done to the process. */
     private class Recording extends KyoAppRunner:
-        var exited: Maybe[Int]                                     = Absent
-        protected def exitHook(code: Int)(using AllowUnsafe): Unit = exited = Present(code)
+        var exited: Maybe[Int]                                                                                    = Absent
+        protected def exitHook(code: Int)(using AllowUnsafe): Unit                                                = exited = Present(code)
         protected def handle[A](v: A < (Async & Scope & Abort[Any]))(using Frame): A < (Async & Abort[Throwable]) =
             throw new UnsupportedOperationException("not used by these tests")
 
@@ -42,8 +42,8 @@ class KyoAppInterruptsTest extends kyo.test.Test[Any]:
     "a signalled stop" - {
 
         "ends quietly with the signal's conventional exit code" in {
-            val runner = new RecordingWithInterrupts
-            val cause  = runner.recordSignal("TERM", 143)
+            val runner     = new RecordingWithInterrupts
+            val cause      = runner.recordSignal("TERM", 143)
             val (out, err) = captured {
                 runner.report(Result.panic(cause))
             }
@@ -65,7 +65,7 @@ class KyoAppInterruptsTest extends kyo.test.Test[Any]:
             val runner    = new RecordingWithInterrupts
             val _         = runner.recordSignal("TERM", 143)
             val lookalike = Interrupted(Frame.internal, "Interrupt Signal: TERM")
-            val thrown =
+            val thrown    =
                 try
                     captured(runner.report(Result.panic(lookalike)))
                     Absent
@@ -91,7 +91,7 @@ class KyoAppInterruptsTest extends kyo.test.Test[Any]:
         val runner                   = new Recording
         val failure                  = new RuntimeException("boom")
         var thrown: Maybe[Throwable] = Absent
-        val (out, err) = captured {
+        val (out, err)               = captured {
             try runner.report(Result.panic(failure))
             catch case e: Throwable => thrown = Present(e)
         }

@@ -20,7 +20,7 @@ class DynamicFlagConcurrencyPlatformTest extends AnyFreeSpec {
             @volatile var stop = false
             var errors         = 0
             var completed      = 0
-            val writer = new Thread(() => {
+            val writer         = new Thread(() => {
                 while (!stop) {
                     flag.update("rollout:200@enterprise;75")
                     flag.update("rollout:100@enterprise;50")

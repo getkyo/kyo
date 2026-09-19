@@ -127,9 +127,9 @@ class WritePumpDoubleFireTest extends Test:
         // Then: the CAS succeeds, doWrite is called, and the write completes
         // (sanity-check that the non-stale path still works after the CAS was added)
         "legitimate-writable-wins-CAS-and-drives-write" in {
-            val writeCalls  = AtomicInt.Unsafe.init(0)
-            val parkedLatch = Promise.Unsafe.init[Unit, Any]()
-            val doneLatch   = Promise.Unsafe.init[Unit, Any]()
+            val writeCalls                                                           = AtomicInt.Unsafe.init(0)
+            val parkedLatch                                                          = Promise.Unsafe.init[Unit, Any]()
+            val doneLatch                                                            = Promise.Unsafe.init[Unit, Any]()
             var capturedWritable: Promise.Unsafe[Unit, Abort[Closed | NetException]] =
                 null.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed | NetException]]]
 

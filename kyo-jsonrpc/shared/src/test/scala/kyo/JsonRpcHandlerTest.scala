@@ -25,7 +25,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
     private class CountingTransport(inner: JsonRpcTransport, val counter: AtomicInt.Unsafe)
         extends JsonRpcTransport:
 
-        def send(env: JsonRpcEnvelope)(using Frame): Unit < (Async & Abort[Closed]) =
+        def send(env: JsonRpcEnvelope)(using Frame): Unit < (Async & Abort[Closed | JsonRpcError]) =
             Sync.defer(discard(counter.incrementAndGet()(using AllowUnsafe.embrace.danger))).andThen(inner.send(env))
 
         def incoming(using Frame): Stream[JsonRpcEnvelope, Async & Abort[Closed]] =
@@ -48,7 +48,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
 
     "notify sends notification and handler runs without reply" in {
         // Unsafe: AtomicInt.Unsafe.init for concurrent counter in synchronous handler scope
-        val seen = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
+        val seen      = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
         val logMethod = JsonRpcRoute.request[LogMsg, Unit]("log") {
             (_, _) => Sync.defer(discard(seen.incrementAndGet()(using AllowUnsafe.embrace.danger)))
         }
@@ -346,7 +346,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
                 (req, _) => gate.get.andThen(AddResp(req.a + req.b))
             }
             // Unsafe: AtomicRef.Unsafe.init for id capture across fibers
-            val capturedId = AtomicRef.Unsafe.init[Maybe[JsonRpcId]](Absent)(using AllowUnsafe.embrace.danger)
+            val capturedId     = AtomicRef.Unsafe.init[Maybe[JsonRpcId]](Absent)(using AllowUnsafe.embrace.danger)
             val captureEncoder = JsonRpcExtrasEncoder(id =>
                 Sync.defer {
                     capturedId.set(Present(id))(using AllowUnsafe.embrace.danger)
@@ -383,7 +383,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
 
     "late reply for cancelled outbound call is silently dropped" in {
         // Unsafe: AtomicRef.Unsafe.init for id capture across fibers
-        val capturedId = AtomicRef.Unsafe.init[Maybe[JsonRpcId]](Absent)(using AllowUnsafe.embrace.danger)
+        val capturedId     = AtomicRef.Unsafe.init[Maybe[JsonRpcId]](Absent)(using AllowUnsafe.embrace.danger)
         val captureEncoder = JsonRpcExtrasEncoder(id =>
             Sync.defer {
                 capturedId.set(Present(id))(using AllowUnsafe.embrace.danger)
@@ -445,7 +445,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
     "JsonRpcExtrasEncoder.const causes extras value to appear in handler ctx" in {
         val extrasValue = Structure.Value.Record(Chunk("sessionId" -> Structure.Value.Str("my-token")))
         // Unsafe: AtomicRef.Unsafe.init for extras capture across fibers
-        val seen = AtomicRef.Unsafe.init[Maybe[Structure.Value]](Absent)(using AllowUnsafe.embrace.danger)
+        val seen       = AtomicRef.Unsafe.init[Maybe[Structure.Value]](Absent)(using AllowUnsafe.embrace.danger)
         val echoMethod = JsonRpcRoute.request[AddReq, AddResp]("add") {
             (req, ctx) =>
                 Sync.defer {
@@ -467,7 +467,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
 
     "IdStrategy.SequentialLong produces ids Num(1), Num(2), Num(3)" in {
         // Unsafe: AtomicRef.Unsafe.init for id accumulation across fibers
-        val ids = AtomicRef.Unsafe.init(List.empty[JsonRpcId])(using AllowUnsafe.embrace.danger)
+        val ids     = AtomicRef.Unsafe.init(List.empty[JsonRpcId])(using AllowUnsafe.embrace.danger)
         val capture = JsonRpcExtrasEncoder(id =>
             Sync.defer { ids.getAndUpdate(id :: _)(using AllowUnsafe.embrace.danger); Absent }
         )
@@ -488,7 +488,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
 
     "IdStrategy.SequentialInt produces ids Num(1), Num(2), Num(3)" in {
         // Unsafe: AtomicRef.Unsafe.init for id accumulation across fibers
-        val ids = AtomicRef.Unsafe.init(List.empty[JsonRpcId])(using AllowUnsafe.embrace.danger)
+        val ids     = AtomicRef.Unsafe.init(List.empty[JsonRpcId])(using AllowUnsafe.embrace.danger)
         val capture = JsonRpcExtrasEncoder(id =>
             Sync.defer { ids.getAndUpdate(id :: _)(using AllowUnsafe.embrace.danger); Absent }
         )
@@ -544,13 +544,13 @@ class JsonRpcHandlerTest extends JsonRpcTest:
 
     "IdStrategy.Custom with 100 concurrent calls produces 100 distinct ids" in {
         // Unsafe: AtomicLong.Unsafe.init for id generation
-        val counter = AtomicLong.Unsafe.init(0L)(using AllowUnsafe.embrace.danger)
+        val counter        = AtomicLong.Unsafe.init(0L)(using AllowUnsafe.embrace.danger)
         val customStrategy = JsonRpcIdStrategy.Custom(() =>
             Sync.defer(JsonRpcId.Num(counter.incrementAndGet()(using AllowUnsafe.embrace.danger)))
         )
         // Unsafe: AtomicRef.Unsafe.init for concurrent id collection (replaces ConcurrentHashMap)
         val collectedIds = AtomicRef.Unsafe.init(Map.empty[JsonRpcId, Boolean])(using AllowUnsafe.embrace.danger)
-        val addOnB = JsonRpcRoute.request[AddReq, AddResp]("add") {
+        val addOnB       = JsonRpcRoute.request[AddReq, AddResp]("add") {
             (req, _) => AddResp(req.a + req.b)
         }
         JsonRpcTransport.inMemory.map { (ta, tb) =>
@@ -636,7 +636,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
                     JsonRpcTransport.inMemory.map { (ta, tb) =>
                         val tbWrap = new JsonRpcTransport:
                             def send(env: JsonRpcEnvelope)(using Frame) = tb.send(env)
-                            def incoming(using Frame) = tb.incoming.mapPure { env =>
+                            def incoming(using Frame)                   = tb.incoming.mapPure { env =>
                                 discard(seen.updateAndGet(_ :+ env)(using AllowUnsafe.embrace.danger))
                                 env match
                                     case JsonRpcRequest(_, "slow", _, _) =>
@@ -684,7 +684,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
         // fields on the wire. The strict decode then classifies that wire JSON as Malformed-with-id,
         // routing through the Malformed(Present(id), reason, _) branch in JsonRpcEndpointImpl. Every
         // method except toStructureValue delegates to the strict schema.
-        val strictCodec = internal.codec.JsonRpcEnvelopeSchema.strict
+        val strictCodec     = internal.codec.JsonRpcEnvelopeSchema.strict
         val bothFieldsCodec = new Schema[JsonRpcEnvelope](Seq.empty):
             override private[kyo] def toStructureValue(env: JsonRpcEnvelope): Structure.Value =
                 given Frame = Frame.internal
@@ -816,7 +816,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
         JsonRpcTransport.inMemory.map { (ta, tb) =>
             val tbWrap = new JsonRpcTransport:
                 def send(env: JsonRpcEnvelope)(using Frame) = tb.send(env)
-                def incoming(using Frame) = tb.incoming.mapPure { env =>
+                def incoming(using Frame)                   = tb.incoming.mapPure { env =>
                     discard(seen.updateAndGet(_ :+ env)(using AllowUnsafe.embrace.danger))
                     env
                 }
@@ -892,7 +892,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
     // JsonRpcResponse.Halt short-circuit: the wire response IS the wrapped response.
     "handler Abort.fail(JsonRpcResponse.halt(resp)) sends resp directly over the wire" in {
         val haltError = JsonRpcCustomError(-32777, "short-circuited")
-        val route = JsonRpcRoute.request[AddReq, AddResp]("haltMethod") { (_, ctx) =>
+        val route     = JsonRpcRoute.request[AddReq, AddResp]("haltMethod") { (_, ctx) =>
             ctx.requestId match
                 case Present(id) =>
                     val resp = JsonRpcResponse.failure(id, haltError)

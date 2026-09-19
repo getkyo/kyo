@@ -15,6 +15,11 @@ import scala.scalajs.js.annotation.*
 private[kyo] object PodNodeChildProcess extends js.Object:
     def execSync(command: String): js.Dynamic                  = js.native
     def execSync(command: String, options: js.Any): js.Dynamic = js.native
+
+    /** Spawns `command` directly, with no shell between. The result carries `error` when the binary could not be
+      * spawned at all and `status` when it ran, which is what tells "not installed" from "installed and failing".
+      */
+    def spawnSync(command: String, args: js.Array[String], options: js.Any): js.Dynamic = js.native
 end PodNodeChildProcess
 
 @js.native

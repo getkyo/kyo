@@ -14,7 +14,7 @@ class TastyEffectRowTest extends kyo.test.Test[Any]:
         Abort.run[TastyError](
             Tasty.withPickles(Chunk(someObjectPickle)) {
                 Tasty.classpath.map { classpath =>
-                    val allSyms = classpath.symbols
+                    val allSyms   = classpath.symbols
                     val methodSym = allSyms.find {
                         case _: Tasty.Symbol.Method => true
                         case _: Tasty.Symbol.Val    => true

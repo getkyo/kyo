@@ -11,9 +11,10 @@ import kyo.kernel.*
 /** A typed effect representing first-class conversations with a large language model.
   *
   * `LLM` is a custom `ArrowEffect` whose ops carry data and read/append per-instance conversation histories
-  * held in one threaded `State`; a program typed `< LLM` has no `Async` in its row. The one op that reaches
-  * the world is `Gen`, whose handler runs the eval loop: that is where `Async` and `Abort[AIGenException]`
-  * enter, riding out on `run`'s residual. `AI` identifies one conversation slot.
+  * held in one threaded `State`; a program typed `< LLM` has no `Async` in its row. The ops that reach the
+  * world are `Gen`, whose handler runs the eval loop, and `Decide`, whose handler runs the decision glue:
+  * that is where `Async` and `Abort[AIGenException]` enter, riding out on `run`'s residual. `AI` identifies
+  * one conversation slot.
   *
   * @see
   *   [[kyo.ai.Context]] for the conversation history
@@ -22,6 +23,8 @@ import kyo.kernel.*
   * @see
   *   [[kyo.Tool]], [[kyo.Thought]], [[kyo.Prompt]], [[kyo.Mode]], [[kyo.Observe]] for the composable
   *   generation surface
+  * @see
+  *   [[kyo.Decider]] for typed decisions over the same effect
   */
 sealed trait LLM extends ArrowEffect[LLM.internal.Op, Id]
 
@@ -66,6 +69,7 @@ object LLM:
             case o: Op.Add        => Present(o.target)
             case o: Op.Set        => Present(o.target)
             case o: Op.Gen[?]     => Present(o.target)
+            case o: Op.Decide[?]  => Present(o.target)
             case o: Op.Stream[?]  => Present(o.target)
             case o: Op.Discard    => Present(o.target)
             case o: Op.GetSession => Present(o.target)
@@ -122,6 +126,12 @@ object LLM:
                             // threads the updated state back; Async & Abort enter here and ride out on run's
                             // residual.
                             runWith(state)(genLoop(op.target, op.schema))((s, c) => (s, c))
+                                .map((s, c) => Loop.continue(s, cont(c)))
+                        case op: Op.Decide[C] @unchecked =>
+                            // A decision is itself an LLM computation (reads config, may generate on the
+                            // completion backend, records on the instance), so a nested runWith discharges
+                            // its ops and threads the state back; Async & Abort enter here as for Gen.
+                            runWith(state)(Decider.internal.decide(op.target, op.plan, op.record))((s, c) => (s, c))
                                 .map((s, c) => Loop.continue(s, cont(c)))
                         case op: Op.Stream[C] @unchecked =>
                             // The SSE projection is itself an LLM computation (reads config, assembles the
@@ -197,7 +207,7 @@ object LLM:
         given Schema[A] = schema
         AI.config.map { config =>
             if config.provider.usesApiKey && config.apiKey.isEmpty then
-                Abort.fail[AIGenException](AIMissingApiKeyException(config.modelName))
+                Abort.fail[AIGenException](AIMissingApiKeyException(config.modelName, config.provider.keyName))
             else
                 // The result_tool rides every request: its definition plus prompt go into the request body
                 // via enrichedContext.
@@ -376,10 +386,10 @@ object LLM:
         Tag[Emit[Chunk[A]]],
         Tag[Emit[Chunk[Completion.StreamElement]]]
     ): (String, AIStats) < (Emit[Chunk[A]] & Async & Scope & Abort[AIStreamException]) =
-        given Schema[A] = schema
+        given Schema[A]                                                                 = schema
         def emitText(delta: String): Unit < (Emit[Chunk[A]] & Abort[AIStreamException]) =
             Structure.decode[A](Structure.Value.Str(delta)) match
-                case Result.Success(a) => Emit.value(Chunk(a))
+                case Result.Success(a)   => Emit.value(Chunk(a))
                 case Result.Failure(err) =>
                     Abort.fail(AIStreamDeltaException(s"stream[String] decoded text chunk failed schema validation: $err"))
                 case Result.Panic(ex) =>
@@ -437,7 +447,7 @@ object LLM:
         Tag[Emit[Chunk[A]]],
         Tag[Emit[Chunk[Completion.StreamElement]]]
     ): (String, AIStats) < (Emit[Chunk[A]] & Async & Scope & Abort[AIStreamException]) =
-        given Schema[A] = schema
+        given Schema[A]                                              = schema
         def decodeElement(raw: String): A < Abort[AIStreamException] =
             Json.decode[Structure.Value](raw) match
                 case Result.Success(v) =>
@@ -500,6 +510,9 @@ object LLM:
     private[kyo] def setSession(ai: AI, value: AISession)(using Frame): Unit < LLM = suspend(Op.SetSession(ai, value))
 
     private[kyo] def gen[A](target: AI, schema: Schema[A])(using Frame): A < LLM = suspend(Op.Gen[A](target, schema))
+
+    private[kyo] def decide[R](target: AI, plan: Decider.internal.Plan[R], record: Boolean)(using Frame): R < LLM =
+        suspend(Op.Decide(target, plan, record))
 
     private[kyo] def stream[A](target: AI, schema: Schema[A])(using
         Frame,
@@ -648,7 +661,7 @@ object LLM:
                     )
                 else ctx
             context <- Prompt.internal.enrichedContext(requestCtx, allTools)
-            _ <- Log.debug(
+            _       <- Log.debug(
                 // Carries the facts that DECIDE this request's shape, not just its size: the reasoning state,
                 // resolved amount, and ceiling are each derived from a declaration, so a turn that behaved
                 // unexpectedly can't be diagnosed from the call alone without this.
@@ -683,11 +696,13 @@ object LLM:
                                         // sees it, so the clause names AITransientException alone: transport
                                         // blips, transient outages, and throttles retry; auth failures,
                                         // timeouts, and rejected requests surface without retry. Command
-                                        // harnesses classify into the same leaves.
+                                        // harnesses classify into the same leaves. A throttle's Retry-After
+                                        // is waited out, under the deadline, before the schedule's backoff.
                                         Abort.recover[HttpException](e =>
                                             Abort.fail(Completion.classifyHttp(config, e))
                                         )(_),
                                         config.meter.run,
+                                        Completion.awaitRetryAfter(config.timeout)(_),
                                         Retry[AITransientException](config.retrySchedule)(_)
                                     )
                             }.map {
@@ -734,7 +749,7 @@ object LLM:
             // decode guessing at usability would fail working turns, or let a truncated call through to be
             // reported as a schema problem many rejections later.
             _ <- Kyo.when(reply.stopReason == Completion.StopReason.MaxOutputTokens) {
-                val stopped = messages.collect { case msg: AssistantMessage => msg.calls }.flatten
+                val stopped  = messages.collect { case msg: AssistantMessage => msg.calls }.flatten
                 val unusable =
                     stopped.isEmpty ||
                         stopped.lastOption.exists(call => Json.decode[Structure.Value](call.arguments).isFailure)
@@ -773,11 +788,11 @@ object LLM:
             // touches the payload or adds a parallel repair channel.
             preRejections <- capture.rejections
             _             <- Tool.internal.handle(ai, allTools, calls.filterNot(call => completedCallIds.contains(call.id)))
-            r <- capture.value.map {
+            r             <- capture.value.map {
                 case present @ Present(_) => Kyo.lift(present)
-                case Absent =>
+                case Absent               =>
                     val calledResult = calls.exists(_.function == Completion.resultToolName)
-                    val repair =
+                    val repair       =
                         if calledResult then
                             // The call was dispatched and rejected; the tool loop already fed the reason
                             // back. Record the rejection for the exhaustion report when a decode-stage
@@ -814,12 +829,13 @@ object LLM:
           */
         abstract class Op[A]
         object Op:
-            case class Read(target: AI)                      extends Op[Context]
-            case class Add(target: AI, message: Message)     extends Op[Unit]
-            case class Set(target: AI, context: Context)     extends Op[Unit]
-            case object Init                                 extends Op[AI]
-            case object Env                                  extends Op[AIEnv]
-            case class Gen[A](target: AI, schema: Schema[A]) extends Op[A]
+            case class Read(target: AI)                                                       extends Op[Context]
+            case class Add(target: AI, message: Message)                                      extends Op[Unit]
+            case class Set(target: AI, context: Context)                                      extends Op[Unit]
+            case object Init                                                                  extends Op[AI]
+            case object Env                                                                   extends Op[AIEnv]
+            case class Gen[A](target: AI, schema: Schema[A])                                  extends Op[A]
+            case class Decide[R](target: AI, plan: Decider.internal.Plan[R], record: Boolean) extends Op[R]
             case class Stream[A](target: AI, schema: Schema[A], emitTag: Tag[Emit[Chunk[A]]])
                 extends Op[kyo.Stream[A, LLM & Async & Scope & Abort[AIStreamException]]]
             case class SetEnv(env: AIEnv)                         extends Op[AIEnv]
@@ -835,9 +851,9 @@ object LLM:
           * GC'd, letting the sweep (`State.pruned`) find and drop it. `isValid` is false once collected.
           */
         final class AIRef(ai: AI) extends WeakReference[AI](ai):
-            private val refId: Long    = ai.id
-            def isValid: Boolean       = get() != null
-            override def hashCode: Int = refId.hashCode
+            private val refId: Long              = ai.id
+            def isValid: Boolean                 = get() != null
+            override def hashCode: Int           = refId.hashCode
             override def equals(o: Any): Boolean = o match
                 case r: AIRef => refId == r.refId
                 case _        => false

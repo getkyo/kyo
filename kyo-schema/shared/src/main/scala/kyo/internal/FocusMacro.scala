@@ -164,8 +164,8 @@ import scala.quoted.*
             $focus.getter.asInstanceOf[A => Maybe[Any]](root) match
                 case Maybe.Present(currentParent) =>
                     ${
-                        val typedParent   = '{ currentParent.asInstanceOf[Nominal] }
-                        val typedNewValue = '{ newValue }
+                        val typedParent      = '{ currentParent.asInstanceOf[Nominal] }
+                        val typedNewValue    = '{ newValue }
                         val args: List[Term] = caseFields.map: field =>
                             if field.name == fieldName then
                                 typedNewValue.asTerm
@@ -173,7 +173,7 @@ import scala.quoted.*
                                 Select.unique(typedParent.asTerm, field.name)
 
                         val companion = Ref(sym.companionModule)
-                        val typeArgs = nominalType match
+                        val typeArgs  = nominalType match
                             case AppliedType(_, targs) => targs
                             case _                     => List.empty
                         val constructorCall = Select.overloaded(companion, "apply", typeArgs, args)
@@ -212,8 +212,8 @@ import scala.quoted.*
             $focus.getter.asInstanceOf[A => Maybe[Any]](root) match
                 case Maybe.Present(currentParent) =>
                     ${
-                        val typedParent   = '{ currentParent.asInstanceOf[Nominal] }
-                        val typedNewValue = '{ newValue }
+                        val typedParent      = '{ currentParent.asInstanceOf[Nominal] }
+                        val typedNewValue    = '{ newValue }
                         val args: List[Term] = caseFields.map: field =>
                             if field.name == originalName then
                                 typedNewValue.asTerm
@@ -221,7 +221,7 @@ import scala.quoted.*
                                 Select.unique(typedParent.asTerm, field.name)
 
                         val companion = Ref(sym.companionModule)
-                        val typeArgs = nominalType match
+                        val typeArgs  = nominalType match
                             case AppliedType(_, targs) => targs
                             case _                     => List.empty
                         val constructorCall = Select.overloaded(companion, "apply", typeArgs, args)
@@ -358,7 +358,7 @@ import scala.quoted.*
       */
     private def captureAnnotations(using Quotes)(sym: quotes.reflect.Symbol): Expr[Chunk[Any]] =
         import quotes.reflect.*
-        val policy = summonAnnotationPolicy
+        val policy                = summonAnnotationPolicy
         val kept: List[Expr[Any]] = sym.annotations.flatMap { term =>
             val fqn      = term.tpe.typeSymbol.fullName
             val isMarker = term.tpe <:< TypeRepr.of[kyo.schema.SchemaAnnotation]
@@ -393,7 +393,7 @@ import scala.quoted.*
         val accessorAnnots             = caseField.annotations
         val ctorTypeSyms               = ctorAnnots.map(_.tpe.typeSymbol)
         val mergedAnnots               = ctorAnnots ++ accessorAnnots.filterNot(a => ctorTypeSyms.contains(a.tpe.typeSymbol))
-        val kept: List[Expr[Any]] = mergedAnnots.flatMap { term =>
+        val kept: List[Expr[Any]]      = mergedAnnots.flatMap { term =>
             val fqn      = term.tpe.typeSymbol.fullName
             val isMarker = term.tpe <:< TypeRepr.of[kyo.schema.SchemaAnnotation]
             if isMarker || policyAdmits(policy, fqn) then reifyAnnotation(term)
@@ -417,7 +417,7 @@ import scala.quoted.*
             case Inlined(_, _, inner)                                  => extractStrings(inner)
             case Select(_, "empty") | TypeApply(Select(_, "empty"), _) => Some(Nil)
             case Typed(inner, _)                                       => extractStrings(inner)
-            case Repeated(elems, _) =>
+            case Repeated(elems, _)                                    =>
                 val ss = elems.flatMap { case Literal(StringConstant(s)) => Some(s); case _ => None }
                 if ss.length == elems.length then Some(ss) else None
             case Apply(_, List(Typed(Repeated(elems, _), _))) =>
@@ -452,11 +452,11 @@ import scala.quoted.*
         end followRhs
 
         def decodePolicy(term: Term): Option[kyo.schema.AnnotationPolicy] = term match
-            case Inlined(_, _, inner) => decodePolicy(inner)
-            case Typed(inner, _)      => decodePolicy(inner)
+            case Inlined(_, _, inner)                                                    => decodePolicy(inner)
+            case Typed(inner, _)                                                         => decodePolicy(inner)
             case Apply(_, args) if term.tpe <:< TypeRepr.of[kyo.schema.AnnotationPolicy] =>
                 val named = args.collect { case NamedArg(n, t) => n -> t }.toMap
-                val inc = named.get("include").flatMap(extractStrings)
+                val inc   = named.get("include").flatMap(extractStrings)
                     .map(kyo.Chunk.from[String])
                     .getOrElse(kyo.schema.AnnotationPolicy.default.include)
                 val exc = named.get("exclude").flatMap(extractStrings)
@@ -464,7 +464,7 @@ import scala.quoted.*
                     .getOrElse(kyo.schema.AnnotationPolicy.default.exclude)
                 Some(kyo.schema.AnnotationPolicy(inc, exc))
             case Block(_, last) => decodePolicy(last)
-            case _ =>
+            case _              =>
                 val sym      = term.symbol
                 val ownerFqn = sym.owner.fullName
                 if ownerFqn == "kyo.schema.AnnotationPolicy" || ownerFqn == "kyo.schema.AnnotationPolicy$" then
@@ -476,14 +476,14 @@ import scala.quoted.*
                 end if
 
         Expr.summon[kyo.schema.AnnotationPolicy] match
-            case None => kyo.schema.AnnotationPolicy.default
+            case None             => kyo.schema.AnnotationPolicy.default
             case Some(policyExpr) =>
                 val term     = policyExpr.asTerm
                 val givenSym = term.symbol
                 val body     = followRhs(givenSym).getOrElse(term)
                 decodePolicy(body) match
                     case Some(policy) => policy
-                    case None =>
+                    case None         =>
                         report.errorAndAbort(
                             "A custom AnnotationPolicy must be provided as an `inline given` so its value is " +
                                 "readable at derivation time, e.g. `inline given AnnotationPolicy = AnnotationPolicy.markersOnly`. " +
@@ -797,7 +797,7 @@ import scala.quoted.*
                         case scala.None =>
                             val mode      = omitModeName(term)
                             val fieldType = tpe.memberType(f).dealias
-                            val isOpt = fieldType match
+                            val isOpt     = fieldType match
                                 case AppliedType(tycon, _) =>
                                     tycon.typeSymbol == maybeSym || tycon.typeSymbol == optionSym
                                 case _ => false
@@ -1159,7 +1159,7 @@ import scala.quoted.*
 
         // Variant-level: @rename and @alias on each child symbol.
         children.foreach { child =>
-            val childName = child.name.stripSuffix("$")
+            val childName      = child.name.stripSuffix("$")
             val childRenameOpt = child.annotations.collectFirst {
                 case term if term.tpe <:< TypeRepr.of[kyo.schema.rename] =>
                     firstStringArg(term)
@@ -1351,7 +1351,7 @@ import scala.quoted.*
         val fnTerm     = construct.asTerm
         val paramTypes = fnTerm.tpe.widen.dealias match
             case AppliedType(tycon, args) if tycon.typeSymbol.fullName.startsWith("scala.Function") => args.init
-            case other =>
+            case other                                                                              =>
                 report.errorAndAbort(
                     s"Schema.derivedVia expects a function over ${tpe.show}'s case fields; got ${other.show}."
                 )
@@ -1375,7 +1375,7 @@ import scala.quoted.*
                 )
         }
 
-        val typeNameExpr = Expr(sym.name)
+        val typeNameExpr                                 = Expr(sym.name)
         val sourceFieldsExpr: Expr[Seq[kyo.Field[?, ?]]] = Expr.summon[kyo.Fields[A]] match
             case Some(fieldsExpr) => '{ $fieldsExpr.fields }
             case None             => '{ Seq.empty[kyo.Field[?, ?]] }
@@ -1408,11 +1408,11 @@ import scala.quoted.*
       */
     private def flattenUnion(using Quotes)(tpe: quotes.reflect.TypeRepr): List[quotes.reflect.TypeRepr] =
         import quotes.reflect.*
-        val acc  = scala.collection.mutable.ListBuffer.empty[TypeRepr]
-        val seen = scala.collection.mutable.ListBuffer.empty[String]
+        val acc                   = scala.collection.mutable.ListBuffer.empty[TypeRepr]
+        val seen                  = scala.collection.mutable.ListBuffer.empty[String]
         def go(t: TypeRepr): Unit = t.dealias match
             case OrType(l, r) => go(l); go(r)
-            case other =>
+            case other        =>
                 val key = other.show
                 if !seen.contains(key) then
                     seen += key
@@ -1444,7 +1444,7 @@ import scala.quoted.*
         val labelCounts = memberNames.groupBy(identity).filter(_._2.size > 1)
         if labelCounts.nonEmpty then
             val collisions = labelCounts.keys.toList.sorted.mkString(", ")
-            val involved = memberNames.zip(members).collect {
+            val involved   = memberNames.zip(members).collect {
                 case (label, member) if labelCounts.contains(label) =>
                     s"${member.show} (label \"$label\")"
             }.mkString(", ")
@@ -1460,11 +1460,13 @@ import scala.quoted.*
 
         // _uself: Schema[A] (lazy), one _u$idx: Schema[Any] (lazy) per member,
         // one _unb$idx: Array[Byte] per member for the fieldBytes write envelope.
-        val selfSym = Symbol.newVal(owner, "_uself", TypeRepr.of[Schema[A]], Flags.Lazy, Symbol.noSymbol)
-        val variantSyms: List[Symbol] =
-            (0 until n).toList.map(idx => Symbol.newVal(owner, s"_u$idx", TypeRepr.of[Schema[Any]], Flags.Lazy, Symbol.noSymbol))
-        val nameByteSyms: List[Symbol] =
-            (0 until n).toList.map(idx => Symbol.newVal(owner, s"_unb$idx", TypeRepr.of[Array[Byte]], Flags.EmptyFlags, Symbol.noSymbol))
+        val selfSym                   = Symbol.newVal(owner, "_uself", TypeRepr.of[Schema[A]], Flags.Lazy, Symbol.noSymbol)
+        val variantSyms: List[Symbol] = (0 until n).toList.map(idx =>
+            Symbol.newVal(owner, s"_u$idx", TypeRepr.of[Schema[Any]], Flags.Lazy, Symbol.noSymbol)
+        )
+        val nameByteSyms: List[Symbol] = (0 until n).toList.map(idx =>
+            Symbol.newVal(owner, s"_unb$idx", TypeRepr.of[Array[Byte]], Flags.EmptyFlags, Symbol.noSymbol)
+        )
 
         val selfRef: Term = Ref(selfSym)
 
@@ -1481,7 +1483,7 @@ import scala.quoted.*
                     case '[t] => '{ $v.asInstanceOf[Any].isInstanceOf[t] }.asTerm
                 val mName    = Expr(memberNames(idx))
                 val mFieldId = Expr(kyo.internal.CodecMacro.fieldId(memberNames(idx)))
-                val arm = '{
+                val arm      = '{
                     $w.variantStart($mName, $mName, ${ Ref(nameByteSyms(idx)).asExprOf[Array[Byte]] }, $mFieldId)
                     ${ Ref(variantSyms(idx)).asExprOf[Schema[Any]] }.serializeWrite($v, $w)
                     $w.variantEnd()
@@ -1551,7 +1553,7 @@ import scala.quoted.*
         val selfRefExpr: Expr[Schema[A]] = selfRef.asExprOf[Schema[A]]
         val writeFn                      = writeFnExpr[A](writeBody)
         val readFn                       = readFnExpr[A](readBody)
-        val selfRhs: Expr[Schema[A]] = '{
+        val selfRhs: Expr[Schema[A]]     = '{
             Schema.init[A](
                 writeFn = $writeFn,
                 readFn = $readFn,
@@ -1708,8 +1710,8 @@ import scala.quoted.*
         // structure. summonInline inline-expands a no-derives nested codec (and at runtime
         // re-constructs it); hoisting fires it once per distinct field type and memoizes it per
         // instance, instead of 3x per field plus a per-call reconstruction at every field site.
-        val hoistOwner     = Symbol.spliceOwner
-        val hoistedSchemas = scala.collection.mutable.ListBuffer.empty[(TypeRepr, Symbol)]
+        val hoistOwner                            = Symbol.spliceOwner
+        val hoistedSchemas                        = scala.collection.mutable.ListBuffer.empty[(TypeRepr, Symbol)]
         def hoistedSchemaSym(t: TypeRepr): Symbol =
             hoistedSchemas.find((tt, _) => tt =:= t).map(_._2).getOrElse {
                 val schemaTpe = t.asType match
@@ -1785,7 +1787,7 @@ import scala.quoted.*
             // key method: the JSON writer's ASCII fast path, the Protobuf field tag, and the MsgPack
             // key-encoding switch). Dynamic `Map` keys and the hand-written sum discriminator keys stay
             // on `field`, which carries the raw String for escaping.
-            val header: Term = '{ $w.objectStart(${ Expr(typeName) }, ${ Expr(n) }) }.asTerm
+            val header: Term         = '{ $w.objectStart(${ Expr(typeName) }, ${ Expr(n) }) }.asTerm
             val perField: List[Term] = fields.zipWithIndex.map { (f, idx) =>
                 // Field header tag MUST be the hash-based field ID (CodecMacro.fieldId), NOT the
                 // positional index. Computed at macro time as a literal; identical to the runtime's
@@ -1961,8 +1963,8 @@ import scala.quoted.*
                     // (field decoding, defaults, the required-field bitmap) is shared verbatim.
                     val construct: Term = constructVia match
                         case Some(build) => build(ctorArgs, r)
-                        case None =>
-                            val ctor: Term = Select(New(TypeTree.of[a]), sym.primaryConstructor)
+                        case None        =>
+                            val ctor: Term   = Select(New(TypeTree.of[a]), sym.primaryConstructor)
                             val typeArgsList = tpe match
                                 case AppliedType(_, targs) => targs
                                 case _                     => List.empty
@@ -1972,7 +1974,7 @@ import scala.quoted.*
                     val resultSym = Symbol.newVal(owner, "_result", tpe, Flags.EmptyFlags, Symbol.noSymbol)
                     val resultDef = ValDef(resultSym, Some(construct))
 
-                    val nExpr = Expr(n)
+                    val nExpr                     = Expr(n)
                     val allStmts: List[Statement] =
                         List(
                             '{ kyo.discard($r.objectStart()) }.asTerm,
@@ -1995,7 +1997,7 @@ import scala.quoted.*
             // Read each field's @doc off the PRIMARY-CONSTRUCTOR PARAMETER symbol (the case-field getter
             // carries no annotation). Built once before the fields loop so the per-field emission stays
             // branch-free: one buildProductSchema per derivation, no per-field annotation read.
-            val docSym = TypeRepr.of[kyo.schema.doc].typeSymbol
+            val docSym                        = TypeRepr.of[kyo.schema.doc].typeSymbol
             val ctorDocs: Map[String, String] =
                 sym.primaryConstructor.paramSymss.flatten.flatMap { p =>
                     p.getAnnotation(docSym).collect {
@@ -2009,7 +2011,7 @@ import scala.quoted.*
                 val optExpr  = Expr(isOpt)
                 val defVal   = defaultStructureValuesExpr
                 val idxExpr  = Expr(idx)
-                val docExpr = ctorDocs.get(f.name) match
+                val docExpr  = ctorDocs.get(f.name) match
                     case Some(s) => '{ kyo.Maybe(${ Expr(s) }) }
                     case None    => '{ kyo.Maybe.empty[String] }
                 rawType.asType match
@@ -2052,9 +2054,9 @@ import scala.quoted.*
 
         // Build the Schema.init term first so every fieldSchemaExprTyped / structure call has
         // populated `hoistedSchemas`, then prepend the hoisted lazy vals as a wrapping block.
-        val cfg     = desugarProductConfig[A](sym, tpe)
-        val writeFn = writeFnExpr[A](writeBody)
-        val readFn  = readFnExpr[A](readBody)
+        val cfg                  = desugarProductConfig[A](sym, tpe)
+        val writeFn              = writeFnExpr[A](writeBody)
+        val readFn               = readFnExpr[A](readBody)
         val schemaInitTerm: Term =
             '{
                 Schema.init[A](
@@ -2195,14 +2197,14 @@ import scala.quoted.*
             report.errorAndAbort(s"Cannot derive Schema for sealed trait ${sym.name}: no case class or object variants found.")
         val n = children.length
 
-        val childNames: List[String] = children.map(_.name.stripSuffix("$"))
+        val childNames: List[String]   = children.map(_.name.stripSuffix("$"))
         val childTypes: List[TypeRepr] = children.map { child =>
             if child.isType then child.typeRef
             else if child.flags.is(Flags.Module) then child.termRef.widen
             else child.typeRef
         }
 
-        val tagExpr = summonSchemaTag(tpe)
+        val tagExpr                  = summonSchemaTag(tpe)
         val enumValues: List[String] = children.zip(childNames).collect {
             case (child, nm) if child.flags.is(Flags.Module) || !child.isClassDef => nm
         }
@@ -2210,11 +2212,13 @@ import scala.quoted.*
         val owner = Symbol.spliceOwner
 
         // _self: Schema[A] plus one _v_i: Schema[Any] per variant; mutually referenced lazy vals.
-        val selfSym = Symbol.newVal(owner, "_self", TypeRepr.of[Schema[A]], Flags.Lazy, Symbol.noSymbol)
-        val variantSyms: List[Symbol] =
-            (0 until n).toList.map(idx => Symbol.newVal(owner, s"_v$idx", TypeRepr.of[Schema[Any]], Flags.Lazy, Symbol.noSymbol))
-        val nameByteSyms: List[Symbol] =
-            (0 until n).toList.map(idx => Symbol.newVal(owner, s"_nb$idx", TypeRepr.of[Array[Byte]], Flags.EmptyFlags, Symbol.noSymbol))
+        val selfSym                   = Symbol.newVal(owner, "_self", TypeRepr.of[Schema[A]], Flags.Lazy, Symbol.noSymbol)
+        val variantSyms: List[Symbol] = (0 until n).toList.map(idx =>
+            Symbol.newVal(owner, s"_v$idx", TypeRepr.of[Schema[Any]], Flags.Lazy, Symbol.noSymbol)
+        )
+        val nameByteSyms: List[Symbol] = (0 until n).toList.map(idx =>
+            Symbol.newVal(owner, s"_nb$idx", TypeRepr.of[Array[Byte]], Flags.EmptyFlags, Symbol.noSymbol)
+        )
 
         val selfRef: Term = Ref(selfSym)
 
@@ -2246,7 +2250,7 @@ import scala.quoted.*
                 }.asTerm
             ) { (idx, elseTerm) =>
                 val cond = variantCheck(idx, v).asTerm
-                val arm = '{
+                val arm  = '{
                     $w.variantStart(
                         ${ Expr(typeName) },
                         ${ Expr(childNames(idx)) },
@@ -2327,9 +2331,9 @@ import scala.quoted.*
             }
             '{ kyo.Chunk.from[kyo.Codec.Reader => Any](Array[kyo.Codec.Reader => Any](${ Varargs(perVariant) }*)) }
         end variantDecodersExpr
-        val cfg     = desugarSumConfig(sym, tpe, children)
-        val writeFn = writeFnExpr[A](writeBody)
-        val readFn  = readFnExpr[A](readBody)
+        val cfg                      = desugarSumConfig(sym, tpe, children)
+        val writeFn                  = writeFnExpr[A](writeBody)
+        val readFn                   = readFnExpr[A](readBody)
         val selfRhs: Expr[Schema[A]] = '{
             Schema.init[A](
                 writeFn = $writeFn,

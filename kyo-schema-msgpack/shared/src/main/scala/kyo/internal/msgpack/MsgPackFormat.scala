@@ -82,7 +82,7 @@ private[msgpack] object MsgPackFormat:
     def isMap(b: Int): Boolean   = isFixMap(b) || b == Map16 || b == Map32
     def isArray(b: Int): Boolean = isFixArray(b) || b == Array16 || b == Array32
     def isBin(b: Int): Boolean   = b == Bin8 || b == Bin16 || b == Bin32
-    def isExt(b: Int): Boolean =
+    def isExt(b: Int): Boolean   =
         b == Ext8 || b == Ext16 || b == Ext32 ||
             b == FixExt1 || b == FixExt2 || b == FixExt4 || b == FixExt8 || b == FixExt16
 

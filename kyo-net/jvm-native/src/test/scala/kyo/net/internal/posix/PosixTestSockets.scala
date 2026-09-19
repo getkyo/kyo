@@ -54,8 +54,8 @@ object PosixTestSockets:
                 finally
                     out.close()
                     ol.close()
-            val client   = sockets.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
-            val (ca, cl) = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", port).getOrElse(???)
+            val client    = sockets.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
+            val (ca, cl)  = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", port).getOrElse(???)
             val connected =
                 Sync.ensure(Sync.defer(ca.close()))(sockets.connect(client, ca, cl).safe.get.map(r => assert(r.value == 0)))
             connected.andThen {
@@ -94,8 +94,8 @@ object PosixTestSockets:
                 finally
                     out.close()
                     ol.close()
-            val client   = sockets.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
-            val (ca, cl) = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", port).getOrElse(???)
+            val client    = sockets.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
+            val (ca, cl)  = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", port).getOrElse(???)
             val connected =
                 Sync.ensure(Sync.defer(ca.close()))(sockets.connect(client, ca, cl).safe.get.map(r => assert(r.value == 0)))
             connected.andThen {
@@ -152,7 +152,7 @@ object PosixTestSockets:
                     ol.close()
             val client = sockets.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
             setIntSockOpt(client, PosixConstants.SO_SNDBUF, sndBuf)
-            val (ca, cl) = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", port).getOrElse(???)
+            val (ca, cl)  = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", port).getOrElse(???)
             val connected =
                 Sync.ensure(Sync.defer(ca.close()))(sockets.connect(client, ca, cl).safe.get.map(r => assert(r.value == 0)))
             connected.andThen {
@@ -196,7 +196,7 @@ object PosixTestSockets:
       */
     def drainPeer(driver: IoDriver[PosixHandle], handle: PosixHandle, fd: Int, want: Int)(using Frame): Int < (Abort[Closed] & Async) =
         import AllowUnsafe.embrace.danger
-        val sockets = sock
+        val sockets                   = sock
         def recvLoop(total: Int): Int =
             val buf = Buffer.alloc[Byte](65536)
             try
@@ -239,8 +239,8 @@ object PosixTestSockets:
       */
     def drainCollect(driver: IoDriver[PosixHandle], fd: Int, want: Int)(using Frame): List[Byte] < (Abort[Closed] & Async) =
         import AllowUnsafe.embrace.danger
-        val sockets = sock
-        val handle  = PosixHandle.socket(fd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+        val sockets                               = sock
+        val handle                                = PosixHandle.socket(fd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
         def recvLoop(acc: List[Byte]): List[Byte] =
             val buf = Buffer.alloc[Byte](65536)
             try

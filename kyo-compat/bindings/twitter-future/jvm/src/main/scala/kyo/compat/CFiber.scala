@@ -23,7 +23,7 @@ object CFiber:
         CIO.defer {
             val result = new Promise[A]()
             val body   = c.lower()
-            val _ = body.respond { r =>
+            val _      = body.respond { r =>
                 val _ = result.updateIfEmpty(r)
             }
             result.setInterruptHandler { case t =>

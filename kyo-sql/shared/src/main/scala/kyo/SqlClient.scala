@@ -101,7 +101,7 @@ abstract class SqlClient(private[kyo] val runtime: Runtime[?]):
             // `simpleQuery` and `pipeline` reach the server through here, so a failure either handles must still reach
             // the commit decision.
             case Present(ctx) => self.serialised(ctx.meter)(self.recordingFailure(ctx)(op(ctx.connection)))
-            case Absent =>
+            case Absent       =>
                 self.pinnedEntry.flatMap {
                     case Present((conn, meter)) => self.serialised(meter)(op(conn))
                     case Absent                 => self.useIndependentConnection(op)
@@ -136,7 +136,7 @@ abstract class SqlClient(private[kyo] val runtime: Runtime[?]):
     def serverVersion(using Frame): Idiom.ServerVersion < (Async & Abort[SqlException]) =
         runtime.serverVersionRef.get.flatMap {
             case Present(version) => version
-            case Absent =>
+            case Absent           =>
                 self.routed(_.serverVersion).flatMap { version =>
                     runtime.serverVersionRef.set(Present(version)).andThen(version)
                 }
@@ -477,7 +477,7 @@ abstract class SqlClient(private[kyo] val runtime: Runtime[?]):
         // `GET_LOCK` are both session-scoped and non-transactional, so a ROLLBACK does not free the lock.
         self.pinnedEntry.map {
             case Present((conn, meter)) => self.lockedOn(conn, meter, key, timeout)(body)
-            case Absent =>
+            case Absent                 =>
                 self.useIndependentConnection { conn =>
                     Meter.initMutexUnscoped.map(meter => self.lockedOn(conn, meter, key, timeout)(body))
                 }
@@ -560,7 +560,7 @@ abstract class SqlClient(private[kyo] val runtime: Runtime[?]):
     ): A < (Async & Abort[SqlException]) =
         self.enclosingTransaction.flatMap {
             case Present(ctx) => self.serialised(ctx.meter)(self.recordingFailure(ctx)(op(ctx.connection)))
-            case Absent =>
+            case Absent       =>
                 self.pinnedEntry.flatMap {
                     case Present((conn, meter)) => self.serialised(meter)(op(conn))
                     case Absent                 => runtime.leaseStatement(config)(op)
@@ -581,7 +581,7 @@ abstract class SqlClient(private[kyo] val runtime: Runtime[?]):
     ): A < (S & Async & Abort[SqlException]) =
         ctx.failed.get.flatMap {
             case Present(detail) => Abort.fail(SqlRequestTransactionFailedStatementException(detail))
-            case Absent =>
+            case Absent          =>
                 Abort.run[SqlException](op).flatMap {
                     case Result.Success(a) => a
                     case Result.Failure(e) => ctx.failed.set(Present(e.getMessage)).andThen(Abort.fail(e))
@@ -762,7 +762,7 @@ abstract class SqlClient(private[kyo] val runtime: Runtime[?]):
                 // someone delete the upstream guard.
                 self.enclosingLock.map {
                     case Present(lock) => self.beginOn(lock.connection, lock.meter, isolation, readOnly)(body)
-                    case Absent =>
+                    case Absent        =>
                         self.useIndependentConnection { conn =>
                             Meter.initMutexUnscoped.map(meter => self.beginOn(conn, meter, isolation, readOnly)(body))
                         }
@@ -1480,10 +1480,12 @@ object SqlClient:
     private[kyo] def factoryFor(rawUrl: String, registry: Backend.Registry)(using
         Frame
     ): (SqlConfig.Url, Backend) < Abort[SqlException] =
-        Abort.get(SqlConfig.Url.parse(rawUrl)).flatMap { url =>
-            registry.forScheme(url.address.scheme) match
-                case Present(backend) => (url, backend)
-                case Absent           => Abort.fail(SqlConnectionUnsupportedSchemeException(url.address.scheme, registry.schemes))
+        // The scheme is resolved BEFORE the rest is parsed, so each backend reads the URL shape it answers to. A
+        // network parser applied to an embedded engine's path would reject a URL that backend understands perfectly.
+        Abort.get(SqlConfig.Url.schemeOf(rawUrl)).flatMap { scheme =>
+            registry.forScheme(scheme) match
+                case Present(backend) => Abort.get(backend.parseUrl(rawUrl)).map(url => (url, backend))
+                case Absent           => Abort.fail(SqlConnectionUnsupportedSchemeException(scheme, registry.schemes))
         }
 
 end SqlClient

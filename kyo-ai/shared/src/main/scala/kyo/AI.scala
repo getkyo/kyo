@@ -29,10 +29,11 @@ object AI:
     given Ordering[AI] = Ordering.by(_.id)
 
     /** Surfaced under `AI` so `import kyo.*` reaches the settings and content types without a `kyo.ai` import:
-      * `AI.Config`, `AI.Context`, `AI.Image`.
+      * `AI.Config`, `AI.DeciderConfig`, `AI.Context`, `AI.Image`.
       */
     export kyo.ai.Config
     export kyo.ai.Context
+    export kyo.ai.DeciderConfig
     export kyo.ai.Image
 
     /** A composable element of the generation surface that can be enabled on an `AI`: a [[kyo.Tool]], a
@@ -264,6 +265,53 @@ object AI:
             input4: E
         ): Stream[A, LLM & Async & Scope & Abort[AIStreamException]] < LLM =
             ai.stream[A]((input1, input2, input3, input4))
+
+        // ---- decisions: the conversation is the context; the question and the answer join it as two messages.
+
+        /** [[Decider.check]] against this conversation, recorded on it. */
+        def check[Q: Schema](question: Q)(using Frame): Boolean < LLM =
+            ai.check(question, Decider.internal.defaultThreshold)
+
+        /** [[Decider.check]] against this conversation with an explicit threshold, recorded on it. */
+        def check[Q: Schema](question: Q, threshold: Double)(using Frame): Boolean < LLM =
+            LLM.decide(ai, Decider.internal.checkPlan(Structure.encode(question), threshold), record = true)
+
+        /** [[Decider.choose]] against this conversation, recorded on it. */
+        def choose[Q: Schema, A: Schema](question: Q, options: Seq[A])(using Frame): A < LLM =
+            LLM.decide(ai, Decider.internal.choosePlan(Structure.encode(question), options), record = true)
+
+        /** [[Decider.score]] against this conversation, recorded on it. */
+        def score[Q: Schema, A: Schema](question: Q, levels: Seq[A])(using Frame): Double < LLM =
+            LLM.decide(ai, Decider.internal.scorePlan(Structure.encode(question), levels), record = true)
+
+        /** [[Decider.noul]] against this conversation, recorded on it. */
+        def noul[Q: Schema](question: Q)(using Frame): Double < LLM =
+            LLM.decide(ai, Decider.internal.noulPlan(Structure.encode(question)), record = true)
+
+        /** [[Decider.query]] against this conversation, recorded on it. */
+        def query[R](query: Decider.Query[R])(using Frame): R < LLM =
+            LLM.decide(ai, Decider.internal.queryPlan(query), record = true)
+
+        /** [[Decider.batch]] of any number of same-typed questions against this conversation, recorded on
+          * it as one exchange. Empty input asks nothing and records nothing.
+          */
+        def batch[R](queries: Seq[Decider.Query[R]])(using Frame): Chunk[R] < LLM =
+            if queries.isEmpty then Chunk.empty
+            else LLM.decide(ai, Decider.internal.batchPlan(queries), record = true)
+
+        /** [[Decider.batch]] of two questions against this conversation, recorded on it. */
+        def batch[A, B](q1: Decider.Query[A], q2: Decider.Query[B])(using Frame): (A, B) < LLM =
+            LLM.decide(ai, Decider.internal.batchPlan(q1, q2), record = true)
+
+        /** [[Decider.batch]] of three questions against this conversation, recorded on it. */
+        def batch[A, B, D](q1: Decider.Query[A], q2: Decider.Query[B], q3: Decider.Query[D])(using Frame): (A, B, D) < LLM =
+            LLM.decide(ai, Decider.internal.batchPlan(q1, q2, q3), record = true)
+
+        /** [[Decider.batch]] of four questions against this conversation, recorded on it. */
+        def batch[A, B, D, E](q1: Decider.Query[A], q2: Decider.Query[B], q3: Decider.Query[D], q4: Decider.Query[E])(using
+            Frame
+        ): (A, B, D, E) < LLM =
+            LLM.decide(ai, Decider.internal.batchPlan(q1, q2, q3, q4), record = true)
 
         def systemMessage(content: String)(using Frame): Unit < LLM =
             LLM.append(ai, SystemMessage(content))

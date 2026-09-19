@@ -47,7 +47,7 @@ final private[kyo] case class MysqlRowCodec(format: Format) extends SqlPositiona
         else MysqlRowCodec.nameOf(MysqlColumnToken.columnType(typeToken))
 
     /** A `FLOAT` column is the narrower of the two widths this backend maps to one kind. */
-    override private[kyo] def isSingleWidthFloat(typeToken: Int): Boolean =
+    override def isSingleWidthFloat(typeToken: Int): Boolean =
         MysqlColumnToken.columnType(typeToken) == MysqlEncoder.TYPE_FLOAT
 
     /** Reads the kinds whose wire only this backend can interpret, under BOTH wire formats.
@@ -60,7 +60,7 @@ final private[kyo] case class MysqlRowCodec(format: Format) extends SqlPositiona
       */
     override def columnValue(row: SqlRow, idx: Int)(using Frame): SqlValue < Abort[SqlDecodeException] =
         import SqlRow.ColumnKind
-        val column = row.columns(idx)
+        val column                                          = row.columns(idx)
         def bytesOf: Span[Byte] < Abort[SqlDecodeException] =
             row.column(idx) match
                 case Maybe.Present(bytes) => bytes

@@ -56,7 +56,7 @@ class Rfc7617Test extends BaseHttpTest:
             .handler(req => HttpResponse.ok(s"hello ${req.fields.user}"))
         withServer(ep) { port =>
             val encoded = java.util.Base64.getEncoder.encodeToString("user:pass:word".getBytes("UTF-8"))
-            val req = HttpRequest.getRaw(HttpUrl.fromUri("/secure"))
+            val req     = HttpRequest.getRaw(HttpUrl.fromUri("/secure"))
                 .setHeader("Authorization", s"Basic $encoded")
             send(port, rawRoute, req).map { resp =>
                 assert(resp.status == HttpStatus.OK, s"Password with colon should work, got: ${resp.status}")
@@ -70,7 +70,7 @@ class Rfc7617Test extends BaseHttpTest:
             .handler(req => HttpResponse.ok(s"hello ${req.fields.user}"))
         withServer(ep) { port =>
             val encoded = java.util.Base64.getEncoder.encodeToString("user:".getBytes("UTF-8"))
-            val req = HttpRequest.getRaw(HttpUrl.fromUri("/secure"))
+            val req     = HttpRequest.getRaw(HttpUrl.fromUri("/secure"))
                 .setHeader("Authorization", s"Basic $encoded")
             send(port, rawRoute, req).map { resp =>
                 assert(resp.status == HttpStatus.OK, s"Empty password should work, got: ${resp.status}")
@@ -84,7 +84,7 @@ class Rfc7617Test extends BaseHttpTest:
             .handler(req => HttpResponse.ok(s"hello ${req.fields.user}"))
         withServer(ep) { port =>
             val encoded = java.util.Base64.getEncoder.encodeToString(":password".getBytes("UTF-8"))
-            val req = HttpRequest.getRaw(HttpUrl.fromUri("/secure"))
+            val req     = HttpRequest.getRaw(HttpUrl.fromUri("/secure"))
                 .setHeader("Authorization", s"Basic $encoded")
             send(port, rawRoute, req).map { resp =>
                 assert(resp.status == HttpStatus.OK, s"Empty username should work, got: ${resp.status}")
@@ -111,7 +111,7 @@ class Rfc7617Test extends BaseHttpTest:
     "Section 2 - Missing Basic prefix returns 401" in {
         withServer(basicEndpoint) { port =>
             val encoded = java.util.Base64.getEncoder.encodeToString("Aladdin:open sesame".getBytes("UTF-8"))
-            val req = HttpRequest.getRaw(HttpUrl.fromUri("/secure"))
+            val req     = HttpRequest.getRaw(HttpUrl.fromUri("/secure"))
                 .setHeader("Authorization", encoded) // No "Basic " prefix
             Abort.run(send(port, rawRoute, req)).map { result =>
                 result match
@@ -142,7 +142,7 @@ class Rfc7617Test extends BaseHttpTest:
         // "basic" and "BASIC" should both be accepted
         withServer(basicEndpoint) { port =>
             val encoded = java.util.Base64.getEncoder.encodeToString("Aladdin:open sesame".getBytes("UTF-8"))
-            val req = HttpRequest.getRaw(HttpUrl.fromUri("/secure"))
+            val req     = HttpRequest.getRaw(HttpUrl.fromUri("/secure"))
                 .setHeader("Authorization", s"basic $encoded") // lowercase "basic"
             send(port, rawRoute, req).map { resp =>
                 // RFC 9110 §11.1: scheme comparison MUST be case-insensitive
@@ -159,7 +159,7 @@ class Rfc7617Test extends BaseHttpTest:
     "Section 2 - Extra whitespace after Basic" in {
         withServer(basicEndpoint) { port =>
             val encoded = java.util.Base64.getEncoder.encodeToString("Aladdin:open sesame".getBytes("UTF-8"))
-            val req = HttpRequest.getRaw(HttpUrl.fromUri("/secure"))
+            val req     = HttpRequest.getRaw(HttpUrl.fromUri("/secure"))
                 .setHeader("Authorization", s"Basic  $encoded") // extra space
             Abort.run(send(port, rawRoute, req)).map { result =>
                 // Extra whitespace handling is implementation-defined; either success or 401 is acceptable
@@ -173,7 +173,7 @@ class Rfc7617Test extends BaseHttpTest:
     "Section 2 - Wrong credentials return 401" in {
         withServer(basicEndpoint) { port =>
             val encoded = java.util.Base64.getEncoder.encodeToString("wrong:creds".getBytes("UTF-8"))
-            val req = HttpRequest.getRaw(HttpUrl.fromUri("/secure"))
+            val req     = HttpRequest.getRaw(HttpUrl.fromUri("/secure"))
                 .setHeader("Authorization", s"Basic $encoded")
             Abort.run(send(port, rawRoute, req)).map { result =>
                 result match
@@ -189,7 +189,7 @@ class Rfc7617Test extends BaseHttpTest:
         // RFC 9110 §11.1: Authentication scheme names are case-insensitive
         withServer(basicEndpoint) { port =>
             val encoded = java.util.Base64.getEncoder.encodeToString("Aladdin:open sesame".getBytes("UTF-8"))
-            val req = HttpRequest.getRaw(HttpUrl.fromUri("/secure"))
+            val req     = HttpRequest.getRaw(HttpUrl.fromUri("/secure"))
                 .setHeader("Authorization", s"BASIC $encoded")
             send(port, rawRoute, req).map { resp =>
                 assert(resp.status == HttpStatus.OK, s"BASIC (uppercase) should be accepted per RFC 9110 §11.1, got: ${resp.status}")
@@ -200,7 +200,7 @@ class Rfc7617Test extends BaseHttpTest:
     "Section 2 - Mixed case scheme accepted" in {
         withServer(basicEndpoint) { port =>
             val encoded = java.util.Base64.getEncoder.encodeToString("Aladdin:open sesame".getBytes("UTF-8"))
-            val req = HttpRequest.getRaw(HttpUrl.fromUri("/secure"))
+            val req     = HttpRequest.getRaw(HttpUrl.fromUri("/secure"))
                 .setHeader("Authorization", s"bAsIc $encoded")
             send(port, rawRoute, req).map { resp =>
                 assert(resp.status == HttpStatus.OK, s"bAsIc (mixed case) should be accepted per RFC 9110 §11.1, got: ${resp.status}")
@@ -215,7 +215,7 @@ class Rfc7617Test extends BaseHttpTest:
             .handler(req => HttpResponse.ok(s"hello ${req.fields.user}"))
         withServer(ep) { port =>
             val encoded = java.util.Base64.getEncoder.encodeToString("user:pässwörd".getBytes("UTF-8"))
-            val req = HttpRequest.getRaw(HttpUrl.fromUri("/secure"))
+            val req     = HttpRequest.getRaw(HttpUrl.fromUri("/secure"))
                 .setHeader("Authorization", s"Basic $encoded")
             send(port, rawRoute, req).map { resp =>
                 assert(resp.status == HttpStatus.OK, s"UTF-8 password should work, got: ${resp.status}")
@@ -241,12 +241,12 @@ class Rfc7617Test extends BaseHttpTest:
     "Section 2 - Long credentials accepted" in {
         val longUser = "a" * 200
         val longPass = "b" * 200
-        val ep = basicRoute
+        val ep       = basicRoute
             .filter(HttpFilter.server.basicAuth((u, p) => u == longUser && p == longPass))
             .handler(req => HttpResponse.ok("ok"))
         withServer(ep) { port =>
             val encoded = java.util.Base64.getEncoder.encodeToString(s"$longUser:$longPass".getBytes("UTF-8"))
-            val req = HttpRequest.getRaw(HttpUrl.fromUri("/secure"))
+            val req     = HttpRequest.getRaw(HttpUrl.fromUri("/secure"))
                 .setHeader("Authorization", s"Basic $encoded")
             send(port, rawRoute, req).map { resp =>
                 assert(resp.status == HttpStatus.OK, s"Long credentials should work, got: ${resp.status}")

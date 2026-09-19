@@ -141,8 +141,8 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
                         Log.warn(
                             s"kyo.sql: pool acquire timeout after ${config.acquireTimeout} poolSize=${config.maxConnections}"
                         ).andThen(Abort.fail(e))
-                    case Result.Failure(e) => Abort.fail(e)
-                    case Result.Panic(t)   => Abort.error(Result.Panic(t))
+                    case Result.Failure(e)  => Abort.fail(e)
+                    case Result.Panic(t)    => Abort.error(Result.Panic(t))
                     case Result.Success(()) =>
                         leaseClock.elapsed.flatMap(dur => metrics.recordPoolAcquireWait(dur.toMillis)).andThen {
                             Scope.ensure {
@@ -391,8 +391,8 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
                     Log.warn(
                         s"kyo.sql: pool acquire timeout after ${config.acquireTimeout} poolSize=${config.maxConnections}"
                     ).andThen(Abort.fail(e))
-                case Result.Failure(e) => Abort.fail(e)
-                case Result.Panic(t)   => Abort.error(Result.Panic(t))
+                case Result.Failure(e)  => Abort.fail(e)
+                case Result.Panic(t)    => Abort.error(Result.Panic(t))
                 case Result.Success(()) =>
                     sw.elapsed.flatMap(dur => metrics.recordPoolAcquireWait(dur.toMillis)).andThen {
                         // The permit is returned by a Scope finalizer, not a `Sync.ensure` one. `Sync.ensure` covers
@@ -488,7 +488,7 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
             onLease(netKey, conn, config) {
                 Sync.Unsafe.defer(custody.take())
                     .andThen(Log.debug(
-                        s"kyo.sql: opened connection id=${conn.id} host=${address.host} port=${address.port} tls=${config.tls.isDefined}"
+                        s"kyo.sql: opened connection id=${conn.id} address=${Render.asString(address)} tls=${config.tls.isDefined}"
                     ))
                     .andThen(metrics.recordAcquire)
                     .andThen(leaseClock.elapsed.flatMap(d => metrics.recordLeaseAcquired(d.toMillis)))
@@ -562,7 +562,7 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
                             }
                         case RingAttempt.Reserved   => Loop.done[Unit, Maybe[C]](Absent)
                         case RingAttempt.PoolClosed => Abort.fail(SqlConnectionPoolClosedException())
-                        case RingAttempt.InTransit =>
+                        case RingAttempt.InTransit  =>
                             withinAcquireBudget(transitClock, config).andThen(Async.sleep(1.milli).andThen(Loop.continue(())))
                     }
                 }
@@ -605,7 +605,7 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
       */
     private def healthy(conn: C, config: SqlConfig)(using Frame): Boolean < (Async & Abort[SqlException]) =
         config.connectionTestQuery match
-            case Absent => true
+            case Absent       => true
             case Present(sql) =>
                 Log.use { logger =>
                     Abort.run[SqlException] {
@@ -671,7 +671,7 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
             else
                 Async.timeoutWithError(
                     budget,
-                    Result.Failure(SqlConnectionEstablishTimeoutException(budget, address.host, address.port, source))
+                    Result.Failure(SqlConnectionEstablishTimeoutException(budget, address, source))
                 )(factory.open(address, password, config))
             end if
     end connect
@@ -903,7 +903,7 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
                             Scope.ensure(error => decideExit(netKey, conn, config, logger, error))
                                 .andThen(Sync.Unsafe.defer(custody.take()))
                                 .andThen(Log.debug(
-                                    s"kyo.sql: opened connection id=${conn.id} host=${address.host} port=${address.port} tls=${config.tls.isDefined}"
+                                    s"kyo.sql: opened connection id=${conn.id} address=${Render.asString(address)} tls=${config.tls.isDefined}"
                                 ))
                                 .andThen(held).andThen(conn)
                         }
@@ -938,14 +938,17 @@ private[kyo] object SqlConnectionPool:
       * ordinary case, has exactly one bucket and is unaffected.
       */
     private[kyo] case class Endpoint(
-        net: NetAddress,
+        address: SqlConfig.Address,
         tlsMode: TlsMode,
         tls: Maybe[NetTlsConfig]
     ) derives CanEqual
 
     private[kyo] object Endpoint:
+        // Keyed on the ADDRESS rather than on a resolved network endpoint. It was only ever a key, never read as one,
+        // and an address is the one coordinate every engine has: an embedded one has a path and no host or port.
         def apply(address: SqlConfig.Address, config: SqlConfig): Endpoint =
-            Endpoint(NetAddress.Tcp(address.host, address.port), config.tlsMode, config.tls)
+            Endpoint(address, config.tlsMode, config.tls)
+    end Endpoint
 
     /** Builds a pool around a fresh [[ConnectionPool]] for the connection type `factory` opens.
       *

@@ -1,7 +1,7 @@
 lazy val root = (project in file("."))
     .enablePlugins(KyoFfiPlugin)
     .settings(
-        scalaVersion := "3.8.3",
+        scalaVersion := sys.props("kyo.scalaVersion"),
         ffiLibraryId := "test_lib",
         ffiIncludes  := Seq(baseDirectory.value / "include")
     )

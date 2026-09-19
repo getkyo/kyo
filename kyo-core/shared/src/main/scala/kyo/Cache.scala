@@ -210,7 +210,7 @@ object Cache:
         def close(gracePeriod: Duration)(using frame: Frame): Unit < Async =
             Sync.Unsafe.defer:
                 self.finalization match
-                    case Absent => ()
+                    case Absent         => ()
                     case Present(typed) =>
                         if typed.closing.compareAndSet(false, true) then
                             // Snapshot every live value into the unbounded queue so the drainer
@@ -422,7 +422,7 @@ object Cache:
             (Integer.highestOneBit(target - 1) << 1) - 1
 
         private val values =
-            val a = new AtomicReferenceArray[Slot[V]](mask + 1)
+            val a                           = new AtomicReferenceArray[Slot[V]](mask + 1)
             @tailrec def loop(i: Int): Unit =
                 if i <= mask then
                     a.set(i, Slot.empty)
@@ -446,7 +446,7 @@ object Cache:
 
         /** Looks up a key and returns its value if present and not expired. */
         def get(key: K)(using AllowUnsafe): Maybe[V] =
-            val now = nowCentis()
+            val now                                           = nowCentis()
             @tailrec def loop(slot: Int, dist: Int): Maybe[V] =
                 if dist > mask then
                     // Probed entire table
@@ -685,8 +685,8 @@ object Cache:
 
         /** Returns all present, non-expired entries as a Dict. For testing and diagnostics only. */
         def contents(using AllowUnsafe): Dict[K, V] =
-            val now = nowCentis()
-            val b   = DictBuilder.init[K, V]
+            val now                         = nowCentis()
+            val b                           = DictBuilder.init[K, V]
             @tailrec def loop(i: Int): Unit =
                 if i <= mask then
                     val s = values.get(i)
@@ -754,8 +754,7 @@ object Cache:
             loop(0)
         end evict
 
-        private def nowCentis()(using AllowUnsafe): Int =
-            ((clock.nowMonotonic().toNanos - epoch) / 10_000_000L).toInt
+        private def nowCentis()(using AllowUnsafe): Int = ((clock.nowMonotonic().toNanos - epoch) / 10_000_000L).toInt
 
         // Scrambles low bits of hashCode to prevent clustering in open-addressing probes.
         private def spread(h: Int): Int =
@@ -841,10 +840,10 @@ object Cache:
                     Long.MinValue | (nowCentis.toLong << 31) | (nowCentis.toLong & 0x7fffffffL)
 
                 extension (s: State)
-                    inline def writeTime: Int       = ((s >>> 31) & 0xffffffffL).toInt
-                    inline def accessTime: Int      = (s & 0x7fffffffL).toInt
-                    inline def accessed: Boolean    = s < 0
-                    inline def clearAccessed: State = s & Long.MaxValue
+                    inline def writeTime: Int                    = ((s >>> 31) & 0xffffffffL).toInt
+                    inline def accessTime: Int                   = (s & 0x7fffffffL).toInt
+                    inline def accessed: Boolean                 = s < 0
+                    inline def clearAccessed: State              = s & Long.MaxValue
                     inline def withAccess(nowCentis: Int): State =
                         (s & 0xffffffff80000000L) | Long.MinValue | (nowCentis.toLong & 0x7fffffffL)
                 end extension

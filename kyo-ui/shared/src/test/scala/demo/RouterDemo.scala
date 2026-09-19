@@ -23,10 +23,10 @@ object RouterDemo extends KyoApp:
 
     private val users = Seq("1" -> "Ada Lovelace", "2" -> "Alan Turing", "3" -> "Grace Hopper")
 
-    private val pageStyle = Style.padding(24.px).fontFamily(FontFamily.SansSerif).gap(16.px)
-    private val navStyle  = Style.row.gap(8.px).align(Alignment.center).padding(0.px, 0.px, 12.px, 0.px)
-    private val viewStyle = Style.column.gap(8.px).padding(16.px).bg(Color.slate).rounded(10.px).minHeight(220.px)
-    private val linkBase  = Style.padding(6.px, 12.px).rounded(8.px).cursor(Cursor.pointer)
+    private val pageStyle                       = Style.padding(24.px).fontFamily(FontFamily.SansSerif).gap(16.px)
+    private val navStyle                        = Style.row.gap(8.px).align(Alignment.center).padding(0.px, 0.px, 12.px, 0.px)
+    private val viewStyle                       = Style.column.gap(8.px).padding(16.px).bg(Color.slate).rounded(10.px).minHeight(220.px)
+    private val linkBase                        = Style.padding(6.px, 12.px).rounded(8.px).cursor(Cursor.pointer)
     private def navLink(active: Boolean): Style =
         if active then linkBase.bg(Color.blue).color(Color.white)
         else linkBase.bg(Color.slate).color(Color.white)
@@ -61,7 +61,7 @@ object RouterDemo extends KyoApp:
     private def app: UI < Async =
         for route <- Signal.initRef("/")
         yield
-            val go = (path: String) => route.set(path)
+            val go                                         = (path: String) => route.set(path)
             def active(cur: String, path: String): Boolean =
                 cur == path || (path != "/" && cur.startsWith(path + "/"))
             def link(path: String, label: String) =

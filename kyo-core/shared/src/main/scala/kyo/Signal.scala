@@ -190,7 +190,7 @@ sealed abstract class Signal[A](using CanEqual[A, A]) extends Serializable:
                             .andThen(self.currentWith { a2 =>
                                 (if a2 == a then inner else f(a2)).currentWith(g)
                             })
-                }
+                    }
         )
 
     /** Pairs this signal with another, waiting for both to change before emitting.

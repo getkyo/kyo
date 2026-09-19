@@ -61,7 +61,7 @@ class SqlClientInsertOutcomeTest extends SqlBackendTest:
         val autoIncPk   = backend.autoIncrementPrimaryKey
         val expectedKey = SqlClient.InsertOutcome.GeneratedKey.Value(1L)
         for
-            _ <- client.executeRaw(s"CREATE TABLE account (id $autoIncPk, name VARCHAR(255) NOT NULL)")
+            _      <- client.executeRaw(s"CREATE TABLE account (id $autoIncPk, name VARCHAR(255) NOT NULL)")
             result <- Sql
                 .insert[Account]
                 .values(Account(0L, "ada"), Account(0L, "bob"), Account(0L, "cid"))

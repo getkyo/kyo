@@ -46,7 +46,7 @@ class PostgresEncoderInetTest extends kyo.Test:
         val addrLen    = bytes(3).toInt & 0xff
         if bytes.size < 4 + addrLen then throw SqlDecodeInsufficientBytesException("inet address", addrLen, bytes.size - 4, 4)
         val hostWidth = addrLen * 8
-        val address = family match
+        val address   = family match
             case 2 =>
                 val a = bytes(4) & 0xff
                 val b = bytes(5) & 0xff
@@ -161,7 +161,7 @@ class PostgresEncoderInetTest extends kyo.Test:
 
     "inet decode with an unknown address family raises, naming the family" in {
         val badBytes = Span.from(Array[Byte](99.toByte, 32.toByte, 0.toByte, 4.toByte, 192.toByte, 168.toByte, 1.toByte, 1.toByte))
-        val ex = intercept[IllegalArgumentException] {
+        val ex       = intercept[IllegalArgumentException] {
             val _ = decodeBinary(badBytes)
         }
         assert(ex.getMessage.contains("99"), s"expected the family named, got: ${ex.getMessage}")
@@ -169,7 +169,7 @@ class PostgresEncoderInetTest extends kyo.Test:
 
     "inet binary shorter than its header raises insufficient bytes" in {
         val bytes = Span.from(Array[Byte](2.toByte, 32.toByte))
-        val ex = intercept[SqlDecodeInsufficientBytesException] {
+        val ex    = intercept[SqlDecodeInsufficientBytesException] {
             val _ = decodeBinary(bytes)
         }
         assert((ex.expected, ex.actual, ex.position) == (4, 2, 0), s"got ${(ex.expected, ex.actual, ex.position)}")

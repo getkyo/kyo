@@ -212,7 +212,7 @@ object ByteSize:
 
         private def applyUnit(numStr: String, unitStr: String, original: String): Either[Throwable, ByteSize] =
             Units.values.find(u => u.symbol.equalsIgnoreCase(unitStr) || u.toString.equalsIgnoreCase(unitStr)) match
-                case None => Left(new IllegalArgumentException(s"Invalid byte size unit: $unitStr"))
+                case None       => Left(new IllegalArgumentException(s"Invalid byte size unit: $unitStr"))
                 case Some(unit) =>
                     bytesFromParsed(numStr, unit) match
                         case Present(byteCount) => Right(fromBytes(byteCount))

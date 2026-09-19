@@ -6,7 +6,7 @@ class GlobTest extends kyo.test.Test[Any]:
 
     private def parse(value: String): Glob =
         Glob.parse(value) match
-            case Result.Success(glob) => glob
+            case Result.Success(glob)  => glob
             case Result.Failure(error) =>
                 throw new AssertionError(s"unexpected parse error at ${error.offset}: ${error.reason}")
             case Result.Panic(error) => throw error

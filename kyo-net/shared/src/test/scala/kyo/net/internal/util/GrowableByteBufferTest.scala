@@ -236,7 +236,7 @@ class GrowableByteBufferTest extends Test:
             // The agreement itself: every string isAscii accepts writes, and every string it rejects is rejected by writeAscii.
             val cases = Seq("", "GET /path HTTP/1.1", 0x7f.toChar.toString, 0x80.toChar.toString, "é", "café")
             cases.foreach { s =>
-                val buf = new GrowableByteBuffer()
+                val buf   = new GrowableByteBuffer()
                 val wrote =
                     try
                         buf.writeAscii(s)
@@ -375,7 +375,7 @@ class GrowableByteBufferTest extends Test:
         // allocating. Int.MaxValue == MaxArrayLength + 8 > MaxArrayLength, so `required > MaxArrayLength` trips the guard up front (no doubling loop,
         // no allocation). An Int doubling would instead wrap the length negative.
         "capacity request above the max array length fails bounded, never negative array length" in {
-            val buf = new GrowableByteBuffer()
+            val buf    = new GrowableByteBuffer()
             val thrown =
                 try
                     buf.ensureCapacityFor(Int.MaxValue)

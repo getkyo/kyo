@@ -28,7 +28,7 @@ class JvmLeakDetectorTest extends Test:
 
     "open guard, testForceLeak emits stderr leakWarning" in {
         given frame: Frame = Frame.internal
-        val (_, captured) = captureStderr {
+        val (_, captured)  = captureStderr {
             val g = Ffi.Guard.open()
             JvmLeakDetector.testForceLeak(g.asInstanceOf[JvmGuard])
             // Close after capturing the warning to cancel the real Cleaner registration. An unclosed guard stays armed and
@@ -40,7 +40,7 @@ class JvmLeakDetectorTest extends Test:
 
     "open guard, close it, then testForceLeak emits nothing" in {
         given frame: Frame = Frame.internal
-        val (_, captured) = captureStderr {
+        val (_, captured)  = captureStderr {
             val g = Ffi.Guard.open()
             discardOutcome(g.close())
             JvmLeakDetector.testForceLeak(g.asInstanceOf[JvmGuard])
@@ -53,7 +53,7 @@ class JvmLeakDetectorTest extends Test:
         // state-aware and will emit again if invoked again. We assert both invocations produce output: this pins that
         // `testForceLeak` does not clear its own state (that is the Cleanable's job on legitimate close).
         given frame: Frame = Frame.internal
-        val (_, captured) = captureStderr {
+        val (_, captured)  = captureStderr {
             val g = Ffi.Guard.open()
             JvmLeakDetector.testForceLeak(g.asInstanceOf[JvmGuard])
             JvmLeakDetector.testForceLeak(g.asInstanceOf[JvmGuard])

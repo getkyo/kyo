@@ -57,25 +57,24 @@ class NativeLoaderForkStressTest extends Test:
                 val pool                   = Executors.newFixedThreadPool(forkN).nn
                 given ec: ExecutionContext = ExecutionContext.fromExecutorService(pool)
                 try
-                    val futures =
-                        (0 until forkN).map { _ =>
-                            Future {
-                                val pb = new ProcessBuilder(
-                                    javaBin.toString,
-                                    "-cp",
-                                    classpath,
-                                    "kyo.ffi.internal.NativeLoaderForkMain",
-                                    dir.toString,
-                                    libId,
-                                    hex
-                                )
-                                pb.redirectErrorStream(true)
-                                val proc       = pb.start().nn
-                                val finishedOk = proc.waitFor(60L, TimeUnit.SECONDS)
-                                val out        = new String(proc.getInputStream.nn.readAllBytes().nn).nn
-                                (finishedOk, proc.exitValue(), out.trim.nn)
-                            }
+                    val futures = (0 until forkN).map { _ =>
+                        Future {
+                            val pb = new ProcessBuilder(
+                                javaBin.toString,
+                                "-cp",
+                                classpath,
+                                "kyo.ffi.internal.NativeLoaderForkMain",
+                                dir.toString,
+                                libId,
+                                hex
+                            )
+                            pb.redirectErrorStream(true)
+                            val proc       = pb.start().nn
+                            val finishedOk = proc.waitFor(60L, TimeUnit.SECONDS)
+                            val out        = new String(proc.getInputStream.nn.readAllBytes().nn).nn
+                            (finishedOk, proc.exitValue(), out.trim.nn)
                         }
+                    }
 
                     val results = Await.result(Future.sequence(futures), 120.seconds)
 

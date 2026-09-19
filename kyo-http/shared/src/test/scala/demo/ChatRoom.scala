@@ -20,7 +20,7 @@ object ChatRoom extends KyoApp:
 
         val post = HttpHandler.postText("messages") { (_, body) =>
             storeRef.updateAndGet { s =>
-                val parts = body.split(":", 2)
+                val parts        = body.split(":", 2)
                 val (user, text) =
                     if parts.length == 2 then (parts(0).trim, parts(1).trim)
                     else ("anonymous", body.trim)
@@ -110,7 +110,7 @@ object ChatRoomClient extends KyoApp:
 
                     _    <- Console.printLine("\n=== Listing messages ===")
                     msgs <- HttpClient.getJson[List[Message]]("/messages")
-                    _ <- Kyo.foreach(msgs) { m =>
+                    _    <- Kyo.foreach(msgs) { m =>
                         Console.printLine(s"  [${m.id}] ${m.user}: ${m.text}")
                     }
 

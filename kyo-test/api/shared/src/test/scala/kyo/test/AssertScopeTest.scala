@@ -51,7 +51,7 @@ class AssertScopeTest extends AsyncFreeSpec with NonImplicitAssertions:
 
         "record after close drops the failure, emits a stderr warning naming the leaf path" in {
             val captured = new StringBuilder
-            val scope = new AssertScope(
+            val scope    = new AssertScope(
                 Chunk("outer", "inner-leaf"),
                 s =>
                     captured.append(s).append('\n'); ()
@@ -80,7 +80,7 @@ class AssertScopeTest extends AsyncFreeSpec with NonImplicitAssertions:
             val _ = AssertScope.drainLeakedAfterClose()
             // Capture the (expected) warning into a per-instance sink so it does not clutter test output and the assertion is
             // deterministic; we only assert the enqueue and the warning here.
-            val sink = new StringBuilder
+            val sink  = new StringBuilder
             val scope = new AssertScope(
                 Chunk("p", "leaf-after"),
                 s =>

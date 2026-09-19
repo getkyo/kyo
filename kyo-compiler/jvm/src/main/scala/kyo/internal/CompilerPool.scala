@@ -93,7 +93,7 @@ final private[kyo] class CompilerPool(
                 .handle(Abort.run[Timeout])
                 .map {
                     case Result.Success(response) => response
-                    case Result.Failure(_) =>
+                    case Result.Failure(_)        =>
                         instances.remove(config).andThen(
                             Abort.fail(CompilerUnresponsiveException(settings.stuckTimeout))
                         )
@@ -162,10 +162,12 @@ final private[kyo] class CompilerPool(
 end CompilerPool
 
 private[kyo] object CompilerPool:
-    /** kyo's own Scala version; the same-version fast path for `effectiveIsolate`. A toolchain
-      * pinned to a different version forces a forked worker regardless of `isolate`.
+    /** The version of the Scala compiler loaded in this JVM; the same-version fast path for
+      * `effectiveIsolate`. A toolchain pinned to a different version forces a forked worker regardless
+      * of `isolate`. Read from the `compiler.properties` of the scala3-compiler jar on the classpath, so
+      * the in-process backend is chosen only for the compiler it would actually run.
       */
-    val ownVersion: String = "3.8.4"
+    val ownVersion: String = dotty.tools.dotc.config.Properties.versionNumberString
 
     /** The pool's driver timeouts, sized for loaded CI hosts: Aeron's 10s client-liveness default
       * assumes dedicated cores, and a compile burst can stall a client conductor past it, which the

@@ -147,7 +147,7 @@ object SqlCodec:
           * than one emitted column, an absent value, and a format the writer cannot meet are each refused with the typed leaf the composite
           * wire form has no way to carry. `typeName` names the element's Scala type in those refusals.
           */
-        final private[kyo] def encodeSingleElement[P](
+        final def encodeSingleElement[P](
             typeName: String,
             params: Chunk[P],
             format: SqlCodec.Format,
@@ -160,7 +160,7 @@ object SqlCodec:
             // format refusal would name the backend for something no flavor's composite wire form can express.
             val head = params.head
             encoded(head) match
-                case Maybe.Absent => throw SqlUnsupportedAbsentElementException(typeName)
+                case Maybe.Absent         => throw SqlUnsupportedAbsentElementException(typeName)
                 case Maybe.Present(bytes) =>
                     if !formatMatches(head) then
                         throw SqlUnsupportedElementFormatException(typeName, format, dialectId)
@@ -287,7 +287,7 @@ object SqlCodec:
           * this so a by-name decode survives a column order the row type did not declare. A return outside `names` means "no match";
           * the row codec falls back to the positional slot.
           */
-        private[kyo] def fieldIndex(index: Int, names: Chunk[String]): Int = index
+        def fieldIndex(index: Int, names: Chunk[String]): Int = index
 
         /** Verifies the input is fully consumed, when the reader can know. Default no-op. */
         private[kyo] def requireEndOfInput(): Unit = ()

@@ -64,7 +64,7 @@ class HandshakeMessagesTest extends Test:
     val authPart2Body: Array[Byte] = Array[Byte](9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20)
     val capLow                     = 0xffff
     val capHigh                    = 0x0001
-    val testPacket: Array[Byte] = buildHandshakeV10(
+    val testPacket: Array[Byte]    = buildHandshakeV10(
         version = "8.0.34",
         threadId = 42L,
         part1 = authPart1,
@@ -116,7 +116,7 @@ class HandshakeMessagesTest extends Test:
 
     "HandshakeResponse41Marshaller sets CLIENT_PROTOCOL_41 in capability flags" in {
         val caps = Capabilities.Default
-        val msg = HandshakeResponse41(
+        val msg  = HandshakeResponse41(
             capabilities = caps,
             maxPacket = 16777216L,
             charset = 255,

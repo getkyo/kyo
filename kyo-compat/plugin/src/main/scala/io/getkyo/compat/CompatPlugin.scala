@@ -83,7 +83,7 @@ object CompatPlugin extends AutoPlugin {
                 scalaVersions: Seq[String]
             ): ProjectMatrix = {
                 val backends = (FutureLib +: extras).distinct
-                val meta = CompatLibrary.Meta(
+                val meta     = CompatLibrary.Meta(
                     backends = backends,
                     platforms = platforms,
                     scalaVersions = scalaVersions,

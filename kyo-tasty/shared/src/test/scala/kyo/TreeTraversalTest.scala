@@ -108,7 +108,7 @@ class TreeTraversalTest extends kyo.test.Test[Any]:
         val lit1  = Tasty.Tree.Literal(Tasty.Constant.IntConst(1))
         val lit2  = Tasty.Tree.Literal(Tasty.Constant.IntConst(2))
         val block = Tasty.Tree.Block(Chunk(lit1), lit2)
-        val sum = block.foldLeft(0) {
+        val sum   = block.foldLeft(0) {
             case (acc, Tasty.Tree.Literal(Tasty.Constant.IntConst(i))) => acc + i
             case (acc, _)                                              => acc
         }

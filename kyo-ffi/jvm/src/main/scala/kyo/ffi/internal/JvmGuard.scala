@@ -23,7 +23,7 @@ final class JvmGuard private[ffi] (arena: Arena, frame: Frame) extends Ffi.Guard
         try arena.close()
         catch
             case NonFatal(_) => ()
-            case e: Error =>
+            case e: Error    =>
                 java.lang.System.err.println(s"[kyo-ffi] Error during guard teardown: ${e.getClass.getName}: ${e.getMessage}")
         end try
         val it = adopted.iterator().nn
@@ -31,7 +31,7 @@ final class JvmGuard private[ffi] (arena: Arena, frame: Frame) extends Ffi.Guard
             try it.next().nn.close()
             catch
                 case NonFatal(_) => ()
-                case e: Error =>
+                case e: Error    =>
                     java.lang.System.err.println(s"[kyo-ffi] Error during guard teardown: ${e.getClass.getName}: ${e.getMessage}")
         end while
         adopted.clear()
@@ -84,7 +84,7 @@ final class JvmGuard private[ffi] (arena: Arena, frame: Frame) extends Ffi.Guard
             try a.close()
             catch
                 case NonFatal(_) => ()
-                case e: Error =>
+                case e: Error    =>
                     java.lang.System.err.println(s"[kyo-ffi] Error during guard teardown: ${e.getClass.getName}: ${e.getMessage}")
         else adopted.addLast(a)
         end if

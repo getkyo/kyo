@@ -62,7 +62,8 @@ class MysqlDialectValuesRenderTest extends Test:
         val r       = Sql.values[Person]("pv", Person(1L, payload, 30, 1L)).render(MysqlDialect)
         val sql     = r.onlySql.get
         assert(
-            sql == "SELECT `pv`.`id`, `pv`.`name`, `pv`.`age`, `pv`.`deptId` FROM (VALUES ROW(?, ?, ?, ?)) `pv`(`id`, `name`, `age`, `deptId`)"
+            sql ==
+                "SELECT `pv`.`id`, `pv`.`name`, `pv`.`age`, `pv`.`deptId` FROM (VALUES ROW(?, ?, ?, ?)) `pv`(`id`, `name`, `age`, `deptId`)"
         )
         assert(!sql.contains("'"))
         assert(!sql.contains("\\"))
@@ -84,7 +85,7 @@ class MysqlDialectValuesRenderTest extends Test:
 
     "Sql.values on MySQL 8.0.18 raises SqlUnsupportedDialectFeatureException" in {
         val version = Present(Idiom.ServerVersion(8, 0, 18))
-        val ex = intercept[SqlUnsupportedDialectFeatureException] {
+        val ex      = intercept[SqlUnsupportedDialectFeatureException] {
             Sql.values[Point]("v", Point(1, 2)).render(MysqlDialect, version)
         }
         assert(ex.feature == "VALUES source", s"expected feature 'VALUES source', got: ${ex.feature}")

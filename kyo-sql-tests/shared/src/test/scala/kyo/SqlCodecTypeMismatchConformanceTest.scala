@@ -277,7 +277,7 @@ class SqlCodecTypeMismatchConformanceTest extends SqlBackendTest:
                 _ <- assertDecodeRefused("time over bigint, dynamic", columnTypeName(backend, "b"))(row.decode[java.time.LocalTime]("b"))
                 // And under the simple protocol, since the check is on the column's type rather than on the format.
                 simple <- client.simpleQuery("SELECT i, b FROM probe")
-                _ <- assertDecodeRefused("date over int, simple protocol", columnTypeName(backend, "i")) {
+                _      <- assertDecodeRefused("date over int, simple protocol", columnTypeName(backend, "i")) {
                     simple.head.decode[java.time.LocalDate]("i")
                 }
                 // The positive control, without which every assertion above is satisfied by a guard that refuses

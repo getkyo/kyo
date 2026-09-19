@@ -65,7 +65,7 @@ object `<`:
                 v match
                     case kyo: KyoSuspend[IX, OX, EX, Any, A, S] @unchecked =>
                         new KyoContinue[IX, OX, EX, Any, B, S & S2](kyo):
-                            def frame = _frame
+                            def frame                                                = _frame
                             def apply(v: OX[Any], context: Context)(using Safepoint) =
                                 mapLoop(kyo(v, context))
                     case v =>
@@ -101,7 +101,7 @@ object `<`:
                 v match
                     case kyo: KyoSuspend[IX, OX, EX, Any, A, S] @unchecked =>
                         new KyoContinue[IX, OX, EX, Any, B, S & S2](kyo):
-                            def frame = _frame
+                            def frame                                                = _frame
                             def apply(v: OX[Any], context: Context)(using Safepoint) =
                                 flatMapLoop(kyo(v, context))
                     case v =>
@@ -134,7 +134,7 @@ object `<`:
                 v match
                     case kyo: KyoSuspend[IX, OX, EX, Any, A, S] @unchecked =>
                         new KyoContinue[IX, OX, EX, Any, B, S & S2](kyo):
-                            def frame = _frame
+                            def frame                                                = _frame
                             def apply(v: OX[Any], context: Context)(using Safepoint) =
                                 andThenLoop(kyo(v, context))
                     case v =>
@@ -167,7 +167,7 @@ object `<`:
                 v match
                     case kyo: KyoSuspend[IX, OX, EX, Any, A, S] @unchecked =>
                         new KyoContinue[IX, OX, EX, Any, Unit, S](kyo):
-                            def frame = _frame
+                            def frame                                                = _frame
                             def apply(v: OX[Any], context: Context)(using Safepoint) =
                                 unitLoop(kyo(v, context))
                     case v =>
@@ -383,7 +383,7 @@ object `<`:
                 v match
                     case kyo: KyoSuspend[IX, OX, EX, Any, A < S, S2] @unchecked =>
                         new KyoContinue[IX, OX, EX, Any, A, S & S2](kyo):
-                            def frame = _frame
+                            def frame                                                = _frame
                             def apply(v: OX[Any], context: Context)(using Safepoint) =
                                 flattenLoop(kyo(v, context))
                     case v =>

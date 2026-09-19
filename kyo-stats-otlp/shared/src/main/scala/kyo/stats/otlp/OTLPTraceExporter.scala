@@ -76,7 +76,7 @@ class OTLPTraceExporter private (val config: OTLPConfig)(using AllowUnsafe) exte
         val traceId = parent match
             case Some(p: UnsafeTraceSpan.Propagatable) => p.traceId
             case _                                     => randomHex(16)
-        val spanId = randomHex(8)
+        val spanId       = randomHex(8)
         val parentSpanId = parent match
             case Some(p: UnsafeTraceSpan.Propagatable) => p.spanId
             case _                                     => ""
@@ -111,7 +111,7 @@ class OTLPTraceExporter private (val config: OTLPConfig)(using AllowUnsafe) exte
         def end(now: java.time.Instant)(using AllowUnsafe): Unit =
             given Frame  = Frame.internal
             val endNanos = Instant.fromJava(now).toDuration.toNanos
-            val status = (spanStatus: UnsafeTraceSpan.Status) match
+            val status   = (spanStatus: UnsafeTraceSpan.Status) match
                 case _: UnsafeTraceSpan.Status.Unset.type => SpanStatus(code = OTLPModel.StatusUnset)
                 case _: UnsafeTraceSpan.Status.Ok.type    => SpanStatus(code = OTLPModel.StatusOk)
                 case e: UnsafeTraceSpan.Status.Error      => SpanStatus(code = OTLPModel.StatusError, message = e.message)
@@ -139,7 +139,7 @@ class OTLPTraceExporter private (val config: OTLPConfig)(using AllowUnsafe) exte
 
         def event(name: String, a: Attributes, now: java.time.Instant)(using AllowUnsafe): Unit =
             val eventNanos = Instant.fromJava(now).toDuration.toNanos
-            val _ = events.add(SpanEvent(
+            val _          = events.add(SpanEvent(
                 name = name,
                 timeUnixNano = eventNanos.toString,
                 attributes = toKeyValues(a)
@@ -148,7 +148,7 @@ class OTLPTraceExporter private (val config: OTLPConfig)(using AllowUnsafe) exte
 
         private def drainEvents(): Seq[SpanEvent] =
             import scala.annotation.tailrec
-            val buf = ChunkBuilder.init[SpanEvent]
+            val buf                   = ChunkBuilder.init[SpanEvent]
             @tailrec def loop(): Unit =
                 val item = events.poll()
                 if item ne null then

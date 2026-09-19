@@ -43,7 +43,7 @@ sealed abstract class SqlSchema[A]:
     private[kyo] def fieldNames: Chunk[String]
 
     /** Writes `value` as `width` columns to `writer`. */
-    private[kyo] def write(value: A, writer: SqlCodec.Writer): Unit
+    def write(value: A, writer: SqlCodec.Writer): Unit
 
     /** Reads a value of `A`, consuming `width` columns from `reader`. Decode failures are thrown ([[SqlDecodeException]]) and converted to
       * `Abort` at the transport boundary.
@@ -67,10 +67,10 @@ object SqlSchema extends kyo.internal.LowPrioritySqlSchema:
         writeFn: (A, SqlCodec.Writer) => Unit,
         readFn: SqlCodec.Reader => A
     ) extends SqlSchema[A]:
-        private[kyo] def width: Int                                     = 1
-        private[kyo] def fieldNames: Chunk[String]                      = Chunk.empty
-        private[kyo] def write(value: A, writer: SqlCodec.Writer): Unit = writeFn(value, writer)
-        private[kyo] def read(reader: SqlCodec.Reader): A               = readFn(reader)
+        private[kyo] def width: Int                        = 1
+        private[kyo] def fieldNames: Chunk[String]         = Chunk.empty
+        def write(value: A, writer: SqlCodec.Writer): Unit = writeFn(value, writer)
+        private[kyo] def read(reader: SqlCodec.Reader): A  = readFn(reader)
     end Column
 
     object Column:
@@ -231,10 +231,10 @@ object SqlSchema extends kyo.internal.LowPrioritySqlSchema:
         val writeFn = write
         val readFn  = read
         new SqlSchema[A]:
-            private[kyo] def width: Int                                     = names.size
-            private[kyo] def fieldNames: Chunk[String]                      = names
-            private[kyo] def write(value: A, writer: SqlCodec.Writer): Unit = writeFn(value, writer)
-            private[kyo] def read(reader: SqlCodec.Reader): A               = readFn(reader)
+            private[kyo] def width: Int                        = names.size
+            private[kyo] def fieldNames: Chunk[String]         = names
+            def write(value: A, writer: SqlCodec.Writer): Unit = writeFn(value, writer)
+            private[kyo] def read(reader: SqlCodec.Reader): A  = readFn(reader)
         end new
     end ofMulti
 
@@ -253,7 +253,7 @@ object SqlSchema extends kyo.internal.LowPrioritySqlSchema:
         private[kyo] def width: Int                = columns.size
         private[kyo] def fieldNames: Chunk[String] = names
 
-        private[kyo] def write(value: P, writer: SqlCodec.Writer): Unit =
+        def write(value: P, writer: SqlCodec.Writer): Unit =
             // Erasure boundary: Mirror.ProductOf[P] guarantees P is a Product, and columns(i) was built for
             // field i's type; the heterogeneous Chunk erases it to Column[?].
             val product = value.asInstanceOf[Product]
@@ -285,10 +285,10 @@ object SqlSchema extends kyo.internal.LowPrioritySqlSchema:
         private[kyo] def width: Int                = inner.width
         private[kyo] def fieldNames: Chunk[String] = inner.fieldNames
 
-        private[kyo] def write(value: M, writer: SqlCodec.Writer): Unit =
+        def write(value: M, writer: SqlCodec.Writer): Unit =
             unwrap(value) match
                 case Maybe.Present(p) => inner.write(p, writer)
-                case _ =>
+                case _                =>
                     var i = 0
                     while i < inner.width do
                         writer.nil()

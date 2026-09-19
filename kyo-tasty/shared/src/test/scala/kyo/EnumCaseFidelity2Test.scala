@@ -28,7 +28,6 @@ class EnumCaseFidelity2Test extends Fidelity2TestBase:
 
     "every enum class has at least one EnumCase child" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
-
             val enums = classpath.allClassLike.filter(e => e.isEnum && !e.isInstanceOf[Tasty.Symbol.EnumCase]).toList
             assert(enums.nonEmpty, "Expected at least one enum class in the classpath (embedded: Color, Shape)")
 
@@ -81,12 +80,11 @@ class EnumCaseFidelity2Test extends Fidelity2TestBase:
     // Color.Red/Green/Blue are value-form enum cases; their owner is always the companion Object (Color$).
     "Color value-form EnumCase owner is the companion Object" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
-
             // Look for value-form enum cases from known enums:
             // kyo.SymbolKind (on JVM real classpath from kyo-tasty jar)
             // kyo.fixtures.Color (on JS/Native embedded fixtures)
             // Both are pure value-form enums with Object companions.
-            val knownEnumNames = Set("SymbolKind", "Color")
+            val knownEnumNames      = Set("SymbolKind", "Color")
             val knownValueFormCases = classpath.symbols.collect {
                 case e: Tasty.Symbol.EnumCase
                     if knownEnumNames.exists(n => classpath.symbol(e.ownerId).map(_.name.asString.startsWith(n)).getOrElse(false)) =>
@@ -119,7 +117,6 @@ class EnumCaseFidelity2Test extends Fidelity2TestBase:
 
     "class-form EnumCase still correctly classified (Shape or TastyError)" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
-
             // Try kyo.TastyError first (JVM), fall back to kyo.fixtures.Shape (JS/Native)
             val target = classpath.findClass("kyo.TastyError").orElse(classpath.findClass("kyo.fixtures.Shape"))
             target match

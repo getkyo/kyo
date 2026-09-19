@@ -105,8 +105,8 @@ class Utf8Test extends kyo.test.Test[Any]:
     // Supplementary characters are generated as low-surrogate + high-surrogate pairs via
     // Character.toChars so that String construction is well-formed (no unpaired surrogates).
     "Utf8.decode round-trips 100 seeded random strings via getBytes encode" in {
-        val rng    = new scala.util.Random(0L)
-        val trials = 100
+        val rng      = new scala.util.Random(0L)
+        val trials   = 100
         val failures = (0 until trials).flatMap { i =>
             val len = rng.nextInt(129) // 0..128 inclusive
             val sb  = new java.lang.StringBuilder

@@ -671,7 +671,7 @@ object Tasty:
                 val ctx  = maybeCtx.get
                 val blob = Maybe.fromOption(Option(ctx.bodyStore.get(symbol.id)))
                 blob match
-                    case Maybe.Absent => Maybe.Absent
+                    case Maybe.Absent     => Maybe.Absent
                     case Maybe.Present(b) =>
                         val classpath = mbind.get.classpath
                         Sync.Unsafe.defer {
@@ -774,7 +774,7 @@ object Tasty:
                     // propagated AllowUnsafe, mirroring bodyTree.
                     Maybe.fromOption(Option(ctx.occurrenceMemo.get(sourceFile))) match
                         case Maybe.Present(cached) => cached
-                        case Maybe.Absent =>
+                        case Maybe.Absent          =>
                             val ids    = classpath.indices.bySourceFile.getOrElse(sourceFile, Chunk.empty)
                             val bodies = ids.flatMap(id => Maybe.fromOption(Option(ctx.bodyStore.get(id))).map(b => (id, b)).toChunk)
                             // Upfront bounds validation over every body in this file, mirroring bodyTree's
@@ -821,7 +821,7 @@ object Tasty:
                                     ))
                                 case None =>
                                     positionsByPickle match
-                                        case Result.Failure(e) => Abort.fail(e)
+                                        case Result.Failure(e)        => Abort.fail(e)
                                         case Result.Success(byPickle) =>
                                             val occResult: Result[TastyError, Chunk[Occurrence]] =
                                                 // A file's bySourceFile ids include both a class-like symbol and each of
@@ -856,7 +856,7 @@ object Tasty:
                                                         Result.Failure(
                                                             TastyError.ClasspathClosed(s"occurrencesInFile(sourceFile=$sourceFile)")
                                                         )
-                                                    case _: IllegalStateException => Result.Success(Chunk.empty[Occurrence])
+                                                    case _: IllegalStateException      => Result.Success(Chunk.empty[Occurrence])
                                                     case ex: Throwable if NonFatal(ex) =>
                                                         Result.Failure(TastyError.MalformedSection(
                                                             "ASTs",
@@ -1079,7 +1079,7 @@ object Tasty:
       * carried as fields so the caller can report the mismatch.
       */
     final case class Version(major: Int, minor: Int, experimental: Int):
-        /** Render the version as `"<major>.<minor>.<experimental>"` (e.g. `"28.8.0"`). */
+        /** Render the version as `"<major>.<minor>.<experimental>"` (e.g. `"28.9.0"`). */
         def show: String = s"$major.$minor.$experimental"
 
     /** The Scala 3 TASTy format version this kyo-tasty release targets.
@@ -1087,10 +1087,10 @@ object Tasty:
       * Pickles whose major version differs from this value fail to load with
       * `TastyError.UnsupportedVersion(found, supported)`. The minor version is the tail of a backwards-compatible
       * range: pickles with a minor at or below this number are accepted. Bump this value when picking up a new
-      * Scala 3 minor release in CI; the `Version.show` rendering (e.g. `"28.8.0"`) is what `TastyError` carries
+      * Scala 3 minor release in CI; the `Version.show` rendering (e.g. `"28.9.0"`) is what `TastyError` carries
       * to the caller for human-readable diagnostics.
       */
-    val supportedTastyVersion: Version = Version(28, 8, 0)
+    val supportedTastyVersion: Version = Version(28, 9, 0)
 
     // ── Names and flags ─────────────────────────────────────────────────────
 
@@ -1404,7 +1404,7 @@ object Tasty:
             case StringConst(s) => Constant.escapeStringLiteral(s)
             case IntConst(i)    => i.toString
             case LongConst(l)   => l.toString + "L"
-            case FloatConst(f) =>
+            case FloatConst(f)  =>
                 if f.isNaN then "Float.NaN"
                 else if f == Float.PositiveInfinity then "Float.PositiveInfinity"
                 else if f == Float.NegativeInfinity then "Float.NegativeInfinity"
@@ -1469,9 +1469,9 @@ object Tasty:
           * behaviour for any new Type cases added in the future.
           */
         private[kyo] def classConstTypeShow(t: Type): String = t match
-            case Type.Named(id) => s"<id:${id.value}>"
-            case Type.Any       => "Any"
-            case Type.Nothing   => "Nothing"
+            case Type.Named(id)           => s"<id:${id.value}>"
+            case Type.Any                 => "Any"
+            case Type.Nothing             => "Nothing"
             case Type.Applied(base, args) =>
                 val baseStr = classConstTypeShow(base)
                 val argsStr = args.iterator.map(classConstTypeShow).mkString(", ")
@@ -1901,19 +1901,19 @@ object Tasty:
         private[kyo] def visit(f: Type => Unit): Unit = this match
             case Applied(base, args) =>
                 f(base); args.foreach(f)
-            case TypeLambda(_, body) => f(body)
+            case TypeLambda(_, body)   => f(body)
             case Function(params, ret) =>
                 params.foreach(f); f(ret)
             case ContextFunction(params, ret) =>
                 params.foreach(f); f(ret)
-            case Tuple(elements) => elements.foreach(f)
-            case ByName(t)       => f(t)
-            case Repeated(t)     => f(t)
-            case Array(t)        => f(t)
+            case Tuple(elements)     => elements.foreach(f)
+            case ByName(t)           => f(t)
+            case Repeated(t)         => f(t)
+            case Array(t)            => f(t)
             case Refinement(p, _, i) =>
                 f(p); f(i)
-            case Rec(p)       => f(p)
-            case RecThis(rec) => f(rec)
+            case Rec(p)        => f(p)
+            case RecThis(rec)  => f(rec)
             case AndType(l, r) =>
                 f(l); f(r)
             case OrType(l, r) =>
@@ -1923,7 +1923,7 @@ object Tasty:
                 f(s); f(m)
             case Wildcard(lo, hi) =>
                 f(lo); f(hi)
-            case Skolem(u) => f(u)
+            case Skolem(u)               => f(u)
             case MatchType(b, sc, cases) =>
                 f(b); f(sc); cases.foreach(f)
             case FlexibleType(u) => f(u)
@@ -1931,7 +1931,7 @@ object Tasty:
                 f(p); f(r)
             case Bind(_, p)       => f(p)
             case TypeRef(qual, _) => f(qual)
-            case Bounds(lo, hi) =>
+            case Bounds(lo, hi)   =>
                 f(lo); f(hi)
             case Named(_)           => ()
             case TermRef(prefix, _) => f(prefix)
@@ -1976,7 +1976,7 @@ object Tasty:
             findImpl(p)
 
         private def findImpl(p: Type => Boolean): Maybe[Type] =
-            var found: Maybe[Type] = Maybe.Absent
+            var found: Maybe[Type]   = Maybe.Absent
             def go(t: Type): Boolean =
                 if found.isDefined then true
                 else if p(t) then
@@ -2272,7 +2272,7 @@ object Tasty:
           * not materialize a Chunk per node.
           */
         private[kyo] def visit(f: Tree => Unit): Unit = this match
-            case Tree.Ident(_, _) => ()
+            case Tree.Ident(_, _)             => ()
             case Tree.Select(qualifier, _, _) =>
                 f(qualifier)
             case Tree.Apply(fun, args) =>
@@ -2291,8 +2291,8 @@ object Tasty:
                     case Maybe.Present(t) => f(t)
                     case Maybe.Absent     => ()
                 f(body)
-            case Tree.Literal(_) => ()
-            case Tree.New(_)     => ()
+            case Tree.Literal(_)       => ()
+            case Tree.New(_)           => ()
             case Tree.Assign(lhs, rhs) =>
                 f(lhs); f(rhs)
             case Tree.Return(expr, _) =>
@@ -2334,7 +2334,7 @@ object Tasty:
                 rhs match
                     case Maybe.Present(t) => f(t)
                     case Maybe.Absent     => ()
-            case Tree.TypeDef(_, _) => ()
+            case Tree.TypeDef(_, _)        => ()
             case Tree.PackageDef(_, stats) =>
                 stats.foreach(f)
             case Tree.ClassDef(_, template) =>
@@ -2343,14 +2343,14 @@ object Tasty:
                 parents.foreach(f); body.foreach(f)
             case Tree.Super(qual, _) =>
                 f(qual)
-            case Tree.This(_) => ()
+            case Tree.This(_)            => ()
             case Tree.NamedArg(_, value) =>
                 f(value)
             case Tree.Annotated(expr, annot) =>
                 f(expr); f(annot)
-            case Tree.Shared(_)       => ()
-            case Tree.Modifier(_)     => ()
-            case Tree.RecType(parent) => f(parent)
+            case Tree.Shared(_)         => ()
+            case Tree.Modifier(_)       => ()
+            case Tree.RecType(parent)   => f(parent)
             case Tree.SuperType(t1, t2) =>
                 f(t1); f(t2)
             case Tree.RefinedType(parent, _, info) =>
@@ -2371,19 +2371,19 @@ object Tasty:
                 f(bound); f(scrutinee); cases.foreach(f)
             case Tree.FlexibleType(arg) =>
                 f(arg)
-            case Tree.IdentTpt(_, _) => ()
+            case Tree.IdentTpt(_, _)     => ()
             case Tree.SelectTpt(qual, _) =>
                 f(qual)
             case Tree.SingletonTpt(tpe) =>
                 f(tpe)
-            case Tree.TermRefPkg(_) => ()
-            case Tree.TypeRefPkg(_) => ()
+            case Tree.TermRefPkg(_)          => ()
+            case Tree.TypeRefPkg(_)          => ()
             case Tree.TermRefSymbol(_, qual) =>
                 f(qual)
             case Tree.TypeRefSymbol(_, qual) =>
                 f(qual)
-            case Tree.TermRefDirect(_) => ()
-            case Tree.TypeRefDirect(_) => ()
+            case Tree.TermRefDirect(_)         => ()
+            case Tree.TypeRefDirect(_)         => ()
             case Tree.SelectIn(qual, _, owner) =>
                 f(qual); f(owner)
             case Tree.Import(qual, selectors) =>
@@ -2396,12 +2396,12 @@ object Tasty:
             case Tree.TypeTree(_)    => ()
             case Tree.Imported(qual) =>
                 f(qual)
-            case Tree.Renamed(_)   => ()
-            case Tree.ByNameTpt(_) => ()
+            case Tree.Renamed(_)     => ()
+            case Tree.ByNameTpt(_)   => ()
             case Tree.Bounded(bound) =>
                 f(bound)
-            case Tree.ExplicitTpt(_) => ()
-            case Tree.Elided(_)      => ()
+            case Tree.ExplicitTpt(_)       => ()
+            case Tree.Elided(_)            => ()
             case Tree.TypeRefTree(qual, _) =>
                 f(qual)
             case Tree.TermRef(prefix, _) =>
@@ -2449,7 +2449,7 @@ object Tasty:
             findImpl(p)
 
         private def findImpl(p: Tree => Boolean): Maybe[Tree] =
-            var found: Maybe[Tree] = Maybe.Absent
+            var found: Maybe[Tree]   = Maybe.Absent
             def go(t: Tree): Boolean =
                 if found.isDefined then true
                 else if p(t) then
@@ -3239,7 +3239,7 @@ object Tasty:
         //   idempotent so a concurrent double-derive is benign (both writers produce an equal value).
         //   Authorized as a non-defaultable structural cycle break.
         private var _schemaAnnotation: Schema[Annotation] = null.asInstanceOf[Schema[Annotation]]
-        given schemaAnnotation: Schema[Annotation] =
+        given schemaAnnotation: Schema[Annotation]        =
             if _schemaAnnotation == null then
                 _schemaAnnotation = Schema.derived[Annotation]
             _schemaAnnotation
@@ -4557,7 +4557,7 @@ object Tasty:
                         case p: Symbol.Package   => p.memberIds.flatMap(id => this.symbol(id).toChunk)
                 case MemberScope.Inherited =>
                     val directNames = scala.collection.mutable.HashSet.empty[String]
-                    val declIds = symbol match
+                    val declIds     = symbol match
                         case c: Symbol.ClassLike => c.declarationIds
                         case p: Symbol.Package   => p.memberIds
                     // A private own-declared symbol (e.g. a val-less primary-constructor parameter
@@ -4696,8 +4696,8 @@ object Tasty:
         private def allMembersOf(symbol: Symbol.ClassLike | Symbol.Package): Chunk[Symbol] =
             symbol match
                 case c: Symbol.ClassLike =>
-                    val seen = scala.collection.mutable.HashSet.empty[String]
-                    val out  = Chunk.newBuilder[Symbol]
+                    val seen                              = scala.collection.mutable.HashSet.empty[String]
+                    val out                               = Chunk.newBuilder[Symbol]
                     def visit(cl: Symbol.ClassLike): Unit =
                         cl.declarationIds.foreach { id =>
                             this.symbol(id).foreach { d =>

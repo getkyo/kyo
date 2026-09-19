@@ -79,7 +79,7 @@ object PubSub:
         yield new PubSub[A]:
             def publish(value: A)(using Frame): Unit < (Async & Abort[Closed]) =
                 closed.get.map {
-                    case true => Abort.fail(Closed("PubSub", frame))
+                    case true  => Abort.fail(Closed("PubSub", frame))
                     case false =>
                         state.get.map { subscribers =>
                             fanOut(subscribers, value, concurrency).map { dead =>
@@ -90,7 +90,7 @@ object PubSub:
                 }
             def subscribe(subscriber: Subject[A])(using Frame): Unit < (Async & Abort[Closed] & Scope) =
                 closed.get.map {
-                    case true => Abort.fail(Closed("PubSub", frame))
+                    case true  => Abort.fail(Closed("PubSub", frame))
                     case false =>
                         state.updateAndGet(_ + subscriber).andThen {
                             Scope.ensure(state.updateAndGet(_ - subscriber).unit)

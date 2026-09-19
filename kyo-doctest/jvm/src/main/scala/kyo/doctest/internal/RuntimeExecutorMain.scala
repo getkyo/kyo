@@ -41,7 +41,7 @@ private[kyo] object RuntimeExecutorMain:
                 val file    = frame.fold("")(_.getFileName)
                 val line    = frame.fold(0)(_.getLineNumber)
                 val message = Option(cause.getMessage).getOrElse("")
-                val result =
+                val result  =
                     s"threw\n${encode(cause.getClass.getName)}\n${encode(message)}\n${encode(file)}\n$line\n"
                 val _ = Files.writeString(resultPath, result, StandardCharsets.UTF_8)
         end try

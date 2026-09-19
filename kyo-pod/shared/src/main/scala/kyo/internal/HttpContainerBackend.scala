@@ -29,14 +29,36 @@ import kyo.schema.omit
 final private[kyo] class HttpContainerBackend(
     socketPath: String,
     private[internal] val apiVersion: String = HttpContainerBackend.defaultApiVersion,
-    meter: Meter = Meter.Noop
+    meter: Meter = Meter.Noop,
+    probedRuntime: Maybe[String] = Absent
 ) extends ContainerBackend(meter):
 
     import Container.*
 
-    /** Runtime family derived from the socket path — "podman" if the path contains "podman", else "docker". Diagnostic only. */
-    private val runtimeName: String =
-        if socketPath.contains("podman") then "podman" else "docker"
+    // Set once, by `recordProbedRuntime` during detection, and read-only afterwards. It is a var because
+    // the alternative measured worse: returning a SECOND HttpContainerBackend carrying the answer (which is
+    // what this did first) leaks containers. A scope-managed container captures the backend that created it
+    // for its teardown, so handing the caller a different instance than the one detection validated breaks
+    // that pairing; the container-leak check added in the test base caught 37 leaves leaving containers
+    // Running, and the same run with the original instance returned leaks none. Single-owner: written once
+    // on the detection path before the backend is published to any caller, read everywhere after.
+    @volatile private var probedName: Maybe[String] = probedRuntime
+
+    /** Records what the daemon answered. Called once by detection, before this backend reaches a caller. */
+    private[kyo] def recordProbedRuntime(runtime: String): Unit =
+        probedName = Present(runtime)
+
+    /** The runtime family this backend is talking to.
+      *
+      * The daemon's own answer when it has been asked (`HttpContainerBackend.probeRuntime`, which detection
+      * runs once per backend), falling back to the socket path otherwise. The path is a poor witness and was
+      * the only one: podman serves the Docker Engine API, and `/var/run/docker.sock` is commonly a symlink to
+      * the podman machine's socket, so a podman-only host was reported as docker. This is not only a label.
+      * The libpod-native paths below are gated on it, so a podman daemon reached through a docker-named socket
+      * silently lost the update endpoints kyo-pod uses it for.
+      */
+    private[kyo] def runtimeName: String =
+        probedName.getOrElse(if socketPath.contains("podman") then "podman" else "docker")
 
     /** Builds an `http+unix://` URL for the Docker API.
       *
@@ -83,10 +105,10 @@ final private[kyo] class HttpContainerBackend(
                 // the bind expression in the body directly.
                 extractPortConflict(e.body) match
                     case Some(port) => Abort.fail(ContainerPortConflictException(port, e.body.getOrElse("")))
-                    case None =>
+                    case None       =>
                         notRunningExceptionFor(e.body, ctx) match
                             case Some(ex) => Abort.fail(ex)
-                            case None =>
+                            case None     =>
                                 canonicalStatus(e) match
                                     case 304 =>
                                         ctx match
@@ -125,7 +147,7 @@ final private[kyo] class HttpContainerBackend(
       */
     private def extractPortConflict(body: Maybe[String]): Option[Int] =
         body.toOption.flatMap { b =>
-            val lower = b.toLowerCase
+            val lower          = b.toLowerCase
             val isPortConflict =
                 lower.contains("port is already allocated") ||
                     lower.contains("address already in use") ||
@@ -184,7 +206,7 @@ final private[kyo] class HttpContainerBackend(
     )(using Frame): A < (Async & Abort[ContainerException]) =
         Abort.runWith[Closed](meter.run {
             Abort.runWith[HttpException](v) {
-                case Result.Success(a) => a
+                case Result.Success(a)                                                                      => a
                 case Result.Failure(e: HttpStatusException) if e.status.code == 404 || e.status.code == 501 =>
                     Abort.fail(ContainerNotSupportedException(
                         opName,
@@ -208,7 +230,7 @@ final private[kyo] class HttpContainerBackend(
             Abort.runWith[HttpException](v) {
                 case Result.Success(a) => a
                 case Result.Failure(e) => mapHttpError(e, ctx)
-                case Result.Panic(e) =>
+                case Result.Panic(e)   =>
                     Abort.fail(ContainerBackendException(s"Unexpected error during ${ctx.describe}", e))
             }
         }) {
@@ -339,12 +361,12 @@ final private[kyo] class HttpContainerBackend(
                 Abort.runWith[HttpException](
                     HttpClient.postJson[CreateContainerResponse](url("/containers/create", params*), body)
                 ) {
-                    case Result.Success(resp) => Container.Id(resp.Id)
+                    case Result.Success(resp)                   => Container.Id(resp.Id)
                     case Result.Failure(e: HttpStatusException) =>
                         canonicalStatus(e) match
                             case 404 => Abort.fail(ContainerImageMissingException(config.image))
                             case 409 => Abort.fail(ContainerAlreadyExistsException(nameForErrors))
-                            case _ =>
+                            case _   =>
                                 warnIfMissingBody(e, ResourceContext.Op(s"create:$nameForErrors")).andThen(
                                     Abort.fail(ContainerOperationException(
                                         s"Daemon returned HTTP ${e.status.code}${e.body.map(b => s": $b").getOrElse("")} creating container $nameForErrors",
@@ -462,8 +484,8 @@ final private[kyo] class HttpContainerBackend(
       * closes that gap.
       */
     private def awaitTerminalState(id: Container.Id)(using Frame): Unit < (Async & Abort[ContainerException]) =
-        val maxAttempts = 20
-        val pollDelay   = 50.millis
+        val maxAttempts                                                    = 20
+        val pollDelay                                                      = 50.millis
         def loop(attempt: Int): Unit < (Async & Abort[ContainerException]) =
             state(id).map { s =>
                 if s == Container.State.Stopped || s == Container.State.Dead then ()
@@ -540,7 +562,7 @@ final private[kyo] class HttpContainerBackend(
         waitForRemoved.andThen {
             stillPresent.map {
                 case false => ()
-                case true =>
+                case true  =>
                     Log.warn(s"Container ${id.value} survived DELETE + wait?condition=removed; forcing removal again")
                         .andThen(forceRemove)
                         .andThen(waitForRemoved)
@@ -576,7 +598,7 @@ final private[kyo] class HttpContainerBackend(
         else
             Abort.run[Timeout](Async.timeout(timeout)(call)).map {
                 case Result.Success(code) => code
-                case Result.Failure(_) =>
+                case Result.Failure(_)    =>
                     Abort.fail[ContainerException](
                         ContainerBackendException(s"waitForExit for ${id.value} exceeded $timeout")
                     )
@@ -689,7 +711,7 @@ final private[kyo] class HttpContainerBackend(
             HttpClient.getJson[TopResponse](url(s"/containers/${id.value}/top", "ps_args" -> psArgs))
         }.map { resp =>
             val titlesCount = resp.Titles.size
-            val processes = resp.Processes.map { row =>
+            val processes   = resp.Processes.map { row =>
                 if row.size == 1 && titlesCount > 1 then
                     // Podman's libpod compat may return the whole row as a single concatenated string;
                     // split it on whitespace to recover the column-per-element shape Docker uses.
@@ -809,7 +831,7 @@ final private[kyo] class HttpContainerBackend(
                                     Emit.value(entries)
                                 }
                         case Result.Failure(e) => mapHttpError(e, ctxContainer(id)).unit
-                        case Result.Panic(e) =>
+                        case Result.Panic(e)   =>
                             Abort.fail(ContainerBackendException(s"execStream panicked in ${id.value}", e))
                     }
                 }
@@ -840,7 +862,7 @@ final private[kyo] class HttpContainerBackend(
                 case Result.Success(conn) =>
                     buildAttachSession(conn, isTty = false, includeStdout = true, includeStderr = true)
                 case Result.Failure(e) => mapHttpError(e, ctxContainer(id))
-                case Result.Panic(e) =>
+                case Result.Panic(e)   =>
                     Abort.fail(ContainerBackendException(s"Unexpected error for ${id.value}", e))
             }
         }
@@ -871,7 +893,7 @@ final private[kyo] class HttpContainerBackend(
             ) {
                 case Result.Success(conn) => buildAttachSession(conn, isTty, stdout, stderr)
                 case Result.Failure(e)    => mapHttpError(e, ctxContainer(id))
-                case Result.Panic(e) =>
+                case Result.Panic(e)      =>
                     Abort.fail(ContainerBackendException(s"Unexpected error for ${id.value}", e))
             }
         }
@@ -1019,7 +1041,7 @@ final private[kyo] class HttpContainerBackend(
                 Abort.runWith[HttpException](drain) {
                     case Result.Success(_) => ()
                     case Result.Failure(e) => mapHttpError(e, ctxContainer(id)).unit
-                    case Result.Panic(e) =>
+                    case Result.Panic(e)   =>
                         Abort.fail(ContainerBackendException(s"Log stream failed for ${id.value}", e))
                 }
             }
@@ -1129,7 +1151,7 @@ final private[kyo] class HttpContainerBackend(
                         Abort.runWith[CommandException](
                             Command("mv", extractedPath.toString, destination.toString).text
                         ) {
-                            case Result.Success(_) => ()
+                            case Result.Success(_)     => ()
                             case Result.Failure(cmdEx) =>
                                 Abort.fail(ContainerOperationException(
                                     s"Copy operation failed for ${id.value}: failed to rename extracted file for copyFrom",
@@ -1181,7 +1203,7 @@ final private[kyo] class HttpContainerBackend(
                             s"Missing X-Docker-Container-Path-Stat header for container ${id.value}"
                         ))
             case Result.Failure(e) => mapHttpError(e, ctxContainer(id))
-            case Result.Panic(e) =>
+            case Result.Panic(e)   =>
                 Abort.fail(ContainerBackendException(s"Unexpected error during stat on container ${id.value}", e))
         }
 
@@ -1199,7 +1221,7 @@ final private[kyo] class HttpContainerBackend(
             ) {
                 case Result.Success(_) => ()
                 case Result.Failure(e) => mapHttpError(e, ctxContainer(id)).unit
-                case Result.Panic(e) =>
+                case Result.Panic(e)   =>
                     Abort.fail(ContainerBackendException(s"Unexpected error during export of ${id.value}", e))
             }
         }
@@ -1238,10 +1260,10 @@ final private[kyo] class HttpContainerBackend(
         // Default swap to 2× memory when only `memory` is provided. Mirrors what
         // `podman container update --memory=...` sends: the libpod endpoint
         // silently no-ops a `{"memory":{"limit":N}}` body that omits `swap`.
-        val swp    = memorySwap.toOption.filter(_ > 0).orElse(mem.map(_ * 2L))
-        val cpu    = cpuLimit.toOption.filter(_ > 0).map(c => (c * 1024).toLong) // approximate cpu shares
-        val cpuset = cpuAffinity.toOption.filter(_.nonEmpty)
-        val pids   = maxProcesses.toOption.filter(_ > 0)
+        val swp        = memorySwap.toOption.filter(_ > 0).orElse(mem.map(_ * 2L))
+        val cpu        = cpuLimit.toOption.filter(_ > 0).map(c => (c * 1024).toLong) // approximate cpu shares
+        val cpuset     = cpuAffinity.toOption.filter(_.nonEmpty)
+        val pids       = maxProcesses.toOption.filter(_ > 0)
         val libpodBody = LibpodUpdateRequest(
             memory = if mem.isDefined || swp.isDefined then Some(LibpodMemory(limit = mem, swap = swp)) else None,
             cpu = if cpu.isDefined || cpuset.isDefined then Some(LibpodCpu(shares = cpu, cpus = cpuset)) else None,
@@ -1436,7 +1458,7 @@ final private[kyo] class HttpContainerBackend(
             val fromImage     = imageBase(image)
             val tagOrDigest   = image.digest.map(_.value).orElse(image.tag)
             val platformParam = platform.fold(Seq.empty[(String, String)])(p => Seq("platform" -> p.reference))
-            val params =
+            val params        =
                 Seq("fromImage" -> fromImage) ++ tagOrDigest.fold(Seq.empty[(String, String)])(t => Seq("tag" -> t)) ++ platformParam
             val authHeader =
                 auth.flatMap(a => registryAuthHeader(image, a)).fold(Seq.empty[(String, String)])(h => Seq("X-Registry-Auth" -> h))
@@ -1501,7 +1523,7 @@ final private[kyo] class HttpContainerBackend(
         if e.status.code == 401 || e.status.code == 403 then true
         else
             e.body match
-                case Absent => false
+                case Absent        => false
                 case Present(body) =>
                     val lower = body.toLowerCase
                     lower.contains("denied") ||
@@ -1803,11 +1825,11 @@ final private[kyo] class HttpContainerBackend(
             case Result.Success(body) =>
                 Json.decode[ImageCommitResponseDto](body) match
                     case Result.Success(dto) => dto.Id
-                    case Result.Failure(_) =>
+                    case Result.Failure(_)   =>
                         Abort.fail(ContainerDecodeException("Parse error in imageCommit", "Failed to parse commit response"))
                     case Result.Panic(t) => Abort.panic(t)
             case Result.Failure(e) => mapHttpError(e, ctxContainer(container))
-            case Result.Panic(e) =>
+            case Result.Panic(e)   =>
                 Abort.fail(ContainerBackendException(s"Unexpected error committing container ${container.value}", e))
         }
     end imageCommit
@@ -1900,7 +1922,7 @@ final private[kyo] class HttpContainerBackend(
                 case Result.Success(_)                                              => ()
                 case Result.Failure(e: HttpStatusException) if e.status.code == 403 => ()
                 case Result.Failure(e)                                              => mapHttpError(e, ResourceContext.Network(network))
-                case Result.Panic(e) =>
+                case Result.Panic(e)                                                =>
                     Abort.fail(ContainerBackendException(s"Unexpected error for network ${network.value}", e))
             }
         }) {
@@ -1986,7 +2008,8 @@ final private[kyo] class HttpContainerBackend(
     // --- Backend detection ---
 
     def describe: String =
-        s"HttpContainerBackend(socket=$socketPath, apiVersion=$apiVersion, runtime=$runtimeName)"
+        s"HttpContainerBackend(socket=$socketPath, apiVersion=$apiVersion, runtime=$runtimeName, " +
+            s"cli=${HttpContainerBackend.cliEquivalent(socketPath, runtimeName)})"
 
     /** Probe THIS backend's configured socket via `_ping`. Used by [[HttpContainerBackend.detect]] (companion) during candidate
       * enumeration.
@@ -1994,7 +2017,7 @@ final private[kyo] class HttpContainerBackend(
     def detect()(using Frame): Unit < (Async & Abort[ContainerException]) =
         Abort.runWith[HttpException](HttpClient.getText(url("/_ping"))) {
             case Result.Success(response) if response.trim == "OK" => ()
-            case Result.Success(response) =>
+            case Result.Success(response)                          =>
                 Abort.fail(ContainerBackendUnavailableException(
                     "http",
                     s"Unexpected ping response from $socketPath: $response"
@@ -2143,7 +2166,7 @@ final private[kyo] class HttpContainerBackend(
         dto.NetworkSettings.Ports.getOrElse(Map.empty).flatMap { case (portProto, maybeMappings) =>
             val parts         = portProto.split("/")
             val containerPort = parts(0).toIntOption.getOrElse(0)
-            val protocol = if parts.length > 1 then
+            val protocol      = if parts.length > 1 then
                 parts(1) match
                     case "udp"  => Config.Protocol.UDP
                     case "sctp" => Config.Protocol.SCTP
@@ -2248,7 +2271,7 @@ final private[kyo] class HttpContainerBackend(
 
     private def mapNetworkInfo(dto: NetworkInfoDto): Container.Network.Info =
         val canonicalId = if dto.Name.nonEmpty then dto.Name else dto.Id
-        val containers = Dict.from(dto.Containers.getOrElse(Map.empty).map { case (cid, ep) =>
+        val containers  = Dict.from(dto.Containers.getOrElse(Map.empty).map { case (cid, ep) =>
             Container.Id(cid) -> Info.NetworkEndpoint(
                 networkId = Network.Id(canonicalId),
                 endpointId = ep.EndpointID,
@@ -2830,7 +2853,7 @@ private[kyo] object HttpContainerBackend:
       * `username:password`, which is wrapped in a JSON object and re-encoded per the Docker engine's `X-Registry-Auth` contract.
       */
     private[kyo] def registryAuthHeader(image: ContainerImage, auth: ContainerImage.RegistryAuth)(using Frame): Maybe[String] =
-        val key = image.registry.getOrElse(ContainerImage.Registry.DockerHub)
+        val key   = image.registry.getOrElse(ContainerImage.Registry.DockerHub)
         val creds = auth.auths.get(key).orElse {
             // RegistryAuth.apply defaults to "https://index.docker.io/v1/" for Docker Hub;
             // fall back to that legacy key when the canonical "docker.io" key is absent.
@@ -2875,7 +2898,7 @@ private[kyo] object HttpContainerBackend:
                     case Result.Success(api) =>
                         inferStatusFromMessage(api).orElse(api.response.filter(c => c >= 100 && c < 600)).getOrElse(httpStatus)
                     case Result.Failure(_) => httpStatus
-                    case Result.Panic(_) =>
+                    case Result.Panic(_)   =>
                         httpStatus
             case Absent => httpStatus
 
@@ -2968,9 +2991,24 @@ private[kyo] object HttpContainerBackend:
                     val backend = new HttpContainerBackend(path, apiVersion, meter)
                     Abort.run[ContainerException](backend.detect()).map {
                         case Result.Success(_) =>
-                            Log.info(s"kyo-pod: using HTTP backend at $path (apiVersion=${backend.apiVersion})").andThen(backend)
+                            // Ask the daemon what it is, rather than reading it off the socket path. The answer
+                            // is carried by the backend that is returned, so `describe` and the libpod gating
+                            // both see it. The startup line prints the command that reaches this same daemon
+                            // from a shell, because the CLI's own default connection can be a different (or
+                            // broken) endpoint, and "podman ps shows nothing" is exactly when a user concludes
+                            // their code started nothing.
+                            probeRuntime(backend).map { runtime =>
+                                // Record on the SAME backend rather than building a resolved copy: a
+                                // scope-managed container captures its creating backend for teardown, so a
+                                // second instance breaks that pairing and leaks containers.
+                                backend.recordProbedRuntime(runtime)
+                                Log.info(
+                                    s"kyo-pod: using HTTP backend at $path (apiVersion=${backend.apiVersion}, " +
+                                        s"runtime=$runtime). Same daemon from a shell: ${cliEquivalent(path, runtime)}"
+                                ).andThen(backend)
+                            }
                         case Result.Failure(_) => tryNext(remaining.tail)
-                        case Result.Panic(ex) =>
+                        case Result.Panic(ex)  =>
                             Log.warn(s"Unexpected error pinging socket $path", ex).andThen(
                                 tryNext(remaining.tail)
                             )
@@ -2979,6 +3017,33 @@ private[kyo] object HttpContainerBackend:
             end tryNext
             tryNext(candidates)
         }
+
+    /** Ask the daemon which runtime it is, through the docker-compat `/version` endpoint.
+      *
+      * Podman's `/version` names itself in its `Components` list ("Podman Engine"); Docker's names "Engine".
+      * The body is matched as text rather than decoded into a DTO because the shape differs between the two
+      * and across API versions, while the name itself does not. A daemon that does not answer, or answers
+      * something unrecognized, leaves the backend on its socket-path heuristic rather than failing detection:
+      * this is a diagnostic and a feature-gating hint, never a reason to reject a daemon that just pinged.
+      */
+    private[kyo] def probeRuntime(backend: HttpContainerBackend)(using Frame): String < Async =
+        Abort.run[Throwable](HttpClient.getText(backend.url("/version"))).map {
+            case Result.Success(body) if body.toLowerCase.contains("podman") => "podman"
+            case Result.Success(_)                                           => "docker"
+            case _                                                           => backend.runtimeName
+        }
+
+    /** The shell command that reaches the same daemon this backend is bound to.
+      *
+      * kyo-pod probes and picks a socket that works, which is not necessarily the one the user's CLI is
+      * configured for: on a host whose `podman system connection` default is broken, kyo-pod talks to the
+      * machine socket through `/var/run/docker.sock` while `podman ps` shows nothing at all. Printing the
+      * equivalent command turns that from "my code started nothing" into one line to paste. The env var
+      * differs by runtime: podman reads `CONTAINER_HOST` and ignores `DOCKER_HOST`.
+      */
+    private[kyo] def cliEquivalent(socketPath: String, runtime: String): String =
+        if runtime == "podman" then s"CONTAINER_HOST=unix://$socketPath podman ps"
+        else s"DOCKER_HOST=unix://$socketPath docker ps"
 
     /** Parse a `CONTAINER_HOST` / `DOCKER_HOST` env var value into a Unix socket path.
       *
@@ -3044,7 +3109,7 @@ private[kyo] object HttpContainerBackend:
     private def explicitSocketPath(using Frame): Maybe[String] < (Sync & Abort[ContainerException]) =
         envNonEmpty("CONTAINER_HOST").map {
             case Present(v) => parseHostUri("CONTAINER_HOST", v).map(Present(_))
-            case Absent =>
+            case Absent     =>
                 envNonEmpty("DOCKER_HOST").map {
                     case Present(v) => parseHostUri("DOCKER_HOST", v).map(Present(_))
                     case Absent     => Absent

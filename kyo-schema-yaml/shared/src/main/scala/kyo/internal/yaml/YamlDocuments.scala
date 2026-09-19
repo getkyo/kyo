@@ -10,7 +10,7 @@ private[kyo] object YamlDocuments:
             if start >= input.length then false
             else
                 val lineEnd = YamlSource.lineEnd(input, start)
-                val stop =
+                val stop    =
                     if lineEnd > start && input.charAt(lineEnd - 1) == '\r' then lineEnd - 1
                     else lineEnd
                 marker(input, start, stop) match
@@ -29,7 +29,7 @@ private[kyo] object YamlDocuments:
         var start = 0
         while start < input.length do
             val lineEnd = YamlSource.lineEnd(input, start)
-            val stop =
+            val stop    =
                 if lineEnd > start && input.charAt(lineEnd - 1) == '\r' then lineEnd - 1
                 else lineEnd
             marker(input, start, stop) match

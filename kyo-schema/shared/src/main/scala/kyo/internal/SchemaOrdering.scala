@@ -23,9 +23,9 @@ import scala.deriving.Mirror
         new Ordering[A]:
             def compare(x: A, y: A): Int =
                 // Mirror.ProductOf guarantees A is a case class (extends Product)
-                val px = x.asInstanceOf[Product]
-                val py = y.asInstanceOf[Product]
-                val n  = orderings.length
+                val px                         = x.asInstanceOf[Product]
+                val py                         = y.asInstanceOf[Product]
+                val n                          = orderings.length
                 @tailrec def loop(i: Int): Int =
                     if i < n then
                         val c = orderings(i).compare(px.productElement(i), py.productElement(i))
@@ -45,7 +45,7 @@ import scala.deriving.Mirror
     /** Summons an Ordering[H], falling back to Mirror-based derivation for case classes. */
     private inline def summonOrdering[H]: Ordering[Any] =
         summonFrom {
-            case o: Ordering[H @unchecked] => o.asInstanceOf[Ordering[Any]]
+            case o: Ordering[H @unchecked]         => o.asInstanceOf[Ordering[Any]]
             case m: Mirror.ProductOf[H @unchecked] =>
                 deriveOrdering[H](using m).asInstanceOf[Ordering[Any]]
         }

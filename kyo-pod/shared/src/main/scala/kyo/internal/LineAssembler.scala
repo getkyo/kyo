@@ -23,7 +23,7 @@ object LineAssembler:
         Pipe:
             Loop("") { residual =>
                 Poll.andMap[Chunk[String]] {
-                    case Absent => Loop.done
+                    case Absent           => Loop.done
                     case Present(strings) =>
                         val (newResidual, lines) = strings.foldLeft((residual, Chunk.empty[String])) {
                             case ((r, acc), s) =>
@@ -42,7 +42,7 @@ object LineAssembler:
         Pipe:
             Loop(Map.empty[K, String]) { state =>
                 Poll.andMap[Chunk[(String, K)]] {
-                    case Absent => Loop.done
+                    case Absent         => Loop.done
                     case Present(pairs) =>
                         val (newState, emitted) = pairs.foldLeft((state, Chunk.empty[(String, K)])) {
                             case ((st, acc), (content, key)) =>

@@ -68,7 +68,7 @@ object TodoAppFixture:
             for
                 id    <- requireId(options, remainingArgs)
                 todos <- store.get
-                todo <- todos.find(_.id == id) match
+                todo  <- todos.find(_.id == id) match
                     case None =>
                         Abort.fail(new NoSuchElementException(s"no todo #$id"))
                     case Some(value) =>
@@ -87,7 +87,7 @@ object TodoAppFixture:
         override def name = "list"
         run { (options, _) =>
             for
-                todos <- store.get
+                todos   <- store.get
                 visible <- Sync.defer {
                     if options.all then todos
                     else todos.filter(t => t.status ne TodoStatus.Completed)
@@ -105,7 +105,7 @@ object TodoAppFixture:
             for
                 id    <- requireId(options, remainingArgs)
                 todos <- store.get
-                todo <- todos.find(_.id == id) match
+                todo  <- todos.find(_.id == id) match
                     case None =>
                         Abort.fail(new NoSuchElementException(s"no todo #$id"))
                     case Some(value) =>
@@ -122,7 +122,7 @@ object TodoAppFixture:
             for
                 id    <- requireId(options, remainingArgs)
                 todos <- store.get
-                todo <- todos.find(_.id == id) match
+                todo  <- todos.find(_.id == id) match
                     case None =>
                         Abort.fail(new NoSuchElementException(s"no todo #$id"))
                     case Some(value) =>

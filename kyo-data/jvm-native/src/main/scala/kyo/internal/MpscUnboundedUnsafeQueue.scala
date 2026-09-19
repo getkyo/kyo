@@ -54,8 +54,8 @@ final private[kyo] class MpscUnboundedUnsafeQueue[A](chunkSize: Int) extends Uns
                 val buffer = producerBuffer
                 if pLimit <= pIdx then
                     offerSlowPath(mask, pIdx, pLimit) match
-                        case RETRY    => loop()
-                        case CONTINUE => loop()
+                        case RETRY        => loop()
+                        case CONTINUE     => loop()
                         case QUEUE_RESIZE =>
                             if resize(mask, buffer, pIdx, a) then true
                             else loop()
@@ -167,7 +167,7 @@ final private[kyo] class MpscUnboundedUnsafeQueue[A](chunkSize: Int) extends Uns
     private def newBufferPoll(nextBuffer: AtomicReferenceArray[AnyRef], cIdx: Long): Maybe[A] =
         val newMask = ((nextBuffer.length() - 1) << 1).toLong - 2
         consumerMask = newMask
-        val offset = ((cIdx & newMask) >> 1).toInt
+        val offset                  = ((cIdx & newMask) >> 1).toInt
         @tailrec def spin(): AnyRef =
             val v = nextBuffer.get(offset)
             if isNull(v) then spin() else v

@@ -22,7 +22,7 @@ class TopicRoundTripTest extends Test:
         Topic.run {
             for
                 started <- Latch.init(1)
-                fiber <- Fiber.initUnscoped(using Topic.isolate)(
+                fiber   <- Fiber.initUnscoped(using Topic.isolate)(
                     started.release.andThen(Topic.stream[BigMsg]("aeron:ipc").take(messages.size).run)
                 )
                 _        <- started.await
@@ -51,7 +51,7 @@ class TopicRoundTripTest extends Test:
             for
                 started   <- Latch.init(1)
                 receiving <- Latch.init(1)
-                fiber <- Fiber.initUnscoped(using Topic.isolate)(
+                fiber     <- Fiber.initUnscoped(using Topic.isolate)(
                     started.release.andThen(
                         Topic.stream[Ordered](uri)
                             .tap(_ => receiving.release)
@@ -102,7 +102,7 @@ class TopicRoundTripTest extends Test:
         Topic.run {
             for
                 started <- Latch.init(1)
-                fiber <- Fiber.initUnscoped(using Topic.isolate)(
+                fiber   <- Fiber.initUnscoped(using Topic.isolate)(
                     started.release.andThen(Topic.stream[RollMsg](rollUri).take(total).run)
                 )
                 _ <- started.await
@@ -126,7 +126,7 @@ class TopicRoundTripTest extends Test:
         val pingValue = 42
         Topic.run {
             for
-                started <- Latch.init(2)
+                started   <- Latch.init(2)
                 echoFiber <- Fiber.initUnscoped(using Topic.isolate)(
                     started.release.andThen(
                         for
@@ -158,7 +158,7 @@ class TopicRoundTripTest extends Test:
         Topic.run {
             for
                 started <- Latch.init(1)
-                fiber <- Fiber.initUnscoped(using Topic.isolate)(
+                fiber   <- Fiber.initUnscoped(using Topic.isolate)(
                     started.release.andThen(Topic.stream[UdpMsg](uri).take(messages.size).run)
                 )
                 _        <- started.await

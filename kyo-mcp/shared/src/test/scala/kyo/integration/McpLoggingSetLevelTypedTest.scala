@@ -46,7 +46,7 @@ class McpLoggingSetLevelTypedTest extends Test:
     }
 
     "notifyLog before setLogLevel uses Info default threshold" in {
-        val counter = makeCounter
+        val counter       = makeCounter
         val logNotifRoute = McpClientHandler.onNotification[LogMsg]("notifications/message") { _ =>
             Sync.defer(discard(counter.incrementAndGet()(using AllowUnsafe.embrace.danger)))
         }

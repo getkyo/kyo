@@ -21,9 +21,11 @@ the shape of the statement it renders to.
 Every driver implements its server's wire protocol directly on Kyo's async network stack, with no JDBC
 underneath. A statement suspends a fiber rather than blocking a thread, and the whole implementation,
 protocols included, is one set of shared sources compiled for the JVM, Scala.js, Scala Native, and Wasm, so
-every feature works the same on all four platforms. PostgreSQL and MySQL drivers ship with the module, each
-exposing its engine's own capabilities (`COPY`, `LISTEN`/`NOTIFY`, `LOAD DATA LOCAL INFILE`) alongside the
-portable surface, and the URL scheme selects among the drivers a build depends on.
+every feature works the same on all four platforms. PostgreSQL, MySQL and SQLite drivers ship with the
+module, and the URL scheme selects among the drivers a build depends on. The two server drivers each expose
+their engine's own capabilities (`COPY`, `LISTEN`/`NOTIFY`, `LOAD DATA LOCAL INFILE`) alongside the portable
+surface; SQLite is embedded, so it runs in the same process with no server to reach and adds typed refusals
+where the engine lacks a construct rather than methods.
 
 Typed queries can be generated at compile time through ordinary Scala 3 inlining, with no annotation, build
 step, or return type annotation restrictions. The SQL string lands in the artifact as a constant avoiding runtime
@@ -35,7 +37,8 @@ overhead.
 libraryDependencies ++= Seq(
     "io.getkyo" %% "kyo-sql"          % "<latest version>",
     "io.getkyo" %% "kyo-sql-postgres" % "<latest version>",
-    "io.getkyo" %% "kyo-sql-mysql"    % "<latest version>"
+    "io.getkyo" %% "kyo-sql-mysql"    % "<latest version>",
+    "io.getkyo" %% "kyo-sql-sqlite"   % "<latest version>"
 )
 ```
 
@@ -55,7 +58,8 @@ val program: Chunk[Ping] < (Async & Abort[SqlException]) =
 
 `DB.run(url)` opens a connection pool, supplies it to every statement inside, and closes it when the block
 ends. The `url` is an ordinary runtime `String`. `"postgres://user:pass@host:5432/app"` runs the program
-against PostgreSQL; swapping in `"mysql://user:pass@host:3306/app"` runs it against MySQL, because the engine
+against PostgreSQL; swapping in `"mysql://user:pass@host:3306/app"` runs it against MySQL, or
+`"sqlite://app.db"` against a local file, because the engine
 is chosen by the URL, not by the code. For a URL written as a
 literal, the scheme is resolved while compiling, and a scheme no driver on the classpath claims is a build
 warning listing the schemes that are available (a warning rather than an error, since a backend registered
@@ -348,9 +352,9 @@ The compile-time render works through ordinary Scala 3 inlining: no annotation, 
 no macro configuration. When it
 succeeds, the SQL text is a constant in the artifact and rendering costs nothing at run time. The render is
 made once per driver on the compile classpath, each targeting its dialect's capability floor (PostgreSQL
-11.0, MySQL 8.0.31), since compiling has no server to ask. Bind positions must land identically across the
+11.0, MySQL 8.0.31, SQLite 3.39.0), since compiling has no server to ask. Bind positions must land identically across the
 rendered texts, and at run time the client picks the text matching its own dialect, which is how one
-compiled statement serves PostgreSQL and MySQL from the same artifact. Every successful `.runStatic`
+compiled statement serves every driver on the classpath from the same artifact. Every successful `.runStatic`
 reports what it folded to at the call site, one line per driver, so the sbt log shows the exact SQL that
 was produced (on by default, off with `-Dkyo.sql.static.log=false` on the compiler's JVM):
 
@@ -449,7 +453,7 @@ val perCustomer: Chunk[(Long, BigDecimal)] < (Abort[SqlException] & DB) =
 ```
 
 Aggregate result types are the ones the servers return: `sum` over an `Int` column is a `Long`, `avg` over
-an exact operand is a `BigDecimal`, so the widening both engines perform is present in the types. A typed
+an exact operand is a `BigDecimal`, so the widening the engines perform is present in the types. A typed
 query's rows decode positionally, because the renderer emitted the columns itself in field order, so a
 naming convention at the call site cannot reorder a typed read.
 
@@ -524,7 +528,7 @@ whole call in `Async.timeout`.
 
 `SqlSchema[A]` is the evidence that a type can cross the wire. The derivation builds it one
 `SqlSchema.Column` per field, so the columns that prove support are the columns that serialize. The base
-column set covers the standard Scala and `java.time` types, mapped natively on both shipped drivers, and
+column set covers the standard Scala and `java.time` types, mapped natively on every shipped driver, and
 the full table is in the [reference](#type-support). `List`, `Vector`, `Set`, `Map`, and general `Chunk[A]` have
 no column, and a nested case class does not flatten implicitly: each is a compile error naming the field or
 bind position, because admitting a type to storage is a visible declaration rather than a library default.
@@ -559,7 +563,13 @@ pinned with `@column`.
 ```text
 postgres://user:password@host:port/database[?options]
 mysql://user:password@host:port/database[?options]
+sqlite://path/to/database.db[?options]
+sqlite://:memory:
 ```
+
+SQLite's URL is a path rather than a network coordinate: no user, no password, no host, no port. Everything
+between `://` and the query string is the path, read as it stands, so a name containing a colon or an `@`
+needs no escaping.
 
 The scheme picks the driver: at compile time for a literal URL, through runtime discovery for a computed
 one. URL options cover transport settings (`sslmode`, `sslrootcert`, `connectTimeout`, `socketTimeout`,
@@ -593,7 +603,9 @@ settings attach through `config.extension(...)`, and engine-specific capabilitie
 clients, reached by narrowing (`DB.clientAs[PostgresClient]`), so portable code does not reach
 engine-specific behavior accidentally. Both are documented in the drivers:
 [kyo-sql-postgres](../kyo-sql-postgres/README.md) (`COPY`, `LISTEN`/`NOTIFY`, hstore, ranges, custom types),
-[kyo-sql-mysql](../kyo-sql-mysql/README.md) (`LOAD DATA LOCAL INFILE`, TLS modes).
+[kyo-sql-mysql](../kyo-sql-mysql/README.md) (`LOAD DATA LOCAL INFILE`, TLS modes),
+[kyo-sql-sqlite](../kyo-sql-sqlite/README.md) (embedded, no server; the DDL type name is what the codec
+dispatches on).
 
 ## When things fail
 
@@ -663,7 +675,7 @@ answering one `Result` per statement so one failure does not void the batch. `pi
 
 ## Cross-platform notes
 
-The module and both drivers compile from single shared sources on the JVM, Scala.js, Scala Native, and Wasm,
+The module and its drivers compile from single shared sources on the JVM, Scala.js, Scala Native, and Wasm,
 down to the authentication crypto, which is pure Scala rather than `javax.crypto`. Two things are platform
 work:
 
@@ -687,32 +699,37 @@ work:
 
 ### Type support
 
-Each entry is a `SqlSchema.Column` given with a native mapping on both shipped drivers. A case class or
+Each entry is a `SqlSchema.Column` given with a native mapping on every shipped driver. A case class or
 tuple of these is row evidence, and `Maybe` / `Option` wrap any of them as a nullable column.
 
-| Scala type | PostgreSQL | MySQL |
-|---|---|---|
-| `Byte`, `Short` | `int2` | `TINYINT`, `SMALLINT` |
-| `Int`, `Long` | `int4`, `int8` | `INT`, `BIGINT` |
-| `Float`, `Double` | `float4`, `float8` | `FLOAT`, `DOUBLE` |
-| `BigDecimal`, `BigInt` | `numeric` | `DECIMAL` |
-| `Boolean` | `bool` | `TINYINT(1)` |
-| `String`, `Char` | `text` | `VARCHAR` / `TEXT` |
-| `Span[Byte]` | `bytea` | `BLOB` |
-| `Instant`, `java.time.Instant` | `timestamptz` | `DATETIME` in UTC |
-| `java.time.LocalDate`, `LocalTime`, `LocalDateTime` | `date`, `time`, `timestamp` | `DATE`, `TIME`, `DATETIME` |
-| `java.time.OffsetTime` | `timetz` | ISO-8601 text |
-| `java.time.OffsetDateTime`, `ZonedDateTime` | `timestamptz`, normalised to UTC | `DATETIME` in UTC |
-| `java.time.Duration`, `FiniteDuration` | `interval` | `TIME` |
-| `Duration` | `int8`, total nanoseconds | `BIGINT`, total nanoseconds |
-| `java.time.Period` | `interval` | ISO-8601 text |
-| `java.util.UUID` | `uuid` | 36-character string |
-| `UUID` | `text` | `VARCHAR` |
-| `java.net.URI`, `java.util.Locale`, `java.util.Currency` | `text` | `VARCHAR` |
-| `Chunk[Int]`, `Chunk[String]`, `Chunk[JsonText]` | `int4[]`, `text[]`, `jsonb[]` | `JSON` |
-| `JsonText` | `jsonb` | `JSON` |
+The SQLite column reads differently from the other two. SQLite has no fixed column types, only a declared
+name and a per-value storage class, so the driver dispatches on the DECLARED name and the names below are
+what a `CREATE TABLE` must use. A trailing `TEXT` is load-bearing: it forces TEXT affinity, without which a
+24-digit decimal, an all-digit date and a bare-number JSON document are each rewritten on insert.
 
-`OffsetDateTime` and `ZonedDateTime` normalise to UTC on the way out, because that is what both engines
+| Scala type | PostgreSQL | MySQL | SQLite |
+|---|---|---|---|
+| `Byte`, `Short` | `int2` | `TINYINT`, `SMALLINT` | `SMALLINT` |
+| `Int`, `Long` | `int4`, `int8` | `INT`, `BIGINT` | `INTEGER`, `BIGINT` |
+| `Float`, `Double` | `float4`, `float8` | `FLOAT`, `DOUBLE` | `FLOAT`, `DOUBLE` |
+| `BigDecimal`, `BigInt` | `numeric` | `DECIMAL` | `DECIMAL TEXT(38,10)` |
+| `Boolean` | `bool` | `TINYINT(1)` | `BOOLEAN` |
+| `String`, `Char` | `text` | `VARCHAR` / `TEXT` | `TEXT` |
+| `Span[Byte]` | `bytea` | `BLOB` | `BLOB` |
+| `Instant`, `java.time.Instant` | `timestamptz` | `DATETIME` in UTC | `TIMESTAMP TEXT` |
+| `java.time.LocalDate`, `LocalTime`, `LocalDateTime` | `date`, `time`, `timestamp` | `DATE`, `TIME`, `DATETIME` | `DATE TEXT`, `TIME TEXT`, `DATETIME TEXT` |
+| `java.time.OffsetTime` | `timetz` | ISO-8601 text | `TIMETZ TEXT` |
+| `java.time.OffsetDateTime`, `ZonedDateTime` | `timestamptz`, normalised to UTC | `DATETIME` in UTC | `TIMESTAMP TEXT` in UTC |
+| `java.time.Duration`, `FiniteDuration` | `interval` | `TIME` | `DURATION TEXT` |
+| `Duration` | `int8`, total nanoseconds | `BIGINT`, total nanoseconds | `DURATION TEXT` |
+| `java.time.Period` | `interval` | ISO-8601 text | `INTERVAL TEXT` |
+| `java.util.UUID` | `uuid` | 36-character string | `UUID TEXT` |
+| `UUID` | `text` | `VARCHAR` | `UUID TEXT` |
+| `java.net.URI`, `java.util.Locale`, `java.util.Currency` | `text` | `VARCHAR` | `TEXT` |
+| `Chunk[Int]`, `Chunk[String]`, `Chunk[JsonText]` | `int4[]`, `text[]`, `jsonb[]` | `JSON` | `JSON TEXT` |
+| `JsonText` | `jsonb` | `JSON` | `JSON TEXT` |
+
+`OffsetDateTime` and `ZonedDateTime` normalise to UTC on the way out, because that is what the engines
 store. A codec that keeps the offset is a two-column `SqlSchema.ofMulti`.
 
 ### Configuration
@@ -737,20 +754,24 @@ store. A codec that keeps the offset is a two-column `SqlSchema.ofMulti`.
 
 ### Protocol capabilities
 
-| Capability | PostgreSQL | MySQL |
-|---|---|---|
-| Oldest server targeted | 11.0 | 8.0.31 |
-| Authentication | trust, cleartext, MD5, SCRAM-SHA-256, SCRAM-SHA-256-PLUS | `mysql_native_password`, `caching_sha2_password`, `sha256_password`, `mysql_clear_password` |
-| TLS | `SSLRequest` upgrade | `CLIENT_SSL` upgrade |
-| Extended protocol | prepared and binary, per-connection cache | prepared and binary, per-connection cache |
-| Streaming | portal fetches of `streamBatchSize` | rows as the server frames them |
-| Pipelining | one TCP write per batch | sequential on one connection |
-| Cancellation | `CancelRequest` on a fresh connection | `KILL QUERY` on a sidecar |
-| Bulk transfer | `COPY` in and out | `LOAD DATA LOCAL INFILE` |
-| Notifications | `LISTEN` / `NOTIFY` | none |
+| Capability | PostgreSQL | MySQL | SQLite |
+|---|---|---|---|
+| Oldest version targeted | 11.0 | 8.0.31 | 3.39.0 |
+| Authentication | trust, cleartext, MD5, SCRAM-SHA-256, SCRAM-SHA-256-PLUS | `mysql_native_password`, `caching_sha2_password`, `sha256_password`, `mysql_clear_password` | none, in-process |
+| TLS | `SSLRequest` upgrade | `CLIENT_SSL` upgrade | none, in-process |
+| Extended protocol | prepared and binary, per-connection cache | prepared and binary, per-connection cache | one statement API, so the simple and extended paths are the same one |
+| Streaming | portal fetches of `streamBatchSize` | rows as the server frames them | one row per step, with no batch to size |
+| Pipelining | one TCP write per batch | sequential on one connection | statements in turn, with no round trip to save |
+| Cancellation | `CancelRequest` on a fresh connection | `KILL QUERY` on a sidecar | `sqlite3_interrupt` on the connection |
+| Bulk transfer | `COPY` in and out | `LOAD DATA LOCAL INFILE` | none |
+| Notifications | `LISTEN` / `NOTIFY` | none | none |
 
-A construct one engine lacks (`RETURNING` and `CUBE` on MySQL, for instance) fails as a typed
-`SqlUnsupportedDialectFeatureException` at render time, never as SQL the server rejects.
+The SQLite column reads as absences because most of it is protocol, and an embedded engine has none: the
+database is a file this process opens, so there is nothing to authenticate to, encrypt, or batch a round
+trip against.
+
+A construct an engine lacks (`RETURNING` and `CUBE` on MySQL, `GROUP BY ROLLUP` and `LATERAL` on SQLite)
+fails as a typed `SqlUnsupportedDialectFeatureException` at render time, never as SQL the server rejects.
 
 ## Adding a backend
 

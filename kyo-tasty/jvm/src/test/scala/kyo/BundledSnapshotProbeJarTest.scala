@@ -118,7 +118,7 @@ class BundledSnapshotProbeJarTest extends kyo.test.Test[Any]:
     "digest mismatch raises TastyError.DigestMismatch" in {
         val staleDigest   = 0xdeadbeefL // intentionally wrong
         val snapshotBytes = syntheticSnapshotBytes(2, staleDigest)
-        val jarBytes = buildZipBytes(
+        val jarBytes      = buildZipBytes(
             "B.class"                              -> Array[Byte](0xca.toByte, 0xfe.toByte),
             BundledSnapshotProbe.snapshotEntryPath -> snapshotBytes
         )
@@ -142,7 +142,7 @@ class BundledSnapshotProbeJarTest extends kyo.test.Test[Any]:
         val contentPath   = writeTempJar(contentBytes)
         val digest        = DigestComputer.digestForRoot(contentPath)
         val snapshotBytes = syntheticSnapshotBytes(2, digest)
-        val jarBytes = buildZipBytes(
+        val jarBytes      = buildZipBytes(
             "Bar.class"                            -> Array[Byte](0xca.toByte, 0xfe.toByte),
             BundledSnapshotProbe.snapshotEntryPath -> snapshotBytes
         )

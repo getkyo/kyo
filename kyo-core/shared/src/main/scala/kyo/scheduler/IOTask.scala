@@ -79,7 +79,7 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
                                 locally {
                                     completeDiscard(input.asInstanceOf[Result[E, A]])
                                     nullResult
-                            },
+                                },
                         [C] =>
                             (joinInput, cont) =>
                                 locally {
@@ -103,7 +103,7 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
                                             }
                                             nullResult
                                     end match
-                            }
+                                }
                     )
                 }
             if !isNull(next) then
@@ -126,7 +126,7 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
 
     final def run(startMillis: Long, clock: InternalClock, deadline: Long): Task.Result =
         val safepoint = Safepoint.get
-        val next =
+        val next      =
             try eval(startMillis, clock, deadline)(using safepoint)
             catch
                 case ex =>
@@ -209,7 +209,7 @@ object IOTask:
         finalizers: Finalizers = Finalizers.empty,
         runtime: Int = 0
     ): IOTask[Ctx, E, A] =
-        val ctx = context
+        val ctx  = context
         val task =
             if ctx.isEmpty then
                 new IOTask(curr, trace, finalizers)

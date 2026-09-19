@@ -2,6 +2,7 @@ package kyo.internal
 
 import kyo.*
 import kyo.Sql.*
+import scala.annotation.publicInBinary
 import scala.compiletime.constValue
 import scala.compiletime.erasedValue
 import scala.compiletime.summonFrom
@@ -11,7 +12,10 @@ import scala.compiletime.summonFrom
   * These live outside [[kyo.Sql]] because they are `transparent inline` scaffolding invoked by the DSL entry points
   * ([[kyo.Sql.from]], [[kyo.Sql.insert]], [[kyo.Sql.update]], [[kyo.Sql.delete]]) and by macro-emitted code, not user-facing surface.
   * The helpers here are pure scaffolding whose call sites expand at macro-expansion time and never appear in inferred user types.
+  *
+  * Public binary visibility supports inline callers while Scala access remains restricted to kyo.
   */
+@publicInBinary
 private[kyo] object SqlAstInternal:
 
     /** Per-field SQL-name resolver used by `buildColumns` / `buildRowColumns` to populate `Column.sqlName`.

@@ -46,7 +46,7 @@ class RuntimeExecutorTest extends kyo.test.Test[Any]:
     "times out and terminates a non-cooperative block process" in {
         withOutputDir { outputDir =>
             for
-                cp <- testClasspath
+                cp     <- testClasspath
                 result <- RuntimeExecutor.execute(
                     "kyo.doctest.internal.RuntimeExecutorTimeoutTarget$",
                     kyo.Path("RuntimeExecutorTest.scala"),
@@ -65,7 +65,7 @@ class RuntimeExecutorTest extends kyo.test.Test[Any]:
     "contains System.exit inside the block process" in {
         withOutputDir { outputDir =>
             for
-                cp <- testClasspath
+                cp     <- testClasspath
                 result <- RuntimeExecutor.execute(
                     "kyo.doctest.internal.RuntimeExecutorExitTarget$",
                     kyo.Path("RuntimeExecutorTest.scala"),
@@ -83,7 +83,7 @@ class RuntimeExecutorTest extends kyo.test.Test[Any]:
     "resets the deadline and applies the active block timeout" in {
         withOutputDir { outputDir =>
             for
-                cp <- testClasspath
+                cp     <- testClasspath
                 result <- RuntimeExecutor.execute(
                     "kyo.doctest.internal.RuntimeExecutorPerBlockTimeoutTarget$",
                     kyo.Path("RuntimeExecutorTest.scala"),

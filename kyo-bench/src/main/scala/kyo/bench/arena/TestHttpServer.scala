@@ -75,7 +75,7 @@ object TestHttpServer:
         val port      = freePort()
         val javaBin   = System.getProperty("java.home") + "/bin/java"
         val classpath = System.getProperty("java.class.path")
-        val command =
+        val command   =
             List(javaBin, "-cp", classpath, "kyo.bench.arena.TestHttpServer", concurrency.toString, port.toString)
         val builder = new ProcessBuilder(command*)
         try
@@ -116,7 +116,7 @@ object TestHttpServer:
 
     class PingVerticle extends AbstractVerticle:
         override def start(): Unit =
-            val port = config().getInteger("port")
+            val port          = config().getInteger("port")
             val serverOptions = new HttpServerOptions()
                 .setMaxInitialLineLength(8192)
                 .setMaxHeaderSize(8192)
@@ -157,7 +157,7 @@ object TestHttpServer:
         val concurrency = args(0).toInt
         val port        = args(1).toInt
         log(port, "starting")
-        val vertx = Vertx.vertx()
+        val vertx   = Vertx.vertx()
         val options =
             new DeploymentOptions()
                 .setInstances(concurrency)

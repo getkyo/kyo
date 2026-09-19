@@ -37,7 +37,7 @@ object McpClient:
             /** Decodes `meta` to `M`, or `Absent` when no `_meta` is present. */
             def metaAs[M](using Schema[M], Frame): Maybe[M] < Abort[McpDecodeException] =
                 self.meta match
-                    case Absent => Maybe.empty
+                    case Absent      => Maybe.empty
                     case Present(sv) =>
                         Structure.decode[M](sv) match
                             case Result.Success(m) => Present(m)
@@ -303,7 +303,7 @@ object McpClient:
             Schema[Out]
         ): Out < Abort[McpReadResourceFailure] =
             contents.headMaybe match
-                case Absent => Abort.fail(McpToolStructuredMissingException(method))
+                case Absent      => Abort.fail(McpToolStructuredMissingException(method))
                 case Present(rc) =>
                     rc match
                         case McpHandler.ResourceContents.Text(_, _, text) =>
@@ -323,7 +323,7 @@ object McpClient:
             Schema[Out]
         ): Out < Abort[McpGetPromptFailure] =
             outcome.meta match
-                case Absent => Abort.fail(McpToolStructuredMissingException(name))
+                case Absent      => Abort.fail(McpToolStructuredMissingException(name))
                 case Present(sv) =>
                     Structure.decode[Out](sv) match
                         case Result.Success(o) => o
@@ -350,7 +350,7 @@ object McpClient:
     /** Returns true when `cap` is advertised in the (post-handshake) server capabilities. */
     private[kyo] def capabilityAdvertised(cap: McpCapabilities.Name, caps: Maybe[McpCapabilities.Server]): Boolean =
         caps match
-            case Absent => false
+            case Absent     => false
             case Present(c) =>
                 cap match
                     case McpCapabilities.Name.Tools       => c.tools.isDefined
