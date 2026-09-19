@@ -9,6 +9,11 @@ abstract class FileSystemWatchTestSuite extends kyo.test.Test[Any]:
 
     private given Frame = Frame.internal
 
+    /** Ticks a single [[take]] will advance before reporting that no events arrived. Far above any leaf's need (a scan
+      * publishes within two), so reaching it means the watcher stopped producing rather than that it was slow.
+      */
+    private val maxTicks = 1000
+
     protected def withFileSystem(
         use: (FileSystem.Write[Sync] & FileSystem.Watch, Path) => Unit <
             (Async & Sync & Scope & Abort[FileSystemException])
@@ -24,7 +29,21 @@ abstract class FileSystemWatchTestSuite extends kyo.test.Test[Any]:
         Frame
     ): Chunk[PathChange] < (Async & Abort[FileWatchException]) =
         Fiber.initUnscoped(Scope.run(watcher.events.take(count).run)).map { fiber =>
-            clock.advance(10.millis).andThen(clock.advance(10.millis)).andThen(fiber.get)
+            // A scan can need more than one tick, since a removal-only change is held back a cycle. Only the first
+            // tick's timer is armed before openWatcher returns, so an advance can land before the next one exists and
+            // be spent on nothing; advancing until the take has its events repeats it. A watcher that has terminated
+            // arms no further tick, so this cannot wait on the next timer to appear.
+            Loop.indexed { i =>
+                fiber.done.map {
+                    case true                   => Loop.done(())
+                    case false if i >= maxTicks =>
+                        // Reported rather than left to the suite budget, which is the silent hang this loop exists to avoid.
+                        fiber.interrupt.andThen(
+                            Abort.panic(new AssertionError(s"no events after $maxTicks ticks of ${10.millis}"))
+                        )
+                    case false => clock.advance(10.millis).andThen(Loop.continue)
+                }
+            }.andThen(fiber.get)
         }
 
     private def takeQueued(clock: Clock.TimeControl, watcher: Path.Watcher, count: Int)(using

@@ -456,6 +456,61 @@ class LLMTest extends kyo.test.Test[Any]:
         }
     }
 
+    "a 429 with Retry-After is waited out under the deadline before the retry, on the Anthropic and OpenAI wires" in {
+        // A Retry-After past the deadline: the wait is cut to the deadline, which then fires with the one
+        // request made (without the wait, the immediate schedule would have made a second request at
+        // once). Then a short Retry-After: the retry follows it and succeeds. Virtual time advances in
+        // steps until the fiber settles, so the outcome does not depend on when the sleeper registers.
+        def probe(config: Config, server: TestCompletionServer, okBody: String)(using Frame) =
+            Clock.withTimeControl { control =>
+                for
+                    _           <- server.enqueueStatus(429, """{"error":{"message":"rate limited"}}""", Seq("retry-after" -> "60"))
+                    long        <- Fiber.init(Abort.run[AIException](LLM.run(config.timeout(3.seconds))(AI.gen[String])))
+                    _           <- awaitCaptured(server, control, 1)
+                    _           <- settle(control, long)
+                    longResult  <- long.get
+                    afterLong   <- server.captured
+                    _           <- server.enqueueStatus(429, """{"error":{"message":"rate limited"}}""", Seq("retry-after" -> "2"))
+                    _           <- server.enqueueBody(okBody)
+                    short       <- Fiber.init(Abort.run[AIException](LLM.run(config.timeout(1.minute))(AI.gen[String])))
+                    _           <- awaitCaptured(server, control, 2)
+                    _           <- settle(control, short)
+                    shortResult <- short.get
+                    bodies      <- server.captured
+                yield
+                    assert(longResult.failure.exists(_.isInstanceOf[AICompletionTimeoutException]), s"long: $longResult")
+                    assert(afterLong.size == 1, "a Retry-After past the deadline makes no second request")
+                    assert(shortResult == Result.succeed("ok"), s"short: $shortResult")
+                    assert(bodies.size == 3, "a short Retry-After is followed by the retry")
+                end for
+            }
+        TestCompletionServer.run { anthropic =>
+            probe(
+                anthropicServerConfig(anthropic.baseUrl).retrySchedule(Schedule.repeat(1)),
+                anthropic,
+                anthropicResultToolBody("""{"resultValue":"ok"}""")
+            )
+        }.andThen {
+            TestCompletionServer.run { openai =>
+                probe(serverConfig(openai.baseUrl).retrySchedule(Schedule.repeat(1)), openai, resultToolBody("""{"resultValue":"ok"}"""))
+            }
+        }
+    }
+
+    "a 408 retries on the schedule like a 5xx" in {
+        TestCompletionServer.run { server =>
+            val config = serverConfig(server.baseUrl).retrySchedule(Schedule.repeat(1))
+            server.enqueueStatus(408, "timed out").andThen(server.enqueueBody(resultToolBody("""{"resultValue":"ok"}"""))).andThen {
+                LLM.run(config)(AI.gen[String]).map { result =>
+                    server.captured.map { caps =>
+                        assert(result == "ok")
+                        assert(caps.size == 2, s"a 408 should retry exactly once, expected 2 requests, got: ${caps.size}")
+                    }
+                }
+            }
+        }
+    }
+
     "a tool payload trailed by content, not just brackets, is still rejected" in {
         // The salvage is narrow on purpose. Surplus closing brackets are provider-shaped noise at the end
         // of a long generation; anything else after a complete value says the model misunderstood the
@@ -573,6 +628,18 @@ class LLMTest extends kyo.test.Test[Any]:
                 if caps.size >= n then Loop.done
                 else if i >= 200 then Loop.done
                 else control.advance(Duration.Zero, 20.millis).andThen(Loop.continue(i + 1))
+            }
+        }
+
+    /** Advances virtual time one second at a time, bounded, until the fiber settles, so an outcome that
+      * depends on a sleeper registered at an unknown moment (a Retry-After wait) is reached whichever
+      * step it registers in; the sleeper registered up front (the deadline) fires on schedule regardless.
+      */
+    private def settle[A](control: Clock.TimeControl, fiber: Fiber[A, Any])(using Frame): Unit < Async =
+        Loop(0) { i =>
+            fiber.done.map { done =>
+                if done || i >= 90 then Loop.done
+                else control.advance(1.second, 50.millis).andThen(Loop.continue(i + 1))
             }
         }
 
@@ -1037,10 +1104,14 @@ class LLMTest extends kyo.test.Test[Any]:
         val addOp     = LLM.internal.Op.Add(theAi, UserMessage("x", Absent))
         val setOp     = LLM.internal.Op.Set(theAi, Context.empty)
         val discardOp = LLM.internal.Op.Discard(theAi)
+        val plan      = Decider.internal.checkPlan(Structure.Value.Str("q"), 0.5)
+        val decideOp  = LLM.internal.Op.Decide(theAi, plan, record = false)
         assert(readOp.target == theAi, "Op.Read carries its target field")
         assert(addOp.message == UserMessage("x", Absent), "Op.Add carries its message field")
         assert(setOp.context == Context.empty, "Op.Set carries its context field")
         assert(discardOp.target == theAi, s"Op.Discard carries its target AI field, got: ${discardOp.target}")
+        assert(decideOp.target == theAi && (decideOp.plan eq plan), "Op.Decide carries its target and plan")
+        assert(!decideOp.record, "Op.Decide carries its record flag")
     }
 
     "run threads State across init, two adds, and a read" in {
@@ -1099,11 +1170,12 @@ class LLMTest extends kyo.test.Test[Any]:
                 discard <- Abort.run[AIException](LLM.run(escaped.reset)).map(_.isPanic)
                 session <- Abort.run[AIException](LLM.run(escaped.snapshot)).map(_.isPanic)
                 setSess <- Abort.run[AIException](LLM.run(escaped.enable(Tool.empty))).map(_.isPanic)
-            yield List(read, set, gen, stream, discard, session, setSess)
+                decide  <- Abort.run[AIException](LLM.run(escaped.check("x"))).map(_.isPanic)
+            yield List(read, set, gen, stream, discard, session, setSess, decide)
         }.map { panics =>
             assert(
                 panics.forall(identity),
-                s"every targeted op must panic cross-run; got [read,set,gen,stream,discard,session,setSess]=$panics"
+                s"every targeted op must panic cross-run; got [read,set,gen,stream,discard,session,setSess,decide]=$panics"
             )
         }
     }

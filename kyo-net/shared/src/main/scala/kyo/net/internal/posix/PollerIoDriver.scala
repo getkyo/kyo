@@ -54,9 +54,9 @@ import kyo.scheduler.Task
   *
   * The change FIFO carries packed primitive `long` commands rather than closures: each command encodes an opcode (RegisterRead /
   * RegisterWrite / Rearm / Deregister) plus fd and direction bits into one `long`. This eliminates the per-change closure allocation. The
-  * FIFO is an unboxed [[kyo.net.internal.util.MpscLongQueue]] (multi-producer, single change-worker consumer) that stores the raw `long` and
-  * recycles drained nodes, so enqueueing a change allocates nothing in steady state; a `ConcurrentLinkedQueue[java.lang.Long]` would box each
-  * command on every offer (a `java.lang.Long` per enqueue a JFR alloc profile flagged on the poller hot path).
+  * FIFO is an unboxed [[kyo.net.internal.util.MpscLongQueue]] (multi-producer, single change-worker consumer) that stores the raw `long` in
+  * an array chunk, so enqueueing a change allocates nothing until a burst outgrows the chunk; a `ConcurrentLinkedQueue[java.lang.Long]` would
+  * box each command on every offer (a `java.lang.Long` per enqueue a JFR alloc profile flagged on the poller hot path).
   *
   * The pending read and accept promises are stored directly on the [[PosixHandle]] (`pendingReadPromise`, `pendingAcceptPromise`) rather than
   * as `(promise, handle)` tuple pairs in the pending maps. This removes the per-await `Tuple2` allocation; the maps now hold `PosixHandle`
@@ -231,9 +231,9 @@ final private[net] class PollerIoDriver private[posix] (
     //
     // Element type: primitive long, in an unboxed MpscLongQueue (many producers, the single change worker as consumer). Each entry packs an
     // opcode + fd + direction bits into one long (see packCmd / OpXxx constants). This eliminates BOTH a per-change Function0 closure
-    // allocation AND the java.lang.Long boxing a ConcurrentLinkedQueue[java.lang.Long] would incur per offer (the queue
-    // recycles drained nodes, so a steady-state enqueue allocates nothing). The MpscLongQueue.offer is the happens-before barrier the awaitRead
-    // promise-store relies on, the same barrier a ConcurrentLinkedQueue.offer provides.
+    // allocation AND the java.lang.Long boxing a ConcurrentLinkedQueue[java.lang.Long] would incur per offer (the queue holds
+    // commands in an array chunk it reuses as a ring, so a cycle the chunk fits allocates nothing). The MpscLongQueue.offer is the
+    // happens-before barrier the awaitRead promise-store relies on, the same barrier a ConcurrentLinkedQueue.offer provides.
     // Exposed for allocation-seam tests: the unboxed long element type proves neither a closure nor a boxed Long is allocated per change.
     //
     // Single-consumer drain model (mirrors IoUringDriver's engine FIFO over its reap loop): the change FIFO and the engine FIFO below are drained
@@ -717,7 +717,7 @@ final private[net] class PollerIoDriver private[posix] (
         // change command. The poll fiber drains regIntake before processing the register command, so the map entry is in place when dispatchCmd
         // runs (the registration is published before the command via the change-queue happens-before, and the intake drain precedes the command).
         // rc<0 failure is handled inside dispatchCmd, which reads pendingReads and fails the stored promise. The pendingReadPromise store
-        // happens-before the changeQueue.offer (the MpscLongQueue offer tail swap is the barrier), so the change worker sees it on rc<0.
+        // happens-before the changeQueue.offer (the MpscLongQueue slot store is the release barrier), so the change worker sees it on rc<0.
         regIntake.offer(Registration(handle, RegKind.Read))
         submitChange(packCmd(OpRegisterRead, handle.readFd))
         // Offer-then-recheck against [[terminal]], mirroring the poll-fiber-confined idiom this file already uses elsewhere

@@ -68,7 +68,7 @@ class JsonRpcHandlerCancellationPolicyTest extends JsonRpcTest:
         // Unsafe: AtomicRef.Unsafe.init for thread-safe envelope accumulation outside effect context
         val sent = AtomicRef.Unsafe.init(List.empty[JsonRpcEnvelope])(using AllowUnsafe.embrace.danger)
 
-        def send(env: JsonRpcEnvelope)(using Frame): Unit < (Async & Abort[Closed]) =
+        def send(env: JsonRpcEnvelope)(using Frame): Unit < (Async & Abort[Closed | JsonRpcError]) =
             Sync.defer(discard(sent.getAndUpdate(env :: _)(using AllowUnsafe.embrace.danger))).andThen(inner.send(env))
 
         def incoming(using Frame): Stream[JsonRpcEnvelope, Async & Abort[Closed]] =
@@ -89,7 +89,7 @@ class JsonRpcHandlerCancellationPolicyTest extends JsonRpcTest:
         // Unsafe: AtomicRef.Unsafe.init for thread-safe envelope accumulation outside effect context
         val sent = AtomicRef.Unsafe.init(List.empty[JsonRpcEnvelope])(using AllowUnsafe.embrace.danger)
 
-        def send(env: JsonRpcEnvelope)(using Frame): Unit < (Async & Abort[Closed]) =
+        def send(env: JsonRpcEnvelope)(using Frame): Unit < (Async & Abort[Closed | JsonRpcError]) =
             env match
                 case _: JsonRpcResponse =>
                     Sync.defer(discard(sent.getAndUpdate(env :: _)(using AllowUnsafe.embrace.danger))).andThen {

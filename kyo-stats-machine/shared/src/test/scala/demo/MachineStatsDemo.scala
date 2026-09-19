@@ -14,15 +14,16 @@ import kyo.stats.machine.MachineRegistrySnapshot
   * enumerates it exactly as `OTLPMetricsExporter` does, and reports the machine.* families it found with real
   * values sampled off THIS host.
   *
-  * The read is non-destructive on purpose: histograms are read via `summary()` (bucket sums, no reset) and
-  * cumulative CPU counters via their retained baseline (`getLast()`), so reading the registry does not drain
-  * the values a real exporter would later flush.
+  * Histograms are read via `summary()` without resetting their buckets. Counters are read via `delta()`,
+  * draining their accumulated values as an exporter would. This demo reads them once, after sampling, and
+  * does not run another exporter alongside the snapshot.
   *
   * This is a standalone `main` meant to run on YOUR classpath with kyo-stats-machine present: run it from,
-  * or copy it into, an application that depends on the module. It runs on the JVM only, because its
-  * `MachineRegistrySnapshot` readback dereferences a `WeakReference`, which does not link under Scala.js/Wasm
-  * and throws under Scala Native; the module itself is cross-platform (the test suites cover js, wasm, and
-  * native). It is not runnable through this repository's own build, whose test configuration sets the
+  * or copy it into, an application that depends on the module. Its `MachineRegistrySnapshot` readback works
+  * on JVM and Scala Native, using their platform `WeakReference` implementations. Native also needs the
+  * service-provider configuration described in the module README. Scala.js and Wasm lack the
+  * `java.lang.ref.Reference` required by this readback helper. It is not runnable through this repository's
+  * own build, whose test configuration sets the
   * `KYO_MACHINE_DISABLED` opt-out so the module's suites never race a live sampler; under that lever the
   * sampler stays off, the snapshot is empty, and `validate` rejects it. Setting that same env var on your
   * own run is how you watch the opt-out suppress the sampler.

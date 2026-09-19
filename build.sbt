@@ -143,7 +143,7 @@ lazy val `kyo-settings` = Seq(
     scalacOptions ++= (if (sys.env.get("KYO_RETAIN_TREES").contains("true")) Seq("-Yretain-trees") else Nil),
     Test / scalacOptions --= scalacOptionTokens(Set(ScalacOptions.warnNonUnitStatement)).value,
     // Not in CI: parallel cross-version compilations of one module format the same shared
-    // sources concurrently, and the loser logs "scalafmt: failed for 1 sources" on every
+    // sources concurrently, and the loser reports a formatting failure on every
     // Native job. The scalafmt workflow (scalafmtAll plus a dirty-tree check) is the CI
     // enforcement; compile-time formatting is a local convenience only.
     scalafmtOnCompile := !insideCI.value,
@@ -3531,8 +3531,10 @@ def readFfiNativeManifest(cp: Seq[Attributed[File]], relDir: Seq[String], inBuil
 // the kyoNative aggregate (which has no native sources, hence no Test / nativeLink to transform) can
 // take these without the per-module link hook below.
 lazy val `native-settings-base` = Seq(
-    fork       := false,
-    bspEnabled := false,
+    fork := false,
+    // Native test binaries do not consume JVM process options.
+    Test / javaOptions := Nil,
+    bspEnabled         := false,
     // One test task per module, not one per suite. The scala-native TestAdapter keys its runner
     // processes by sbt task thread id, and sbt's cached task pool reaps a thread after 60s idle, so
     // one task per suite gives one FRESH runner process per suite whenever consecutive suites are
@@ -3554,9 +3556,14 @@ lazy val `native-settings-base` = Seq(
     // nativeConfig does not propagate across a project dependency, so fold each dep's FFI compile/link flags in
     // here or the link fails (SSL_CTX_ctrl macro / undefined io_uring_*).
     nativeConfig := {
-        val base         = nativeConfig.value
-        val cp           = (Compile / dependencyClasspath).value
-        val linkExtra    = readFfiNativeManifest(cp, KyoFfiPlugin.ffiNativeLinkFlagsDir, KyoFfiPlugin.ffiNativeInBuildLinkFlagsDir)
+        val base                = nativeConfig.value
+        val cp                  = (Compile / dependencyClasspath).value
+        val dependencyLinkExtra = readFfiNativeManifest(cp, KyoFfiPlugin.ffiNativeLinkFlagsDir, KyoFfiPlugin.ffiNativeInBuildLinkFlagsDir)
+        // Scala Native 0.5.12 omits GNU-stack notes in its safepoint assembly (upstream #4956).
+        // Mark Linux binaries' stacks non-executable until a release carries those notes.
+        val triple       = base.targetTriple.getOrElse(scala.scalanative.build.Discover.targetTriple(base))
+        val isLinux      = triple.split("-").contains("linux")
+        val linkExtra    = dependencyLinkExtra ++ (if (isLinux) Seq("-Wl,-z,noexecstack") else Nil)
         val compileExtra = readFfiNativeManifest(cp, KyoFfiPlugin.ffiNativeCompileFlagsDir, KyoFfiPlugin.ffiNativeInBuildCompileFlagsDir)
         val withLink     = if (linkExtra.isEmpty) base else base.withLinkingOptions(base.linkingOptions ++ linkExtra)
         if (compileExtra.isEmpty) withLink else withLink.withCompileOptions(withLink.compileOptions ++ compileExtra)
@@ -3592,8 +3599,10 @@ lazy val `native-settings` = `native-settings-base` ++ Seq(
 )
 
 lazy val `js-settings` = Seq(
-    Compile / doc / sources                     := Seq.empty,
-    fork                                        := false,
+    Compile / doc / sources := Seq.empty,
+    fork                    := false,
+    // Node test process options are configured through jsEnv.
+    Test / javaOptions                          := Nil,
     bspEnabled                                  := false,
     Test / parallelExecution                    := false,
     jsEnv                                       := new NodeJSEnv(NodeJSEnv.Config().withArgs(List("--max_old_space_size=5120"))),
@@ -3619,8 +3628,10 @@ lazy val `js-settings` = Seq(
 // TurboFan pipeline on Node 22/23 miscompiled it; Node 23 is EOL, and Node 24 made Turboshaft the
 // default and removed the --turboshaft-wasm opt-in flag (passing it there is a startup error).
 lazy val `wasm-settings` = Seq(
-    Compile / doc / sources  := Seq.empty,
-    fork                     := false,
+    Compile / doc / sources := Seq.empty,
+    fork                    := false,
+    // Node test process options are configured through jsEnv.
+    Test / javaOptions       := Nil,
     bspEnabled               := false,
     Test / parallelExecution := false,
     jsEnv                    := new NodeJSEnv(

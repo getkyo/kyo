@@ -10,35 +10,20 @@ import kyo.scheduler.util.Threads
   * same process. The returned executors ignore shutdown calls to prevent accidental closure by test cleanup code.
   */
 object TestExecutors {
-    // Suppress stack trace printing globally on Scala Native — StackTrace_PrintStackTrace
-    // triggers stackOverflowHandler → SIGSEGV.
-    Thread.setDefaultUncaughtExceptionHandler((_, _) => ())
-
-    // Thread factory that suppresses uncaught exception stack traces.
-    // On Scala Native, Thread.getUncaughtExceptionHandler.uncaughtException triggers
-    // StackTrace_PrintStackTrace which causes SIGSEGV via stackOverflowHandler.
-    private val silentThreadFactory = Threads(
+    private val workerThreadFactory = Threads(
         "test-worker",
-        r => {
-            val t = new Thread(null, r, "test-worker", 8 * 1024 * 1024) // 8MB stack
-            t.setUncaughtExceptionHandler((_, _) => ())
-            t
-        }
+        r => new Thread(null, r, "test-worker", 8 * 1024 * 1024)
     )
 
     val cached: ExecutorService =
-        uncloseableExecutor(Executors.newCachedThreadPool(silentThreadFactory))
-    private val silentTimerFactory = Threads(
+        uncloseableExecutor(Executors.newCachedThreadPool(workerThreadFactory))
+    private val timerThreadFactory = Threads(
         "test-timer",
-        r => {
-            val t = new Thread(null, r, "test-timer", 8 * 1024 * 1024) // 8MB stack
-            t.setUncaughtExceptionHandler((_, _) => ())
-            t
-        }
+        r => new Thread(null, r, "test-timer", 8 * 1024 * 1024)
     )
 
     val scheduled: ScheduledExecutorService =
-        uncloseableScheduled(Executors.newScheduledThreadPool(16, silentTimerFactory))
+        uncloseableScheduled(Executors.newScheduledThreadPool(16, timerThreadFactory))
 
     private def uncloseableExecutor(e: ExecutorService): ExecutorService =
         new java.util.concurrent.AbstractExecutorService {

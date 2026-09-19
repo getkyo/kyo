@@ -5,7 +5,7 @@ import sbt.Keys._
 import scala.scalanative.sbtplugin.ScalaNativePlugin
 
 /** Auto-triggered companion that swaps the JVM framework for the Scala Native framework on any project where both [[KyoTestPlugin]] and
-  * [[ScalaNativePlugin]] are enabled.
+  * `ScalaNativePlugin` are enabled.
   */
 object KyoTestNativePlugin extends AutoPlugin {
     override def trigger  = allRequirements

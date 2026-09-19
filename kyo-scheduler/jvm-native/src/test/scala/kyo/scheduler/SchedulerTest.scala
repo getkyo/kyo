@@ -237,6 +237,58 @@ class SchedulerTest extends AnyFreeSpec with NonImplicitAssertions {
         }
     }
 
+    "stalled workers" - {
+        // A worker whose task runs past its slice without honoring preemption (a nested evaluation such as a finalizer, or a step with
+        // no suspension point) is Stalled but not blocked, and stays so until the task yields. Only the worker itself serves its queue,
+        // so a task placed there waits for as long as the task spins, however many other workers are idle: an idle worker is woken only
+        // by an enqueue onto itself. Two things keep such a task from stranding: schedule places on an unavailable worker only when no
+        // worker at all is available, and the cycle drains a stalled worker's queue for as long as its task stays over its slice.
+        "tasks are not stranded behind workers whose tasks ignore preemption" in {
+            // Three workers, two of them held by spinning tasks, and a sampling stride of one so the placement search regularly
+            // misses the free worker and reaches the fallback.
+            val cfg = Scheduler.Config.default.copy(cores = 3, coreWorkers = 3, minWorkers = 3, maxWorkers = 3, scheduleStride = 1)
+            withScheduler(cfg) { s =>
+                val release = new CountDownLatch(1)
+                val started = new CountDownLatch(2)
+                try {
+                    (0 until 2).foreach(_ =>
+                        s.schedule(TestTask(_run = () => {
+                            started.countDown()
+                            while (release.getCount() > 0) {}
+                            Task.Done
+                        }))
+                    )
+                    assert(started.await(5, java.util.concurrent.TimeUnit.SECONDS))
+                    // Wait (poll, not a fixed sleep) until both carriers are past their slice and Stalled. The deadline is a
+                    // hang-guard for a pool that never stalls, never the pass condition.
+                    val deadline = java.lang.System.nanoTime() + 15000000000L
+                    var stalled  = 0
+                    while (
+                        {
+                            stalled = s.status().workers.count(w => (w ne null) && w.isStalled); stalled < 2
+                        } && java.lang.System.nanoTime() < deadline
+                    )
+                        Thread.sleep(1)
+                    assert(stalled == 2, s"the spinning tasks never stalled their workers (stalled=$stalled)")
+
+                    val served = new CountDownLatch(100)
+                    var landed = 0
+                    (0 until 100).foreach { _ =>
+                        s.schedule(TestTask(_run = () => { served.countDown(); Task.Done }))
+                        // The free worker is available throughout, so no task may be placed on a stalled one: a stalled worker's load
+                        // is its spinning task alone.
+                        if (s.status().workers.exists(w => (w ne null) && w.isStalled && w.load > 1)) landed += 1
+                    }
+                    assert(landed == 0, s"$landed tasks were placed on a stalled worker while a worker was available")
+                    assert(
+                        served.await(10, java.util.concurrent.TimeUnit.SECONDS),
+                        s"${served.getCount()} tasks stranded behind the spinning tasks with a worker free"
+                    )
+                } finally release.countDown()
+            }
+        }
+    }
+
     "regulator harness liveness" - {
         // Each Scheduler permanently pins TWO timer-pool threads with infinite loops: the blocking-monitor scan loop
         // (BlockingMonitor's submitted task) and the worker-cycle loop (Scheduler.cycleTask). The concurrency and admission

@@ -56,6 +56,19 @@ class JsonRpcHttpTransportTest extends kyo.test.Test[Any]:
         )
     end withCloseTrackingWsServer
 
+    private def withClosingWsServer[A, S](
+        test: HttpUrl => A < (S & Async & Abort[HttpException])
+    )(using Frame): A < (S & Async & Scope & Abort[HttpException]) =
+        HttpServer.init(0, "127.0.0.1")(
+            // Accepts the upgrade and closes straight away, so the client sees a session that ends
+            // after a successful connect rather than a connect that never succeeded.
+            HttpHandler.webSocket("ws/bye") { (_, ws) =>
+                ws.close()
+            }
+        ).map(server =>
+            test(HttpUrl.parse(s"http://127.0.0.1:${server.port}").getOrThrow)
+        )
+
     private def withGarbageWsServer[A, S](
         test: HttpUrl => A < (S & Async & Abort[HttpException])
     )(using Frame): A < (S & Async & Scope & Abort[HttpException]) =
@@ -86,6 +99,46 @@ class JsonRpcHttpTransportTest extends kyo.test.Test[Any]:
                                     case JsonRpcRequest(JsonRpcId.Num(1), "ping", _, _) => succeed
                                     case other                                          => fail(s"unexpected $other")
                             }
+                        }
+                    case other => fail(s"unexpected $other")
+                }
+            }
+        }
+    }
+
+    "webSocket aborts HttpException when the connection cannot be established".notNative in {
+        withEchoWsServer { url =>
+            Scope.run {
+                // The server answers on this port but has no WebSocket handler at this path, so the
+                // upgrade is refused and the factory must surface that as the HttpException its row declares.
+                val wsUrl = HttpUrl.parse(s"ws://${url.host}:${url.port}/ws/absent").getOrThrow
+                Abort.run[Timeout](Async.timeout(30.seconds)(Abort.run[HttpException](JsonRpcHttpTransport.webSocket(wsUrl)))).map {
+                    case Result.Success(Result.Failure(_: HttpException)) => succeed
+                    case Result.Success(Result.Success(_))                =>
+                        fail("a refused upgrade returned a transport instead of aborting HttpException")
+                    case Result.Failure(_: Timeout) => fail("webSocket neither returned nor aborted within 30s")
+                    case other                      => fail(s"unexpected $other")
+                }
+            }
+        }
+    }
+
+    "send aborts Closed once the peer has closed the connection".notNative in {
+        withClosingWsServer { url =>
+            Scope.run {
+                val wsUrl = HttpUrl.parse(s"ws://${url.host}:${url.port}/ws/bye").getOrThrow
+                Abort.run[HttpException](JsonRpcHttpTransport.webSocket(wsUrl)).map {
+                    case Result.Success(t) =>
+                        val req = JsonRpcRequest(JsonRpcId.Num(1), "ping", Absent, Absent)
+                        // incoming completing is the signal that the session is over; from that point a send
+                        // has nowhere to go and must abort rather than buffer into the outbound channel.
+                        Abort.run[Timeout](
+                            Async.timeout(30.seconds)(t.incoming.run.andThen(Abort.run[Closed](t.send(req))))
+                        ).map {
+                            case Result.Success(Result.Failure(_: Closed)) => succeed
+                            case Result.Success(Result.Success(_)) => fail("send reported success after the peer closed the connection")
+                            case Result.Failure(_: Timeout)        => fail("send neither completed nor aborted within 30s")
+                            case other                             => fail(s"unexpected $other")
                         }
                     case other => fail(s"unexpected $other")
                 }
