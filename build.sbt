@@ -302,6 +302,23 @@ Global / onLoad := {
         }
 
     (Global / onLoad).value andThen { state =>
+        // The same guarantee for every cross-project: a platform project ships only if its platform
+        // aggregate names it, and CI tests every project whether aggregated or not, so an omission
+        // stays green and silently unpublished. kyo-sql-dolt-api, kyo-sql-dolt, kyo-sql-doltlite and
+        // kyo-system-doltfs were merged that way. Read off the loaded structure, so a new module is
+        // covered without being listed here.
+        val structure = Project.extract(state).structure
+        val unaggregated = Seq("JVM" -> kyoJVM.id, "JS" -> kyoJS.id, "Native" -> kyoNative.id, "Wasm" -> kyoWasm.id).flatMap {
+            case (suffix, rootId) =>
+                val aggregated = structure.allProjects.find(_.id == rootId).toSeq.flatMap(_.aggregate.map(_.project)).toSet
+                structure.allProjects.map(_.id).filter(id => id.endsWith(suffix) && id != rootId && !aggregated.contains(id))
+        }
+        if (unaggregated.nonEmpty) {
+            throw new IllegalStateException(
+                s"not in their platform aggregate (kyoJVM / kyoJS / kyoNative / kyoWasm): ${unaggregated.sorted.mkString(", ")}; " +
+                    "projects outside the aggregate are never published by ci-release."
+            )
+        }
         "project " + project.id :: state
     }
 }
@@ -404,8 +421,12 @@ lazy val kyoJVM: Project = project
         `kyo-sql-mysql`.jvm,
         `kyo-sql-sqlite-driver`.jvm,
         `kyo-sql-sqlite`.jvm,
+        `kyo-sql-dolt-api`.jvm,
+        `kyo-sql-dolt`.jvm,
+        `kyo-sql-doltlite`.jvm,
         `kyo-sql-tests`.jvm,
         `kyo-system`.jvm,
+        `kyo-system-doltfs`.jvm,
         `kyo-http`.jvm,
         `kyo-flow`.jvm,
         `kyo-ai`.jvm,
@@ -493,8 +514,12 @@ lazy val kyoJS = project
         `kyo-sql-mysql`.js,
         `kyo-sql-sqlite-driver`.js,
         `kyo-sql-sqlite`.js,
+        `kyo-sql-dolt-api`.js,
+        `kyo-sql-dolt`.js,
+        `kyo-sql-doltlite`.js,
         `kyo-sql-tests`.js,
         `kyo-system`.js,
+        `kyo-system-doltfs`.js,
         `kyo-http`.js,
         `kyo-aeron`.js,
         `kyo-flow`.js,
@@ -561,8 +586,12 @@ lazy val kyoNative = project
         `kyo-sql-mysql`.native,
         `kyo-sql-sqlite-driver`.native,
         `kyo-sql-sqlite`.native,
+        `kyo-sql-dolt-api`.native,
+        `kyo-sql-dolt`.native,
+        `kyo-sql-doltlite`.native,
         `kyo-sql-tests`.native,
         `kyo-system`.native,
+        `kyo-system-doltfs`.native,
         `kyo-http`.native,
         `kyo-aeron`.native,
         `kyo-flow`.native,
@@ -621,8 +650,12 @@ lazy val kyoWasm = project
         `kyo-sql-mysql`.wasm,
         `kyo-sql-sqlite-driver`.wasm,
         `kyo-sql-sqlite`.wasm,
+        `kyo-sql-dolt-api`.wasm,
+        `kyo-sql-dolt`.wasm,
+        `kyo-sql-doltlite`.wasm,
         `kyo-sql-tests`.wasm,
         `kyo-system`.wasm,
+        `kyo-system-doltfs`.wasm,
         `kyo-scheduler`.wasm,
         `kyo-core`.wasm,
         `kyo-ffi`.wasm,

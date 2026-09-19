@@ -1301,6 +1301,14 @@ object KyoFfiPlugin extends AutoPlugin {
       * C into the binary. This is what lets a `nativeBundled` binding (emitted without
       * `@link`) resolve its C symbols with no `-l<library>` the linker can't find.
       *
+      * The libraries' `-D` `cFlags` travel beside the sources as the directory's Scala Native descriptor,
+      * `scala-native.properties`, whose `preprocessor.defines` Scala Native applies to that directory's C
+      * alone, in whichever build links it. `nativeConfig.compileOptions` is the wrong carrier on both
+      * counts: it applies to every C file in the binary, and it does not cross a dependency edge, so a
+      * consumer compiled SQLite without `SQLITE_ENABLE_MATH_FUNCTIONS` and the DoltLite shim against
+      * `sqlite3.h`. Only defines travel: any other flag names one compiler's syntax (`/MD` is MSVC's),
+      * and the build that compiles the copy chooses its own compiler.
+      *
       * No-op on JVM / JS (those load a shared library at runtime instead). Copies are
       * content-skipped: a destination identical to the source is left untouched so the
       * generator does not churn `nativeLink`'s input hash on every build.
@@ -1320,7 +1328,7 @@ object KyoFfiPlugin extends AutoPlugin {
             if (sources.isEmpty) Seq.empty[File]
             else {
                 IO.createDirectory(destDir)
-                sources.map { src =>
+                val copied = sources.map { src =>
                     val dest = destDir / src.getName
                     // Only copy when content differs so the generated resource (and thus
                     // nativeLink's classpath hash) stays stable across no-change builds.
@@ -1330,7 +1338,34 @@ object KyoFfiPlugin extends AutoPlugin {
                     }
                     dest
                 }.distinct // two libraries may declare byte-identical copies of one header (kyo-net's kyo_ssl_common.h)
+                copied ++ writeNativeDescriptor(destDir, nativeDescriptorDefines(libs))
             }
+        }
+    }
+
+    /** The defines a module's Native descriptor carries: every library's `-D` flag, without the `-D`, first-seen order. */
+    private[sbt] def nativeDescriptorDefines(libs: Seq[FfiLibrary]): Seq[String] = {
+        val defines = libs.flatMap(_.cFlags).filter(_.startsWith("-D")).map(_.drop(2)).distinct
+        // The descriptor value is a comma-separated list read through java.util.Properties, so neither can appear in one entry.
+        defines.find(d => d.exists(c => c == ',' || c == '\n' || c == '\r' || c == '\\')).foreach { bad =>
+            sys.error(s"[kyo-ffi-plugin] the define '$bad' cannot be carried in a Scala Native descriptor (comma, newline or backslash).")
+        }
+        defines
+    }
+
+    /** Writes `scala-native.properties` into `dir` with `defines`, or removes a stale one when there are none. Written by hand
+      * rather than through `Properties.store`, whose timestamp comment would change the resource, and so the jar and
+      * `nativeLink`'s input hash, on every build.
+      */
+    private def writeNativeDescriptor(dir: File, defines: Seq[String]): Seq[File] = {
+        val file = dir / "scala-native.properties"
+        if (defines.isEmpty) {
+            IO.delete(file)
+            Nil
+        } else {
+            val content = s"preprocessor.defines = ${defines.mkString(", ")}\n"
+            if (!file.exists() || IO.read(file) != content) IO.write(file, content)
+            Seq(file)
         }
     }
 

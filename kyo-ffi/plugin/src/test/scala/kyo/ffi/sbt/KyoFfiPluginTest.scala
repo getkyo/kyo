@@ -219,6 +219,27 @@ class KyoFfiPluginTest extends AnyFunSuite with Matchers {
     test("partitionPortableFlags: a system link lib with the same spelling as no vendored lib is kept") {
         KyoFfiPlugin.partitionPortableFlags(Seq("-lssl"), Set("crypto"))._1 shouldBe Seq("-lssl")
     }
+
+    test("nativeDescriptorDefines: carries every library's -D flag, without the -D, once") {
+        val sqlite = FfiLibrary(
+            id = "kyo_sqlite",
+            cSources = Nil,
+            cFlags = Seq("-DSQLITE_THREADSAFE=1", "-DSQLITE_ENABLE_MATH_FUNCTIONS=1")
+        )
+        val other = FfiLibrary(id = "other", cSources = Nil, cFlags = Seq("-DSQLITE_THREADSAFE=1", "-DKYO_SQLITE_HEADER=\"doltlite.h\""))
+        KyoFfiPlugin.nativeDescriptorDefines(Seq(sqlite, other)) shouldBe
+            Seq("SQLITE_THREADSAFE=1", "SQLITE_ENABLE_MATH_FUNCTIONS=1", "KYO_SQLITE_HEADER=\"doltlite.h\"")
+    }
+
+    test("nativeDescriptorDefines: flags in one compiler's syntax stay out") {
+        val aeron = FfiLibrary(id = "kyo_aeron", cSources = Nil, cFlags = Seq("/MD", "-O2"))
+        KyoFfiPlugin.nativeDescriptorDefines(Seq(aeron)) shouldBe empty
+    }
+
+    test("nativeDescriptorDefines: refuses a define the comma-separated descriptor would split") {
+        val bad = FfiLibrary(id = "bad", cSources = Nil, cFlags = Seq("-DPAIR=a,b"))
+        an[RuntimeException] should be thrownBy KyoFfiPlugin.nativeDescriptorDefines(Seq(bad))
+    }
 }
 
 /** The completeness half of `ffiPackagingCheck`: which (library, platform) pairs a release is still

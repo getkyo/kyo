@@ -132,6 +132,24 @@ class FfiLibraryTest extends AnyFunSuite with Matchers {
         l.resolvedLinkLibs("linux") shouldBe Seq("uring")
     }
 
+    test("linkedDefine upper-cases the id and replaces every non-alphanumeric character") {
+        FfiLibrary(id = "kyonet_posix_uring", cSources = Nil).linkedDefine shouldBe "KYO_FFI_LINKED_KYONET_POSIX_URING"
+        FfiLibrary(id = "my-lib.v2", cSources = Nil).linkedDefine shouldBe "KYO_FFI_LINKED_MY_LIB_V2"
+    }
+
+    test("linkedDefineFlags follows the link libs resolved for the OS") {
+        // The shim's real branch compiles exactly where its library reaches the link: uring on Linux, nowhere else.
+        val l = FfiLibrary(id = "kyonet_posix_uring", cSources = Nil, linkLibsByOs = Map("linux" -> Seq("uring")))
+        l.linkedDefineFlags("linux") shouldBe Seq("-DKYO_FFI_LINKED_KYONET_POSIX_URING")
+        l.linkedDefineFlags("linux-musl") shouldBe Seq("-DKYO_FFI_LINKED_KYONET_POSIX_URING")
+        l.linkedDefineFlags("darwin") shouldBe empty
+        l.linkedDefineFlags("windows") shouldBe empty
+    }
+
+    test("a library that links nothing gets no define") {
+        FfiLibrary(id = "kyonet_boringssl", cSources = Nil).linkedDefineFlags("linux") shouldBe empty
+    }
+
     test("different OS keys are honored independently") {
         val l = lib(byOs = Map("linux" -> Seq("uring"), "windows" -> Seq("ws2_32")))
         l.resolvedLinkLibs("linux") shouldBe Seq("uring")
