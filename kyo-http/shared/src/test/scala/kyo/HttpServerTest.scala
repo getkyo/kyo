@@ -4000,7 +4000,7 @@ class HttpServerTest extends BaseHttpTest:
         ).notJs.notWasm in {
             val route   = HttpRoute.getRaw("test").response(_.bodyText)
             val handler = route.handler(_ => HttpResponse.ok("hello"))
-            val rounds  = 40
+            val rounds  = 300
             // Linux exposes the socket table as /proc/net/tcp: one row per socket, the state in column 4 (01 is
             // ESTABLISHED) and the remote address in column 3 as hex ip:port. Elsewhere lsof answers the same question.
             val procNetTcp = Chunk("/proc/net/tcp", "/proc/net/tcp6").map(java.nio.file.Paths.get(_)).filter(java.nio.file.Files.exists(_))
@@ -4039,7 +4039,7 @@ class HttpServerTest extends BaseHttpTest:
                                             Sync.Unsafe.defer {
                                                 val bound = java.lang.System.nanoTime() + 200_000_000L
                                                 while !requesting.get() && java.lang.System.nanoTime() < bound do ()
-                                                val target = java.lang.System.nanoTime() + (i % 40) * 50_000L
+                                                val target = java.lang.System.nanoTime() + (i % 300) * 5_000L
                                                 while java.lang.System.nanoTime() < target do ()
                                                 discard(fiber.unsafe.interrupt())
                                             }.andThen(fiber.getResult.map(_.isPanic))
