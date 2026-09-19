@@ -217,7 +217,9 @@ abstract private class Worker(
       *   - Not in Stalled state
       *   - Thread not blocked on I/O or synchronization
       *
-      * If checks fail while Running, transitions to Stalled and drains queue. Used by scheduler to skip workers that can't make progress.
+      * If checks fail while Running, transitions to Stalled and drains queue. A worker already Stalled drains again whenever it holds
+      * queued work it cannot serve: while blocked, or while its task stays over its slice. Used by scheduler to skip workers that can't
+      * make progress.
       */
     def checkAvailability(nowMs: Long): Boolean = {
         val st = this.state.get()
@@ -233,17 +235,21 @@ abstract private class Worker(
         if (!available) {
             if ((st eq State.Running) && state.compareAndSet(State.Running, State.Stalled))
                 drain()
-            else if (blocked && !queue.isEmpty())
-                // Drain again for a worker that is ALREADY Stalled and still blocked. The transition drain above fires once,
-                // on the Running -> Stalled edge, but tasks keep arriving after it: Scheduler.schedule's random fallback
-                // ignores availability, and a worker can block at any point after a task was handed to it. Such a task is
-                // stranded, because nothing else frees a blocked worker's queue. Stealing is opportunistic (a thief must
-                // sample this worker while its own queue is empty) and preemption is not an option here: doPreempt is
-                // deliberately withheld from blocked workers, since their task is parked in a syscall rather than burning a
-                // time slice. So the queue sits until the syscall returns, which deadlocks outright when the blocked worker
-                // is an I/O driver parked in a poll and the stranded task is what would produce the event it waits for.
-                // Restricted to `blocked`: a Stalled worker that is merely CPU-bound does receive doPreempt, and run() then
-                // polls its own queue, so draining it here would move work that its owner is about to pick up anyway.
+            else if ((blocked || stalling) && !queue.isEmpty())
+                // Drain again for a worker that is ALREADY Stalled and still cannot serve its queue. The transition drain
+                // above fires once, on the Running -> Stalled edge, but tasks keep arriving after it: Scheduler.schedule
+                // places on an unavailable worker once no worker is available, and a worker can block, or overrun its
+                // slice, at any point after a task was handed to it. Such a task is stranded, because nothing else frees
+                // the queue: stealing is opportunistic (a thief must sample this worker while its own queue is empty, and
+                // an idle worker is woken only by an enqueue onto itself), and run() polls the queue only once the current
+                // task yields. A blocked task is parked in a syscall and gets no doPreempt (pointless, and on Native
+                // unsafe), so it yields when the syscall returns. A task still over its slice was issued doPreempt by
+                // checkStalling and has not honored it, which is what a nested evaluation (a finalizer, an unsafe run) or a
+                // step with no suspension point does, so it yields when it is done. Either way the queue waits on the task,
+                // and the wait deadlocks outright when the task is itself waiting, directly or through another fiber, on the
+                // stranded work: an I/O driver parked in a poll whose event the stranded task would produce, or a finalizer
+                // spinning on a flag the stranded task sets. A task that honors the preemption yields within its next
+                // suspension point and run() then polls its own queue, so the drain moves at most the arrivals of one cycle.
                 drain()
         }
         available
