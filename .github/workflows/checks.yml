@@ -17,10 +17,11 @@ on:
     branches:
       - main
 
-# Without this, rapid pushes each hold a slot to completion while validating a commit that
-# is already stale, which is expensive when the job runs ~50 minutes.
+# A pull request keys on the PR number, so a new commit supersedes the run validating the previous
+# one. A push to main keys on the commit, so every main commit is validated rather than only the
+# newest.
 concurrency:
-  group: checks-${{ github.event.pull_request.number || github.ref }}
+  group: checks-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: true
 
 jobs:
