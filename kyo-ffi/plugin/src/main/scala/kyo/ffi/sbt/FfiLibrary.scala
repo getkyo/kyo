@@ -137,6 +137,10 @@ final case class FfiLibrary(
         buildsOn(CCompiler.parseOsArch(osArch)._1) &&
             (osArchTargets.isEmpty || osArchTargets.contains(osArch))
 
+    /** Every supported os-arch tag this library is built and bundled for, which is what a release publishes for it. */
+    def osArchTags: Seq[String] =
+        CCompiler.supportedOsArchTags.filter(buildsOnTarget)
+
     /** The `osTargets` entries that are not `CCompiler.supportedOs` names. A typo makes `buildsOn`
       * false on every OS, which is silent: the library is skipped everywhere, recorded `absent` in
       * every manifest, and required of nothing by the release guard. Callers validate at resolution

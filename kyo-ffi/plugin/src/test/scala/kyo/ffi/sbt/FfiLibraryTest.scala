@@ -150,6 +150,20 @@ class FfiLibraryTest extends AnyFunSuite with Matchers {
         FfiLibrary(id = "kyonet_boringssl", cSources = Nil).linkedDefineFlags("linux") shouldBe empty
     }
 
+    test("osArchTags is every supported tag with no targets declared, and narrows with osTargets and osArchTargets") {
+        FfiLibrary(id = "all", cSources = Nil).osArchTags shouldBe CCompiler.supportedOsArchTags
+        // kyonet_boringssl's shape: every arch of three OSes, musl named explicitly, no Windows.
+        FfiLibrary(id = "bssl", cSources = Nil, osTargets = Seq("linux", "linux-musl", "darwin")).osArchTags.sorted shouldBe Seq(
+            "darwin-aarch64",
+            "darwin-x86_64",
+            "linux-aarch64",
+            "linux-musl-aarch64",
+            "linux-musl-x86_64",
+            "linux-x86_64"
+        )
+        FfiLibrary(id = "one", cSources = Nil, osArchTargets = Seq("darwin-aarch64")).osArchTags shouldBe Seq("darwin-aarch64")
+    }
+
     test("a library that links an archive by path gets the define on every OS") {
         // kyo_doltlite links its prebuilt engine as `<staged>/libdoltlite.a` in linkFlags, with no linkLibs at all.
         val l = FfiLibrary(id = "kyo_doltlite", cSources = Nil, linkFlags = Seq("/staged/libdoltlite.a"))

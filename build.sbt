@@ -2430,6 +2430,25 @@ val kyoNetClassifierArtifacts = taskKey[Map[Artifact, File]](
     "Per-os-arch native classifier jars (transport-native `<os-arch>`, vendored-BoringSSL `<os-arch>-boringssl`) + the `all-natives` aggregator."
 )
 
+// One of kyo-net's native classifier jars as a published artifact. In the `optional` configuration because Ivy
+// metadata fetches a module's publications by configuration: in `compile` every consumer would download every
+// pole's natives, while in `optional` only a dependency naming the classifier gets it. Maven ignores the
+// configuration and resolves classifiers by file name.
+def kyoNetClassifierArtifact(classifier: String): Artifact =
+    Artifact("kyo-net")
+        .withType("jar")
+        .withExtension("jar")
+        .withClassifier(Some(classifier))
+        .withConfigurations(Vector(ConfigRef("optional")))
+
+// The classifier a kyo-net native ships under on the JVM: the transport as `<os-arch>`, BoringSSL as
+// `<os-arch>-boringssl`. kyonet_openssl has none, being absent on the JVM.
+def kyoNetNativeClassifier(osArch: String, libId: String): Option[String] = libId match {
+    case "kyonet_posix_uring" => Some(osArch)
+    case "kyonet_boringssl"   => Some(s"$osArch-boringssl")
+    case _                    => None
+}
+
 lazy val `kyo-net` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
@@ -2595,30 +2614,40 @@ lazy val `kyo-net` =
                         val libId  = f.getName.stripPrefix("lib").takeWhile(_ != '.')
                         (osArch, libId, f)
                 }
-                def familyClassifier(osArch: String, libId: String): Option[String] = libId match {
-                    case "kyonet_posix_uring" => Some(osArch)
-                    case "kyonet_boringssl"   => Some(s"$osArch-boringssl")
-                    case _                    => None // kyonet_openssl etc. is not a JVM classifier family
-                }
                 def sliceJar(classifier: String, files: Seq[File]): (Artifact, File) = {
                     val jar     = out / s"$base-$ver-$classifier-natives.jar"
                     val entries = files.map(f => f -> s"META-INF/native/${f.getParentFile.getName}/${f.getName}")
                     IO.zip(entries, jar, None)
-                    Artifact(base).withType("jar").withExtension("jar").withClassifier(Some(classifier)) -> jar
+                    kyoNetClassifierArtifact(classifier) -> jar
                 }
                 val perClassifier = nativeEntries
-                    .groupBy { case (osArch, libId, _) => familyClassifier(osArch, libId) }
+                    .groupBy { case (osArch, libId, _) => kyoNetNativeClassifier(osArch, libId) }
                     .collect { case (Some(classifier), entries) => sliceJar(classifier, entries.map(_._3)) }
                     .toMap
                 val allNatives =
                     if (nativeEntries.nonEmpty) Map(sliceJar("all-natives", nativeEntries.map(_._3)))
                     else Map.empty[Artifact, File]
                 val result = perClassifier ++ allNatives
+                val undeclared = result.keySet -- artifacts.value
+                if (undeclared.nonEmpty)
+                    sys.error(
+                        s"[kyo-net classifier] ${undeclared.flatMap(_.classifier).mkString(", ")} packaged but missing from `artifacts`, " +
+                            "so publishLocal's ivy.xml would not list them and an Ivy consumer naming one would resolve nothing."
+                    )
                 log.info(s"[kyo-net classifier] ${nativeEntries.size} native(s) -> ${result.keys.flatMap(_.classifier).mkString(", ")}")
                 result
             },
             // Project-scoped `packagedArtifacts` is what `publish`/`ci-release` uploads (Compile / packagedArtifacts does not reach it).
-            packagedArtifacts ++= kyoNetClassifierArtifacts.value
+            packagedArtifacts ++= kyoNetClassifierArtifacts.value,
+            // publishLocal's ivy.xml lists `artifacts` and nothing else, so the classifier jars are declared here as well as
+            // packaged. Every pole a release carries is declared; a host-only local publish holds fewer, and a consumer naming
+            // a missing one gets a resolution error rather than a jar without natives.
+            artifacts ++= {
+                val perPole = ffiLibraries.value.filter(_.cSources.nonEmpty).flatMap { lib =>
+                    lib.osArchTags.flatMap(kyoNetNativeClassifier(_, lib.id))
+                }
+                (perPole :+ "all-natives").map(kyoNetClassifierArtifact)
+            }
         )
         .nativeSettings(
             `native-settings`,
@@ -3828,8 +3857,10 @@ lazy val `kyo-test-readme` =
 // link provided.
 //
 // Publishes the transitive closure of the checked modules and kyo-ffi-plugin first, so the vendored
-// libraries have to be staged exactly as for a release. Unaggregated: run it with
-// `kyo-consumer-check/scripted`.
+// libraries have to be staged exactly as for a release. It publishes to the local Maven repository and
+// the fixtures resolve from Maven-layout repositories only, because a user resolves the release from
+// Maven Central through its POMs. Through the Ivy local repository a fixture would instead read ivy.xml
+// metadata no user ever sees. Unaggregated: run it with `kyo-consumer-check/scripted`.
 lazy val consumerCheckModules: Seq[ProjectReference] =
     Seq(`kyo-net`, `kyo-aeron`, `kyo-sql-sqlite`, `kyo-sql-doltlite`, `kyo-stats-machine`)
         .flatMap(m => Seq[ProjectReference](m.jvm, m.js, m.native)) ++
@@ -3855,10 +3886,13 @@ lazy val `kyo-consumer-check` =
                 "-Dscalajs.version=" + scalaJSVersion,
                 "-Dscalanative.version=" + nativeVersion,
                 // The classifier a JVM consumer on this host adds for kyo-net's per-platform natives.
-                "-Dkyo.hostOsArch=" + ffiHostOsArch
+                "-Dkyo.hostOsArch=" + ffiHostOsArch,
+                // Every fixture build, its plugins included, resolves from exactly the repositories this file lists.
+                "-Dsbt.override.build.repos=true",
+                "-Dsbt.repository.config=" + (baseDirectory.value / "repositories").getAbsolutePath
             ),
             scriptedDependencies := {
-                val published = publishLocal.all(ScopeFilter(consumerCheckModules.map(inDependencies(_)).reduce(_ || _))).value
+                val published = publishM2.all(ScopeFilter(consumerCheckModules.map(inDependencies(_)).reduce(_ || _))).value
                 scriptedDependencies.value
             }
         )

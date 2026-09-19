@@ -440,12 +440,10 @@ object KyoFfiPlugin extends AutoPlugin {
         ffiLinkLibs         := Nil,
         ffiReleasePlatforms := {
             val libs = ffiLibrariesResolved.value
-            // buildsOnTarget is the same predicate ffiCompile gates on, so what a release requires cannot
-            // drift from what a producer would actually build. Asked with the full os-arch tag, since a
-            // library can exist for one arch of an OS and not another.
-            libs.filter(_.cSources.nonEmpty).flatMap { lib =>
-                CCompiler.supportedOsArchTags.filter(lib.buildsOnTarget)
-            }.distinct.sorted
+            // osArchTags filters on buildsOnTarget, the same predicate ffiCompile gates on, so what a release
+            // requires cannot drift from what a producer would actually build. Asked with the full os-arch
+            // tag, since a library can exist for one arch of an OS and not another.
+            libs.filter(_.cSources.nonEmpty).flatMap(_.osArchTags).distinct.sorted
         },
         ffiStubLibraries := Nil,
         // Load-bearing beyond its value: ffiCompileAll, ffiPackagingCheckAll and
