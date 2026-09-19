@@ -123,11 +123,21 @@ object DoltLite:
     private[kyo] def openUnscoped(url: SqlConfig.Url, config: SqlConfig)(using
         Frame
     ): Dolt < (Async & Abort[SqlException]) =
-        // The engine is a compiled library published for some platforms and not others, so failing to load it
-        // is this backend being unavailable HERE rather than anything about the URL. Translated into the declared
+        // The engine is a compiled library published for some platforms and not others, so failing to reach it is
+        // this backend being unavailable HERE rather than anything about the URL. Translated into the declared
         // failure type, since the loader raises outside it and would otherwise reach the caller as a panic.
-        Abort.catching[FfiLoadError](e => DoltLiteEngineUnavailableException(Maybe(e.getMessage).getOrElse(e.toString))) {
-            Sync.Unsafe.defer(Ffi.load[DoltLiteBindings])
+        //
+        // The binding is CALLED, not merely loaded. On the JS runtime a load resolves its dispatch table lazily, so
+        // a missing engine leaves the load silent and a caller receives a client that fails at its first statement,
+        // which is the panic this translation exists to prevent. `libversionNumber` is the cheapest call there is:
+        // no database, no handle, no allocation. `Throwable` rather than `FfiLoadError` alone, because absence also
+        // arrives as a `LinkageError` from a generated companion and as a JavaScript `TypeError` off a null table.
+        Abort.catching[Throwable](e => DoltLiteEngineUnavailableException(Maybe(e.getMessage).getOrElse(e.toString))) {
+            Sync.Unsafe.defer {
+                val loaded = Ffi.load[DoltLiteBindings]
+                val _      = loaded.libversionNumber()
+                loaded
+            }
         }.flatMap { bindings =>
             val factory = new DoltLiteConnectionFactory(new SqliteConnectionFactory(bindings))
             Runtime.init(url, config, factory).map(rt => new DoltLiteClient(rt))

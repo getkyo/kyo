@@ -1,5 +1,7 @@
 package kyo
 
+import kyo.internal.doltlite.DoltLiteEngineProbe
+
 /** The engine driven from WebAssembly instead of a loaded native library.
   *
   * The leaves are the cases where the WebAssembly path rebuilds one of this build's own C wrappers: an embedded NUL in
@@ -15,6 +17,9 @@ class DoltLiteWasmTest extends Test:
     private def withWasm[A](f: Dolt => A < (Async & Abort[SqlException] & Scope & DB))(using
         Frame
     ): A < (Async & Abort[SqlException | DoltLiteWasmUnavailableException]) =
+        // Both transports read what the staging step placed, so where the engine is not published for this
+        // platform neither the native nor the WebAssembly one has anything to reach.
+        assume(DoltLiteEngineProbe.available, "the DoltLite engine is not published for this platform")
         Sync.defer(java.lang.System.setProperty("kyo.ffi.js.transport", "wasm")).andThen {
             DoltLiteWasm.init.andThen {
                 Scope.run {
@@ -24,6 +29,7 @@ class DoltLiteWasmTest extends Test:
                 }
             }
         }
+    end withWasm
 
     "the engine runs from WebAssembly, with version control intact" in {
         withWasm { dolt =>
