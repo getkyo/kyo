@@ -532,6 +532,18 @@ jobs:
         run: |
           sbt -Dplatform=JVM 'set ThisBuild / ffiPrebuiltPool := Some(file("ffi-prebuilt"))' ffiPackagingCheckAll
           sbt -Dplatform=JS  'set ThisBuild / ffiPrebuiltPool := Some(file("ffi-prebuilt"))' ffiPackagingCheckAll
+      # The guards above check what the artifacts contain; this checks that they work. kyo-consumer-check
+      # publishes the FFI modules locally from this same tree and pool, then builds, links and runs small
+      # applications outside this build against them on JVM, Scala.js and Scala Native, with and without
+      # kyo-ffi-plugin. A Native jar that no consumer could link passed every in-build suite, because those
+      # link through in-build flags and staged trees. Before the tag upload, so a failure stops the release.
+      # OpenSSL's headers are what the plugin-enabled Native fixture finds on this machine.
+      - name: Consumer check, every FFI module (pre-release belt)
+        timeout-minutes: 120
+        shell: bash
+        run: |
+          bash scripts/apt-install.sh --if-missing libssl-dev
+          sbt -Dplatform=JVM 'set ThisBuild / ffiPrebuiltPool := Some(file("ffi-prebuilt"))' kyo-consumer-check/scripted
       # Phase 2: upload and publish the whole staged bundle as ONE Central Portal deployment. Single
       # attempt: re-uploading would collide on the portal. It bundles target/sona-staging and does not
       # re-run doc. Tag pushes only; snapshots were already published by the stage steps above.
