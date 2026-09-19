@@ -4,6 +4,125 @@ import kyo.*
 
 class HttpContainerBackendTest extends BasePodTest:
 
+    "runtime identity and CLI equivalent" - {
+
+        "the CLI equivalent names the env var the runtime actually reads" in {
+            // podman reads CONTAINER_HOST and ignores DOCKER_HOST, which is the whole reason a user staring at
+            // an empty `podman ps` cannot reconcile it with the containers kyo-pod is managing.
+            assert(
+                HttpContainerBackend.cliEquivalent("/var/run/docker.sock", "podman") ==
+                    "CONTAINER_HOST=unix:///var/run/docker.sock podman ps"
+            )
+            assert(
+                HttpContainerBackend.cliEquivalent("/var/run/docker.sock", "docker") ==
+                    "DOCKER_HOST=unix:///var/run/docker.sock docker ps"
+            )
+        }
+
+        "the description carries the runtime and the command that reaches the same daemon" in {
+            val backend = new HttpContainerBackend("/var/run/docker.sock", "v1.43", Meter.Noop, Present("podman"))
+            val text    = backend.describe
+            assert(text.contains("socket=/var/run/docker.sock"))
+            assert(text.contains("runtime=podman"), s"expected the probed runtime, got: $text")
+            assert(text.contains("CONTAINER_HOST=unix:///var/run/docker.sock podman ps"), s"missing the CLI equivalent: $text")
+            assert(!text.contains("DOCKER_HOST"), s"podman does not read DOCKER_HOST: $text")
+        }
+
+        "the live backend reports the runtime the daemon itself reports" - runRuntimes { runtime =>
+            // The container-backed half: the description has to be right against a real daemon, which is where
+            // the socket-path heuristic went wrong. An installed CLI does not mean a reachable daemon, so a
+            // socket that does not answer is skipped rather than asserted against.
+            import AllowUnsafe.embrace.danger
+            ContainerRuntime.findSocket(runtime) match
+                case Some(path) =>
+                    Abort.run[ContainerException] {
+                        Container.withBackendConfig(_.UnixSocket(Path(path))) {
+                            Container.currentBackendDescription
+                        }
+                    }.map {
+                        case Result.Success(text) =>
+                            assert(text.contains(s"runtime=$runtime"), s"expected runtime=$runtime in: $text")
+                            val expectedEnv = if runtime == "podman" then "CONTAINER_HOST=" else "DOCKER_HOST="
+                            assert(text.contains(expectedEnv), s"expected $expectedEnv in: $text")
+                            assert(text.contains(path), s"expected the socket path in: $text")
+                        case _ =>
+                            succeed(s"the $runtime socket at $path does not answer on this host")
+                    }
+                case None => succeed(s"no $runtime socket on this host")
+            end match
+        }
+
+        "the daemon's answer wins over a socket path that names a different runtime" in {
+            // The reported host exactly: /var/run/docker.sock is a symlink to the podman machine socket, so
+            // the path says docker while the daemon is podman. The oracle is an independent read of the
+            // daemon's own /version, so this asserts the wiring rather than restating the classification.
+            import AllowUnsafe.embrace.danger
+            val dockerNamed = "/var/run/docker.sock"
+            val guess       = new HttpContainerBackend(dockerNamed, "v1.43", Meter.Noop)
+            assert(guess.runtimeName == "docker", "the path alone can only say docker")
+            Abort.run[Throwable](HttpClient.getText(guess.url("/version"))).map {
+                case Result.Success(body) =>
+                    val fromDaemon = if body.toLowerCase.contains("podman") then "podman" else "docker"
+                    Abort.run[ContainerException] {
+                        Container.withBackendConfig(_.UnixSocket(Path(dockerNamed))) {
+                            Container.currentBackendDescription
+                        }
+                    }.map {
+                        case Result.Success(text) =>
+                            assert(text.contains(s"runtime=$fromDaemon"), s"expected runtime=$fromDaemon in: $text")
+                        case _ => succeed(s"$dockerNamed pinged but did not serve a backend")
+                    }
+                case _ => succeed(s"no daemon answers at $dockerNamed on this host")
+            }
+        }
+
+        "the printed CLI equivalent actually reaches the daemon kyo-pod is managing" - runRuntimes { runtime =>
+            // The point of printing the command is that a user can run it and see the containers their code
+            // started. Asserting the string alone would not establish that, so this runs it: the ids the
+            // command lists must contain every id Container.list(all = true) reports through the same socket.
+            import AllowUnsafe.embrace.danger
+            ContainerRuntime.findSocket(runtime) match
+                case Some(path) =>
+                    val envVar = if runtime == "podman" then "CONTAINER_HOST" else "DOCKER_HOST"
+                    Abort.run[Any] {
+                        Container.withBackendConfig(_.UnixSocket(Path(path))) {
+                            for
+                                seen <- Container.list(all = true)
+                                out <- Command(runtime, "ps", "--all", "--format", "{{.ID}}")
+                                    .envAppend(Map(envVar -> s"unix://$path"))
+                                    .text
+                            yield
+                                val listed = out.linesIterator.map(_.trim).filter(_.nonEmpty).toSet
+                                // Container.Id renders the full id; the CLI prints the short form.
+                                val missing = seen.map(_.id.value).filterNot(id => listed.exists(short => id.startsWith(short)))
+                                assert(
+                                    missing.isEmpty,
+                                    s"$envVar=unix://$path $runtime ps did not list ${missing.mkString(", ")}; it listed $listed"
+                                )
+                            end for
+                        }
+                    }.map {
+                        case Result.Success(_) => ()
+                        case _                 => succeed(s"the $runtime CLI or its socket is unavailable on this host")
+                    }
+                case None => succeed(s"no $runtime socket on this host")
+            end match
+        }
+
+        "a probed runtime overrides the socket-path guess" in {
+            // The reported host: /var/run/docker.sock is a symlink to the podman machine socket, so the path
+            // says docker while the daemon is podman. The path is the fallback, never the answer when the
+            // daemon has given one.
+            val guessed = new HttpContainerBackend("/var/run/docker.sock", "v1.43", Meter.Noop)
+            assert(guessed.runtimeName == "docker")
+            val probed = new HttpContainerBackend("/var/run/docker.sock", "v1.43", Meter.Noop, Present("podman"))
+            assert(probed.runtimeName == "podman")
+            // A podman-named path still resolves to podman with nothing probed.
+            val byPath = new HttpContainerBackend("/run/user/501/podman/podman.sock", "v1.43", Meter.Noop)
+            assert(byPath.runtimeName == "podman")
+        }
+    }
+
     final private class FixedUUIDGenerator(value: UUID) extends UUIDGenerator:
         var calls = 0
 
