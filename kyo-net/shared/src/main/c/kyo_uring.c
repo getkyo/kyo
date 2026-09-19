@@ -12,20 +12,19 @@
  * submit / wait_cqes) resolve here too and the shipped artifact carries no
  * runtime liburing dependency.
  *
- * macOS safety: io_uring is a Linux kernel feature and liburing exists only on
- * Linux. The #if guard below selects the real liburing calls on Linux and a full
- * set of failing stubs on every other platform (and on a Linux host that lacks the
- * liburing headers), so the library builds with zero liburing symbols referenced
- * and the C compiler needs no -luring there. Every symbol the binding names is
- * still DEFINED off Linux, which is what keeps a macOS Scala Native link whole:
- * this file is compiled on the machine that links, so the platform decision is
- * made against the target rather than against whichever host published the
- * artifact. io_uring's absence stays a runtime answer, kyo_uring_probe_available
- * returning 0, and the backend probe reports it unavailable.
+ * The #if guard below selects the real liburing calls only on Linux AND only when
+ * the build that compiles this file also links liburing, which kyo-ffi signals
+ * with KYO_FFI_LINKED_KYONET_POSIX_URING. Everywhere else it compiles a full set of
+ * failing stubs that reference no liburing symbol. On Scala Native this file is
+ * compiled by the consumer's build, so it must not decide by header presence: a
+ * Linux machine with the liburing headers and no -luring on its link would compile
+ * the real calls and fail to link. io_uring's absence stays a runtime answer,
+ * kyo_uring_probe_available returning 0, and the backend probe reports it
+ * unavailable.
  */
 #include "kyo_net_api.h"
 
-#if defined(__linux__) && __has_include(<liburing.h>)
+#if defined(__linux__) && defined(KYO_FFI_LINKED_KYONET_POSIX_URING)
 
 /* POLLRDHUP (peer half-close) is a Linux extension gated behind _GNU_SOURCE; define it before any header so kyo_uring_poll_peer_closed sees it. */
 #define _GNU_SOURCE 1
@@ -345,9 +344,9 @@ KYO_NET_API int kyo_uring_probe_available(int depth) {
 #else
 
 /*
- * Non-Linux (or Linux without liburing headers): every kyo_uring_* entry point is
- * defined here as a stub that reports failure. No liburing symbol is referenced,
- * so the shared library still links with no -luring on these hosts.
+ * Non-Linux, or a build that does not link liburing: every kyo_uring_* entry point
+ * is defined here as a stub that reports failure. No liburing symbol is referenced,
+ * so the library links with no -luring.
  *
  * The stubs exist because the Scala binding is emitted when kyo is COMPILED while
  * the Scala Native link happens on the CONSUMER's host. An artifact published from

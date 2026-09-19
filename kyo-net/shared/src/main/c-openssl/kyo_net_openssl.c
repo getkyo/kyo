@@ -11,12 +11,10 @@
  *   The kyo_bssl shim and this kyo_ossl shim both `#include <openssl/ssl.h>` and both reference the
  *   raw `SSL_*` symbols. They do NOT clash because every `kyo_ossl_*` / `kyo_bssl_*` function is a
  *   distinct, prefixed export, and the raw `SSL_*` calls in both resolve to the ONE TLS implementation
- *   the binary actually links: the system OpenSSL dylib (`-lssl -lcrypto`), which the linker binds
- *   first so the staged BoringSSL archive's same-named objects are never pulled. BoringSSL's headers
- *   are API-compatible with that runtime (opaque `SSL*`/`SSL_CTX*` passed by pointer), so both shims
- *   drive the same OpenSSL through their own prefixed entry points with no symbol collision. The
- *   only exported surface from this translation unit is `kyo_ossl_*`; the `SSL_*` references stay
- *   undefined-imported, exactly as the BoringSSL shim's do.
+ *   the binary links. When BoringSSL is linked, that is BoringSSL: kyo-ffi links no second `-lssl`
+ *   for a name a vendored archive already provides, and this file compiles against the BoringSSL
+ *   headers that precede the system ones on the include path. Otherwise it is the system OpenSSL
+ *   (`-lssl -lcrypto`). The only exported surface from this translation unit is `kyo_ossl_*`.
  *
  * The TLS state machine itself lives in the shared kyo_ssl_common.h, included below with
  * KYO_SSL_PREFIX = kyo_ossl_ so each shared static function token-pastes to a kyo_ossl_*_impl name. The
@@ -31,17 +29,17 @@
  * dereferences them; it only round-trips them back into these functions.
  */
 /*
- * Header gate: this translation unit is compiled on the machine that LINKS the binary, not on the one
- * that published the artifact, so the presence of the system OpenSSL headers is a question about the
- * TARGET. Compiling unconditionally froze the publisher's answer into the shipped C: an artifact
- * released from a Linux runner carried a shim referencing 64 raw SSL_*, BIO_*, EVP_*, ERR_* and PEM_*
- * symbols, and a macOS consumer's Scala Native link failed on every one of them, whether or not their
- * program used TLS at all. Off a host with the headers the #else branch below defines the same
- * kyo_ossl_* surface as stubs, so the link stays whole and kyo_ossl_probe_available reports 0, which
- * is what makes SystemOpenSslProvider demote at selection instead of at the first connection. This
- * mirrors the BoringSSL shim's staged / stub pair and kyo_uring.c's Linux / non-Linux pair.
+ * Link gate: on Scala Native this translation unit is compiled by the build that LINKS the binary, and
+ * the real branch references 64 raw SSL_*, BIO_*, EVP_*, ERR_* and PEM_* symbols that only resolve if
+ * that same build links an OpenSSL. Header presence does not answer that: a consumer with the headers
+ * installed and no -lssl on its link would compile the real branch and fail to link, whether or not
+ * their program used TLS at all. So the real branch compiles only under KYO_FFI_LINKED_KYONET_OPENSSL,
+ * which kyo-ffi defines in exactly the build that links the library. Without it the #else branch below
+ * defines the same kyo_ossl_* surface as stubs, the link stays whole, and kyo_ossl_probe_available
+ * reports 0, which is what makes SystemOpenSslProvider demote at selection instead of at the first
+ * connection. The BoringSSL shim and kyo_uring.c gate the same way.
  */
-#if __has_include(<openssl/ssl.h>)
+#if defined(KYO_FFI_LINKED_KYONET_OPENSSL)
 
 #include <openssl/ssl.h>
 #include <openssl/bio.h>
@@ -109,7 +107,7 @@ int kyo_ossl_peer_cert_sha256(long ssl_ptr, unsigned char *out_buf, int out_len)
 #else
 
 /*
- * No system OpenSSL headers on this host. Every entry point reports the library absent, using the same
+ * No OpenSSL on this link. Every entry point reports the library absent, using the same
  * sentinels the real wrappers return on failure (0 / NULL-as-0 / -1), so a caller that reaches one gets
  * a clean refusal rather than a crash. Nothing should reach one: kyo_ossl_probe_available returns 0, so
  * SystemOpenSslProvider.isAvailable is false and the TLS registry falls through. Signatures MUST match

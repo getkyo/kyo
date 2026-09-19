@@ -793,7 +793,7 @@ object KyoFfiPlugin extends AutoPlugin {
                             // (e.g. Aeron, which supports Windows only under MSVC); the default empty
                             // map leaves every other library on the global `cc`, unchanged.
                             val libCc      = lib.compilerFor(targetOs).getOrElse(cc)
-                            val flags      = globalFlags ++ lib.cFlags
+                            val flags      = globalFlags ++ lib.cFlags ++ lib.linkedDefineFlags(targetOs)
                             val linkFlags  = globalLinkFlags ++ lib.linkFlags
                             val linkLibs   = lib.resolvedLinkLibs(targetOs)
                             val staticLink = lib.staticLink
@@ -942,7 +942,7 @@ object KyoFfiPlugin extends AutoPlugin {
                 CCompiler.buildCommand(
                     cc = libCc,
                     family = libFamily,
-                    cFlags = globalFlags ++ lib.cFlags,
+                    cFlags = globalFlags ++ lib.cFlags ++ lib.linkedDefineFlags(os),
                     linkFlags = globalLinkFlags ++ lib.linkFlags,
                     linkLibs = lib.resolvedLinkLibs(os),
                     sources = lib.cSources,
@@ -972,6 +972,11 @@ object KyoFfiPlugin extends AutoPlugin {
                 // ffiTargetOsArch overrides it), so the two never disagree about which per-OS libs
                 // a build needs.
                 val buildOs = CCompiler.resolveTargetOsArch(ffiTargetOsArch.value)._1
+                // A name a vendored archive already links is not linked again from the system. Two libraries
+                // of one binary can name the same library (kyonet_openssl and a staged kyonet_boringssl both
+                // name ssl and crypto), and the vendored archive is the one the build compiled against, so a
+                // second plain `-lssl` could only add a different library's copy of the same symbols.
+                val vendoredLinkLibs = libs.filter(_.libDirs.nonEmpty).flatMap(_.resolvedLinkLibs(buildOs)).toSet
                 libs.flatMap { lib =>
                     val libDirs = lib.libDirs.distinct
                     if (libDirs.nonEmpty)
@@ -987,7 +992,7 @@ object KyoFfiPlugin extends AutoPlugin {
                         CCompiler.vendoredArchiveForceLoadFlags(libDirs, lib.resolvedLinkLibs(buildOs), lib.staticLink, buildOs) ++
                             lib.linkFlags
                     else
-                        CCompiler.foldedLinkLibFlags(lib.resolvedLinkLibs(buildOs), lib.staticLink)
+                        CCompiler.foldedLinkLibFlags(lib.resolvedLinkLibs(buildOs).filterNot(vendoredLinkLibs), lib.staticLink)
                 }
             }
         },
@@ -1000,11 +1005,17 @@ object KyoFfiPlugin extends AutoPlugin {
         // system openssl headers (`SSL_CTX_set_min_proto_version` -> the `SSL_CTX_ctrl` macro) while the
         // link resolves against a BoringSSL archive that does not export `SSL_CTX_ctrl`, and nativeLink
         // fails with `undefined reference to SSL_CTX_ctrl`.
+        //
+        // It also carries each linked library's `FfiLibrary.linkedDefine`, the macro its C gates real code on,
+        // for exactly the libraries `ffiNativeLinkingOptions` links.
         ffiNativeCompileOptions := {
             val platform = ffiTargetPlatform.value
             val libs     = ffiLibrariesResolved.value
+            val buildOs  = CCompiler.resolveTargetOsArch(ffiTargetOsArch.value)._1
             if (platform != "Native") Nil
-            else libs.flatMap(_.includeDirs).distinct.map(d => s"-I${d.getAbsolutePath}")
+            else
+                libs.flatMap(_.includeDirs).distinct.map(d => s"-I${d.getAbsolutePath}") ++
+                    libs.flatMap(_.linkedDefineFlags(buildOs)).distinct
         },
 
         // The flags this project's DEPENDENCIES declare, read off their manifests. Without these a consumer
@@ -1318,7 +1329,7 @@ object KyoFfiPlugin extends AutoPlugin {
                         log.info(s"[kyo-ffi-plugin] Native: bundled C source ${src.getName} -> ${dest.getAbsolutePath}")
                     }
                     dest
-                }
+                }.distinct // two libraries may declare byte-identical copies of one header (kyo-net's kyo_ssl_common.h)
             }
         }
     }
@@ -1389,12 +1400,19 @@ object KyoFfiPlugin extends AutoPlugin {
         val log          = streams.value.log
         // The `-l` names that only resolve inside a vendored tree this artifact does not ship. They travel with the tree, so they leave
         // with it: see `partitionPortableFlags`.
-        val vendoredLinkLibs =
-            ffiLibrariesResolved.value.filter(_.libDirs.nonEmpty).flatMap(_.resolvedLinkLibs(targetOs)).distinct.toSet
+        val libs             = ffiLibrariesResolved.value
+        val vendoredLinkLibs = libs.filter(_.libDirs.nonEmpty).flatMap(_.resolvedLinkLibs(targetOs)).distinct.toSet
         if (platform != "Native") Seq.empty[File]
         else {
+            // The define of a library that links anything through a vendored archive leaves with the archive: a reader that
+            // compiled real code under it would have nothing to link that code against. That covers the vendored library
+            // itself and one whose names a vendored archive provides (kyonet_openssl beside a staged kyonet_boringssl).
+            val vendoredDefines = libs
+                .filter(_.resolvedLinkLibs(targetOs).exists(vendoredLinkLibs))
+                .map(lib => s"-D${lib.linkedDefine}")
+                .toSet
             val (portableLink, droppedLink)       = partitionPortableFlags(linkFlags, vendoredLinkLibs)
-            val (portableCompile, droppedCompile) = partitionPortableFlags(compileFlags, vendoredLinkLibs)
+            val (portableCompile, droppedCompile) = partitionPortableFlags(compileFlags.filterNot(vendoredDefines), vendoredLinkLibs)
             val dropped                           = (droppedLink ++ droppedCompile).distinct
             if (dropped.nonEmpty)
                 log.debug(

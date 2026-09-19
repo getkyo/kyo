@@ -158,6 +158,24 @@ final case class FfiLibrary(
         (linkLibs ++ osSpecific).distinct
     }
 
+    /** The preprocessor macro that tells this library's C its link libraries are on the link:
+      * `KYO_FFI_LINKED_<ID>`, the id upper-cased with every other character as `_` (the spelling
+      * `KYO_FFI_<ID>_PATH` uses). A shim gates the code that calls into an external library on it and
+      * compiles a stub in its `#else`.
+      *
+      * The gate cannot be header presence. On Scala Native the C ships as source and compiles in the
+      * consumer's build, where `__has_include(<openssl/ssl.h>)` answers yes on any machine with the
+      * headers while nothing puts `-lssl` on that link: the binary then fails to link on symbols the
+      * consumer never wrote. The macro is emitted by the same build that emits the link flags, so the
+      * two cannot disagree, and a build that emits neither compiles the stub and links.
+      */
+    def linkedDefine: String =
+        "KYO_FFI_LINKED_" + id.map(c => if (c.isLetterOrDigit) c.toUpper else '_')
+
+    /** `-D<linkedDefine>` when this library declares link libraries for `os`, empty otherwise. */
+    def linkedDefineFlags(os: String): Seq[String] =
+        if (resolvedLinkLibs(os).nonEmpty) Seq(s"-D$linkedDefine") else Nil
+
     /** The C compiler this library requires for the OS being built, overriding the global
       * `ffiCCompiler` for that OS only. `linux-musl` resolves the `linux` key. Absent (the default,
       * empty map) means use the global compiler, so a library that does not set `compilerByOs`
