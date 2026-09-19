@@ -31,6 +31,12 @@ import kyo.ffi.Ffi
   * ffiGenerate cache is keyed on TASTy and silently drops new methods otherwise.
   */
 private[kyo] trait AeronBindings extends Ffi:
+    /** False when the shim compiled its stubs because the build that linked this binary did not link Aeron. On Scala Native the shim
+      * compiles in the application's build, so this is the only way to tell a binary without Aeron from one with it; every other call
+      * in a stubbed shim returns a failure sentinel.
+      */
+    def linked()(using AllowUnsafe): Boolean
+
     /** Timeouts are nanoseconds; `0` leaves the driver's own default in place. */
     @Ffi.blocking
     def driverStart(dir: String, clientLivenessNs: Long, publicationUnblockNs: Long)(using

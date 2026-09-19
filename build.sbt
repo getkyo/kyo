@@ -2683,6 +2683,8 @@ lazy val `kyo-aeron` =
                     FfiLibrary(
                         id = "kyo_aeron",
                         cSources = (sharedBase / "src" / "main" / "c" ** "*.c").get,
+                        // kyo_aeron.h travels with the source into the Native jar, where the consumer's build compiles it.
+                        cHeaders = (sharedBase / "src" / "main" / "c" ** "*.h").get,
                         includeDirs = Seq(
                             aeronStaged / "include" / "aeron",
                             aeronStaged / "include" / "aeronmd"
@@ -2724,22 +2726,14 @@ lazy val `kyo-aeron` =
             // reason; kept here so a change there cannot silently reintroduce the port collision.
             // (The JS and Wasm blocks need no equivalent: they inherit it from `js-settings`.)
             Test / parallelExecution := false,
-            nativeConfig             := {
+            // Scala Native compiles the C shim from a copy under scala-native/, so the staged Aeron headers must be on its include
+            // path, and the shim compiles its real branch only under the KYO_FFI_LINKED_KYO_AERON define. ffiNativeCompileOptions
+            // carries both, for exactly the archives ffiNativeLinkingOptions links.
+            nativeConfig := {
                 val base = nativeConfig.value
-                // Scala Native compiles the C shim from a copy under scala-native/, so both the staged
-                // Aeron headers and the shim's own directory (holding kyo_aeron.h) must be on the
-                // include path. Without them kyo_aeron.c's #if __has_include(<aeronc.h>) guard is false
-                // and every function compiles out, leaving an empty .c.o and undefined symbols at link.
-                val aeronStaged   = baseDirectory.value / ".." / "build" / "aeron" / "staged" / hostOsArch
-                val cSrcDir       = baseDirectory.value / ".." / "shared" / "src" / "main" / "c"
-                val aeronIncludes = Seq(
-                    s"-I${cSrcDir.absolutePath}",
-                    s"-I${(aeronStaged / "include" / "aeron").absolutePath}",
-                    s"-I${(aeronStaged / "include" / "aeronmd").absolutePath}"
-                )
                 base
                     .withLinkingOptions(base.linkingOptions ++ ffiNativeLinkingOptions.value)
-                    .withCompileOptions(base.compileOptions ++ aeronIncludes)
+                    .withCompileOptions(base.compileOptions ++ ffiNativeCompileOptions.value)
             }
         )
         .jsSettings(
@@ -3804,6 +3798,45 @@ lazy val `kyo-test-readme` =
             `kyo-settings`,
             publish / skip := true,
             doctestSources := Seq((ThisBuild / baseDirectory).value / "kyo-test" / "README.md")
+        )
+
+// Builds, links and runs small applications that live outside this build against locally published kyo
+// artifacts, one scripted test per module and platform under src/sbt-test/<platform>/<module>. It exists
+// because nothing else here consumes an artifact the way a user does: every in-build test links through
+// in-build flag manifests and staged vendored trees, so a jar that cannot link outside this build still
+// passes every suite. That is how kyo-net's Native jar shipped referencing OpenSSL symbols no consumer
+// link provided.
+//
+// Publishes the transitive closure of the checked modules and kyo-ffi-plugin first, so the vendored
+// libraries have to be staged exactly as for a release. Unaggregated: run it with
+// `kyo-consumer-check/scripted`.
+lazy val consumerCheckModules: Seq[ProjectReference] =
+    Seq(`kyo-net`, `kyo-aeron`, `kyo-sql-sqlite`, `kyo-sql-doltlite`, `kyo-stats-machine`)
+        .flatMap(m => Seq[ProjectReference](m.jvm, m.js, m.native)) ++
+        Seq[ProjectReference](`kyo-ffi-plugin`, `kyo-ffi-codegen`)
+
+lazy val `kyo-consumer-check` =
+    project
+        .in(file("kyo-consumer-check"))
+        .enablePlugins(ScriptedPlugin)
+        .disablePlugins(MimaPlugin, KyoDoctestPlugin)
+        .settings(
+            scalaVersion      := scala39Version,
+            publish / skip    := true,
+            scriptedBufferLog := false,
+            scriptedLaunchOpts ++= Seq(
+                "-Xmx2G",
+                "-Dkyo.version=" + version.value,
+                // Pinned to what the published artifacts were built with, as kyo-ffi-plugin's scripted suite does: a
+                // stale Scala cannot read their TASTy, and a stale Scala.js or Scala Native plugin cannot read their IR.
+                "-Dkyo.scalaVersion=" + scala39Version,
+                "-Dscalajs.version=" + scalaJSVersion,
+                "-Dscalanative.version=" + nativeVersion
+            ),
+            scriptedDependencies := {
+                val published = publishLocal.all(ScopeFilter(consumerCheckModules.map(inDependencies(_)).reduce(_ || _))).value
+                scriptedDependencies.value
+            }
         )
 
 lazy val `openssl-native-settings` = Seq(

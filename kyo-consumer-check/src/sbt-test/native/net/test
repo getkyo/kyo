@@ -1,0 +1,4 @@
+# Links with no plugin: the TLS shims compile their stubs, so no OpenSSL symbol reaches the link. Plain TCP works and TLS
+# fails closed as unavailable, never as a crash.
+> nativeLink
+$ exec sh -c 'set -eu; bin=$(find target -type f -perm -u+x -name consumer | head -n1); [ -n "$bin" ] || { echo "no consumer binary under target/" >&2; exit 1; }; "$bin" > out.txt 2>&1 || { cat out.txt; exit 1; }; cat out.txt; grep -q "CONSUMER plain=hello tls=failure:NetTlsProviderUnavailableException" out.txt'

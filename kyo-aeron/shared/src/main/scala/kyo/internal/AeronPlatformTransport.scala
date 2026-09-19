@@ -2,6 +2,7 @@ package kyo.internal
 
 import kyo.*
 import kyo.ffi.Ffi
+import kyo.ffi.FfiLoadError
 import kyo.ffi.FfiNullPointer
 
 /** Platform selector, backed by the C client through kyo-ffi over the `kyo_aeron.c` shim.
@@ -29,7 +30,7 @@ private[kyo] object AeronPlatformTransport:
         clientLivenessNs: Long = AeronDriver.Settings.embedded.clientLivenessTimeout.toNanos,
         publicationUnblockNs: Long = AeronDriver.Settings.embedded.publicationUnblockTimeout.toNanos
     )(using Frame): AeronRuntime < Async =
-        Sync.Unsafe.defer(Ffi.load[AeronBindings]).map { bindings =>
+        Sync.Unsafe.defer(loadBindings()).map { bindings =>
             for
                 driver <- Sync.Unsafe.defer(
                     bindings.driverStart(dir, clientLivenessNs, publicationUnblockNs)
@@ -77,7 +78,7 @@ private[kyo] object AeronPlatformTransport:
       * relationship before reaching here.
       */
     def driver(dir: String, clientLivenessNs: Long, publicationUnblockNs: Long)(using Frame): AeronDriverRuntime < Async =
-        Sync.Unsafe.defer(Ffi.load[AeronBindings]).map { bindings =>
+        Sync.Unsafe.defer(loadBindings()).map { bindings =>
             Sync.Unsafe.defer(bindings.driverStart(dir, clientLivenessNs, publicationUnblockNs)).flatMap(_.safe.get).map {
                 started =>
                     Sync.Unsafe.defer {
@@ -105,7 +106,7 @@ private[kyo] object AeronPlatformTransport:
       * installs the C recording error handler.
       */
     def external(aeronDir: String)(using Frame): AeronRuntime < (Async & Abort[TopicTransportFailedException]) =
-        Sync.Unsafe.defer(Ffi.load[AeronBindings]).map { bindings =>
+        Sync.Unsafe.defer(loadBindings()).map { bindings =>
             // A driver-absent connect returns NULL after the ~10s driver timeout, which the
             // generated binding raises as FfiNullPointer inside the fiber: a Panic, hence recover
             // rather than catch. A `@Ffi.blocking` binding returns `Fiber.Unsafe[A, Any]`, whose
@@ -137,4 +138,24 @@ private[kyo] object AeronPlatformTransport:
             case n: FfiNullPointer =>
                 Abort.fail(TopicTransportFailedException(Maybe(n.getMessage).filter(_.nonEmpty).getOrElse(n.toString), n))
             case other => Abort.panic(other)
+
+    /** Loads the bindings, refusing a binary whose shim compiled its stubs.
+      *
+      * On Scala Native the shim compiles in the application's build and links Aeron only when that build does. Without Aeron every entry
+      * point is a stub, and the first one reached would fail as an opaque NULL from `driverStart`. Checking here surfaces the cause the way
+      * the JVM surfaces a missing native: `FfiLoadError.LibraryNotFound`, as a panic, since it is an environment defect.
+      */
+    private def loadBindings()(using AllowUnsafe): AeronBindings =
+        val bindings = Ffi.load[AeronBindings]
+        if !bindings.linked() then
+            throw new FfiLoadError.LibraryNotFound(
+                AeronBindings.library,
+                Chunk.empty,
+                s"Library '${AeronBindings.library}' is not linked into this binary: its shim compiled without Aeron. " +
+                    "On Scala Native the application's build must link Aeron; see the kyo-aeron README.",
+                null
+            )
+        end if
+        bindings
+    end loadBindings
 end AeronPlatformTransport
