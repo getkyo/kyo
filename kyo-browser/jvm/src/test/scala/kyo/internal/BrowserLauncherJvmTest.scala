@@ -19,6 +19,8 @@ class BrowserLauncherJvmTest extends BaseBrowserTest:
         // block an owner from creating entries in a read-only directory anyway, so the
         // unwritable-parent scenario is expressible on POSIX hosts only.
         assume(!Platform.isWindows, "POSIX directory permissions")
+        // root ignores directory permissions, so a read-only parent refuses nothing when the JVM runs as root.
+        assume(java.lang.System.getProperty("user.name") != "root", "a non-root user, for whom a read-only parent refuses writes")
         val outerTmp = Paths.get(java.lang.System.getProperty("java.io.tmpdir"))
         val parent   = Files.createTempDirectory(outerTmp, s"kyo-browser-jvm-test-${UUID.randomUUID()}-")
 
@@ -62,7 +64,10 @@ class BrowserLauncherJvmTest extends BaseBrowserTest:
             }
         def kill(token: String): Unit < Async =
             Abort.run[CommandException](Command("pkill", "-9", "-f", token).textWithExitCode).unit
-        SharedChrome.chromeConfig.map { base =>
+        Abort.run[BrowserSetupException](SharedChrome.chromeConfig).map { obtained =>
+            val base = obtained match
+                case Result.Success(cfg) => cfg
+                case other               => cancel(s"no Chrome to launch here: $other")
             Loop.indexed { i =>
                 if i >= rounds then Loop.done(succeed)
                 else
