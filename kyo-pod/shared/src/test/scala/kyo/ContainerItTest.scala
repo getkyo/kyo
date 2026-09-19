@@ -82,6 +82,7 @@ class ContainerItTest extends BasePodTest:
         }
 
         "auto-detect passes meter to backend" - runRuntimes { runtime =>
+            requireRuntimeCli(runtime)
             Meter.initSemaphore(4).map { meter =>
                 requireRuntimeCli(runtime)
                 Container.withBackendConfig(_.Shell(runtime, meter)) {
@@ -99,6 +100,7 @@ class ContainerItTest extends BasePodTest:
         }
 
         "Shell with explicit command path" - runRuntimes { runtime =>
+            requireRuntimeCli(runtime)
             val cmd = if runtime == "docker" then "docker" else "podman"
             requireRuntimeCli(runtime)
             Container.withBackendConfig(_.Shell(cmd)) {
@@ -150,8 +152,8 @@ class ContainerItTest extends BasePodTest:
                 // The backend routes each exec through meter.run, so decorating the permits=2 semaphore to record peak in-flight makes
                 // the admitted concurrency directly observable: exactly 2 proves the limit is enforced and saturated.
                 Meter.initSemaphore(2).map { base =>
-                    val inFlight = new java.util.concurrent.atomic.AtomicInteger(0)
-                    val peak     = new java.util.concurrent.atomic.AtomicInteger(0)
+                    val inFlight     = new java.util.concurrent.atomic.AtomicInteger(0)
+                    val peak         = new java.util.concurrent.atomic.AtomicInteger(0)
                     val meter: Meter = new Meter:
                         def run[A, S](v: => A < S)(using Frame): A < (S & Async & Abort[Closed]) =
                             base.run {
@@ -265,7 +267,7 @@ class ContainerItTest extends BasePodTest:
             val name = uniqueName("kyo-scope-cleanup")
             for
                 idRef <- AtomicRef.init[Container.Id](Container.Id(""))
-                _ <- Scope.run {
+                _     <- Scope.run {
                     Container.init(alpine.name(name).autoRemove(false)).map { c =>
                         idRef.set(c.id)
                     }
@@ -357,7 +359,7 @@ class ContainerItTest extends BasePodTest:
                     )).map(_ => ())
                 )
             yield result match
-                case Result.Success(_) => ()
+                case Result.Success(_)                                 => ()
                 case Result.Failure(e: ContainerImageMissingException) =>
                     fail(s"auto-pull failed — Container.init should pull missing images, got $e")
                 case other => fail(s"unexpected result: $other")
@@ -397,7 +399,7 @@ class ContainerItTest extends BasePodTest:
         "creates container, runs block, returns result, cleans up" - runBackends {
             val name = uniqueName("kyo-run")
             for
-                idRef <- AtomicRef.init[Container.Id](Container.Id(""))
+                idRef  <- AtomicRef.init[Container.Id](Container.Id(""))
                 result <- Scope.run {
                     Container.initWith(alpine.name(name).autoRemove(false)) { c =>
                         idRef.set(c.id).andThen(42)
@@ -416,7 +418,7 @@ class ContainerItTest extends BasePodTest:
         "container is removed after block fails" - runBackends {
             for
                 idRef <- AtomicRef.init[Container.Id](Container.Id(""))
-                _ <- Abort.run[ContainerException] {
+                _     <- Abort.run[ContainerException] {
                     Scope.run {
                         Container.initWith(alpinePersistent(alpine)) { c =>
                             idRef.set(c.id).andThen {
@@ -746,7 +748,7 @@ class ContainerItTest extends BasePodTest:
             // nc's single connection, the probe then finds nobody listening, and init times
             // out. nginx waits for the request line on every accepted connection, which is
             // exactly the held-open shape a real service presents.
-            val img = ContainerImage("nginx:alpine")
+            val img    = ContainerImage("nginx:alpine")
             val config = Container.Config(img)
                 .port(80, 0)
                 .requireService(true)
@@ -901,7 +903,7 @@ class ContainerItTest extends BasePodTest:
                     assert(e.getMessage.contains("Health check failed"))
                 case Result.Failure(other) => fail(s"unexpected failure type: $other")
                 case Result.Panic(t)       => fail(s"panic: $t")
-                case Result.Success(_) =>
+                case Result.Success(_)     =>
                     fail("httpGet to /no-such-path should fail (404 != 200): expectedStatus was ignored")
             }
         }
@@ -1010,8 +1012,8 @@ class ContainerItTest extends BasePodTest:
             Scope.run {
                 Path.run {
                     for
-                        _ <- Container.Volume.init(Container.Volume.Config.default.copy(name = Present(volName)))
-                        _ <- hostDir.mkDir
+                        _    <- Container.Volume.init(Container.Volume.Config.default.copy(name = Present(volName)))
+                        _    <- hostDir.mkDir
                         info <- Container.initWith(
                             alpine
                                 .bind(hostDir, Path("/mnt/bind-target"))
@@ -1453,7 +1455,7 @@ class ContainerItTest extends BasePodTest:
                         val entry = entries.head
                         entry.timestamp match
                             case Present(_) => ()
-                            case Absent =>
+                            case Absent     =>
                                 fail(s"Expected timestamp to be Present when timestamps=true, but got Absent. Content: '${entry.content}'")
                         end match
                     }
@@ -1617,7 +1619,7 @@ class ContainerItTest extends BasePodTest:
             Container.init(alpine).map { c =>
                 for
                     // Create a 5MB file so the tar export is large enough to require multiple chunks
-                    _ <- c.exec("sh", "-c", "dd if=/dev/urandom bs=1024 count=5120 of=/tmp/bigfile 2>/dev/null")
+                    _          <- c.exec("sh", "-c", "dd if=/dev/urandom bs=1024 count=5120 of=/tmp/bigfile 2>/dev/null")
                     chunkCount <- Scope.run {
                         // Count how many chunks the stream emits
                         var count = 0
@@ -1920,7 +1922,7 @@ class ContainerItTest extends BasePodTest:
             val img  = ContainerImage("ghcr.io/kyo-test/private-99999:v1")
             Abort.run[ContainerException](ContainerImage.pull(img, auth = Present(auth))).map {
                 case Result.Failure(e) =>
-                    val msg = Option(e.getMessage).getOrElse("").toLowerCase
+                    val msg            = Option(e.getMessage).getOrElse("").toLowerCase
                     val isNetworkError = msg.contains("ssl") || msg.contains("tls") ||
                         msg.contains("network") || msg.contains("timeout") || msg.contains("connect")
                     if isNetworkError then
@@ -2119,7 +2121,7 @@ class ContainerItTest extends BasePodTest:
                     result <- Scope.run {
                         for
                             texts <- AtomicRef.init(Chunk.empty[String])
-                            _ <- ContainerImage.buildFromPath(
+                            _     <- ContainerImage.buildFromPath(
                                 dir,
                                 tags = Chunk(s"$imgName:latest"),
                                 noCache = true
@@ -2201,8 +2203,8 @@ class ContainerItTest extends BasePodTest:
             val imgName = uniqueName("kyo-built-err")
             Path.run {
                 for
-                    _ <- dir.mkDir
-                    _ <- (dir / "Dockerfile").write("FROM alpine:latest\nRUN false\n")
+                    _      <- dir.mkDir
+                    _      <- (dir / "Dockerfile").write("FROM alpine:latest\nRUN false\n")
                     result <- Abort.run[ContainerException] {
                         Scope.run(ContainerImage.buildFromPath(dir, tags = Chunk(s"$imgName:latest")).run)
                     }
@@ -2302,7 +2304,7 @@ class ContainerItTest extends BasePodTest:
             val imgName = uniqueName("kyo-commit-meta")
             Container.init(alpine).map { c =>
                 for
-                    _ <- c.exec("touch", "/meta-marker")
+                    _  <- c.exec("touch", "/meta-marker")
                     id <- ContainerImage.commit(
                         c.id,
                         repo = imgName,
@@ -2720,11 +2722,15 @@ class ContainerItTest extends BasePodTest:
 
     "container with mounts" - {
         "bind mount — host file visible in container" - runBackends {
+            assume(
+                ContainerRuntime.daemonSharesFilesystem,
+                "the daemon is a sibling container; a locally-written path is not the path it mounts"
+            )
             val hostDir = Path("/tmp/" + uniqueName("kyo-bind"))
             Path.run {
                 for
-                    _ <- hostDir.mkDir
-                    _ <- (hostDir / "data.txt").write("from-host-12345")
+                    _       <- hostDir.mkDir
+                    _       <- (hostDir / "data.txt").write("from-host-12345")
                     content <- Scope.run {
                         Container.initWith(alpine.bind(hostDir, Path("/mnt/data"), readOnly = true)) { c =>
                             c.exec("cat", "/mnt/data/data.txt").map(_.stdout.trim)
@@ -2741,7 +2747,7 @@ class ContainerItTest extends BasePodTest:
             val hostDir = Path("/tmp/" + uniqueName("kyo-bind-ro"))
             Path.run {
                 for
-                    _ <- hostDir.mkDir
+                    _      <- hostDir.mkDir
                     result <- Scope.run {
                         Container.initWith(alpine.bind(hostDir, Path("/mnt/data"), readOnly = true)) { c =>
                             c.exec("touch", "/mnt/data/test")
@@ -2754,12 +2760,16 @@ class ContainerItTest extends BasePodTest:
         }
 
         "bind mount from /tmp works on macOS" - runBackends {
+            assume(
+                ContainerRuntime.daemonSharesFilesystem,
+                "the daemon is a sibling container; a locally-written path is not the path it mounts"
+            )
             val hostDir  = Path("/tmp/" + uniqueName("kyo-tmp-bind"))
             val filename = "test-data.txt"
             Path.run {
                 for
-                    _ <- hostDir.mkDir
-                    _ <- (hostDir / filename).write("from-tmp-host-path")
+                    _       <- hostDir.mkDir
+                    _       <- (hostDir / filename).write("from-tmp-host-path")
                     content <- Scope.run {
                         Container.initWith(alpine.bind(hostDir, Path("/mnt/tmpdata"), readOnly = true)) { c =>
                             c.exec("cat", s"/mnt/tmpdata/$filename").map(_.stdout.trim)
@@ -3090,6 +3100,15 @@ class ContainerItTest extends BasePodTest:
     "copy edge cases" - {
         // CVE-2018-15664 — symlink traversal in archive path
         "copy file with unicode name roundtrip" - runBackends {
+            // The DESTINATION below is a path inside the container, but it is built with kyo.Path, which on
+            // the JVM is java.nio.file.Path and so is constrained by THIS process's sun.jnu.encoding. Under a
+            // non-UTF-8 locale (a bare Linux container sets ANSI_X3.4-1968) the name is unmappable and the
+            // construction throws before any container is involved. Cancel rather than fail: the encoding of
+            // the local JVM says nothing about whether kyo-pod round-trips the name.
+            assume(
+                scala.util.Try(Path("/tmp/" + "файл")).isSuccess,
+                "this JVM's filename encoding cannot represent a non-ASCII path (locale is not UTF-8)"
+            )
             val localPath = Path("/tmp/" + uniqueName("kyo-unicode"))
             Container.init(alpine).map { c =>
                 Path.run {
@@ -3595,6 +3614,7 @@ class ContainerItTest extends BasePodTest:
     }
 
     "NotFound references container id, not rename target (shell backend)" - runRuntimes { runtime =>
+        requireRuntimeCli(runtime)
         // Force shell backend. The HTTP backend passes ids explicitly to its error-mapping layer;
         // only the shell backend uses args.lastOption in mapError.
         requireRuntimeCli(runtime)
@@ -3629,7 +3649,7 @@ class ContainerItTest extends BasePodTest:
         val hostDir = Path("/tmp/" + uniqueName("kyo-attach-bind"))
         Path.run {
             for
-                _ <- hostDir.mkDir
+                _      <- hostDir.mkDir
                 result <- Scope.run {
                     Container.initWith(
                         alpine
@@ -3704,6 +3724,7 @@ class ContainerItTest extends BasePodTest:
     }
 
     "128KB single line arrives intact via logStream" - runRuntimes { runtime =>
+        requireRuntimeCli(runtime)
         // Force shell backend where chunk boundaries are observable.
         // Container emits exactly ONE line of 128KB then a newline.
         // The line-splitting must handle lines that straddle chunk boundaries —
@@ -3777,7 +3798,7 @@ class ContainerItTest extends BasePodTest:
             // redis:7-alpine's default CMD is redis-server; we verify the well-known
             // startup message appears in logs.
             val redisImage = ContainerImage("redis", "7-alpine")
-            val config = Container.Config(redisImage)
+            val config     = Container.Config(redisImage)
                 .healthCheck(Container.HealthCheck.log(
                     "Ready to accept connections",
                     retrySchedule = Schedule.fixed(500.millis).take(30)

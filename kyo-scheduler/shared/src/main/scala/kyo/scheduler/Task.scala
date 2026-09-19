@@ -93,8 +93,7 @@ object Task {
             /** Adds execution time, clearing the preemption flag (clears bit 31): a time-slice preemption has been
               * consumed by the time runtime is recorded.
               */
-            def addRuntime(v: Int): State =
-                (s & Int.MaxValue) + v
+            def addRuntime(v: Int): State = (s & Int.MaxValue) + v
 
             /** Drops accumulated runtime to 0, the minimum, giving the task the highest scheduling priority so an
               * interrupted fiber is rescheduled ahead of all others (including freshly-submitted runtime-1 tasks) to

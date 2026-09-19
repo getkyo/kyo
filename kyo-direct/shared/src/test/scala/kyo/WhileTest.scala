@@ -91,7 +91,7 @@ class WhileTest extends kyo.test.Test[Any]:
         "with abort effect" in {
             direct {
                 val counter = AtomicInt.init(0).now
-                val result = Abort.run {
+                val result  = Abort.run {
                     direct {
                         while counter.get.now < 2 do
                             if counter.get.now >= 5 then
@@ -111,7 +111,7 @@ class WhileTest extends kyo.test.Test[Any]:
         "break using abort" in {
             direct {
                 val counter = AtomicInt.init(0).now
-                val result = Abort.run {
+                val result  = Abort.run {
                     direct {
                         while true do
                             val current = counter.incrementAndGet.now

@@ -9,7 +9,7 @@ private[kyo] object YamlCstParser:
     import Yaml.Cst
 
     def document(input: String)(using Frame): Result[DecodeException, Cst.Document] =
-        val docs = YamlDocuments.split(input)
+        val docs       = YamlDocuments.split(input)
         val startIndex =
             firstDocumentIndex(input, docs)
         if docs.isEmpty && !hasDocumentContent(input) then
@@ -98,7 +98,7 @@ private[kyo] object YamlCstParser:
         else
             explicitDocumentBodyStart(source) match
                 case Present(start) if start <= source.length => start
-                case _ =>
+                case _                                        =>
                     val index = source.indexOf(body)
                     if index >= 0 then index else 0
             end match
@@ -110,7 +110,7 @@ private[kyo] object YamlCstParser:
             if start >= source.length then Absent
             else
                 val lineEnd = YamlSource.lineEnd(source, start)
-                val stop =
+                val stop    =
                     if lineEnd > start && source.charAt(lineEnd - 1) == '\r' then lineEnd - 1
                     else lineEnd
                 if startsWithMarker(source, start, stop, "---") then
@@ -337,7 +337,7 @@ private[kyo] object YamlCstParser:
             if start >= input.length then false
             else
                 val lineEnd = YamlSource.lineEnd(input, start)
-                val stop =
+                val stop    =
                     if lineEnd > start && input.charAt(lineEnd - 1) == '\r' then lineEnd - 1
                     else lineEnd
                 if lineHasContent(input, start, stop) then true
@@ -353,7 +353,7 @@ private[kyo] object YamlCstParser:
             if start >= input.length then false
             else
                 val lineEnd = YamlSource.lineEnd(input, start)
-                val stop =
+                val stop    =
                     if lineEnd > start && input.charAt(lineEnd - 1) == '\r' then lineEnd - 1
                     else lineEnd
                 val first = firstNonWhitespace(input, start, stop)
@@ -409,7 +409,7 @@ private[kyo] object YamlCstParser:
             if index < 0 || index >= source.length then Absent
             else
                 val lineEnd = YamlSource.lineEnd(source, index)
-                val stop =
+                val stop    =
                     if lineEnd > index && source.charAt(lineEnd - 1) == '\r' then lineEnd - 1
                     else lineEnd
                 val first = firstNonWhitespace(source, index, stop)
@@ -575,7 +575,7 @@ private[kyo] object YamlCstParser:
             @tailrec def loop(start: Int, number: Int): Unit =
                 if start < source.length then
                     val lineEnd = YamlSource.lineEnd(source, start)
-                    val stop =
+                    val stop    =
                         if lineEnd > start && source.charAt(lineEnd - 1) == '\r' then lineEnd - 1
                         else lineEnd
                     val contentStart = firstNonWhitespace(source, start, stop)

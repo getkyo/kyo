@@ -42,7 +42,20 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || '' }}
-      - uses: coursier/setup-action@v3.0.2
+      # Same key as .github/actions/setup, so producers reuse what ci already populated.
+      - uses: actions/cache@v6
+        env:
+          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+        with:
+          path: |
+            ~/.cache/coursier
+            ~/Library/Caches/Coursier
+            ~/AppData/Local/Coursier/Cache
+            ~/.sbt
+            ~/.ivy2/cache
+          key: deps-macos-arm64-${{ hashFiles('build.sbt', 'project/build.properties', 'project/plugins.sbt', 'project/*.scala') }}
+          restore-keys: deps-macos-arm64-
+      - uses: coursier/setup-action@v3.0.3
         with:
           jvm: corretto:25
           apps: sbt
@@ -121,7 +134,20 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || '' }}
-      - uses: coursier/setup-action@v3.0.2
+      # Same key as .github/actions/setup, so producers reuse what ci already populated.
+      - uses: actions/cache@v6
+        env:
+          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+        with:
+          path: |
+            ~/.cache/coursier
+            ~/Library/Caches/Coursier
+            ~/AppData/Local/Coursier/Cache
+            ~/.sbt
+            ~/.ivy2/cache
+          key: deps-linux-x64-${{ hashFiles('build.sbt', 'project/build.properties', 'project/plugins.sbt', 'project/*.scala') }}
+          restore-keys: deps-linux-x64-
+      - uses: coursier/setup-action@v3.0.3
         with:
           jvm: corretto:25
           apps: sbt
@@ -149,7 +175,9 @@ jobs:
           # only busybox sh), plus liburing-dev for the posix_uring shim, util-linux-dev for the Aeron
           # driver's -luuid, and curl/tar for the sbt launcher, which is a JAR the musl JDK runs (no
           # glibc dependency).
-          docker run --rm -v "$PWD:/work" -w /work eclipse-temurin:25-jdk-alpine sh -c '
+          # Mount the cache in, or the container resolves into throwaway storage.
+          mkdir -p "$HOME/.cache/coursier"
+          docker run --rm -v "$PWD:/work" -v "$HOME/.cache/coursier:/root/.cache/coursier" -w /work eclipse-temurin:25-jdk-alpine sh -c '
             set -eu
             apk add --no-cache bash cmake go build-base git file binutils perl linux-headers liburing-dev util-linux-dev curl tar tcl
             sbt_ver="$(sed -n "s/^sbt.version=//p" project/build.properties)"
@@ -197,7 +225,20 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || '' }}
-      - uses: coursier/setup-action@v3.0.2
+      # Same key as .github/actions/setup, so producers reuse what ci already populated.
+      - uses: actions/cache@v6
+        env:
+          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+        with:
+          path: |
+            ~/.cache/coursier
+            ~/Library/Caches/Coursier
+            ~/AppData/Local/Coursier/Cache
+            ~/.sbt
+            ~/.ivy2/cache
+          key: deps-linux-arm64-${{ hashFiles('build.sbt', 'project/build.properties', 'project/plugins.sbt', 'project/*.scala') }}
+          restore-keys: deps-linux-arm64-
+      - uses: coursier/setup-action@v3.0.3
         with:
           jvm: corretto:25
           apps: sbt
@@ -221,7 +262,9 @@ jobs:
       - name: Build linux-musl-aarch64 natives (Alpine)
         shell: bash
         run: |
-          docker run --rm -v "$PWD:/work" -w /work eclipse-temurin:25-jdk-alpine sh -c '
+          # Mount the cache in, or the container resolves into throwaway storage.
+          mkdir -p "$HOME/.cache/coursier"
+          docker run --rm -v "$PWD:/work" -v "$HOME/.cache/coursier:/root/.cache/coursier" -w /work eclipse-temurin:25-jdk-alpine sh -c '
             set -eu
             apk add --no-cache bash cmake go build-base git file binutils perl linux-headers liburing-dev util-linux-dev curl tar tcl
             sbt_ver="$(sed -n "s/^sbt.version=//p" project/build.properties)"
@@ -278,7 +321,20 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || '' }}
-      - uses: coursier/setup-action@v3.0.2
+      # Same key as .github/actions/setup, so producers reuse what ci already populated.
+      - uses: actions/cache@v6
+        env:
+          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+        with:
+          path: |
+            ~/.cache/coursier
+            ~/Library/Caches/Coursier
+            ~/AppData/Local/Coursier/Cache
+            ~/.sbt
+            ~/.ivy2/cache
+          key: deps-windows-x64-${{ hashFiles('build.sbt', 'project/build.properties', 'project/plugins.sbt', 'project/*.scala') }}
+          restore-keys: deps-windows-x64-
+      - uses: coursier/setup-action@v3.0.3
         with:
           jvm: corretto:25
           apps: sbt
@@ -322,6 +378,19 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || '' }}
+      # Same key as .github/actions/setup, so producers reuse what ci already populated.
+      - uses: actions/cache@v6
+        env:
+          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+        with:
+          path: |
+            ~/.cache/coursier
+            ~/Library/Caches/Coursier
+            ~/AppData/Local/Coursier/Cache
+            ~/.sbt
+            ~/.ivy2/cache
+          key: deps-windows-arm64-${{ hashFiles('build.sbt', 'project/build.properties', 'project/plugins.sbt', 'project/*.scala') }}
+          restore-keys: deps-windows-arm64-
       # setup-java, not coursier: coursier publishes no aarch64-pc-win32 launcher, so setup-action 404s
       # trying to install itself here. sbt is preinstalled on this image; only the JDK needs replacing,
       # since the one it ships is 21. Microsoft's build because Amazon ships no Corretto for Windows on

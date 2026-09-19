@@ -65,7 +65,7 @@ runs:
       shell: bash
       run: bash kyo-sql-doltlite/scripts/build-doltlite.sh "${{ steps.osarch.outputs.value }}"
 
-    - uses: coursier/setup-action@v3.0.0
+    - uses: coursier/setup-action@v3.0.3
       with:
         jvm: corretto:25
         apps: sbt

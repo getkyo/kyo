@@ -51,7 +51,7 @@ class TopicInvariantsTest extends Test:
         Topic.run {
             for
                 started <- Latch.init(1)
-                fiber <- Fiber.initUnscoped(using Topic.isolate)(
+                fiber   <- Fiber.initUnscoped(using Topic.isolate)(
                     started.release.andThen(Topic.stream[Int]("aeron:ipc").take(messages.size).run)
                 )
                 _        <- started.await
@@ -128,7 +128,7 @@ class TopicInvariantsTest extends Test:
         Topic.run {
             for
                 started <- Latch.init(1)
-                fiber <- Fiber.initUnscoped(using Topic.isolate)(
+                fiber   <- Fiber.initUnscoped(using Topic.isolate)(
                     started.release.andThen(Topic.stream[Int]("aeron:ipc").take(messages.size).run)
                 )
                 _        <- started.await
@@ -185,7 +185,7 @@ class TopicInvariantsTest extends Test:
                 pub      = pubMaybe.get
                 payload  = Array[Byte](0)
                 result <- Sync.Unsafe.defer(transport.offer(pub, payload))
-                _ <- Sync.Unsafe.defer {
+                _      <- Sync.Unsafe.defer {
                     transport.closePublication(pub)
                 }
             yield

@@ -46,7 +46,7 @@ private[kyo] object DeclaredBounds:
         def declaration: Option[TypeBounds] =
             symbol.tree match
                 case TypeDef(_, TypeBoundsTree(low, high)) => Some(TypeBounds(low.tpe, high.tpe))
-                case TypeDef(_, tpt: TypeTree) =>
+                case TypeDef(_, tpt: TypeTree)             =>
                     tpt.tpe match
                         case bounds: TypeBounds => Some(bounds)
                         case _                  => None
@@ -73,7 +73,7 @@ private[kyo] object DeclaredBounds:
       */
     def upper(using q: Quotes)(node: q.reflect.TypeRepr): Option[q.reflect.TypeRepr] =
         import quotes.reflect.*
-        val args = node.typeArgs
+        val args                         = node.typeArgs
         def instantiate(bound: TypeRepr) =
             bound match
                 case lambda: TypeLambda if args.nonEmpty && lambda.paramNames.size == args.size => lambda.appliedTo(args)

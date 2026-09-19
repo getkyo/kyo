@@ -62,7 +62,7 @@ final private[kyo] class SqliteConnection(
                     else
                         fromReturning match
                             case Present(k) => SqlClient.InsertOutcome.GeneratedKey.Value(k)
-                            case Absent =>
+                            case Absent     =>
                                 val rowid = bindings.lastInsertRowid(db)
                                 // Unavailable rather than NoAutoKey: a zero rowid covers both a table with no such
                                 // column and one whose value the caller supplied, and nothing here tells them apart.
@@ -89,9 +89,9 @@ final private[kyo] class SqliteConnection(
                     stmt
                 }
             )(stmt => finalizeStatement(stmt)).map { prepared =>
-                val declarations = readDeclarations(prepared)
-                val codec        = new SqliteRowCodec(declarations)
-                val columns      = readColumns(prepared, declarations)
+                val declarations                                                     = readDeclarations(prepared)
+                val codec                                                            = new SqliteRowCodec(declarations)
+                val columns                                                          = readColumns(prepared, declarations)
                 def loop: Unit < (Async & Abort[SqlException] & Emit[Chunk[SqlRow]]) =
                     serialised(step(prepared)).map { rc =>
                         if rc == Done then
@@ -355,7 +355,7 @@ final private[kyo] class SqliteConnection(
                         case SqliteParamWriter.Param.Null       => discard(bindings.bindNull(stmt, slot))
                         case SqliteParamWriter.Param.Integer(v) => discard(bindings.bindInt64(stmt, slot, v))
                         case SqliteParamWriter.Param.Real(v)    => discard(bindings.bindDouble(stmt, slot, v))
-                        case SqliteParamWriter.Param.Text(v) =>
+                        case SqliteParamWriter.Param.Text(v)    =>
                             val bytes = v.getBytes(java.nio.charset.StandardCharsets.UTF_8)
                             discard(Buffer.useArray(bytes)(buf => bindings.bindTextCopy(stmt, slot, buf, bytes.length)))
                         case SqliteParamWriter.Param.Blob(v) =>
@@ -390,7 +390,7 @@ final private[kyo] class SqliteConnection(
 
     private def readRow(stmt: Ffi.Handle[SqliteStmt], columns: Chunk[SqlRow.Column], codec: SqliteRowCodec)(using Frame): SqlRow =
         given AllowUnsafe = AllowUnsafe.embrace.danger
-        val values = Chunk.from((0 until columns.size).map { i =>
+        val values        = Chunk.from((0 until columns.size).map { i =>
             if bindings.columnType(stmt, i) == NullClass then Absent
             else
                 // A blob's bytes are the value; everything else is read as the text the renderer wrote. The storage
@@ -429,9 +429,9 @@ final private[kyo] class SqliteConnection(
                 // stepping to a `Result` puts the finalize on the value path, before `Abort.get` re-raises; the `Sync.ensure` covers
                 // the interrupt, which arrives another way.
                 Sync.ensure(finalizeOnce) {
-                    val declarations = readDeclarations(stmt)
-                    val codec        = new SqliteRowCodec(declarations)
-                    val columns      = readColumns(stmt, declarations)
+                    val declarations                                                            = readDeclarations(stmt)
+                    val codec                                                                   = new SqliteRowCodec(declarations)
+                    val columns                                                                 = readColumns(stmt, declarations)
                     def loop(acc: Chunk[SqlRow]): Chunk[SqlRow] < (Async & Abort[SqlException]) =
                         step(stmt).map { rc =>
                             if rc == Done then acc else loop(acc.append(readRow(stmt, columns, codec)))

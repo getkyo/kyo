@@ -15,7 +15,7 @@ class McpProgressNotificationWireTest extends Test:
             ("progress", Structure.Value.Decimal(0.5): Structure.Value),
             ("total", Structure.Value.Decimal(1.0): Structure.Value)
         )
-        val sv = Structure.Value.Record(fields)
+        val sv   = Structure.Value.Record(fields)
         val keys = sv match
             case Structure.Value.Record(fs) => fs.map(_._1).toSeq
             case _                          => Seq.empty

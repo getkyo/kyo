@@ -47,7 +47,7 @@ private[kyo] object TypeSafeDecider extends Decider.Backend:
     private def apiKey(decider: DeciderConfig)(using Frame): String < (Async & Abort[AIGenException]) =
         decider.apiKey match
             case Present(key) => key
-            case Absent =>
+            case Absent       =>
                 Config.read(decider.provider.keyName).map {
                     case Present(key) => key
                     case Absent       => Abort.fail(AIMissingApiKeyException(decider.modelName, decider.provider.keyName))
@@ -140,7 +140,7 @@ private[kyo] object TypeSafeDecider extends Decider.Backend:
                         acc.flatMap { answers =>
                             val id = s"q${i + 1}"
                             response.answers.get(id) match
-                                case Absent => Result.fail(AIDecodeException(s"no answer for question ${i + 1}"))
+                                case Absent        => Result.fail(AIDecodeException(s"no answer for question ${i + 1}"))
                                 case Present(wire) =>
                                     if wire.`type` != question.kind then
                                         Result.fail(AIDecodeException(
@@ -174,7 +174,7 @@ private[kyo] object TypeSafeDecider extends Decider.Backend:
                             acc.flatMap { ps =>
                                 probabilities.get(i.toString) match
                                     case Present(p) => Result.succeed(ps.append(p))
-                                    case Absent =>
+                                    case Absent     =>
                                         Result.fail(
                                             AIDecodeException(s"answer $position lacks a probability for one of ${levels.size} levels")
                                         )

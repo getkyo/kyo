@@ -108,9 +108,8 @@ private object LiveCoverageFixtures:
     // ── 6. handle ─────────────────────────────────────────────────────────────────────────────
 
     class HandleSuite extends TestBase[Any]:
-        "uses-env".handle[Env[Int]](
-            [A] => (b: A < (Env[Int] & Async & Abort[Any] & Scope)) => Env.run(42)(b)
-        ) in Env.get[Int].map(v => assert(v == 42))
+        "uses-env".handle[Env[Int]]([A] => (b: A < (Env[Int] & Async & Abort[Any] & Scope)) => Env.run(42)(b)) in
+            Env.get[Int].map(v => assert(v == 42))
     end HandleSuite
 
     // ── 7. typeCheck suite macros ─────────────────────────────────────────────────────────────

@@ -136,7 +136,7 @@ class PollerIoDriverRaceTest extends Test:
                             )
                             outcome match
                                 // genuine close-during-decrypt race; read may resolve Success or Closed, the free-once/no-UAF invariant is pinned unconditionally above
-                                case Result.Failure(_: Closed) => succeed
+                                case Result.Failure(_: Closed)  => succeed
                                 case Result.Failure(_: Timeout) =>
                                     fail("the dispatch did not complete within the timeout (read promise stranded)")
                                 case Result.Success(ReadOutcome.Bytes(span)) =>

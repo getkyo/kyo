@@ -114,7 +114,7 @@ private[kyo] object ChartLower:
         // Interactive hidden-series filter: the marks drop rows whose color label is hidden; the
         // legend keeps every category (built from the full emission rows) so a hidden series can be toggled on.
         val visibleRows = visibleRowsFor(rows, spec)
-        val marksG = stateRef match
+        val marksG      = stateRef match
             case Present(ref) => ChartTransitions.marksRegionWithTransitions(visibleRows, spec, layout, xs, ysL, ysR, ref, internalHoverRef)
             case Absent       => ChartMarks.marksRegion(visibleRows, spec.marks, layout, xs, ysL, ysR, Present(spec), internalHoverRef)
         // Live legend: built per emission from the full rows so it reflects the current category set.
@@ -153,7 +153,7 @@ private[kyo] object ChartLower:
                     )
                 case Absent => Chunk.empty
             val allElems: Chunk[Svg.SvgElement] = leftAxisElems ++ rightAxisElems ++ xAxisElems ++ legendElems
-            val axisG = allElems.foldLeft(Svg.g): (g, el) =>
+            val axisG                           = allElems.foldLeft(Svg.g): (g, el) =>
                 el match
                     case l: Svg.Line => g(l)
                     case t: Svg.Text => g(t)
@@ -186,7 +186,7 @@ private[kyo] object ChartLower:
                         case Present(ch) =>
                             val colorEnc: Encoding[A, ?] = ch
                             // Build a CatKey -> index map from the same ordered color-category list the legend uses.
-                            val catsList = ChartLegend.collectColorCategoriesWithRaw(rows, colorEnc)
+                            val catsList                                    = ChartLegend.collectColorCategoriesWithRaw(rows, colorEnc)
                             val idxByKey: Map[ChartFoundations.CatKey, Int] =
                                 catsList.zipWithIndex.foldLeft(Map.empty[ChartFoundations.CatKey, Int]): (m, pair) =>
                                     val ((_, raw), idx) = pair
@@ -236,7 +236,7 @@ private[kyo] object ChartLower:
         // We resolve from Chunk.empty to get a stable layout; the reactive region re-resolves the y-scale
         // per emission.
         val initialRows: Chunk[A] = Chunk.empty
-        val hasRight = spec.marks.exists:
+        val hasRight              = spec.marks.exists:
             case m: Mark.Bar[A, ?, ?]      => m.axis == Axis.Right
             case m: Mark.Line[A, ?, ?]     => m.axis == Axis.Right
             case m: Mark.Area[A, ?, ?]     => m.axis == Axis.Right
@@ -268,7 +268,7 @@ private[kyo] object ChartLower:
         val staticFrame = buildStaticFrameLive(layout, xs, ysLForFrame, ysRFixed, spec, initialRows)
         val vb          = Svg.ViewBox(0.0, 0.0, layout.svgW, layout.svgH)
         val baseSvg     = buildBaseSvg(spec, layout, vb)
-        val withFrame = staticFrame.foldLeft(baseSvg): (acc, el) =>
+        val withFrame   = staticFrame.foldLeft(baseSvg): (acc, el) =>
             el match
                 case r: Svg.Rect => acc(r)
                 case l: Svg.Line => acc(l)
@@ -354,7 +354,7 @@ private[kyo] object ChartLower:
                 // Cannot throw: signal.current returns A < Sync (no Abort in scope), so Abort.run yields
                 // Result.Ok and getOrThrow never executes the throw branch.
                 Sync.Unsafe.evalOrThrow(signal.current)
-        val layout = ChartLayout.buildLayout(spec)
+        val layout   = ChartLayout.buildLayout(spec)
         val hasRight = spec.marks.exists:
             case m: Mark.Bar[A, ?, ?]      => m.axis == Axis.Right
             case m: Mark.Line[A, ?, ?]     => m.axis == Axis.Right
@@ -363,7 +363,7 @@ private[kyo] object ChartLower:
             case _: Mark.Rule[A]           => false
             case _: Mark.Text[A, ?, ?]     => false
             case _: Mark.ErrorBar[A, ?, ?] => false
-        val computeRight = hasRight || spec.yAxisRightCfg.isDefined
+        val computeRight                 = hasRight || spec.yAxisRightCfg.isDefined
         val ResolvedScales(xs, ysL, ysR) =
             ChartScales.resolveAllScales(
                 rows,
@@ -408,7 +408,7 @@ private[kyo] object ChartLower:
     end buildBaseSvg
 
     private def lowerStatic[A](rows: Chunk[A], spec: Chart[A], gradPrefix: String)(using Frame, AllowUnsafe): Svg.Root =
-        val layout = ChartLayout.buildLayout(spec)
+        val layout   = ChartLayout.buildLayout(spec)
         val hasRight = spec.marks.exists:
             case m: Mark.Bar[A, ?, ?]      => m.axis == Axis.Right
             case m: Mark.Line[A, ?, ?]     => m.axis == Axis.Right
@@ -417,7 +417,7 @@ private[kyo] object ChartLower:
             case _: Mark.Rule[A]           => false
             case _: Mark.Text[A, ?, ?]     => false
             case _: Mark.ErrorBar[A, ?, ?] => false
-        val computeRight = hasRight || spec.yAxisRightCfg.isDefined
+        val computeRight                 = hasRight || spec.yAxisRightCfg.isDefined
         val ResolvedScales(xs, ysL, ysR) =
             ChartScales.resolveAllScales(
                 rows,
@@ -443,8 +443,8 @@ private[kyo] object ChartLower:
                 given CanEqual[Maybe[A], Maybe[A]] = CanEqual.derived
                 Present(Signal.SignalRef.Unsafe.init[Maybe[A]](Absent).safe)
             case Absent => Absent
-        val marksG  = ChartMarks.marksRegion(visibleRows, spec.marks, layout, xs, ysL, ysR, Present(spec), internalHoverRef)
-        val baseSvg = buildBaseSvg(spec, layout, vb)
+        val marksG    = ChartMarks.marksRegion(visibleRows, spec.marks, layout, xs, ysL, ysR, Present(spec), internalHoverRef)
+        val baseSvg   = buildBaseSvg(spec, layout, vb)
         val withFrame = frame.foldLeft(baseSvg): (acc, el) =>
             el match
                 case r: Svg.Rect => acc(r)

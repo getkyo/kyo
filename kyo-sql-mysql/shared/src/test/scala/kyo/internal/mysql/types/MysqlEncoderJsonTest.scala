@@ -63,7 +63,7 @@ class MysqlEncoderJsonTest extends kyo.Test:
         result match
             case Result.Success(decoded) => assert(decoded == json)
             case Result.Failure(e)       => fail(s"Unexpected failure: $e")
-            case Result.Panic(t) =>
+            case Result.Panic(t)         =>
                 java.lang.System.err.println(s"[MysqlEncoderJsonTest] unexpected panic: ${t.getMessage}")
                 fail(s"Unexpected panic: $t")
         end match
@@ -80,7 +80,7 @@ class MysqlEncoderJsonTest extends kyo.Test:
         result match
             case Result.Success(decoded) => assert(decoded == original)
             case Result.Failure(e)       => fail(s"Unexpected failure: $e")
-            case Result.Panic(t) =>
+            case Result.Panic(t)         =>
                 java.lang.System.err.println(s"[MysqlEncoderJsonTest] unexpected panic: ${t.getMessage}")
                 fail(s"Unexpected panic: $t")
         end match

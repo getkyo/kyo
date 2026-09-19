@@ -87,7 +87,7 @@ class CancelIntegrationTest extends SqlContainerTest:
             // Unsafe: both accessors read a Channel size, as the pool's own observability accessors do.
             (client.runtime.pool.slotPermits(client.url.address), client.runtime.pool.slotCapacity(client.url.address)) match
                 case (Present(available), Present(capacity)) => (available, capacity)
-                case _ =>
+                case _                                       =>
                     fail(s"no slot channel exists for ${client.url.address}, so no statement ever reached the pool")
         }
 
@@ -121,7 +121,7 @@ class CancelIntegrationTest extends SqlContainerTest:
     "interrupting a stream reclaims the connection inside the cancel budget".tagged("kyo.OwnContainer") in {
         Scope.run {
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.Postgres) { ctx =>
-                val url = s"postgres://${ctx.username}:${ctx.password}@${ctx.host}:${ctx.port}/${ctx.database}"
+                val url    = s"postgres://${ctx.username}:${ctx.password}@${ctx.host}:${ctx.port}/${ctx.database}"
                 val config = SqlConfig(
                     maxConnections = 1,
                     acquireTimeout = 30.seconds,
@@ -178,7 +178,7 @@ class CancelIntegrationTest extends SqlContainerTest:
     "the wire cancel reaches a batch the server is still computing".tagged("kyo.OwnContainer") in {
         Scope.run {
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.Postgres) { ctx =>
-                val url = s"postgres://${ctx.username}:${ctx.password}@${ctx.host}:${ctx.port}/${ctx.database}"
+                val url    = s"postgres://${ctx.username}:${ctx.password}@${ctx.host}:${ctx.port}/${ctx.database}"
                 val config = SqlConfig(
                     maxConnections = 1,
                     acquireTimeout = 30.seconds,
@@ -191,7 +191,7 @@ class CancelIntegrationTest extends SqlContainerTest:
                         // keeps demanding, so it ends up blocked reading batch 2 while the server computes it,
                         // which is the state where a drain sequenced before the cancel waits on ~20 seconds of
                         // work nobody wants and the reclaim cannot begin until it is done.
-                        val sql = "SELECT i, CASE WHEN i <= 100 THEN '' ELSE pg_sleep(0.2)::text END FROM generate_series(1, 300) i"
+                        val sql     = "SELECT i, CASE WHEN i <= 100 THEN '' ELSE pg_sleep(0.2)::text END FROM generate_series(1, 300) i"
                         val consume =
                             Scope.run {
                                 client.streamQuery(Sql.Fragment.lit[Any](sql), 100).foreach(_ => started.release)

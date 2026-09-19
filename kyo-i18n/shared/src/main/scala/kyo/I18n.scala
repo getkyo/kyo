@@ -159,7 +159,7 @@ object I18n:
         sigArgs.iterator.map(_._1).zip(values.iterator).foldLeft(args)((acc, pair) => acc.update(pair._1, pair._2))
 
     private[kyo] def interpolate(sc: StringContext, args: Seq[Arg])(using Frame): Signal[String] =
-        val sigs = Chunk.from(args).collect { case sig: Signal[String] @unchecked => sig }
+        val sigs                                       = Chunk.from(args).collect { case sig: Signal[String] @unchecked => sig }
         def render(resolved: Iterator[String]): String =
             val sb = new StringBuilder(StringContext.processEscapes(sc.parts.head))
             args.iterator.zip(sc.parts.tail.iterator).foreach { (arg, part) =>

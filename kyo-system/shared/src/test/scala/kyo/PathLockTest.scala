@@ -163,8 +163,8 @@ class HostPathLockTest extends FileSystemLockTest[Sync]:
     "failed raw release remains retryable" in {
         AtomicInt.init(0).map { releases =>
             val raw = new Path.RawLock:
-                def isExclusive: Boolean                                               = true
-                def check()(using AllowUnsafe, Frame): Result[FileLockException, Unit] = Result.unit
+                def isExclusive: Boolean                                                 = true
+                def check()(using AllowUnsafe, Frame): Result[FileLockException, Unit]   = Result.unit
                 def release()(using AllowUnsafe, Frame): Result[FileLockException, Unit] =
                     if releases.unsafe.incrementAndGet() == 1 then Result.fail(FileLockOwnershipLostException(Path("retry-lock")))
                     else Result.unit

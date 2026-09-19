@@ -24,7 +24,7 @@ private[kyo] object McpInitializeRoute:
     )(using Frame): JsonRpcRoute[?, ?, ?] =
         JsonRpcRoute.request[McpInitializeRequest, McpInitializeResult]("initialize") { (req, _) =>
             val clientVersion = req.protocolVersion
-            val version =
+            val version       =
                 if config.supportedProtocolVersions.contains(clientVersion) then
                     clientVersion
                 else

@@ -100,7 +100,7 @@ class CompileLoadRoundTripTest extends kyo.test.Test[Any]:
         val prefix = if isWindows then "" else "lib"
         val ext    = if osName.contains("mac") then "dylib" else if isWindows then "dll" else "so"
         val outLib = baseDir.resolve(s"$prefix$libraryId.$ext")
-        val cmd =
+        val cmd    =
             if isMsvc then
                 // cl builds a DLL with /LD and names it with /Fe:; it takes none of the gcc-style flags.
                 List(cc, "/LD", "/O2", s"/Fe:${outLib.toString}", cSource.toString)
@@ -132,7 +132,7 @@ class CompileLoadRoundTripTest extends kyo.test.Test[Any]:
         val cwd = Paths.get("").toAbsolutePath
         // The codegen module lives at kyo-ffi/codegen (see EmitterGoldenTest for the same anchor).
         val marker = Paths.get("kyo-ffi", "codegen")
-        val base =
+        val base   =
             if cwd.endsWith(marker) then cwd
             else cwd.resolve(marker)
         val resolved = base.resolve("src/test/resources").resolve(relativePath)

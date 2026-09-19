@@ -80,7 +80,7 @@ private[kyo] object SqlTestContainers:
     ): Container < (Async & Abort[ContainerException]) =
         adoptLive(cfg, tag).map {
             case Present(adopted) => reapOrphans.andThen(adopted)
-            case Absent =>
+            case Absent           =>
                 reapOrphans.andThen {
                     // A failed claim is harmless here, unlike on the adoption path: this container's own
                     // owner label already carries this process's live pid, so every reaper spares it.
@@ -157,7 +157,7 @@ private[kyo] object SqlTestContainers:
             summary.attach.map { attached =>
                 claimOwnership(attached.id).map {
                     case false => Absent
-                    case true =>
+                    case true  =>
                         attached.state.map {
                             case Container.State.Running =>
                                 Container.awaitPortsReachableWithin(attached, adoptProbeTimeout)
@@ -206,7 +206,7 @@ private[kyo] object SqlTestContainers:
         val dir = ownerDir(root, id)
         Abort.run[FileSystemException](Path.runReadOnly(dir.exists)).map {
             case Result.Success(false) => false
-            case Result.Success(true) =>
+            case Result.Success(true)  =>
                 Abort.run[FileSystemException] {
                     Path.runReadOnly {
                         dir.list.map { entries =>
@@ -354,7 +354,7 @@ private[kyo] object SqlTestContainers:
         ref.use { current =>
             Maybe.fromOption(current.get(id)) match
                 case Present(p) => p.get
-                case Absent =>
+                case Absent     =>
                     Promise.init[A, Abort[ContainerException]].flatMap { p =>
                         ref.compareAndSet(current, current.updated(id, p)).flatMap {
                             case false =>

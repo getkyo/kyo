@@ -44,7 +44,7 @@ class SafepointTest extends kyo.test.Test[Any]:
 
     "suspends when Safepoint is from a different thread" in {
         var capturedSafepoint: Safepoint = null
-        val computation = Effect.defer {
+        val computation                  = Effect.defer {
             capturedSafepoint = summon[Safepoint]
             ()
         }
@@ -127,7 +127,7 @@ class SafepointTest extends kyo.test.Test[Any]:
 
     "no new Safepoint for nested eval calls" in {
         val outerComputation = Effect.defer {
-            val outerSafepoint = Safepoint.get
+            val outerSafepoint   = Safepoint.get
             val innerComputation = Effect.defer {
                 val innerSafepoint = Safepoint.get
                 assert(innerSafepoint eq outerSafepoint)
@@ -182,7 +182,7 @@ class SafepointTest extends kyo.test.Test[Any]:
 
     "no NPE when safepoint leaks across threads (#1095)" in {
         val safepoint = Safepoint.get
-        val result = fork {
+        val result    = fork {
             given Safepoint = safepoint
             (1: Int < Any).map(_ + 1).eval
         }
@@ -197,10 +197,10 @@ class SafepointTest extends kyo.test.Test[Any]:
         "immediate" - {
 
             "use the interceptor" in {
-                var executed = false
+                var executed    = false
                 val interceptor = new TestInterceptor:
                     def ensure(f: Maybe[Error[Any]] => Unit): Unit = ()
-                    def enter(frame: Frame, value: Any): Boolean =
+                    def enter(frame: Frame, value: Any): Boolean   =
                         executed = true
                         true
 
@@ -209,10 +209,10 @@ class SafepointTest extends kyo.test.Test[Any]:
             }
 
             "eval removes the interceptor" in {
-                var executed = false
+                var executed    = false
                 val interceptor = new TestInterceptor:
                     def ensure(f: Maybe[Error[Any]] => Unit): Unit = ()
-                    def enter(frame: Frame, value: Any): Boolean =
+                    def enter(frame: Frame, value: Any): Boolean   =
                         executed = true
                         true
 
@@ -221,16 +221,16 @@ class SafepointTest extends kyo.test.Test[Any]:
             }
 
             "restore previous interceptor" in {
-                var count = 0
+                var count        = 0
                 val interceptor1 = new TestInterceptor:
                     def ensure(f: Maybe[Error[Any]] => Unit): Unit = ()
-                    def enter(frame: Frame, value: Any): Boolean =
+                    def enter(frame: Frame, value: Any): Boolean   =
                         count += 1
                         true
 
                 val interceptor2 = new TestInterceptor:
                     def ensure(f: Maybe[Error[Any]] => Unit): Unit = ()
-                    def enter(frame: Frame, value: Any): Boolean =
+                    def enter(frame: Frame, value: Any): Boolean   =
                         count += 10
                         true
 
@@ -244,10 +244,10 @@ class SafepointTest extends kyo.test.Test[Any]:
 
         "propagating" - {
             "through suspensions" in {
-                var count = 0
+                var count       = 0
                 val interceptor = new TestInterceptor:
                     def ensure(f: Maybe[Error[Any]] => Unit): Unit = ()
-                    def enter(frame: Frame, value: Any): Boolean =
+                    def enter(frame: Frame, value: Any): Boolean   =
                         count += 1
                         true
 
@@ -270,13 +270,13 @@ class SafepointTest extends kyo.test.Test[Any]:
 
                 val outerInterceptor = new TestInterceptor:
                     def ensure(f: Maybe[Error[Any]] => Unit): Unit = ()
-                    def enter(frame: Frame, value: Any): Boolean =
+                    def enter(frame: Frame, value: Any): Boolean   =
                         outerCount += 1
                         true
 
                 val innerInterceptor = new TestInterceptor:
                     def ensure(f: Maybe[Error[Any]] => Unit): Unit = ()
-                    def enter(frame: Frame, value: Any): Boolean =
+                    def enter(frame: Frame, value: Any): Boolean   =
                         innerCount += 1
                         true
 
@@ -350,7 +350,7 @@ class SafepointTest extends kyo.test.Test[Any]:
 
         "executes cleanup after successful completion" in {
             var cleaned = false
-            val result = Safepoint.ensure { _ => cleaned = true } {
+            val result  = Safepoint.ensure { _ => cleaned = true } {
                 42
             }
             assert(result.eval == 42)
@@ -368,8 +368,8 @@ class SafepointTest extends kyo.test.Test[Any]:
         }
 
         "nested ensures" in {
-            var outer = false
-            var inner = false
+            var outer  = false
+            var inner  = false
             val result = Safepoint.ensure { _ => outer = true } {
                 Safepoint.ensure { _ => inner = true } {
                     42
@@ -381,7 +381,7 @@ class SafepointTest extends kyo.test.Test[Any]:
         }
 
         "cleanup functions execute in reverse order" in {
-            val order = scala.collection.mutable.ArrayBuffer[Int]()
+            val order  = scala.collection.mutable.ArrayBuffer[Int]()
             val result = Safepoint.ensure { _ => order += 1 } {
                 Safepoint.ensure { _ => order += 2 } {
                     Safepoint.ensure { _ => order += 3 } {
@@ -395,7 +395,7 @@ class SafepointTest extends kyo.test.Test[Any]:
 
         "works with effects" in {
             var cleaned = false
-            val result = Safepoint.ensure { _ => cleaned = true } {
+            val result  = Safepoint.ensure { _ => cleaned = true } {
                 for
                     x <- ArrowEffect.suspend[Int](Tag[TestEffect1], 5)
                     y <- ArrowEffect.suspend[Int](Tag[TestEffect1], 6)
@@ -408,7 +408,7 @@ class SafepointTest extends kyo.test.Test[Any]:
 
         "executes cleanup when effect fails" in {
             var cleaned = false
-            val result = Safepoint.ensure { _ => cleaned = true } {
+            val result  = Safepoint.ensure { _ => cleaned = true } {
                 for
                     _ <- ArrowEffect.suspend[Int](Tag[TestEffect1], 5)
                     _ <- ArrowEffect.suspend[Int](Tag[TestEffect1], throw new RuntimeException("Test failure"))
@@ -421,7 +421,7 @@ class SafepointTest extends kyo.test.Test[Any]:
         }
 
         "works with defer" in {
-            var cleaned = false
+            var cleaned   = false
             val suspended = Safepoint.ensure { _ => cleaned = true } {
                 Effect.defer(42)
             }
@@ -431,7 +431,7 @@ class SafepointTest extends kyo.test.Test[Any]:
         }
 
         "executes thunk only once" in {
-            var count = 0
+            var count  = 0
             val effect = Safepoint.ensure { _ =>
                 count += 1
             } {
@@ -443,7 +443,7 @@ class SafepointTest extends kyo.test.Test[Any]:
 
         "executes thunk on normal completion" in {
             var executed = false
-            val effect = Safepoint.ensure { _ =>
+            val effect   = Safepoint.ensure { _ =>
                 executed = true
             } {
                 "result"
@@ -465,8 +465,8 @@ class SafepointTest extends kyo.test.Test[Any]:
         }
 
         "nested ensure executes all thunks" in {
-            var outer = 0
-            var inner = 0
+            var outer  = 0
+            var inner  = 0
             val effect = Safepoint.ensure { _ =>
                 outer += 1
             } {
@@ -482,7 +482,7 @@ class SafepointTest extends kyo.test.Test[Any]:
         }
 
         "multiple evaluations execute thunk only once" in {
-            var count = 0
+            var count  = 0
             val effect = Safepoint.ensure { _ =>
                 count += 1
             } {
@@ -494,7 +494,7 @@ class SafepointTest extends kyo.test.Test[Any]:
         }
 
         "executes thunk only once with map" in {
-            var count = 0
+            var count  = 0
             val effect = Safepoint.ensure { _ =>
                 count += 1
             } {
@@ -654,7 +654,7 @@ class SafepointTest extends kyo.test.Test[Any]:
         "Maybe[Error[Any]] parameter" - {
             "receives Absent on normal completion" in {
                 var receivedValue: Maybe[Error[Any]] = null
-                val effect = Safepoint.ensure { t =>
+                val effect                           = Safepoint.ensure { t =>
                     receivedValue = t
                 } {
                     42
@@ -814,7 +814,7 @@ class SafepointTest extends kyo.test.Test[Any]:
         "combined operations" - {
             "maintains correct state after multiple operations" in {
                 val initialState = Safepoint.State.init()
-                val finalState = initialState
+                val finalState   = initialState
                     .incrementDepth
                     .incrementDepth
                     .withInterceptor(true)
@@ -828,7 +828,7 @@ class SafepointTest extends kyo.test.Test[Any]:
             }
 
             "handles rapid toggling of interceptor" in {
-                val state = Safepoint.State.init()
+                val state      = Safepoint.State.init()
                 val finalState = (1 to 1000).foldLeft(state) { (s, i) =>
                     s.withInterceptor(i % 2 == 0)
                 }

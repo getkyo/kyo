@@ -15,7 +15,7 @@ class TastyHeaderCompilerTest extends kyo.test.Test[Any]:
     "supportedTastyVersion matches the TASTy version the build compiler emits" in {
         import AllowUnsafe.embrace.danger
         val resource = "/kyo/Tasty.tasty"
-        val bytes = Maybe(classOf[Tasty.Version].getResourceAsStream(resource))
+        val bytes    = Maybe(classOf[Tasty.Version].getResourceAsStream(resource))
             .map(in =>
                 try in.readAllBytes()
                 finally in.close()

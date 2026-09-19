@@ -52,7 +52,7 @@ class PollerIoDriverReadyCountTest extends Test:
                     // timeout as a failure) or deliver a wrong value.
                     def readAll(pending: List[(PosixHandle, Byte)]): List[Byte] < (Abort[Closed] & Async) =
                         pending match
-                            case Nil => Nil: List[Byte]
+                            case Nil              => Nil: List[Byte]
                             case (h, exp) :: rest =>
                                 val promise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                                 driver.awaitRead(h, promise)

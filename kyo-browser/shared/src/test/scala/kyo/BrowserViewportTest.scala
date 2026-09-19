@@ -253,7 +253,7 @@ class BrowserViewportTest extends BrowserTest:
                     tight(Browser.scrollToElement(Browser.Selector.css("#never")))
                 }.map {
                     case Result.Failure(e: BrowserElementNotFoundException) => succeed
-                    case other =>
+                    case other                                              =>
                         fail(s"expected BrowserElementNotFoundException but got $other")
                 }
             }

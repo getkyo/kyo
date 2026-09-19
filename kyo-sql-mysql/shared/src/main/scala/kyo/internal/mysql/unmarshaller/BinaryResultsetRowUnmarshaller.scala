@@ -41,7 +41,7 @@ final class BinaryResultsetRowUnmarshaller(numColumns: Int, columnTypes: Chunk[I
         buf: MysqlBufferReader,
         nullBitmap: Span[Byte]
     )(using Frame): Chunk[Maybe[Span[Byte]]] < Abort[SqlDecodeException] =
-        val b = Chunk.newBuilder[Maybe[Span[Byte]]]
+        val b                                                                  = Chunk.newBuilder[Maybe[Span[Byte]]]
         def loop(i: Int): Chunk[Maybe[Span[Byte]]] < Abort[SqlDecodeException] =
             if i >= numColumns then b.result()
             else

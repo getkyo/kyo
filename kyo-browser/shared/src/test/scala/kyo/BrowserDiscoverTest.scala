@@ -13,7 +13,7 @@ class BrowserDiscoverTest extends BrowserTest:
             </body></html>""") {
                 Browser.element(Browser.Selector.css("#submit")).map { result =>
                     result match
-                        case Absent => fail("expected Present(ElementInfo) but got Absent")
+                        case Absent        => fail("expected Present(ElementInfo) but got Absent")
                         case Present(info) =>
                             assert(info.tag == "button", s"expected tag=button but got ${info.tag}")
                             assert(info.id == Present("submit"), s"expected id=Present(submit) but got ${info.id}")
@@ -55,7 +55,7 @@ class BrowserDiscoverTest extends BrowserTest:
             </body></html>""") {
                 Browser.elementAt(130, 58).map { result =>
                     result match
-                        case Absent => fail("expected Present(ElementInfo) but got Absent at (130,58)")
+                        case Absent        => fail("expected Present(ElementInfo) but got Absent at (130,58)")
                         case Present(info) =>
                             assert(
                                 info.bounds.x <= 130.0 && info.bounds.x + info.bounds.width >= 130.0,
@@ -96,7 +96,7 @@ class BrowserDiscoverTest extends BrowserTest:
 
         // Sub-case C (pure, no Chrome needed): build a Chunk directly and verify leaves filters ancestors.
         val defaultBounds = Browser.Bounds(0, 0, 10, 10)
-        val a = Browser.ElementInfo(
+        val a             = Browser.ElementInfo(
             selector = "#a",
             tag = "div",
             id = Present("a"),
@@ -243,7 +243,7 @@ class BrowserDiscoverTest extends BrowserTest:
     // BrowserCaptureLimitExceededException("screenshotMarks", 3, 5) before any CDP call.
 
     "screenshotMarks aborts over maxMarks" in {
-        val dummyBounds = Browser.Bounds(0, 0, 10, 10)
+        val dummyBounds    = Browser.Bounds(0, 0, 10, 10)
         def mkInfo(n: Int) = Browser.ElementInfo(
             selector = s"#el$n",
             tag = "div",

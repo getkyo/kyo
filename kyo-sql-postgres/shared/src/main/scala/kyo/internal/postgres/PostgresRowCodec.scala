@@ -107,7 +107,7 @@ final private[kyo] case class PostgresRowCodec(format: Format) extends SqlPositi
       * holds one.
       */
     private lazy val arrayValue: PostgresDecoder[SqlValue] = new PostgresDecoder[SqlValue]:
-        val oids: Set[Int] = Set.empty
+        val oids: Set[Int]                                                                        = Set.empty
         def read(format: Format, bytes: Span[Byte], columnOid: Int)(using frame: Frame): SqlValue =
             val arr   = new PostgresArrayReader(bytes, format, frame)
             val count = arr.openArray()

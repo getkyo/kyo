@@ -78,7 +78,7 @@ class HandshakeExchangeTest extends kyo.Test:
         // failure for any other reason would leave the guard unexercised.
         Abort.run[SqlException](initialResponse("mysql_clear_password", Present(password), tlsActive = false)).map {
             case Result.Failure(_: SqlConnectionClearPasswordRequiresTlsException) => succeed
-            case other =>
+            case other                                                             =>
                 fail(s"expected SqlConnectionClearPasswordRequiresTlsException over plaintext, got: $other")
         }
     }

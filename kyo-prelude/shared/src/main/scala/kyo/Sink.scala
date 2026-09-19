@@ -55,7 +55,7 @@ sealed abstract class Sink[-V, +A, -S] extends Serializable:
                                     done = b =>
                                         nextA.map: a =>
                                             Loop.done((a, b))
-                            )
+                                )
                     ,
                     done = a =>
                         ArrowEffect.handleFirst(tag, pollB)(
@@ -84,12 +84,11 @@ sealed abstract class Sink[-V, +A, -S] extends Serializable:
         fr: Frame
     ): Sink[V2, A, S] =
         Sink:
-            ArrowEffect.handleLoop(t1, poll)(
-                [C] =>
-                    (_, cont) =>
-                        Poll.andMap[Chunk[V2]]: maybeChunkV2 =>
-                            val maybeChunkV = maybeChunkV2.map(_.map(f))
-                            Loop.continue(cont(maybeChunkV))
+            ArrowEffect.handleLoop(t1, poll)([C] =>
+                (_, cont) =>
+                    Poll.andMap[Chunk[V2]]: maybeChunkV2 =>
+                        val maybeChunkV = maybeChunkV2.map(_.map(f))
+                        Loop.continue(cont(maybeChunkV))
             )
 
     /** Transform a sink to consume a stream of a different element type using an effectful mapping function.
@@ -108,15 +107,14 @@ sealed abstract class Sink[-V, +A, -S] extends Serializable:
             ArrowEffect.handleLoop[Const[Unit], Const[Maybe[Chunk[VV]]], Poll[Chunk[VV]], A, S, S2 & Poll[Chunk[V2]]](
                 t1,
                 poll
-            )(
-                [C] =>
-                    (_, cont) =>
-                        Poll.andMap[Chunk[V2]]:
-                            case Absent =>
-                                Loop.continue(cont(Absent))
-                            case Present(chunk2) =>
-                                Kyo.foreach(chunk2)(f).map: chunk1 =>
-                                    Loop.continue(cont(Present(chunk1)))
+            )([C] =>
+                (_, cont) =>
+                    Poll.andMap[Chunk[V2]]:
+                        case Absent =>
+                            Loop.continue(cont(Absent))
+                        case Present(chunk2) =>
+                            Kyo.foreach(chunk2)(f).map: chunk1 =>
+                                Loop.continue(cont(Present(chunk1)))
             )
 
     /** Transform a sink to consume a stream of a different element type using a pure mapping function that transforms streamed chunks.
@@ -132,12 +130,11 @@ sealed abstract class Sink[-V, +A, -S] extends Serializable:
         fr: Frame
     ): Sink[V2, A, S] =
         Sink:
-            ArrowEffect.handleLoop[Const[Unit], Const[Maybe[Chunk[VV]]], Poll[Chunk[VV]], A, S, Poll[Chunk[V2]]](t1, poll)(
-                [C] =>
-                    (_, cont) =>
-                        Poll.andMap[Chunk[V2]]: maybeChunkV2 =>
-                            val maybeChunkV = maybeChunkV2.map(f)
-                            Loop.continue(cont(maybeChunkV))
+            ArrowEffect.handleLoop[Const[Unit], Const[Maybe[Chunk[VV]]], Poll[Chunk[VV]], A, S, Poll[Chunk[V2]]](t1, poll)([C] =>
+                (_, cont) =>
+                    Poll.andMap[Chunk[V2]]: maybeChunkV2 =>
+                        val maybeChunkV = maybeChunkV2.map(f)
+                        Loop.continue(cont(maybeChunkV))
             )
 
     /** Transform a sink to consume a stream of a different element type using an effectful mapping function that transforms streamed
@@ -154,14 +151,13 @@ sealed abstract class Sink[-V, +A, -S] extends Serializable:
         fr: Frame
     ): Sink[V2, A, S & S2] =
         Sink:
-            ArrowEffect.handleLoop[Const[Unit], Const[Maybe[Chunk[VV]]], Poll[Chunk[VV]], A, S, S2 & Poll[Chunk[V2]]](t1, poll)(
-                [C] =>
-                    (_, cont) =>
-                        Poll.andMap[Chunk[V2]]:
-                            case Absent => Loop.continue(cont(Absent))
-                            case Present(chunk2) =>
-                                f(chunk2).map: chunk1 =>
-                                    Loop.continue(cont(Present(chunk1)))
+            ArrowEffect.handleLoop[Const[Unit], Const[Maybe[Chunk[VV]]], Poll[Chunk[VV]], A, S, S2 & Poll[Chunk[V2]]](t1, poll)([C] =>
+                (_, cont) =>
+                    Poll.andMap[Chunk[V2]]:
+                        case Absent          => Loop.continue(cont(Absent))
+                        case Present(chunk2) =>
+                            f(chunk2).map: chunk1 =>
+                                Loop.continue(cont(Present(chunk1)))
             )
 
     /** Transform a sink to produce a new output type using a function that transforms the original pipe's result.
@@ -201,7 +197,7 @@ sealed abstract class Sink[-V, +A, -S] extends Serializable:
                                 (emitted, emitCont) =>
                                     Loop.continue(emitCont(()), pollCont(Maybe(emitted))),
                             done = _ => Loop.continue(Kyo.unit, pollCont(Absent))
-                    ),
+                        ),
                 done = a =>
                     Loop.done(a)
             )
@@ -228,7 +224,7 @@ object Sink:
         Sink:
             Loop.foreach:
                 Poll.andMap[Chunk[V]]:
-                    case Absent => Loop.done
+                    case Absent     => Loop.done
                     case Present(_) =>
                         Loop.continue
 
@@ -241,7 +237,7 @@ object Sink:
         Sink:
             Loop(Chunk.empty[V]): currentChunk =>
                 Poll.andMap[Chunk[V]]:
-                    case Absent => Loop.done(currentChunk)
+                    case Absent     => Loop.done(currentChunk)
                     case Present(c) =>
                         Loop.continue(currentChunk.concat(c))
     end collect
@@ -255,7 +251,7 @@ object Sink:
         Sink:
             Loop(0): count =>
                 Poll.andMap[Chunk[V]]:
-                    case Absent => Loop.done(count)
+                    case Absent         => Loop.done(count)
                     case Present(chunk) =>
                         Loop.continue(count + chunk.size)
     end count
@@ -271,7 +267,7 @@ object Sink:
         Sink:
             Loop.foreach:
                 Poll.andMap[Chunk[V]]:
-                    case Absent => Loop.done
+                    case Absent     => Loop.done
                     case Present(c) =>
                         Kyo.foreachDiscard(c)(f).andThen(Loop.continue)
     end foreach
@@ -287,7 +283,7 @@ object Sink:
         Sink:
             Loop.foreach:
                 Poll.andMap[Chunk[V]]:
-                    case Absent => Loop.done
+                    case Absent     => Loop.done
                     case Present(c) =>
                         f(c).andThen(Loop.continue)
     end foreachChunk
@@ -310,7 +306,7 @@ object Sink:
         Sink:
             Loop(acc): state =>
                 Poll.andMap[Chunk[V]]:
-                    case Absent => Loop.done(state)
+                    case Absent     => Loop.done(state)
                     case Present(c) =>
                         Loop.continue(c.foldLeft(state)(f))
     end fold
@@ -333,7 +329,7 @@ object Sink:
         Sink:
             Loop(acc): state =>
                 Poll.andMap[Chunk[V]]:
-                    case Absent => Loop.done(state)
+                    case Absent     => Loop.done(state)
                     case Present(c) =>
                         Kyo.foldLeft(c)(state)(f).map: newState =>
                             Loop.continue(newState)

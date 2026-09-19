@@ -68,7 +68,7 @@ abstract class FlowStoreTest extends kyo.test.Test[Any]:
             }.andThen {
                 Maybe.fromOption(batch.find(_.state.executionId == eid)) match
                     case Present(claimed) => claimed
-                    case Absent =>
+                    case Absent           =>
                         Abort.panic(new IllegalStateException(
                             s"the fixture could not claim ${eid.value}: readiness handed back ${batch.map(_.state.executionId.value)}"
                         ))
@@ -165,7 +165,7 @@ abstract class FlowStoreTest extends kyo.test.Test[Any]:
         "two concurrent claimReady, 1 ready, exactly one gets it" in {
             makeStore.map { store =>
                 for
-                    _ <- mkExecution(store, eid1, wf1, Flow.Status.Running)
+                    _  <- mkExecution(store, eid1, wf1, Flow.Status.Running)
                     r1 <- Async.race(
                         store.claimReady(served, ex1, lease, 10, 1.second),
                         store.claimReady(served, ex2, lease, 10, 1.second)
@@ -188,7 +188,7 @@ abstract class FlowStoreTest extends kyo.test.Test[Any]:
         "two concurrent claimReady from the SAME executor, exactly one gets it" in {
             makeStore.map { store =>
                 for
-                    _ <- mkExecution(store, eid1, wf1, Flow.Status.Running)
+                    _    <- mkExecution(store, eid1, wf1, Flow.Status.Running)
                     pair <- Async.zip(
                         store.claimReady(served, ex1, lease, 10, Duration.Zero),
                         store.claimReady(served, ex1, lease, 10, Duration.Zero)
@@ -313,7 +313,7 @@ abstract class FlowStoreTest extends kyo.test.Test[Any]:
                     _       <- mkExecution(store, eid1, wf1, Flow.Status.Running)
                     claimed <- claim(store, eid1)
                     now     <- Clock.now
-                    _ <- claimed.updateStatus(
+                    _       <- claimed.updateStatus(
                         Flow.Status.Compensating(cause),
                         Flow.Event.CompensationStarted(wf1, eid1, cause, now)
                     )
@@ -391,7 +391,7 @@ abstract class FlowStoreTest extends kyo.test.Test[Any]:
         "two concurrent signals, same input, exactly one is Delivered" in {
             makeStore.map { store =>
                 for
-                    _ <- mkExecution(store, eid1, wf1, Flow.Status.Running)
+                    _       <- mkExecution(store, eid1, wf1, Flow.Status.Running)
                     results <- Async.zip(
                         deliver[Int](store, eid1, wf1, "field1", 1),
                         deliver[Int](store, eid1, wf1, "field1", 2)
@@ -504,7 +504,7 @@ abstract class FlowStoreTest extends kyo.test.Test[Any]:
                     _       <- mkExecution(store, eid1, wf1, Flow.Status.Running)
                     claimed <- claim(store, eid1)
                     now     <- Clock.now
-                    _ <- claimed.finish(FlowStore.Claimed.Outcome.Terminal(
+                    _       <- claimed.finish(FlowStore.Claimed.Outcome.Terminal(
                         Flow.Status.Failed("err"),
                         Flow.Event.Failed(wf1, eid1, "err", now)
                     ))
@@ -573,7 +573,7 @@ abstract class FlowStoreTest extends kyo.test.Test[Any]:
                     claimed <- claim(store, eid1)
                     before  <- store.getHistory(eid1, Maybe.empty, 0)
                     cause = Flow.Cause.Failure("boom")
-                    now <- Clock.now
+                    now     <- Clock.now
                     outcome <- claimed.finish(FlowStore.Claimed.Outcome.Terminal(
                         Flow.Status.Compensating(cause),
                         Flow.Event.CompensationStarted(wf1, eid1, cause, now)
@@ -621,7 +621,7 @@ abstract class FlowStoreTest extends kyo.test.Test[Any]:
                     _       <- mkExecution(store, eid1, wf1, Flow.Status.Running)
                     claimed <- claim(store, eid1)
                     now     <- Clock.now
-                    _ <- claimed.updateStatus(
+                    _       <- claimed.updateStatus(
                         Flow.Status.Compensating(cause),
                         Flow.Event.CompensationStarted(wf1, eid1, cause, now)
                     )
@@ -732,7 +732,7 @@ abstract class FlowStoreTest extends kyo.test.Test[Any]:
                     for
                         _   <- mkExecution(store, eid1, wf1, Flow.Status.Running)
                         now <- Clock.now
-                        _ <- mkWaits(
+                        _   <- mkWaits(
                             store,
                             eid1,
                             wf1,
@@ -848,7 +848,7 @@ abstract class FlowStoreTest extends kyo.test.Test[Any]:
                         _ = assert(claimed.size == 1, "the premise is that an executor took the execution")
                         // The attempt records a wait nothing will ever satisfy, then dies: no release, no retirement.
                         now <- Clock.now
-                        _ <- claimed.head.recordWait(
+                        _   <- claimed.head.recordWait(
                             "never",
                             Flow.Wake.OnField("never"),
                             Flow.Event.InputWaiting(wf1, eid1, "never", now)
@@ -877,7 +877,7 @@ abstract class FlowStoreTest extends kyo.test.Test[Any]:
                     claimed <- store.claimReady(served, ex1, lease, 10, Duration.Zero)
                     _ = assert(claimed.size == 1, "the premise is that an executor took the execution")
                     now <- Clock.now
-                    _ <- claimed.head.recordWait(
+                    _   <- claimed.head.recordWait(
                         "loser",
                         Flow.Wake.OnField("loser"),
                         Flow.Event.InputWaiting(wf1, eid1, "loser", now)
@@ -1204,7 +1204,7 @@ abstract class FlowStoreTest extends kyo.test.Test[Any]:
                     _       <- mkExecution(store, eid1, wf1, Flow.Status.Running)
                     claimed <- claim(store, eid1)
                     now     <- Clock.now
-                    _ <- claimed.recordWait(
+                    _       <- claimed.recordWait(
                         "gate",
                         Flow.Wake.OnField("gate"),
                         waitEvent(wf1, eid1, "gate", Flow.Wake.OnField("gate"), now)
@@ -1469,7 +1469,7 @@ abstract class FlowStoreTest extends kyo.test.Test[Any]:
                         woken <- claim(store, eid1)
                         _     <- woken.recordProgress("s", Flow.Event.SleepCompleted(wf1, eid1, "s", now))
                         s2    <- store.getExecution(eid1)
-                        _ <- woken.finish(FlowStore.Claimed.Outcome.Terminal(
+                        _     <- woken.finish(FlowStore.Claimed.Outcome.Terminal(
                             Flow.Status.Completed,
                             Flow.Event.Completed(wf1, eid1, now)
                         ))
@@ -1513,7 +1513,7 @@ abstract class FlowStoreTest extends kyo.test.Test[Any]:
                     _       <- mkExecution(store, eid1, wf1, Flow.Status.Running)
                     claimed <- claim(store, eid1)
                     now     <- Clock.now
-                    _ <- Kyo.foreach(1 to 10)(i =>
+                    _       <- Kyo.foreach(1 to 10)(i =>
                         claimed.appendEvent(Flow.Event.StepStarted(wf1, eid1, s"s$i", ex1, now))
                     )
                     h <- store.getHistory(eid1, Maybe(3), 0)
@@ -1529,7 +1529,7 @@ abstract class FlowStoreTest extends kyo.test.Test[Any]:
                     _       <- mkExecution(store, eid1, wf1, Flow.Status.Running)
                     claimed <- claim(store, eid1)
                     now     <- Clock.now
-                    _ <- Kyo.foreach(1 to 5)(i =>
+                    _       <- Kyo.foreach(1 to 5)(i =>
                         claimed.appendEvent(Flow.Event.StepStarted(wf1, eid1, s"s$i", ex1, now))
                     )
                     h <- store.getHistory(eid1, Maybe(100), 3)
@@ -1710,7 +1710,7 @@ abstract class FlowStoreTest extends kyo.test.Test[Any]:
                         _      <- mkExecution(store, eid2, wf1, Flow.Status.Running)
                         lapsed <- store.claimReady(served, ex1, 5.seconds, 10, Duration.Zero)
                         _ = assert(lapsed.exists(_.state.executionId == eid2), "the premise is that the second row was claimed")
-                        _ <- tc.advance(10.seconds)
+                        _       <- tc.advance(10.seconds)
                         expired <- lapsed.head.recordProgress[String](
                             "receipt",
                             Maybe("paid"),
@@ -1722,7 +1722,7 @@ abstract class FlowStoreTest extends kyo.test.Test[Any]:
                         _        <- mkExecution(store, eid3, wf1, Flow.Status.Running)
                         released <- store.claimReady(served, ex1, 30.seconds, 10, Duration.Zero)
                         _ = assert(released.exists(_.state.executionId == eid3), "the premise is that the third row was claimed")
-                        _ <- released.head.finish(FlowStore.Claimed.Outcome.Suspended(Set.empty))
+                        _            <- released.head.finish(FlowStore.Claimed.Outcome.Suspended(Set.empty))
                         afterRelease <- released.head.recordProgress[String](
                             "receipt",
                             Maybe("paid"),
@@ -1764,9 +1764,9 @@ abstract class FlowStoreTest extends kyo.test.Test[Any]:
                         _     <- mkExecution(store, eid1, wf1, Flow.Status.Running)
                         stale <- store.claimReady(served, ex1, 5.seconds, 10, Duration.Zero)
                         _ = assert(stale.size == 1, "the premise is that the first executor took the execution")
-                        _   <- tc.advance(10.seconds)
-                        _   <- store.claimReady(served, ex2, 30.seconds, 10, Duration.Zero)
-                        now <- Clock.now
+                        _       <- tc.advance(10.seconds)
+                        _       <- store.claimReady(served, ex2, 30.seconds, 10, Duration.Zero)
+                        now     <- Clock.now
                         refused <- stale.head.finish(FlowStore.Claimed.Outcome.Terminal(
                             Flow.Status.Failed("the stale executor's verdict"),
                             Flow.Event.Failed(wf1, eid1, "the stale executor's verdict", now)
@@ -2388,7 +2388,7 @@ abstract class FlowStoreTest extends kyo.test.Test[Any]:
                 woken <- claim(store, eid1)
                 _     <- woken.recordProgress("x", Flow.Event.InputDischarged(wf1, eid1, "x", now))
                 s2    <- store.getExecution(eid1)
-                _ <- woken.finish(FlowStore.Claimed.Outcome.Terminal(
+                _     <- woken.finish(FlowStore.Claimed.Outcome.Terminal(
                     Flow.Status.Failed("err"),
                     Flow.Event.Failed(wf1, eid1, "err", now)
                 ))
@@ -2534,7 +2534,7 @@ abstract class FlowStoreTest extends kyo.test.Test[Any]:
           * arm too, rather than discovering it from a comparison that quietly answered true.
           */
         "a row differing outside its wait ledger is not equal either" in {
-            val base = stateWith(Dict("waiting" -> waiting))
+            val base   = stateWith(Dict("waiting" -> waiting))
             val varied = Seq(
                 "executionId"     -> base.copy(executionId = eid2),
                 "flowId"          -> base.copy(flowId = wf2),

@@ -42,11 +42,11 @@ final class TypeArena:
         // `f`) and to rebuild a node from its interned children (with `f = internOf`).
         def rebuild(t: Tasty.Type, f: Tasty.Type => Tasty.Type): Tasty.Type =
             t match
-                case Tasty.Type.Named(_)        => t
-                case Tasty.Type.RecThis(_)      => t
-                case Tasty.Type.ParamRef(_, _)  => t
-                case Tasty.Type.ConstantType(_) => t
-                case Tasty.Type.ThisType(_)     => t
+                case Tasty.Type.Named(_)            => t
+                case Tasty.Type.RecThis(_)          => t
+                case Tasty.Type.ParamRef(_, _)      => t
+                case Tasty.Type.ConstantType(_)     => t
+                case Tasty.Type.ThisType(_)         => t
                 case Tasty.Type.Applied(base, args) =>
                     Tasty.Type.Applied(f(base), args.map(f))
                 case Tasty.Type.Function(ps, r) =>
@@ -139,10 +139,10 @@ final class TypeArena:
                     val key = TypeKey.of(t)
                     canonical.map.get(key) match
                         case Some(canon) => discard(internedByObj.put(t, canon))
-                        case None =>
+                        case None        =>
                             inProgress.get(key) match
                                 case Some(placeholder) => discard(internedByObj.put(t, placeholder))
-                                case None =>
+                                case None              =>
                                     inProgress(key) = t
                                     work.append((t, depth, true))
                                     discard(rebuild(t, child => { work.append((child, depth + 1, false)); child }))

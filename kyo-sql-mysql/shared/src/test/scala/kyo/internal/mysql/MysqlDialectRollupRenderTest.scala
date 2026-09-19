@@ -32,7 +32,7 @@ class MysqlDialectRollupRenderTest extends Test:
     // MySQL has no CUBE at any release. It gained `GROUP BY ... WITH ROLLUP` in 8.0 and nothing else from
     // SQL:1999's grouping-set family, so emitting `GROUP BY CUBE (...)` would be SQL the server rejects.
     "GROUP BY CUBE on MySQL raises Unsupported rather than emitting SQL MySQL cannot parse" in {
-        val q = sales.groupByCube(c => (c.s.region, c.s.product)).select(view => (view.region, view.product, view.amount.sum))
+        val q  = sales.groupByCube(c => (c.s.region, c.s.product)).select(view => (view.region, view.product, view.amount.sum))
         val ex = intercept[SqlUnsupportedDialectFeatureException] {
             q.render(MysqlDialect)
         }

@@ -119,7 +119,7 @@ class PosixTransportTlsConcurrentEchoTest extends Test:
                     if !java.util.Arrays.equals(frame, expected) then permits.put(()).andThen(Loop.done(false))
                     else
                         certExpected match
-                            case Absent => permits.put(()).andThen(Loop.continue(remain))
+                            case Absent       => permits.put(()).andThen(Loop.continue(remain))
                             case Present(exp) =>
                                 Sync.defer(conn.serverCertificateHash).map {
                                     case Present(h) if java.util.Arrays.equals(h.toArray, exp) =>

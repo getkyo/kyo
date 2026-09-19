@@ -62,9 +62,9 @@ final class Recorder:
                 // would overflow, skip placement entirely (the diagram would be unprintable).
                 if col < 0 || (Int.MaxValue - col) < text.length then ()
                 else
-                    val line = ensureLine(lineIdx)
-                    val need = col + text.length
-                    val cur  = line.length
+                    val line     = ensureLine(lineIdx)
+                    val need     = col + text.length
+                    val cur      = line.length
                     val extended =
                         if need > cur then
                             val a = new Array[Char](need)

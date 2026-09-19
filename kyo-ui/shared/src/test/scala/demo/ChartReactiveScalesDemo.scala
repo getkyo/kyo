@@ -106,7 +106,7 @@ object ChartReactiveScalesDemo extends KyoApp:
                     .lowerWithScales
         yield
             val targetPx = scales.y.toPixel(targetScore)
-            val target =
+            val target   =
                 Svg.line
                     .x1(scales.plot.x)
                     .x2(scales.plot.x + scales.plot.width)

@@ -816,7 +816,7 @@ class STMPropertyTest extends kyo.test.Test[Any]:
                 val r2 = "name" ~ s"b$v2" & "age" ~ v2
                 for
                     table <- TTable.init["name" ~ String & "age" ~ Int]
-                    res <- STM.run {
+                    res   <- STM.run {
                         for
                             id   <- table.insert(r1)
                             prev <- table.update(id, r2)
@@ -842,7 +842,7 @@ class STMPropertyTest extends kyo.test.Test[Any]:
                 val record = "name" ~ s"x$value" & "age" ~ value
                 for
                     table <- TTable.init["name" ~ String & "age" ~ Int]
-                    res <- STM.run {
+                    res   <- STM.run {
                         for
                             rr <- table.update(table.unsafeId(fakeId), record)
                             gg <- table.get(table.unsafeId(fakeId))
@@ -868,7 +868,7 @@ class STMPropertyTest extends kyo.test.Test[Any]:
             Kyo.foreach(cases.toSeq) { case (n1, n2, v) =>
                 for
                     table <- TTable.Indexed.init["name" ~ String & "value" ~ Int, "name" ~ String & "value" ~ Int]
-                    res <- STM.run {
+                    res   <- STM.run {
                         val id0 = table.unsafeId(0)
                         for
                             _  <- table.upsert(id0, "name" ~ n1 & "value" ~ v)

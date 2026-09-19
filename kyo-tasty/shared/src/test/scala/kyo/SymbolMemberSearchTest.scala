@@ -154,10 +154,10 @@ class SymbolMemberSearchTest extends kyo.test.Test[Any]:
 
     "allMembers includes inherited members from parent ClassLike" in {
         buildInheritanceFixture.map { classpath =>
-            val b = classpath.findClass("B").get
+            val b     = classpath.findClass("B").get
             val names = {
-                val _seen = scala.collection.mutable.HashSet.empty[String]
-                val _out  = Chunk.newBuilder[Tasty.Symbol]
+                val _seen                                    = scala.collection.mutable.HashSet.empty[String]
+                val _out                                     = Chunk.newBuilder[Tasty.Symbol]
                 def _visit(cl: Tasty.Symbol.ClassLike): Unit =
                     cl.declarationIds.foreach { id =>
                         classpath.symbol(id).foreach { d =>
@@ -180,14 +180,14 @@ class SymbolMemberSearchTest extends kyo.test.Test[Any]:
 
     "findDeclaredMember vs findInheritedMember for inherited method" in {
         buildInheritanceFixture.map { classpath =>
-            val b        = classpath.findClass("B").get
-            val declared = Maybe.fromOption(b.declarationIds.flatMap(id => classpath.symbol(id).toChunk).find(_.simpleName == "foo"))
+            val b         = classpath.findClass("B").get
+            val declared  = Maybe.fromOption(b.declarationIds.flatMap(id => classpath.symbol(id).toChunk).find(_.simpleName == "foo"))
             val inherited =
                 val directs     = b.declarationIds.flatMap(id => classpath.symbol(id).toChunk)
                 val directNames = scala.collection.mutable.HashSet.empty[String]
                 directs.foreach(d => directNames.add(d.simpleName))
                 // Walk parent chain for inherited
-                var _foundInh: Maybe[Tasty.Symbol] = Maybe.Absent
+                var _foundInh: Maybe[Tasty.Symbol]              = Maybe.Absent
                 def _visitInh(cl: Tasty.Symbol.ClassLike): Unit =
                     cl.declarationIds.foreach { id =>
                         classpath.symbol(id).foreach { d =>
@@ -214,10 +214,10 @@ class SymbolMemberSearchTest extends kyo.test.Test[Any]:
 
     "findAnyMember finds inherited member" in {
         buildInheritanceFixture.map { classpath =>
-            val b = classpath.findClass("B").get
+            val b      = classpath.findClass("B").get
             val result =
-                val _seen2 = scala.collection.mutable.HashSet.empty[String]
-                val _all2  = Chunk.newBuilder[Tasty.Symbol]
+                val _seen2                                      = scala.collection.mutable.HashSet.empty[String]
+                val _all2                                       = Chunk.newBuilder[Tasty.Symbol]
                 def _visitAny(cl: Tasty.Symbol.ClassLike): Unit =
                     cl.declarationIds.foreach { id =>
                         classpath.symbol(id).foreach { d =>

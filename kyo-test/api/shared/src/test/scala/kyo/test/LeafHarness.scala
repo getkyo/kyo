@@ -33,16 +33,16 @@ object LeafHarness:
       */
     private def toTestResult(result: Result[Throwable, Unit]): TestResult =
         result match
-            case Result.Success(_) => TestResult.Passed(Duration.Zero)
+            case Result.Success(_)                   => TestResult.Passed(Duration.Zero)
             case Result.Failure(af: AssertionFailed) =>
                 TestResult.Failed(af.diagram, Maybe(af.getCause), Duration.Zero)
             case Result.Failure(tc: TestCancelled) => TestResult.Cancelled(tc.reason, Duration.Zero)
             case Result.Failure(t)                 => TestResult.Failed(t.toString, Maybe(t), Duration.Zero)
-            case panic: Result.Panic =>
+            case panic: Result.Panic               =>
                 panic.exception match
                     case af: AssertionFailed => TestResult.Failed(af.diagram, Maybe(af.getCause), Duration.Zero)
                     case tc: TestCancelled   => TestResult.Cancelled(tc.reason, Duration.Zero)
-                    case t =>
+                    case t                   =>
                         java.lang.System.err.println(s"[kyo-test] unexpected panic in api self-test leaf: $t")
                         TestResult.Failed(t.toString, Maybe(t), Duration.Zero)
 

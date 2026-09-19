@@ -422,8 +422,8 @@ object Async extends AsyncPlatformSpecific:
             Kyo.foreachIndexed(Chunk.from(iterable))(f)
         else
             iterable.size match
-                case 0 => Chunk.empty
-                case 1 => f(0, iterable.head).map(Chunk(_))
+                case 0    => Chunk.empty
+                case 1    => f(0, iterable.head).map(Chunk(_))
                 case size =>
                     isolate.capture { state =>
                         val items = Chunk.Indexed.from(iterable)
@@ -778,11 +778,11 @@ object Async extends AsyncPlatformSpecific:
       */
     def memoize[A, S](v: A < S)(using Frame): A < (S & Async) < Sync =
         Sync.Unsafe.defer {
-            val ref = AtomicRef.Unsafe.init(Maybe.empty[Promise.Unsafe[A, Any]])
+            val ref                              = AtomicRef.Unsafe.init(Maybe.empty[Promise.Unsafe[A, Any]])
             @tailrec def loop(): A < (S & Async) =
                 ref.get() match
                     case Present(v) => v.safe.get
-                    case Absent =>
+                    case Absent     =>
                         val promise = Promise.Unsafe.init[A, Any]()
                         if ref.compareAndSet(Absent, Present(promise)) then
                             Abort.run(v).map { r =>

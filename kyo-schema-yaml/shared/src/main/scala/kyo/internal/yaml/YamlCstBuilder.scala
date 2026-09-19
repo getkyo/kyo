@@ -23,8 +23,8 @@ private[kyo] object YamlCstBuilder:
                     case Present(Cst.Node.Mapping(mappingEntries, _, _, _, _)) => acc ++ mappingEntries
                     case _                                                     => acc
             }
-        val mark = stream.span.start
-        val span = Cst.SourceSpan(mark, stream.span.end)
+        val mark    = stream.span.start
+        val span    = Cst.SourceSpan(mark, stream.span.end)
         val mapping =
             Cst.Node.Mapping(entries, Cst.MappingSyntax.Canonical, Yaml.Meta(Absent, Absent, mark), span, Absent)
         Cst.Document(Maybe(mapping), Chunk.empty, Chunk.empty, span, Absent)
@@ -211,7 +211,7 @@ private[kyo] object YamlCstBuilder:
                     root match
                         case Present(node) =>
                             val nodeSpan = span(node)
-                            val docSpan = Cst.SourceSpan(
+                            val docSpan  = Cst.SourceSpan(
                                 documentStart.getOrElse(nodeSpan.start),
                                 documentEnd.getOrElse(nodeSpan.end)
                             )

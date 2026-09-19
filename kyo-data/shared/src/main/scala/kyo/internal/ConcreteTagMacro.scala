@@ -97,8 +97,8 @@ private[kyo] object ConcreteTagMacro:
                                 case '[Char]                          => '{ CharTag }
                                 case '[Boolean]                       => '{ BooleanTag }
                                 case _ if tpe =:= TypeRepr.of[AnyVal] => '{ AnyValTag }
-                                case '[t] =>
-                                    val classOfSym = Symbol.requiredMethod("scala.Predef.classOf")
+                                case '[t]                             =>
+                                    val classOfSym  = Symbol.requiredMethod("scala.Predef.classOf")
                                     val classOfExpr = Select(Ref(Symbol.requiredModule("scala.Predef")), classOfSym)
                                         .appliedToType(TypeRepr.of[t])
                                     val expr = classOfExpr.asExprOf[Any]

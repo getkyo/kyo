@@ -22,11 +22,10 @@ class PostgresEncoderEpochTest extends kyo.Test:
             ((bytes(6) & 0xffL) << 8) |
             (bytes(7) & 0xffL)
 
-    private def readInt(bytes: Span[Byte]): Int =
-        ((bytes(0) & 0xff) << 24) |
-            ((bytes(1) & 0xff) << 16) |
-            ((bytes(2) & 0xff) << 8) |
-            (bytes(3) & 0xff)
+    private def readInt(bytes: Span[Byte]): Int = ((bytes(0) & 0xff) << 24) |
+        ((bytes(1) & 0xff) << 16) |
+        ((bytes(2) & 0xff) << 8) |
+        (bytes(3) & 0xff)
 
     // ── PG_EPOCH_MICROS constant ──────────────────────────────────────────────
 

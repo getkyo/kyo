@@ -8,7 +8,7 @@ class HttpClientContentionBench
 
     val concurrency = Runtime.getRuntime().availableProcessors()
     val url         = TestHttpServer.start(concurrency)
-    val parsedUrl =
+    val parsedUrl   =
         import kyo.*
         HttpUrl.parse(url).getOrThrow
 

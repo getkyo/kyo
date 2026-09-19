@@ -300,7 +300,7 @@ class SqlConfigTlsModeIntegrationTest extends SqlContainerTest:
                 Path.run(tempPath.writeBytes(Span.from("NOT A VALID PEM CERTIFICATE".getBytes(StandardCharsets.UTF_8)))).flatMap { _ =>
                     Scope.ensure(Abort.run[FileSystemException](Path.run(tempPath.remove)).unit).andThen {
                         val badPath = tempPath.toString
-                        val url =
+                        val url     =
                             s"postgres://${ctx.user}:${ctx.password}@${ctx.host}:${ctx.port}/${ctx.db}?sslmode=verify-ca&sslrootcert=$badPath"
                         Abort.run[SqlException] {
                             Scope.run {
@@ -598,7 +598,7 @@ object SqlConfigTlsModeIntegrationTest:
     ): A < (S & Async & Abort[ContainerException]) =
         tlsRef.use {
             case Maybe.Present(p) => p.get.flatMap(f)
-            case Maybe.Absent =>
+            case Maybe.Absent     =>
                 Promise.init[TlsCtx, Abort[ContainerException]].flatMap { p =>
                     tlsRef.compareAndSet(Maybe.empty, Maybe.Present(p)).flatMap {
                         case false =>
@@ -635,7 +635,7 @@ object SqlConfigTlsModeIntegrationTest:
     ): A < (S & Async & Abort[ContainerException]) =
         requireSslRef.use {
             case Maybe.Present(p) => p.get.flatMap(f)
-            case Maybe.Absent =>
+            case Maybe.Absent     =>
                 Promise.init[RequireSslCtx, Abort[ContainerException]].flatMap { p =>
                     requireSslRef.compareAndSet(Maybe.empty, Maybe.Present(p)).flatMap {
                         case false =>
@@ -759,7 +759,7 @@ object SqlConfigTlsModeIntegrationTest:
     private def startTlsContainer(tempDirPath: Path)(using
         Frame
     ): TlsCtx < (Async & Abort[ContainerException] & Scope) =
-        val tempDir = tempDirPath.toString
+        val tempDir       = tempDirPath.toString
         val wrapperScript =
             "cp /etc/ssl-pg/server.crt /tmp/server.crt && " +
                 "cp /etc/ssl-pg/server.key /tmp/server.key && " +

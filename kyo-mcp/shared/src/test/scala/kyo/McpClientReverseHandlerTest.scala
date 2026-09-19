@@ -26,7 +26,7 @@ class McpClientReverseHandlerTest extends Test:
     "reverse handler without advertised capability is rejected at init with Peer.Client" in {
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
             val capsMissingSampling = McpCapabilities.Client()
-            val samplingHandler = McpClientHandler.onSampling[Nothing] { _ =>
+            val samplingHandler     = McpClientHandler.onSampling[Nothing] { _ =>
                 McpServer.SamplingResponse(McpContent.Role.Assistant, McpContent.text("hi"), Present("m"))
             }
             // Server side: init without waiting for client (unscoped; not used, just needed for transport).
@@ -54,7 +54,7 @@ class McpClientReverseHandlerTest extends Test:
     "reverse handler with advertised capability is accepted at init" in {
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
             val capsWithSampling = McpCapabilities.Client(sampling = Present(McpCapabilities.SamplingCapability()))
-            val samplingHandler = McpClientHandler.onSampling[Nothing] { _ =>
+            val samplingHandler  = McpClientHandler.onSampling[Nothing] { _ =>
                 McpServer.SamplingResponse(McpContent.Role.Assistant, McpContent.text("ok"), Present("m"))
             }
             Async.zip[McpException, McpServer, McpClient, Any](

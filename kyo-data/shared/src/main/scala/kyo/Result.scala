@@ -189,9 +189,9 @@ object Result:
           */
         def apply[A](value: A): Success[A] =
             value match
-                case v: SuccessError[?]       => v.nest.asInstanceOf[Success[A]]
-                case v: Failure[A] @unchecked => SuccessError(v)
-                case v                        => v
+                case v: SuccessError[?]     => v.nest.asInstanceOf[Success[A]]
+                case v: Error[A] @unchecked => SuccessError(v)
+                case v                      => v
 
         /** Extracts the value from a Success Result.
           *
@@ -509,7 +509,7 @@ object Result:
         inline def flatMap[E2, B](inline f: A => Result[E2, B]): Result[E | E2, B] =
             self match
                 case self: Error[E] @unchecked => self
-                case self =>
+                case self                      =>
                     try f(self.asInstanceOf[Result[Nothing, A]].getOrThrow)
                     catch
                         case ex =>

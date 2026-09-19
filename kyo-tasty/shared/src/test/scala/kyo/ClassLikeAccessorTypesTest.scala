@@ -65,7 +65,7 @@ class ClassLikeAccessorTypesTest extends kyo.test.Test[Any]:
             val typePs = classpath.typeParams(withDecls)
             val ms     = decls.filter(_.isInstanceOf[Tasty.Symbol.Method])
             val vs     = decls.filter(_.isInstanceOf[Tasty.Symbol.Val])
-            val nt = decls.filter(s =>
+            val nt     = decls.filter(s =>
                 s.isInstanceOf[Tasty.Symbol.Class] || s.isInstanceOf[Tasty.Symbol.Trait] || s.isInstanceOf[Tasty.Symbol.Object]
             )
             val ta = decls.collect { case t: Tasty.Symbol.TypeAlias => t }

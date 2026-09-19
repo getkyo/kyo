@@ -30,10 +30,10 @@ end JsStringUtil
   */
 private[kyo] object PercentEncode:
     def apply(s: String): String =
-        val hex = "0123456789ABCDEF"
+        val hex                         = "0123456789ABCDEF"
         def encodeByte(b: Byte): String =
-            val u = b & 0xff
-            val c = u.toChar
+            val u            = b & 0xff
+            val c            = u.toChar
             val isUnreserved =
                 (c >= 'A' && c <= 'Z') ||
                     (c >= 'a' && c <= 'z') ||

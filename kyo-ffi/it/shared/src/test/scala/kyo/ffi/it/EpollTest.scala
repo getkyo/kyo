@@ -64,11 +64,10 @@ class EpollTest extends ItTestBase:
     end writeEpollEvent
 
     /** Read the `events` field (uint32_t) from a `struct epoll_event` at the given byte offset. */
-    private def readEvents(buf: Buffer[Byte], offset: Int): Int =
-        (buf.get(offset) & 0xff) |
-            ((buf.get(offset + 1) & 0xff) << 8) |
-            ((buf.get(offset + 2) & 0xff) << 16) |
-            ((buf.get(offset + 3) & 0xff) << 24)
+    private def readEvents(buf: Buffer[Byte], offset: Int): Int = (buf.get(offset) & 0xff) |
+        ((buf.get(offset + 1) & 0xff) << 8) |
+        ((buf.get(offset + 2) & 0xff) << 16) |
+        ((buf.get(offset + 3) & 0xff) << 24)
 
     /** Read the `data.u64` field (uint64_t) from a `struct epoll_event` at the given byte offset. */
     private def readData(buf: Buffer[Byte], offset: Int): Long =

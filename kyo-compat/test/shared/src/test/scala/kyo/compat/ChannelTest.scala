@@ -112,7 +112,7 @@ class ChannelTest extends CompatTest:
         // 5 consumers each take 10 items. Verify produced Set == consumed Set.
         val produced = new ConcurrentLinkedQueue[Int]()
         val consumed = new ConcurrentLinkedQueue[Int]()
-        val c =
+        val c        =
             CChannel.init[Int](20).flatMap { ch =>
                 val producers = CIO.foreach(0 until 5) { prod =>
                     CFiber.init(CIO.foreach(0 until 10) { i =>

@@ -252,7 +252,7 @@ private[postgres] object StreamQueryExchange:
     )(using Frame): Unit < (Async & Abort[SqlException]) =
         val paramFormats: Chunk[Short]            = params.map(_.encoder.format.code)
         val paramValues: Chunk[Maybe[Span[Byte]]] = params.map(_.encoded)
-        val bindMsg = Bind(
+        val bindMsg                               = Bind(
             portalName = portalName,
             stmtName = stmt.name,
             paramFormats = paramFormats,
@@ -288,7 +288,7 @@ private[postgres] object StreamQueryExchange:
         onNotification: NotificationResponse => Unit < Async,
         isFirstBatch: Boolean = false
     )(using Frame): BatchResult < (Async & Abort[SqlException]) =
-        val contextLabel = if isFirstBatch then "first Execute batch" else "Execute batch"
+        val contextLabel  = if isFirstBatch then "first Execute batch" else "Execute batch"
         val expectedLabel =
             if isFirstBatch then "BindComplete / DataRow / PortalSuspended / CommandComplete / EmptyQueryResponse / ErrorResponse"
             else "DataRow / PortalSuspended / CommandComplete / EmptyQueryResponse / ErrorResponse"

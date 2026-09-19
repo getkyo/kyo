@@ -12,7 +12,7 @@ class CacheTest extends kyo.test.Test[Any]:
 
     // Test key with controlled hashCode
     class Key(val id: Int, val hash: Int) derives CanEqual:
-        override def hashCode(): Int = hash
+        override def hashCode(): Int             = hash
         override def equals(other: Any): Boolean = other match
             case k: Key => k.id == id
             case _      => false
@@ -746,7 +746,7 @@ class CacheTest extends kyo.test.Test[Any]:
         "listeners are independent — only relevant one fires" in {
             var evicted = List.empty[(Int, String)]
             var removed = List.empty[(Int, String)]
-            val s = cache(
+            val s       = cache(
                 maxSize = 2,
                 onEvict = (k, v) => evicted = (k.id, v) :: evicted,
                 onRemove = (k, v) => removed = (k.id, v) :: removed
@@ -1646,7 +1646,7 @@ class CacheTest extends kyo.test.Test[Any]:
                 for
                     calls = new AtomicInteger(0)
                     latch <- Latch.init(1)
-                    m <- Cache.memo(100) { (v: Int) =>
+                    m     <- Cache.memo(100) { (v: Int) =>
                         discard(calls.incrementAndGet())
                         v + 1
                     }
@@ -1667,7 +1667,7 @@ class CacheTest extends kyo.test.Test[Any]:
                 for
                     calls = new AtomicInteger(0)
                     latch <- Latch.init(1)
-                    m <- Cache.memo(100) { (v: Int) =>
+                    m     <- Cache.memo(100) { (v: Int) =>
                         discard(calls.incrementAndGet())
                         v * 10
                     }
@@ -1688,7 +1688,7 @@ class CacheTest extends kyo.test.Test[Any]:
                 for
                     calls = new AtomicInteger(0)
                     latch <- Latch.init(1)
-                    m <- Cache.memo(100) { (v: Int) =>
+                    m     <- Cache.memo(100) { (v: Int) =>
                         Fiber.initUnscoped {
                             discard(calls.incrementAndGet())
                             v + 1
@@ -1711,7 +1711,7 @@ class CacheTest extends kyo.test.Test[Any]:
                 for
                     calls = new AtomicInteger(0)
                     latch <- Latch.init(1)
-                    m <- Cache.memo(100) { (v: Int) =>
+                    m     <- Cache.memo(100) { (v: Int) =>
                         val c = calls.incrementAndGet()
                         if c == 1 then throw new Exception("first call")
                         else v + 1
@@ -1733,8 +1733,8 @@ class CacheTest extends kyo.test.Test[Any]:
         "concurrent eviction under contention".notJs in {
             Loop.repeat(repeats) {
                 for
-                    latch <- Latch.init(1)
-                    m     <- Cache.memo(4) { (v: Int) => v * 10 }
+                    latch  <- Latch.init(1)
+                    m      <- Cache.memo(4) { (v: Int) => v * 10 }
                     fibers <- Kyo.foreach(1 to 20) { i =>
                         Fiber.initUnscoped(latch.await.andThen(m(i)))
                     }
@@ -1750,7 +1750,7 @@ class CacheTest extends kyo.test.Test[Any]:
                 for
                     calls = new AtomicInteger(0)
                     latch <- Latch.init(1)
-                    m <- Cache.memo(100) { (v: Int) =>
+                    m     <- Cache.memo(100) { (v: Int) =>
                         val c = calls.incrementAndGet()
                         if v == 1 && c % 2 == 1 then
                             throw new Exception("odd call")
@@ -1792,8 +1792,8 @@ class CacheTest extends kyo.test.Test[Any]:
         "interleaved puts and gets across many keys".notJs in {
             Loop.repeat(repeats) {
                 for
-                    latch <- Latch.init(1)
-                    m     <- Cache.memo(50) { (v: Int) => v }
+                    latch   <- Latch.init(1)
+                    m       <- Cache.memo(50) { (v: Int) => v }
                     writers <- Kyo.foreach(1 to 100) { i =>
                         Fiber.initUnscoped(latch.await.andThen(m(i)))
                     }
@@ -1813,8 +1813,8 @@ class CacheTest extends kyo.test.Test[Any]:
         "no lost updates under concurrent eviction".notJs in {
             Loop.repeat(repeats) {
                 for
-                    m     <- Cache.memo(8) { (v: Int) => v * v }
-                    latch <- Latch.init(1)
+                    m      <- Cache.memo(8) { (v: Int) => v * v }
+                    latch  <- Latch.init(1)
                     fibers <- Kyo.foreach(1 to 100) { i =>
                         Fiber.initUnscoped(latch.await.andThen(m(i % 20)))
                     }
@@ -1833,7 +1833,7 @@ class CacheTest extends kyo.test.Test[Any]:
                 for
                     calls = new AtomicInteger(0)
                     latch <- Latch.init(1)
-                    m <- Cache.memo(100) { (v: Int) =>
+                    m     <- Cache.memo(100) { (v: Int) =>
                         Async.sleep(1.millis).andThen {
                             discard(calls.incrementAndGet())
                             v + 1
@@ -1863,8 +1863,8 @@ class CacheTest extends kyo.test.Test[Any]:
 
         "add under contention".onlyJvm in {
             for
-                c     <- Cache.init[Int, String](1)
-                latch <- Latch.init(1)
+                c      <- Cache.init[Int, String](1)
+                latch  <- Latch.init(1)
                 fibers <- Kyo.foreach(1 to 1000)(i =>
                     Fiber.initUnscoped(latch.await.andThen(c.add(i % 4, s"val-$i")))
                 )
@@ -1879,8 +1879,8 @@ class CacheTest extends kyo.test.Test[Any]:
 
         "add and remove under contention".onlyJvm in {
             for
-                c     <- Cache.init[Int, String](1)
-                latch <- Latch.init(1)
+                c      <- Cache.init[Int, String](1)
+                latch  <- Latch.init(1)
                 fibers <- Kyo.foreach(1 to 1000)(i =>
                     Fiber.initUnscoped(latch.await.andThen {
                         if i % 2 == 0 then c.add(i % 4, s"val-$i")

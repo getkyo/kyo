@@ -682,7 +682,7 @@ class HtmlRendererTest extends UITest:
     }
 
     "fill very long unicode string signal preserves" in {
-        val longText = "漢" * 500
+        val longText        = "漢" * 500
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(

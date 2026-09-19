@@ -243,7 +243,7 @@ class SqliteDialect extends Idiom:
                 }
                 i.returning match
                     case Maybe.Present(cols) => returning(ctx, cols)
-                    case Maybe.Absent =>
+                    case Maybe.Absent        =>
                         i.autoKey.foreach { col =>
                             ctx.append(" RETURNING ")
                             ctx.appendQuoted(col)
@@ -295,9 +295,10 @@ class SqliteDialect extends Idiom:
             case _                          => false
 
     private def isDefaultOverride(perColumn: Seq[Maybe[Sql.SetSpec[?, ?]]], idx: Int): Boolean =
-        idx < perColumn.size && (perColumn(idx) match
-            case Maybe.Present(spec) => isDefault(spec.value)
-            case Maybe.Absent        => false)
+        idx < perColumn.size &&
+            (perColumn(idx) match
+                case Maybe.Present(spec) => isDefault(spec.value)
+                case Maybe.Absent        => false)
 
 end SqliteDialect
 

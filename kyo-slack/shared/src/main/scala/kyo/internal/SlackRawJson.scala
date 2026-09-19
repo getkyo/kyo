@@ -54,7 +54,7 @@ private[kyo] object SlackRawJson:
     @tailrec
     private def navigate(value: Structure.Value, path: Seq[String]): Maybe[Structure.Value] =
         path match
-            case Seq() => Present(value)
+            case Seq()        => Present(value)
             case head +: tail =>
                 value match
                     case Structure.Value.Record(fields) =>
@@ -90,7 +90,8 @@ private[kyo] object SlackRawJson:
         private def fail(msg: String): Nothing = throw new ParseError(s"$msg at position $pos")
 
         private def skipWs(): Unit =
-            while pos < input.length && (input(pos) match
+            while pos < input.length &&
+                (input(pos) match
                     case ' ' | '\t' | '\n' | '\r' => true
                     case _                        => false)
             do pos += 1
@@ -160,13 +161,13 @@ private[kyo] object SlackRawJson:
 
         private def str(): String =
             expect('"')
-            val sb = new StringBuilder
+            val sb                    = new StringBuilder
             @tailrec def loop(): Unit =
                 if pos >= input.length then fail("unterminated string")
                 val c = input(pos)
                 pos += 1
                 c match
-                    case '"' => ()
+                    case '"'  => ()
                     case '\\' =>
                         if pos >= input.length then fail("unterminated escape")
                         val e = input(pos); pos += 1
@@ -179,7 +180,7 @@ private[kyo] object SlackRawJson:
                             case 'n'  => sb += '\n'; loop()
                             case 'r'  => sb += '\r'; loop()
                             case 't'  => sb += '\t'; loop()
-                            case 'u' =>
+                            case 'u'  =>
                                 if pos + 4 > input.length then fail("incomplete unicode escape")
                                 val hex = input.substring(pos, pos + 4)
                                 pos += 4

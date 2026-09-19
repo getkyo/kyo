@@ -82,7 +82,7 @@ class PollerIoDriverCorruptRecordTest extends Test:
                             java.lang.System.arraycopy(corrupted, 0, coalesced, goodRecord.length, corrupted.length)
                             // Send BEFORE arming the read so both records are in the accepted side's kernel buffer, delivered in one recv.
                             val cipherBuf = Buffer.fromArray[Byte](coalesced)
-                            val sendR =
+                            val sendR     =
                                 try sock.sendNow(client, cipherBuf, coalesced.length.toLong, PosixConstants.MSG_NOSIGNAL)
                                 finally cipherBuf.close()
                             assert(sendR.value.toInt == coalesced.length, s"send failed: errno=${sendR.errorCode}")

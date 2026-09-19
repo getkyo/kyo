@@ -137,7 +137,7 @@ class SingletonTest extends AnyFreeSpec with NonImplicitAssertions {
 
                 futures.foreach(_.get(5, TimeUnit.SECONDS))
 
-                val finalLoader = new URLClassLoader(Array.empty[URL], getClass.getClassLoader)
+                val finalLoader    = new URLClassLoader(Array.empty[URL], getClass.getClassLoader)
                 val finalSingleton = finalLoader
                     .loadClass("kyo.scheduler.util.TestSingleton")
                     .getDeclaredConstructor()

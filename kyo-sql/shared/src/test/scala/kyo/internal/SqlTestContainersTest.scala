@@ -195,7 +195,7 @@ class SqlTestContainersTest extends kyo.Test:
 
     "matchesFixture" - {
         val fingerprint = SqlTestContainers.fixtureFingerprint(mysqlCfg)
-        val labels = Dict(
+        val labels      = Dict(
             SqlTestContainers.singletonLabelKey -> "mysql",
             SqlTestContainers.fixtureLabelKey   -> fingerprint
         )

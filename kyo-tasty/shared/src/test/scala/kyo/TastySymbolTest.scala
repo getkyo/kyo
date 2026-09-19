@@ -109,7 +109,7 @@ class TastySymbolTest extends kyo.test.Test[Any]:
         import kyo.Tasty.SymbolId
         val comSym     = Tasty.Symbol.Package(SymbolId(0), Tasty.Name("com"), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
         val exampleSym = Tasty.Symbol.Package(SymbolId(1), Tasty.Name("example"), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
-        val outerSym = Tasty.Symbol.Class(
+        val outerSym   = Tasty.Symbol.Class(
             SymbolId(2),
             Tasty.Name("Outer"),
             Tasty.Flags.empty,
@@ -153,7 +153,7 @@ class TastySymbolTest extends kyo.test.Test[Any]:
         import kyo.Tasty.SymbolId
         val comSym     = Tasty.Symbol.Package(SymbolId(0), Tasty.Name("com"), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
         val exampleSym = Tasty.Symbol.Package(SymbolId(1), Tasty.Name("example"), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
-        val fooSym = Tasty.Symbol.Class(
+        val fooSym     = Tasty.Symbol.Class(
             SymbolId(2),
             Tasty.Name("Foo"),
             Tasty.Flags.empty,
@@ -271,7 +271,7 @@ class TastySymbolTest extends kyo.test.Test[Any]:
         val root   = makeRoot()
         val symbol = makeClass("SyntheticFoo", root)
         symbol.scaladoc match
-            case Absent => succeed
+            case Absent       => succeed
             case Present(doc) =>
                 fail(s"Expected Absent for synthetic symbol scaladoc but got Present($doc)")
         end match
@@ -346,7 +346,7 @@ class TastySymbolTest extends kyo.test.Test[Any]:
     // Build Symbol chains with explicit ownerId and assert fullName matches dot-joined segments.
     "Symbol.fullName.asString matches dot-joined segments for a known chain" in {
         import kyo.Tasty.SymbolId
-        val segments = List("com", "example", "MyClass")
+        val segments                       = List("com", "example", "MyClass")
         val syms: List[Tasty.Symbol.Class] = segments.zipWithIndex.map { (seg, i) =>
             val ownerId = if i == 0 then 0 else i - 1
             Tasty.Symbol.Class(
@@ -376,10 +376,10 @@ class TastySymbolTest extends kyo.test.Test[Any]:
 
     "Symbol.kind returns the kind passed to Symbol.make" in {
         import kyo.Tasty.SymbolId
-        val sid   = SymbolId(-1)
-        val n0    = Tasty.Name("X")
-        val flags = Tasty.Flags.empty
-        val tb    = Tasty.TypeBounds(Tasty.Type.Nothing, Tasty.Type.Any)
+        val sid      = SymbolId(-1)
+        val n0       = Tasty.Name("X")
+        val flags    = Tasty.Flags.empty
+        val tb       = Tasty.TypeBounds(Tasty.Type.Nothing, Tasty.Type.Any)
         val classSym = Tasty.Symbol.Class(
             sid,
             n0,

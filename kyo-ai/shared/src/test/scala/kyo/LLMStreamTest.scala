@@ -52,7 +52,7 @@ class LLMStreamTest extends kyo.test.Test[Any]:
                     arrived <- Latch.init(1)
                     seen    <- AtomicRef.init(Chunk.empty[String])
                     _       <- server.enqueueStreamStall(Chunk(argDelta("""{"resultValue":""""), argDelta("partial")))
-                    fiber <- Fiber.init {
+                    fiber   <- Fiber.init {
                         Abort.run[AIException] {
                             LLM.run(config)(Scope.run(AI.stream[String].map(_.foreach { s =>
                                 seen.updateAndGet(_.append(s)).flatMap(cur => Kyo.when(cur.mkString == "partial")(arrived.release))
@@ -95,7 +95,7 @@ class LLMStreamTest extends kyo.test.Test[Any]:
                     proceed   <- Latch.init(1)
                     seen      <- AtomicRef.init(Chunk.empty[Answer])
                     _         <- server.enqueueStream(split.map(argDelta))
-                    fiber <- Fiber.init {
+                    fiber     <- Fiber.init {
                         LLM.run(config)(Scope.run(AI.stream[Answer].map(_.foreach { a =>
                             seen.updateAndGet(_.append(a)).flatMap(cur =>
                                 Kyo.when(cur.size == 1)(firstSeen.release).andThen(proceed.await)
@@ -391,7 +391,7 @@ class LLMStreamTest extends kyo.test.Test[Any]:
         // message behind an opaque incomplete failure. It must instead surface as the same typed leaf the
         // non-streaming 400 produces, driven by the entry's InvalidToolCalls declaration.
         TestCompletionServer.runStreaming { server =>
-            val config = Config.Groq.gpt_oss_20b.apiKey("test").apiUrl(server.baseUrl)
+            val config     = Config.Groq.gpt_oss_20b.apiKey("test").apiUrl(server.baseUrl)
             val errorEvent =
                 """{"error":{"message":"Tool choice is required, but model did not call a tool","type":"invalid_request_error","code":"tool_use_failed","status_code":400}}"""
             server.enqueueStream(Chunk(errorEvent)).andThen {
@@ -417,7 +417,7 @@ class LLMStreamTest extends kyo.test.Test[Any]:
         // loudly, classified by its status the way an HTTP failure is: a mid-stream 429 is a rate limit,
         // not a silently skipped delta.
         TestCompletionServer.runStreaming { server =>
-            val config = serverConfig(server.baseUrl)
+            val config     = serverConfig(server.baseUrl)
             val errorEvent =
                 """{"error":{"message":"slow down","type":"rate_limit_error","status_code":429}}"""
             server.enqueueStream(Chunk(errorEvent)).andThen {
@@ -441,7 +441,7 @@ class LLMStreamTest extends kyo.test.Test[Any]:
         // rejection. This is the streaming mirror of classifyHttp's fail-closed 400 handling: the rejection
         // leaf appears only when the entry declares the code and the body carries exactly it.
         TestCompletionServer.runStreaming { server =>
-            val config = serverConfig(server.baseUrl)
+            val config     = serverConfig(server.baseUrl)
             val errorEvent =
                 """{"error":{"message":"Tool choice is required, but model did not call a tool","type":"invalid_request_error","code":"tool_use_failed","status_code":400}}"""
             server.enqueueStream(Chunk(errorEvent)).andThen {
@@ -548,7 +548,7 @@ class LLMStreamTest extends kyo.test.Test[Any]:
         // Without decoding it, a truncated stream looked identical to one that simply never finished,
         // and failed carrying a buffer dump that named neither the cause nor the knob.
         TestCompletionServer.runStreaming { server =>
-            val config = anthropicServerConfig(server.baseUrl)
+            val config      = anthropicServerConfig(server.baseUrl)
             val ceilingStop =
                 """{"type":"message_delta","delta":{"stop_reason":"max_tokens"},"usage":{"output_tokens":1}}"""
             server.enqueueStream(Chunk(
@@ -574,7 +574,7 @@ class LLMStreamTest extends kyo.test.Test[Any]:
         val _                                                                            = tokens
         // (b) A full collect terminates in the fully decoded Answers and the request carried result_tool.
         TestCompletionServer.runStreaming { server =>
-            val config = serverConfig(server.baseUrl)
+            val config                                                                                 = serverConfig(server.baseUrl)
             val collected: Chunk[Answer] < (Async & Scope & Abort[AIStreamException | AIGenException]) =
                 server.enqueueStream(Chunk(
                     argDelta("{\"resultValue\":[{\"text\":\"he"),
@@ -1116,7 +1116,7 @@ class LLMStreamTest extends kyo.test.Test[Any]:
 
         "Anthropic: the split input and output sides sum to the turn's usage" in {
             TestCompletionServer.runStreaming { server =>
-                val config = anthropicServerConfig(server.baseUrl)
+                val config       = anthropicServerConfig(server.baseUrl)
                 val messageStart =
                     """{"type":"message_start","message":{"usage":{"input_tokens":50,"output_tokens":1,"cache_read_input_tokens":30,"cache_creation_input_tokens":5}}}"""
                 val messageDelta =

@@ -93,8 +93,8 @@ private object RunnerSelfFixtures:
     // completes, so at most globalK leaves are in-flight across ALL suites at once. That is the bound the
     // cross-suite test asserts deterministically.
     object XSuiteCounters:
-        val inFlight: AtomicInteger = new AtomicInteger(0)
-        val peak: AtomicInteger     = new AtomicInteger(0)
+        val inFlight: AtomicInteger  = new AtomicInteger(0)
+        val peak: AtomicInteger      = new AtomicInteger(0)
         def updatePeak(n: Int): Unit =
             var cur = peak.get()
             while n > cur && !peak.compareAndSet(cur, n) do cur = peak.get()
@@ -280,8 +280,8 @@ class RunnerSelfTest extends AsyncFreeSpec with NonImplicitAssertions:
                 TestRunner.runReport(classOf[RunnerSelfFixtures.XSuiteB], cfg)
             )
         ).map { case (reportA, reportB) =>
-            val pathsA = reportA.suiteReports.flatMap(_.leafResults.map(_._1))
-            val pathsB = reportB.suiteReports.flatMap(_.leafResults.map(_._1))
+            val pathsA  = reportA.suiteReports.flatMap(_.leafResults.map(_._1))
+            val pathsB  = reportB.suiteReports.flatMap(_.leafResults.map(_._1))
             val passedA = reportA.suiteReports.forall(_.leafResults.forall {
                 case (_, _: TestResult.Passed) => true
                 case _                         => false

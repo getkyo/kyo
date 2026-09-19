@@ -140,7 +140,6 @@ private[mysql] object HandshakeExchange:
                     val scramble   = handshake.authPluginData
                     val pluginName = handshake.authPluginName
                     computeAuthResponse(pluginName, password, scramble, tlsActive).flatMap { authResponse =>
-
                         // Step 3: Send full HandshakeResponse41 (over TLS if upgraded).
                         val response = HandshakeResponse41(
                             capabilities = clientCaps,
@@ -553,7 +552,7 @@ private[mysql] object HandshakeExchange:
     private def passwordToEncrypt(password: Maybe[String], plugin: String)(using Frame): String < Abort[SqlException] =
         password match
             case Maybe.Present(pw) if pw.nonEmpty => pw
-            case _ =>
+            case _                                =>
                 Abort.fail(SqlConnectionUnexpectedMessageException(
                     s"$plugin full-auth",
                     "no AuthMoreData (RSA PEM); the client sends no key request without a password",

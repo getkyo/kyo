@@ -181,12 +181,11 @@ class AspectTest extends kyo.test.Test[Any]:
 
         val cut =
             Cut[Const[Int], Const[Int], Var[Int]] {
-                [C] =>
-                    (input, cont) =>
-                        for
-                            _      <- Var.update[Int](_ * 2)
-                            result <- cont(input * 2)
-                        yield result
+                [C] => (input, cont) =>
+                    for
+                        _      <- Var.update[Int](_ * 2)
+                        result <- cont(input * 2)
+                    yield result
             }
 
         Var.run(0) {
@@ -229,7 +228,8 @@ class AspectTest extends kyo.test.Test[Any]:
                 (input, cont) =>
                     if input.meta == "init" then
                         cont(Wrapped(input.value, "modified"))
-                    else cont(input)) {
+                    else cont(input)
+            ) {
                 test[String]("test").map { result =>
                     assert(result.value == "test")
                     assert(result.meta == "modified")
@@ -311,10 +311,12 @@ class AspectTest extends kyo.test.Test[Any]:
 
             intProcessor.let([C] =>
                 (input, cont) =>
-                    if input > 0 then cont(input * 2) else None) {
+                    if input > 0 then cont(input * 2) else None
+            ) {
                 stringProcessor.let([C] =>
                     (input, cont) =>
-                        if input.nonEmpty then cont(input.toUpperCase) else None) {
+                        if input.nonEmpty then cont(input.toUpperCase) else None
+                ) {
                     for
                         r1 <- intProcessor(5)(Some(_))
                         r2 <- intProcessor(-5)(Some(_))
@@ -362,10 +364,12 @@ class AspectTest extends kyo.test.Test[Any]:
                     if input.age >= 0 && input.name.nonEmpty then
                         cont(input)
                     else
-                        Left("Invalid user")) {
+                        Left("Invalid user")
+            ) {
                 intValidator.let([C] =>
                     (input, cont) =>
-                        if input >= 0 then cont(input) else Left("Negative number")) {
+                        if input >= 0 then cont(input) else Left("Negative number")
+                ) {
                     for
                         r1 <- userValidator(User("Alice", 25))(Right(_))
                         r2 <- userValidator(User("", -1))(Right(_))

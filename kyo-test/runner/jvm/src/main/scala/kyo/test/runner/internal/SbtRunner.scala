@@ -95,7 +95,7 @@ final private[runner] class SbtRunner(
         parsedArgs match
             case Args.Result.Error(msg) => msg
             case Args.Result.Help       => ""
-            case Args.Result.Ok(_) =>
+            case Args.Result.Ok(_)      =>
                 import scala.jdk.CollectionConverters.*
                 Summary.render(results.asScala, discoveryErrors.get(), positionalArgs)
         end match

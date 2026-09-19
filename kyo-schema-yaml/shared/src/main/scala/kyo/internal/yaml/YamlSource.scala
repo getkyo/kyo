@@ -38,8 +38,8 @@ private[kyo] object YamlSource:
         @tailrec def loop(current: Int): Int =
             if current >= source.length then current
             else
-                val start   = current
-                val content = lineContentStart(current)
+                val start          = current
+                val content        = lineContentStart(current)
                 val blankOrComment =
                     content >= source.length ||
                         source.charAt(content) == '\n' ||
@@ -149,9 +149,9 @@ private[kyo] object YamlSource:
 
             @tailrec def loop(start: Int, append: Boolean): Unit =
                 if start <= text.length then
-                    val stop = lineStop(start)
-                    val from = trimStart(start, stop)
-                    val to   = trimEnd(from, stop)
+                    val stop       = lineStop(start)
+                    val from       = trimStart(start, stop)
+                    val to         = trimEnd(from, stop)
                     val nextAppend =
                         if from < to then
                             if append then out.append(' ')

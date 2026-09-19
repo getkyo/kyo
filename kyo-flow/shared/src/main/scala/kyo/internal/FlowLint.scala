@@ -68,7 +68,7 @@ private[kyo] object FlowLint:
                 Schema[V],
                 Tag[State],
                 Schema[State]
-            ) = Chunk(name)
+            )                                                                                                                 = Chunk(name)
             override def onForEach[V](name: String, concurrency: Int, frame: Frame, meta: Flow.Meta)(using Tag[V], Schema[V]) =
                 Chunk(name)
             override def onSubflow(name: String, childFlow: Flow[?, ?, ?], child: Chunk[String], frame: Frame, meta: Flow.Meta) =
@@ -134,7 +134,7 @@ private[kyo] object FlowLint:
     private def join(left: Names, right: Names, composition: String, exemptShared: Boolean): Names =
         val shared = (left.written & (right.written ++ right.read.keySet)) ++ (right.written & left.read.keySet)
         val exempt = if exemptShared then left.result.keySet & right.result.keySet else Set.empty[String]
-        val found = (shared -- exempt).toSeq.sorted.map { name =>
+        val found  = (shared -- exempt).toSeq.sorted.map { name =>
             FlowNameConflict(name, composition, (left.locationsOf(name) ++ right.locationsOf(name)).toSeq)
         }
         Names(
@@ -230,7 +230,7 @@ private[kyo] object FlowLint:
                 Schema[V],
                 Tag[State],
                 Schema[State]
-            ) = Chunk(name)
+            )                                                                                                                 = Chunk(name)
             override def onForEach[V](name: String, concurrency: Int, frame: Frame, meta: Flow.Meta)(using Tag[V], Schema[V]) =
                 Chunk(name)
             override def onSubflow(name: String, childFlow: Flow[?, ?, ?], child: Chunk[String], frame: Frame, meta: Flow.Meta) =
@@ -264,7 +264,7 @@ private[kyo] object FlowLint:
                 Schema[V],
                 Tag[State],
                 Schema[State]
-            ) = Chunk(name)
+            )                                                                                                                 = Chunk(name)
             override def onForEach[V](name: String, concurrency: Int, frame: Frame, meta: Flow.Meta)(using Tag[V], Schema[V]) =
                 Chunk(name)
             // The subflow's own name and not its child's: these are the names the PARENT's record carries, and a child's

@@ -81,7 +81,7 @@ private[posix] trait TlsEngineIo:
     private[posix] def plaintextStagingFor(handle: PosixHandle, size: Int)(using AllowUnsafe): Buffer[Byte] =
         handle.plaintextStaging match
             case Present(buf) if buf.size >= size => buf
-            case _ =>
+            case _                                =>
                 handle.plaintextStaging.foreach(_.close())
                 val buf = Buffer.alloc[Byte](size)
                 handle.plaintextStaging = Present(buf)
@@ -95,7 +95,7 @@ private[posix] trait TlsEngineIo:
     private[posix] def encryptDrainFor(handle: PosixHandle)(using AllowUnsafe): Buffer[Byte] =
         handle.encryptDrain match
             case Present(buf) => buf
-            case Absent =>
+            case Absent       =>
                 val buf = Buffer.alloc[Byte](handle.readBufferSize)
                 handle.encryptDrain = Present(buf)
                 buf
@@ -226,7 +226,7 @@ private[posix] trait TlsEngineIo:
         val buf =
             handle.pendingCipher match
                 case Present(b) => b
-                case Absent =>
+                case Absent     =>
                     val b = new GrowableByteBuffer
                     handle.pendingCipher = Present(b)
                     b
@@ -239,7 +239,7 @@ private[posix] trait TlsEngineIo:
     private[posix] def drainFor(handle: PosixHandle)(using AllowUnsafe): Buffer[Byte] =
         handle.decryptDrain match
             case Present(buf) => buf
-            case Absent =>
+            case Absent       =>
                 val buf = Buffer.alloc[Byte](handle.readBufferSize)
                 handle.decryptDrain = Present(buf)
                 buf
@@ -251,7 +251,7 @@ private[posix] trait TlsEngineIo:
     private[posix] def accFor(handle: PosixHandle): GrowableByteBuffer =
         handle.decryptAcc match
             case Present(acc) => acc
-            case Absent =>
+            case Absent       =>
                 val acc = new GrowableByteBuffer
                 handle.decryptAcc = Present(acc)
                 acc

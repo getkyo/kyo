@@ -62,8 +62,8 @@ class CompilerPoolTest extends kyo.test.Test[Any]:
 
     "one instance per config: two concurrent ops on the same config reuse it; eviction triggers recreate" in {
         Scope.run {
-            val cfg = minConfig("one-instance")
-            val uri = Compiler.Uri("Test.scala")
+            val cfg      = minConfig("one-instance")
+            val uri      = Compiler.Uri("Test.scala")
             val settings =
                 Compiler.Pool.Settings(isolate = false, maxConcurrentCompiles = 4, maxLiveCompilers = 2, idleEviction = Duration.Zero)
 
@@ -133,7 +133,7 @@ class CompilerPoolTest extends kyo.test.Test[Any]:
                             makePool(settings, instances).map { pool =>
                                 val N = 4
                                 for
-                                    gate <- Latch.init(1)
+                                    gate   <- Latch.init(1)
                                     fibers <- Kyo.fill(N) {
                                         Fiber.initUnscoped {
                                             gate.await.andThen {
@@ -212,7 +212,7 @@ class CompilerPoolTest extends kyo.test.Test[Any]:
             val overlapCount = new java.util.concurrent.atomic.AtomicInteger(0)
             val maxOverlap   = new java.util.concurrent.atomic.AtomicInteger(0)
             val cfg          = minConfig("serialize")
-            val settings =
+            val settings     =
                 Compiler.Pool.Settings(isolate = false, maxConcurrentCompiles = 4, maxLiveCompilers = 16, idleEviction = Duration.Zero)
 
             Channel.initUnscoped[Unit](2).map { parkCh =>
@@ -277,7 +277,7 @@ class CompilerPoolTest extends kyo.test.Test[Any]:
         Scope.run {
             val inFlight    = new java.util.concurrent.atomic.AtomicInteger(0)
             val maxInFlight = new java.util.concurrent.atomic.AtomicInteger(0)
-            val settings =
+            val settings    =
                 Compiler.Pool.Settings(isolate = false, maxConcurrentCompiles = 2, maxLiveCompilers = 16, idleEviction = Duration.Zero)
             val cfgA = minConfig("capA")
             val cfgB = minConfig("capB")
@@ -356,8 +356,8 @@ class CompilerPoolTest extends kyo.test.Test[Any]:
 
     "pool isolation: a failure on config A does not affect config B" in {
         Scope.run {
-            val cfgA = minConfig("iso-a")
-            val cfgB = minConfig("iso-b")
+            val cfgA     = minConfig("iso-a")
+            val cfgB     = minConfig("iso-b")
             val settings =
                 Compiler.Pool.Settings(isolate = false, maxConcurrentCompiles = 4, maxLiveCompilers = 16, idleEviction = Duration.Zero)
 
@@ -434,7 +434,7 @@ class CompilerPoolTest extends kyo.test.Test[Any]:
     "cross-config parallelism: two ops on distinct configs run in the backend simultaneously" in {
         Scope.run {
             val maxConcurrent = new java.util.concurrent.atomic.AtomicInteger(0)
-            val settings =
+            val settings      =
                 Compiler.Pool.Settings(isolate = false, maxConcurrentCompiles = 4, maxLiveCompilers = 16, idleEviction = Duration.Zero)
             val cfgA = minConfig("par-a")
             val cfgB = minConfig("par-b")
@@ -491,7 +491,7 @@ class CompilerPoolTest extends kyo.test.Test[Any]:
 
                                                     // Both must be in the backend at the same time.
                                                     snapshot = inFlight.get()
-                                                    _ = assert(
+                                                    _        = assert(
                                                         snapshot == 2,
                                                         s"expected 2 concurrent ops on distinct configs, got $snapshot"
                                                     )
@@ -520,7 +520,7 @@ class CompilerPoolTest extends kyo.test.Test[Any]:
         Scope.run {
             val createCount = new java.util.concurrent.atomic.AtomicInteger(0)
             val cfg         = minConfig("lazy", version = CompilerPool.ownVersion)
-            val settings =
+            val settings    =
                 Compiler.Pool.Settings(isolate = false, maxConcurrentCompiles = 4, maxLiveCompilers = 16, idleEviction = Duration.Zero)
 
             Cache.initWithFinalizer[Compiler.Config, Promise[Instance, Abort[CompilerException]]](
@@ -556,8 +556,8 @@ class CompilerPoolTest extends kyo.test.Test[Any]:
     "pool eviction closes the Instance via the Cache finalizer" in {
         Scope.run {
             Channel.initUnscoped[String](4).map { closedCh =>
-                val cfgA = minConfig("evict-a")
-                val cfgB = minConfig("evict-b")
+                val cfgA     = minConfig("evict-a")
+                val cfgB     = minConfig("evict-b")
                 val settings =
                     Compiler.Pool.Settings(isolate = false, maxConcurrentCompiles = 4, maxLiveCompilers = 1, idleEviction = Duration.Zero)
 
@@ -623,7 +623,7 @@ class CompilerPoolTest extends kyo.test.Test[Any]:
             Channel.initUnscoped[String](4).map { closedCh =>
                 val cfg          = minConfig("stuck")
                 val stuckTimeout = 500.millis
-                val settings =
+                val settings     =
                     Compiler.Pool.Settings(isolate = false, maxConcurrentCompiles = 4, maxLiveCompilers = 16, idleEviction = Duration.Zero)
 
                 // A backend whose op never returns: only the leg-3 timeout can end it. Its close-on-evict

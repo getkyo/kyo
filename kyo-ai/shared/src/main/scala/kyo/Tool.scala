@@ -229,7 +229,7 @@ object Tool:
             frame: Frame
         ): (Chunk[Info[?, ?, LLM]], ResultCapture[A]) < Sync =
             AtomicRef.init((Maybe.empty[A], 0, Maybe.empty[String])).map { ref =>
-                val capture = ResultCapture[A](ref)
+                val capture                                                               = ResultCapture[A](ref)
                 def accept(resultValue: A): String < (LLM & Sync & Abort[AIGenException]) =
                     val conformed =
                         resultValue match
@@ -297,7 +297,7 @@ object Tool:
         private[kyo] def decodeArguments(arguments: String)(using Schema[Any], Frame): (Result[DecodeException, Any], Maybe[String]) =
             Json.decode[Any](arguments) match
                 case ok @ Result.Success(_) => (ok, Absent)
-                case failed =>
+                case failed                 =>
                     @scala.annotation.tailrec
                     def salvage(end: Int): (Result[DecodeException, Any], Maybe[String]) =
                         if end <= 0 then (failed, Absent)
@@ -371,7 +371,7 @@ object Tool:
                                             )
                                         ).map {
                                             case Result.Success(out) => out
-                                            case error =>
+                                            case error               =>
                                                 p"""
                                                 Tool '${tool.name}' failed:
                                                 ${error}

@@ -244,7 +244,7 @@ class AbortCombinatorsTest extends kyo.test.Test[Any]:
             }
 
             "should map union abort" in {
-                val effect1 = Abort.fail[String | Int | Boolean]("failure")
+                val effect1       = Abort.fail[String | Int | Boolean]("failure")
                 val effect1Mapped = effect1.mapAbort:
                     case str: String => 0
                     case _           => -1
@@ -346,7 +346,7 @@ class AbortCombinatorsTest extends kyo.test.Test[Any]:
                     }.orThrow
                 assert(handledFailure.eval == 100)
                 val success: Int < Abort[String] = 23
-                val handledSuccess: Int < Any =
+                val handledSuccess: Int < Any    =
                     success.recover {
                         case "wrong"   => 99
                         case "failure" => 100
@@ -376,7 +376,7 @@ class AbortCombinatorsTest extends kyo.test.Test[Any]:
                 val handledFailure: Result[String, Int] < Any =
                     Abort.run[String](caughtFailure)
                 assert(handledFailure.eval == Result.succeed(100))
-                val success: Int < Abort[String] = 23
+                val success: Int < Abort[String]       = 23
                 val caughtSuccess: Int < Abort[String] =
                     success.recoverSome {
                         case "failure" => 100
@@ -401,7 +401,7 @@ class AbortCombinatorsTest extends kyo.test.Test[Any]:
 
         "foldAbort" - {
             "should handle success and fail case, leaving panics unhandled, when two handlers provided" in {
-                val success: Int < Abort[String] = 23
+                val success: Int < Abort[String]            = 23
                 val handledSuccess: String < Abort[Nothing] =
                     success.foldAbort(
                         i => i.toString,
@@ -416,8 +416,8 @@ class AbortCombinatorsTest extends kyo.test.Test[Any]:
                         identity
                     )
                 assert(handledFailure.orThrow.eval == "failure")
-                val exc                        = Exception("message")
-                val panic: Int < Abort[String] = Abort.panic(exc)
+                val exc                                   = Exception("message")
+                val panic: Int < Abort[String]            = Abort.panic(exc)
                 val handledPanic: String < Abort[Nothing] = panic.foldAbort(
                     i => i.toString,
                     identity
@@ -644,19 +644,19 @@ class AbortCombinatorsTest extends kyo.test.Test[Any]:
             "recoverSome" - {
                 "should catch some abort with partial function" in {
                     val effect: Int < Abort[String | Boolean] = Abort.fail("error")
-                    val caught = effect.forAbort[String].recoverSome {
+                    val caught                                = effect.forAbort[String].recoverSome {
                         case "error" => 99
                     }
                     assert(Abort.run[Any](caught).eval == Result.succeed(99))
 
                     val effect2: Int < Abort[String | Boolean] = Abort.fail("other")
-                    val caught2 = effect2.forAbort[String].recoverSome {
+                    val caught2                                = effect2.forAbort[String].recoverSome {
                         case "error" => 99
                     }
                     assert(Abort.run[Any](caught2).eval == Result.fail("other"))
 
                     val effect3: Int < Abort[String | Boolean] = 42
-                    val caught3 = effect3.forAbort[String].recoverSome {
+                    val caught3                                = effect3.forAbort[String].recoverSome {
                         case "error" => 99
                     }
                     assert(Abort.run[Any](caught3).eval == Result.succeed(42))
@@ -695,7 +695,7 @@ class AbortCombinatorsTest extends kyo.test.Test[Any]:
 
             "fold" - {
                 "should handle success and fail case, throwing panics, when two handlers provided" in {
-                    val success: Int < Abort[String | Boolean] = 23
+                    val success: Int < Abort[String | Boolean]  = 23
                     val handledSuccess: String < Abort[Boolean] =
                         success.forAbort[String].fold(
                             i => i.toString,
@@ -814,7 +814,7 @@ class AbortCombinatorsTest extends kyo.test.Test[Any]:
                     }
 
                     "failing panic without forAbort" in {
-                        val exception = Exception("failure")
+                        val exception                                  = Exception("failure")
                         val effect: Unit < (Var[Int] & Abort[Nothing]) =
                             for
                                 _ <- Var.update[Int](_ + 1)
@@ -830,7 +830,7 @@ class AbortCombinatorsTest extends kyo.test.Test[Any]:
                     }
 
                     "failing panic with forAbort" in {
-                        val exception = Exception("failure")
+                        val exception                              = Exception("failure")
                         val effect: Unit < (Var[Int] & Abort[Int]) =
                             for
                                 _ <- Var.update[Int](_ + 1)

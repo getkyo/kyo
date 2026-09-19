@@ -132,8 +132,8 @@ object KyoPodDevRunner extends KyoApp:
             case None          => baseConfig
 
         for
-            _ <- ensureImage
-            _ <- Console.printLine(s"[kyo-pod-dev] launching: $testCmd")
+            _    <- ensureImage
+            _    <- Console.printLine(s"[kyo-pod-dev] launching: $testCmd")
             exit <- Container.initWith(config) { c =>
                 for
                     _    <- c.logStream.foreach(e => Console.printLine(s"[${e.source}] ${e.content}"))

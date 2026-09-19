@@ -35,7 +35,7 @@ private[kyo] object SchedulerDiagnostics:
         }
 
     private def render(): String =
-        val s = Scheduler.get.status()
+        val s       = Scheduler.get.status()
         val workers =
             s.workers.iterator.zipWithIndex.map {
                 case (w, i) =>

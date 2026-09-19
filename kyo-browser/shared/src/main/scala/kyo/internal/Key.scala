@@ -142,24 +142,24 @@ private[kyo] object KeyInfo:
     /** Maps a Key to its CDP descriptor. Unknown keys fall back to keyCode 0, which is the standard "unidentified" keyCode. */
     private[kyo] def mapKey(key: Key): KeyInfo =
         key.value match
-            case "\uE006" => EnterKey
-            case "\uE004" => TabKey
-            case "\uE003" => BackspaceKey
-            case "\uE00C" => EscapeKey
-            case "\uE013" => ArrowUpKey
-            case "\uE015" => ArrowDownKey
-            case "\uE012" => ArrowLeftKey
-            case "\uE014" => ArrowRightKey
-            case "\uE011" => HomeKey
-            case "\uE010" => EndKey
-            case "\uE00E" => PageUpKey
-            case "\uE00F" => PageDownKey
-            case "\uE017" => DeleteKey
-            case " "      => SpaceKey
-            case "\uE008" => ShiftKey
-            case "\uE009" => ControlKey
-            case "\uE00A" => AltKey
-            case "\uE03D" => MetaKey
+            case "\uE006"                   => EnterKey
+            case "\uE004"                   => TabKey
+            case "\uE003"                   => BackspaceKey
+            case "\uE00C"                   => EscapeKey
+            case "\uE013"                   => ArrowUpKey
+            case "\uE015"                   => ArrowDownKey
+            case "\uE012"                   => ArrowLeftKey
+            case "\uE014"                   => ArrowRightKey
+            case "\uE011"                   => HomeKey
+            case "\uE010"                   => EndKey
+            case "\uE00E"                   => PageUpKey
+            case "\uE00F"                   => PageDownKey
+            case "\uE017"                   => DeleteKey
+            case " "                        => SpaceKey
+            case "\uE008"                   => ShiftKey
+            case "\uE009"                   => ControlKey
+            case "\uE00A"                   => AltKey
+            case "\uE03D"                   => MetaKey
             case other if other.length == 1 =>
                 val (code, vk) = physicalKey(other.charAt(0))
                 KeyInfo(other, vk, Maybe(other), code, 0)

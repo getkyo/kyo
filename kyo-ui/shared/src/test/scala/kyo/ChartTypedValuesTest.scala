@@ -192,7 +192,7 @@ class ChartTypedValuesTest extends kyo.test.Test[Any]:
             override def toString: String = "T"
         case class Item(name: String, value: Double, tier: Tier)
         given CanEqual[Item, Item] = CanEqual.derived
-        val rows = Chunk(
+        val rows                   = Chunk(
             Item("a", 10.0, Tier.Gold),
             Item("b", 20.0, Tier.Silver)
         )
@@ -319,8 +319,8 @@ class ChartTypedValuesTest extends kyo.test.Test[Any]:
         )
         val spec = Chart(rows)(line(x = _.month, y = _.value))
         (spec).lower.map { root =>
-            val paths    = marksPaths(root)
-            val commands = Svg.PathData.commands(paths(0).svgAttrs.d.getOrElse(Svg.PathData.empty))
+            val paths       = marksPaths(root)
+            val commands    = Svg.PathData.commands(paths(0).svgAttrs.d.getOrElse(Svg.PathData.empty))
             val moveToCount = commands.count:
                 case _: PathCommand.MoveTo => true
                 case _                     => false

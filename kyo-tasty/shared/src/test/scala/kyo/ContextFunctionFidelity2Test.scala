@@ -26,7 +26,6 @@ class ContextFunctionFidelity2Test extends Fidelity2TestBase:
 
     "classpath symbols have at least one ContextFunction in their types" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
-
             def walkType(t: Tasty.Type): Int =
                 var n = 0
                 t.foreach {

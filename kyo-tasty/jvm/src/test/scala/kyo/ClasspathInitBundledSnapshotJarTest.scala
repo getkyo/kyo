@@ -118,7 +118,7 @@ class ClasspathInitBundledSnapshotJarTest extends kyo.test.Test[Any]:
         val bundledContent1File = writeTempJar(bundledContent)
         val bundledDigest       = DigestComputer.digestForRoot(bundledContent1File.getAbsolutePath)
         val bundledSnapshot     = syntheticSnapshotBytes(3, bundledDigest)
-        val bundledFinal = buildZipBytes(
+        val bundledFinal        = buildZipBytes(
             "A.class"                              -> Array[Byte](0xca.toByte),
             BundledSnapshotProbe.snapshotEntryPath -> bundledSnapshot
         )

@@ -55,7 +55,7 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
             case g: Svg.G =>
                 g.children.flatMap:
                     case r: Svg.Rect => Chunk(r)
-                    case ig: Svg.G =>
+                    case ig: Svg.G   =>
                         ig.children.collect { case r: Svg.Rect => r }
                     case _ => Chunk.empty
             case _ => Chunk.empty
@@ -559,7 +559,7 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
 
     "with hiddenSeries={0}, the catA bar (index 0) is dropped from the marks while catB remains" in {
         // catA at x-band "p" (index 0), catB at x-band "q" (index 1). Hiding index 0 drops catA's bar.
-        val rowsFull = Chunk(CatRow("p", 1.0, "catA"), CatRow("q", 2.0, "catB"))
+        val rowsFull                                  = Chunk(CatRow("p", 1.0, "catA"), CatRow("q", 2.0, "catB"))
         def markBars(root: Svg.Root): Chunk[Svg.Rect] =
             rectsIn(root).filter(r => !(coordNum(r.svgAttrs.width).contains(12.0) && coordNum(r.svgAttrs.height).contains(12.0)))
         for
@@ -791,7 +791,7 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
             selectRef <- Signal.initRef[Maybe[Sale]](Absent)
             rows   = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
             signal = Signal.initConst[Seq[Sale]](rows)
-            spec = Chart(signal: Signal[Seq[Sale]])(bar(x = _.month, y = _.revenue))
+            spec   = Chart(signal: Signal[Seq[Sale]])(bar(x = _.month, y = _.revenue))
                 .onSelect(selectRef)
             root <- (spec).lower
             html <- HtmlRenderer.render(root, Seq.empty)
@@ -809,7 +809,7 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
             selectRef <- Signal.initRef[Maybe[Sale]](Absent)
             rows   = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
             signal = Signal.initConst[Seq[Sale]](rows)
-            spec = Chart(signal: Signal[Seq[Sale]])(bar(x = _.month, y = _.revenue))
+            spec   = Chart(signal: Signal[Seq[Sale]])(bar(x = _.month, y = _.revenue))
                 .onSelect(selectRef)
                 .interaction(_.highlightSelect)
             root       <- (spec).lower
@@ -834,7 +834,7 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
             selectRef <- Signal.initRef[Maybe[Sale]](Absent)
             rows   = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
             signal = Signal.initConst[Seq[Sale]](rows)
-            spec = Chart(signal: Signal[Seq[Sale]])(line(x = _.month, y = _.revenue))
+            spec   = Chart(signal: Signal[Seq[Sale]])(line(x = _.month, y = _.revenue))
                 .onSelect(selectRef)
             root <- (spec).lower
             html <- HtmlRenderer.render(root, Seq.empty)
@@ -850,7 +850,7 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
             selectRef <- Signal.initRef[Maybe[Sale]](Absent)
             rows   = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
             signal = Signal.initConst[Seq[Sale]](rows)
-            spec = Chart(signal: Signal[Seq[Sale]])(line(x = _.month, y = _.revenue))
+            spec   = Chart(signal: Signal[Seq[Sale]])(line(x = _.month, y = _.revenue))
                 .onSelect(selectRef)
                 .interaction(_.highlightSelect)
             root       <- (spec).lower
@@ -875,7 +875,7 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
             selectRef <- Signal.initRef[Maybe[Sale]](Absent)
             rows   = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
             signal = Signal.initConst[Seq[Sale]](rows)
-            spec = Chart(signal: Signal[Seq[Sale]])(area(x = _.month, y = _.revenue))
+            spec   = Chart(signal: Signal[Seq[Sale]])(area(x = _.month, y = _.revenue))
                 .onSelect(selectRef)
             root <- (spec).lower
             html <- HtmlRenderer.render(root, Seq.empty)
@@ -891,7 +891,7 @@ class ChartInteractionTest extends kyo.test.Test[Any]:
             selectRef <- Signal.initRef[Maybe[Sale]](Absent)
             rows   = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
             signal = Signal.initConst[Seq[Sale]](rows)
-            spec = Chart(signal: Signal[Seq[Sale]])(area(x = _.month, y = _.revenue))
+            spec   = Chart(signal: Signal[Seq[Sale]])(area(x = _.month, y = _.revenue))
                 .yScale(_.linear(0, 2000))
                 .onSelect(selectRef)
                 .interaction(_.highlightSelect)

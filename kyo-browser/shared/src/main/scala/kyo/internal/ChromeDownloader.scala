@@ -33,7 +33,7 @@ private[kyo] object ChromeDownloader:
     ): String < (Async & Abort[BrowserSetupException]) =
         Abort.run[HttpException](HttpClient.getJson[ChromeForTestingMetadata](cfg.metadataUrl)).map {
             case Result.Success(meta) => meta.channels.Stable.version
-            case Result.Failure(err) =>
+            case Result.Failure(err)  =>
                 Log.warn(s"ChromeDownloader.latestVersion: metadata lookup failed ($err); falling back to ${cfg.fallbackVersion}")
                     .andThen(cfg.fallbackVersion)
             case Result.Panic(ex) =>
@@ -78,7 +78,7 @@ private[kyo] object ChromeDownloader:
             versionDir = root / s"${artifactName(build)}-$v-$platform"
             exec       = executablePath(versionDir, platform, build)
             cached <- Abort.recover[FileSystemException](_ => false)(Path.runReadOnly(exec.exists))
-            _ <-
+            _      <-
                 if cached then Kyo.unit
                 else download(build, v, platform, versionDir)
         yield exec.toString
@@ -104,7 +104,7 @@ private[kyo] object ChromeDownloader:
             case (System.OS.Linux, System.Arch.X86_64)   => "linux64"
             case (System.OS.Windows, System.Arch.X86_64) => "win64"
             case (System.OS.Windows, System.Arch.X86)    => "win32"
-            case other =>
+            case other                                   =>
                 Abort.fail[BrowserSetupException](
                     BrowserSetupFailedException(unsupportedPlatformMessage(other))
                 )

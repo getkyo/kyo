@@ -279,7 +279,7 @@ object Channel:
                 Loop.forever:
                     drainEffect.map:
                         case chunk if chunk.nonEmpty => Emit.value(chunk)
-                        case _ =>
+                        case _                       =>
                             Channel.take(self).map { a =>
                                 Channel.drainUpTo(self)(maxChunkSize - 1)
                                     .map(ch => Emit.value(Chunk(a).concat(ch)))

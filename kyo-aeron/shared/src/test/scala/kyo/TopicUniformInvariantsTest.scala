@@ -19,7 +19,7 @@ class TopicUniformInvariantsTest extends Test:
         val run1 = Topic.run {
             for
                 started <- Latch.init(1)
-                fiber <- Fiber.initUnscoped(using Topic.isolate)(
+                fiber   <- Fiber.initUnscoped(using Topic.isolate)(
                     started.release.andThen(Topic.stream[Int]("aeron:ipc").take(3).run)
                 )
                 _        <- started.await
@@ -30,7 +30,7 @@ class TopicUniformInvariantsTest extends Test:
         val run2 = Topic.run {
             for
                 started <- Latch.init(1)
-                fiber <- Fiber.initUnscoped(using Topic.isolate)(
+                fiber   <- Fiber.initUnscoped(using Topic.isolate)(
                     started.release.andThen(Topic.stream[Int]("aeron:ipc").take(3).run)
                 )
                 _        <- started.await
@@ -68,7 +68,7 @@ class TopicUniformInvariantsTest extends Test:
             }.map(_.toSet)
         for
             before <- embeddedDirs
-            _ <- Loop.indexed { i =>
+            _      <- Loop.indexed { i =>
                 if i >= n then Loop.done
                 else
                     // An empty body still exercises the full embedded() lifecycle (alloc dir, start
@@ -94,7 +94,7 @@ class TopicUniformInvariantsTest extends Test:
         Topic.run {
             for
                 started <- Latch.init(1)
-                fiber <- Fiber.initUnscoped(using Topic.isolate)(
+                fiber   <- Fiber.initUnscoped(using Topic.isolate)(
                     started.release.andThen(Topic.stream[Int]("aeron:ipc").take(3).run)
                 )
                 _        <- started.await
@@ -115,7 +115,7 @@ class TopicUniformInvariantsTest extends Test:
                 Topic.run(dir) {
                     for
                         started <- Latch.init(1)
-                        fiber <- Fiber.initUnscoped(using Topic.isolate)(
+                        fiber   <- Fiber.initUnscoped(using Topic.isolate)(
                             started.release.andThen(Topic.stream[String]("aeron:ipc").take(2).run)
                         )
                         _        <- started.await
@@ -136,7 +136,7 @@ class TopicUniformInvariantsTest extends Test:
             Topic.run(dir) {
                 for
                     started <- Latch.init(1)
-                    fiber <- Fiber.initUnscoped(using Topic.isolate)(
+                    fiber   <- Fiber.initUnscoped(using Topic.isolate)(
                         started.release.andThen(Topic.stream[String]("aeron:ipc", streamId = Present(streamId)).take(payload.size).run)
                     )
                     _        <- started.await
@@ -208,7 +208,7 @@ class TopicUniformInvariantsTest extends Test:
     // run(v) and run(client) produce A < (Async & S); run(aeronDir) adds the failable external-connect
     // row. The ascriptions pin the rows, then all three drive a present-driver round-trip.
     "all three run overloads funnel through runWith; cross-backend type-identical rows" in {
-        val _: Int < Async = Topic.run(42)
+        val _: Int < Async                                          = Topic.run(42)
         val _: Int < (Async & Abort[TopicTransportFailedException]) = Scope.run(AeronClient.connect(Path("/dev/shm", "type-probe")).map {
             c =>
                 Topic.run(c)(42)

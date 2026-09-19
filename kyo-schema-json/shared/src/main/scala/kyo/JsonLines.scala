@@ -343,7 +343,7 @@ object JsonLines:
                 case -1 =>
                     settle(held.add(span), offset, nextIndex, Chunk.empty)
                 case nl =>
-                    val (index, lines) = resolveSpanning(held, offset, span, nl)
+                    val (index, lines)                            = resolveSpanning(held, offset, span, nl)
                     val (start, restOffset, restIndex, restLines) =
                         emitFrom(span, nl + 1, offset + held.size + nl + 1, index, lines)
                     settle(Pending.empty.add(span.slice(start, span.size)), restOffset, restIndex, restLines)

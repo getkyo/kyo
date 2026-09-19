@@ -10,7 +10,7 @@ class SchedulerTest extends AnyFreeSpec with NonImplicitAssertions {
 
     "schedule" - {
         "enqueues tasks to workers" in withScheduler { scheduler =>
-            val cdl = new CountDownLatch(1)
+            val cdl   = new CountDownLatch(1)
             val task1 = TestTask(_run = () => {
                 cdl.await()
                 Task.Done
@@ -35,7 +35,7 @@ class SchedulerTest extends AnyFreeSpec with NonImplicitAssertions {
         }
 
         "handles scheduling from within a task" in withScheduler { scheduler =>
-            val cdl = new CountDownLatch(1)
+            val cdl  = new CountDownLatch(1)
             val task = TestTask(_run =
                 () => {
                     scheduler.schedule(TestTask(_run = () => {
@@ -119,8 +119,8 @@ class SchedulerTest extends AnyFreeSpec with NonImplicitAssertions {
         }
 
         "covers all busy workers, not first-only" in withScheduler { scheduler =>
-            val n   = 3
-            val cdl = new CountDownLatch(1)
+            val n     = 3
+            val cdl   = new CountDownLatch(1)
             val tasks = List.fill(n)(TestTask(_run = () => {
                 cdl.await()
                 Task.Done
@@ -140,7 +140,7 @@ class SchedulerTest extends AnyFreeSpec with NonImplicitAssertions {
         }
 
         "is total under concurrent worker mutation" in withScheduler { scheduler =>
-            val cdl = new CountDownLatch(1)
+            val cdl  = new CountDownLatch(1)
             val task = TestTask(_run = () => {
                 cdl.await()
                 Task.Done
@@ -171,9 +171,10 @@ class SchedulerTest extends AnyFreeSpec with NonImplicitAssertions {
             // clamps currentWorkers >= blocked + minWorkers regardless of jitter, keeping minWorkers runnable carriers, so the task runs.
             // The load is real CPU contention, not an injected jitter value, so this exercises the real probe -> shrink -> floor path;
             // keep it that way rather than reducing it to a mocked measurement.
-            val cfg = Scheduler.Config.default.copy(cores = 4, coreWorkers = 4, minWorkers = 2, maxWorkers = 400)
+            val cfg         = Scheduler.Config.default.copy(cores = 4, coreWorkers = 4, minWorkers = 2, maxWorkers = 400)
             val hostThreads =
-                Runtime.getRuntime().availableProcessors() * 4 // 4x oversubscription: reliably drives the regulator's probe jitter over its shrink threshold, even on a 4-vCPU CI runner
+                Runtime.getRuntime().availableProcessors() *
+                    4 // 4x oversubscription: reliably drives the regulator's probe jitter over its shrink threshold, even on a 4-vCPU CI runner
             val load = java.util.concurrent.Executors.newFixedThreadPool(hostThreads, kyo.scheduler.util.Threads("host-load"))
             withScheduler(cfg) { s =>
                 val gate   = new CountDownLatch(1)

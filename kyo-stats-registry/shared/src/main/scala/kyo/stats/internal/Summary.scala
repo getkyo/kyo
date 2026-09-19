@@ -11,7 +11,7 @@ case class Summary(
     sum: Double
 ) {
     def percentile(v: Double): Double = {
-        val target = (v * count / 100.0).toLong
+        val target                                          = (v * count / 100.0).toLong
         @tailrec def loop(i: Int, cumulative: Long): Double =
             if (i >= bucketCounts.length) {
                 if (boundaries.nonEmpty)

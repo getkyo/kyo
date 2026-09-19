@@ -162,7 +162,7 @@ object JvmEmitter extends EmitterBase.Ops with PlatformTypes:
                         fqcn,
                         throw new IllegalStateException(s"struct '$fqcn' not found in trait ${spec.fqcn}")
                     )
-                    val segN = s"${name}Seg"
+                    val segN  = s"${name}Seg"
                     val setup =
                         s"val $segN = __kyoScratch.alloc(${layoutConst(sSpec)}.byteSize(), ${layoutConst(sSpec)}.byteAlignment(), $fqnLit, $methodLit)" ::
                             emitStructWrite(name, segN, sSpec, structsByName, "0L", spec.fqcn, method.scalaName)
@@ -197,9 +197,9 @@ object JvmEmitter extends EmitterBase.Ops with PlatformTypes:
                     //
                     // Transient callbacks allocate a per-call `Arena.ofConfined()` that is closed in finally.
                     // Retained callbacks use `cbArena` from the guard (unchanged).
-                    val stubN  = s"${name}Stub"
-                    val arity  = params.size
-                    val descId = callbackDescName(method.scalaName, p.name)
+                    val stubN    = s"${name}Stub"
+                    val arity    = params.size
+                    val descId   = callbackDescName(method.scalaName, p.name)
                     val kindName = method.callbackKind match
                         case CallbackKind.Transient => "transient"
                         case CallbackKind.Retained  => "retained"
@@ -256,7 +256,7 @@ object JvmEmitter extends EmitterBase.Ops with PlatformTypes:
                 var running = 0L
                 val buf     = List.newBuilder[OutSeg]
                 sSpec.fields.drop(1).foreach { f =>
-                    val n = s"${f.name}Out"
+                    val n                         = s"${f.name}Out"
                     val (fAlign, fSize, readExpr) = f.tpe match
                         case TypeRef.StringT =>
                             // String out-param: C writes a `char*` pointer into an 8-byte slot. Reinterpret the address
@@ -462,7 +462,7 @@ object JvmEmitter extends EmitterBase.Ops with PlatformTypes:
             case ReturnShape.Primitive(_) =>
                 retValName
             case ReturnShape.MultiValue(sSpec) =>
-                val head = sSpec.fields.head
+                val head     = sSpec.fields.head
                 val headExpr =
                     head.tpe match
                         case TypeRef.BooleanT => s"$retValName != 0"
@@ -500,13 +500,13 @@ object JvmEmitter extends EmitterBase.Ops with PlatformTypes:
                 val elemScala    = scalaTypeOf(elem)
                 val elemBytes    = primitiveBytes(elem)
                 val reinterpretE = s"$retValName.reinterpret($sp.toLong * ${elemBytes}L)"
-                val checkedCall =
+                val checkedCall  =
                     s"Buffer.Unsafe.wrapBorrowedChecked[$elemScala]($reinterpretE, $sp.toInt, " +
                         s"kyo.ffi.internal.BufferFactory.currentBorrowOwner())"
                 val uncheckedCall =
                     s"Buffer.Unsafe.wrapBorrowed[$elemScala]($reinterpretE, $sp.toInt)"
                 val checkedBorrows = spec.companion.exists(_.checkedBorrows)
-                val nonNullWrap =
+                val nonNullWrap    =
                     if checkedBorrows then checkedCall
                     else s"""(if (java.lang.System.getProperty("kyo.ffi.checkedBorrows") == "true") $checkedCall else $uncheckedCall)"""
                 s"Ffi.Borrowed.wrap(if $retValName.address() == 0L then null else $nonNullWrap)"
@@ -558,7 +558,7 @@ object JvmEmitter extends EmitterBase.Ops with PlatformTypes:
                 case TypeRef.BooleanT | TypeRef.ByteT | TypeRef.ShortT | TypeRef.IntT | TypeRef.LongT |
                     TypeRef.FloatT | TypeRef.DoubleT | TypeRef.StringT => ()
                 case TypeRef.BufferT(_) => ()
-                case other =>
+                case other              =>
                     throw new IllegalStateException(
                         s"variadic method '${method.scalaName}' on '${spec.fqcn}' has unsupported fixed parameter type $other, " +
                             "variadic v1 supports only primitives, String, and Buffer[A] in the fixed-arg list"
@@ -609,7 +609,7 @@ object JvmEmitter extends EmitterBase.Ops with PlatformTypes:
         val retLayoutExpr: String = method.returnShape match
             case ReturnShape.Void         => "null"
             case ReturnShape.Primitive(t) => valueLayoutOf(t)
-            case other =>
+            case other                    =>
                 throw new IllegalStateException(
                     s"variadic method '${method.scalaName}' on '${spec.fqcn}' has unsupported return shape $other, " +
                         "variadic v1 supports only Unit / primitive returns"
@@ -669,13 +669,14 @@ object JvmEmitter extends EmitterBase.Ops with PlatformTypes:
                 inner ++= s"val retVal = $invokeCall\n"
                 if method.withError then
                     inner ++= "val __errno = errnoSeg.get(JAVA_INT, errnoOffset)\n"
-                    inner ++= "Ffi.Outcome.fromValueErrno(if retVal.asInstanceOf[java.lang.Integer].intValue() != 0 then 1L else 0L, __errno)\n"
+                    inner ++=
+                        "Ffi.Outcome.fromValueErrno(if retVal.asInstanceOf[java.lang.Integer].intValue() != 0 then 1L else 0L, __errno)\n"
                 else
                     inner ++= s"retVal.asInstanceOf[java.lang.Integer].intValue() != 0\n"
                 end if
             case ReturnShape.Primitive(t) =>
                 val boxed = boxedName(t)
-                val prim = primitiveScala(t) match
+                val prim  = primitiveScala(t) match
                     case "Int"    => "intValue()"
                     case "Byte"   => "byteValue()"
                     case "Short"  => "shortValue()"
@@ -796,12 +797,14 @@ object JvmEmitter extends EmitterBase.Ops with PlatformTypes:
                 case TypeRef.BufferT(_) =>
                     // Checked unwrap, alien `Buffer.Raw` implementations produce a
                     // diagnostic instead of a silent `ClassCastException`.
-                    buf += (s"$segExpr.set(ADDRESS, $offExpr, kyo.ffi.internal.FfiUnsafe.expect[MemorySegment](" +
-                        s"""$access.raw.asInstanceOf[AnyRef], classOf[MemorySegment], "MemorySegment on JVM", "$bindingFqn", "$methodName"))""")
+                    buf +=
+                        (s"$segExpr.set(ADDRESS, $offExpr, kyo.ffi.internal.FfiUnsafe.expect[MemorySegment](" +
+                            s"""$access.raw.asInstanceOf[AnyRef], classOf[MemorySegment], "MemorySegment on JVM", "$bindingFqn", "$methodName"))""")
                 case TypeRef.HandleT(_) =>
                     // Handle field: unwrap via Ffi.Handle.unwrap and set as ADDRESS.
-                    buf += (s"$segExpr.set(ADDRESS, $offExpr, kyo.ffi.internal.FfiUnsafe.expect[MemorySegment](" +
-                        s"""Ffi.Handle.unwrap($access).asInstanceOf[AnyRef], classOf[MemorySegment], "MemorySegment on JVM", "$bindingFqn", "$methodName"))""")
+                    buf +=
+                        (s"$segExpr.set(ADDRESS, $offExpr, kyo.ffi.internal.FfiUnsafe.expect[MemorySegment](" +
+                            s"""Ffi.Handle.unwrap($access).asInstanceOf[AnyRef], classOf[MemorySegment], "MemorySegment on JVM", "$bindingFqn", "$methodName"))""")
                 case TypeRef.EnumT(_) =>
                     // Enum field: write the Int value.
                     buf += s"$segExpr.set(JAVA_INT, $offExpr, $access.value)"
@@ -949,7 +952,7 @@ object JvmEmitter extends EmitterBase.Ops with PlatformTypes:
                     sizeField.tpe match
                         case TypeRef.IntT  => s"$segExpr.get(JAVA_INT, $sibOffExpr)"
                         case TypeRef.LongT => s"$segExpr.get(JAVA_LONG, $sibOffExpr).toInt"
-                        case other =>
+                        case other         =>
                             throw new IllegalStateException(
                                 s"internal: sibling size type $other not Int/Long for struct '${sSpec.fqcn}'"
                             )
@@ -986,7 +989,7 @@ object JvmEmitter extends EmitterBase.Ops with PlatformTypes:
                     // When the binding opts into `Ffi.Config.checkedBorrows` OR the process-wide
                     // sys-prop `-Dkyo.ffi.checkedBorrows=true` is set, route through the checked variant with the per-thread
                     // BorrowOwner. The unchecked path is unchanged, zero overhead beyond the sys-prop read.
-                    val sizeExpr = bufferSizeExpr(f.name)
+                    val sizeExpr   = bufferSizeExpr(f.name)
                     val borrowBody =
                         s"$segExpr.get(ADDRESS, $offExpr).reinterpret(Scratch.stringFieldMaxBytes), $sizeExpr"
                     val checkedCall =
@@ -1033,13 +1036,13 @@ object JvmEmitter extends EmitterBase.Ops with PlatformTypes:
         checkedBorrows: Boolean
     ): String =
         firstVariant match
-            case TypeRef.BooleanT => s"$segExpr.get(JAVA_INT, $offExpr) != 0"
-            case TypeRef.ByteT    => s"$segExpr.get(JAVA_BYTE, $offExpr)"
-            case TypeRef.ShortT   => s"$segExpr.get(JAVA_SHORT, $offExpr)"
-            case TypeRef.IntT     => s"$segExpr.get(JAVA_INT, $offExpr)"
-            case TypeRef.LongT    => s"$segExpr.get(JAVA_LONG, $offExpr)"
-            case TypeRef.FloatT   => s"$segExpr.get(JAVA_FLOAT, $offExpr)"
-            case TypeRef.DoubleT  => s"$segExpr.get(JAVA_DOUBLE, $offExpr)"
+            case TypeRef.BooleanT   => s"$segExpr.get(JAVA_INT, $offExpr) != 0"
+            case TypeRef.ByteT      => s"$segExpr.get(JAVA_BYTE, $offExpr)"
+            case TypeRef.ShortT     => s"$segExpr.get(JAVA_SHORT, $offExpr)"
+            case TypeRef.IntT       => s"$segExpr.get(JAVA_INT, $offExpr)"
+            case TypeRef.LongT      => s"$segExpr.get(JAVA_LONG, $offExpr)"
+            case TypeRef.FloatT     => s"$segExpr.get(JAVA_FLOAT, $offExpr)"
+            case TypeRef.DoubleT    => s"$segExpr.get(JAVA_DOUBLE, $offExpr)"
             case TypeRef.StructT(n) =>
                 val child = structsByName.getOrElse(n, throw new IllegalStateException(s"nested struct '$n' not found"))
                 emitStructReadExpr(child, structsByName, segExpr, offExpr, bindingFqn, methodName, checkedBorrows)
@@ -1067,7 +1070,10 @@ object JvmEmitter extends EmitterBase.Ops with PlatformTypes:
         // errnoOffset is errno's byte offset within that struct (0 on Linux/macOS, 8 on Windows). Emitted only when a
         // method reads errno (withError); a captured downcall with no Outcome return never reads it.
         if spec.methods.exists(_.withError) then
-            sb ++= """    private val errnoOffset = captureLayout.byteOffset(java.lang.foreign.MemoryLayout.PathElement.groupElement("errno"))""" + "\n"
+            sb ++=
+                """    private val errnoOffset = captureLayout.byteOffset(java.lang.foreign.MemoryLayout.PathElement.groupElement("errno"))""" +
+                    "\n"
+        end if
         if needsCritOn then
             // `Linker.Option.critical(...)` was added in JDK 22. Detect it reflectively at class-init time
             // so the emitted impl still class-loads under JDK 21 (capture-only downcall path).
@@ -1139,7 +1145,7 @@ object JvmEmitter extends EmitterBase.Ops with PlatformTypes:
             case TypeRef.HandleT(_)   => "ADDRESS"
             case TypeRef.EnumT(_)     => "JAVA_INT"
             case TypeRef.FnPtrT(_, _) => "ADDRESS"
-            case TypeRef.StructT(n) =>
+            case TypeRef.StructT(n)   =>
                 val child = structsByName.getOrElse(
                     n,
                     throw new IllegalStateException(s"nested struct '$n' not found")
@@ -1182,13 +1188,13 @@ object JvmEmitter extends EmitterBase.Ops with PlatformTypes:
     private def unionLayoutExpr(variants: List[TypeRef], structsByName: Map[String, StructSpec]): String =
         val parts = variants.map { v =>
             v match
-                case TypeRef.BooleanT => "JAVA_INT"
-                case TypeRef.ByteT    => "JAVA_BYTE"
-                case TypeRef.ShortT   => "JAVA_SHORT"
-                case TypeRef.IntT     => "JAVA_INT"
-                case TypeRef.LongT    => "JAVA_LONG"
-                case TypeRef.FloatT   => "JAVA_FLOAT"
-                case TypeRef.DoubleT  => "JAVA_DOUBLE"
+                case TypeRef.BooleanT   => "JAVA_INT"
+                case TypeRef.ByteT      => "JAVA_BYTE"
+                case TypeRef.ShortT     => "JAVA_SHORT"
+                case TypeRef.IntT       => "JAVA_INT"
+                case TypeRef.LongT      => "JAVA_LONG"
+                case TypeRef.FloatT     => "JAVA_FLOAT"
+                case TypeRef.DoubleT    => "JAVA_DOUBLE"
                 case TypeRef.StructT(n) =>
                     val child = structsByName.getOrElse(n, throw new IllegalStateException(s"nested struct '$n' not found"))
                     structLayoutExpr(child, structsByName)
@@ -1259,7 +1265,7 @@ object JvmEmitter extends EmitterBase.Ops with PlatformTypes:
         case TypeRef.BufferT(_)   => "ADDRESS"
         case TypeRef.StringT      => "ADDRESS"
         case TypeRef.FnPtrT(_, _) => "ADDRESS"
-        case other =>
+        case other                =>
             throw new IllegalStateException(s"callbackValueLayout: unsupported callback position type $other")
 
     /** Name of the `FunctionDescriptor` companion val associated with one callback parameter. */

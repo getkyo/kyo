@@ -55,7 +55,7 @@ end NextSuiteB
 // ── Test infrastructure ─────────────────────────────────────────────────────────────────────────
 
 class CapturingEventHandler extends EventHandler:
-    private val _events = new java.util.concurrent.CopyOnWriteArrayList[Event]()
+    private val _events        = new java.util.concurrent.CopyOnWriteArrayList[Event]()
     def handle(e: Event): Unit =
         _events.add(e)
         ()
@@ -111,7 +111,7 @@ class SbtFrameworkTest extends AnyFunSuite with NonImplicitAssertions:
 
     test("runner.tasks returns one task per suite class") {
         val runner = makeRunner()
-        val defs = Array(
+        val defs   = Array(
             taskDefFor(classOf[NextSingleLeafSuite]),
             taskDefFor(classOf[NextMultiLeafSuite]),
             taskDefFor(classOf[NextAsyncLeafSuite])
@@ -212,12 +212,12 @@ class SbtFrameworkTest extends AnyFunSuite with NonImplicitAssertions:
                     val generation = callCount.getAndIncrement()
                     val content    = if generation == 0 then firstBogus + "\n" else secondBogus + "\n"
                     val bytes      = makeBytes(content)
-                    val url = URL.of(
+                    val url        = URL.of(
                         java.net.URI.create(s"jar:synthetic-gen-$generation"),
                         new java.net.URLStreamHandler:
                             def openConnection(u: URL): java.net.URLConnection =
                                 new java.net.URLConnection(u):
-                                    def connect(): Unit = ()
+                                    def connect(): Unit                              = ()
                                     override def getInputStream: java.io.InputStream =
                                         new ByteArrayInputStream(bytes)
                     )

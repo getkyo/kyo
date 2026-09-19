@@ -394,9 +394,9 @@ class QueueTest extends kyo.test.Test[Any]:
 
         "offer and close" in {
             (for
-                size  <- Choice.eval(0, 1, 2, 10, 100)
-                queue <- Queue.init[Int](size)
-                latch <- Latch.init(1)
+                size       <- Choice.eval(0, 1, 2, 10, 100)
+                queue      <- Queue.init[Int](size)
+                latch      <- Latch.init(1)
                 offerFiber <- Fiber.initUnscoped(
                     latch.await.andThen(Async.foreach(1 to 100, 100)(i => Abort.run(queue.offer(i))))
                 )
@@ -420,9 +420,9 @@ class QueueTest extends kyo.test.Test[Any]:
 
         "offer and poll" in {
             (for
-                size  <- Choice.eval(0, 1, 2, 10, 100)
-                queue <- Queue.init[Int](size)
-                latch <- Latch.init(1)
+                size       <- Choice.eval(0, 1, 2, 10, 100)
+                queue      <- Queue.init[Int](size)
+                latch      <- Latch.init(1)
                 offerFiber <- Fiber.initUnscoped(
                     latch.await.andThen(Async.foreach(1 to 100, 100)(i => Abort.run(queue.offer(i))))
                 )
@@ -440,10 +440,10 @@ class QueueTest extends kyo.test.Test[Any]:
 
         "offer to full queue during close" in {
             (for
-                size  <- Choice.eval(0, 1, 2, 10, 100)
-                queue <- Queue.init[Int](size)
-                _     <- Kyo.foreach(1 to size)(i => queue.offer(i))
-                latch <- Latch.init(1)
+                size       <- Choice.eval(0, 1, 2, 10, 100)
+                queue      <- Queue.init[Int](size)
+                _          <- Kyo.foreach(1 to size)(i => queue.offer(i))
+                latch      <- Latch.init(1)
                 offerFiber <- Fiber.initUnscoped(
                     latch.await.andThen(Async.foreach(1 to 100)(i => Abort.run(queue.offer(i))))
                 )
@@ -463,9 +463,9 @@ class QueueTest extends kyo.test.Test[Any]:
 
         "concurrent close attempts" in {
             (for
-                size  <- Choice.eval(0, 1, 2, 10, 100)
-                queue <- Queue.init[Int](size)
-                latch <- Latch.init(1)
+                size       <- Choice.eval(0, 1, 2, 10, 100)
+                queue      <- Queue.init[Int](size)
+                latch      <- Latch.init(1)
                 offerFiber <- Fiber.initUnscoped(
                     latch.await.andThen(Async.foreach(1 to 100, 100)(i => Abort.run(queue.offer(i))))
                 )
@@ -487,9 +487,9 @@ class QueueTest extends kyo.test.Test[Any]:
 
         "offer, poll and close" in {
             (for
-                size  <- Choice.eval(0, 1, 2, 10, 100)
-                queue <- Queue.init[Int](size)
-                latch <- Latch.init(1)
+                size       <- Choice.eval(0, 1, 2, 10, 100)
+                queue      <- Queue.init[Int](size)
+                latch      <- Latch.init(1)
                 offerFiber <- Fiber.initUnscoped(
                     latch.await.andThen(Async.foreach(1 to 100, 100)(i => Abort.run(queue.offer(i))))
                 )
@@ -563,9 +563,9 @@ class QueueTest extends kyo.test.Test[Any]:
             val producers = producerCount(access)
             val preload   = preloadCount(capacity)
             for
-                queue   <- Queue.initUnscoped[Int](capacity, access)
-                _       <- Kyo.foreachDiscard(1 to preload)(i => Abort.run(queue.offer(i)))
-                running <- Latch.init(producers)
+                queue         <- Queue.initUnscoped[Int](capacity, access)
+                _             <- Kyo.foreachDiscard(1 to preload)(i => Abort.run(queue.offer(i)))
+                running       <- Latch.init(producers)
                 producerFiber <- Fiber.initUnscoped(
                     Async.foreach(1 to producers, producers)(offerUntilClosed(queue, running, _))
                 )
@@ -592,8 +592,8 @@ class QueueTest extends kyo.test.Test[Any]:
         def awaitEmptyRace(capacity: Int, access: Access)(using Frame, kyo.test.AssertScope) =
             val producers = producerCount(access)
             for
-                queue   <- Queue.initUnscoped[Int](capacity, access)
-                running <- Latch.init(producers)
+                queue         <- Queue.initUnscoped[Int](capacity, access)
+                running       <- Latch.init(producers)
                 producerFiber <- Fiber.initUnscoped(
                     Async.foreach(1 to producers, producers)(offerUntilClosed(queue, running, _))
                 )
@@ -685,10 +685,10 @@ class QueueTest extends kyo.test.Test[Any]:
         def slideRace(capacity: Int, access: Access)(using Frame, kyo.test.AssertScope) =
             val producers = producerCount(access)
             for
-                queue    <- Queue.Unbounded.initSlidingUnscoped[Int](capacity, access)
-                _        <- Kyo.foreachDiscard(1 to capacity)(i => Abort.run(queue.offer(i)))
-                finished <- AtomicBoolean.init(false)
-                running  <- Latch.init(producers)
+                queue         <- Queue.Unbounded.initSlidingUnscoped[Int](capacity, access)
+                _             <- Kyo.foreachDiscard(1 to capacity)(i => Abort.run(queue.offer(i)))
+                finished      <- AtomicBoolean.init(false)
+                running       <- Latch.init(producers)
                 producerFiber <- Fiber.initUnscoped(
                     Async.foreach(1 to producers, producers)(slideUntilDone(queue, running, _))
                         .map(results => finished.set(true).andThen(results))
@@ -946,10 +946,10 @@ class QueueTest extends kyo.test.Test[Any]:
 
         "race between closeAwaitEmpty and close" in {
             (for
-                size  <- Choice.eval(0, 1, 2, 10, 100)
-                queue <- Queue.init[Int](size)
-                _     <- Kyo.foreach(1 to (size min 5))(i => queue.offer(i))
-                latch <- Latch.init(1)
+                size                 <- Choice.eval(0, 1, 2, 10, 100)
+                queue                <- Queue.init[Int](size)
+                _                    <- Kyo.foreach(1 to (size min 5))(i => queue.offer(i))
+                latch                <- Latch.init(1)
                 closeAwaitEmptyFiber <- Fiber.initUnscoped(
                     latch.await.andThen(queue.closeAwaitEmpty)
                 )

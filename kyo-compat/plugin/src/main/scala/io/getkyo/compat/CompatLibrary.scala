@@ -153,7 +153,7 @@ private[compat] object CompatLibrary {
             // project ids on multi-scala matrices).
             val enablePlatformPlugin: Project => Project = platform match {
                 case VirtualAxis.jvm => identity
-                case VirtualAxis.js =>
+                case VirtualAxis.js  =>
                     p =>
                         p.enablePlugins(
                             ReflectionUtil.getSingletonObject[AutoPlugin](
@@ -188,8 +188,8 @@ private[compat] object CompatLibrary {
                             "but not bound; add .bindLocally(<axis>, <project>) for it."
                     )
                 val withPlugin = enablePlatformPlugin(proj)
-                val withDeps = withPlugin.settings(
-                    moduleName := name.value + backend.directorySuffix,
+                val withDeps   = withPlugin.settings(
+                    moduleName    := name.value + backend.directorySuffix,
                     baseDirectory := {
                         val dir = IO.resolve((LocalRootProject / baseDirectory).value, backendBase)
                         IO.createDirectory(dir)
@@ -230,7 +230,7 @@ private[compat] object CompatLibrary {
                 // customRow process closures run). Re-read at materialization
                 // time so `.jvmSettings(...)` calls placed AFTER
                 // `.compatLibrary(...)` are picked up.
-                val currentMeta = metaOf(matrixId)
+                val currentMeta                     = metaOf(matrixId)
                 val platformExtras: Seq[Setting[?]] = currentMeta.map { meta =>
                     platform match {
                         case VirtualAxis.jvm    => meta.jvmExtras
@@ -306,7 +306,7 @@ final case class CompatBackendAxis(
     version: Option[String] = None,      // artifact version; defaults to compatKyoVersion.value
     local: Boolean = false               // declared via `local(...)`: vendored, must be bound with bindLocally
 ) extends VirtualAxis.WeakAxis {
-    override val suffixOrder: Int = 40
+    override val suffixOrder: Int          = 40
     override def equals(obj: Any): Boolean = obj match {
         case that: CompatBackendAxis => this.name == that.name
         case _                       => false

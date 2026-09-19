@@ -68,7 +68,7 @@ private[kyo] object LocalBackend:
             Abort.catching[Throwable] {
                 Sync.defer {
                     val base = new ScalaPresentationCompiler()
-                    val pc = base.newInstance(
+                    val pc   = base.newInstance(
                         config.toolchain.scalaVersion,
                         classpathList(config),
                         optionsList(config)
@@ -100,7 +100,7 @@ private[kyo] object LocalBackend:
       */
     private def optionsList(config: Compiler.Config): java.util.List[String] =
         import scala.jdk.CollectionConverters.*
-        val base = config.scalacOptions.toList
+        val base           = config.scalacOptions.toList
         val withSourcepath =
             if config.sourceRoots.isEmpty then base
             else base ++ List("-sourcepath", config.sourceRoots.map(_.toString).mkString(Path.pathSeparator))

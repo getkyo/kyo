@@ -18,8 +18,7 @@ class WebsiteBuildGraphTest extends WebsiteTest:
     end repoRoot
 
     // build.sbt is at the repo root.
-    private def buildSbtLines(): List[String] =
-        (repoRoot() / "build.sbt").unsafe.read().getOrThrow.linesIterator.toList
+    private def buildSbtLines(): List[String] = (repoRoot() / "build.sbt").unsafe.read().getOrThrow.linesIterator.toList
 
     // kyo-website/shared, kyo-website/js, and kyo-website-bundle source trees should have no flexmark import.
     private def sourceLines(subdir: String): List[String] =
@@ -186,7 +185,7 @@ class WebsiteBuildGraphTest extends WebsiteTest:
         val bundleLines = sourceLines("kyo-website-bundle")
         val jsLines     = sourceLines("kyo-website/js")
         val allLines    = bundleLines ++ jsLines
-        val renderHits = allLines.filter(l =>
+        val renderHits  = allLines.filter(l =>
             l.contains("DocsMarkdownRender") ||
                 l.contains("highlightScala") ||
                 l.contains(".transpile(")

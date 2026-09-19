@@ -431,7 +431,7 @@ object Structure:
                             reader.objectEnd()
                             Product(name, tag, typeParams, fields)
                         end serializeRead
-                        @publicInBinary private[kyo] def getter(value: Product): Maybe[Any] = Maybe(value)
+                        @publicInBinary private[kyo] def getter(value: Product): Maybe[Any]         = Maybe(value)
                         @publicInBinary private[kyo] def setter(value: Product, next: Any): Product =
                             next match
                                 case p: Product => p
@@ -479,7 +479,7 @@ object Structure:
                             reader.objectEnd()
                             Sum(name, tag, typeParams, variants, enumValues)
                         end serializeRead
-                        @publicInBinary private[kyo] def getter(value: Sum): Maybe[Any] = Maybe(value)
+                        @publicInBinary private[kyo] def getter(value: Sum): Maybe[Any]     = Maybe(value)
                         @publicInBinary private[kyo] def setter(value: Sum, next: Any): Sum =
                             next match
                                 case s: Sum => s
@@ -530,14 +530,14 @@ object Structure:
                         case "Mapping"    => mappingSchema.serializeRead(reader)
                         case "Optional"   => optionalSchema.serializeRead(reader)
                         case "Open"       => openSchema.serializeRead(reader)
-                        case other =>
+                        case other        =>
                             reader.skip()
                             throw UnknownVariantException(Seq.empty, other)(using reader.frame)
                     reader.objectEnd()
                     result
                 end serializeRead
 
-                @publicInBinary private[kyo] def getter(value: Structure.Type): Maybe[Any] = Maybe(value)
+                @publicInBinary private[kyo] def getter(value: Structure.Type): Maybe[Any]                = Maybe(value)
                 @publicInBinary private[kyo] def setter(value: Structure.Type, next: Any): Structure.Type =
                     next match
                         case t: Structure.Type => t
@@ -694,7 +694,7 @@ object Structure:
                     reader.objectEnd()
                     Field(name, fieldType, doc, default, optional)
                 end serializeRead
-                @publicInBinary private[kyo] def getter(value: Field): Maybe[Any] = Maybe(value)
+                @publicInBinary private[kyo] def getter(value: Field): Maybe[Any]       = Maybe(value)
                 @publicInBinary private[kyo] def setter(value: Field, next: Any): Field =
                     next match
                         case f: Field => f
@@ -796,7 +796,7 @@ object Structure:
                     reader.objectEnd()
                     Variant(name, variantType)
                 end serializeRead
-                @publicInBinary private[kyo] def getter(value: Variant): Maybe[Any] = Maybe(value)
+                @publicInBinary private[kyo] def getter(value: Variant): Maybe[Any]         = Maybe(value)
                 @publicInBinary private[kyo] def setter(value: Variant, next: Any): Variant =
                     next match
                         case v: Variant => v
@@ -972,18 +972,18 @@ object Structure:
                 @publicInBinary private[kyo] def serializeRead(reader: Codec.Reader): Value =
                     reader match
                         case ir: Codec.IntrospectingReader => ir.readStructure()
-                        case other =>
+                        case other                         =>
                             throw SchemaNotSerializableException(
                                 s"Schema[Structure.Value] requires a self-describing reader (JSON or Structure source); got ${other.getClass.getSimpleName}"
                             )(using reader.frame)
-                @publicInBinary private[kyo] def getter(value: Value): Maybe[Any] = Maybe(value)
+                @publicInBinary private[kyo] def getter(value: Value): Maybe[Any]       = Maybe(value)
                 @publicInBinary private[kyo] def setter(value: Value, next: Any): Value =
                     next match
                         case sv: Value => sv
                         case _         => value
                 private lazy val _structure: Structure.Type =
                     Structure.Type.Open(Tag[Structure.Value].asInstanceOf[Tag[Any]])
-                override def structure: Structure.Type = _structure
+                override def structure: Structure.Type                                                               = _structure
                 override private[kyo] def fromStructureValue(sv: Value)(using Frame): Result[DecodeException, Value] =
                     Result.Success(sv)
 
@@ -1086,7 +1086,7 @@ object Structure:
 
         private def getAll(current: Chunk[Value], remaining: List[PathSegment])(using Frame): Result[NavigationException, Chunk[Value]] =
             remaining match
-                case Nil => Result.succeed(current)
+                case Nil         => Result.succeed(current)
                 case seg :: rest =>
                     val stepped = current.flatMap(v => stepGet(v, seg))
                     if stepped.isEmpty && current.nonEmpty then
@@ -1124,7 +1124,7 @@ object Structure:
 
         private def setAt(v: Value, remaining: List[PathSegment], newValue: Value)(using Frame): Result[NavigationException, Value] =
             remaining match
-                case Nil => Result.succeed(newValue)
+                case Nil         => Result.succeed(newValue)
                 case seg :: rest =>
                     seg match
                         case PathSegment.Field(name) =>

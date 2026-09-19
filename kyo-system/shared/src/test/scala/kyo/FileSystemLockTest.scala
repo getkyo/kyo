@@ -188,8 +188,8 @@ abstract class FileSystemLockTest[S >: Async] extends kyo.test.Test[Any]:
 
         "expiry before a retry prevents another acquisition attempt" in {
             Clock.withTimeControl { control =>
-                val path  = Path("deadline-retry.bin")
-                val token = Path.LockOwnership.fresh()
+                val path      = Path("deadline-retry.bin")
+                val token     = Path.LockOwnership.fresh()
                 val available = new Path.Lock:
                     def mode: Path.LockMode                                          = Path.LockMode.Exclusive
                     def ownership: Path.LockOwnership                                = token

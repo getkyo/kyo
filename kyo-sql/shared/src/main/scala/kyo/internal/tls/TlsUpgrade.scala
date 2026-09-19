@@ -57,7 +57,7 @@ private[kyo] object TlsUpgrade:
             }
         }.flatMap {
             case Result.Success(tlsConn) => tlsConn
-            case Result.Failure(netEx) =>
+            case Result.Failure(netEx)   =>
                 Abort.fail(SqlConnectionConnectFailedException(host, port, netEx))
             case Result.Panic(t) =>
                 Log.error(s"[kyo-sql] TlsUpgrade: TLS upgrade panic: ${t.getMessage}").andThen(

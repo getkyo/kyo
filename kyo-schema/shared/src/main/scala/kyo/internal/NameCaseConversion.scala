@@ -67,8 +67,8 @@ private[kyo] object NameCaseConversion:
       * An uppercase run with no trailing lowercase stays one word (`XML`, `HTTP`).
       */
     private def breaksBefore(name: String, idx: Int): Boolean =
-        val prev = name.charAt(idx - 1)
-        val cur  = name.charAt(idx)
+        val prev            = name.charAt(idx - 1)
+        val cur             = name.charAt(idx)
         val acronymBoundary =
             prev.isUpper && cur.isUpper && idx + 1 < name.length && name.charAt(idx + 1).isLower
         val camelHump = (prev.isLower || prev.isDigit) && cur.isUpper

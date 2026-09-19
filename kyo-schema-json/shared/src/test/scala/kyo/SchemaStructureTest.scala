@@ -123,7 +123,7 @@ class SchemaStructureTest extends kyo.test.Test[Any]:
         }
 
         "exception subtypes are distinct" in {
-            given Frame = Frame.derive
+            given Frame                           = Frame.derive
             val exceptions: List[SchemaException] = List(
                 MissingFieldException(Nil, "f"),
                 TypeMismatchException(Nil, "A", "B"),

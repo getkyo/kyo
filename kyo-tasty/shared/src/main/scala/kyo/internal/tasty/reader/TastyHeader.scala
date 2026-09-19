@@ -77,7 +77,7 @@ object TastyHeader:
             val fileExperimental = Varint.readNat(view)
 
             // Step 3: check version compatibility using verbatim dotty formula.
-            val supported = Tasty.supportedTastyVersion
+            val supported  = Tasty.supportedTastyVersion
             val compatible = TastyFormat.isVersionCompatible(
                 fileMajor,
                 fileMinor,

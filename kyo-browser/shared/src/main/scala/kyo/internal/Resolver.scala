@@ -53,7 +53,7 @@ private[kyo] object Resolver:
                                 // `text` for a malformed-selector SyntaxError is just "Uncaught" on some platforms (JS/Native);
                                 // the actual error message naming the bad selector lives in `exception.description`. Reading
                                 // only `text` drops the diagnostic the test asserts on.
-                                val msg = ExceptionDetailsFormat.format(details)
+                                val msg          = ExceptionDetailsFormat.format(details)
                                 val msgOrDefault =
                                     if msg.isEmpty || msg == "Unknown script error" then "Runtime.evaluate exception" else msg
                                 Abort.fail(BrowserProtocolErrorException(CdpBackend.RuntimeEvaluateMethod, msgOrDefault))
@@ -118,7 +118,7 @@ private[kyo] object Resolver:
                                 // `text` for a malformed-selector SyntaxError is just "Uncaught" on some platforms (JS/Native);
                                 // the actual error message naming the bad selector lives in `exception.description`. Reading
                                 // only `text` drops the diagnostic the test asserts on.
-                                val msg = ExceptionDetailsFormat.format(details)
+                                val msg          = ExceptionDetailsFormat.format(details)
                                 val msgOrDefault =
                                     if msg.isEmpty || msg == "Unknown script error" then "Runtime.evaluate exception" else msg
                                 Abort.fail(BrowserProtocolErrorException(CdpBackend.RuntimeEvaluateMethod, msgOrDefault))

@@ -78,7 +78,7 @@ class IoUringFatalRecordCloseRaceTest extends Test:
         val observed = Promise.Unsafe.init[Boolean, Abort[Closed]]()
         driver.submitEngineOp { () =>
             val cipher = Buffer.fromArray[Byte](corrupted)
-            val plain =
+            val plain  =
                 try driver.feedAndDecrypt(engine, cipher, corrupted.length, handle, onFatal)
                 finally cipher.close()
             discard(plain) // empty on the fatal path; not the subject of this test (TlsEngineIoCorruptRecordTest covers that)

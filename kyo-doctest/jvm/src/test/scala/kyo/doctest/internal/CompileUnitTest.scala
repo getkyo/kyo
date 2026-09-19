@@ -136,7 +136,7 @@ class CompileUnitTest extends kyo.test.Test[Any]:
     }
 
     "Skipped blocks never contribute to compile units or preludes" in {
-        val inherited = makeBlock("val inherited = 1", Block.Visibility.Inherited, lineStart = 1)
+        val inherited        = makeBlock("val inherited = 1", Block.Visibility.Inherited, lineStart = 1)
         val skippedInherited = makeBlock(
             "this is invalid skipped inherited pseudocode",
             Block.Visibility.Inherited,

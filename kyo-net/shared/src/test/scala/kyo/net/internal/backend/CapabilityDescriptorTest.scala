@@ -19,7 +19,7 @@ class CapabilityDescriptorTest extends Test:
             private[net] def doProbe(using AllowUnsafe): CapabilityOutcome = body
 
     "the probe body runs once and every later call reads the memo" in {
-        val runs = new AtomicInteger(0)
+        val runs    = new AtomicInteger(0)
         val subject = descriptor {
             discard(runs.getAndIncrement())
             CapabilityOutcome.Available
@@ -31,7 +31,7 @@ class CapabilityDescriptorTest extends Test:
     }
 
     "a failing probe body is memoized too, so a broken dependency is not re-attempted per question" in {
-        val runs = new AtomicInteger(0)
+        val runs    = new AtomicInteger(0)
         val subject = descriptor {
             discard(runs.getAndIncrement())
             CapabilityOutcome.NotBundled("kyonet_posix_uring", "linux-x86_64")

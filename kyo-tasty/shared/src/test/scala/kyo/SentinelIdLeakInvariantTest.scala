@@ -88,7 +88,8 @@ class SentinelIdLeakInvariantTest extends kyo.test.Test[Any]:
                                     val ids = namedIdsInType(annotation.annotationType)
                                     ids.foreach { v =>
                                         if v == -1 then
-                                            violations ::= s"${c.name.asString}.annotation.type=${annotation.annotationType} has Named(SymbolId(-1))"
+                                            violations ::=
+                                                s"${c.name.asString}.annotation.type=${annotation.annotationType} has Named(SymbolId(-1))"
                                     }
                                 }
                             case _ => ()

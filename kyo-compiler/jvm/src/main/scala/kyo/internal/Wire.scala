@@ -96,7 +96,7 @@ private[kyo] object Wire:
         else
             val index       = new LineIndex(text)
             val absoluteStr = toAbsoluteUri(uri.asString).toString
-            val localSpan =
+            val localSpan   =
                 result.locations.asScala
                     .find(loc => loc.getUri == absoluteStr)
                     .map(loc => uri -> rangeToSpan(index, loc.getRange))
@@ -250,7 +250,7 @@ private[kyo] object Wire:
       * future rather than through the token lever.
       */
     private object NoopCancelToken extends scala.meta.pc.CancelToken:
-        def checkCanceled(): Unit = ()
+        def checkCanceled(): Unit                                               = ()
         def onCancel(): java.util.concurrent.CompletionStage[java.lang.Boolean] =
             java.util.concurrent.CompletableFuture.completedFuture(java.lang.Boolean.FALSE)
     end NoopCancelToken

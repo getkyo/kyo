@@ -315,7 +315,7 @@ class HttpClientTest extends BaseHttpTest:
 
         "Int" - {
             val route = HttpRoute.getRaw("items" / Capture[Int]("id")).response(_.bodyText)
-            val ep = route.handler { req =>
+            val ep    = route.handler { req =>
                 HttpResponse.ok(s"item-${req.fields.id}")
             }
             runServer(ep) { url =>
@@ -329,7 +329,7 @@ class HttpClientTest extends BaseHttpTest:
 
         "String" - {
             val route = HttpRoute.getRaw("users" / Capture[String]("name")).response(_.bodyText)
-            val ep = route.handler { req =>
+            val ep    = route.handler { req =>
                 HttpResponse.ok(s"hello ${req.fields.name}")
             }
             runServer(ep) { url =>
@@ -582,7 +582,7 @@ class HttpClientTest extends BaseHttpTest:
                 HttpClient.withConfig(_.maxResponseLength(64 * 1024)) {
                     Abort.run[HttpException](HttpClient.getText(s"$url/big")).map {
                         case Result.Failure(_: HttpPayloadTooLargeException) => succeed
-                        case other =>
+                        case other                                           =>
                             fail(s"expected HttpPayloadTooLargeException for a 256 KiB response under a 64 KiB cap, got $other")
                     }
                 }
@@ -606,7 +606,7 @@ class HttpClientTest extends BaseHttpTest:
 
         "response" - {
             val route = HttpRoute.getRaw("stream").response(_.bodyStream)
-            val ep = route.handler { _ =>
+            val ep    = route.handler { _ =>
                 val chunks = Stream.init(Seq(
                     Span.fromUnsafe("hello ".getBytes("UTF-8")),
                     Span.fromUnsafe("world".getBytes("UTF-8"))
@@ -645,7 +645,7 @@ class HttpClientTest extends BaseHttpTest:
                 }
             }
             runServer(ep) { url =>
-                var called = false
+                var called                                = false
                 val bodyStream: Stream[Span[Byte], Async] = Stream.init(Seq(
                     Span.fromUnsafe("chunk1".getBytes("UTF-8")),
                     Span.fromUnsafe("chunk2".getBytes("UTF-8"))
@@ -677,7 +677,7 @@ class HttpClientTest extends BaseHttpTest:
                 }
             }
             runServer(ep) { url =>
-                var called = false
+                var called                                = false
                 val bodyStream: Stream[Span[Byte], Async] = Stream.init(Seq(
                     Span.fromUnsafe("alice".getBytes("UTF-8"))
                 ))
@@ -969,7 +969,7 @@ class HttpClientTest extends BaseHttpTest:
             val route       = HttpRoute.getRaw("old").response(_.bodyText)
             val targetRoute = HttpRoute.getRaw("new").response(_.bodyText)
             val targetEp    = targetRoute.handler(_ => HttpResponse.ok("temp"))
-            val redirectEp = route.handler { _ =>
+            val redirectEp  = route.handler { _ =>
                 HttpResponse(HttpStatus.TemporaryRedirect)
                     .setHeader("Location", "/new")
                     .addField("body", "redirect")
@@ -993,7 +993,7 @@ class HttpClientTest extends BaseHttpTest:
             val route       = HttpRoute.getRaw("old").response(_.bodyText)
             val targetRoute = HttpRoute.getRaw("new").response(_.bodyText)
             val targetEp    = targetRoute.handler(_ => HttpResponse.ok("perm"))
-            val redirectEp = route.handler { _ =>
+            val redirectEp  = route.handler { _ =>
                 HttpResponse(HttpStatus.PermanentRedirect)
                     .setHeader("Location", "/new")
                     .addField("body", "redirect")
@@ -1040,7 +1040,7 @@ class HttpClientTest extends BaseHttpTest:
         "303 See Other becomes a GET and sends no body (RFC 9110 section 15.4.4)" - {
             val startRoute = HttpRoute.postRaw("start").request(_.bodyText).response(_.bodyText)
             val seenRoute  = HttpRoute.getRaw("seen").response(_.bodyText)
-            val seenEp = seenRoute.handler { req =>
+            val seenEp     = seenRoute.handler { req =>
                 val method = req.method.name
                 val len    = req.headers.get("Content-Length").getOrElse("absent")
                 HttpResponse.ok(s"method=$method contentLength=$len")
@@ -1085,7 +1085,7 @@ class HttpClientTest extends BaseHttpTest:
         "forwards Authorization across a same-origin redirect (GHSA-2rgg-r783-mrx4 control)" - {
             val startRoute  = HttpRoute.getRaw("start").response(_.bodyText)
             val targetRoute = HttpRoute.getRaw("target").response(_.bodyText)
-            val targetEp = targetRoute.handler { req =>
+            val targetEp    = targetRoute.handler { req =>
                 HttpResponse.ok(s"auth=${req.headers.get("Authorization").getOrElse("none")}")
             }
             val redirectEp = startRoute.handler(_ => HttpResponse.redirect("/target").addField("body", "redirect"))
@@ -1155,7 +1155,7 @@ class HttpClientTest extends BaseHttpTest:
         "does not forward Authorization across an https to http downgrade (GHSA-2rgg-r783-mrx4)" in {
             val startRoute   = HttpRoute.getRaw("start").response(_.bodyText)
             val collectRoute = HttpRoute.getRaw("collect").response(_.bodyText)
-            val collectEp = collectRoute.handler { req =>
+            val collectEp    = collectRoute.handler { req =>
                 val auth   = req.headers.get("Authorization").getOrElse("none")
                 val cookie = req.headers.get("Cookie").getOrElse("none")
                 HttpResponse.ok(s"auth=$auth cookie=$cookie")
@@ -1198,7 +1198,7 @@ class HttpClientTest extends BaseHttpTest:
         "on server error" in {
             var attempts = 0
             val route    = HttpRoute.getRaw("flaky").response(_.bodyText)
-            val ep = route.handler { _ =>
+            val ep       = route.handler { _ =>
                 attempts += 1
                 if attempts < 3 then HttpResponse.serverError.addField("body", "error")
                 else HttpResponse.ok("recovered")
@@ -1222,7 +1222,7 @@ class HttpClientTest extends BaseHttpTest:
         "no retry on client error" in {
             var attempts = 0
             val route    = HttpRoute.getRaw("bad").response(_.bodyText)
-            val ep = route.handler { _ =>
+            val ep       = route.handler { _ =>
                 attempts += 1
                 HttpResponse.notFound.addField("body", "nope")
             }
@@ -1244,7 +1244,7 @@ class HttpClientTest extends BaseHttpTest:
         "no retry after success" in {
             var attempts = 0
             val route    = HttpRoute.getRaw("ok").response(_.bodyText)
-            val ep = route.handler { _ =>
+            val ep       = route.handler { _ =>
                 attempts += 1
                 HttpResponse.ok("immediate")
             }
@@ -1266,7 +1266,7 @@ class HttpClientTest extends BaseHttpTest:
         "custom predicate" in {
             var attempts = 0
             val route    = HttpRoute.getRaw("custom").response(_.bodyText)
-            val ep = route.handler { _ =>
+            val ep       = route.handler { _ =>
                 attempts += 1
                 if attempts == 1 then HttpResponse.serviceUnavailable.addField("body", "503")
                 else if attempts == 2 then HttpResponse.serverError.addField("body", "500")
@@ -1296,7 +1296,7 @@ class HttpClientTest extends BaseHttpTest:
             val base     = 500.millis
             val attempts = new AtomicInteger(0)
             val route    = HttpRoute.getRaw("slow").response(_.bodyText)
-            val ep = route.handler { _ =>
+            val ep       = route.handler { _ =>
                 if attempts.incrementAndGet() < 3 then HttpResponse.serverError.addField("body", "wait")
                 else HttpResponse.ok("done")
             }
@@ -1354,13 +1354,13 @@ class HttpClientTest extends BaseHttpTest:
         "retry after redirect to flaky endpoint" in {
             var attempts   = 0
             val flakyRoute = HttpRoute.getRaw("flaky").response(_.bodyText)
-            val flakyEp = flakyRoute.handler { _ =>
+            val flakyEp    = flakyRoute.handler { _ =>
                 attempts += 1
                 if attempts < 3 then HttpResponse.serverError.addField("body", "error")
                 else HttpResponse.ok("recovered")
             }
             val redirectRoute = HttpRoute.getRaw("start").response(_.bodyText)
-            val redirectEp = redirectRoute.handler { _ =>
+            val redirectEp    = redirectRoute.handler { _ =>
                 HttpResponse.redirect("/flaky").addField("body", "redirect")
             }
             withServer(redirectEp, flakyEp) { url =>
@@ -1383,7 +1383,7 @@ class HttpClientTest extends BaseHttpTest:
             var attempts    = 0
             val route       = HttpRoute.getRaw("ep").response(_.bodyText)
             val targetRoute = HttpRoute.getRaw("target").response(_.bodyText)
-            val ep = route.handler { _ =>
+            val ep          = route.handler { _ =>
                 attempts += 1
                 if attempts < 2 then HttpResponse.serverError.addField("body", "error")
                 else HttpResponse.redirect("/target").addField("body", "redirect")
@@ -1423,7 +1423,7 @@ class HttpClientTest extends BaseHttpTest:
         "exhausted returns last response" in {
             var attempts = 0
             val route    = HttpRoute.getRaw("fail").response(_.bodyText)
-            val ep = route.handler { _ =>
+            val ep       = route.handler { _ =>
                 attempts += 1
                 HttpResponse.serverError.addField("body", "always fails")
             }
@@ -1448,7 +1448,7 @@ class HttpClientTest extends BaseHttpTest:
 
         "timeout error" - {
             val route = HttpRoute.getRaw("slow").response(_.bodyText)
-            val ep = route.handler { _ =>
+            val ep    = route.handler { _ =>
                 // Block forever — cancelled when client times out
                 Latch.init(1).map(_.await).andThen(HttpResponse.ok("too late"))
             }
@@ -1500,7 +1500,7 @@ class HttpClientTest extends BaseHttpTest:
         "works after error responses" in {
             var count = 0
             val route = HttpRoute.getRaw("maybe").response(_.bodyText)
-            val ep = route.handler { _ =>
+            val ep    = route.handler { _ =>
                 count += 1
                 if count <= 3 then HttpResponse.serverError.addField("body", "fail")
                 else HttpResponse.ok("recovered")
@@ -1603,7 +1603,7 @@ class HttpClientTest extends BaseHttpTest:
         "reuse after streaming response" - {
             val streamRoute = HttpRoute.getRaw("stream-reuse").response(_.bodyStream)
             val textRoute   = HttpRoute.getRaw("text-reuse").response(_.bodyText)
-            val streamEp = streamRoute.handler { _ =>
+            val streamEp    = streamRoute.handler { _ =>
                 val chunks = Stream.init(Seq(
                     Span.fromUnsafe("a".getBytes("UTF-8")),
                     Span.fromUnsafe("b".getBytes("UTF-8"))
@@ -1677,7 +1677,7 @@ class HttpClientTest extends BaseHttpTest:
         "concurrent requests with shared state" - {
             val counter = new java.util.concurrent.atomic.AtomicInteger(0)
             val route   = HttpRoute.getRaw("count").response(_.bodyText)
-            val ep = route.handler { _ =>
+            val ep      = route.handler { _ =>
                 val n = counter.incrementAndGet()
                 HttpResponse.ok(n.toString)
             }
@@ -1726,7 +1726,7 @@ class HttpClientTest extends BaseHttpTest:
                 val sizes   = Choice.eval(2, 4, 8)
                 (for
                     size <- sizes
-                    _ <- Scope.run {
+                    _    <- Scope.run {
                         for
                             c     <- initTrustAllClient(size)
                             latch <- Latch.init(1)
@@ -1740,7 +1740,7 @@ class HttpClientTest extends BaseHttpTest:
                             ))
                             _       <- latch.release
                             results <- Kyo.foreach(fibers)(_.get)
-                            successes = results.count(_.isSuccess)
+                            successes     = results.count(_.isSuccess)
                             poolExhausted = results.count {
                                 case Result.Failure(_: HttpPoolExhaustedException) => true
                                 case _                                             => false
@@ -1761,7 +1761,7 @@ class HttpClientTest extends BaseHttpTest:
                 val sizes   = Choice.eval(2, 4, 8)
                 (for
                     size <- sizes
-                    _ <- Scope.run {
+                    _    <- Scope.run {
                         for
                             c     <- initTrustAllClient(size)
                             latch <- Latch.init(1)
@@ -1803,7 +1803,7 @@ class HttpClientTest extends BaseHttpTest:
                             // Run 5 batches, each batch fires `size` concurrent requests with a latch
                             _ <- Kyo.foreach(1 to 5) { _ =>
                                 for
-                                    latch <- Latch.init(1)
+                                    latch  <- Latch.init(1)
                                     fibers <- Kyo.fill(size)(Fiber.initUnscoped(
                                         latch.await.andThen(
                                             HttpClient.withConfig(noTimeout) {
@@ -1827,7 +1827,7 @@ class HttpClientTest extends BaseHttpTest:
             val textRoute   = HttpRoute.getRaw("text").response(_.bodyText)
             val streamRoute = HttpRoute.getRaw("stream-mix").response(_.bodyStream)
             val textEp      = textRoute.handler(_ => HttpResponse.ok("hello"))
-            val streamEp = streamRoute.handler { _ =>
+            val streamEp    = streamRoute.handler { _ =>
                 val chunks = Stream.init(Seq(
                     Span.fromUnsafe("chunk1\n".getBytes("UTF-8")),
                     Span.fromUnsafe("chunk2\n".getBytes("UTF-8"))
@@ -1839,7 +1839,7 @@ class HttpClientTest extends BaseHttpTest:
                 val sizes   = Choice.eval(2, 4)
                 (for
                     size <- sizes
-                    _ <- Scope.run {
+                    _    <- Scope.run {
                         for
                             c     <- initTrustAllClient(size * 2)
                             latch <- Latch.init(1)
@@ -1895,14 +1895,14 @@ class HttpClientTest extends BaseHttpTest:
                 val sizes   = Choice.eval(2, 4)
                 (for
                     size <- sizes
-                    _ <- Scope.run {
+                    _    <- Scope.run {
                         for
-                            c     <- initTrustAllClient(size)
-                            latch <- Latch.init(1)
+                            c      <- initTrustAllClient(size)
+                            latch  <- Latch.init(1)
                             fibers <- Kyo.foreach(0 until size) { i =>
                                 Fiber.initUnscoped {
                                     latch.await.andThen {
-                                        val marker = s"marker-$i"
+                                        val marker                                = s"marker-$i"
                                         val bodyStream: Stream[Span[Byte], Async] = Stream.init(Seq(
                                             Span.fromUnsafe(s"$marker-a,".getBytes("UTF-8")),
                                             Span.fromUnsafe(s"$marker-b".getBytes("UTF-8"))
@@ -2065,7 +2065,7 @@ class HttpClientTest extends BaseHttpTest:
         "buffered request: fiber interruption cancels in-flight request" - {
             // Server never responds. Client times out. Request should be cancelled, not leak.
             val route = HttpRoute.getRaw("slow").response(_.bodyText)
-            val ep = route.handler { _ =>
+            val ep    = route.handler { _ =>
                 // Block forever — cancelled when client times out
                 Latch.init(1).map(_.await).andThen(HttpResponse.ok("too late"))
             }
@@ -2114,7 +2114,7 @@ class HttpClientTest extends BaseHttpTest:
         "streaming response: fiber interruption stops stream consumption" - {
             // Server sends an infinite stream. Client reads one chunk then cancels via scope close.
             val route = HttpRoute.getRaw("infinite").response(_.bodyStream)
-            val ep = route.handler { _ =>
+            val ep    = route.handler { _ =>
                 val chunks = Stream[Span[Byte], Async] {
                     kyo.Loop.foreach {
                         Async.delay(1.millis) {
@@ -2144,7 +2144,7 @@ class HttpClientTest extends BaseHttpTest:
         "streaming response: server-side stream error propagates to client" - {
             // Server stream throws after first chunk. Client should see an error, not hang.
             val route = HttpRoute.getRaw("fail-stream").response(_.bodyStream)
-            val ep = route.handler { _ =>
+            val ep    = route.handler { _ =>
                 val failingStream = Stream[Span[Byte], Async] {
                     kyo.Emit.valueWith(Chunk(Span.fromUnsafe("ok\n".getBytes("UTF-8")))) {
                         throw new RuntimeException("stream error")
@@ -2234,7 +2234,7 @@ class HttpClientTest extends BaseHttpTest:
             // of looping forever pulling from the infinite stream (leaking the fiber).
             kyo.Latch.init(1).map { writeDone =>
                 val route = HttpRoute.postRaw("sink").request(_.bodyStream).response(_.bodyText)
-                val ep = route.handler { req =>
+                val ep    = route.handler { req =>
                     req.fields.body.take(1).run.map(_ => HttpResponse.ok("ok"))
                 }
                 withServer(ep) { url =>
@@ -2271,7 +2271,7 @@ class HttpClientTest extends BaseHttpTest:
                 val sizes   = Choice.eval(2, 4)
                 (for
                     size <- sizes
-                    _ <- Scope.run {
+                    _    <- Scope.run {
                         for
                             c     <- initTrustAllClient(size)
                             latch <- Latch.init(1)
@@ -2671,7 +2671,7 @@ class HttpClientTest extends BaseHttpTest:
 
         "postJson round-trip" - {
             val route = HttpRoute.postJson[User, User]("users")
-            val ep = route.handler { req =>
+            val ep    = route.handler { req =>
                 HttpResponse.ok.addField("body", User(req.fields.body.id + 1, req.fields.body.name.toUpperCase))
             }
             runServer(ep) { url =>
@@ -2723,7 +2723,7 @@ class HttpClientTest extends BaseHttpTest:
 
         "postBinary round-trip" - {
             val route = HttpRoute.postBinary("bin")
-            val ep = route.handler { req =>
+            val ep    = route.handler { req =>
                 HttpResponse.ok.addField("body", req.fields.body)
             }
             val data = Span.fromUnsafe(Array[Byte](10, 20, 30))
@@ -2750,7 +2750,7 @@ class HttpClientTest extends BaseHttpTest:
 
         "putJson" - {
             val route = HttpRoute.putJson[User, User]("user")
-            val ep = route.handler { req =>
+            val ep    = route.handler { req =>
                 HttpResponse.ok.addField("body", User(req.fields.body.id, "updated"))
             }
             runServer(ep) { url =>
@@ -2765,7 +2765,7 @@ class HttpClientTest extends BaseHttpTest:
 
         "patchJson" - {
             val route = HttpRoute.patchJson[User, User]("user")
-            val ep = route.handler { req =>
+            val ep    = route.handler { req =>
                 HttpResponse.ok.addField("body", User(req.fields.body.id, "patched"))
             }
             runServer(ep) { url =>
@@ -2816,7 +2816,7 @@ class HttpClientTest extends BaseHttpTest:
 
         "putBinary" - {
             val route = HttpRoute.putBinary("bin")
-            val ep = route.handler { req =>
+            val ep    = route.handler { req =>
                 HttpResponse.ok.addField("body", req.fields.body)
             }
             runServer(ep) { url =>
@@ -2831,7 +2831,7 @@ class HttpClientTest extends BaseHttpTest:
 
         "patchBinary" - {
             val route = HttpRoute.patchBinary("bin")
-            val ep = route.handler { req =>
+            val ep    = route.handler { req =>
                 HttpResponse.ok.addField("body", req.fields.body)
             }
             runServer(ep) { url =>
@@ -2858,7 +2858,7 @@ class HttpClientTest extends BaseHttpTest:
 
         "getSseText" - {
             val route = HttpRoute.getRaw("events").response(_.bodySseText)
-            val ep = route.handler { _ =>
+            val ep    = route.handler { _ =>
                 HttpResponse.ok.addField(
                     "body",
                     Stream.init(Seq(
@@ -2881,7 +2881,7 @@ class HttpClientTest extends BaseHttpTest:
 
         "getSseJson" - {
             val route = HttpRoute.getRaw("events").response(_.bodySseJson[User])
-            val ep = route.handler { _ =>
+            val ep    = route.handler { _ =>
                 HttpResponse.ok.addField(
                     "body",
                     Stream.init(Seq(
@@ -2905,7 +2905,7 @@ class HttpClientTest extends BaseHttpTest:
 
         "getNdJson" - {
             val route = HttpRoute.getRaw("data").response(_.bodyNdjson[User])
-            val ep = route.handler { _ =>
+            val ep    = route.handler { _ =>
                 HttpResponse.ok.addField(
                     "body",
                     Stream.init(Seq(
@@ -2929,7 +2929,7 @@ class HttpClientTest extends BaseHttpTest:
 
         "getStreamBytes returns chunks" - {
             val route = HttpRoute.getRaw("bytes").response(_.bodyStream)
-            val ep = route.handler { _ =>
+            val ep    = route.handler { _ =>
                 HttpResponse.ok.addField(
                     "body",
                     Stream.init(Seq(
@@ -2953,7 +2953,7 @@ class HttpClientTest extends BaseHttpTest:
 
         "getStreamBytes completes when server closes" - {
             val route = HttpRoute.getRaw("finish").response(_.bodyStream)
-            val ep = route.handler { _ =>
+            val ep    = route.handler { _ =>
                 HttpResponse.ok.addField(
                     "body",
                     Stream.init(Seq(
@@ -2977,7 +2977,7 @@ class HttpClientTest extends BaseHttpTest:
 
         "getStreamBytes fails on non-2xx" - {
             val route = HttpRoute.getRaw("error").response(_.bodyStream)
-            val ep = route.handler { _ =>
+            val ep    = route.handler { _ =>
                 HttpResponse(HttpStatus.InternalServerError).addField(
                     "body",
                     Stream.init(Seq(Span.fromUnsafe("error".getBytes("UTF-8"))))
@@ -3073,7 +3073,7 @@ class HttpClientTest extends BaseHttpTest:
         "nested withConfig composes" in {
             val route    = HttpRoute.getRaw("stack").response(_.bodyText)
             var attempts = 0
-            val ep = route.handler { _ =>
+            val ep       = route.handler { _ =>
                 attempts += 1
                 if attempts < 2 then HttpResponse.serverError.addField("body", "fail")
                 else HttpResponse.ok("ok")
@@ -3095,7 +3095,7 @@ class HttpClientTest extends BaseHttpTest:
         }
 
         "withConfig transform preserves untouched fields" in {
-            val base = HttpUrl(Present("http"), "localhost", 1234, "/", Absent)
+            val base   = HttpUrl(Present("http"), "localhost", 1234, "/", Absent)
             val config = noTimeout.copy(
                 baseUrl = Present(base),
                 maxRedirects = 3,
@@ -3157,7 +3157,7 @@ class HttpClientTest extends BaseHttpTest:
 
         "streaming response (chunked)" in {
             val route = HttpRoute.getRaw("pump-stream").response(_.bodyStream)
-            val ep = route.handler { _ =>
+            val ep    = route.handler { _ =>
                 val chunks = Stream.init(Seq(
                     Span.fromUnsafe("alpha ".getBytes("UTF-8")),
                     Span.fromUnsafe("beta ".getBytes("UTF-8")),
@@ -4033,7 +4033,7 @@ class HttpClientTest extends BaseHttpTest:
 
         "fails on non-2xx status" - {
             val route = HttpRoute.postRaw("raw-fail").request(_.bodyBinary).response(_.bodyText)
-            val ep = route.handler { _ =>
+            val ep    = route.handler { _ =>
                 HttpResponse.badRequest.addField("body", "bad request")
             }
             runServer(ep) { url =>
@@ -4054,7 +4054,7 @@ class HttpClientTest extends BaseHttpTest:
 
         "succeeds with 200" - {
             val route = HttpRoute.postRaw("raw-ok").request(_.bodyBinary).response(_.bodyText)
-            val ep = route.handler { _ =>
+            val ep    = route.handler { _ =>
                 HttpResponse.ok.addField("body", "connected")
             }
             runServer(ep) { url =>
@@ -4079,7 +4079,7 @@ class HttpClientTest extends BaseHttpTest:
 
         "fails with HttpStatusException on 500" - {
             val route = HttpRoute.postRaw("raw-500").request(_.bodyBinary).response(_.bodyText)
-            val ep = route.handler { _ =>
+            val ep    = route.handler { _ =>
                 HttpResponse(HttpStatus.InternalServerError, HttpHeaders.empty, Record.empty)
                     .addField("body", "server error")
             }
@@ -4101,7 +4101,7 @@ class HttpClientTest extends BaseHttpTest:
 
         "sends custom headers to server" - {
             val route = HttpRoute.postRaw("raw-headers").request(_.bodyBinary).response(_.bodyText)
-            val ep = route.handler { req =>
+            val ep    = route.handler { req =>
                 val customVal = req.headers.get("X-Custom-Header").getOrElse("missing")
                 HttpResponse.ok.addField("body", customVal)
             }
@@ -4115,7 +4115,7 @@ class HttpClientTest extends BaseHttpTest:
                             Scope.run {
                                 Scope.ensure(client.closeNow(conn)).andThen {
                                     val textRoute = HttpRoute.postRaw("raw-headers").request(_.bodyBinary).response(_.bodyText)
-                                    val req = HttpRequest(
+                                    val req       = HttpRequest(
                                         HttpMethod.POST,
                                         HttpUrl.fromUri("/raw-headers"),
                                         HttpHeaders.init(Seq("X-Custom-Header" -> "test-value-123")),
@@ -4136,7 +4136,7 @@ class HttpClientTest extends BaseHttpTest:
 
         "sends request body to server" - {
             val route = HttpRoute.postRaw("raw-body").request(_.bodyBinary).response(_.bodyBinary)
-            val ep = route.handler { req =>
+            val ep    = route.handler { req =>
                 // Echo back the received body
                 HttpResponse.ok.addField("body", req.fields.body)
             }
@@ -4149,7 +4149,7 @@ class HttpClientTest extends BaseHttpTest:
                                 Scope.ensure(client.closeNow(conn)).andThen {
                                     val bodyBytes   = Span.fromUnsafe("hello raw body".getBytes("UTF-8"))
                                     val binaryRoute = HttpRoute.postRaw("raw-body").request(_.bodyBinary).response(_.bodyBinary)
-                                    val req = HttpRequest(
+                                    val req         = HttpRequest(
                                         HttpMethod.POST,
                                         HttpUrl.fromUri("/raw-body"),
                                         HttpHeaders.empty,
@@ -4171,7 +4171,7 @@ class HttpClientTest extends BaseHttpTest:
 
         "connection closed on scope exit" - {
             val route = HttpRoute.postRaw("raw-scope").request(_.bodyBinary).response(_.bodyText)
-            val ep = route.handler { _ =>
+            val ep    = route.handler { _ =>
                 HttpResponse.ok.addField("body", "scoped")
             }
             runServer(ep) { url =>
@@ -4191,7 +4191,7 @@ class HttpClientTest extends BaseHttpTest:
 
         "reads response body bytes from lastBodySpan" - {
             val route = HttpRoute.postRaw("raw-read").request(_.bodyBinary).response(_.bodyText)
-            val ep = route.handler { _ =>
+            val ep    = route.handler { _ =>
                 HttpResponse.ok.addField("body", "raw-content-data")
             }
             runServer(ep) { url =>

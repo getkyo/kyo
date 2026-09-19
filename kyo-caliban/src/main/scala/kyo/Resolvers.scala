@@ -178,7 +178,7 @@ object Resolvers:
       * GraphQL error envelope instead of letting jsoniter throw out of the request pipeline.
       */
     private def parseRequest(body: Span[Byte], headers: HttpHeaders): Either[CalibanError.ParsingError, GraphQLRequest] =
-        val ct = headers.get("content-type")
+        val ct                                                        = headers.get("content-type")
         val parsed: Either[CalibanError.ParsingError, GraphQLRequest] =
             if ct.exists(_.contains("application/graphql")) then
                 Right(GraphQLRequest(query = Some(new String(body.toArrayUnsafe, java.nio.charset.StandardCharsets.UTF_8))))
@@ -230,7 +230,7 @@ object Resolvers:
         response: GraphQLResponse[CalibanError],
         headers: HttpHeaders
     ): HttpResponse["body" ~ Span[Byte]] =
-        val acceptsGql = caliban.HttpUtils.AcceptsGqlEncodings(headers.get("accept").toOption).graphQLJson
+        val acceptsGql   = caliban.HttpUtils.AcceptsGqlEncodings(headers.get("accept").toOption).graphQLJson
         val isBadRequest =
             if acceptsGql then
                 response.errors.exists {
@@ -265,7 +265,7 @@ object Resolvers:
         val graphiql = config.graphiql
 
         // POST (queries & mutations)
-        val postRoute = HttpRoute.postRaw(path).request(_.bodyBinary).response(_.bodyBinary).filter(filter)
+        val postRoute   = HttpRoute.postRaw(path).request(_.bodyBinary).response(_.bodyBinary).filter(filter)
         val postHandler = postRoute.handler { req =>
             parseRequest(req.fields.body, req.headers) match
                 case Left(err) =>
@@ -295,7 +295,7 @@ object Resolvers:
         }
 
         // SSE (subscriptions)
-        val sseRoute = HttpRoute.postRaw(s"$path/sse").request(_.bodyBinary).response(_.bodySseText).filter(filter)
+        val sseRoute   = HttpRoute.postRaw(s"$path/sse").request(_.bodyBinary).response(_.bodySseText).filter(filter)
         val sseHandler = sseRoute.handler { req =>
             // Parse defensively; SSE replies with a single 'next' carrying the error then a 'complete'.
             val request: GraphQLRequest = parseRequest(req.fields.body, req.headers) match
@@ -312,7 +312,7 @@ object Resolvers:
         }
 
         // @defer (multipart/mixed streaming)
-        val deferRoute = HttpRoute.postRaw(s"$path/defer").request(_.bodyBinary).response(_.bodyStream).filter(filter)
+        val deferRoute   = HttpRoute.postRaw(s"$path/defer").request(_.bodyBinary).response(_.bodyStream).filter(filter)
         val deferHandler = deferRoute.handler { req =>
             val request: GraphQLRequest = parseRequest(req.fields.body, req.headers) match
                 case Left(_)    => GraphQLRequest()
@@ -329,7 +329,7 @@ object Resolvers:
                 val pipeline  = caliban.HttpUtils.DeferMultipart.createPipeline(response)
                 val zioStream = (source >>> pipeline).catchAll(_ => zio.stream.ZStream.empty)
                 val parts     = ZStreams.get(zioStream).map(formatDeferPart)
-                val endBytes =
+                val endBytes  =
                     Span.fromUnsafe(caliban.HttpUtils.DeferMultipart.EndBoundary.getBytes(java.nio.charset.StandardCharsets.UTF_8))
                 val stream = parts.concat(Stream.init(Chunk(endBytes)))
                 val params = caliban.HttpUtils.DeferMultipart.DeferHeaderParams.map((k, v) => s"$k=$v").mkString("; ")
@@ -338,7 +338,7 @@ object Resolvers:
         }
 
         // Upload (multipart)
-        val uploadRoute = HttpRoute.postRaw(s"$path/upload").request(_.bodyMultipart).response(_.bodyBinary).filter(filter)
+        val uploadRoute   = HttpRoute.postRaw(s"$path/upload").request(_.bodyMultipart).response(_.bodyBinary).filter(filter)
         val uploadHandler = uploadRoute.handler { req =>
             val parts = req.fields.body
             parts.find(_.name == "operations") match
@@ -349,7 +349,7 @@ object Resolvers:
                 case Some(opsPart) =>
                     val parseResult: Either[CalibanError, (GraphQLRequest, Option[Map[String, List[String]]])] =
                         try
-                            val ops = readFromArray[GraphQLRequest](opsPart.data.toArrayUnsafe)(using GraphQLRequest.jsoniterCodec)
+                            val ops     = readFromArray[GraphQLRequest](opsPart.data.toArrayUnsafe)(using GraphQLRequest.jsoniterCodec)
                             val mapJson = parts.find(_.name == "map").map(p =>
                                 readFromArray[Map[String, List[String]]](p.data.toArrayUnsafe)(using uploadMapCodec)
                             )
@@ -373,7 +373,7 @@ object Resolvers:
                                     )
                             }.toMap
                             val fileHandle = Uploads.handler(id => ZIO.succeed(fileMap.get(id)))
-                            val pathMap = mapJson.getOrElse(Map.empty).map { (k, paths) =>
+                            val pathMap    = mapJson.getOrElse(Map.empty).map { (k, paths) =>
                                 k -> paths.flatMap(_.split("\\.").toList.map(PathValue.parse))
                             }.toList
                             val remapped = GraphQLUploadRequest(operations, pathMap, fileHandle).remap
@@ -389,7 +389,7 @@ object Resolvers:
         }
 
         // WebSocket (subscriptions) at ${path}/ws
-        val wsConfig = HttpWebSocket.Config(subprotocols = SupportedWsProtocols)
+        val wsConfig  = HttpWebSocket.Config(subprotocols = SupportedWsProtocols)
         val wsHandler = HttpHandler.webSocket(s"$path/ws", wsConfig) { (req, ws) =>
             runWebSocketProtocol(interpreter, env, hooks, config.webSocketKeepAlive, req, ws)
         }

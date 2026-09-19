@@ -89,11 +89,11 @@ private[kyo] object SlackWebApi:
       */
     private[kyo] def decodeOut[Out: Schema](rawBody: Maybe[String], method: String)(using Frame): Out < Abort[SlackException] =
         rawBody match
-            case Absent => Abort.fail(new SlackDecodeException(s"$method response had no body to decode"))
+            case Absent       => Abort.fail(new SlackDecodeException(s"$method response had no body to decode"))
             case Present(raw) =>
                 Json.decode[Out](raw) match
                     case Result.Success(out) => out
-                    case other =>
+                    case other               =>
                         Abort.fail(new SlackDecodeException(s"$method response did not decode to the expected type: $other"))
 
     private def parseRetryAfter(raw: String): Duration =

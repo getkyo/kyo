@@ -163,7 +163,7 @@ import scala.quoted.*
                     // Cannot use MacroUtils.constructCaseClass or MacroUtils.getDefault here:
                     // symB/tpeB/fieldsB are bound to the outer Quotes instance, but this splice
                     // introduces a new Quotes context, causing path-dependent type mismatch.
-                    val companion = Ref(symB.companionModule)
+                    val companion        = Ref(symB.companionModule)
                     val args: List[Term] = fieldsB.zipWithIndex.map: (field, idx) =>
                         val fieldName  = field.name
                         val fieldTypeB = tpeB.memberType(field)

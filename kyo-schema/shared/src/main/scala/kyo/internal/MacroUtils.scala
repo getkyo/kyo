@@ -109,7 +109,7 @@ private[internal] object MacroUtils:
         expr.asTerm match
             case Inlined(_, _, Literal(StringConstant(s))) => s
             case Literal(StringConstant(s))                => s
-            case _ => report.errorAndAbort(
+            case _                                         => report.errorAndAbort(
                     "Transform field name must be a string literal"
                 )
         end match
@@ -199,7 +199,7 @@ private[internal] object MacroUtils:
     ): quotes.reflect.Term =
         import quotes.reflect.*
         val companion = Ref(sym.companionModule)
-        val typeArgs = tpe match
+        val typeArgs  = tpe match
             case AppliedType(_, targs) => targs
             case _                     => List.empty
         Select.overloaded(companion, "apply", typeArgs, args)

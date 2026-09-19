@@ -188,7 +188,7 @@ class FiberTest extends kyo.test.Test[Any]:
                     _              <- promise1.onInterrupt(_ => interruptCount.incrementAndGet.unit)
                     _              <- promise2.onInterrupt(_ => interruptCount.incrementAndGet.unit)
                     _              <- promise3.onInterrupt(_ => interruptCount.incrementAndGet.unit)
-                    fiber <- Fiber.internal.raceFirst(Seq(
+                    fiber          <- Fiber.internal.raceFirst(Seq(
                         startLatch.release.andThen(promise1.get),
                         startLatch.release.andThen(promise2.get),
                         startLatch.release.andThen(promise3.get)
@@ -248,7 +248,7 @@ class FiberTest extends kyo.test.Test[Any]:
             }
             "slow + fast" in {
                 for
-                    adder <- LongAdder.init
+                    adder  <- LongAdder.init
                     result <-
                         Fiber.internal.race(Seq(
                             Async.delay(1.second)(adder.increment.andThen(24)),
@@ -527,7 +527,7 @@ class FiberTest extends kyo.test.Test[Any]:
             run    <- Latch.init(1)
             stop   <- Latch.init(1)
             result <- AtomicInt.init(0)
-            fiber <-
+            fiber  <-
                 Fiber.initUnscoped {
                     for
                         _ <- start.release
@@ -814,15 +814,15 @@ class FiberTest extends kyo.test.Test[Any]:
 
     "boundary inference with Abort" - {
         "same failures" in {
-            val v: Int < Abort[Int]              = 1
-            val _: Fiber[Int, Abort[Int]] < Sync = Fiber.internal.race(Seq(v))
+            val v: Int < Abort[Int]                   = 1
+            val _: Fiber[Int, Abort[Int]] < Sync      = Fiber.internal.race(Seq(v))
             val _: Fiber[Seq[Int], Abort[Int]] < Sync =
                 Fiber.internal.foreachIndexed(Chunk.from(Seq(v)).toIndexed, Int.MaxValue)((_, v) => v)
             succeed("compile-time type inference check")
         }
         "additional failure" in {
-            val v: Int < Abort[Int]                       = 1
-            val _: Fiber[Int, Abort[Int | String]] < Sync = Fiber.internal.race(Seq(v))
+            val v: Int < Abort[Int]                            = 1
+            val _: Fiber[Int, Abort[Int | String]] < Sync      = Fiber.internal.race(Seq(v))
             val _: Fiber[Seq[Int], Abort[Int | String]] < Sync =
                 Fiber.internal.foreachIndexed(Chunk.from(Seq(v)).toIndexed, Int.MaxValue)((_, v) => v)
             succeed("compile-time type inference check")
@@ -984,7 +984,7 @@ class FiberTest extends kyo.test.Test[Any]:
                 for
                     latch1 <- Latch.init(1)
                     latch2 <- Latch.init(1)
-                    fiber <- Fiber.internal.gather(2)(Seq(
+                    fiber  <- Fiber.internal.gather(2)(Seq(
                         latch1.release.andThen(1),
                         latch2.release.andThen(2),
                         Async.delay(50.millis)(3)
@@ -1061,7 +1061,7 @@ class FiberTest extends kyo.test.Test[Any]:
                     _              <- promise1.onInterrupt(_ => interruptCount.incrementAndGet.unit)
                     _              <- promise2.onInterrupt(_ => interruptCount.incrementAndGet.unit)
                     _              <- promise3.onInterrupt(_ => interruptCount.incrementAndGet.unit)
-                    fiber <- Fiber.internal.gather(3)(Seq(
+                    fiber          <- Fiber.internal.gather(3)(Seq(
                         startLatch.release.andThen(promise1.get),
                         startLatch.release.andThen(promise2.get),
                         startLatch.release.andThen(promise3.get)
@@ -1085,7 +1085,7 @@ class FiberTest extends kyo.test.Test[Any]:
                     _              <- promise1.onInterrupt(_ => interruptCount.incrementAndGet.unit)
                     _              <- promise2.onInterrupt(_ => interruptCount.incrementAndGet.unit)
                     _              <- promise3.onInterrupt(_ => interruptCount.incrementAndGet.unit)
-                    fiber <- Fiber.internal.gather(2)(Seq(
+                    fiber          <- Fiber.internal.gather(2)(Seq(
                         startLatch.release.andThen(promise1.get),
                         startLatch.release.andThen(promise2.get),
                         startLatch.release.andThen(promise3.get)

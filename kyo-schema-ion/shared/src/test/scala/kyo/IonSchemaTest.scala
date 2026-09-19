@@ -114,7 +114,7 @@ class IonSchemaTest extends kyo.test.Test[Any]:
         "streams ISL text to an output stream across more than one write call" in {
             import AllowUnsafe.embrace.danger
             val fieldCount = 300
-            val fields = Chunk.from((1 to fieldCount).map { i =>
+            val fields     = Chunk.from((1 to fieldCount).map { i =>
                 IonSchema.Field(f"wideField$i%04d", IonSchema.TypeExpr.Scalar("string"), required = true)
             })
             val schema = IonSchema(

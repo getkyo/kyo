@@ -29,7 +29,7 @@ class SymbolIdTest extends kyo.test.Test[Any]:
     // SymbolId pattern-binding.
     "SymbolId pattern-binding: extract underlying Int via match" in {
         val s: SymbolId = SymbolId(42)
-        val extracted = s match
+        val extracted   = s match
             case x: SymbolId => x.value
         assert(extracted == 42, s"Expected extracted == 42 but got $extracted")
     }

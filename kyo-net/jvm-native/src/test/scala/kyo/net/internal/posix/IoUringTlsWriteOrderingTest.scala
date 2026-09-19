@@ -114,7 +114,7 @@ class IoUringTlsWriteOrderingTest extends Test:
                 }
             }
         Abort.run[Timeout | Closed](Async.timeout(30.seconds)(settle)).map {
-            case Result.Success(_) => ()
+            case Result.Success(_)          => ()
             case Result.Failure(_: Timeout) =>
                 fail(s"awaitQuiesced: handle ${handle.id} did not reach quiescence within the 30s deadlock ceiling")
             case other =>

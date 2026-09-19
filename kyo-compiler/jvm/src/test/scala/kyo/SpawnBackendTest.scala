@@ -114,8 +114,8 @@ class SpawnBackendTest extends kyo.test.Test[Any]:
         Scope.run {
             Abort.run[Closed] {
                 for
-                    sentCh <- Channel.initUnscoped[Int](16)
-                    respCh <- Channel.initUnscoped[Envelope](16)
+                    sentCh   <- Channel.initUnscoped[Int](16)
+                    respCh   <- Channel.initUnscoped[Envelope](16)
                     exchange <- Exchange.initUnscoped[Request, Response, Envelope, Nothing, TransportError](
                         encode = (id, req) => Envelope.Req(id, req),
                         send = (frame: Envelope) =>
@@ -271,7 +271,7 @@ class SpawnBackendTest extends kyo.test.Test[Any]:
                 // Capture THIS init's worker process via the onSpawn seam (fired once the interrupt-safe
                 // kill is armed, just before the readiness probe), targeting this test's own worker.
                 spawned <- Sync.defer(new java.util.concurrent.atomic.AtomicReference[Maybe[Process]](Absent))
-                fiber <- Fiber.initUnscoped(
+                fiber   <- Fiber.initUnscoped(
                     Abort.run[CompilerException](SpawnBackend.init(spawnConfig(), driver, 7, p => spawned.set(Present(p))))
                 )
                 // The worker JVM has spawned but cannot answer the probe for seconds, so once captured the

@@ -133,7 +133,7 @@ class AeronTransportTest extends Test:
         maxAttempts: Int
     )(using Frame): Maybe[Ffi.Handle[AeronPublication]] < Async =
         Sync.Unsafe.defer(bindings.asyncAddPublication(client, uri, streamId)).map {
-            case Absent => (Absent: Maybe[Ffi.Handle[AeronPublication]])
+            case Absent       => (Absent: Maybe[Ffi.Handle[AeronPublication]])
             case Present(tok) =>
                 Loop.indexed { i =>
                     if i >= maxAttempts then Loop.done(Absent: Maybe[Ffi.Handle[AeronPublication]])
@@ -159,7 +159,7 @@ class AeronTransportTest extends Test:
         maxAttempts: Int
     )(using Frame): Maybe[Ffi.Handle[AeronSubscription]] < Async =
         Sync.Unsafe.defer(bindings.asyncAddSubscription(client, uri, streamId)).map {
-            case Absent => (Absent: Maybe[Ffi.Handle[AeronSubscription]])
+            case Absent       => (Absent: Maybe[Ffi.Handle[AeronSubscription]])
             case Present(tok) =>
                 Loop.indexed { i =>
                     if i >= maxAttempts then Loop.done(Absent: Maybe[Ffi.Handle[AeronSubscription]])
@@ -250,7 +250,7 @@ class AeronTransportTest extends Test:
 
         val freesAfterDone = new java.util.concurrent.atomic.AtomicInteger(0)
 
-        def asyncAddPublication(uri: String, streamId: Int)(using AllowUnsafe): Maybe[AsyncPub] = Present(streamId)
+        def asyncAddPublication(uri: String, streamId: Int)(using AllowUnsafe): Maybe[AsyncPub]         = Present(streamId)
         def pollAddPublication(async: AsyncPub)(using AllowUnsafe): AeronTransport.AddPoll[Publication] =
             pollEntered = true
             interruptTook = interrupter()
@@ -260,11 +260,11 @@ class AeronTransportTest extends Test:
         end pollAddPublication
         def freeAsyncPub(async: AsyncPub)(using AllowUnsafe): Unit =
             if doneObserved then discard(freesAfterDone.incrementAndGet())
-        def publicationIsConnected(pub: Publication)(using AllowUnsafe): Boolean                 = false
-        def offer(pub: Publication, message: Array[Byte])(using AllowUnsafe): Long               = 0L
-        def maxMessageLength(pub: Publication)(using AllowUnsafe): Int                           = 0
-        def closePublication(pub: Publication)(using AllowUnsafe): Unit                          = ()
-        def asyncAddSubscription(uri: String, streamId: Int)(using AllowUnsafe): Maybe[AsyncSub] = Present(streamId)
+        def publicationIsConnected(pub: Publication)(using AllowUnsafe): Boolean                          = false
+        def offer(pub: Publication, message: Array[Byte])(using AllowUnsafe): Long                        = 0L
+        def maxMessageLength(pub: Publication)(using AllowUnsafe): Int                                    = 0
+        def closePublication(pub: Publication)(using AllowUnsafe): Unit                                   = ()
+        def asyncAddSubscription(uri: String, streamId: Int)(using AllowUnsafe): Maybe[AsyncSub]          = Present(streamId)
         def pollAddSubscription(async: AsyncSub)(using AllowUnsafe): AeronTransport.AddPoll[Subscription] =
             AeronTransport.AddPoll.Awaiting
         def freeAsyncSub(async: AsyncSub)(using AllowUnsafe): Unit                 = ()
@@ -286,7 +286,7 @@ class AeronTransportTest extends Test:
           */
         val pubFrees = new java.util.concurrent.atomic.AtomicInteger(0)
         val subFrees = new java.util.concurrent.atomic.AtomicInteger(0)
-        def asyncAddPublication(uri: String, streamId: Int)(using AllowUnsafe): Maybe[AsyncPub] = Present(streamId)
+        def asyncAddPublication(uri: String, streamId: Int)(using AllowUnsafe): Maybe[AsyncPub]         = Present(streamId)
         def pollAddPublication(async: AsyncPub)(using AllowUnsafe): AeronTransport.AddPoll[Publication] =
             AeronTransport.AddPoll.Awaiting
         def freeAsyncPub(async: AsyncPub)(using AllowUnsafe): Unit                               = discard(pubFrees.incrementAndGet())
@@ -322,15 +322,15 @@ class AeronTransportTest extends Test:
         type Subscription = Int
         type AsyncPub     = Int
         type AsyncSub     = Int
-        def asyncAddPublication(uri: String, streamId: Int)(using AllowUnsafe): Maybe[AsyncPub] = Present(streamId)
+        def asyncAddPublication(uri: String, streamId: Int)(using AllowUnsafe): Maybe[AsyncPub]         = Present(streamId)
         def pollAddPublication(async: AsyncPub)(using AllowUnsafe): AeronTransport.AddPoll[Publication] =
             AeronTransport.AddPoll.Awaiting
-        def freeAsyncPub(async: AsyncPub)(using AllowUnsafe): Unit                               = ()
-        def publicationIsConnected(pub: Publication)(using AllowUnsafe): Boolean                 = false
-        def offer(pub: Publication, message: Array[Byte])(using AllowUnsafe): Long               = AeronSentinels.Closed
-        def maxMessageLength(pub: Publication)(using AllowUnsafe): Int                           = 0
-        def closePublication(pub: Publication)(using AllowUnsafe): Unit                          = ()
-        def asyncAddSubscription(uri: String, streamId: Int)(using AllowUnsafe): Maybe[AsyncSub] = Present(streamId)
+        def freeAsyncPub(async: AsyncPub)(using AllowUnsafe): Unit                                        = ()
+        def publicationIsConnected(pub: Publication)(using AllowUnsafe): Boolean                          = false
+        def offer(pub: Publication, message: Array[Byte])(using AllowUnsafe): Long                        = AeronSentinels.Closed
+        def maxMessageLength(pub: Publication)(using AllowUnsafe): Int                                    = 0
+        def closePublication(pub: Publication)(using AllowUnsafe): Unit                                   = ()
+        def asyncAddSubscription(uri: String, streamId: Int)(using AllowUnsafe): Maybe[AsyncSub]          = Present(streamId)
         def pollAddSubscription(async: AsyncSub)(using AllowUnsafe): AeronTransport.AddPoll[Subscription] =
             AeronTransport.AddPoll.Awaiting
         def freeAsyncSub(async: AsyncSub)(using AllowUnsafe): Unit                 = ()
@@ -397,7 +397,7 @@ class AeronTransportTest extends Test:
                 connected <- awaitTrue(5000)(Sync.Unsafe.defer(transport.publicationIsConnected(pub)))
                 _ = assert(connected, "publication did not connect after subscriber was added within 5s")
                 connectedPosition <- offerUntil(5000)(Sync.Unsafe.defer(transport.offer(pub, payload)))
-                _ <- Sync.Unsafe.defer {
+                _                 <- Sync.Unsafe.defer {
                     transport.closePublication(pub)
                     transport.closeSubscription(sub)
                 }
@@ -427,7 +427,7 @@ class AeronTransportTest extends Test:
                 subConnected <- awaitTrue(5000)(Sync.Unsafe.defer(transport.subscriptionIsConnected(sub)))
                 _ = assert(subConnected, "subscription did not connect within 5s")
                 result <- Sync.Unsafe.defer(transport.pollOne(sub))
-                _ <- Sync.Unsafe.defer {
+                _      <- Sync.Unsafe.defer {
                     transport.closePublication(pub)
                     transport.closeSubscription(sub)
                 }
@@ -493,7 +493,7 @@ class AeronTransportTest extends Test:
                 pub      = pubMaybe.get
                 payload  = Array[Byte](0)
                 result <- Sync.Unsafe.defer(transport.offer(pub, payload))
-                _ <- Sync.Unsafe.defer {
+                _      <- Sync.Unsafe.defer {
                     transport.closePublication(pub)
                 }
             yield
@@ -543,7 +543,7 @@ class AeronTransportTest extends Test:
                     "Int subscription did not receive its own message within 5000 poll attempts"
                 )
                 stringResult <- Sync.Unsafe.defer(transport.pollOne(subString))
-                _ <- Sync.Unsafe.defer {
+                _            <- Sync.Unsafe.defer {
                     transport.closePublication(pubInt)
                     transport.closeSubscription(subInt)
                     transport.closeSubscription(subString)
@@ -902,7 +902,7 @@ class AeronTransportTest extends Test:
     private def advanceUntilSettled[A](clock: Clock.TimeControl, fiber: Fiber[A, Any])(using Frame): Unit < Async =
         Loop.indexed { i =>
             fiber.done.map {
-                case true => Loop.done(())
+                case true                         => Loop.done(())
                 case false if i >= maxSettleTicks =>
                     fiber.interrupt.andThen(
                         Abort.panic(new AssertionError(s"the add never settled across $maxSettleTicks ticks of virtual time"))
@@ -964,7 +964,7 @@ class AeronTransportTest extends Test:
         val deadline        = 500.millis
         val transport       = new NeverConfirmTransport
         for
-            counter <- AtomicInt.init(0)
+            counter     <- AtomicInt.init(0)
             tickerFiber <- Fiber.initUnscoped {
                 Loop.indexed { i =>
                     if i >= tickerThreshold then Loop.done(())
@@ -1152,7 +1152,7 @@ class AeronTransportTest extends Test:
             // The three guarded reads, each on a now-freed inner handle.
             pubConnected <- Sync.Unsafe.defer(bindings.publicationIsConnected(pub))
             subConnected <- Sync.Unsafe.defer(bindings.subscriptionIsConnected(sub))
-            polled <- Sync.Unsafe.defer {
+            polled       <- Sync.Unsafe.defer {
                 Buffer.useArray(new Array[Byte](pollDstCap)) { buf =>
                     bindings.subscriptionPoll(sub, buf, pollDstCap)
                 }
@@ -1234,7 +1234,7 @@ class AeronTransportTest extends Test:
                 pubConnected <- awaitTrue(5000)(Sync.Unsafe.defer(transport.publicationIsConnected(pub)))
                 _ = assert(pubConnected, "publication did not connect within 5s")
                 result <- Abort.run[Throwable](Sync.Unsafe.defer(transport.offer(pub, oversize)))
-                _ <- Sync.Unsafe.defer {
+                _      <- Sync.Unsafe.defer {
                     transport.closePublication(pub)
                     transport.closeSubscription(sub)
                 }
@@ -1272,7 +1272,7 @@ class AeronTransportTest extends Test:
                 pubConnected <- awaitTrue(5000)(Sync.Unsafe.defer(transport.publicationIsConnected(pub)))
                 _ = assert(pubConnected, "publication did not connect within 5s")
                 result <- Abort.run[Throwable](Sync.Unsafe.defer(transport.offer(pub, oversize)))
-                _ <- Sync.Unsafe.defer {
+                _      <- Sync.Unsafe.defer {
                     transport.closePublication(pub)
                     transport.closeSubscription(sub)
                 }
@@ -1317,7 +1317,7 @@ class AeronTransportTest extends Test:
         withEmbeddedRuntime() { rt =>
             val transport = rt.transport
             for
-                _ <- Sync.Unsafe.defer(transport.injectError(-1000, "driver timeout"))
+                _      <- Sync.Unsafe.defer(transport.injectError(-1000, "driver timeout"))
                 result <- Abort.run[TopicException] {
                     Topic.runWith(transport) {
                         Topic.publish[Int](ipcUri, Schedule.never)(Stream.init(Seq(42)))
@@ -1344,7 +1344,7 @@ class AeronTransportTest extends Test:
         withEmbeddedRuntime() { rt =>
             val transport = rt.transport
             for
-                _ <- Sync.Unsafe.defer(transport.injectError(-1000, "driver timeout"))
+                _      <- Sync.Unsafe.defer(transport.injectError(-1000, "driver timeout"))
                 result <- Abort.run[TopicException] {
                     Topic.runWith(transport) {
                         Topic.stream[Int](ipcUri, Schedule.never).take(1).run

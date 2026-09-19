@@ -84,7 +84,7 @@ object JsonRpcHttpTransport:
             // connect failure reaches the caller as the Abort[HttpException] the effect row declares
             // instead of being swallowed by the fiber's own Abort.run.
             connected <- Fiber.Promise.init[Unit, Abort[HttpException] & Async]
-            _ <- Scope.ensure(
+            _         <- Scope.ensure(
                 doneRef.completeUnitDiscard.andThen(Abort.run[Closed](inbound.close).unit)
                     .andThen(Abort.run[Closed](outbound.close).unit)
             )

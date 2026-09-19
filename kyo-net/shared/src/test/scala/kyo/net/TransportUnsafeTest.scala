@@ -55,7 +55,7 @@ class TransportUnsafeTest extends Test:
         val count     = new java.util.concurrent.atomic.AtomicInteger(0)
         for
             // Latch the handler signals on each invocation, so the test synchronizes on the actual handler-fired events rather than polling.
-            fired <- Channel.init[Unit](3)
+            fired    <- Channel.init[Unit](3)
             listener <- transport.listen("127.0.0.1", 0, 128) { serverConn =>
                 count.incrementAndGet()
                 serverConn.close()
@@ -122,7 +122,7 @@ class TransportUnsafeTest extends Test:
             _        <- Scope.ensure(Sync.defer(listener.close()))
             conn     <- transport.connect("127.0.0.1", listener.port).safe.get
             _        <- Scope.ensure(Sync.defer(conn.close()))
-            fiber <- Fiber.init {
+            fiber    <- Fiber.init {
                 Abort.run[Closed](conn.inbound.safe.take).unit
             }
             // The inbound channel is empty and open, so `take` cannot complete. `fiber.interrupt` therefore

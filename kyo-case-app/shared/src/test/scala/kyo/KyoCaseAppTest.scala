@@ -62,7 +62,7 @@ class KyoCaseAppTest extends kyo.test.Test[Any]:
 
     "multiple runs share parsed cli".notJs in {
         val captured = new ListBuffer[(String, Seq[String])]
-        val app = new KyoCaseApp[GreetOptions]:
+        val app      = new KyoCaseApp[GreetOptions]:
             run { (options, remainingArgs) =>
                 Sync.defer(captured += ((options.name, remainingArgs.remaining)))
             }
@@ -105,7 +105,7 @@ class KyoCaseAppTest extends kyo.test.Test[Any]:
         assume(!Platform.isNative, "KyoCaseApp.main too slow on Native")
         val x       = new ListBuffer[Int]
         val promise = scala.concurrent.Promise[Unit]()
-        val app = new KyoCaseApp[GreetOptions]:
+        val app     = new KyoCaseApp[GreetOptions]:
             run { (_, _) => Async.delay(10.millis)(Sync.defer(x += 1)) }
             run { (_, _) => Async.delay(10.millis)(Sync.defer(x += 2)) }
             run { (_, _) => Async.delay(10.millis)(Sync.defer(x += 3)) }
@@ -118,7 +118,7 @@ class KyoCaseAppTest extends kyo.test.Test[Any]:
 
     "empty run blocks".notJs in {
         var exitCode = -1
-        val app = new KyoCaseApp[GreetOptions]:
+        val app      = new KyoCaseApp[GreetOptions]:
             override def exitHook(code: Int)(using AllowUnsafe): Unit = exitCode = code
         app.main(Array.empty)
         assert(exitCode == 1)

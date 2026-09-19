@@ -18,7 +18,7 @@ object StackLimitedRunner:
 
     def run(body: => Unit): Unit =
         var exception: Option[Throwable] = None
-        val thread = new Thread(
+        val thread                       = new Thread(
             null,
             () =>
                 try body

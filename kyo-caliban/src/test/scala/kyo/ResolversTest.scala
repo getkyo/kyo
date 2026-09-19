@@ -146,7 +146,7 @@ class ResolverTest extends BaseCalibanTest:
         val route = HttpRoute.postRaw("api/graphql").request(_.bodyBinary).response(_.bodyBinary)
         for
             server <- startServer
-            resp <-
+            resp   <-
                 val req = HttpRequest.postRaw(HttpUrl.fromUri("/api/graphql"))
                     .addField("body", Span.fromUnsafe("{not json".getBytes(java.nio.charset.StandardCharsets.UTF_8)))
                 Abort.run[HttpException](send(server.port, route, req))
@@ -165,7 +165,7 @@ class ResolverTest extends BaseCalibanTest:
         val route = HttpRoute.postRaw("api/graphql").request(_.bodyBinary).response(_.bodyBinary)
         for
             server <- startServer
-            resp <-
+            resp   <-
                 val req = HttpRequest.postRaw(HttpUrl.fromUri("/api/graphql"))
                     .addField("body", Span.fromUnsafe(Array.emptyByteArray))
                 Abort.run[HttpException](send(server.port, route, req))
@@ -193,8 +193,8 @@ class ResolverTest extends BaseCalibanTest:
     "GET - query with variables" in {
         val api = graphQL(RootResolver(ArgsQuery(args => args.a + args.b)))
         for
-            interpreter <- Resolvers.get(api)
-            server      <- Resolvers.run(interpreter)
+            interpreter  <- Resolvers.get(api)
+            server       <- Resolvers.run(interpreter)
             (_, body, _) <- getGql(
                 server.port,
                 "query=query(%24a%3AInt!%2C%24b%3AInt!)%7Badd(a%3A%24a%2Cb%3A%24b)%7D&variables=%7B%22a%22%3A1%2C%22b%22%3A2%7D"
@@ -271,7 +271,7 @@ class ResolverTest extends BaseCalibanTest:
 
         case class Query(k: Int < Environment) derives schema.SemiAuto
 
-        val api = graphQL(RootResolver(Query(Env.get[String].map(_.length))))
+        val api    = graphQL(RootResolver(Query(Env.get[String].map(_.length))))
         val runner = new CalibanRunner[Environment]:
             def apply[A](v: A < Environment): A < (Abort[Throwable] & Async) = Env.run("kyo")(Var.run(0)(v))
         val config = Resolvers.Config.default.path("gql")
@@ -404,7 +404,7 @@ class ResolverTest extends BaseCalibanTest:
         val sseClientRoute = HttpRoute.postRaw("api/graphql/sse").request(_.bodyBinary).response(_.bodyBinary)
         for
             server <- startServer
-            resp <-
+            resp   <-
                 val bodyBytes = Span.fromUnsafe("""{"query":"{ k1 }"}""".getBytes(java.nio.charset.StandardCharsets.UTF_8))
                 val req       = HttpRequest.postRaw(HttpUrl.fromUri("/api/graphql/sse")).addField("body", bodyBytes)
                 send(server.port, sseClientRoute, req)
@@ -424,7 +424,7 @@ class ResolverTest extends BaseCalibanTest:
         for
             interpreter <- Resolvers.get(api)
             server      <- Resolvers.run(interpreter)
-            resp <-
+            resp        <-
                 val bodyBytes =
                     Span.fromUnsafe("""{"query":"subscription { values }"}""".getBytes(java.nio.charset.StandardCharsets.UTF_8))
                 val req = HttpRequest.postRaw(HttpUrl.fromUri("/api/graphql/sse")).addField("body", bodyBytes)
@@ -442,7 +442,7 @@ class ResolverTest extends BaseCalibanTest:
         val deferClientRoute = HttpRoute.postRaw("api/graphql/defer").request(_.bodyBinary).response(_.bodyBinary)
         for
             server <- startServer
-            resp <-
+            resp   <-
                 val bodyBytes = Span.fromUnsafe("""{"query":"{ k1 }"}""".getBytes(java.nio.charset.StandardCharsets.UTF_8))
                 val req       = HttpRequest.postRaw(HttpUrl.fromUri("/api/graphql/defer")).addField("body", bodyBytes)
                 send(server.port, deferClientRoute, req)
@@ -463,7 +463,7 @@ class ResolverTest extends BaseCalibanTest:
         for
             interpreter <- Resolvers.get(api)
             server      <- Resolvers.run(interpreter)
-            resp <-
+            resp        <-
                 val bodyBytes = Span.fromUnsafe(
                     """{"query":"{ k1 ... @defer { sub { slow } } }"}""".getBytes(java.nio.charset.StandardCharsets.UTF_8)
                 )
@@ -484,7 +484,7 @@ class ResolverTest extends BaseCalibanTest:
         val uploadRoute = HttpRoute.postRaw("api/graphql/upload").request(_.bodyMultipart).response(_.bodyBinary)
         for
             server <- startServer
-            resp <-
+            resp   <-
                 val operations = HttpRequest.Part(
                     "operations",
                     Absent,
@@ -516,7 +516,7 @@ class ResolverTest extends BaseCalibanTest:
         val uploadRoute = HttpRoute.postRaw("api/graphql/upload").request(_.bodyMultipart).response(_.bodyBinary)
         for
             server <- startServer
-            resp <-
+            resp   <-
                 val operations = HttpRequest.Part(
                     "operations",
                     Absent,
@@ -548,7 +548,7 @@ class ResolverTest extends BaseCalibanTest:
         val uploadRoute = HttpRoute.postRaw("api/graphql/upload").request(_.bodyMultipart).response(_.bodyBinary)
         for
             server <- startServer
-            resp <-
+            resp   <-
                 val operations = HttpRequest.Part(
                     "operations",
                     Absent,
@@ -582,7 +582,7 @@ class ResolverTest extends BaseCalibanTest:
         val uploadRoute = HttpRoute.postRaw("api/graphql/upload").request(_.bodyMultipart).response(_.bodyBinary)
         for
             server <- startServer
-            resp <-
+            resp   <-
                 val emptyPart = HttpRequest.Part(
                     "other",
                     Absent,
@@ -625,7 +625,7 @@ class ResolverTest extends BaseCalibanTest:
 
     "response - Accept application/graphql-response+json" in {
         for
-            server <- startServer
+            server                  <- startServer
             (status, body, headers) <- postGql(
                 server.port,
                 """{"query":"{ k1 }"}""",
@@ -640,7 +640,7 @@ class ResolverTest extends BaseCalibanTest:
 
     "response - 400 for validation error with graphql-response+json" in {
         for
-            server <- startServer
+            server            <- startServer
             (status, body, _) <- postGql(
                 server.port,
                 """{"query":"{ nonexistent }"}""",
@@ -811,7 +811,7 @@ class ResolverTest extends BaseCalibanTest:
                 for
                     _   <- ws.put(HttpWebSocket.Payload.Text("""{"type":"connection_init"}"""))
                     ack <- expectMessage(ws, _.contains("connection_ack"))
-                    _ <- ws.put(HttpWebSocket.Payload.Text(
+                    _   <- ws.put(HttpWebSocket.Payload.Text(
                         """{"type":"subscribe","id":"1","payload":{"query":"subscription { values }"}}"""
                     ))
                     msgs <- collectMessages(ws, 4) // 3 next + 1 complete
@@ -897,7 +897,7 @@ class ResolverTest extends BaseCalibanTest:
                 for
                     _   <- ws.put(HttpWebSocket.Payload.Text("""{"type":"connection_init"}"""))
                     ack <- expectMessage(ws, _.contains("connection_ack"))
-                    _ <- ws.put(HttpWebSocket.Payload.Text(
+                    _   <- ws.put(HttpWebSocket.Payload.Text(
                         """{"type":"start","id":"1","payload":{"query":"subscription { values }"}}"""
                     ))
                     msgs <- collectMessages(ws, 3) // 2 data + 1 complete
@@ -936,7 +936,7 @@ class ResolverTest extends BaseCalibanTest:
         val api = wsApi
         for
             interpreter <- Resolvers.get(api)
-            server <- Resolvers.run(
+            server      <- Resolvers.run(
                 interpreter,
                 Resolvers.Config.default.webSocketKeepAlive(150.millis)
             )
@@ -1465,7 +1465,7 @@ class ResolverTest extends BaseCalibanTest:
     // ==================== WS - Hooks ====================
 
     "WS - hook onAck attaches payload to connection_ack" in {
-        val api = wsApi
+        val api   = wsApi
         val hooks = caliban.ws.WebSocketHooks.ack[Any, CalibanError](
             zio.ZIO.succeed(caliban.ResponseValue.ObjectValue(List("hello" -> caliban.Value.StringValue("world"))))
         )
@@ -1486,7 +1486,7 @@ class ResolverTest extends BaseCalibanTest:
     }
 
     "WS - hook beforeInit accepts when token matches" in {
-        val api = wsApi
+        val api   = wsApi
         val hooks = caliban.ws.WebSocketHooks.init[Any, CalibanError] { payload =>
             payload match
                 case caliban.InputValue.ObjectValue(fields) if fields.get("token").contains(caliban.Value.StringValue("ok")) =>
@@ -1526,7 +1526,7 @@ class ResolverTest extends BaseCalibanTest:
     }
 
     "WS - hook afterInit failure closes with 4401" in {
-        val api = wsApi
+        val api   = wsApi
         val hooks = caliban.ws.WebSocketHooks.afterInit[Any, CalibanError](
             zio.ZIO.fail(CalibanError.ExecutionError("auth expired"))
         )
@@ -1546,8 +1546,8 @@ class ResolverTest extends BaseCalibanTest:
     }
 
     "WS - hook onPing customizes pong payload" in {
-        val api   = wsApi
-        val hooks = caliban.ws.WebSocketHooks.empty[Any, CalibanError]
+        val api    = wsApi
+        val hooks  = caliban.ws.WebSocketHooks.empty[Any, CalibanError]
         val hooks2 = new caliban.ws.WebSocketHooks[Any, CalibanError]:
             override def onPing
                 : Option[Option[caliban.InputValue] => zio.ZIO[Any, CalibanError, Option[caliban.ResponseValue]]] =
@@ -1573,7 +1573,7 @@ class ResolverTest extends BaseCalibanTest:
     "WS - hook onPong observes client pong" in {
         val api       = wsApi
         val callCount = new java.util.concurrent.atomic.AtomicInteger(0)
-        val hooks = new caliban.ws.WebSocketHooks[Any, CalibanError]:
+        val hooks     = new caliban.ws.WebSocketHooks[Any, CalibanError]:
             override def onPong: Option[caliban.InputValue => zio.ZIO[Any, CalibanError, Any]] =
                 Some(_ => zio.ZIO.succeed(callCount.incrementAndGet()))
         for
@@ -1665,7 +1665,7 @@ class ResolverTest extends BaseCalibanTest:
     "WS - hook afterInit success runs side effect" in {
         val api     = wsApi
         val counter = new java.util.concurrent.atomic.AtomicInteger(0)
-        val hooks = caliban.ws.WebSocketHooks.afterInit[Any, CalibanError](
+        val hooks   = caliban.ws.WebSocketHooks.afterInit[Any, CalibanError](
             zio.ZIO.succeed(counter.incrementAndGet())
         )
         for
@@ -1946,7 +1946,7 @@ class ResolverTest extends BaseCalibanTest:
     // sees the protocol-level Complete frame in addition to data frames.
     "WS - onMessage hook is applied to all output frames including Complete" in {
         val sawComplete = new java.util.concurrent.atomic.AtomicBoolean(false)
-        val hooks = new caliban.ws.WebSocketHooks[Any, CalibanError]:
+        val hooks       = new caliban.ws.WebSocketHooks[Any, CalibanError]:
             override def onMessage
                 : Option[zio.stream.ZPipeline[Any, CalibanError, caliban.GraphQLWSOutput, caliban.GraphQLWSOutput]] =
                 Some(zio.stream.ZPipeline.map { out =>

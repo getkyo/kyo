@@ -181,7 +181,7 @@ class LocalBackendTest extends kyo.test.Test[Any]:
         pkgDir.toFile.deleteOnExit()
         defsFile.toFile.deleteOnExit()
 
-        val uri = Compiler.Uri("Probe.scala")
+        val uri  = Compiler.Uri("Probe.scala")
         val text =
             """object Probe:
               |  val n = myroot.Defs.magicNumber""".stripMargin

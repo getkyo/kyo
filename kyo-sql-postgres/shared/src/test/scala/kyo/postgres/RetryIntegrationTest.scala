@@ -39,7 +39,7 @@ class RetryIntegrationTest extends SqlContainerTest:
         Abort.run[SqlConnectionException](SqlClient.init(url, config)).flatMap {
             case Result.Success(client) => DB.run(client)(f(client))
             case Result.Failure(e)      => Abort.fail(e: SqlException)
-            case Result.Panic(t) =>
+            case Result.Panic(t)        =>
                 scala.Console.err.println(s"[kyo-sql] RetryIntegrationTest.withPgClient panic: ${t.getMessage}")
                 Abort.fail(SqlConnectionConnectFailedException("test", 0, new Exception(t.getMessage)))
         }

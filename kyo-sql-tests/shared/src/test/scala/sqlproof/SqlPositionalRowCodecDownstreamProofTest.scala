@@ -23,7 +23,7 @@ class SqlPositionalRowCodecDownstreamProofTest extends kyo.Test:
 
     "a downstream row codec is SqlPositionalRowCodec plus one reader hook" in {
         val codec = new StubRowCodec
-        val row = new SqlRow(
+        val row   = new SqlRow(
             Chunk(Maybe.empty, Maybe.empty),
             Chunk(SqlRow.Column("id", 0), SqlRow.Column("name", 0)),
             codec

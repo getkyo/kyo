@@ -24,10 +24,10 @@ class TreePolishTest extends kyo.test.Test[Any]:
             Chunk.empty
         )
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(symbol)).map { classpath =>
-            val n     = Tasty.Name("x")
-            val tpe   = Tasty.Type.Named(SymbolId(0))
-            val lit   = Tasty.Tree.Literal(Tasty.Constant.IntConst(42))
-            val ident = Tasty.Tree.Ident(n, tpe)
+            val n                      = Tasty.Name("x")
+            val tpe                    = Tasty.Type.Named(SymbolId(0))
+            val lit                    = Tasty.Tree.Literal(Tasty.Constant.IntConst(42))
+            val ident                  = Tasty.Tree.Ident(n, tpe)
             val trees: Seq[Tasty.Tree] = Seq(
                 lit,
                 ident,

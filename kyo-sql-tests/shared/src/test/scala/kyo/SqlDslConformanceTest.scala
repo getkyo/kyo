@@ -71,8 +71,8 @@ class SqlDslConformanceTest extends SqlBackendTest:
                 Maybe(Sql.WindowFrame(Sql.WindowFrame.Kind.Range, Sql.FrameBound.preceding(2), Maybe(Sql.FrameBound.CurrentRow)))
             )
             for
-                _ <- client.executeRaw(s"CREATE TABLE bound (v ${backend.columnType(ColumnType.Int)})")
-                _ <- client.executeRaw("INSERT INTO bound VALUES (1), (2), (2), (3), (NULL)")
+                _    <- client.executeRaw(s"CREATE TABLE bound (v ${backend.columnType(ColumnType.Int)})")
+                _    <- client.executeRaw("INSERT INTO bound VALUES (1), (2), (2), (3), (NULL)")
                 rows <- Sql.from[Bound]("b")
                     .select(view => (view.b.v, view.b.v.sum.over(window.copy(orderBy = Chunk(view.b.v.asc)))))
                     .orderBy(_.b.v.asc)
@@ -100,7 +100,7 @@ class SqlDslConformanceTest extends SqlBackendTest:
                 Maybe(Sql.WindowFrame(Sql.WindowFrame.Kind.Range, Sql.FrameBound.preceding(2), Maybe(Sql.FrameBound.CurrentRow)))
             )
             for
-                _ <- client.executeRaw(s"CREATE TABLE bound (v ${backend.columnType(ColumnType.Int)})")
+                _       <- client.executeRaw(s"CREATE TABLE bound (v ${backend.columnType(ColumnType.Int)})")
                 outcome <- Abort.run[SqlException] {
                     Sql.from[Bound]("b")
                         .select(view => (view.b.v, view.b.v.sum.over(window.copy(orderBy = Chunk(view.b.v.asc)))))
@@ -129,8 +129,8 @@ class SqlDslConformanceTest extends SqlBackendTest:
                 ))
             )
             for
-                _ <- client.executeRaw(s"CREATE TABLE bound (v ${backend.columnType(ColumnType.Int)})")
-                _ <- client.executeRaw("INSERT INTO bound VALUES (1), (2), (NULL), (10)")
+                _    <- client.executeRaw(s"CREATE TABLE bound (v ${backend.columnType(ColumnType.Int)})")
+                _    <- client.executeRaw("INSERT INTO bound VALUES (1), (2), (NULL), (10)")
                 rows <- Sql.from[Bound]("b")
                     .select(view => (view.b.v, view.b.v.sum.over(window.copy(orderBy = Chunk(view.b.v.asc)))))
                     .run
@@ -238,8 +238,8 @@ class SqlDslConformanceTest extends SqlBackendTest:
         agreeAcrossBackends(expected = Present("refused as a value out of range")) { (backend, client, _) =>
             val int = backend.columnType(ColumnType.Int)
             for
-                _ <- client.executeRaw(s"CREATE TABLE ratio (a $int NOT NULL, b $int NOT NULL)")
-                _ <- Sql.insert[Ratio].values(Ratio(Int.MaxValue, 1)).run
+                _      <- client.executeRaw(s"CREATE TABLE ratio (a $int NOT NULL, b $int NOT NULL)")
+                _      <- Sql.insert[Ratio].values(Ratio(Int.MaxValue, 1)).run
                 answer <- Abort.run[SqlException](Sql.from[Ratio]("r").select(view => view.r.a + view.r.b).run).map {
                     case Result.Success(rows)                  => s"the largest Int plus one answered ${rows.head}"
                     case Result.Failure(_: SqlValueOutOfRange) => "refused as a value out of range"
@@ -342,8 +342,8 @@ class SqlDslConformanceTest extends SqlBackendTest:
             for
                 // `q` rather than a word like `out`, which one engine reserves: the DDL here is hand-written text and
                 // the renderer's quoting does not reach it.
-                _ <- client.executeRaw(s"CREATE TABLE quot (a $int, b $int, q ${backend.columnType(ColumnType.Numeric)})")
-                _ <- Sql.insert[Quot].values(Quot(Present(5), Present(0), Absent)).run
+                _      <- client.executeRaw(s"CREATE TABLE quot (a $int, b $int, q ${backend.columnType(ColumnType.Numeric)})")
+                _      <- Sql.insert[Quot].values(Quot(Present(5), Present(0), Absent)).run
                 answer <- Abort.run[SqlException](Sql.update[Quot].set(c => c.q := c.a / c.b).where(_.a == Present(5)).run).map {
                     case Result.Success(_) => "ran"
                     case Result.Failure(e) => s"refused with ${e.getClass.getSimpleName}"

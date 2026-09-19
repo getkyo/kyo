@@ -159,8 +159,8 @@ class ScaleTest extends kyo.test.Test[Any]:
 
     // symlog invert round-trips.
     "Symlog invert(apply(v)) recovers v within 1e-6" in {
-        val s  = Scale.Symlog(-100.0, 100.0, 0.0, 200.0, clamp = false)
-        val px = s.apply(Domain.Continuous(12.5))
+        val s    = Scale.Symlog(-100.0, 100.0, 0.0, 200.0, clamp = false)
+        val px   = s.apply(Domain.Continuous(12.5))
         val back = s.invert(px) match
             case Domain.Continuous(v) => v
             case _                    => Double.NaN
@@ -305,7 +305,7 @@ class ScaleTest extends kyo.test.Test[Any]:
         case class Row(x: String, y: Double)
         given scala.CanEqual[Row, Row] = scala.CanEqual.derived
         val rows                       = kyo.Chunk(Row("a", 20.0), Row("b", 80.0))
-        val spec = Chart(rows)(line(x = _.x, y = _.y))
+        val spec                       = Chart(rows)(line(x = _.x, y = _.y))
             .yScale(_.linear(100.0, 0.0))
         spec.lower.map { root =>
             // Collect all Svg.Text nodes anywhere in the tree (axes, labels, ticks).

@@ -231,7 +231,7 @@ class SqliteClientTest extends Test:
                     }.map { outcome =>
                         outcome match
                             case Result.Failure(_: SqliteIsolationLevelUnsupportedException) => succeed
-                            case other =>
+                            case other                                                       =>
                                 fail(s"READ COMMITTED must be refused rather than run at snapshot, got $other")
                     }
                 }

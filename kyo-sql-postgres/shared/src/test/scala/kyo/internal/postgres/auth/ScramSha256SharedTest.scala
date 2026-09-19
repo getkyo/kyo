@@ -80,7 +80,7 @@ class ScramSha256SharedTest extends kyo.Test:
     "ScramSha256Shared verifyServerSignature accepts valid RFC 7677 vector" in {
         val scram = ScramSha256Shared(rfcUsername, rfcClientNonce, ChannelBinding.NotSupported)
         scram.clientFinalMessage(rfcServerFirst, rfcPassword) match
-            case Result.Failure(err) => fail(s"clientFinalMessage failed: $err")
+            case Result.Failure(err)            => fail(s"clientFinalMessage failed: $err")
             case Result.Success((_, serverSig)) =>
                 val result = scram.verifyServerSignature(rfcServerFinal, serverSig)
                 assert(result.isSuccess, s"Expected Success but got: $result")
@@ -111,7 +111,7 @@ class ScramSha256SharedTest extends kyo.Test:
     "ScramSha256Shared clientFinalMessage includes channelBinding cb=biws" in {
         val scram = ScramSha256Shared(rfcUsername, rfcClientNonce, ChannelBinding.NotSupported)
         scram.clientFinalMessage(rfcServerFirst, rfcPassword) match
-            case Result.Failure(err) => fail(s"clientFinalMessage failed: $err")
+            case Result.Failure(err)              => fail(s"clientFinalMessage failed: $err")
             case Result.Success((clientFinal, _)) =>
                 assert(clientFinal.startsWith("c=biws,"), s"Expected 'c=biws,' prefix, got: $clientFinal")
             case Result.Panic(t) => fail(s"Unexpected panic: $t")
@@ -204,7 +204,7 @@ class ScramSha256SharedTest extends kyo.Test:
     "ScramSha256Shared verifyServerSignature rejects malformed server-final" in {
         val scram = ScramSha256Shared(rfcUsername, rfcClientNonce, ChannelBinding.NotSupported)
         scram.clientFinalMessage(rfcServerFirst, rfcPassword) match
-            case Result.Failure(err) => fail(s"clientFinalMessage failed: $err")
+            case Result.Failure(err)            => fail(s"clientFinalMessage failed: $err")
             case Result.Success((_, serverSig)) =>
                 val result = scram.verifyServerSignature("not-valid-format", serverSig)
                 assert(result.isFailure)
@@ -221,7 +221,7 @@ class ScramSha256SharedTest extends kyo.Test:
     "ScramSha256Shared verifyServerSignature handles server-error response" in {
         val scram = ScramSha256Shared(rfcUsername, rfcClientNonce, ChannelBinding.NotSupported)
         scram.clientFinalMessage(rfcServerFirst, rfcPassword) match
-            case Result.Failure(err) => fail(s"clientFinalMessage failed: $err")
+            case Result.Failure(err)            => fail(s"clientFinalMessage failed: $err")
             case Result.Success((_, serverSig)) =>
                 val result = scram.verifyServerSignature("e=invalid-proof", serverSig)
                 result match
@@ -260,8 +260,8 @@ class ScramSha256SharedTest extends kyo.Test:
 
         val scram = ScramSha256Shared(username, clientNonce, ChannelBinding.Bound(certHash))
         scram.clientFinalMessage(serverFirst, password) match
-            case Result.Failure(e) => fail(s"clientFinalMessage failed: $e")
-            case Result.Panic(t)   => fail(s"clientFinalMessage panicked: $t")
+            case Result.Failure(e)                        => fail(s"clientFinalMessage failed: $e")
+            case Result.Panic(t)                          => fail(s"clientFinalMessage panicked: $t")
             case Result.Success((clientFinal, serverSig)) =>
                 assert(
                     clientFinal == expectedClientFinal,

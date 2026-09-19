@@ -88,7 +88,7 @@ class CancelExchangeTlsTest extends kyo.Test:
 
         def loop(carry: Chunk[Byte]): Unit < Async =
             readMessage(conn, carry).flatMap {
-                case Absent => report("closed")
+                case Absent                   => report("closed")
                 case Present((message, rest)) =>
                     val event = describe(message)
                     report(event).andThen {
@@ -149,7 +149,7 @@ class CancelExchangeTlsTest extends kyo.Test:
                         report(events, 3).map { seen =>
                             outcome match
                                 case Result.Failure(_: SqlConnectionTlsNotAdvertisedException) => line(mode, seen)
-                                case other =>
+                                case other                                                     =>
                                     fail(
                                         s"under ${mode.sslMode} the cancel must report that the server did not advertise TLS, got $other"
                                     )
@@ -265,7 +265,7 @@ class CancelExchangeTlsTest extends kyo.Test:
                                 )
                                 outcome match
                                     case Result.Failure(_: SqlConnectionClosedException) => line(mode, seen)
-                                    case other =>
+                                    case other                                           =>
                                         fail(
                                             s"under ${mode.sslMode} a silent server must fail the cancel on the SSLRequest read, got $other"
                                         )

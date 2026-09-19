@@ -183,8 +183,7 @@ object Instant:
           * @return
           *   true if this Instant is between start and end (inclusive)
           */
-        def between(start: Instant, end: Instant): Boolean =
-            (instant >= start) && (instant <= end)
+        def between(start: Instant, end: Instant): Boolean = (instant >= start) && (instant <= end)
 
         /** Clamps this Instant between two bounds.
           *

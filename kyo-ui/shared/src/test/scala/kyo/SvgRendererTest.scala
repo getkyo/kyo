@@ -157,7 +157,7 @@ class SvgRendererTest extends kyo.test.Test[Any]:
     // all 47 concrete types without MatchError.
     "exhaustiveness: SvgElement is sealed and svgTagName covers all 47 types" in {
         // Runtime: all 47 SVG types render without MatchError.
-        val sym = Svg.symbol.id("s1")
+        val sym                           = Svg.symbol.id("s1")
         val elements: Seq[Svg.SvgElement] = Seq(
             Svg.svg,
             Svg.g,
@@ -223,7 +223,7 @@ class SvgRendererTest extends kyo.test.Test[Any]:
     // The check below is runtime coverage: rebuildSvgElement covers all 47 concrete SvgElement types
     // without MatchError.
     "exhaustiveness: rebuildSvgElement covers all 47 types without MatchError" in {
-        val sym = Svg.symbol.id("s2")
+        val sym                           = Svg.symbol.id("s2")
         val elements: Seq[Svg.SvgElement] = Seq(
             Svg.svg,
             Svg.g,

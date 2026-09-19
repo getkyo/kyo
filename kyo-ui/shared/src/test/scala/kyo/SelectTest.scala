@@ -463,7 +463,7 @@ class SelectTest extends UITest:
     }
 
     "select with 100 options scrollable" in {
-        val opts = (1 to 100).map(i => s"Option$i" -> s"v$i")
+        val opts            = (1 to 100).map(i => s"Option$i" -> s"v$i")
         val app: UI < Async =
             for selected <- Signal.initRef("v1")
             yield UI.div(UI.dropdown(opts*).id("d").value(selected))

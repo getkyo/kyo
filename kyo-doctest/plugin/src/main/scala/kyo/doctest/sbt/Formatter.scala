@@ -74,8 +74,8 @@ private[sbt] object Formatter {
                     val bodyStart = i + 1
                     var j         = bodyStart
                     while (j < lines.length && !isClosingFence(lines(j))) j += 1
-                    val bodyLines = lines.slice(bodyStart, j)
-                    val body      = bodyLines.mkString("\n")
+                    val bodyLines                   = lines.slice(bodyStart, j)
+                    val body                        = bodyLines.mkString("\n")
                     val replacement: Vector[String] =
                         if (j >= lines.length || hasNoFormat(info)) { skipped += 1; bodyLines }
                         else
@@ -114,7 +114,7 @@ private[sbt] object Formatter {
         // literal's value is preserved exactly. scalafmt then normalises the structural indentation, which
         // unwrap strips back off. Indenting every line (including string interiors) would change a string's
         // value; indenting none confuses scalafmt's Scala-3 significant-indentation parse.
-        val wrapped = OpenBrace + "\n" + indentStructural(body, "  ") + "\n}\n"
+        val wrapped   = OpenBrace + "\n" + indentStructural(body, "  ") + "\n}\n"
         val formatted =
             try scalafmt.format(confPath, fmtFile, wrapped)
             catch { case _: Throwable => return None }
@@ -159,7 +159,7 @@ private[sbt] object Formatter {
     // min-over-all-lines dedent would under-dedent the code whenever a block contains a multi-line string.
     private def dedentStructural(lines: Vector[String]): Vector[String] = {
         val structural = structuralFlags(lines)
-        val indents =
+        val indents    =
             lines.zip(structural).collect { case (l, true) if l.trim.nonEmpty => l.takeWhile(_ == ' ').length }
         val dedent = if (indents.isEmpty) 0 else indents.min
         lines.zip(structural).map {

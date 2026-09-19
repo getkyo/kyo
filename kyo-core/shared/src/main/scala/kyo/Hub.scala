@@ -169,7 +169,7 @@ final class Hub[A] private[kyo] (
     def listen(bufferSize: Int, filter: A => Boolean)(using frame: Frame): Listener[A] < (Sync & Abort[Closed] & Scope) =
         def fail = Abort.fail(Closed("Hub", initFrame))
         closed.map {
-            case true => fail
+            case true  => fail
             case false =>
                 Sync.Unsafe.defer {
                     val child    = Channel.Unsafe.init[A](bufferSize, Access.SingleProducerMultiConsumer).safe

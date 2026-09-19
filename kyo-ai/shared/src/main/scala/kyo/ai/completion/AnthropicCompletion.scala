@@ -394,7 +394,7 @@ private[completion] object AnthropicCompletion extends Completion:
                 // field: reading activity directly closes the hole a Managed-style entry would open (thinking
                 // empty yet reasoning on) rather than forcing a request it reasons on.
                 val reasoningActive = config.reasoningEnabled && config.modelReasoning != Config.ReasoningEncoding.Unavailable
-                val toolChoice =
+                val toolChoice      =
                     if reasoningActive && config.forcedToolChoice == Config.ForcedToolChoice.RefusedWhileReasoning then
                         Maybe.empty[ToolChoice]
                     else

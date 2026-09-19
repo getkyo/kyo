@@ -85,8 +85,8 @@ private[kyo] object ChartFoundations:
             def loop(i: Int, acc: Map[CatKey, Chunk[A]]): Map[CatKey, Chunk[A]] =
                 if i >= rows.size then acc
                 else
-                    val row = rows(i)
-                    val k   = key(row)
+                    val row     = rows(i)
+                    val k       = key(row)
                     val updated = acc.get(k) match
                         case Some(existing) => acc.updated(k, existing.append(row))
                         case None           => acc.updated(k, Chunk(row))

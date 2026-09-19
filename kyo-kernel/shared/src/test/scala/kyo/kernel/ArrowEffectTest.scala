@@ -27,7 +27,7 @@ class ArrowEffectTest extends kyo.test.Test[Any]:
             var denied                                                     = false
             def addFinalizer(f: Maybe[Result.Error[Any]] => Unit): Unit    = ()
             def removeFinalizer(f: Maybe[Result.Error[Any]] => Unit): Unit = ()
-            def enter(frame: Frame, value: Any): Boolean =
+            def enter(frame: Frame, value: Any): Boolean                   =
                 if denied then true
                 else
                     denied = true
@@ -42,9 +42,7 @@ class ArrowEffectTest extends kyo.test.Test[Any]:
     "handle" - {
         "single effect" in {
             val effect = testEffect1(42)
-            val result = ArrowEffect.handle(Tag[TestEffect1], effect)(
-                [C] => (input, cont) => cont(input.toString)
-            )
+            val result = ArrowEffect.handle(Tag[TestEffect1], effect)([C] => (input, cont) => cont(input.toString))
             assert(result.eval == "42")
         }
 
@@ -87,16 +85,16 @@ class ArrowEffectTest extends kyo.test.Test[Any]:
                     s2 <- testEffect1(43)
                 yield (s1, s2)
 
-            val result = ArrowEffect.handleLoop(Tag[TestEffect1], 0, effect)(
-                [C] => (input, state, cont) => Loop.continue(state + 1, cont((input + state).toString))
+            val result = ArrowEffect.handleLoop(Tag[TestEffect1], 0, effect)([C] =>
+                (input, state, cont) => Loop.continue(state + 1, cont((input + state).toString))
             )
 
             assert(result.eval == ("42", "44"))
         }
 
         "execution is tail-recursive" in {
-            var minDepth = Int.MaxValue
-            var maxDepth = 0
+            var minDepth                        = Int.MaxValue
+            var maxDepth                        = 0
             def loop(i: Int): Int < TestEffect1 =
                 val depth = (new Exception).getStackTrace().size
                 if depth < minDepth then minDepth = depth
@@ -107,9 +105,7 @@ class ArrowEffectTest extends kyo.test.Test[Any]:
 
             val effect = loop(10000)
 
-            val result = ArrowEffect.handle(Tag[TestEffect1], effect)(
-                [C] => (input, cont) => cont(input.toString)
-            )
+            val result = ArrowEffect.handle(Tag[TestEffect1], effect)([C] => (input, cont) => cont(input.toString))
 
             assert(result.eval == 42)
             assert(maxDepth - minDepth <= 10)
@@ -160,7 +156,7 @@ class ArrowEffectTest extends kyo.test.Test[Any]:
 
         "handles pure values correctly" in {
             val effect: String < Any = "pure"
-            val result = ArrowEffect.handleFirst(Tag[TestEffect1], effect)(
+            val result               = ArrowEffect.handleFirst(Tag[TestEffect1], effect)(
                 [C] => (input, cont) => cont("handled"),
                 s => s + "-done"
             )
@@ -192,7 +188,7 @@ class ArrowEffectTest extends kyo.test.Test[Any]:
 
         "defers when the safepoint denies entry and completes on evaluation" in {
             Safepoint.eval {
-                val effect = testEffect1(42)
+                val effect                       = testEffect1(42)
                 val result: String < TestEffect1 = Safepoint.immediate(denyOnce()) {
                     ArrowEffect.handleFirst(Tag[TestEffect1], effect)(
                         [C] => (input, cont) => cont(input.toString),
@@ -285,9 +281,7 @@ class ArrowEffectTest extends kyo.test.Test[Any]:
 
         "suspend and handle" in {
             val effect = customEffect(List(1, 2, 3))
-            val result = ArrowEffect.handle(Tag[CustomEffect], effect)(
-                [C] => (input, cont) => cont(input.headOption)
-            )
+            val result = ArrowEffect.handle(Tag[CustomEffect], effect)([C] => (input, cont) => cont(input.headOption))
             assert(result.eval == Some(1))
         }
 
@@ -298,9 +292,7 @@ class ArrowEffectTest extends kyo.test.Test[Any]:
                     b <- customEffect(List(4, 5, 6))
                 yield (a, b)
 
-            val result = ArrowEffect.handle(Tag[CustomEffect], effect)(
-                [C] => (input, cont) => cont(input.headOption)
-            )
+            val result = ArrowEffect.handle(Tag[CustomEffect], effect)([C] => (input, cont) => cont(input.headOption))
             assert(result.eval == (Some(1), Some(4)))
         }
 
@@ -311,8 +303,8 @@ class ArrowEffectTest extends kyo.test.Test[Any]:
                     b <- customEffect(List(4, 5, 6))
                 yield (a, b)
 
-            val result = ArrowEffect.handleLoop(Tag[CustomEffect], 0, effect)(
-                [C] => (input, state, cont) => Loop.continue(state + 1, cont(Some(input(state))))
+            val result = ArrowEffect.handleLoop(Tag[CustomEffect], 0, effect)([C] =>
+                (input, state, cont) => Loop.continue(state + 1, cont(Some(input(state))))
             )
             assert(result.eval == (Some(1), Some(5)))
         }
@@ -321,7 +313,7 @@ class ArrowEffectTest extends kyo.test.Test[Any]:
     "handlePartial" - {
         "evaluates pure values" in {
             val x: Int < Any = 5
-            val result = ArrowEffect.handlePartial(
+            val result       = ArrowEffect.handlePartial(
                 Tag[TestEffect1],
                 Tag[TestEffect2],
                 x,
@@ -341,7 +333,7 @@ class ArrowEffectTest extends kyo.test.Test[Any]:
         "suspends at effects" in {
             Safepoint.eval {
                 val x: Int < TestEffect1 = testEffect1(5).map(_ => 6)
-                val result = ArrowEffect.handlePartial(
+                val result               = ArrowEffect.handlePartial(
                     Tag[TestEffect1],
                     Tag[TestEffect2],
                     x,
@@ -359,7 +351,7 @@ class ArrowEffectTest extends kyo.test.Test[Any]:
         "drains a deferred handler continuation" in {
             Safepoint.eval {
                 val x: Int < TestEffect1 = testEffect1(5).map(_ => 6)
-                val result = Safepoint.immediate(denyOnce()) {
+                val result               = Safepoint.immediate(denyOnce()) {
                     ArrowEffect.handlePartial(
                         Tag[TestEffect1],
                         Tag[TestEffect2],
@@ -379,7 +371,7 @@ class ArrowEffectTest extends kyo.test.Test[Any]:
         "respects the stop condition" in {
             var called       = false
             val x: Int < Any = Effect.defer(5)
-            val result = ArrowEffect.handlePartial(
+            val result       = ArrowEffect.handlePartial(
                 Tag[TestEffect1],
                 Tag[TestEffect2],
                 x,
@@ -402,7 +394,7 @@ class ArrowEffectTest extends kyo.test.Test[Any]:
 
         "evaluates nested suspensions" in {
             val x: Int < Any = Effect.defer(Effect.defer(5))
-            val result = ArrowEffect.handlePartial(
+            val result       = ArrowEffect.handlePartial(
                 Tag[TestEffect1],
                 Tag[TestEffect2],
                 x,
@@ -433,8 +425,8 @@ class ArrowEffectTest extends kyo.test.Test[Any]:
         "not handle Nested" - {
 
             def handle[A, S](v: A < (S & NestedTestEffect)): A < S =
-                ArrowEffect.handle(nestedTag, v):
-                    [C] => (input, cont) => cont(input * 10)
+                ArrowEffect.handle(nestedTag, v): [C] =>
+                    (input, cont) => cont(input * 10)
 
             "unwraps Nested and returns inner suspension" in {
                 val comp: Int < NestedTestEffect         = suspendNested(5)
@@ -479,8 +471,8 @@ class ArrowEffectTest extends kyo.test.Test[Any]:
         "handleLoop (stateless) on Nested" - {
 
             def handle[A, S](v: A < (S & NestedTestEffect)): A < S =
-                ArrowEffect.handleLoop(Tag[NestedTestEffect], v):
-                    [C] => (input, cont) => Loop.continue(cont(input * 10))
+                ArrowEffect.handleLoop(Tag[NestedTestEffect], v): [C] =>
+                    (input, cont) => Loop.continue(cont(input * 10))
 
             "unwraps Nested and handles inner suspension" in {
                 val comp: Int < NestedTestEffect         = suspendNested(5)
@@ -499,9 +491,7 @@ class ArrowEffectTest extends kyo.test.Test[Any]:
         "handleLoop (stateful) on Nested" - {
 
             def handle[A, S](v: A < (S & NestedTestEffect)): A < S =
-                ArrowEffect.handleLoop(nestedTag, 0, v)(
-                    [C] => (input, state, cont) => Loop.continue(state + 1, cont((input + state) * 10))
-                )
+                ArrowEffect.handleLoop(nestedTag, 0, v)([C] => (input, state, cont) => Loop.continue(state + 1, cont((input + state) * 10)))
 
             "unwraps Nested and handles inner suspension" in {
                 val comp: Int < NestedTestEffect         = suspendNested(5)
@@ -608,14 +598,13 @@ class ArrowEffectTest extends kyo.test.Test[Any]:
                     ArrowEffect.suspend[A](tag, Op.Shift(f))
 
                 def run[R: Tag, S](v: R < (Delim[R, S] & S))(using tag: Tag[Delim[R, S]]): R < S =
-                    ArrowEffect.handle(tag, v)(
-                        [A] =>
-                            (input, cont) =>
-                                input match
-                                    case Op.Shift(f) =>
-                                        // the compiler currently can't prove that the shift effect set
-                                        // is the same as the one being handled as restricted by the method signature
-                                        f(cont(_).asInstanceOf)
+                    ArrowEffect.handle(tag, v)([A] =>
+                        (input, cont) =>
+                            input match
+                                case Op.Shift(f) =>
+                                    // the compiler currently can't prove that the shift effect set
+                                    // is the same as the one being handled as restricted by the method signature
+                                    f(cont(_).asInstanceOf)
                     )
 
             end Delim
@@ -770,7 +759,7 @@ class ArrowEffectTest extends kyo.test.Test[Any]:
                     val a =
                         Loop(0) { acc =>
                             Kyo.zip(Flow.poll[Int], Flow.poll[String]).map(_.zip(_)).map {
-                                case Absent => Loop.done(acc)
+                                case Absent          => Loop.done(acc)
                                 case Present((i, s)) =>
                                     Flow.emit(i + 1).andThen(Flow.emit(s + "a")).andThen(Loop.continue(acc + i + s.size))
                             }

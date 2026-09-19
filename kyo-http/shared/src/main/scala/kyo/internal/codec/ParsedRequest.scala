@@ -39,8 +39,8 @@ private[kyo] object ParsedRequest:
       * read back as UTF-8, so a multi-byte character split across several escapes reassembles correctly.
       */
     private[codec] def decodePathEscapes(raw: String): String =
-        val src = raw.getBytes(StandardCharsets.UTF_8)
-        val out = new Array[Byte](src.length)
+        val src                                = raw.getBytes(StandardCharsets.UTF_8)
+        val out                                = new Array[Byte](src.length)
         @tailrec def loop(i: Int, j: Int): Int =
             if i >= src.length then j
             else
@@ -123,14 +123,12 @@ private[kyo] object ParsedRequest:
 
     // -- Byte reading helpers (big-endian) --
 
-    private inline def readShort(arr: Span[Byte], offset: Int): Int =
-        ((arr(offset) & 0xff) << 8) | (arr(offset + 1) & 0xff)
+    private inline def readShort(arr: Span[Byte], offset: Int): Int = ((arr(offset) & 0xff) << 8) | (arr(offset + 1) & 0xff)
 
-    private inline def readInt(arr: Span[Byte], offset: Int): Int =
-        ((arr(offset) & 0xff) << 24) |
-            ((arr(offset + 1) & 0xff) << 16) |
-            ((arr(offset + 2) & 0xff) << 8) |
-            (arr(offset + 3) & 0xff)
+    private inline def readInt(arr: Span[Byte], offset: Int): Int = ((arr(offset) & 0xff) << 24) |
+        ((arr(offset + 1) & 0xff) << 16) |
+        ((arr(offset + 2) & 0xff) << 8) |
+        (arr(offset + 3) & 0xff)
 
     import Segment.bytes
 
@@ -142,36 +140,28 @@ private[kyo] object ParsedRequest:
             methodFromOrdinal((flags >> 8) & 0xff)
 
         /** Whether Transfer-Encoding: chunked was detected. Bit 0 of flags. */
-        def isChunked: Boolean =
-            (readShort(self, 0) & 1) != 0
+        def isChunked: Boolean = (readShort(self, 0) & 1) != 0
 
         /** Whether Connection: keep-alive was detected. Bit 1 of flags. */
-        def isKeepAlive: Boolean =
-            (readShort(self, 0) & 2) != 0
+        def isKeepAlive: Boolean = (readShort(self, 0) & 2) != 0
 
         /** Whether the request has a query string. Bit 2 of flags. */
-        def hasQuery: Boolean =
-            (readShort(self, 0) & 4) != 0
+        def hasQuery: Boolean = (readShort(self, 0) & 4) != 0
 
         /** Whether the request has Expect: 100-continue header. Bit 3 of flags. */
-        def expectContinue: Boolean =
-            (readShort(self, 0) & 8) != 0
+        def expectContinue: Boolean = (readShort(self, 0) & 8) != 0
 
         /** Whether the request has a Host header. Bit 4 of flags. */
-        def hasHost: Boolean =
-            (readShort(self, 0) & 16) != 0
+        def hasHost: Boolean = (readShort(self, 0) & 16) != 0
 
         /** Whether the request has multiple Host headers (RFC 9110 violation). Bit 5 of flags. */
-        def hasMultipleHost: Boolean =
-            (readShort(self, 0) & 32) != 0
+        def hasMultipleHost: Boolean = (readShort(self, 0) & 32) != 0
 
         /** Whether the Host header value is empty. Bit 6 of flags. */
-        def hasEmptyHost: Boolean =
-            (readShort(self, 0) & 64) != 0
+        def hasEmptyHost: Boolean = (readShort(self, 0) & 64) != 0
 
         /** Whether the request is a HttpWebSocket upgrade (Upgrade: websocket + Connection: upgrade). Bit 7 of flags. */
-        def isUpgrade: Boolean =
-            (readShort(self, 0) & 128) != 0
+        def isUpgrade: Boolean = (readShort(self, 0) & 128) != 0
 
         /** Pre-parsed Content-Length (-1 if absent). */
         def contentLength: Int =
@@ -215,11 +205,11 @@ private[kyo] object ParsedRequest:
             val segCount = readShort(self, 14)
             if i < 0 || i >= segCount then ""
             else
-                val base   = rawBytesOffset
-                val segIdx = 16 + i * 4
-                val off    = readShort(self, segIdx)
-                val len    = readShort(self, segIdx + 2)
-                val arr    = new Array[Byte](len)
+                val base                        = rawBytesOffset
+                val segIdx                      = 16 + i * 4
+                val off                         = readShort(self, segIdx)
+                val len                         = readShort(self, segIdx + 2)
+                val arr                         = new Array[Byte](len)
                 @tailrec def copy(j: Int): Unit =
                     if j < len then
                         arr(j) = self(base + off + j)
@@ -260,7 +250,7 @@ private[kyo] object ParsedRequest:
             if fromSegment < 0 || fromSegment >= segCount then ""
             else if fromSegment == segCount - 1 then pathSegmentAsStringDecoded(fromSegment)
             else
-                val sb = new java.lang.StringBuilder
+                val sb                          = new java.lang.StringBuilder
                 @tailrec def loop(i: Int): Unit =
                     if i < segCount then
                         if i > fromSegment then discard(sb.append('/'))
@@ -273,10 +263,10 @@ private[kyo] object ParsedRequest:
 
         /** Returns the full path as a String. 1 allocation. */
         def pathAsString: String =
-            val base = rawBytesOffset
-            val off  = readShort(self, 6)
-            val len  = readShort(self, 8)
-            val arr  = new Array[Byte](len)
+            val base                        = rawBytesOffset
+            val off                         = readShort(self, 6)
+            val len                         = readShort(self, 8)
+            val arr                         = new Array[Byte](len)
             @tailrec def copy(j: Int): Unit =
                 if j < len then
                     arr(j) = self(base + off + j)
@@ -294,7 +284,7 @@ private[kyo] object ParsedRequest:
                 val len  = readShort(self, 12)
                 if len == 0 then Absent
                 else
-                    val arr = new Array[Byte](len)
+                    val arr                         = new Array[Byte](len)
                     @tailrec def copy(j: Int): Unit =
                         if j < len then
                             arr(j) = self(base + off + j)
@@ -318,7 +308,7 @@ private[kyo] object ParsedRequest:
 
         /** Scans the query bytes for a parameter matching nameBytes, then decodes and returns its value. */
         private def findQueryParam(start: Int, length: Int, nameBytes: Array[Byte]): Maybe[String] =
-            val end = start + length
+            val end                                    = start + length
             @tailrec def scan(pos: Int): Maybe[String] =
                 if pos >= end then Absent
                 else
@@ -365,8 +355,8 @@ private[kyo] object ParsedRequest:
 
         /** Decodes percent-encoded and '+'-encoded query value bytes into a String. */
         private def urlDecode(start: Int, length: Int): String =
-            val buf = new Array[Byte](length) // at most length bytes
-            val end = start + length
+            val buf                                = new Array[Byte](length) // at most length bytes
+            val end                                = start + length
             @tailrec def loop(i: Int, j: Int): Int =
                 if i >= end then j
                 else
@@ -414,11 +404,11 @@ private[kyo] object ParsedRequest:
             val hdrCount          = readShort(self, headerCountOffset)
             if i < 0 || i >= hdrCount then ""
             else
-                val base      = headerCountOffset + 2 + hdrCount * 8
-                val headerIdx = headerCountOffset + 2 + i * 8
-                val off       = readShort(self, headerIdx)
-                val len       = readShort(self, headerIdx + 2)
-                val arr       = new Array[Byte](len)
+                val base                        = headerCountOffset + 2 + hdrCount * 8
+                val headerIdx                   = headerCountOffset + 2 + i * 8
+                val off                         = readShort(self, headerIdx)
+                val len                         = readShort(self, headerIdx + 2)
+                val arr                         = new Array[Byte](len)
                 @tailrec def copy(j: Int): Unit =
                     if j < len then
                         arr(j) = self(base + off + j)
@@ -435,11 +425,11 @@ private[kyo] object ParsedRequest:
             val hdrCount          = readShort(self, headerCountOffset)
             if i < 0 || i >= hdrCount then ""
             else
-                val base      = headerCountOffset + 2 + hdrCount * 8
-                val headerIdx = headerCountOffset + 2 + i * 8
-                val off       = readShort(self, headerIdx + 4)
-                val len       = readShort(self, headerIdx + 6)
-                val arr       = new Array[Byte](len)
+                val base                        = headerCountOffset + 2 + hdrCount * 8
+                val headerIdx                   = headerCountOffset + 2 + i * 8
+                val off                         = readShort(self, headerIdx + 4)
+                val len                         = readShort(self, headerIdx + 6)
+                val arr                         = new Array[Byte](len)
                 @tailrec def copy(j: Int): Unit =
                     if j < len then
                         arr(j) = self(base + off + j)

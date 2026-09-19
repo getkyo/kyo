@@ -53,7 +53,7 @@ private[net] trait CapabilityDescriptor:
     final def probe(using AllowUnsafe): CapabilityOutcome =
         memo match
             case Present(outcome) => outcome
-            case Absent =>
+            case Absent           =>
                 val outcome =
                     try doProbe
                     catch case t: Throwable => CapabilityOutcome.ProbeFailed(t)

@@ -5,20 +5,20 @@ import kyo.ffi.codegen.model.*
 private[emitters] object EmitterBase:
 
     def scalaTypeOf(t: TypeRef): String = t match
-        case TypeRef.BooleanT   => "Boolean"
-        case TypeRef.ByteT      => "Byte"
-        case TypeRef.ShortT     => "Short"
-        case TypeRef.IntT       => "Int"
-        case TypeRef.LongT      => "Long"
-        case TypeRef.FloatT     => "Float"
-        case TypeRef.DoubleT    => "Double"
-        case TypeRef.UnitT      => "Unit"
-        case TypeRef.StringT    => "String"
-        case TypeRef.ArrayT(e)  => s"Array[${scalaTypeOf(e)}]"
-        case TypeRef.BufferT(e) => s"Buffer[${scalaTypeOf(e)}]"
-        case TypeRef.StructT(n) => n
-        case TypeRef.HandleT(n) => s"Ffi.Handle[$n]"
-        case TypeRef.EnumT(n)   => n
+        case TypeRef.BooleanT      => "Boolean"
+        case TypeRef.ByteT         => "Byte"
+        case TypeRef.ShortT        => "Short"
+        case TypeRef.IntT          => "Int"
+        case TypeRef.LongT         => "Long"
+        case TypeRef.FloatT        => "Float"
+        case TypeRef.DoubleT       => "Double"
+        case TypeRef.UnitT         => "Unit"
+        case TypeRef.StringT       => "String"
+        case TypeRef.ArrayT(e)     => s"Array[${scalaTypeOf(e)}]"
+        case TypeRef.BufferT(e)    => s"Buffer[${scalaTypeOf(e)}]"
+        case TypeRef.StructT(n)    => n
+        case TypeRef.HandleT(n)    => s"Ffi.Handle[$n]"
+        case TypeRef.EnumT(n)      => n
         case TypeRef.FnPtrT(ps, r) =>
             if ps.isEmpty then s"() => ${scalaTypeOf(r)}"
             else if ps.size == 1 then s"${scalaTypeOf(ps.head)} => ${scalaTypeOf(r)}"
@@ -117,7 +117,7 @@ private[emitters] object EmitterBase:
             case TypeRef.HandleT(_)   => (8L, collapse(8L))
             case TypeRef.EnumT(_)     => (4L, collapse(4L))
             case TypeRef.FnPtrT(_, _) => (8L, collapse(8L))
-            case TypeRef.StructT(n) =>
+            case TypeRef.StructT(n)   =>
                 val child = structsByName.getOrElse(
                     n,
                     throw new IllegalStateException(s"struct '$n' not found")
@@ -177,7 +177,7 @@ private[emitters] object EmitterBase:
                     s.fields.foreach { f =>
                         f.tpe match
                             case TypeRef.StructT(child) if !out.contains(child) => pending.enqueue(child)
-                            case TypeRef.UnionT(variants) =>
+                            case TypeRef.UnionT(variants)                       =>
                                 variants.foreach {
                                     case TypeRef.StructT(child) if !out.contains(child) => pending.enqueue(child)
                                     case _                                              => ()

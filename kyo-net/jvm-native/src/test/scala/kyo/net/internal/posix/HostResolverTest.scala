@@ -31,7 +31,7 @@ class HostResolverTest extends Test:
     private def counting(answer: Result[NetDnsResolutionException, HostResolver.Resolved])
         : (AtomicInteger, (String, Int) => Fiber.Unsafe[Result[NetDnsResolutionException, HostResolver.Resolved], Any]) =
         import AllowUnsafe.embrace.danger
-        val calls = new AtomicInteger(0)
+        val calls                                                                                             = new AtomicInteger(0)
         val raw: (String, Int) => Fiber.Unsafe[Result[NetDnsResolutionException, HostResolver.Resolved], Any] = (_, _) =>
             discard(calls.incrementAndGet())
             Fiber.Unsafe.fromResult(Result.succeed(answer))

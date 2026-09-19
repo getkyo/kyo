@@ -43,7 +43,7 @@ class SymbolIdFidelityTest extends kyo.test.Test[Any]:
     "no fabricated type-decode placeholder names remain in classpath.symbols" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
             import Tasty.Name.asString
-            val allNames = classpath.symbols.map(_.name.asString)
+            val allNames   = classpath.symbols.map(_.name.asString)
             val fabricated = allNames.filter { n =>
                 n.startsWith("rec@") ||
                 n.startsWith("rec-placeholder@") ||

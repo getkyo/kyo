@@ -13,7 +13,7 @@ class McpCapabilityGateTest extends Test:
     given CanEqual[Any, Any] = CanEqual.canEqualAny
 
     private val emptyServer = McpCapabilities.Server()
-    private val fullServer = McpCapabilities.Server(
+    private val fullServer  = McpCapabilities.Server(
         tools = Present(McpCapabilities.ToolsCapability()),
         resources = Present(McpCapabilities.ResourcesCapability(subscribe = true)),
         prompts = Present(McpCapabilities.PromptsCapability()),

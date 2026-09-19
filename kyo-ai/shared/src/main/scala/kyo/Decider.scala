@@ -375,7 +375,7 @@ object Decider:
                         val config = env.config.get
                         Prompt.internal.enrichedContext(env.prompt, session.rawContext, Chunk.empty).map { context =>
                             val backend = config.decider.fold("completion")(_.provider.name)
-                            val log = Log.debug(
+                            val log     = Log.debug(
                                 s"kyo-ai decide backend=$backend questions=${plan.questions.size} " +
                                     s"kinds=${plan.questions.map(_.kind).mkString(",")} messages=${context.messages.size} record=$record"
                             )
@@ -514,11 +514,11 @@ object Decider:
           */
         def keyOf(encoded: Structure.Value, index: Int, docs: Dict[String, String]): (String, Structure.Value) =
             encoded match
-                case Structure.Value.Str(s) => (s, Structure.Value.Null)
+                case Structure.Value.Str(s)                     => (s, Structure.Value.Null)
                 case Structure.Value.VariantCase(name, payload) =>
                     docs.get(name) match
                         case Present(text) => (name, Structure.Value.Str(text))
-                        case Absent =>
+                        case Absent        =>
                             payload match
                                 case Structure.Value.Record(fields) if fields.isEmpty => (name, Structure.Value.Null)
                                 case _                                                => (name, payload)
@@ -549,7 +549,7 @@ object Decider:
                     case Structure.Value.VariantCase(name, payload) =>
                         docs.get(name) match
                             case Present(text) => Structure.Value.Str(text)
-                            case Absent =>
+                            case Absent        =>
                                 payload match
                                     case Structure.Value.Record(fields) if fields.isEmpty => Structure.Value.Str(name)
                                     case _                                                => Structure.Value.VariantCase(name, payload)
@@ -610,7 +610,7 @@ object Decider:
                 val byKey = probabilities.foldLeft(Dict.empty[String, Double])((acc, kp) => acc.update(kp._1, kp._2))
                 Maybe.fromOption(keys.find(k => !byKey.contains(k))) match
                     case Present(k) => Result.fail(AIDecodeException(s"choice answer has no probability for '$k'"))
-                    case Absent =>
+                    case Absent     =>
                         Result.succeed(Decision(
                             values(index),
                             confidence,
@@ -667,7 +667,7 @@ object Decider:
 
         def wireQuestion(question: Question): WireQuestion =
             question match
-                case Question.Noul(instructions, Absent, Absent, _) => WireQuestion("noul", instructions)
+                case Question.Noul(instructions, Absent, Absent, _)      => WireQuestion("noul", instructions)
                 case Question.Noul(instructions, whenTrue, whenFalse, _) =>
                     WireQuestion(
                         "noul",
@@ -683,7 +683,7 @@ object Decider:
 
         def wireAnswer(answer: Answer): WireAnswer =
             answer match
-                case Answer.Noul(probability) => WireAnswer("noul", noul = Present(probability))
+                case Answer.Noul(probability)                      => WireAnswer("noul", noul = Present(probability))
                 case Answer.Choice(key, confidence, probabilities) =>
                     WireAnswer(
                         "choice",

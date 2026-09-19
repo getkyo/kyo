@@ -40,7 +40,7 @@ class SqlIsolationAnomalyConformanceTest extends SqlBackendTest:
             committed <- Latch.init(1)
             other     <- SqlClient.initUnscoped(schema.url, SqlConfig())
             _         <- Scope.ensure(other.close)
-            writer <- Fiber.init {
+            writer    <- Fiber.init {
                 firstRead.await.andThen {
                     // Released whatever the write did. Releasing only on success leaves the reader waiting forever when
                     // the writer fails, so the leaf reports a timeout instead of the assertion that would name the cause.

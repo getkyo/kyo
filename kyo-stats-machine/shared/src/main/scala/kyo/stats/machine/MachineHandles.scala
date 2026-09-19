@@ -113,7 +113,7 @@ private[kyo] object MachineHandles:
         private def histogram(): Histogram =
             handle match
                 case Present(h) => h
-                case Absent =>
+                case Absent     =>
                     val h = scope.initHistogram(name, description, boundaries = boundaries)
                     handle = Present(h)
                     h
@@ -131,7 +131,7 @@ private[kyo] object MachineHandles:
         private def histogram(): Histogram =
             handle match
                 case Present(h) => h
-                case Absent =>
+                case Absent     =>
                     val h = scope.initHistogram(name, description, boundaries = boundaries)
                     handle = Present(h)
                     h
@@ -159,7 +159,7 @@ private[kyo] object MachineHandles:
         private def counter(): Counter =
             handle match
                 case Present(c) => c
-                case Absent =>
+                case Absent     =>
                     val c = scope.initCounter(name, description)
                     handle = Present(c)
                     c

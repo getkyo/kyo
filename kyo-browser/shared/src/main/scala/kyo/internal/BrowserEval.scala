@@ -74,7 +74,7 @@ private[kyo] object BrowserEval:
                 // Recursive walk with explicit early-return: `Kyo.foldLeft` would visit every alternative even after we have a hit, which
                 // means an N-way `FirstOf` issues N JS evaluations on a hit at index 0. The recursion below stops at the first non-zero
                 // count, matching the public-facing short-circuit semantics.
-                val alternatives = selectors.toSeq
+                val alternatives                                                = selectors.toSeq
                 def walk(i: Int): Int < (Browser & Abort[BrowserReadException]) =
                     if i >= alternatives.length then 0
                     else
@@ -226,7 +226,7 @@ private[kyo] object BrowserEval:
     ): Unit < (Browser & Abort[BrowserReadException]) =
         Browser.activeIFrameLocal.use { active =>
             active match
-                case Absent => clickAt(ref.x, ref.y, clickCount)
+                case Absent     => clickAt(ref.x, ref.y, clickCount)
                 case Present(_) =>
                     Browser.use { tab =>
                         Abort.recover[BrowserProtocolErrorException](_ => clickAt(ref.x, ref.y, clickCount)) {

@@ -78,8 +78,8 @@ object Ansi:
                 val allLines        = headerLines ++ Array(separatorLine) ++ codeLines ++ Array(separatorLine) ++ trailerLines
 
                 val processedLines = allLines.zipWithIndex.map { case (line, index) =>
-                    val isHeader  = index <= headerLines.length
-                    val isTrailer = index > (headerLines.length + codeLines.length)
+                    val isHeader   = index <= headerLines.length
+                    val isTrailer  = index > (headerLines.length + codeLines.length)
                     val lineNumber =
                         if isHeader || isTrailer then
                             " ".repeat(lineNumberWidth)

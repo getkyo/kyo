@@ -40,7 +40,7 @@ final private[net] class BlockingReaderDriver private (real: IoDriver[PosixHandl
         // read fiber is still genuinely pending. This driver is JVM/Native-only (it reads through PosixHandle), so
         // there is no JS delivery path here.
         discard(Fiber.Unsafe.init {
-            val readFiber = sockets.read(handle.readFd, handle.readBuffer, handle.readBufferSize.toLong)
+            val readFiber                                = sockets.read(handle.readFd, handle.readBuffer, handle.readBufferSize.toLong)
             def deliver(result: Ffi.Outcome[Long]): Unit =
                 val n = result.value.toInt
                 if n < 0 then
@@ -66,7 +66,7 @@ final private[net] class BlockingReaderDriver private (real: IoDriver[PosixHandl
                 // Extract the result via poll() without parking.
                 readFiber.poll() match
                     case Present(Result.Success(withError)) => deliver(withError.eval)
-                    case Present(Result.Failure(e)) =>
+                    case Present(Result.Failure(e))         =>
                         promise.completeDiscard(Result.succeed(ReadOutcome.Failed(
                             NetConnectionIoException(
                                 s"connection ${handleLabel(handle)}",
@@ -83,7 +83,7 @@ final private[net] class BlockingReaderDriver private (real: IoDriver[PosixHandl
                 // normal path there; on JVM/Native it covers a blocking read that did not resolve inline.
                 readFiber.onComplete {
                     case Result.Success(withError) => deliver(withError.eval)
-                    case Result.Failure(e) =>
+                    case Result.Failure(e)         =>
                         promise.completeDiscard(Result.succeed(ReadOutcome.Failed(
                             NetConnectionIoException(
                                 s"connection ${handleLabel(handle)}",

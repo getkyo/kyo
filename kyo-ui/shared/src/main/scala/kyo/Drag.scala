@@ -94,7 +94,7 @@ object Drag:
                     var count   = 1
                     while reader.hasNextEntry() do
                         reader.checkCollectionSize(count)
-                        val raw = reader.field()
+                        val raw       = reader.field()
                         val mediaType = kyo.internal.constructedOrThrow(
                             parse(raw).toResult(Result.fail(s"invalid media type: $raw")),
                             "Drag.MediaType"

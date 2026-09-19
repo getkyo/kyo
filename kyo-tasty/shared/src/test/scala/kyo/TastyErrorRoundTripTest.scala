@@ -20,7 +20,7 @@ class TastyErrorRoundTripTest extends kyo.test.Test[Any]:
 
     /** Build a minimal Classpath carrying only the given errors, then serialize it. */
     private def snapshotBytesWithErrors(errors: Chunk[TastyError]): Array[Byte] =
-        val rootSym = Tasty.Symbol.Package(SymbolId(0), Tasty.Name(""), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
+        val rootSym   = Tasty.Symbol.Package(SymbolId(0), Tasty.Name(""), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
         val classpath = Tasty.Classpath.make(
             symbols = Chunk(rootSym),
             rootSymbolId = SymbolId(0),

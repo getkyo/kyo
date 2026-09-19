@@ -11,7 +11,7 @@ class PublicAPITest extends kyo.test.Test[Any]:
         val cp   = Chunk(Path("target/scala-3/classes"))
         val opts = Chunk("-release", "17")
         val dir  = Path("target/doctest-cache")
-        val cfg = Doctest.Config(
+        val cfg  = Doctest.Config(
             sources = src,
             classpath = cp,
             scalaOpts = opts,

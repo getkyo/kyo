@@ -56,7 +56,7 @@ class HttpStyleTest extends JsonRpcTest:
     "notification triggers handler and no reply frame arrives on wire" in {
         // Unsafe: AtomicInt.Unsafe.init for handler run counter
         val handlerRan = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
-        val logMethod = JsonRpcRoute.request[LogMsg, Unit]("log") {
+        val logMethod  = JsonRpcRoute.request[LogMsg, Unit]("log") {
             (_, _) => Sync.defer(discard(handlerRan.incrementAndGet()(using AllowUnsafe.embrace.danger)))
         }
         JsonRpcTransport.inMemory.map { (ta, tb) =>

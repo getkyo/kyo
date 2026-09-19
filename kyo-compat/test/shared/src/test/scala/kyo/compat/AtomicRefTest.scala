@@ -96,7 +96,7 @@ class AtomicRefTest extends CompatTest:
         // implementation must not mutate the supplied List under the covers.
         val initial  = List(1, 2, 3)
         val replaced = List(9, 9, 9)
-        val c =
+        val c        =
             CAtomicRef.init[List[Int]](initial).flatMap { r =>
                 r.set(replaced).flatMap { _ =>
                     r.get

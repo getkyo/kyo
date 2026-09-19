@@ -145,9 +145,8 @@ object Poll:
         frame: Frame
     ): A < (reduce.SReduced & S) =
         reduce:
-            ArrowEffect.handleLoop(tag, inputs, v)(
-                [C] =>
-                    (unit, state, cont) => Loop.continue(state.drop(1), cont(state.headMaybe))
+            ArrowEffect.handleLoop(tag, inputs, v)([C] =>
+                (unit, state, cont) => Loop.continue(state.drop(1), cont(state.headMaybe))
             )
 
     /** Runs a Poll effect with a single input value, stopping after the first poll operation.
@@ -229,7 +228,7 @@ object Poll:
                                         // Poller completed early (e.g., received all needed values)
                                         // Discard remaining emit operations
                                         Emit.runDiscard[V](emitCont(())).map(a => Loop.done((a, b)))
-                            ),
+                                ),
                         done = a =>
                             // Emitter completed (no more values to emit)
                             // Run remaining poll operations with empty chunk to signal completion

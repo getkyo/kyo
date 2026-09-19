@@ -34,7 +34,7 @@ private[kyo] trait TypeCheck:
     /** Asserts that `code` type-checks; throws [[kyo.test.AssertionFailed]] with the compiler errors when it does not. */
     transparent inline def typeCheck(inline code: String)(using frame: Frame, as: AssertScope): Unit =
         typeCheckWith(code):
-            case Result.Error(e) => typeCheckFail(s"$code did not typecheck: $e")
+            case Result.Error(e)   => typeCheckFail(s"$code did not typecheck: $e")
             case Result.Success(_) =>
                 as.recordEvaluated()
                 ()

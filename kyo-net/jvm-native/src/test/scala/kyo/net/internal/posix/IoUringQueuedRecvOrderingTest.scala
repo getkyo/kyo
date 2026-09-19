@@ -112,7 +112,7 @@ class IoUringQueuedRecvOrderingTest extends Test:
                                     assert(
                                         acceptedH.queuedRecv match
                                             case _: PosixHandle.QueuedRecv.Queued => false
-                                            case _ =>
+                                            case _                                =>
                                                 true
                                         ,
                                         s"queuedRecv slot must be cleared once drained; got ${acceptedH.queuedRecv}"
