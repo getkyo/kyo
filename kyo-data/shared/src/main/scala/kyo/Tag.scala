@@ -176,18 +176,17 @@ object Tag:
 
         /** Compare the encoded strings after checking their memoized hashes. Matching hashes alone cannot prove type equality.
           */
-        private def fastPathEqual[B](that: Tag[B]): Boolean =
-            (self eq that) || {
-                self match
-                    case self: String =>
-                        that match
-                            case that: String =>
-                                TagHash.of(self) == TagHash.of(that) && self.equals(that)
-                            case _ =>
-                                false
-                    case _ =>
-                        false
-            }
+        private def fastPathEqual[B](that: Tag[B]): Boolean = (self eq that) || {
+            self match
+                case self: String =>
+                    that match
+                        case that: String =>
+                            TagHash.of(self) == TagHash.of(that) && self.equals(that)
+                        case _ =>
+                            false
+                case _ =>
+                    false
+        }
 
         /** Checks if this Tag represents a concrete class type (without type parameters).
           *
@@ -236,7 +235,7 @@ object Tag:
                         case NothingEntry                 => "scala.Nothing"
                         case NullEntry                    => "scala.Null"
                         case LiteralEntry(widened, value) => value
-                        case IntersectionEntry(set) =>
+                        case IntersectionEntry(set)       =>
                             val b = new ChunkBuilder[String]
                             set.foreach(id => b.addOne(render(owner, id)))
                             "(" + b.result().sorted.mkString(" & ") + ")"
@@ -250,7 +249,7 @@ object Tag:
                             if params.isEmpty then
                                 s"($name >: ${render(owner, lower)} <: ${render(owner, upper)})"
                             else
-                                val size = variances.size
+                                val size                                                = variances.size
                                 @tailrec def loop(idx: Int, acc: Chunk[String]): String =
                                     if idx == size then acc.mkString(", ")
                                     else loop(idx + 1, acc.append(variances(idx).show + render(owner, params(idx))))
@@ -259,7 +258,7 @@ object Tag:
                             if params.isEmpty then
                                 className
                             else
-                                val size = params.size
+                                val size                                                = params.size
                                 @tailrec def loop(idx: Int, acc: Chunk[String]): String =
                                     if idx == size then acc.mkString(", ")
                                     else loop(idx + 1, acc.append(variances(idx).show + render(owner, params(idx))))
@@ -371,8 +370,8 @@ object Tag:
                 case Present(cached) if (a eq cached.a) && (b eq cached.b) && mode == cached.mode =>
                     cached.result
                 case _ =>
-                    val aTpe = a.tpe
-                    val bTpe = b.tpe
+                    val aTpe   = a.tpe
+                    val bTpe   = b.tpe
                     val result =
                         mode match
                             case Mode.Equality => isSameType(aTpe, bTpe, aTpe.entryId, bTpe.entryId)
@@ -423,7 +422,7 @@ object Tag:
 
                     case LambdaEntry(aParams, aLower, aUpper, aBody) =>
                         bEntry match
-                            case AnyEntry => true
+                            case AnyEntry                                    => true
                             case LambdaEntry(bParams, bLower, bUpper, bBody) =>
                                 aParams.size == bParams.size &&
                                 Span.forallZip(aLower, bLower) { (aLowerId, bLowerId) =>
@@ -499,8 +498,7 @@ object Tag:
                 end match
         end isSubType
 
-        private def isSameString(a: String, b: String): Boolean =
-            (a eq b) || (a.hashCode() == b.hashCode() && a.equals(b))
+        private def isSameString(a: String, b: String): Boolean = (a eq b) || (a.hashCode() == b.hashCode() && a.equals(b))
 
         private def isSameType(aOwner: Type[?], bOwner: Type[?], aId: Entry.Id, bId: Entry.Id): Boolean =
             if !aOwner.staticDB.contains(aId) then
@@ -607,7 +605,7 @@ object Tag:
 
         private val decodeFunction: java.util.function.Function[String, Type[?]] =
             (encoded: String) =>
-                val lines = encoded.drop(1).linesIterator // discard concreteFlag
+                val lines    = encoded.drop(1).linesIterator // discard concreteFlag
                 val staticDb =
                     HashMap.empty[Entry.Id, Entry] ++
                         lines.map { encoded =>
