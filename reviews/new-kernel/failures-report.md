@@ -69,9 +69,11 @@ decoder (no observation point), `Hub.use`'s orphaned publisher (no observation p
 
 ## CI consequences
 
-- Two Linux JVM legs fail the fork-wide descriptor probe on the listeners their pending leaves leak: kyo-jsonrpc and
-  kyo-http. The leak check works where it runs; it never ran on the macOS machines the branch was validated on. Both fixes
-  are the registration shape above.
+- Three Linux JVM legs fail the fork-wide descriptor probe on what their pending leaves leak: kyo-jsonrpc and kyo-http on
+  the listeners, kyo-sql-postgres on the five established sessions a pool exhausted by lost reservations cannot close
+  within the leaf's bound. The leak check works where it runs; it never ran on the macOS machines the branch was validated
+  on. All three fixes are the registration shape above.
+- The http client leaf reads `/proc/net/tcp` on Linux and `lsof` elsewhere, and cancels where neither exists.
 - The `Result` collapse means any leaf or program that passes a fiber's `Result` through a run reads a stop as its own
   panic; the affected test leaves were rewritten to hand a `Boolean` on instead.
 - Leaves that land their stop by spinning are JVM and Native only: a spinning test fiber never lets the spawner run on a

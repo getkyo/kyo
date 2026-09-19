@@ -4001,13 +4001,28 @@ class HttpServerTest extends BaseHttpTest:
             val route   = HttpRoute.getRaw("test").response(_.bodyText)
             val handler = route.handler(_ => HttpResponse.ok("hello"))
             val rounds  = 40
+            // Linux exposes the socket table as /proc/net/tcp: one row per socket, the state in column 4 (01 is
+            // ESTABLISHED) and the remote address in column 3 as hex ip:port. Elsewhere lsof answers the same question.
+            val procNetTcp = Chunk("/proc/net/tcp", "/proc/net/tcp6").map(java.nio.file.Paths.get(_)).filter(java.nio.file.Files.exists(_))
+            def establishedTo(port: Int): Int =
+                procNetTcp.map { table =>
+                    scala.jdk.CollectionConverters.ListHasAsScala(java.nio.file.Files.readAllLines(table)).asScala.drop(1).count { line =>
+                        val cols = line.trim.split("\\s+")
+                        cols.length > 3 && cols(3) == "01" && Integer.parseInt(cols(2).split(":").last, 16) == port
+                    }
+                }.sum
             def connectedTo(port: Int): Int < Async =
-                Abort.run[CommandException](Command("lsof", "-nP", s"-iTCP:$port", "-sTCP:ESTABLISHED").textWithExitCode).map {
-                    case Result.Success((out, _)) => out.linesIterator.count(_.contains(s"->127.0.0.1:$port"))
-                    case _                        => -1
-                }
-            Abort.run[CommandException](Command("lsof", "-v").textWithExitCode).map { probe =>
-                if probe.isFailure then cancel("lsof is not available, so the socket table cannot be read")
+                if procNetTcp.nonEmpty then Sync.defer(establishedTo(port))
+                else
+                    Abort.run[CommandException](Command("lsof", "-nP", s"-iTCP:$port", "-sTCP:ESTABLISHED").textWithExitCode).map {
+                        case Result.Success((out, _)) => out.linesIterator.count(_.contains(s"->127.0.0.1:$port"))
+                        case _                        => -1
+                    }
+            val probe: Result[CommandException, (String, ExitCode)] < Async =
+                if procNetTcp.nonEmpty then Result.succeed(("", ExitCode.Success))
+                else Abort.run[CommandException](Command("lsof", "-v").textWithExitCode)
+            probe.map { probe =>
+                if probe.isFailure then cancel("neither /proc/net/tcp nor lsof is available, so the socket table cannot be read")
                 HttpServer.init(0, "127.0.0.1")(handler).map { server =>
                     val port = server.port
                     val url  = s"http://127.0.0.1:$port/test"
