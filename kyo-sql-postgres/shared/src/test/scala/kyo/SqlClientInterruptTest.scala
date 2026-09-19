@@ -255,49 +255,59 @@ class SqlClientInterruptTest extends SqlContainerTest:
         }
     }
 
-    /** A lease that finds the ring empty reserves a slot in that same step and registers the reservation's release two steps later, in the
-      * `resolvingOnce` around the connect, so a stop landing between the two holds the slot for good; once the lost reservations reach the
-      * pool's maximum, `tryReserve` refuses every later acquire and each times out. Every round opens a fresh pool of one connection so that
-      * its first lease is the reserving shape, stops that lease at a staggered sub-millisecond offset from the step before it, and then asks
-      * the pool for a statement within its acquire budget: a held slot answers with the acquire timeout. Closing the pool afterwards must
-      * complete and leave no session behind.
+    /** A lease takes ownership of its connection across two steps on either path into the pool: the ring's empty case reserves a slot in one
+      * step and registers the reservation's release two steps later, in the `resolvingOnce` around the connect (`SqlConnectionPool.scala:577`,
+      * `:490-493`); the pooled case registers the lease's exit on the scope one step before the custody take (`:911-913`). A stop landing on
+      * either poll leaves a slot the pool cannot hand out again, and once enough leases have been stopped that way the pool refuses every
+      * acquire. The leaf stops leases against one pool of two, at staggered sub-millisecond offsets from the step before each, and asks the
+      * pool for a statement within its acquire budget after every one: the first refused acquire is the failure. Closing the pool afterwards
+      * must complete and leave no session behind.
       */
     "leases stopped at staggered offsets leave a pool that still serves and closes clean".pendingUntilFixed(
-        "a lease reserves a pool slot in the step that finds the ring empty and registers the reservation's release two steps later, so a stop landing between them holds the slot for good and the pool refuses every acquire once its reservations are exhausted"
+        "a lease takes ownership of its connection one step after the pool handed it a slot, a reservation or a pooled connection, so a stop landing on that poll leaves a slot the pool cannot hand out again and, after enough such stops, a pool of two refuses every acquire"
     ).notJs.notWasm in {
-        val rounds = 100
-        val one    = SqlConfig(maxConnections = 1, minConnections = 0, acquireTimeout = 2.seconds, queryTimeout = 10.seconds)
+        val rounds = 200
+        val two    = SqlConfig(maxConnections = 2, minConnections = 0, acquireTimeout = 2.seconds, queryTimeout = 10.seconds)
         containerUrl("kyo-sql-lease-stops") { url =>
             SqlClient.init(url.replace("kyo-sql-lease-stops", "kyo-sql-lease-probe"), config).map { probe =>
                 def sessions: Int < (Async & Abort[SqlException]) =
                     probe.query("SELECT count(*)::int FROM pg_stat_activity WHERE application_name = 'kyo-sql-lease-stops'")
                         .map(rows => rows(0).decode[Int](0))
-                Loop.indexed { i =>
-                    if i >= rounds then Loop.done(succeed)
-                    else
-                        val leasing = new java.util.concurrent.atomic.AtomicBoolean(false)
+                SqlClient.initUnscoped(url, two).map { client =>
+                    Loop.indexed { i =>
+                        if i >= rounds then Loop.done
+                        else
+                            val leasing = new java.util.concurrent.atomic.AtomicBoolean(false)
+                            for
+                                fiber <- Fiber.initUnscoped(
+                                    Sync.defer(leasing.set(true)).andThen(Abort.run[SqlException](client.query("SELECT 1")))
+                                )
+                                _ <- Sync.Unsafe.defer {
+                                    val bound = java.lang.System.nanoTime() + 200_000_000L
+                                    while !leasing.get() && java.lang.System.nanoTime() < bound do ()
+                                    val target = java.lang.System.nanoTime() + (i % 200) * 10_000L
+                                    while java.lang.System.nanoTime() < target do ()
+                                    discard(fiber.unsafe.interrupt())
+                                }
+                                _ <- fiber.getResult
+                                n <- sessions
+                            yield
+                                assert(n <= 2, s"round $i: the server holds $n sessions for a pool of two")
+                                Loop.continue
+                            end for
+                    }.andThen {
+                        // The stops run back to back: a slot lost to one of them is only visible once the pool has none left to
+                        // hand out, which a statement between the rounds would mask by re-pooling what the round did release.
                         for
-                            client <- SqlClient.initUnscoped(url, one)
-                            fiber <- Fiber.initUnscoped(
-                                Sync.defer(leasing.set(true)).andThen(Abort.run[SqlException](client.query("SELECT 1")))
-                            )
-                            _ <- Sync.Unsafe.defer {
-                                val bound = java.lang.System.nanoTime() + 200_000_000L
-                                while !leasing.get() && java.lang.System.nanoTime() < bound do ()
-                                val target = java.lang.System.nanoTime() + (i % 100) * 20_000L
-                                while java.lang.System.nanoTime() < target do ()
-                                discard(fiber.unsafe.interrupt())
-                            }
-                            _      <- fiber.getResult
                             served <- Abort.run[SqlException](client.query("SELECT 7").map(rows => rows(0).decode[Int](0)))
                             closed <- Abort.run[Timeout](Async.timeout(10.seconds)(Abort.run[SqlException](client.close)))
                             gone   <- Abort.run[Timeout](Async.timeout(5.seconds)(assertEventually(sessions.map(_ == 0))))
                         yield
-                            assert(served.contains(7), s"round $i: the pool did not serve a statement after the stopped lease: $served")
-                            assert(closed.isSuccess, s"round $i: the pool's close did not complete within its bound after the stopped lease")
-                            assert(gone.isSuccess, s"round $i: a session outlived the pool's close after the stopped lease")
-                            Loop.continue
+                            assert(served.contains(7), s"the pool did not serve a statement after the stopped leases: $served")
+                            assert(closed.isSuccess, "the pool's close did not complete within its bound after the stopped leases")
+                            assert(gone.isSuccess, "a session outlived the pool's close after the stopped leases")
                         end for
+                    }
                 }
             }
         }

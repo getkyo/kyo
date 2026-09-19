@@ -40,7 +40,8 @@ fiber inside a run hands a `Result.Panic` on as data.
 
 | Leaf | Window | Platforms seen | Fix shape |
 |---|---|---|---|
-| `SqlClientInterruptTest`, "leases stopped at staggered offsets leave a pool that still serves and closes clean" | a lease reserves a slot in the step that finds the ring empty (`SqlConnectionPool.scala:577`) and releases the reservation two steps later in the `resolvingOnce` around the connect (`:490-493`); sixty stops exhaust a pool of two | JVM, real Postgres | register the reservation's release in the reserving step |
+| `SqlClientInterruptTest`, "leases stopped at staggered offsets leave a pool that still serves and closes clean" | a lease takes ownership one step after the pool handed it a slot on both paths: the reservation taken in the step that finds the ring empty is released two steps later in the `resolvingOnce` around the connect (`SqlConnectionPool.scala:577`, `:490-493`), and the pooled path registers the exit one step before the custody take (`:911-913`); two hundred back-to-back stops exhaust a pool of two, and a statement between the stops masks it by re-pooling what the round released | JVM (3 of 3), Native, real Postgres | take ownership in the step the pool hands the slot over, on both paths |
+| `SqlClientInterruptTest`, "an interrupt landing as close extracts the idle ring strands no session" (D1) | `closeAll` drains the ring in one step and installs the force-close in the next: `SqlConnectionPool.scala:215-222`; the window is one poll wide and needs a 10 microsecond sweep, rounds whose stop landed before the close began are excluded | JVM (round 1 at 10 us), Native (round 0), real Postgres | the cell-filled-in-the-same-step shape `db/Connection.scala:395-407` uses |
 | `HttpServerTest`, "an interrupt landing as the listener binds leaves no listener behind" (D11 server) | `initUnscoped` joins the listen fiber and maps the bound server in a later step; `init`'s `acquireRelease` covers only the last step: `HttpServer.scala:135-148` | JVM, Native, Linux | register the listener's close in the step that delivers it |
 | `HttpServerTest`, "an interrupt landing as the client's connection completes leaves no connection behind" (D11 client) | `poolWithImpl` joins the connect fiber and tracks the connection in the step the join delivers it: `HttpClientBackend.scala:1202-1212` | JVM, Native | track in the producing step (the connect callback), as the `takeSlot` custody shape does |
 | `JsonRpcTransportUnixTest`, "an interrupt landing as the listener binds leaves no listener or socket file behind" (D13) | `UdsBackend.connect` binds in the step that starts the listen fiber and registers the release after the join: `UdsBackend.scala:21-34` | JVM, JS, Linux | `Scope.acquireRelease(listenUnix(...).safe.get)(...)` where the bind is synchronous, registration in the listen fiber where it is not |
@@ -62,10 +63,8 @@ never-parking loser in 4000 rounds (one loaded run had shown one left spinning, 
 
 ## Not reproduced, kept as findings by reading
 
-`mapPar` element fibers, `PubSub` subscriptions, the sql warm-up handover, advisory lock grant and `closeAll`'s ring
-extraction (D1: the guarded leaf is green over 40 rounds of stops at 50 microsecond offsets; its first failure was a
-stop landing before the close began, which the leaf now excludes), the aeron native client, the http fiber trios and
-decoder (no observation point), `Hub.use`'s orphaned publisher (no observation point).
+`mapPar` element fibers, `PubSub` subscriptions, the sql warm-up handover and advisory lock grant, the aeron native
+client, the http fiber trios and decoder (no observation point), `Hub.use`'s orphaned publisher (no observation point).
 
 ## CI consequences
 
