@@ -59,7 +59,7 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
             a      <- f(client, browser, wire)
         yield a
 
-    private def sawEventually(wire: Wire, method: String)(using Frame): Boolean < Async =
+    private def sawEventually(wire: Wire, method: String)(using Frame, kyo.test.AssertScope): Boolean < Async =
         Abort.run[Timeout](Async.timeout(2.seconds)(assertEventually(wire.seen.get.map(_.contains(method))))).map(_.isSuccess)
 
     // The init builds the endpoint over the wire and spawns the dialog drainer before it probes `Browser.getVersion`.
@@ -73,11 +73,11 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
                     fiber <- Fiber.initUnscoped(Abort.run[BrowserReadException | BrowserSetupException](
                         Scope.run(CdpBackend.initUnscoped(client, cfg).andThen(Async.never))
                     ))
-                    probed <- sawEventually(wire, "Browser.getVersion")
-                    _      <- fiber.interrupt
-                    _      <- gate.release
-                    _      <- fiber.getResult
-                    _      <- Abort.run[Closed](browser.send(JsonRpcRequest(JsonRpcId(9001L), "Probe.ping", Absent, Absent)))
+                    probed   <- sawEventually(wire, "Browser.getVersion")
+                    _        <- fiber.interrupt
+                    _        <- gate.release
+                    _        <- fiber.getResult
+                    _        <- Abort.run[Closed](browser.send(JsonRpcRequest(JsonRpcId(9001L), "Probe.ping", Absent, Absent)))
                     answered <- Abort.run[Timeout](Async.timeout(1.second)(assertEventually(wire.replies.get.map(_ > 0)))).map(_.isSuccess)
                 yield
                     assert(probed, "the init never reached the version probe")
@@ -140,7 +140,10 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
                                 restored   <- sawEventually(wire, "Emulation.clearDeviceMetricsOverride")
                             yield
                                 assert(overridden, "the viewport override was never sent")
-                                assert(restored, "the override the reply confirmed was never cleared after the caller was stopped at that reply")
+                                assert(
+                                    restored,
+                                    "the override the reply confirmed was never cleared after the caller was stopped at that reply"
+                                )
                             end for
                         }
                     }

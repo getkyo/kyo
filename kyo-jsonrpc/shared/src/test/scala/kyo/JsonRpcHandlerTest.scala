@@ -929,7 +929,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
                     }
                     transports <- JsonRpcTransport.inMemory
                     (ta, tb) = transports
-                    sending = new java.util.concurrent.atomic.AtomicBoolean(false)
+                    sending  = new java.util.concurrent.atomic.AtomicBoolean(false)
                     _ <- Scope.run {
                         JsonRpcHandler.init(tb, Seq(route)).map { _ =>
                             Scope.run {

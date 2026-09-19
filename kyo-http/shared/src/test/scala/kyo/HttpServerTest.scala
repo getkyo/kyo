@@ -4015,7 +4015,7 @@ class HttpServerTest extends BaseHttpTest:
                             val requesting = new java.util.concurrent.atomic.AtomicBoolean(false)
                             for
                                 _ <- Scope.run {
-                                    HttpClient.init(maxConnectionsPerHost = 1).map { client =>
+                                    HttpClient.init(maxConnectionsPerHost = 2).map { client =>
                                         Fiber.initUnscoped(HttpClient.let(client) {
                                             Sync.defer(requesting.set(true)).andThen(Abort.run[HttpException](HttpClient.getText(url)))
                                         }).map { fiber =>
@@ -4031,7 +4031,10 @@ class HttpServerTest extends BaseHttpTest:
                                 }
                                 gone <- Abort.run[Timeout](Async.timeout(2.seconds)(assertEventually(connectedTo(port).map(_ == 0))))
                             yield
-                                assert(gone.isSuccess, s"round $i: a connection to port $port is still established after the client's scope closed")
+                                assert(
+                                    gone.isSuccess,
+                                    s"round $i: a connection to port $port is still established after the client's scope closed"
+                                )
                                 Loop.continue
                             end for
                     }

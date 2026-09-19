@@ -191,10 +191,19 @@ class FlowEngineLifecycleTest extends FlowEngineSupport:
                             for
                                 gate <- Latch.init(1)
                                 eidRef <- Scope.run {
-                                    FlowEngine.init(store, workerCount = 1, lease = 30.seconds, renewEvery = 5.seconds, pollTimeout = 100.millis).map {
+                                    FlowEngine.init(
+                                        store,
+                                        workerCount = 1,
+                                        lease = 30.seconds,
+                                        renewEvery = 5.seconds,
+                                        pollTimeout = 100.millis
+                                    ).map {
                                         engine =>
                                             for
-                                                _      <- engine.register(Flow.Id.Workflow(s"stops-$i"), flow.output("y")(_ => gate.await.andThen(1)))
+                                                _ <- engine.register(
+                                                    Flow.Id.Workflow(s"stops-$i"),
+                                                    flow.output("y")(_ => gate.await.andThen(1))
+                                                )
                                                 handle <- engine.workflows.start(Flow.Id.Workflow(s"stops-$i"))
                                                 eid = handle.executionId
                                                 _ <- engine.executions.signal[Int](eid, "x", 1)
