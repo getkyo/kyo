@@ -181,7 +181,17 @@ jobs:
             bash kyo-net/build/boringssl/build-boringssl.sh linux-musl-x86_64
             bash kyo-aeron/scripts/build-aeron.sh linux-musl-x86_64
             bash kyo-sql-sqlite/scripts/build-sqlite.sh
-            sbt -Dplatform=JVM ffiCompileAll
+            # The job cache does not reach here: this container mounts only the workspace, so sbt
+            # resolves into throwaway container storage and a dropped connection has nothing to fall
+            # back on. Retry the resolve rather than the step, which also builds BoringSSL and Aeron
+            # from source.
+            n=0
+            until sbt -Dplatform=JVM ffiCompileAll; do
+              n=$((n+1))
+              [ "$n" -ge 3 ] && exit 1
+              echo "sbt failed, retrying $n of 3" >&2
+              sleep 15
+            done
             mkdir -p natives-out
             find . -path "*/target/ffi/lib*-linux-musl-x86_64.so" -exec cp -n {} natives-out/ \;
           '
@@ -265,7 +275,17 @@ jobs:
             bash kyo-net/build/boringssl/build-boringssl.sh linux-musl-aarch64
             bash kyo-aeron/scripts/build-aeron.sh linux-musl-aarch64
             bash kyo-sql-sqlite/scripts/build-sqlite.sh
-            sbt -Dplatform=JVM ffiCompileAll
+            # The job cache does not reach here: this container mounts only the workspace, so sbt
+            # resolves into throwaway container storage and a dropped connection has nothing to fall
+            # back on. Retry the resolve rather than the step, which also builds BoringSSL and Aeron
+            # from source.
+            n=0
+            until sbt -Dplatform=JVM ffiCompileAll; do
+              n=$((n+1))
+              [ "$n" -ge 3 ] && exit 1
+              echo "sbt failed, retrying $n of 3" >&2
+              sleep 15
+            done
             mkdir -p natives-out
             find . -path "*/target/ffi/lib*-linux-musl-aarch64.so" -exec cp -n {} natives-out/ \;
           '
