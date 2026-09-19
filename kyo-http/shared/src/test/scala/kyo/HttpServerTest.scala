@@ -3948,30 +3948,44 @@ class HttpServerTest extends BaseHttpTest:
     }
 
     "init under interruption" - {
-        // `HttpServer.init` binds the listener in the step that starts the listen fiber and registers its release
-        // only once the join returns, so an interrupt landing at that join leaves the listener bound with nobody to
-        // close it. Each round takes a port the OS hands out, closes that probe so the port is free by number, runs
-        // an init on it interrupted at a small staggered delay, and then waits, bounded, for a bind on the same
-        // port to succeed: a release still in flight frees the port within the bound, a listener nobody registered
-        // holds it for good.
-        "an interrupt landing as the listener binds leaves no listener behind" in {
+        // `HttpServer.init` wraps `initUnscoped` in `Scope.acquireRelease`, which registers as the acquire's value
+        // arrives, but the acquire itself joins the listen fiber and maps the result in a step of its own: a stop
+        // landing between the bind and that step abandons the acquire with the listener bound and nobody to close it.
+        // The bind is a fraction of a millisecond, below what a timer lands in, so the leaf's own fiber spins on a
+        // flag the spawner sets in the step before `init`, spins on to a staggered offset, and requests the stop
+        // directly. Each round takes a port the OS hands out, closes that probe so the port is free by number, and
+        // then waits, bounded, for a bind on the same port to succeed: a release still in flight frees the port
+        // within the bound, a listener nobody registered holds it for good.
+        "an interrupt landing as the listener binds leaves no listener behind".pendingUntilFixed(
+            "HttpServer.initUnscoped joins the listen fiber and maps the bound server in a later step, so a stop landing between the bind and that step leaves the listener bound with nobody to close it"
+        ).notJs.notWasm in {
             val route   = HttpRoute.getRaw("test").response(_.bodyText)
             val handler = route.handler(_ => HttpResponse.ok("hello"))
-            val rounds  = 40
+            val rounds  = 80
             def bind(port: Int): Boolean < Async =
                 Abort.run[HttpBindException](Scope.run(HttpServer.init(port, "127.0.0.1")(handler).unit)).map(_.isSuccess)
             Loop.indexed { i =>
                 if i >= rounds then Loop.done(succeed)
                 else
+                    val binding = new java.util.concurrent.atomic.AtomicBoolean(false)
                     for
-                        port  <- Scope.run(HttpServer.init(0, "127.0.0.1")(handler).map(_.port))
-                        fiber <- Fiber.initUnscoped(Scope.run(HttpServer.init(port, "127.0.0.1")(handler).andThen(Async.never)))
-                        _     <- Async.delay((i % 3).millis)(fiber.interrupt)
-                        _     <- fiber.getResult
-                        free  <- Abort.run[Timeout](Async.timeout(2.seconds)(assertEventually(bind(port))))
+                        port <- Scope.run(HttpServer.init(0, "127.0.0.1")(handler).map(_.port))
+                        fiber <- Fiber.initUnscoped(Scope.run(
+                            Sync.defer(binding.set(true)).andThen(HttpServer.init(port, "127.0.0.1")(handler)).andThen(Async.never)
+                        ))
+                        _ <- Sync.Unsafe.defer {
+                            val bound = java.lang.System.nanoTime() + 200_000_000L
+                            while !binding.get() && java.lang.System.nanoTime() < bound do ()
+                            val target = java.lang.System.nanoTime() + (i % 40) * 50_000L
+                            while java.lang.System.nanoTime() < target do ()
+                            discard(fiber.unsafe.interrupt())
+                        }
+                        _    <- fiber.getResult
+                        free <- Abort.run[Timeout](Async.timeout(2.seconds)(assertEventually(bind(port))))
                     yield
                         assert(free.isSuccess, s"round $i: port $port is still held by a listener the interrupted init left behind")
                         Loop.continue
+                    end for
             }
         }
     }

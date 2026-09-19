@@ -25,12 +25,13 @@ class JsonRpcTransportUnixTest extends JsonRpcTest:
         }
 
     // `unixDomain` binds the listener, which creates the socket file, in the step that starts the listen fiber, and
-    // registers their release only once the join returns. An interrupt landing at that join leaves both behind. The
-    // join lasts a listen round trip, so the rounds interrupt at staggered delays around it. A registered release
-    // runs on the scope's detached drain, so each round waits, bounded, for the socket file to go: a release still in
-    // flight removes it within the bound, a listener nobody registered keeps it for good.
+    // registers their release in a later step, after the join on that fiber (a poll away where the bind completes
+    // synchronously, a scheduling round trip away where it does not). A stop landing between the two leaves both
+    // behind, so the rounds interrupt at staggered delays from the fiber's start. A registered release runs on the
+    // scope's detached drain, so each round waits, bounded, for the socket file to go: a release still in flight
+    // removes it within the bound, a listener nobody registered keeps it for good.
     "an interrupt landing as the listener binds leaves no listener or socket file behind".pendingUntilFixed(
-        "unixDomain binds the listener, which creates the socket file, in the step that starts the listen fiber and registers their release only once the join returns, so an interrupt at that join leaves both behind"
+        "unixDomain binds the listener, which creates the socket file, in the step that starts the listen fiber and registers their release in a later step after the join, so a stop landing between the two leaves both behind"
     ) in {
         assumeUnixSockets()
         Path.run(Path.tempDir("kyo-jsonrpc-uds-").map { tempDir =>

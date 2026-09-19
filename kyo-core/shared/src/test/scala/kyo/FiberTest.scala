@@ -169,6 +169,36 @@ class FiberTest extends kyo.test.Test[Any]:
                     assert(r.failure.contains("Winner"))
                 }
             }
+            // The race interrupts each loser from the winner's completion callback while the loser may be mid-slice on
+            // another worker, never parking: the stop has to be observed by the loser's next safepoint poll or at its
+            // next slice entry. A loser that keeps running past the winner outlives the leaf and the end-of-run fiber
+            // probe reports it, which is how one run of the "n" leaf above surfaced. Each round races an immediate
+            // winner against a spinning loser that owes a finalizer; the flag lets the leaf stop a loser the race
+            // failed to, so a lost stop fails the round instead of the fork.
+            "interrupts a losing computation that never parks" in {
+                val rounds = 500
+                def spin(stop: java.util.concurrent.atomic.AtomicBoolean): Unit < Sync =
+                    Sync.defer(if stop.get() then () else spin(stop))
+                Loop.indexed { i =>
+                    if i >= rounds then Loop.done(succeed)
+                    else
+                        val stop = new java.util.concurrent.atomic.AtomicBoolean(false)
+                        for
+                            done <- AtomicInt.init(0)
+                            r <- Fiber.internal.raceFirst(Seq(
+                                Sync.defer(1),
+                                Sync.ensure(done.incrementAndGet.unit)(spin(stop)).andThen(2)
+                            )).map(_.getResult)
+                            freed <- Abort.run[Timeout](Async.timeout(5.seconds)(assertEventually(done.get.map(_ == 1))))
+                            _ = stop.set(true)
+                            _ <- assertEventually(done.get.map(_ == 1))
+                        yield
+                            assert(r.contains(1), s"round $i: the immediate computation did not win: $r")
+                            assert(freed.isSuccess, s"round $i: the losing spinner was not stopped by the race")
+                            Loop.continue
+                        end for
+                }
+            }
             "returns first result regardless of success/failure" in {
                 val error = new Exception("test error")
                 Fiber.internal.raceFirst(Seq(
@@ -724,15 +754,13 @@ class FiberTest extends kyo.test.Test[Any]:
 
                 // The kernel's trace is rebuilt from the child's own regions, so a spawn does not carry the
                 // spawning chain's frames into the child's exceptions.
-                "Trace.saved captures frames from a running computation".pendingUntilFixed(
+                "a carrier spawned from a running computation carries the spawning chain's frames in its failure".pendingUntilFixed(
                     "the kernel's effect trace does not carry the spawning chain's frames into a child fiber"
                 ) in {
-                    // Spawning from inside a running effect chain means the Safepoint has accumulated the
-                    // chain's own user frames. Trace.saved() snapshots them, and the exception thrown by
-                    // the carrier is enriched with those Kyo frame elements (format "snippet @ className"
-                    // in the class-name field). The spawn must follow at least one user-framed effect step,
-                    // since only those steps push frames; a spawn at the very start of the body would see an
-                    // empty trace (the internal placeholder frame is never pushed).
+                    // The spawning chain's own user frames are expected in the exception the carrier throws, as
+                    // Kyo frame elements (format "snippet @ className" in the class-name field). The spawn
+                    // follows at least one user-framed effect step, since only those steps push frames; a spawn
+                    // at the very start of the body would see an empty trace.
                     Sync.defer(1).map(_ => 2).map { _ =>
                         Fiber.Unsafe.init { throw new RuntimeException("trace-test") }: Fiber.Unsafe[Int, Any]
                     }.map { carrier =>

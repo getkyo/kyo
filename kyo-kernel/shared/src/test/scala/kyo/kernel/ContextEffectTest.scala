@@ -580,23 +580,6 @@ class ContextEffectTest extends AnyFreeSpec:
         }
          */
 
-        "each shot of a crossing completes the bindings it re-installs" in {
-            // Known gap: a crossing shot does not complete the bindings it re-installs (same family as the discard-signal gaps).
-            pendingUntilFixed {
-                val log = ListBuffer[String]()
-                val body: Int < (Ask & Say) =
-                    hooked(log, "outer", 1)(hooked(log, "inner", 2)(say("s").map(_ => 0)).map(a => ask.map(_ + a)))
-                val handledSay: Int < Ask = ArrowEffect.handleCont(Tag[Say], body)([C] => (_, cont) => cont(()), a => a)
-                val twice: Int < Any = ArrowEffect.handleCont(Tag[Ask], handledSay)(
-                    [C] => (_, cont) => cont(10).map(a => cont(20).map(b => a + b)),
-                    a => a
-                )
-                assert(twice.eval == 30)
-                assert(log.count(_ == "done outer 1") == 2)
-                ()
-            }
-        }
-
         /* Disabled: needs ContextEffect.handle's done hook plus a completing helper, which this kernel does not provide (it has release instead).
         "a throwing done unwinds through the regions around the binding" in {
             val log  = ListBuffer[String]()

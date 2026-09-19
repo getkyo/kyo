@@ -186,18 +186,27 @@ class KyoAppTest extends kyo.test.Test[Any]:
 
     // `runAndBlock` forks the computation and blocks on the fiber with the timeout as a deadline. On expiry it
     // reports `Timeout` and leaves the fiber it forked running: nothing else holds it, so the computation is
-    // orphaned with whatever it acquired. A promise the computation waits on shows it, through its waiter count.
-    // The timeout is a real one because the block parks the calling thread, which is the thread a controlled
-    // clock would have to be advanced from; nothing here asserts on elapsed time.
+    // orphaned with whatever it acquired. The body releases a latch as it starts and owes a finalizer, so the
+    // check is on the finalizer once the body is known to have started; a body the timeout stopped before it
+    // started owes nothing. The timeout is a real one because the block parks the calling thread, which is the
+    // thread a controlled clock would have to be advanced from; nothing here asserts on elapsed time.
     "runAndBlock's timeout does not leave the forked computation running".pendingUntilFixed(
         "runAndBlock forks the computation and reports Timeout from the block without interrupting the fiber it forked, so the computation runs on with no owner"
     ).notJs.notWasm in {
         for
-            gate   <- Promise.init[Unit, Any]
-            result <- Abort.run[Timeout](KyoApp.runAndBlock(10.millis)(gate.get))
+            gate     <- Promise.init[Unit, Any]
+            started  <- Latch.init(1)
+            released <- AtomicBoolean.init(false)
+            result <- Abort.run[Timeout](KyoApp.runAndBlock(10.millis)(
+                Sync.ensure(released.set(true))(started.release.andThen(gate.get))
+            ))
             _ = assert(result.failure.exists(_.isInstanceOf[Timeout]), s"the block must report the timeout, got $result")
-            gone <- Abort.run[Timeout](Async.timeout(2.seconds)(assertEventually(gate.waiters.map(_ == 0))))
-        yield assert(gone.isSuccess, "the computation is still parked on the gate after runAndBlock reported the timeout")
+            ran <- Abort.run[Timeout](Async.timeout(2.seconds)(started.await))
+            freed <-
+                if ran.isSuccess then Abort.run[Timeout](Async.timeout(2.seconds)(assertEventually(released.get))).map(_.isSuccess)
+                else Kyo.lift(true)
+        yield assert(freed, "the computation started, and its finalizer has not run after runAndBlock reported the timeout")
+        end for
     }
 
 end KyoAppTest

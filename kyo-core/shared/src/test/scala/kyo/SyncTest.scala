@@ -632,7 +632,11 @@ class SyncTest extends kyo.test.Test[Any]:
                                 ended.unsafe.set(true)
                             }
                         }(Sync.defer("token")).ensureMap { _ =>
-                            owned.set(true).andThen(Async.never).andThen(Kyo.unit)
+                            // Unsafe: the mark must land in the step that delivers the value, as a registration would; an
+                            // effectful write would be a step of its own, parked by the same stop.
+                            import AllowUnsafe.embrace.danger
+                            owned.unsafe.set(true)
+                            Async.never.andThen(Kyo.unit)
                         }
                     }): Unit < (Sync & Async)
                 }
