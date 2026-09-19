@@ -1379,9 +1379,14 @@ lazy val `kyo-system-doltfs` =
                     readFfiNativeManifest(cp, KyoFfiPlugin.ffiNativeCompileFlagsDir, KyoFfiPlugin.ffiNativeInBuildCompileFlagsDir)
                 // The engine archive as well: the shim compiled into this binary calls sqlite3_*, and the only
                 // copy of those is the prebuilt DoltLite the sibling module staged.
-                val archive  = doltLiteNativeArchive(baseDirectory.value / ".." / ".." / "kyo-sql-doltlite")
-                val withLink = base.withLinkingOptions(base.linkingOptions ++ linkExtra :+ archive)
-                if (compileExtra.isEmpty) withLink else withLink.withCompileOptions(withLink.compileOptions ++ compileExtra)
+                val archive = doltLiteNativeArchive(baseDirectory.value / ".." / ".." / "kyo-sql-doltlite")
+                // Deduped against what is already there, because the test classpath CONTAINS the compile one:
+                // every dependency on both carries its flags twice otherwise, and a static archive named twice
+                // is every one of its symbols defined twice. kyo-net's libssl.a is the one that fails the link.
+                val newLink    = (linkExtra :+ archive).filterNot(base.linkingOptions.contains)
+                val withLink   = base.withLinkingOptions(base.linkingOptions ++ newLink)
+                val newCompile = compileExtra.filterNot(withLink.compileOptions.contains)
+                if (newCompile.isEmpty) withLink else withLink.withCompileOptions(withLink.compileOptions ++ newCompile)
             }
         )
         .wasmSettings(
