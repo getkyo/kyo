@@ -562,6 +562,32 @@ class HubTest extends kyo.test.Test[Any]:
         }
     }
     "listen under interruption" - {
+        // `Hub.use` spawns the publisher in one step and builds the hub in the next. A stop landing between them
+        // orphans the publisher, parked on a channel nothing else references, which no API can observe: the leaf pins
+        // what is observable, that the caller settles with the interrupt whatever step the stop lands on. The stop is
+        // requested from the leaf's own fiber spinning to a staggered offset from the step before `use`.
+        "interrupting Hub.use around its spawn settles the caller with the interrupt" in {
+            val rounds = 40
+            Loop.indexed { i =>
+                if i >= rounds then Loop.done(succeed)
+                else
+                    val entering = new java.util.concurrent.atomic.AtomicBoolean(false)
+                    for
+                        fiber <- Fiber.initUnscoped(Sync.defer(entering.set(true)).andThen(Hub.use[Int](4)(_ => Async.never)))
+                        _ <- Sync.Unsafe.defer {
+                            val bound = java.lang.System.nanoTime() + 200_000_000L
+                            while !entering.get() && java.lang.System.nanoTime() < bound do ()
+                            val target = java.lang.System.nanoTime() + (i % 40) * 25_000L
+                            while java.lang.System.nanoTime() < target do ()
+                            discard(fiber.unsafe.interrupt())
+                        }
+                        r <- Abort.run[Timeout](Async.timeout(2.seconds)(fiber.getResult.map(_.isPanic)))
+                    yield
+                        assert(r.contains(true), s"round $i: the caller did not settle with the interrupt: $r")
+                        Loop.continue
+                    end for
+            }
+        }
         // `listen` adds the listener to the hub's set in one step and registers its release in the next, behind a
         // poll of the hub's closed flag. An interrupt landing on that poll abandons the registration: the listener
         // stays in the set with nobody to close it, and once its one-slot buffer fills the publisher parks on it

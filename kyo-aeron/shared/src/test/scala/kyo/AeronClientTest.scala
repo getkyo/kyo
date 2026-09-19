@@ -27,6 +27,45 @@ class AeronClientTest extends Test:
             }
         )(client => Sync.Unsafe.defer(client.unsafe.close()))
 
+    // `connectUnscoped` joins the blocking connect on a carrier and builds the runtime that owns the native client in the
+    // step after; `connect` wraps that in `Scope.acquireRelease`, which registers as the value arrives but not for a stop
+    // landing inside the acquire. The client is a native handle with no Scala reference once abandoned, so the leaf
+    // asserts what the driver can show: after rounds of connects stopped at sub-millisecond offsets, with every client
+    // the rounds did receive closed, the embedded driver still closes within its bound rather than waiting on a client
+    // that nobody closed.
+    "connects stopped at staggered offsets leave a driver that still closes" in {
+        Path.run(Path.tempDir("kyo-aeron-client-stops")).map { root =>
+            val dir    = root / AeronDriver.mediaDirName
+            val rounds = 40
+            Abort.run[Timeout](Async.timeout(60.seconds)(Scope.run {
+                withExternalDriver(dir) {
+                    Loop.indexed { i =>
+                        if i >= rounds then Loop.done(succeed)
+                        else
+                            val connecting = new java.util.concurrent.atomic.AtomicBoolean(false)
+                            for
+                                fiber <- Fiber.initUnscoped(
+                                    Sync.defer(connecting.set(true)).andThen(Abort.run[TopicException](AeronClient.connectUnscoped(dir)))
+                                )
+                                _ <- Sync.Unsafe.defer {
+                                    val bound = java.lang.System.nanoTime() + 200_000_000L
+                                    while !connecting.get() && java.lang.System.nanoTime() < bound do ()
+                                    val target = java.lang.System.nanoTime() + (i % 40) * 100_000L
+                                    while java.lang.System.nanoTime() < target do ()
+                                    discard(fiber.unsafe.interrupt())
+                                }
+                                r <- fiber.getResult
+                                _ <- r match
+                                    case Result.Success(Result.Success(client)) => Sync.Unsafe.defer(client.unsafe.close())
+                                    case _                                      => Kyo.unit
+                            yield Loop.continue
+                            end for
+                    }
+                }
+            })).map(r => assert(r.isSuccess, "the driver did not close within the bound after the interrupted connects"))
+        }
+    }
+
     "connect + single Topic.run(client) round-trip: received == Chunk(1L,2L)" in {
         Path.run(Path.tempDir("kyo-aeron-client-l1")).map { root =>
             // The driver creates its own directory inside the temp one: Aeron deletes and recreates a driver

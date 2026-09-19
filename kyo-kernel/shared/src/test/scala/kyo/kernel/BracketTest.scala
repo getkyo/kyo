@@ -1479,6 +1479,49 @@ class BracketTest extends AnyFreeSpec:
             assert(outcome.exists(_.exists(_.isInstanceOf[kyo.KyoException])))
         }
 
+        // The peel's remainder is owed to the region below it. Handed to a nested eval on the same thread and parked
+        // there inside the bracket's use, it must not be released under that use when the region ends: the resume is
+        // either refused with Closed or completes on a resource still held.
+        "a peeled remainder parked in a nested eval is not released under it when the peeling region ends" in {
+            sealed trait Rel extends ContextEffect[Int]
+            def outer[A, S](v: A < (Rel & S)): A < S =
+                ContextEffect.handle(Tag[Rel], derive = (_: Maybe[Int]) => 0, fork = (s: Int) => s, join = (p: Int, _: Int, _: Int) => p)(v)
+            var outcome            = Maybe.empty[Maybe[Throwable]]
+            var useRanAfterRelease = false
+            var parked: Int < Any  = -1
+            val body: Int < Ask =
+                Bracket(Effect.defer(1)) { r =>
+                    ask.map { a =>
+                        requestStop()
+                        Effect.defer {
+                            useRanAfterRelease = outcome.nonEmpty
+                            a + r
+                        }
+                    }
+                }((_, o) => outcome = Maybe(o))
+            val peeled: Int < Ask =
+                ArrowEffect.handleFirst(Tag[Ask], body)(
+                    handle = [C] =>
+                        (_, cont) =>
+                            Effect.defer {
+                                parked = Eval.partial(answerAsk(0)(cont(10)))
+                                -1
+                        },
+                    done = a => a
+                )
+            assert(answerAsk(0)(outer(peeled)).eval == -1)
+            assert(parked.isInstanceOf[Pending.Park[?, ?]])
+            // Either fix shape passes: the resume is refused with Closed, or the use completes on a resource the
+            // region's exit did not release under it.
+            val resumed = scala.util.Try(parked.eval)
+            val refused = resumed.failed.toOption.exists(_.isInstanceOf[Closed])
+            assert(
+                refused || (resumed.isSuccess && !useRanAfterRelease),
+                s"the use resumed after the region released its bracket: outcome=$outcome resumed=$resumed"
+            )
+            ()
+        }
+
         "a park between the hand-out and the resume carries the remainder's debt" in {
             var outcome = Maybe.empty[Maybe[Throwable]]
             val v       = Bracket(Effect.defer(1))(r => ask.map(_ + r))((_, o) => outcome = Maybe(o))

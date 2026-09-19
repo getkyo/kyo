@@ -3988,6 +3988,56 @@ class HttpServerTest extends BaseHttpTest:
                     end for
             }
         }
+
+        // The client pool connects on a fiber and joins it; the connection is tracked for `closeAll` in the step the
+        // join delivers it. A stop landing between the connection's completion and that step abandons a connection no
+        // registry knows, which stays established for its idle life on both ends. The rounds stop a request at
+        // staggered offsets from the step before it, close the client's scope, and read the operating system's view of
+        // the sockets connected to the server's port: a tracked connection closes with the pool within the bound, an
+        // untracked one stays.
+        "an interrupt landing as the client's connection completes leaves no connection behind".notJs.notWasm in {
+            val route   = HttpRoute.getRaw("test").response(_.bodyText)
+            val handler = route.handler(_ => HttpResponse.ok("hello"))
+            val rounds  = 40
+            def connectedTo(port: Int): Int < Async =
+                Abort.run[CommandException](Command("lsof", "-nP", s"-iTCP:$port", "-sTCP:ESTABLISHED").textWithExitCode).map {
+                    case Result.Success((out, _)) => out.linesIterator.count(_.contains(s"->127.0.0.1:$port"))
+                    case _                        => -1
+                }
+            Abort.run[CommandException](Command("lsof", "-v").textWithExitCode).map { probe =>
+                if probe.isFailure then cancel("lsof is not available, so the socket table cannot be read")
+                HttpServer.init(0, "127.0.0.1")(handler).map { server =>
+                    val port = server.port
+                    val url  = s"http://127.0.0.1:$port/test"
+                    Loop.indexed { i =>
+                        if i >= rounds then Loop.done(succeed)
+                        else
+                            val requesting = new java.util.concurrent.atomic.AtomicBoolean(false)
+                            for
+                                _ <- Scope.run {
+                                    HttpClient.init(maxConnectionsPerHost = 1).map { client =>
+                                        Fiber.initUnscoped(HttpClient.let(client) {
+                                            Sync.defer(requesting.set(true)).andThen(Abort.run[HttpException](HttpClient.getText(url)))
+                                        }).map { fiber =>
+                                            Sync.Unsafe.defer {
+                                                val bound = java.lang.System.nanoTime() + 200_000_000L
+                                                while !requesting.get() && java.lang.System.nanoTime() < bound do ()
+                                                val target = java.lang.System.nanoTime() + (i % 40) * 50_000L
+                                                while java.lang.System.nanoTime() < target do ()
+                                                discard(fiber.unsafe.interrupt())
+                                            }.andThen(fiber.getResult)
+                                        }
+                                    }
+                                }
+                                gone <- Abort.run[Timeout](Async.timeout(2.seconds)(assertEventually(connectedTo(port).map(_ == 0))))
+                            yield
+                                assert(gone.isSuccess, s"round $i: a connection to port $port is still established after the client's scope closed")
+                                Loop.continue
+                            end for
+                    }
+                }
+            }
+        }
     }
 
 end HttpServerTest

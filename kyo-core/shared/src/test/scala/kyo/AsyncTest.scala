@@ -507,6 +507,32 @@ class AsyncTest extends kyo.test.Test[Any]:
         end for
     }
 
+    // The shielded body's value is delivered to a promise the caller joins, and the caller's next step is the first
+    // that can own it. An interrupt of the caller landing at that join abandons the value: the release the caller
+    // meant to register for it never runs, and the shield that let the body finish is what produced the orphan.
+    "a value the shielded body produces is not stranded when the caller is interrupted at the join".pendingUntilFixed(
+        "Async.uninterruptible joins the shielded fiber's promise and hands its value to the caller's next step, so a stop landing at that join abandons the value with no owner"
+    ) in {
+        for
+            entered  <- Latch.init(1)
+            gate     <- Latch.init(1)
+            released <- AtomicBoolean.init(false)
+            fiber <- Fiber.initUnscoped {
+                Scope.run {
+                    Scope.acquireRelease(Async.uninterruptible(entered.release.andThen(gate.await).andThen("handle")))(_ =>
+                        released.set(true)
+                    ).andThen(Async.never)
+                }
+            }
+            _ <- entered.await
+            _ <- fiber.interrupt
+            _ <- gate.release
+            _ <- fiber.getResult
+            r <- Abort.run[Timeout](Async.timeout(2.seconds)(assertEventually(released.get)))
+        yield assert(r.isSuccess, "the shielded body handed its value to a join the interrupt had abandoned, and its release never ran")
+        end for
+    }
+
     "boundary inference with Abort" - {
         "same failures" in {
             val v: Int < Abort[Int]                            = 1
@@ -1962,6 +1988,52 @@ class AsyncTest extends kyo.test.Test[Any]:
                 _ <- interrupted.get
             yield succeed("the guarded computation was interrupted with its caller")
             end for
+        }
+    }
+
+    "timeout under interruption" - {
+        // The timeout forks the guarded computation and wires it to the sleep in the step the child's fiber arrives,
+        // then joins the child. A stop requested during that step is observed in front of the join, before the join has
+        // linked the child, so the abandonment interrupts nothing and the child runs on with no owner. The step is a few
+        // microseconds, below what a timer lands in, so the leaf's own fiber spins on a flag set in the step before the
+        // timeout, then to a staggered offset, and requests the stop directly; a child known to have started must then
+        // release, and one stopped before it started owes nothing.
+        "an interrupt landing at the timeout's spawn reaches the guarded computation".pendingUntilFixed(
+            "Async.timeout joins the guarded child in the step after the spawn, so a stop pending as that join is reached parks in front of it, before the join links the child, and the child keeps running unowned"
+        ) in {
+            val rounds = 80
+            Loop.indexed { i =>
+                if i >= rounds then Loop.done(succeed)
+                else
+                    val arming = new java.util.concurrent.atomic.AtomicBoolean(false)
+                    for
+                        entered  <- Latch.init(1)
+                        gate     <- Latch.init(1)
+                        released <- AtomicBoolean.init(false)
+                        fiber <- Fiber.initUnscoped {
+                            Sync.defer(arming.set(true)).andThen {
+                                Async.timeout(1.hour)(Sync.ensure(released.set(true))(entered.release.andThen(gate.await)))
+                            }
+                        }
+                        _ <- Sync.Unsafe.defer {
+                            val bound = java.lang.System.nanoTime() + 200_000_000L
+                            while !arming.get() && java.lang.System.nanoTime() < bound do ()
+                            val target = java.lang.System.nanoTime() + (i % 40) * 10_000L
+                            while java.lang.System.nanoTime() < target do ()
+                            discard(fiber.unsafe.interrupt())
+                        }
+                        _   <- fiber.getResult
+                        ran <- Abort.run[Timeout](Async.timeout(1.second)(entered.await))
+                        freed <-
+                            if ran.isSuccess then
+                                Abort.run[Timeout](Async.timeout(2.seconds)(assertEventually(released.get))).map(_.isSuccess)
+                            else Kyo.lift(true)
+                        _ <- gate.release
+                    yield
+                        assert(freed, s"round $i: the guarded computation kept running after the caller was interrupted at the spawn")
+                        Loop.continue
+                    end for
+            }
         }
     }
 

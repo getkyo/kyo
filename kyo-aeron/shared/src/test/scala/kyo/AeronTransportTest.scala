@@ -1463,4 +1463,81 @@ class AeronTransportTest extends Test:
         }
     }
 
+    /** Confirms every add on its first poll and counts what it hands out and what comes back. */
+    final private class HandoffTransport extends AeronTransport:
+        type Publication  = Int
+        type Subscription = Int
+        type AsyncPub     = Int
+        type AsyncSub     = Int
+
+        val pubOpens  = new java.util.concurrent.atomic.AtomicInteger(0)
+        val pubCloses = new java.util.concurrent.atomic.AtomicInteger(0)
+
+        def asyncAddPublication(uri: String, streamId: Int)(using AllowUnsafe): Maybe[AsyncPub] = Present(streamId)
+        def pollAddPublication(async: AsyncPub)(using AllowUnsafe): AeronTransport.AddPoll[Publication] =
+            discard(pubOpens.incrementAndGet())
+            AeronTransport.AddPoll.Done(async)
+        end pollAddPublication
+        def freeAsyncPub(async: AsyncPub)(using AllowUnsafe): Unit                               = ()
+        def publicationIsConnected(pub: Publication)(using AllowUnsafe): Boolean                 = false
+        def offer(pub: Publication, message: Array[Byte])(using AllowUnsafe): Long               = 0L
+        def maxMessageLength(pub: Publication)(using AllowUnsafe): Int                           = 0
+        def closePublication(pub: Publication)(using AllowUnsafe): Unit                          = discard(pubCloses.incrementAndGet())
+        def asyncAddSubscription(uri: String, streamId: Int)(using AllowUnsafe): Maybe[AsyncSub] = Present(streamId)
+        def pollAddSubscription(async: AsyncSub)(using AllowUnsafe): AeronTransport.AddPoll[Subscription] =
+            AeronTransport.AddPoll.Done(async)
+        def freeAsyncSub(async: AsyncSub)(using AllowUnsafe): Unit                 = ()
+        def subscriptionIsConnected(sub: Subscription)(using AllowUnsafe): Boolean = false
+        def pollOne(sub: Subscription)(using AllowUnsafe): Maybe[Array[Byte]]      = Absent
+        def closeSubscription(sub: Subscription)(using AllowUnsafe): Unit          = ()
+        def fatalError(using AllowUnsafe): Maybe[String]                           = Absent
+    end HandoffTransport
+
+    // The add-deadline guard hands the publication on at its clean end and closes nothing, and Topic's `ensureMap`
+    // takes it over in the step the add's value arrives. Between the two sits the poll of the map that raises the
+    // guard's recorded abort (`Sync.ensure`'s shape): a stop landing there leaves a publication open that nobody
+    // closes. The rounds spin to sub-millisecond offsets from the step before the publish, so the stops land across
+    // the add, the hand-off, and the backpressured offer loop after it; every round must end with every publication
+    // it opened closed.
+    "a publication the add hands on under a stop is closed by someone".pendingUntilFixed(
+        "the add-deadline guard hands the publication on at its clean end and Topic's ensureMap takes it over in the next step, so a stop landing on the poll between them leaves a publication that nobody closes"
+    ) in {
+        val rounds    = 80
+        val transport = new HandoffTransport
+        Loop.indexed { i =>
+            if i >= rounds then Loop.done(succeed)
+            else
+                val adding = new java.util.concurrent.atomic.AtomicBoolean(false)
+                for
+                    fiber <- Fiber.initUnscoped {
+                        Sync.defer(adding.set(true)).andThen {
+                            Topic.runWith(transport) {
+                                Abort.run[TopicException](Topic.publish[Int](
+                                    ipcUri,
+                                    streamId = Present(120 + i)
+                                )(Stream.init(Seq(1, 2, 3))))
+                            }
+                        }
+                    }
+                    _ <- Sync.Unsafe.defer {
+                        val bound = java.lang.System.nanoTime() + 200_000_000L
+                        while !adding.get() && java.lang.System.nanoTime() < bound do ()
+                        val target = java.lang.System.nanoTime() + (i % 40) * 25_000L
+                        while java.lang.System.nanoTime() < target do ()
+                        discard(fiber.unsafe.interrupt())
+                    }
+                    _ <- fiber.getResult
+                    settled <- Abort.run[Timeout](Async.timeout(2.seconds)(assertEventually(
+                        Sync.defer(transport.pubOpens.get() == transport.pubCloses.get())
+                    )))
+                yield
+                    assert(
+                        settled.isSuccess,
+                        s"round $i: opened ${transport.pubOpens.get()} publication(s), closed ${transport.pubCloses.get()}"
+                    )
+                    Loop.continue
+                end for
+        }
+    }
+
 end AeronTransportTest

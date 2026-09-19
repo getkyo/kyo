@@ -209,4 +209,93 @@ class SqlClientInterruptTest extends SqlContainerTest:
         }
     }
 
+    /** `closeAll` drains the idle ring in one step and installs the force-close of what it extracted in the next, so a stop landing between
+      * the two abandons connections the pool no longer holds and nothing else closes. The ring drain is microseconds, so the leaf's own
+      * fiber spins to a staggered offset from the step before the close and requests the stop directly; the server's session count for the
+      * client's `application_name` then has to reach zero within the bound.
+      */
+    "an interrupt landing as close extracts the idle ring strands no session" in {
+        val rounds = 40
+        val warm   = SqlConfig(maxConnections = 2, minConnections = 2, acquireTimeout = 10.seconds, queryTimeout = 10.seconds)
+        containerUrl("kyo-sql-close-orphan") { url =>
+            SqlClient.init(url.replace("kyo-sql-close-orphan", "kyo-sql-close-probe"), config).map { probe =>
+                def sessions: Int < (Async & Abort[SqlException]) =
+                    probe.query("SELECT count(*)::int FROM pg_stat_activity WHERE application_name = 'kyo-sql-close-orphan'")
+                        .map(rows => rows(0).decode[Int](0))
+                Loop.indexed { i =>
+                    if i >= rounds then Loop.done(succeed)
+                    else
+                        val closing = new java.util.concurrent.atomic.AtomicBoolean(false)
+                        for
+                            client <- SqlClient.initUnscoped(url, warm)
+                            _      <- assertEventually(sessions.map(_ == 2))
+                            fiber <- Fiber.initUnscoped(Sync.defer(closing.set(true)).andThen(Abort.run[SqlException](client.close)))
+                            _ <- Sync.Unsafe.defer {
+                                val bound = java.lang.System.nanoTime() + 200_000_000L
+                                while !closing.get() && java.lang.System.nanoTime() < bound do ()
+                                val target = java.lang.System.nanoTime() + (i % 40) * 50_000L
+                                while java.lang.System.nanoTime() < target do ()
+                                discard(fiber.unsafe.interrupt())
+                            }
+                            _    <- fiber.getResult
+                            gone <- Abort.run[Timeout](Async.timeout(5.seconds)(assertEventually(sessions.map(_ == 0))))
+                        yield
+                            assert(gone.isSuccess, s"round $i: sessions of the client whose close was stopped are still open on the server")
+                            Loop.continue
+                        end for
+                }
+            }
+        }
+    }
+
+    /** A lease registers its exit on the scope in one step and takes custody of the connection in the next, so a stop landing between the
+      * two ends the lease through two owners at once: the scope's exit pools the connection and the custody's finalizer closes it, and the
+      * ring then holds a dead connection. The leaf stops leases at staggered sub-millisecond offsets from the step before each, then asserts
+      * what the pool must still honour: it serves a statement, the server never holds more of its sessions than the pool's maximum, and
+      * closing it leaves no session behind.
+      */
+    "leases stopped at staggered offsets leave a pool that still serves and closes clean" in {
+        val rounds = 60
+        val two    = SqlConfig(maxConnections = 2, minConnections = 0, acquireTimeout = 10.seconds, queryTimeout = 10.seconds)
+        containerUrl("kyo-sql-lease-stops") { url =>
+            SqlClient.init(url.replace("kyo-sql-lease-stops", "kyo-sql-lease-probe"), config).map { probe =>
+                def sessions: Int < (Async & Abort[SqlException]) =
+                    probe.query("SELECT count(*)::int FROM pg_stat_activity WHERE application_name = 'kyo-sql-lease-stops'")
+                        .map(rows => rows(0).decode[Int](0))
+                SqlClient.initUnscoped(url, two).map { client =>
+                    Loop.indexed { i =>
+                        if i >= rounds then Loop.done
+                        else
+                            val leasing = new java.util.concurrent.atomic.AtomicBoolean(false)
+                            for
+                                fiber <- Fiber.initUnscoped(Sync.defer(leasing.set(true)).andThen(Abort.run[SqlException](client.query("SELECT 1"))))
+                                _ <- Sync.Unsafe.defer {
+                                    val bound = java.lang.System.nanoTime() + 200_000_000L
+                                    while !leasing.get() && java.lang.System.nanoTime() < bound do ()
+                                    val target = java.lang.System.nanoTime() + (i % 30) * 50_000L
+                                    while java.lang.System.nanoTime() < target do ()
+                                    discard(fiber.unsafe.interrupt())
+                                }
+                                _ <- fiber.getResult
+                                n <- sessions
+                            yield
+                                assert(n <= 2, s"round $i: the server holds $n sessions for a pool of two")
+                                Loop.continue
+                            end for
+                    }.andThen {
+                        for
+                            rows <- client.query("SELECT 7")
+                            v    <- rows(0).decode[Int](0)
+                            _    <- client.close
+                            gone <- Abort.run[Timeout](Async.timeout(5.seconds)(assertEventually(sessions.map(_ == 0))))
+                        yield
+                            assert(v == 7, "the pool did not serve a statement after the stopped leases")
+                            assert(gone.isSuccess, "a session outlived the pool's close after the stopped leases")
+                        end for
+                    }
+                }
+            }
+        }
+    }
+
 end SqlClientInterruptTest

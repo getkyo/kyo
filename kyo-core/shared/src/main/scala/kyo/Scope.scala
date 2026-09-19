@@ -68,6 +68,12 @@ object Scope:
 
     /** Acquires a resource and provides a release function.
       *
+      * The release is registered in the step that delivers the acquired value, so a stop pending at that step cannot separate the two.
+      * That covers an acquire that settles in one step or whose last step produces the value. An acquire that joins a fiber or a
+      * promise for its value is not covered: a stop landing after the join completed and before this fiber resumed abandons the value
+      * with the release unregistered. Register the release in the producing step instead, inside the fiber that produces the value or
+      * through `ensureMap` on it.
+      *
       * @param acquire
       *   The effect to acquire the resource.
       * @param release

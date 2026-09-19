@@ -170,4 +170,57 @@ class FlowEngineLifecycleTest extends FlowEngineSupport:
             }
         }
     }
+
+    // =========================================================================
+    // Supervision under a stop landing on the poll loop
+    // =========================================================================
+    "supervision under interruption" - {
+        // The poll loop spawns an attempt's supervision in one step and records it for the engine's shutdown in the next.
+        // A close of the engine landing between the two stops the loop with the supervision unrecorded: shutdown interrupts
+        // what it recorded, and the orphan keeps renewing the claim of an execution nobody supervises. Each round starts an
+        // execution whose step parks, advances the clock so the loop claims it, spins to a staggered offset and ends the
+        // engine's scope there; the claim's expiry must then stop moving once the clock advances past a renewal.
+        "closing the engine while it spawns a supervision leaves no supervision renewing the claim" in {
+            val rounds = 30
+            Clock.withTimeControl { tc =>
+                FlowStore.initMemory.map { store =>
+                    Loop.indexed { i =>
+                        if i >= rounds then Loop.done(succeed)
+                        else
+                            val flow = Flow.input[Int]("x")
+                            for
+                                gate <- Latch.init(1)
+                                eidRef <- Scope.run {
+                                    FlowEngine.init(store, workerCount = 1, lease = 30.seconds, renewEvery = 5.seconds, pollTimeout = 100.millis).map {
+                                        engine =>
+                                            for
+                                                _      <- engine.register(Flow.Id.Workflow(s"stops-$i"), flow.output("y")(_ => gate.await.andThen(1)))
+                                                handle <- engine.workflows.start(Flow.Id.Workflow(s"stops-$i"))
+                                                eid = handle.executionId
+                                                _ <- engine.executions.signal[Int](eid, "x", 1)
+                                                _ <- tc.advance(100.millis)
+                                                _ <- Sync.Unsafe.defer {
+                                                    val target = java.lang.System.nanoTime() + (i % 30) * 100_000L
+                                                    while java.lang.System.nanoTime() < target do ()
+                                                }
+                                            yield eid
+                                    }
+                                }
+                                before <- store.getExecution(eidRef).map(_.flatMap(_.claimExpiry))
+                                _      <- tc.advance(6.seconds)
+                                _      <- tc.advance(6.seconds)
+                                after  <- store.getExecution(eidRef).map(_.flatMap(_.claimExpiry))
+                                _      <- gate.release
+                            yield
+                                assert(
+                                    before.isEmpty || after == before,
+                                    s"round $i: the claim expiry moved from $before to $after after the engine closed, so a supervision outlived it"
+                                )
+                                Loop.continue
+                            end for
+                    }
+                }
+            }
+        }
+    }
 end FlowEngineLifecycleTest

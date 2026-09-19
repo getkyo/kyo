@@ -1050,4 +1050,29 @@ class QueueTest extends kyo.test.Test[Any]:
         }
     }
 
+    // `close` joins the fiber that settles the in-flight offers before it returns the backlog. An interrupt landing on
+    // that join discards the backlog and the queue still closes, which the scaladoc states; the latch places the
+    // interrupt after the close began, so a round never interrupts a close that has not started.
+    "an interrupted close still closes the queue" in {
+        val rounds = 100
+        Loop.indexed { i =>
+            if i >= rounds then Loop.done(succeed)
+            else
+                for
+                    q       <- Queue.Unbounded.init[Int]()
+                    _       <- Kyo.foreachDiscard(1 to 8)(q.add)
+                    started <- Latch.init(1)
+                    closer  <- Fiber.initUnscoped(started.release.andThen(q.close))
+                    _       <- started.await
+                    _       <- closer.interrupt
+                    _       <- closer.getResult
+                    closed  <- Abort.run[Timeout](Async.timeout(2.seconds)(assertEventually(q.closed)))
+                    p       <- Abort.run[Closed](q.poll)
+                yield
+                    assert(closed.isSuccess, s"round $i: the queue did not close after its close was interrupted")
+                    assert(p.isFailure, s"round $i: a poll after the interrupted close was served: $p")
+                    Loop.continue
+        }
+    }
+
 end QueueTest

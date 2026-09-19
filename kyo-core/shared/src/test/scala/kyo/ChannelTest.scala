@@ -2159,6 +2159,35 @@ class ChannelTest extends kyo.test.Test[Any]:
     end verifyRaceDrainWithClose
 
     "take under interruption" - {
+        // `take` delivers the element to its continuation as a value, and the continuation's first step is where the
+        // element is first owned: a stop pending at that step drops it whole, which is why `takeWith` is the ownership
+        // boundary (the leaf below). The same interrupt sampling as there; the contract pinned is that a dropped
+        // element is dropped entirely, never released and left in the channel at once.
+        "take hands the element to its continuation, which a pending stop can drop whole" in {
+            val rounds = 100
+            Loop.indexed { i =>
+                if i >= rounds then Loop.done
+                else
+                    for
+                        c        <- Channel.init[Int](1)
+                        released <- AtomicInt.init(0)
+                        taker <- Fiber.initUnscoped {
+                            Scope.run {
+                                c.take.map(v => Scope.acquireRelease(v)(_ => released.incrementAndGet.unit)).andThen(Async.never)
+                            }
+                        }
+                        _    <- assertEventually(c.pendingTakes.map(_ == 1))
+                        _    <- c.put(i)
+                        _    <- taker.interrupt
+                        _    <- taker.getResult
+                        rel  <- released.get
+                        left <- c.size
+                    yield
+                        assert(!(rel == 1 && left == 1), s"round $i: the element was released and is still in the channel")
+                        assert(rel <= 1 && left <= 1, s"round $i: released=$rel left=$left")
+                        Loop.continue
+            }
+        }
         // `takeWith` applies its function in the step that delivers the element, so a release registered inside it
         // is owed by the taker's scope even when a stop is pending against the taker. The interrupt here is
         // requested right after the put that wakes the parked taker, so it lands around the resumed slice. Two
