@@ -1,0 +1,4 @@
+# Runs on the Node transport with no native setup: plain TCP and Node's own TLS both round-trip. The certificate is
+# kyo-net's self-signed localhost test certificate.
+> run
+$ exec sh -c 'cat out.txt; grep -q "CONSUMER plain=hello tls=hello" out.txt'

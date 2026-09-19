@@ -1,0 +1,3 @@
+# The embedded driver starts and a publication completes through the natives the artifact ships.
+> run
+$ exec sh -c 'cat out.txt; grep -q "CONSUMER aeron=published" out.txt'

@@ -1,5 +1,5 @@
 # The per-platform jars carry the native transport and BoringSSL for this host; forcing both makes a missing or
-# unloadable native fail the round trip instead of degrading to NIO and JDK TLS.
-$ copy-file ../../../../src/sbt-test/native/net-plugin/server.pem server.pem
+# unloadable native fail the round trip instead of degrading to NIO and JDK TLS. The certificate is kyo-net's
+# self-signed localhost test certificate.
 > run
 $ exec sh -c 'cat out.txt; grep -q "CONSUMER tls=hello" out.txt'

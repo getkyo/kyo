@@ -1,0 +1,3 @@
+# The engine loads from the natives the artifact ships and answers with its math extension.
+> run
+$ exec sh -c 'cat out.txt; grep -q "CONSUMER sqlite=1024" out.txt'
