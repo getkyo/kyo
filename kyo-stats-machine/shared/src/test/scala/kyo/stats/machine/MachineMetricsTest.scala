@@ -71,7 +71,7 @@ class MachineMetricsTest extends kyo.test.Test[Any]:
         registerEveryCell(handles)
 
         val expectedFixed = MachineMetrics.all.map(k => rerooted(root, k.path))
-        val expectedDisk =
+        val expectedDisk  =
             List(MachineMetrics.disk("root").total, MachineMetrics.disk("root").free).map(k => rerooted(root, k.path))
         val expectedPressure =
             MachineMetrics.pressurePairs.flatMap { case (resource, kind) =>
@@ -138,8 +138,7 @@ class MachineMetricsTest extends kyo.test.Test[Any]:
             assert(live.nonEmpty)
             live.foreach { k =>
                 val segments = k.dotted.split('.').toList
-                val splits =
-                    (1 until segments.size).map(i => (segments.take(i), segments.drop(i).mkString(".")))
+                val splits   = (1 until segments.size).map(i => (segments.take(i), segments.drop(i).mkString(".")))
                 val carrying = splits.filter((scope, name) => carriesData(scope, name))
                 assert(carrying.size == 1, s"${k.dotted} carried data at ${carrying.size} splits")
                 assert(carrying.head == (k.scope, k.name))

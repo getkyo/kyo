@@ -104,7 +104,7 @@ class MachineStatFactoryJvmTest extends kyo.test.Test[Any]:
         val classpath = java.lang.System.getProperty("java.class.path")
         val javaHome  = java.lang.System.getProperty("java.home")
         val javaBin   = new java.io.File(new java.io.File(javaHome, "bin"), "java").getAbsolutePath
-        val args = List(javaBin, "--enable-native-access=ALL-UNNAMED") ++
+        val args      = List(javaBin, "--enable-native-access=ALL-UNNAMED") ++
             (if disabled then List("-Dkyo.machine.disabled=true") else Nil) ++
             List("-cp", classpath, "demo.MachineStatsDemoApp")
         val pb = new java.lang.ProcessBuilder(args*)

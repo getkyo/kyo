@@ -18,7 +18,7 @@ class KyoAppTest extends kyo.test.Test[Any]:
         // fiber-creation path, which is not somewhere a stats concern belongs; such a host calls
         // Stat.activate() itself.
         val before = Stat.activationCount
-        val app = new KyoApp:
+        val app    = new KyoApp:
             run(Sync.defer("done"))
         app.main(Array.empty)
         assert(Stat.activationCount > before)

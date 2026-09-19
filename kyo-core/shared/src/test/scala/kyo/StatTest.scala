@@ -37,7 +37,7 @@ class StatTest extends kyo.test.Test[Any]:
             _     <- produced.inc
             _     <- produced.add(4L)
             found <- scope.findCounter("hits")
-            seen <- found match
+            seen  <- found match
                 case Present(c) => c.get
                 case Absent     => Kyo.lift(-1L)
         yield
@@ -71,7 +71,7 @@ class StatTest extends kyo.test.Test[Any]:
         val _     = scope.initGauge("temperature")(42.0)
         for
             found <- scope.findGauge("temperature")
-            v <- found match
+            v     <- found match
                 case Present(g) => g.collect
                 case Absent     => Kyo.lift(-1.0)
         yield

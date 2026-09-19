@@ -34,7 +34,7 @@ class MachineStatsDemoTest extends kyo.test.Test[Any]:
 
     /** A host snapshot that passes: every required family, plus the one disk mount `validate` also demands. */
     private def healthyReport(os: String): MachineStatsDemo.Report =
-        val disk = MachineMetrics.disk("root")
+        val disk     = MachineMetrics.disk("root")
         val readings = readingsFor(MachineStatsDemo.requiredKeys(os))
             .append(MachineRegistrySnapshot.Reading(disk.total.dotted, "gauge", 1.0, 1L, 1.0))
         MachineStatsDemo.report(os, readings)
@@ -111,7 +111,7 @@ class MachineStatsDemoTest extends kyo.test.Test[Any]:
         }
 
         "rejects a snapshot that lost two of the four cpu rates" in {
-            val full = healthyReport("Linux")
+            val full    = healthyReport("Linux")
             val without = full.sampled.filterNot(r =>
                 r.path == MachineMetrics.cpuUserRate.dotted || r.path == MachineMetrics.cpuIdleRate.dotted
             )
@@ -139,7 +139,7 @@ class MachineStatsDemoTest extends kyo.test.Test[Any]:
                 MachineMetrics.loadFive.dotted,
                 MachineMetrics.loadFifteen.dotted
             )
-            val disk = MachineMetrics.disk("C:\\")
+            val disk     = MachineMetrics.disk("C:\\")
             val readings = readingsFor(MachineStatsDemo.requiredKeys("Linux").filterNot(k => absentOnWindows(k.dotted)))
                 .append(MachineRegistrySnapshot.Reading(disk.total.dotted, "gauge", 1.0, 1L, 1.0))
             assert(MachineStatsDemo.validate(MachineStatsDemo.report("Windows", readings)) == Absent)
