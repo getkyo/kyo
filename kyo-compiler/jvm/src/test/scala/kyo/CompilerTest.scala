@@ -57,7 +57,7 @@ class CompilerTest extends kyo.test.Test[Any]:
         val sigRt = roundTrip(sig)
         assert(sigRt == sig)
 
-        val uri = Uri("Main.scala")
+        val uri        = Uri("Main.scala")
         val symWithDef = SymbolInfo(
             name = "foo",
             fullName = "kyo.foo",
@@ -110,7 +110,7 @@ class CompilerTest extends kyo.test.Test[Any]:
         val settings = Pool.Settings.default
         assert(settings == Pool.Settings(true, 4, 16, 5.minutes))
         val toolchain = Toolchain("3.0.0", Chunk.empty)
-        val config = Config(
+        val config    = Config(
             toolchain = toolchain,
             classpath = Chunk.empty,
             scalacOptions = Chunk.empty,

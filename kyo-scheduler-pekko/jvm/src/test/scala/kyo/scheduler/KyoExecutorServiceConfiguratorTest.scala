@@ -62,14 +62,13 @@ class KyoExecutorServiceConfiguratorTest
     }
 
     "handles multiple actors" in {
-        val actors =
-            (1 to 10).map { i =>
-                system.actorOf(Props(new Actor {
-                    def receive = {
-                        case msg => sender() ! Thread.currentThread().getName
-                    }
-                }))
-            }
+        val actors = (1 to 10).map { i =>
+            system.actorOf(Props(new Actor {
+                def receive = {
+                    case msg => sender() ! Thread.currentThread().getName
+                }
+            }))
+        }
 
         val futures =
             for {

@@ -60,7 +60,7 @@ class FullNameFidelityTest extends kyo.test.Test[Any]:
             val caseClassResult = classpath.findClassLike("kyo.fixtures.SomeCaseClass")
             val traitResult     = classpath.findClassLike("kyo.fixtures.SomeTrait")
             val caseClassKeys   = classpath.indices.byFullName.toMap.keys.filter(_.contains("SomeCaseClass")).toSeq.sorted.take(3)
-            val traitKeys =
+            val traitKeys       =
                 classpath.indices.byFullName.toMap.keys.filter(k => k.contains("SomeTrait") && k.startsWith("kyo")).toSeq.sorted.take(3)
             assert(
                 caseClassResult.isDefined,

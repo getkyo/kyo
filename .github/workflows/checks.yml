@@ -78,7 +78,7 @@ jobs:
 
       # --- then formatting (~3m) ---
       - uses: coursier/cache-action@v8.1.1
-      - uses: coursier/setup-action@v3.0.2
+      - uses: coursier/setup-action@v3.0.3
         with:
           jvm: corretto:25
           apps: sbt

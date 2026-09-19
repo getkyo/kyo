@@ -172,8 +172,8 @@ class IOPromiseTest extends kyo.test.Test[Any]:
 
         "onInterrupted fires once, after the CAS, only on the interrupt path" in {
             class HookedPromise extends IOPromise[Nothing, Int]:
-                var fired         = 0
-                var pendingAtHook = true
+                var fired                                    = 0
+                var pendingAtHook                            = true
                 override protected def onInterrupted(): Unit =
                     fired += 1
                     pendingAtHook = !done()
@@ -240,8 +240,8 @@ class IOPromiseTest extends kyo.test.Test[Any]:
         }
 
         "long chain of onComplete callbacks" in {
-            val p     = new IOPromise[Nothing, Int]()
-            var count = 0
+            val p                                 = new IOPromise[Nothing, Int]()
+            var count                             = 0
             def addCallback(remaining: Int): Unit =
                 if remaining > 0 then
                     p.onComplete(_ => count += 1)
@@ -1032,7 +1032,7 @@ class IOPromiseTest extends kyo.test.Test[Any]:
 
     /** A reusable promise that can be used as a Channel taker and reset between cycles. */
     class ReusableChannelPromise[A] extends IOPromise[Any, A < Abort[Closed]]:
-        def reset(): Boolean = becomeAvailable()
+        def reset(): Boolean                                 = becomeAvailable()
         def toUnsafe: Fiber.Promise.Unsafe[A, Abort[Closed]] =
             Fiber.Promise.Unsafe.fromIOPromise(this)
     end ReusableChannelPromise

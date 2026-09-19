@@ -34,7 +34,7 @@ object DB:
 
         def transaction(account: Int, amount: Int, desc: String): Result < Sync =
             index.transaction(account, amount, desc).map {
-                case Denied => Denied
+                case Denied            => Denied
                 case result: Processed =>
                     log.transaction(result.balance, account, amount, desc).andThen(result)
             }

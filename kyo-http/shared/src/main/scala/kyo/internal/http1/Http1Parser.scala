@@ -113,7 +113,7 @@ final private[kyo] class Http1Parser(
                 // For Content-Length requests: extract up to contentLength bytes.
                 // For chunked requests: extract all remaining bytes (chunk framing data)
                 //   so the ChunkedBodyDecoder can use them as initial data.
-                val cl = request.contentLength
+                val cl       = request.contentLength
                 val bodySpan =
                     if cl > 0 && pos > 0 then
                         val bodyLen = math.min(pos, cl)
@@ -385,7 +385,7 @@ final private[kyo] class Http1Parser(
         // sent. Reporting only dot resolution left exactly that spelling routing on one path and reporting another.
         // Kept local to this call rather than made parser state: it describes one path, and a field would survive into
         // the next request on a keep-alive connection.
-        var resolved = false
+        var resolved                                   = false
         @tailrec def loop(i: Int, segStart: Int): Unit =
             if i <= end then
                 if i == end || rawBuf(i) == '/' then
@@ -395,7 +395,7 @@ final private[kyo] class Http1Parser(
                         classifyPathSegment(rawBuf, segStart, i - segStart) match
                             case Http1Parser.SegInvalid => invalid = true
                             // "." addresses the segment it sits in, so it contributes nothing.
-                            case Http1Parser.SegDot => resolved = true
+                            case Http1Parser.SegDot    => resolved = true
                             case Http1Parser.SegDotDot =>
                                 resolved = true
                                 builder.removeLastPathSegment()
@@ -697,17 +697,20 @@ final private[kyo] class Http1Parser(
             then 7 // TRACE
             else -1
         else if len == 6 then
-            if buf(start) == 'D' && buf(start + 1) == 'E' && buf(start + 2) == 'L' && buf(start + 3) == 'E' && buf(start + 4) == 'T' && buf(
+            if buf(start) == 'D' && buf(start + 1) == 'E' && buf(start + 2) == 'L' && buf(start + 3) == 'E' && buf(start + 4) == 'T' &&
+                buf(
                     start + 5
                 ) == 'E'
             then 4 // DELETE
             else -1
         else if len == 7 then
-            if buf(start) == 'O' && buf(start + 1) == 'P' && buf(start + 2) == 'T' && buf(start + 3) == 'I' && buf(start + 4) == 'O' && buf(
+            if buf(start) == 'O' && buf(start + 1) == 'P' && buf(start + 2) == 'T' && buf(start + 3) == 'I' && buf(start + 4) == 'O' &&
+                buf(
                     start + 5
                 ) == 'N' && buf(start + 6) == 'S'
             then 6 // OPTIONS
-            else if buf(start) == 'C' && buf(start + 1) == 'O' && buf(start + 2) == 'N' && buf(start + 3) == 'N' && buf(
+            else if buf(start) == 'C' && buf(start + 1) == 'O' && buf(start + 2) == 'N' && buf(start + 3) == 'N' &&
+                buf(
                     start + 4
                 ) == 'E' && buf(start + 5) == 'C' && buf(start + 6) == 'T'
             then 8 // CONNECT

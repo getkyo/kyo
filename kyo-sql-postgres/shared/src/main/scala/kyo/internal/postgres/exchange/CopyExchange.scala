@@ -263,7 +263,7 @@ private[postgres] object CopyExchange:
         Frame
     ): Unit < (Async & Abort[SqlException]) =
         channel.receiveSkipCheckIfAvailable.flatMap {
-            case Maybe.Absent => ()
+            case Maybe.Absent       => ()
             case Maybe.Present(msg) =>
                 msg match
                     case ErrorResponse(fields) =>
@@ -311,7 +311,7 @@ private[postgres] object CopyExchange:
         Abort.run[Closed](channel.conn.outbound.safe.put(buf.toSpan)).flatMap {
             case Result.Success(_) => ()
             case Result.Failure(_) => Abort.fail(SqlConnectionClosedException("writing (CopyData)"))
-            case Result.Panic(t) =>
+            case Result.Panic(t)   =>
                 Log.error(s"[kyo-sql] CopyExchange: CopyData write panic: ${t.getMessage}").andThen(
                     Abort.fail(SqlConnectionWritePanicException(t))
                 )
@@ -326,7 +326,7 @@ private[postgres] object CopyExchange:
         Abort.run[Closed](channel.conn.outbound.safe.put(buf.toSpan)).flatMap {
             case Result.Success(_) => ()
             case Result.Failure(_) => Abort.fail(SqlConnectionClosedException("writing (CopyDone)"))
-            case Result.Panic(t) =>
+            case Result.Panic(t)   =>
                 Log.error(s"[kyo-sql] CopyExchange: CopyDone write panic: ${t.getMessage}").andThen(
                     Abort.fail(SqlConnectionWritePanicException(t))
                 )
@@ -342,7 +342,7 @@ private[postgres] object CopyExchange:
         Abort.run[Closed](channel.conn.outbound.safe.put(buf.toSpan)).flatMap {
             case Result.Success(_) => ()
             case Result.Failure(_) => Abort.fail(SqlConnectionClosedException("writing (CopyFail)"))
-            case Result.Panic(t) =>
+            case Result.Panic(t)   =>
                 Log.error(s"[kyo-sql] CopyExchange: CopyFail write panic: ${t.getMessage}").andThen(
                     Abort.fail(SqlConnectionWritePanicException(t))
                 )

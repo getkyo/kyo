@@ -74,8 +74,8 @@ final class FlowEngine private (
                     // which is what keeps a crash from leaving an execution that holds some of its declared inputs and not others.
                     seedFields(defn, inputs).map { seeds =>
                         for
-                            eid <- Flow.Id.Execution.random
-                            now <- Clock.now
+                            eid     <- Flow.Id.Execution.random
+                            now     <- Clock.now
                             created <- store.createExecutionIfAbsent(
                                 eid,
                                 Flow.Status.Running,
@@ -96,7 +96,7 @@ final class FlowEngine private (
             Frame
         ): Unit < (Async & Abort[FlowWorkflowNotRegisteredException | FlowDuplicateExecutionException | FlowStoreException]) =
             defs.use(_.latest.get(workflowId)).map {
-                case Absent => Abort.fail(FlowWorkflowNotRegisteredException(workflowId.value))
+                case Absent        => Abort.fail(FlowWorkflowNotRegisteredException(workflowId.value))
                 case Present(defn) =>
                     Clock.nowWith { now =>
                         // The store decides, in one operation. A read followed by a write let two concurrent starts on one id both
@@ -201,7 +201,7 @@ final class FlowEngine private (
             format: Flow.DiagramFormat = Flow.DiagramFormat.Mermaid
         )(using Frame): String < (Async & Abort[FlowWorkflowNotRegisteredException | FlowStoreException]) =
             defs.use(_.latest.get(workflowId)).map {
-                case Absent => Abort.fail(FlowWorkflowNotRegisteredException(workflowId.value))
+                case Absent        => Abort.fail(FlowWorkflowNotRegisteredException(workflowId.value))
                 case Present(defn) =>
                     FlowRender.render(defn.flow, format)
             }
@@ -226,16 +226,18 @@ final class FlowEngine private (
             value: V
         )(using
             Frame
-        ): Unit < (Async & Abort[
-            FlowExecutionStateException | FlowWorkflowNotRegisteredException | FlowSignalException | FlowStoreException
-        ]) =
+        ): Unit <
+            (Async &
+                Abort[
+                    FlowExecutionStateException | FlowWorkflowNotRegisteredException | FlowSignalException | FlowStoreException
+                ]) =
             store.getExecution(executionId).map {
-                case Absent => Abort.fail(FlowExecutionNotFoundException(executionId.value))
+                case Absent                                    => Abort.fail(FlowExecutionNotFoundException(executionId.value))
                 case Present(state) if state.status.isTerminal =>
                     Abort.fail(FlowExecutionTerminalException(executionId.value, state.status))
                 case Present(state) =>
                     defs.use(_.of(state.flowId, state.hash)).map {
-                        case Absent => Abort.fail(FlowWorkflowNotRegisteredException(state.flowId.value))
+                        case Absent        => Abort.fail(FlowWorkflowNotRegisteredException(state.flowId.value))
                         case Present(defn) =>
                             Maybe.fromOption(defn.inputs.find(_.name == name)) match
                                 case Absent =>
@@ -252,7 +254,7 @@ final class FlowEngine private (
                                                 Flow.Event.InputReceived(state.flowId, executionId, name, ts)
                                             )
                                         }.map {
-                                            case FlowStore.SignalOutcome.Delivered => ()
+                                            case FlowStore.SignalOutcome.Delivered        => ()
                                             case FlowStore.SignalOutcome.AlreadyDelivered =>
                                                 Abort.fail(FlowInputAlreadyDeliveredException(executionId.value, name))
                                             // The read above found the execution running and the store found it over, which is the
@@ -268,7 +270,7 @@ final class FlowEngine private (
             Frame
         ): FlowEngine.ExecutionDetail < (Async & Abort[FlowExecutionNotFoundException | FlowStoreException]) =
             store.getExecution(executionId).map {
-                case Absent => Abort.fail(FlowExecutionNotFoundException(executionId.value))
+                case Absent         => Abort.fail(FlowExecutionNotFoundException(executionId.value))
                 case Present(state) =>
                     defs.use(_.of(state.flowId, state.hash)).map {
                         case Absent =>
@@ -281,7 +283,7 @@ final class FlowEngine private (
                                 compensated     = deriveCompensated(history)
                                 failed          = deriveFailed(history)
                                 deliveredInputs = deliveredInputNames(defn, fields)
-                                progress = FlowEngine.Progress.build(
+                                progress        = FlowEngine.Progress.build(
                                     defn.flow,
                                     completed ++ deliveredInputs,
                                     state.status,
@@ -358,14 +360,16 @@ final class FlowEngine private (
         /** List all inputs for an execution, showing which have been delivered and which are still pending. */
         def inputs(executionId: Flow.Id.Execution)(using
             Frame
-        ): Seq[FlowEngine.InputStatus] < (Async & Abort[
-            FlowExecutionNotFoundException | FlowWorkflowNotRegisteredException | FlowStoreException
-        ]) =
+        ): Seq[FlowEngine.InputStatus] <
+            (Async &
+                Abort[
+                    FlowExecutionNotFoundException | FlowWorkflowNotRegisteredException | FlowStoreException
+                ]) =
             store.getExecution(executionId).map {
-                case Absent => Abort.fail(FlowExecutionNotFoundException(executionId.value))
+                case Absent         => Abort.fail(FlowExecutionNotFoundException(executionId.value))
                 case Present(state) =>
                     defs.use(_.of(state.flowId, state.hash)).map {
-                        case Absent => Abort.fail(FlowWorkflowNotRegisteredException(state.flowId.value))
+                        case Absent        => Abort.fail(FlowWorkflowNotRegisteredException(state.flowId.value))
                         case Present(defn) =>
                             store.getAllFields(executionId).map { fields =>
                                 defn.inputs.map { im =>
@@ -398,7 +402,7 @@ final class FlowEngine private (
         )(using Frame): FlowEngine.SearchResult < (Async & Abort[FlowStoreException]) =
             val matched: Chunk[FlowStore.ExecutionState] < (Async & Abort[FlowStoreException]) = wfId match
                 case Present(id) => store.listExecutions(id, filter, Maybe.empty, 0)
-                case _ =>
+                case _           =>
                     sweptWorkflowIds.map { ids =>
                         Kyo.foreach(ids)(id => store.listExecutions(id, filter, Maybe.empty, 0)).map { chunks =>
                             chunks.foldLeft(Chunk.empty[FlowStore.ExecutionState])(_ ++ _)
@@ -419,10 +423,10 @@ final class FlowEngine private (
             Frame
         ): String < (Async & Abort[FlowExecutionNotFoundException | FlowWorkflowNotRegisteredException | FlowStoreException]) =
             store.getExecution(executionId).map {
-                case Absent => Abort.fail(FlowExecutionNotFoundException(executionId.value))
+                case Absent         => Abort.fail(FlowExecutionNotFoundException(executionId.value))
                 case Present(state) =>
                     defs.use(_.of(state.flowId, state.hash)).map {
-                        case Absent => Abort.fail(FlowWorkflowNotRegisteredException(state.flowId.value))
+                        case Absent        => Abort.fail(FlowWorkflowNotRegisteredException(state.flowId.value))
                         case Present(defn) =>
                             store.getAllFields(executionId).map { fields =>
                                 store.getHistory(executionId, Maybe.empty, 0).map { history =>
@@ -430,7 +434,7 @@ final class FlowEngine private (
                                     val compensated     = deriveCompensated(history)
                                     val failed          = deriveFailed(history)
                                     val deliveredInputs = deliveredInputNames(defn, fields)
-                                    val progress = FlowEngine.Progress.build(
+                                    val progress        = FlowEngine.Progress.build(
                                         defn.flow,
                                         completed ++ deliveredInputs,
                                         state.status,
@@ -649,7 +653,7 @@ final class FlowEngine private (
                         // map only grows within a process, so the lookup cannot miss. A row that somehow arrives unserved is
                         // left exactly as a refused renewal leaves one, claimed until its lease lapses.
                         registered.of(claimed.state.flowId, claimed.state.hash) match
-                            case Absent => ()
+                            case Absent        => ()
                             case Present(defn) =>
                                 claimed.renewClaim(lease).map {
                                     // Nothing is written and nothing is released: a release presented on a lapsed claim is
@@ -730,8 +734,8 @@ final class FlowEngine private (
         lease: Duration,
         renewEvery: Duration
     )(using Frame): Unit < (Async & Scope) =
-        val state = claimed.state
-        val eid   = state.executionId
+        val state                                                   = claimed.state
+        val eid                                                     = state.executionId
         val run: Unit < (Async & Scope & Abort[FlowStoreException]) =
             claimedEvent(claimed, ts => Flow.Event.ExecutionClaimed(state.flowId, eid, executorId, ts)).andThen {
                 // The execution runs in its own fiber so the renewal can STOP it. The lease is what
@@ -758,11 +762,11 @@ final class FlowEngine private (
                                     // it closes: it stops the loop rather than being counted against
                                     // the store and asked again, exactly as the worker loop treats one.
                                     case Result.Panic(interrupted: Interrupted) => Abort.panic(interrupted)
-                                    case failedRenewal =>
+                                    case failedRenewal                          =>
                                         val error = failedRenewal match
                                             case Result.Failure(e) => e
                                             case Result.Panic(e)   => e
-                                            case _ =>
+                                            case _                 =>
                                                 new IllegalStateException("renewing the claim failed with no error")
                                         liveness.recordFailure(error).andThen(renew)
                                 }
@@ -790,7 +794,7 @@ final class FlowEngine private (
             // The engine going away, not a store that could not be reached. It ends this execution's supervision rather
             // than being counted against the store's health, exactly as the worker loop treats one.
             case Result.Panic(interrupted: Interrupted) => Abort.panic(interrupted)
-            case refused =>
+            case refused                                =>
                 val error = refused match
                     case Result.Failure(e) => e
                     case Result.Panic(e)   => e
@@ -831,7 +835,7 @@ final class FlowEngine private (
         else
             claimedEvent(claimed, ts => Flow.Event.ExecutionResumed(state.flowId, eid, executorId, ts)).map {
                 case false => Attempt.ClaimLost
-                case true =>
+                case true  =>
                     for
                         _       <- dischargeSleeps(claimed)
                         fields  <- store.getAllFields(eid)
@@ -847,7 +851,7 @@ final class FlowEngine private (
                         resume = state.status match
                             case Flow.Status.Compensating(cause) => Maybe(cause)
                             case _                               => Maybe.empty
-                        interp = new StoreInterpreter(store, claimed, executorId, defn, retried, resume)
+                        interp   = new StoreInterpreter(store, claimed, executorId, defn, retried, resume)
                         flowExec = Flow.run(defn.flow, record, completed, compensated, resume)(interp)
                             .map(_.asInstanceOf[Record[Any]])
                         result <- Abort.run[FlowSuspension] {
@@ -876,7 +880,7 @@ final class FlowEngine private (
       */
     private def dischargeSleeps(claimed: FlowStore.Claimed)(using Frame): Unit < (Async & Abort[FlowStoreException]) =
         val state = claimed.state
-        val due = claimed.satisfied.toSeq.filter { path =>
+        val due   = claimed.satisfied.toSeq.filter { path =>
             state.waits.get(path) match
                 case Present(_: Flow.Wake.At) => true
                 case _                        => false
@@ -1017,10 +1021,10 @@ final class FlowEngine private (
         def end(outcome: FlowStore.Claimed.Outcome): Unit < (Async & Abort[FlowStoreException]) =
             claimedEvent(claimed, ts => Flow.Event.ExecutionReleased(flowId, eid, executorId, ts)).map {
                 case false => ()
-                case true =>
+                case true  =>
                     claimed.finish(outcome).map {
-                        case FlowStore.StatusOutcome.Applied   => ()
-                        case FlowStore.StatusOutcome.ClaimLost => ()
+                        case FlowStore.StatusOutcome.Applied             => ()
+                        case FlowStore.StatusOutcome.ClaimLost           => ()
                         case FlowStore.StatusOutcome.WrongSideOfTerminal =>
                             Abort.panic(new IllegalStateException(
                                 s"the attempt at ${eid.value} ended with a status on the wrong side of the lifecycle partition"
@@ -1080,7 +1084,7 @@ final class FlowEngine private (
             // A store stopped mid-write, not a store that could not be reached. It ends this execution's supervision rather than
             // being counted against the store's health, exactly as the worker and renewal loops treat one.
             case Result.Panic(interrupted: Interrupted) => Abort.panic(interrupted)
-            case refused =>
+            case refused                                =>
                 val error = refused match
                     case Result.Failure(e) => e
                     case Result.Panic(e)   => e
@@ -1435,9 +1439,11 @@ object FlowEngine:
     final class Handle(val executionId: Flow.Id.Execution, engine: FlowEngine):
         def signal[V: Tag: Schema](name: String, value: V)(using
             Frame
-        ): Unit < (Async & Abort[
-            FlowExecutionStateException | FlowWorkflowNotRegisteredException | FlowSignalException | FlowStoreException
-        ]) =
+        ): Unit <
+            (Async &
+                Abort[
+                    FlowExecutionStateException | FlowWorkflowNotRegisteredException | FlowSignalException | FlowStoreException
+                ]) =
             engine.executions.signal[V](executionId, name, value)
 
         /** The execution's persisted lifecycle.
@@ -1530,9 +1536,9 @@ object FlowEngine:
         case class InputInfo(name: String, tag: Tag[Any]) derives Schema
 
         private[kyo] def of(id: String, flow: Flow[?, ?, ?]): WorkflowInfo =
-            val inputMetas  = FlowLint.inputMetas(flow)
-            val outputNames = FlowLint.outputNames(flow)
-            val hash        = WorkflowSchema.structuralHash(flow)
+            val inputMetas   = FlowLint.inputMetas(flow)
+            val outputNames  = FlowLint.outputNames(flow)
+            val hash         = WorkflowSchema.structuralHash(flow)
             val workflowMeta = FlowFold(flow)(new FlowVisitorCollect[Maybe[Flow.Meta]](Maybe.empty, (a, b) => a.orElse(b)):
                 override def onInit(name: String, frame: Frame, meta: Flow.Meta) = Maybe(meta)).getOrElse(Flow.Meta())
             val nodes = FlowFold(flow)(new FlowVisitorCollect[Seq[NodeInfo]](Seq.empty, _ ++ _):
@@ -1747,7 +1753,7 @@ object FlowEngine:
                                         assignStatuses(idx + 1, foundActive, acc :+ node.copy(status = NodeStatus.Pending))
                     end if
             end assignStatuses
-            val walked = assignStatuses(0, false, Chunk.empty)
+            val walked                                                                   = assignStatuses(0, false, Chunk.empty)
             def under(nodes: Chunk[NodeProgress], instance: String): Chunk[NodeProgress] =
                 val prefix = s"$instance${NodePath.Separator}"
                 nodes.filter(_.name.startsWith(prefix))

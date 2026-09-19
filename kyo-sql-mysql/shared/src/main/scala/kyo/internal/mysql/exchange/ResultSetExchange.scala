@@ -40,7 +40,7 @@ private[mysql] object ResultSetExchange:
                 else
                     // Expect an intermediate EOF packet, then read rows
                     channel.receive(false).flatMap {
-                        case _: EofPacket => readRows(channel, columnDefs, Chunk.empty, sqlText, connectionId)
+                        case _: EofPacket   => readRows(channel, columnDefs, Chunk.empty, sqlText, connectionId)
                         case err: ErrPacket =>
                             Abort.fail(MysqlErrors.mkServerError(err, sqlText, 0, connectionId))
                         case other =>

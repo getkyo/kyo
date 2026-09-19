@@ -174,7 +174,7 @@ final private[kyo] class Http1StreamContext(
                 // Channel full — queue via putFiber for backpressure (will complete when space available)
                 discard(outbound.putFiber(data))
             case Result.Failure(_: Closed) => () // channel closed, connection shutting down
-            case Result.Panic(t) =>
+            case Result.Panic(t)           =>
                 Log.live.unsafe.error(s"$context: panic", t)
 
     private val http1ResponseWriter: ResponseWriter = new ResponseWriter:
@@ -282,7 +282,7 @@ private[kyo] object Http1StreamContext:
         @tailrec def countDigits(n: Int, acc: Int): Int = if n == 0 then acc else countDigits(n >>> 4, acc + 1)
         val digits                                      = countDigits(size >>> 4, 1)
         val result                                      = new Array[Byte](digits + 2)
-        @tailrec def fillDigits(n: Int, i: Int): Unit =
+        @tailrec def fillDigits(n: Int, i: Int): Unit   =
             if i >= 0 then
                 result(i) = hexDigits(n & 0xf)
                 fillDigits(n >>> 4, i - 1)

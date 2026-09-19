@@ -390,7 +390,7 @@ final private[net] class PosixTransport private[posix] (
                             case HostResolver.Resolved(family, rawAddr) =>
                                 encodeResolved(family, rawAddr, port) match
                                     case Present(encoded) => out.completeDiscard(Result.succeed(encoded))
-                                    case Absent =>
+                                    case Absent           =>
                                         out.completeDiscard(Result.fail(NetDnsResolutionException(
                                             host,
                                             s"connect: could not encode resolved address for $host"
@@ -696,7 +696,7 @@ final private[net] class PosixTransport private[posix] (
                 // submission order, so it cannot protect an op enqueued after the free: `reaped` is the guard `isReaped` reads inside
                 // driveHandshake's handshakeStep/feedCiphertext/awaitReadCiphertext thunks, set as the FIRST statement of every path here that
                 // frees the engine, so a step thunk that runs AFTER the free skips instead of touching freed native memory.
-                val reaped = AtomicBoolean.Unsafe.init(false)
+                val reaped                            = AtomicBoolean.Unsafe.init(false)
                 val (handshakeToken, handshakeDisarm) = registerHandshake(() =>
                     driver.submitEngineOp { () =>
                         reaped.set(true)
@@ -821,7 +821,7 @@ final private[net] class PosixTransport private[posix] (
       */
     private def deliverHandshakePlaintext(handle: PosixHandle, inbound: Channel.Unsafe[Span[Byte]])(using AllowUnsafe, Frame): Unit =
         handle.tls match
-            case Absent => ()
+            case Absent          => ()
             case Present(engine) =>
                 val acc = new java.io.ByteArrayOutputStream
                 if engine.hasBufferedPlaintext then
@@ -987,7 +987,7 @@ final private[net] class PosixTransport private[posix] (
                             else
                                 val (actualPort, address) = unixPath match
                                     case Present(path) => (-1, NetAddress.Unix(path))
-                                    case Absent =>
+                                    case Absent        =>
                                         val resolved = resolvePort(fd, family)
                                         (resolved, NetAddress.Tcp(host, resolved))
                                 val listener =
@@ -1222,13 +1222,13 @@ final private[net] class PosixTransport private[posix] (
                     // ordering, not one the JMM gives a plain var write/read pair, so the token goes through the AtomicLong: the write
                     // below happens-before any subsequent read the timer's callback performs.
                     val handshakeTokenRef = new java.util.concurrent.atomic.AtomicLong(0L)
-                    val armed = armHandshakeDeadline(
+                    val armed             = armHandshakeDeadline(
                         clientFd,
                         cfg.handshakeTimeout,
                         () =>
                             unregisterHandshake(handshakeTokenRef.get()); handle.driver.submitEngineOp(() => teardown())
                     )
-                    val disarm = armed.disarm
+                    val disarm         = armed.disarm
                     val handshakeToken =
                         registerHandshake(Present(listener), disarm, () => handle.driver.submitEngineOp(() => teardown()))
                     handshakeTokenRef.set(handshakeToken)
@@ -1638,7 +1638,7 @@ final private[net] class PosixTransport private[posix] (
                 // owns the fd), the detached-but-engineless fd once the detach commits, fd and engine once the engine is built, and nothing
                 // again once the discharge hook is installed, since settling `out` then performs the release itself. Read only by the
                 // containment at the call site, which is the one place that can observe a throw from this body.
-                var releaseOnEscape: () => Unit = () => ()
+                var releaseOnEscape: () => Unit                           = () => ()
                 def afterDetach(detached: Maybe[Chunk[Span[Byte]]]): Unit =
                     detached match
                         case Absent =>
@@ -1716,7 +1716,7 @@ final private[net] class PosixTransport private[posix] (
                             // the guard `isReaped` reads inside driveHandshake's handshakeStep/feedCiphertext/awaitReadCiphertext thunks, set as the
                             // FIRST statement of every path here that frees the engine, so a step thunk that runs AFTER the free skips instead of
                             // touching freed native memory.
-                            val reaped = AtomicBoolean.Unsafe.init(false)
+                            val reaped                            = AtomicBoolean.Unsafe.init(false)
                             val (handshakeToken, handshakeDisarm) = registerHandshake(() =>
                                 handle.driver.submitEngineOp { () =>
                                     reaped.set(true)
@@ -1776,7 +1776,7 @@ final private[net] class PosixTransport private[posix] (
                             def completeUpgradeFailure(cause: HandshakeFailure | String | Throwable): Unit =
                                 cause match
                                     case netEx: NetException => out.completeDiscard(Result.fail(netEx))
-                                    case other =>
+                                    case other               =>
                                         val causeMsg: String | Throwable = other match
                                             case hf: HandshakeFailure.EngineThrew => hf.cause
                                             case hf: HandshakeFailure             => hf.toString
@@ -2056,7 +2056,7 @@ final private[net] class PosixTransport private[posix] (
         // method's own match arms and catch; the helpers only ever call onFailed with String or
         // Throwable values (send errors, recv errors, EOF), so the adapter correctly routes them.
         val onFailedStr: (String | Throwable) => Unit = st => onFailed(st)
-        def step(): Unit =
+        def step(): Unit                              =
             // Submit one coarse-grained thunk: run handshakeStep + drainCiphertext inside the FIFO worker so no concurrent
             // read or write op can touch the engine during this step. The send and recv calls stay outside the thunk.
             handle.driver.submitEngineOp { () =>
@@ -2158,8 +2158,8 @@ final private[net] class PosixTransport private[posix] (
     )(using AllowUnsafe, Frame): Unit =
         try
             handle.driver.write(handle, data, offset) match
-                case WriteResult.Done  => cont()
-                case WriteResult.Error => onFailed(NetConnectionClosedException(Operation.Send))
+                case WriteResult.Done                    => cont()
+                case WriteResult.Error                   => onFailed(NetConnectionClosedException(Operation.Send))
                 case WriteResult.Partial(rem, newOffset) =>
                     awaitWritable(handle, cont = () => sendAll(handle, rem, newOffset, cont, onFailed, onPanic), onFailed, onPanic)
                 case WriteResult.TailPartial(rem, newOffset) =>

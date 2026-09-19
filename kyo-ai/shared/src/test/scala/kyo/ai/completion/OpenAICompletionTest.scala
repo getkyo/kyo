@@ -113,7 +113,7 @@ class OpenAICompletionTest extends kyo.test.Test[Any]:
         // Vocabulary a provider adds later must not turn a good reply into a failure.
         TestCompletionServer.run { server =>
             val config = keyedConfig(server.baseUrl)
-            val body =
+            val body   =
                 """{"choices":[{"message":{"role":"assistant","content":"fine","tool_calls":null},"finish_reason":"something_new"}]}"""
             server.enqueueBody(body).andThen {
                 Abort.run[AIException](LLM.run(config)(OpenAICompletion(
@@ -169,7 +169,7 @@ class OpenAICompletionTest extends kyo.test.Test[Any]:
         end CapturingLog
         TestCompletionServer.run { server =>
             val config = keyedConfig(server.baseUrl).maxTokens(64000)
-            val body =
+            val body   =
                 """{"choices":[{"message":{"role":"assistant","content":"","tool_calls":null},""" +
                     """"finish_reason":"length"}],"usage":{"completion_tokens":8192}}"""
             Log.let(Log(new CapturingLog)) {
@@ -350,7 +350,7 @@ class OpenAICompletionTest extends kyo.test.Test[Any]:
         // over-large ask is left unclamped for the endpoint to refuse and name the real bound.
         TestCompletionServer.run { server =>
             val verified = keyedConfig(server.baseUrl)
-            val standIn = keyedConfig(server.baseUrl)
+            val standIn  = keyedConfig(server.baseUrl)
                 .model(
                     Config.OpenAI,
                     "unverified-model",
@@ -444,7 +444,7 @@ class OpenAICompletionTest extends kyo.test.Test[Any]:
         TestCompletionServer.run { server =>
             val config = keyedConfig(server.baseUrl).maxTokens(999999)
             val sent   = config.effectiveMaxOutputTokens
-            val body =
+            val body   =
                 """{"choices":[{"message":{"role":"assistant","content":"","tool_calls":null},""" +
                     s""""finish_reason":"length"}],"usage":{"completion_tokens":$sent}}"""
             Log.let(Log(new CapturingLog)) {
@@ -514,7 +514,7 @@ class OpenAICompletionTest extends kyo.test.Test[Any]:
             // Two off encodings and one entry that does not reason at all, driven through the same path.
             val thinkingTypeOff = Config.DeepSeek.default.apiKey("test-key").apiUrl(server.baseUrl).disableReasoning
             val levelNone       = keyedConfig(server.baseUrl).disableReasoning
-            val doesNotReason = keyedConfig(server.baseUrl)
+            val doesNotReason   = keyedConfig(server.baseUrl)
                 .model(
                     Config.OpenAI,
                     "no-reasoning-model",
@@ -629,7 +629,7 @@ class OpenAICompletionTest extends kyo.test.Test[Any]:
     "the outgoing request reproduces OpenAI wire field names" in {
         TestCompletionServer.run { server =>
             val config = keyedConfig(server.baseUrl)
-            val ctx = Context.empty
+            val ctx    = Context.empty
                 .systemMessage("you are a test assistant")
                 .userMessage("hello")
                 .assistantMessage("", Chunk(Call(CallId("call-1"), "my_tool", """{"x":1}""")))
@@ -706,8 +706,8 @@ class OpenAICompletionTest extends kyo.test.Test[Any]:
 
     "a tool call in the real reply decodes to a Context.Call" in {
         TestCompletionServer.run { server =>
-            val config = keyedConfig(server.baseUrl)
-            val ctx    = Context.empty.userMessage("hello")
+            val config   = keyedConfig(server.baseUrl)
+            val ctx      = Context.empty.userMessage("hello")
             val toolBody =
                 """{"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"tid-1","type":"function","function":{"name":"my_fn","arguments":"{\"x\":42}"}}]}}]}"""
             server.enqueueBody(toolBody).andThen {

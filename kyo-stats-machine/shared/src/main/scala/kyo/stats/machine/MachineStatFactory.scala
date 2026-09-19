@@ -82,7 +82,7 @@ private[kyo] object MachineStatFactory:
     def triggerStart(env: System.Unsafe)(using AllowUnsafe): Boolean =
         if !disabled(env) && started.compareAndSet(false, true) then
             given Frame = Frame.internal
-            val fiber = Sync.Unsafe.evalOrThrow {
+            val fiber   = Sync.Unsafe.evalOrThrow {
                 Fiber.initUnscoped {
                     Scope.run {
                         MachineSampler.run

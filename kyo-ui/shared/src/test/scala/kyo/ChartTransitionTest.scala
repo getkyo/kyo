@@ -426,7 +426,7 @@ class ChartTransitionTest extends kyo.test.Test[Any]:
         // DefaultPalette.blue/orange are Hex colors, rendered as "#3b82f6"/"#f97316".
         val blueCss   = "#3b82f6"
         val orangeCss = "#f97316"
-        val rows = Chunk(
+        val rows      = Chunk(
             SRow(0.0, 1.0, "a"),
             SRow(1.0, 2.0, "a"),
             SRow(0.0, 3.0, "b"),

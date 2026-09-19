@@ -30,10 +30,10 @@ private[kyo] object BundledSnapshotProbe:
         root: String
     )(using Frame): Maybe[Array[Byte]] < (Sync & Scope & Abort[TastyError]) =
         ZipHandle.open(root).map {
-            case Maybe.Absent => Maybe.Absent
+            case Maybe.Absent          => Maybe.Absent
             case Maybe.Present(handle) =>
                 handle.readEntry(snapshotEntryPath).map {
-                    case Maybe.Absent => Maybe.Absent
+                    case Maybe.Absent                 => Maybe.Absent
                     case Maybe.Present(snapshotBytes) =>
                         Sync.defer {
                             val embeddedDigest   = SnapshotReader.readInputDigest(snapshotBytes)

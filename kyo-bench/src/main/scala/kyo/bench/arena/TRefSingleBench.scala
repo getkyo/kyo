@@ -12,7 +12,7 @@ class TRefSingleBench(parallelism: Int) extends ArenaBench.ForkOnly(parallelism)
         STM.runtime[IO].flatMap { stm =>
             for
                 ref <- stm.commit(stm.TVar.of(0))
-                _ <- Seq.fill(parallelism)(
+                _   <- Seq.fill(parallelism)(
                     stm.commit(ref.modify(_ + 1))
                 ).parSequence_
                 result <- stm.commit(ref.get)

@@ -235,7 +235,7 @@ class OTLPTraceExporterTest extends kyo.test.Test[Any]:
                     _ = (1 to 6).foreach { i =>
                         exporter.startSpan(List("test"), s"batch-span-$i", now()).end(now())
                     }
-                    _ <- exporter.flush(config)
+                    _        <- exporter.flush(config)
                     requests <- Loop[Chunk[ExportTraceRequest], Chunk[ExportTraceRequest], Async & Abort[Closed]](Chunk.empty) { acc =>
                         val seen = acc.foldLeft(0)(_ + _.resourceSpans.head.scopeSpans.head.spans.size)
                         if seen >= 6 then Loop.done(acc)

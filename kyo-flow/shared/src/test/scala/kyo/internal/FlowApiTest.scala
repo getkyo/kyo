@@ -389,7 +389,7 @@ class FlowApiTest extends kyo.test.Test[Any]:
                 val eid = Flow.Id.Execution("api-cancel-twice")
                 for
                     now <- Clock.now
-                    _ <- store.createExecutionIfAbsent(
+                    _   <- store.createExecutionIfAbsent(
                         eid,
                         Flow.Status.Running,
                         Flow.Event.Created(Flow.Id.Workflow("unserved-flow"), eid, now),
@@ -425,7 +425,7 @@ class FlowApiTest extends kyo.test.Test[Any]:
                 val eid = Flow.Id.Execution("api-cancel-finished")
                 for
                     now <- Clock.now
-                    _ <- store.createExecutionIfAbsent(
+                    _   <- store.createExecutionIfAbsent(
                         eid,
                         Flow.Status.Completed,
                         Flow.Event.Created(Flow.Id.Workflow("unserved-flow"), eid, now),
@@ -457,8 +457,8 @@ class FlowApiTest extends kyo.test.Test[Any]:
         "searches all executions" in {
             withFlowServer { port =>
                 for
-                    _ <- HttpClient.postText(url(port, "/api/v1/workflows/test-flow/executions"), "")
-                    _ <- HttpClient.postText(url(port, "/api/v1/workflows/test-flow/executions"), "")
+                    _      <- HttpClient.postText(url(port, "/api/v1/workflows/test-flow/executions"), "")
+                    _      <- HttpClient.postText(url(port, "/api/v1/workflows/test-flow/executions"), "")
                     result <- HttpClient.postJson[FlowApi.SearchResponse](
                         url(port, "/api/v1/executions/search"),
                         FlowApi.SearchRequest()
@@ -470,7 +470,7 @@ class FlowApiTest extends kyo.test.Test[Any]:
         "filters by workflow" in {
             withFlowServer { port =>
                 for
-                    _ <- HttpClient.postText(url(port, "/api/v1/workflows/test-flow/executions"), "")
+                    _      <- HttpClient.postText(url(port, "/api/v1/workflows/test-flow/executions"), "")
                     result <- HttpClient.postJson[FlowApi.SearchResponse](
                         url(port, "/api/v1/executions/search"),
                         FlowApi.SearchRequest(workflowId = Some("test-flow"))
@@ -492,7 +492,7 @@ class FlowApiTest extends kyo.test.Test[Any]:
                 val wfId     = Flow.Id.Workflow("test-flow")
                 for
                     now <- Clock.now
-                    _ <- store.createExecutionIfAbsent(
+                    _   <- store.createExecutionIfAbsent(
                         declined,
                         Flow.Status.Failed("declined", Maybe("ChargeDeclined")),
                         Flow.Event.Created(wfId, declined, now),
@@ -542,10 +542,10 @@ class FlowApiTest extends kyo.test.Test[Any]:
                     onName = jsonField(secondBody, "executionId")
                     // The second is walked past its first input so the two executions hold rows for DIFFERENT names, which is what
                     // makes the narrowing observable at all.
-                    _ <- awaitStatus(port, onName)(waitsFor("x"))
-                    _ <- HttpClient.postText(url(port, s"/api/v1/executions/$onName/signal/x"), "42")
-                    _ <- awaitStatus(port, onName)(waitsFor("name"))
-                    _ <- awaitStatus(port, onX)(waitsFor("x"))
+                    _       <- awaitStatus(port, onName)(waitsFor("x"))
+                    _       <- HttpClient.postText(url(port, s"/api/v1/executions/$onName/signal/x"), "42")
+                    _       <- awaitStatus(port, onName)(waitsFor("name"))
+                    _       <- awaitStatus(port, onX)(waitsFor("x"))
                     forName <- HttpClient.postJson[FlowApi.SearchResponse](
                         url(port, "/api/v1/executions/search"),
                         FlowApi.SearchRequest(status = Some("waiting:name"))
@@ -577,8 +577,8 @@ class FlowApiTest extends kyo.test.Test[Any]:
         "an unrecognized filter is refused, not ignored" in {
             withFlowServer { port =>
                 for
-                    _ <- HttpClient.postText(url(port, "/api/v1/workflows/test-flow/executions"), "")
-                    _ <- Async.sleep(200.millis)
+                    _    <- HttpClient.postText(url(port, "/api/v1/workflows/test-flow/executions"), "")
+                    _    <- Async.sleep(200.millis)
                     resp <- HttpClient.postTextResponse(
                         url(port, "/api/v1/executions/search"),
                         """{"status":"bananas"}""",
@@ -603,8 +603,8 @@ class FlowApiTest extends kyo.test.Test[Any]:
         "a filter with an empty narrowing is refused" in {
             withFlowServer { port =>
                 for
-                    _ <- HttpClient.postText(url(port, "/api/v1/workflows/test-flow/executions"), "")
-                    _ <- Async.sleep(200.millis)
+                    _           <- HttpClient.postText(url(port, "/api/v1/workflows/test-flow/executions"), "")
+                    _           <- Async.sleep(200.millis)
                     failedEmpty <- HttpClient.postTextResponse(
                         url(port, "/api/v1/executions/search"),
                         """{"status":"failed:"}""",
@@ -640,8 +640,8 @@ class FlowApiTest extends kyo.test.Test[Any]:
         "a negative search offset is refused" in {
             withFlowServer { port =>
                 for
-                    _ <- HttpClient.postText(url(port, "/api/v1/workflows/test-flow/executions"), "")
-                    _ <- Async.sleep(200.millis)
+                    _    <- HttpClient.postText(url(port, "/api/v1/workflows/test-flow/executions"), "")
+                    _    <- Async.sleep(200.millis)
                     resp <- HttpClient.postTextResponse(
                         url(port, "/api/v1/executions/search"),
                         """{"offset":-1}""",
@@ -661,8 +661,8 @@ class FlowApiTest extends kyo.test.Test[Any]:
         "cancels all matching" in {
             withFlowServer { port =>
                 for
-                    _ <- HttpClient.postText(url(port, "/api/v1/workflows/test-flow/executions"), "")
-                    _ <- HttpClient.postText(url(port, "/api/v1/workflows/test-flow/executions"), "")
+                    _      <- HttpClient.postText(url(port, "/api/v1/workflows/test-flow/executions"), "")
+                    _      <- HttpClient.postText(url(port, "/api/v1/workflows/test-flow/executions"), "")
                     result <- HttpClient.postJson[FlowApi.CancelAllResponse](
                         url(port, "/api/v1/executions/cancel"),
                         FlowApi.CancelAllRequest(workflowId = Some("test-flow"))

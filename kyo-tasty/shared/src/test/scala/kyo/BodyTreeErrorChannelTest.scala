@@ -49,7 +49,7 @@ class BodyTreeErrorChannelTest extends kyo.test.Test[Any]:
         // 0x3E = 62 = TERMREFdirect type tag; 10x 0x00 = continuation bytes (bit 7 clear)
         val sectionBytes: Array[Byte] = Array[Byte](0x3e, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
         val symbol                    = makeValSym(1)
-        val body = SymbolBody(
+        val body                      = SymbolBody(
             bodyStart = 0,
             bodyEnd = sectionBytes.length,
             sectionBytes = Span.fromUnsafe(sectionBytes),
@@ -91,7 +91,7 @@ class BodyTreeErrorChannelTest extends kyo.test.Test[Any]:
         // The upfront bounds check in bodyTree (bodyEnd > sectionLen) fires and returns MalformedSection.
         val tooShortBytes: Array[Byte] = Array[Byte](0x3e)
         val symbol                     = makeValSym(2)
-        val body = SymbolBody(
+        val body                       = SymbolBody(
             bodyStart = 0,
             bodyEnd = 12, // beyond the array length of 1; upfront check fires
             sectionBytes = Span.fromUnsafe(tooShortBytes),
@@ -134,7 +134,7 @@ class BodyTreeErrorChannelTest extends kyo.test.Test[Any]:
     "cached decode failure re-serves as MalformedSection on second bodyTree call" in {
         val sectionBytes: Array[Byte] = Array[Byte](0x3e, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
         val symbol                    = makeValSym(3)
-        val body = SymbolBody(
+        val body                      = SymbolBody(
             bodyStart = 0,
             bodyEnd = sectionBytes.length,
             sectionBytes = Span.fromUnsafe(sectionBytes),
@@ -167,7 +167,7 @@ class BodyTreeErrorChannelTest extends kyo.test.Test[Any]:
         // Use a byte sequence that triggers MalformedVarintException on first type read.
         val sectionBytes: Array[Byte] = Array[Byte](0x3e, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
         val symbol                    = makeValSym(4)
-        val body = SymbolBody(
+        val body                      = SymbolBody(
             bodyStart = 0,
             bodyEnd = sectionBytes.length,
             sectionBytes = Span.fromUnsafe(sectionBytes),

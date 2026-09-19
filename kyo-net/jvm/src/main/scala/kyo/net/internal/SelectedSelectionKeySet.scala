@@ -54,8 +54,8 @@ final private[net] class SelectedSelectionKeySet extends java.util.AbstractSet[S
         val snapshot = count
         val arr      = keys
         new JIterator[SelectionKey]:
-            private var pos      = 0
-            def hasNext: Boolean = pos < snapshot
+            private var pos          = 0
+            def hasNext: Boolean     = pos < snapshot
             def next(): SelectionKey =
                 if pos >= snapshot then throw new java.util.NoSuchElementException()
                 val k = arr(pos)

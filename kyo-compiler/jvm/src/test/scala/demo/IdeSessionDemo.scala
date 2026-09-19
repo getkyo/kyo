@@ -69,7 +69,7 @@ object IdeSessionDemo extends KyoApp:
             _       <- banner("kyo-compiler demo: ide-session")
             _       <- Console.printLine(s"Opening Compiler.Pool, resolving the in-process compiler for Scala $scalaVersion ...\n")
             outcome <- Abort.run[CompilerException](withCompiler(c => flow(c).map(r => (r, validate(r)))))
-            result <- outcome match
+            result  <- outcome match
                 case Result.Success((value, Absent)) =>
                     Console.printLine("\n[OK] validation passed").andThen(value)
                 case Result.Success((_, Present(msg))) =>

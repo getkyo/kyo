@@ -45,7 +45,7 @@ class IdeHoverDemoTest extends kyo.test.Test[Any]:
     /** Look up a member by name within a class and render its kind + signature. */
     private def hoverByName(classpath: Tasty.Classpath, fullName: String, member: String): Maybe[String] =
         classpath.findClass(fullName) match
-            case Absent => Maybe.Absent
+            case Absent       => Maybe.Absent
             case Present(cls) =>
                 val decls = cls.declarationIds.flatMap(id => classpath.symbol(id).toChunk)
                 Maybe.fromOption(decls.find(_.name.asString == member))

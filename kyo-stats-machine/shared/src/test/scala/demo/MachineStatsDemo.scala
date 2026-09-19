@@ -67,7 +67,7 @@ object MachineStatsDemo:
             }
             // Wait past the first sampler tick (which only records the cumulative baseline) plus a couple more,
             // so histograms have observations and CPU counters carry a real cumulative advance.
-            _ <- Async.sleep((ticksToObserve + 1).seconds)
+            _       <- Async.sleep((ticksToObserve + 1).seconds)
             sampled <- Sync.defer {
                 import AllowUnsafe.embrace.danger
                 MachineRegistrySnapshot.read
@@ -82,7 +82,7 @@ object MachineStatsDemo:
     /** Assembles the observed readings into the Report that `validate` checks field by field against real host facts. */
     def report(os: String, sampled: Chunk[MachineRegistrySnapshot.Reading]): Report =
         def valueOf(p: String): Maybe[Double] = Maybe.fromOption(sampled.find(_.path == p).map(_.value))
-        val diskMounts =
+        val diskMounts                        =
             sampled.map(_.path).filter(_.startsWith("machine.disk.")).map(_.split('.').lift(2).getOrElse("")).distinct
         Report(
             os = os,
@@ -150,7 +150,7 @@ object MachineStatsDemoApp extends KyoApp:
             report <- MachineStatsDemo.flow
             _      <- Console.printLine(s"host OS: ${report.os}")
             _      <- Console.printLine(s"machine.* metrics observed: ${report.sampled.size}")
-            _ <- Kyo.foreachDiscard(report.sampled) { m =>
+            _      <- Kyo.foreachDiscard(report.sampled) { m =>
                 Console.printLine(f"  ${m.path}%-40s ${m.kind}%-14s value=${m.value}%,.1f  obs=${m.observations}")
             }
             _ <- Console.printLine(s"cgroup family present: ${report.cgroupPresent} (Linux-only)")

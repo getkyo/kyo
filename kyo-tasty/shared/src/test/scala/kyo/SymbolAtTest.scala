@@ -68,7 +68,7 @@ class SymbolAtTest extends kyo.test.Test[Any]:
       * PositionMap, which still short-circuits the very decode this leaf means to corrupt).
       */
     private def corruptBody(ctx: DecodeContext, sym: Tasty.Symbol, sourceFile: String, corruptBytes: Array[Byte]): Unit =
-        val real = ctx.bodyStore.get(sym.id)
+        val real      = ctx.bodyStore.get(sym.id)
         val corrupted = SymbolBody(
             bodyStart = 0,
             bodyEnd = corruptBytes.length,
@@ -87,7 +87,7 @@ class SymbolAtTest extends kyo.test.Test[Any]:
             boundedFixture { (classpath, sourceFile, _, occ) =>
                 val someTraitSym = classpath.findTrait("kyo.fixtures.SomeTrait").get
                 val computeSym   = classpath.findMember(someTraitSym, "compute", MemberScope.All).get
-                val computeOcc = occ.find(_.symbolId == computeSym.id) match
+                val computeOcc   = occ.find(_.symbolId == computeSym.id) match
                     case Some(o) => o
                     case None    => fail("expected an occurrence resolving to SomeTrait.compute")
                 // Strictly inside the compute SELECT span but past the narrower nested 'a' IDENT
@@ -156,7 +156,7 @@ class SymbolAtTest extends kyo.test.Test[Any]:
     "nested use sites resolve to the narrowest covering span" in {
         Abort.run[TastyError](
             boundedFixture { (_, sourceFile, boundedSym, occ) =>
-                val aId = boundedSym.paramListIds.head.head
+                val aId  = boundedSym.paramListIds.head.head
                 val aOcc = occ.find(_.symbolId == aId) match
                     case Some(o) => o
                     case None    => fail("expected an occurrence for the local 'a' parameter")

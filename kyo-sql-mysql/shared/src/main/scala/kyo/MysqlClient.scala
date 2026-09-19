@@ -71,7 +71,7 @@ final class MysqlClient private[kyo] (runtime: Runtime[MysqlSqlConnection]) exte
     ): A < (S & Async & Abort[SqlException]) =
         self.pinnedSession.flatMap {
             case Present(conn: MysqlSqlConnection) => op(conn.underlying)
-            case _ =>
+            case _                                 =>
                 self.useConfig { config =>
                     runtime.lease(config)(conn => op(conn.underlying))
                 }

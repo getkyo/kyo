@@ -42,7 +42,7 @@ abstract class BaseBrowserTest extends kyo.test.Test[Any]:
             case Result.Success(reply) =>
                 reply.result match
                     case Present(v) => v
-                    case Absent =>
+                    case Absent     =>
                         reply.error match
                             case Present(err) => fail(s"expected CdpReply.result but got error: $err")
                             case Absent       => fail(s"CdpReply has neither result nor error: $reply")

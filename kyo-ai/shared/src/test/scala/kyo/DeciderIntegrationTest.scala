@@ -39,7 +39,7 @@ class DeciderIntegrationTest extends kyo.test.Test[Any]:
     def body(answers: String, inputTokens: Int = 10, outputTokens: Int = 2): String =
         s"""{"model":"jev-1.13.0","answers":{$answers},"usage":{"input_tokens":$inputTokens,"output_tokens":$outputTokens}}"""
 
-    val noulAnswer = """"q1":{"type":"noul","noul":0.93}"""
+    val noulAnswer   = """"q1":{"type":"noul","noul":0.93}"""
     val choiceAnswer =
         """"q1":{"type":"choice","choice":"Database","confidence":0.9,"probabilities":{"Shell":0.05,"Database":0.95,"None":0.0}}"""
     val scoreAnswer = """"q1":{"type":"score","score":1.3,"confidence":0.8,"legend":{},"probabilities":{"0":0.0,"1":0.7,"2":0.3}}"""
@@ -128,10 +128,10 @@ class DeciderIntegrationTest extends kyo.test.Test[Any]:
         }
         "batch sends every question in one request and answers in order, at every arity" in {
             TestDeciderServer.run { server =>
-                val q1 = Query.noul("Done?")
-                val q2 = Query.choice("Which tool?", Tool.values.toSeq)
-                val q3 = Query.score("How healthy?", Seq("Healthy", "Degraded", "Corrupt"))
-                val q4 = Query.noul("Corrupt?", "manifest and tree disagree", "they agree")
+                val q1   = Query.noul("Done?")
+                val q2   = Query.choice("Which tool?", Tool.values.toSeq)
+                val q3   = Query.score("How healthy?", Seq("Healthy", "Degraded", "Corrupt"))
+                val q4   = Query.noul("Corrupt?", "manifest and tree disagree", "they agree")
                 val four = body(
                     """"q1":{"type":"noul","noul":0.1},""" +
                         """"q2":{"type":"choice","choice":"Shell","confidence":0.5,"probabilities":{"Shell":0.6,"Database":0.4,"None":0.0}},""" +
@@ -346,8 +346,8 @@ class DeciderIntegrationTest extends kyo.test.Test[Any]:
         }
         "every instance overload records and returns like its one-shot form" in {
             TestDeciderServer.run { server =>
-                val q1 = Query.noul("Done?")
-                val q2 = Query.choice("Which tool?", Tool.values.toSeq)
+                val q1  = Query.noul("Done?")
+                val q2  = Query.choice("Which tool?", Tool.values.toSeq)
                 val two = body(
                     """"q1":{"type":"noul","noul":0.1},""" +
                         """"q2":{"type":"choice","choice":"Shell","confidence":0.5,"probabilities":{"Shell":0.6,"Database":0.4,"None":0.0}}"""
@@ -542,7 +542,8 @@ class DeciderIntegrationTest extends kyo.test.Test[Any]:
                         assert(ctx.messages.size == 2)
                         assert(ctx.messages(0).content.contains("Point 5 holds"))
                         assert(
-                            ctx.messages(1).content == """{"answers":[{"type":"noul","noul":0.1},{"type":"noul","noul":0.2},{"type":"noul","noul":0.3},{"type":"noul","noul":0.4},{"type":"noul","noul":0.5}]}"""
+                            ctx.messages(1).content ==
+                                """{"answers":[{"type":"noul","noul":0.1},{"type":"noul","noul":0.2},{"type":"noul","noul":0.3},{"type":"noul","noul":0.4},{"type":"noul","noul":0.5}]}"""
                         )
                     }
                 }

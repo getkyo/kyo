@@ -192,7 +192,7 @@ final private[kyo] class JvmCommandUnsafe(
 
         wdError match
             case Present(err) => Result.fail(err)
-            case _ =>
+            case _            =>
                 val pb = new JProcessBuilder(args.toSeq.asJava)
 
                 // Working directory
@@ -205,7 +205,7 @@ final private[kyo] class JvmCommandUnsafe(
 
                 // Environment
                 envMode match
-                    case EnvMode.Inherit => () // default: inherit parent env
+                    case EnvMode.Inherit      => () // default: inherit parent env
                     case EnvMode.Append(vars) =>
                         pb.environment().putAll(vars.asJava)
                     case EnvMode.Remove(names) =>
@@ -242,8 +242,8 @@ final private[kyo] class JvmCommandUnsafe(
 
                 // stdout
                 stdoutSink match
-                    case StdioSink.Pipe    => discard(pb.redirectOutput(JProcessBuilder.Redirect.PIPE))
-                    case StdioSink.Inherit => discard(pb.redirectOutput(JProcessBuilder.Redirect.INHERIT))
+                    case StdioSink.Pipe                 => discard(pb.redirectOutput(JProcessBuilder.Redirect.PIPE))
+                    case StdioSink.Inherit              => discard(pb.redirectOutput(JProcessBuilder.Redirect.INHERIT))
                     case StdioSink.ToFile(path, append) =>
                         val nio = path.unsafe match
                             case n: NioPathUnsafe => n.jpath
@@ -259,8 +259,8 @@ final private[kyo] class JvmCommandUnsafe(
                     discard(pb.redirectErrorStream(true))
                 else
                     stderrSink match
-                        case StdioSink.Pipe    => discard(pb.redirectError(JProcessBuilder.Redirect.PIPE))
-                        case StdioSink.Inherit => discard(pb.redirectError(JProcessBuilder.Redirect.INHERIT))
+                        case StdioSink.Pipe                 => discard(pb.redirectError(JProcessBuilder.Redirect.PIPE))
+                        case StdioSink.Inherit              => discard(pb.redirectError(JProcessBuilder.Redirect.INHERIT))
                         case StdioSink.ToFile(path, append) =>
                             val nio = path.unsafe match
                                 case n: NioPathUnsafe => n.jpath
@@ -414,21 +414,21 @@ final private[kyo] class JvmCommandUnsafe(
         // does not throw for a missing program (unlike JVM), so we check up front.
         validateProgram() match
             case Present(err) => Result.fail(err)
-            case Absent =>
+            case Absent       =>
                 val chain = pipelineChain
                 if chain.length == 1 then
                     // Simple (non-piped) spawn
                     toJProcessBuilder() match
                         case Result.Failure(err) => Result.fail(err)
                         case Result.Panic(ex)    => Result.panic(ex)
-                        case Result.Success(pb) =>
+                        case Result.Success(pb)  =>
                             try
                                 val jp   = pb.start()
                                 val proc = new JvmProcessUnsafe(jp)
                                 // Feed stdin if needed
                                 stdinStream match
                                     case Present(s) => proc.registerInputFeed(feedStream(s, jp.getOutputStream))
-                                    case Absent =>
+                                    case Absent     =>
                                         stdinSource match
                                             case Process.Input.FromStream(is) =>
                                                 proc.registerInputFeed(feedInputStream(is, jp.getOutputStream))
@@ -450,7 +450,7 @@ final private[kyo] class JvmCommandUnsafe(
                     val pb       = new JProcessBuilder("sh", "-c", shellCmd)
 
                     firstCmd.envMode match
-                        case EnvMode.Inherit => ()
+                        case EnvMode.Inherit      => ()
                         case EnvMode.Append(vars) =>
                             vars.foreach { (k, v) => discard(pb.environment().put(k, v)) }
                         case EnvMode.Remove(names) =>
@@ -475,7 +475,7 @@ final private[kyo] class JvmCommandUnsafe(
                         val proc = new JvmProcessUnsafe(jp)
                         firstCmd.stdinStream match
                             case Present(s) => proc.registerInputFeed(feedStream(s, jp.getOutputStream))
-                            case Absent =>
+                            case Absent     =>
                                 firstCmd.stdinSource match
                                     case Process.Input.FromStream(is) =>
                                         proc.registerInputFeed(feedInputStream(is, jp.getOutputStream))

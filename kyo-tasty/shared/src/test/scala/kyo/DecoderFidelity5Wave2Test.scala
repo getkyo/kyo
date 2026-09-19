@@ -227,7 +227,7 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
                         )
                     }
                     candidateOpt match
-                        case None => succeed
+                        case None         => succeed
                         case Some(symbol) =>
                             Async.collectAll(
                                 (0 until 8).map(_ => Tasty.bodyTree(symbol).map(_.isDefined))
@@ -247,7 +247,7 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
             val path    = "mem/partial.krfl"
             val partial = full.take(full.length / 3)
             Abort.run[TastyError](SnapshotReader.readFromBytes(partial, path)).map {
-                case Result.Failure(_) => succeed
+                case Result.Failure(_)         => succeed
                 case Result.Success(classpath) =>
                     val ok = classpath.symbols.forall { s =>
                         s.ownerId.value == -1 ||
@@ -324,7 +324,7 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
 
     "SnapshotWriter.serializeToBytes is byte-deterministic within same JVM" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
-            val digest = Array.fill[Byte](8)(0x55.toByte)
+            val digest     = Array.fill[Byte](8)(0x55.toByte)
             val byteHashes = (0 until 8).map { _ =>
                 val bytes = SnapshotWriter.serializeToBytes(classpath, digest)
                 java.util.Arrays.hashCode(bytes)
@@ -348,7 +348,7 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
         TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
             val fullNameOpt = classpath.indices.byFullName.toMap.keys.headOption
             fullNameOpt match
-                case None => succeed
+                case None           => succeed
                 case Some(fullName) =>
                     val s1 = classpath.findSymbol(fullName)
                     val s2 = classpath.findSymbol(fullName)
@@ -417,7 +417,7 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
             Abort.run[TastyError](SnapshotReader.readFromBytes(out, path)).map {
                 case Result.Failure(_: TastyError.SnapshotFormatError) => succeed
                 case Result.Failure(_: TastyError.MalformedSection)    => succeed
-                case Result.Panic(t) =>
+                case Result.Panic(t)                                   =>
                     fail(s"BUG: section-index OOB produces panic, not structured error: ${t.getClass.getName}: ${t.getMessage}")
                 case other => succeed
             }
@@ -432,7 +432,7 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
             Abort.run[TastyError](SnapshotReader.readFromBytes(out, path)).map {
                 case Result.Failure(_) => succeed
                 case Result.Success(_) => succeed
-                case Result.Panic(t) =>
+                case Result.Panic(t)   =>
                     fail(s"BUG: negative section offset panics: ${t.getClass.getName}: ${t.getMessage}")
             }
         }
@@ -446,7 +446,7 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
             Abort.run[TastyError](SnapshotReader.readFromBytes(out, path)).map {
                 case Result.Failure(_) => succeed
                 case Result.Success(_) => succeed
-                case Result.Panic(t) =>
+                case Result.Panic(t)   =>
                     fail(s"BUG: section count=1B panics: ${t.getClass.getName}: ${t.getMessage}")
             }
         }
@@ -480,7 +480,7 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
     "requireClass on Trait fully-qualified name raises NotFound (narrow-kind semantics)" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
             classpath.allTraits.headOption match
-                case None => succeed
+                case None    => succeed
                 case Some(t) =>
                     val fullName = classpath.fullName(t).asString
                     if fullName.isEmpty then succeed
@@ -506,7 +506,7 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
                         )
                     }
                     candidateOpt match
-                        case None => succeed
+                        case None         => succeed
                         case Some(symbol) =>
                             Tasty.bodyTree(symbol).map { _ =>
                                 Tasty.bindingLocal.use { mbind2 =>
@@ -573,7 +573,7 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
             Abort.run[TastyError](SnapshotReader.readFromBytes(out, path)).map {
                 case Result.Failure(_: TastyError.MalformedSection)    => succeed
                 case Result.Failure(_: TastyError.SnapshotFormatError) => succeed
-                case Result.Panic(t) =>
+                case Result.Panic(t)                                   =>
                     fail(s"BUG: OOB section entry panics instead of giving MalformedSection: ${t.getClass.getName}: ${t.getMessage}")
                 case other => succeed
             }
@@ -587,7 +587,7 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
             SnapshotFormat.writeInt64LE(out, 36 + 8, -99L)
             Abort.run[TastyError](SnapshotReader.readFromBytes(out, path)).map {
                 case Result.Failure(_) => succeed
-                case Result.Panic(t) =>
+                case Result.Panic(t)   =>
                     fail(s"BUG: negative section offset panics: ${t.getClass.getName}: ${t.getMessage}")
                 case Result.Success(_) => succeed
             }
@@ -615,7 +615,7 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
                         )
                     }
                     candidateOpt match
-                        case None => succeed
+                        case None         => succeed
                         case Some(symbol) =>
                             Tasty.bodyTree(symbol).map { tree =>
                                 assert(tree.isDefined || !tree.isDefined, "decodeBody must return without panic")
@@ -698,9 +698,9 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
     }
 
     "error-roundtrip: all TastyError variants round-trip through snapshot ERRORS section" in {
-        val zeroUUID = Tasty.Uuid.unsafeWrap(new java.util.UUID(0L, 0L).toString)
-        val v1       = Tasty.Version(1, 2, 0)
-        val v2       = Tasty.Version(3, 4, 0)
+        val zeroUUID                      = Tasty.Uuid.unsafeWrap(new java.util.UUID(0L, 0L).toString)
+        val v1                            = Tasty.Version(1, 2, 0)
+        val v2                            = Tasty.Version(3, 4, 0)
         val testErrors: Chunk[TastyError] = Chunk(
             TastyError.FileNotFound("/tmp/foo.tasty"),
             TastyError.CorruptedFile("/tmp/bar.tasty", 42L, "bad magic"),
@@ -727,7 +727,7 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
             val bytes     = kyo.internal.tasty.snapshot.SnapshotWriter.serializeToBytes(classpath, digest)
             Abort.run[TastyError](SnapshotReader.readFromBytes(bytes, path)).map { result =>
                 result match
-                    case Result.Failure(e) => fail(s"snapshot round-trip failed: $e")
+                    case Result.Failure(e)   => fail(s"snapshot round-trip failed: $e")
                     case Result.Success(cp2) =>
                         val roundTripped = cp2.errors
                         assert(
@@ -755,7 +755,7 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
             Abort.run[TastyError](SnapshotReader.readFromBytes(out, path)).map {
                 case Result.Failure(_: TastyError.SnapshotFormatError) => succeed
                 case Result.Failure(other)                             => fail(s"expected SnapshotFormatError, got: $other")
-                case Result.Panic(t) =>
+                case Result.Panic(t)                                   =>
                     fail(s"BUG: sectionCount=Int.MaxValue panics: ${t.getClass.getName}: ${t.getMessage}")
                 case Result.Success(_) => fail("expected failure for corrupt sectionCount")
             }

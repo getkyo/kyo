@@ -13,7 +13,7 @@ final class ChannelBackedStream(
     inbound: Channel.Unsafe[Span[Byte]],
     outbound: Channel.Unsafe[Span[Byte]]
 ) extends TransportStream:
-    def read(using Frame): Stream[Span[Byte], Async] = inbound.safe.streamUntilClosed()
+    def read(using Frame): Stream[Span[Byte], Async]       = inbound.safe.streamUntilClosed()
     def write(data: Span[Byte])(using Frame): Unit < Async =
         // TransportStream.write returns Unit < Async (no Abort[Closed] in the type),
         // so we must handle the Closed error here.
@@ -22,7 +22,7 @@ final class ChannelBackedStream(
         Abort.run[Closed](outbound.safe.put(data)).map {
             case Result.Success(_)         => ()
             case Result.Failure(_: Closed) => ()
-            case Result.Panic(t) =>
+            case Result.Panic(t)           =>
                 Log.error("ChannelBackedStream: write panic", t)
         }
 end ChannelBackedStream

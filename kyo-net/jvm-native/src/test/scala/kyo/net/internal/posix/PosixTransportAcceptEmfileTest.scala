@@ -118,9 +118,9 @@ class PosixTransportAcceptEmfileTest extends Test:
 
         "does not spin on acceptNow EMFILE while a connection is pending (bounded retry)" in {
             assumePollerReady()
-            val settled = Promise.Unsafe.init[AcceptGuard, Any]()
-            val spy     = new EmfileAcceptSockets(Ffi.load[SocketBindings], settled)
-            val driver  = PollerIoDriver.init()
+            val settled   = Promise.Unsafe.init[AcceptGuard, Any]()
+            val spy       = new EmfileAcceptSockets(Ffi.load[SocketBindings], settled)
+            val driver    = PollerIoDriver.init()
             val transport = TestTransports.forTesting(
                 driver,
                 spy,
@@ -154,7 +154,7 @@ class PosixTransportAcceptEmfileTest extends Test:
                     outcome <- Abort.run[Timeout](Async.timeout(settleCeiling)(settled.safe.get))
                 yield outcome match
                     case Result.Success(AcceptGuard.BackedOff) => succeed
-                    case Result.Success(AcceptGuard.Spun) =>
+                    case Result.Success(AcceptGuard.Spun)      =>
                         fail(
                             s"accept loop spun: it re-armed immediately under a persistent EMFILE instead of backing off, issuing acceptNow up " +
                                 s"to the spin cap ($spinThreshold) for ONE pending connection. EMFILE leaves the connection in the backlog, so an " +

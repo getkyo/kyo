@@ -192,7 +192,7 @@ class YamlCstParserTest extends kyo.test.Test[Any]:
             val Present(root: Yaml.Cst.Node.Mapping) = doc.node: @unchecked
             val nameEntry                            = root.entries(0)
             val serviceEntry                         = root.entries(1)
-            val obtained = (
+            val obtained                             = (
                 leading = doc.leadingTrivia.collect { case Yaml.Cst.Trivia(text, _) => text },
                 trailingOwner = nameEntry.trailingTrivia.collect { case Yaml.Cst.Trivia(text, _) => text.trim },
                 serviceLeading = serviceEntry.leadingTrivia.collect { case Yaml.Cst.Trivia(text, _) => text }
@@ -213,7 +213,7 @@ class YamlCstParserTest extends kyo.test.Test[Any]:
 
             val Present(root: Yaml.Cst.Node.Mapping) = doc.node: @unchecked
             val key                                  = root.entries(0).key.asInstanceOf[Yaml.Cst.Node.Scalar]
-            val obtained = (
+            val obtained                             = (
                 leading = doc.leadingTrivia.collect { case Yaml.Cst.Trivia(text, _) => text },
                 rendered = doc.render(using Yaml.WriterConfig.Default),
                 rootMark = root.meta.mark,
@@ -235,7 +235,7 @@ class YamlCstParserTest extends kyo.test.Test[Any]:
 
             val Present(root: Yaml.Cst.Node.Mapping) = doc.node: @unchecked
             val key                                  = root.entries(0).key.asInstanceOf[Yaml.Cst.Node.Scalar]
-            val obtained = (
+            val obtained                             = (
                 leading = doc.leadingTrivia.collect { case Yaml.Cst.Trivia(text, _) => text },
                 rendered = doc.render(using Yaml.WriterConfig.Default),
                 rootMark = root.meta.mark,

@@ -49,7 +49,7 @@ final private[kyo] class PostgresSqlConnection private[postgres] (
         underlying.parameters.get.flatMap { params =>
             Maybe.fromOption(params.get("server_version")) match
                 case Present(reported) => Connection.parseServerVersion(reported)
-                case Absent =>
+                case Absent            =>
                     Abort.fail(SqlConnectionProtocolDecodeException(
                         "ParameterStatus",
                         "startup reported no server_version parameter"
@@ -166,7 +166,7 @@ final private[kyo] class PostgresSqlConnection private[postgres] (
             case true =>
                 Sync.Unsafe.defer(exchangeResyncable.get()).flatMap {
                     case false => false // see `pipelined`: more than one barrier is outstanding
-                    case true =>
+                    case true  =>
                         underlying.isOpen.flatMap {
                             case false => false
                             case true  => drainToReadyForQuery
@@ -336,7 +336,7 @@ private[kyo] object PostgresSqlConnection:
                             plainConnect(address, user, password, config, Absent, options)
                 case TlsMode.Allow =>
                     Abort.run[SqlException](plainConnect(address, user, password, config, Absent, options)).flatMap {
-                        case Result.Success(conn) => conn
+                        case Result.Success(conn)                => conn
                         case Result.Failure(e) if requiresSsl(e) =>
                             config.tls match
                                 case Present(tlsConfig) =>
@@ -428,7 +428,7 @@ private[kyo] object PostgresSqlConnection:
                     // from a misbehaving server or proxy; converting it here keeps the failure on the typed
                     // Abort[SqlException] channel instead of escaping as a NumberFormatException panic.
                     val oidText = new java.lang.String(oidBytes.toArray, StandardCharsets.UTF_8).trim
-                    val oid = oidText.toIntOption.getOrElse(
+                    val oid     = oidText.toIntOption.getOrElse(
                         throw SqlConnectionProtocolDecodeException("pg_type oid", s"non-numeric oid '$oidText' for type '$name'")
                     )
                     acc.updated(name, oid)
@@ -523,8 +523,8 @@ private[kyo] object PostgresSqlConnection:
       */
     private def pump(conn: PostgresConnection, cause: AtomicRef[Maybe[SqlException]])(using Frame): Unit < Async =
         Abort.run[SqlException](conn.receive).flatMap {
-            case Result.Failure(e) => failStream(conn, cause, e)
-            case Result.Panic(t)   => failStream(conn, cause, SqlConnectionNotificationPanicException(t))
+            case Result.Failure(e)   => failStream(conn, cause, e)
+            case Result.Panic(t)     => failStream(conn, cause, SqlConnectionNotificationPanicException(t))
             case Result.Success(msg) =>
                 msg match
                     case n: NotificationResponse =>

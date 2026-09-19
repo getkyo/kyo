@@ -269,7 +269,7 @@ class HygieneTest extends kyo.test.Test[Any]:
     "opaque types issue (#993)" in {
         val maybe1: Maybe[Int] < Sync = Maybe(1)
         val maybe0: Maybe[Int]        = Maybe(0)
-        val result1 = direct:
+        val result1                   = direct:
             maybe1.now.fold(2)(_ + 1)
         val result2 = direct:
             maybe1.now.contains(1)

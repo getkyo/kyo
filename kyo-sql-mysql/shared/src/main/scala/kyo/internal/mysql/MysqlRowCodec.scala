@@ -60,7 +60,7 @@ final private[kyo] case class MysqlRowCodec(format: Format) extends SqlPositiona
       */
     override def columnValue(row: SqlRow, idx: Int)(using Frame): SqlValue < Abort[SqlDecodeException] =
         import SqlRow.ColumnKind
-        val column = row.columns(idx)
+        val column                                          = row.columns(idx)
         def bytesOf: Span[Byte] < Abort[SqlDecodeException] =
             row.column(idx) match
                 case Maybe.Present(bytes) => bytes

@@ -232,11 +232,11 @@ class HubTest extends kyo.test.Test[Any]:
     "concurrency" - {
         "publishers and subscribers" in {
             (for
-                hub   <- Hub.init[Int](1)
-                l1    <- hub.listen
-                l2    <- hub.listen
-                l3    <- hub.listen
-                latch <- Latch.init(1)
+                hub      <- Hub.init[Int](1)
+                l1       <- hub.listen
+                l2       <- hub.listen
+                l3       <- hub.listen
+                latch    <- Latch.init(1)
                 pubFiber <- Fiber.initUnscoped(
                     latch.await.andThen(
                         Async.foreach(1 to 10, 10)(i => Abort.run(hub.put(i)))
@@ -275,9 +275,9 @@ class HubTest extends kyo.test.Test[Any]:
 
         "concurrent listeners and close" in {
             (for
-                size  <- Choice.eval(1, 2, 10, 100)
-                hub   <- Hub.init[Int](size)
-                latch <- Latch.init(1)
+                size          <- Choice.eval(1, 2, 10, 100)
+                hub           <- Hub.init[Int](size)
+                latch         <- Latch.init(1)
                 listenerFiber <- Fiber.initUnscoped(
                     latch.await.andThen(
                         Async.fill(20, 20)(Abort.run(hub.listen))
@@ -294,10 +294,10 @@ class HubTest extends kyo.test.Test[Any]:
 
         "message ordering".onlyJvm in {
             for
-                hub   <- Hub.init[Int](1000)
-                l1    <- hub.listen
-                l2    <- hub.listen
-                latch <- Latch.init(1)
+                hub       <- Hub.init[Int](1000)
+                l1        <- hub.listen
+                l2        <- hub.listen
+                latch     <- Latch.init(1)
                 pubFibers <-
                     Async.foreach(0 until 4, 4) { n =>
                         Fiber.initUnscoped(
@@ -357,8 +357,8 @@ class HubTest extends kyo.test.Test[Any]:
 
         "concurrent filtered listeners".onlyJvm in {
             for
-                hub   <- Hub.init[Int](100)
-                latch <- Latch.init(1)
+                hub       <- Hub.init[Int](100)
+                latch     <- Latch.init(1)
                 listeners <- Async.foreach(0 until 10, 10) { n =>
                     hub.listen(_ % 10 == n)
                 }

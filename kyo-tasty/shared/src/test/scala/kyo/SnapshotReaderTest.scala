@@ -37,7 +37,7 @@ class SnapshotReaderTest extends kyo.test.Test[Any]:
         val sectionIndexSize = 4 + sectionCount * SnapshotFormat.sectionIndexEntrySize
         val headerSize       = SnapshotFormat.headerSize + sectionIndexSize
 
-        var offset = headerSize.toLong
+        var offset      = headerSize.toLong
         val sectionMeta = sections.map { (name, bytes) =>
             val entry = (name, offset, bytes.length.toLong)
             offset += bytes.length

@@ -39,7 +39,7 @@ private[kyo] object UIDiff:
       */
     def plan(path: Seq[String], previous: Maybe[UI], current: UI): Chunk[(Seq[String], UI)] =
         previous match
-            case Absent => Chunk((path, current))
+            case Absent     => Chunk((path, current))
             case Present(p) =>
                 decompose(path, p, current).getOrElse(Chunk((path, current)))
 

@@ -464,7 +464,7 @@ class OTLPClientTest extends kyo.test.Test[Any]:
                     }
                 }
                 server <- HttpServer.init(0, "127.0.0.1")(traceHandler, metricHandler)
-                config = testConfig(server.port)
+                config  = testConfig(server.port)
                 request = ExportMetricsRequest(
                     resourceMetrics = Seq(ResourceMetrics(
                         resource = OTLPClient.buildResource(config),

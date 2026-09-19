@@ -227,7 +227,7 @@ object Isolate:
         @nowarn("msg=anonymous")
         private[kyo] inline def runDetached[A, S](inline f: (Trace, Context) => A < S)(using inline _frame: Frame): A < S =
             new KyoDefer[A, S]:
-                def frame = _frame
+                def frame                                                        = _frame
                 def apply(v: Unit, context: Context)(using safepoint: Safepoint) =
                     f(safepoint.saveTrace(), context.inherit)
 

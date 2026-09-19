@@ -9,7 +9,7 @@ class FlagPredicatePreservationTest extends kyo.test.Test[Any]:
     import AllowUnsafe.embrace.danger
 
     "isFinal/isCase/isClass true on Class; 37 others false" in {
-        val flags = Tasty.Flags(Tasty.Flag.Final, Tasty.Flag.Case)
+        val flags                = Tasty.Flags(Tasty.Flag.Final, Tasty.Flag.Case)
         val symbol: Tasty.Symbol = Tasty.Symbol.Class(
             SymbolId(1),
             Tasty.Name("Foo"),
@@ -39,7 +39,7 @@ class FlagPredicatePreservationTest extends kyo.test.Test[Any]:
     }
 
     "isInline/isGiven/isMethod true on Method" in {
-        val flags = Tasty.Flags(Tasty.Flag.Inline, Tasty.Flag.Given)
+        val flags                = Tasty.Flags(Tasty.Flag.Inline, Tasty.Flag.Given)
         val symbol: Tasty.Symbol = Tasty.Symbol.Method(
             SymbolId(1),
             Tasty.Name("foo"),

@@ -61,7 +61,7 @@ object ServeSite extends KyoApp:
             Scope.run(root.walk.run).map { entries =>
                 Kyo.foreach(entries) { entry =>
                     entry.isDirectory.map {
-                        case true => Absent
+                        case true  => Absent
                         case false =>
                             entry.readBytes.map(bytes => Present(entry.parts.drop(depth).mkString("/") -> bytes))
                     }
@@ -74,7 +74,7 @@ object ServeSite extends KyoApp:
       * an extension-less path falls back to `<path>/index.html` (the per-route directory's index).
       */
     private def resolve(rawPath: String, store: Map[String, Span[Byte]]): Maybe[(String, Span[Byte])] =
-        val clean = rawPath.takeWhile(_ != '?').stripPrefix("/")
+        val clean      = rawPath.takeWhile(_ != '?').stripPrefix("/")
         val candidates =
             if clean.isEmpty then List("index.html")
             else if clean.endsWith("/") then List(clean + "index.html")

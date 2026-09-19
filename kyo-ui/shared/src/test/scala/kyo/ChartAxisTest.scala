@@ -93,14 +93,14 @@ class ChartAxisTest extends kyo.test.Test[Any]:
         (spec).lower.map { root =>
             // Gridlines are Svg.Line elements spanning the full plot width with strokeOpacity=0.3
             // (distinct from the axis lines which have no strokeOpacity set)
-            val allLines = frameLinesIn(root)
+            val allLines  = frameLinesIn(root)
             val gridLines = allLines.filter: l =>
                 l.svgAttrs.x1.exists(_ == PlotX) && l.svgAttrs.x2.exists(_ == PlotX + PlotW) &&
                     l.svgAttrs.y1 == l.svgAttrs.y2 && l.svgAttrs.strokeOpacity.isDefined
             assert(gridLines.size == 3, s"Expected 3 gridlines but got ${gridLines.size}")
 
             // Tick labels are Svg.Text elements with TextAnchor.End (left y-axis)
-            val allTexts = frameTextsIn(root)
+            val allTexts   = frameTextsIn(root)
             val tickLabels = allTexts.filter: t =>
                 t.svgAttrs.textAnchor.contains(Svg.TextAnchor.End)
             assert(tickLabels.size == 3, s"Expected 3 tick labels but got ${tickLabels.size}")
@@ -293,7 +293,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
             )
 
             // Right axis tick labels appear on the right margin: x > plotX + plotW_twoax
-            val allTexts = frameTextsIn(root)
+            val allTexts        = frameTextsIn(root)
             val rightTickLabels = allTexts.filter: t =>
                 t.svgAttrs.textAnchor.contains(Svg.TextAnchor.Start) &&
                     t.svgAttrs.x.exists { case Coord.Num(v) => v > PlotX + PlotWTwoAx; case _ => false }
@@ -315,7 +315,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
     "dual-axis combo color-codes each y-axis chrome to its single bound mark (left=palette(0), right=palette(1))" in {
         // Neutral light-theme chrome color, matching ChartLower.LightThemeTextColor (#374151).
         val neutral = Style.Color.hex("#374151").getOrElse(Style.Color.black)
-        val rows = Chunk(
+        val rows    = Chunk(
             Row2Ax("Jan", Usd(1000), 10.0),
             Row2Ax("Feb", Usd(2000), 20.0)
         )
@@ -445,7 +445,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
         // DarkBg = Style.Color.hex("#1f2937").getOrElse(Style.Color.black)
         val darkBg = Style.Color.hex("#1f2937").getOrElse(Style.Color.black)
         val rows   = Chunk(Sale("Jan", Usd(1000)))
-        val spec = Chart(rows)(bar(x = _.month, y = _.revenue))
+        val spec   = Chart(rows)(bar(x = _.month, y = _.revenue))
             .theme(_.dark)
         (spec).lower.map { root =>
             // Background is the first frame Rect
@@ -568,7 +568,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
             SRow("/a", "5xx", 2.0)
         )
         val amber = Style.Color.hex("#f59e0b").getOrElse(Style.Color.orange)
-        val spec = Chart(rows)(bar(
+        val spec  = Chart(rows)(bar(
             x = _.x,
             y = _.count,
             stack = by(_.code)
@@ -613,7 +613,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
             SRow("/a", "5xx", 2.0)
         )
         val amber = Style.Color.hex("#f59e0b").getOrElse(Style.Color.orange)
-        val spec = Chart(rows)(bar(
+        val spec  = Chart(rows)(bar(
             x = _.x,
             y = _.count,
             stack = by(_.code)
@@ -835,7 +835,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
 
             // Group B (index 1) is the top group and its top edge must reach plotY = 20
             val pathBCommands = Svg.PathData.commands(paths(1).svgAttrs.d.getOrElse(Svg.PathData.empty))
-            val bYs = pathBCommands.flatMap:
+            val bYs           = pathBCommands.flatMap:
                 case PathCommand.MoveTo(_, y) => Chunk(y)
                 case PathCommand.LineTo(_, y) => Chunk(y)
                 case _                        => Chunk.empty
@@ -854,7 +854,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
 
     "grouped bar (color encoding) keeps a NEUTRAL y-axis chrome, not palette(0)" in {
         val neutral = Style.Color.hex("#374151").getOrElse(Style.Color.black)
-        val rows = Chunk(
+        val rows    = Chunk(
             Sale("Jan", Usd(1000), Region.NA),
             Sale("Jan", Usd(2000), Region.EU),
             Sale("Jan", Usd(1500), Region.APAC)
@@ -879,7 +879,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
         val neutral = Style.Color.hex("#374151").getOrElse(Style.Color.black)
         case class SRow(x: String, group: String, value: Double)
         given CanEqual[SRow, SRow] = CanEqual.derived
-        val rows = Chunk(
+        val rows                   = Chunk(
             SRow("Jan", "A", 300.0),
             SRow("Jan", "B", 700.0)
         )
@@ -1050,7 +1050,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
         yield
             val cxNoPad  = circlesIn(rootNoPad)(0).svgAttrs.cx
             val cxPadded = circlesIn(rootPadded)(0).svgAttrs.cx
-            val noPadX = cxNoPad match
+            val noPadX   = cxNoPad match
                 case Present(v) => v;
                 case Absent     => fail("cx")
             val padX = cxPadded match
@@ -1181,7 +1181,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
         (spec).lower.map { root =>
             // The left y-tick labels are right-anchored (TextAnchor.End). A 5-digit label "50000" must appear.
             val leftTickLabels = frameTextsIn(root).filter(_.svgAttrs.textAnchor.contains(Svg.TextAnchor.End))
-            val fiveDigit = leftTickLabels.filter: t =>
+            val fiveDigit      = leftTickLabels.filter: t =>
                 t.children.headOption match
                     case Some(UI.Ast.Text(s)) => s.count(_.isDigit) >= 5
                     case _                    => false
@@ -1193,7 +1193,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
                 t.children.headOption match
                     case Some(UI.Ast.Text(s)) => s.length
                     case _                    => 0
-            val labelX = numOf(widest.svgAttrs.x)
+            val labelX        = numOf(widest.svgAttrs.x)
             val widthEstimate =
                 (widest.children.headOption match
                     case Some(UI.Ast.Text(s)) => s.length
@@ -1611,7 +1611,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
         )
         (spec).lower.map { root =>
             // Right axis tick labels appear on the right margin.
-            val allTexts = frameTextsIn(root)
+            val allTexts        = frameTextsIn(root)
             val rightTickLabels = allTexts.filter: t =>
                 t.svgAttrs.textAnchor.contains(Svg.TextAnchor.Start) &&
                     t.svgAttrs.x.exists { case Coord.Num(v) => v > PlotX + PlotWTwoAx; case _ => false }
@@ -1708,7 +1708,7 @@ class ChartAxisTest extends kyo.test.Test[Any]:
         ).yScale(_.log).yScaleRight(_.linear(0.0, 1.0))
         (spec).lower.map { root =>
             // Both axes should render tick labels (confirming both exist with different scale kinds).
-            val allTexts = frameTextsIn(root)
+            val allTexts  = frameTextsIn(root)
             val leftTicks = allTexts.filter: t =>
                 t.svgAttrs.textAnchor.contains(Svg.TextAnchor.End) &&
                     t.svgAttrs.x.exists { case Coord.Num(v) => v < PlotX; case _ => false }

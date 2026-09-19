@@ -21,7 +21,7 @@ class LLMIntegrationTest extends BaseAITest:
                 result <- Abort.run[AIException] {
                     for
                         ai <- AI.init
-                        _ <- ai.systemMessage(
+                        _  <- ai.systemMessage(
                             "You are validating a Kyo completion backend. Return compact factual values. " +
                                 s"Preserve marker '$marker' exactly."
                         )
@@ -33,7 +33,7 @@ class LLMIntegrationTest extends BaseAITest:
                             AI.Image.fromBase64(redPixelJpeg)
                         )
                         first <- ai.gen[FirstTurn]
-                        _ <- ai.userMessage(
+                        _     <- ai.userMessage(
                             "Using only the conversation so far, return the same marker, remembered dominant color, remembered image kind, " +
                                 "remembered readable-text flag, and remembered image description exactly solid red image. Set historyUsed to true only if the prior assistant " +
                                 "result was used."
@@ -118,7 +118,7 @@ class LLMIntegrationTest extends BaseAITest:
                             }
                             orderAfterOrder    <- orderCalls.get
                             customerAfterOrder <- customerCalls.get
-                            customerTurn <- AI.enable(lookupCustomer) {
+                            customerTurn       <- AI.enable(lookupCustomer) {
                                 for
                                     _ <- ai.userMessage(
                                         s"Turn 2. Use the prior assistant JSON field named orderStatus for the order status. " +
@@ -133,7 +133,7 @@ class LLMIntegrationTest extends BaseAITest:
                             }
                             orderAfterCustomer    <- orderCalls.get
                             customerAfterCustomer <- customerCalls.get
-                            _ <- ai.userMessage(
+                            _                     <- ai.userMessage(
                                 s"Turn 3. Do not call any tool. Using conversation history only, return marker $marker. " +
                                     "Copy rememberedOrderStatus from the first tool-backed assistant result. " +
                                     "Copy customerCode and customerZone from the immediately previous assistant result. " +
@@ -228,7 +228,7 @@ class LLMIntegrationTest extends BaseAITest:
         // Both halves of the result contract come from the module's own constructors: the tool the
         // loop registers, and the envelope schema it advertises. Two backends decode their reply
         // THROUGH that contract and refuse a request that arrives without it.
-        val resultSchema = Thought.internal.resultJson(Chunk.empty, Json.jsonSchema[String])
+        val resultSchema      = Thought.internal.resultJson(Chunk.empty, Json.jsonSchema[String])
         def once(cfg: Config) =
             Tool.internal.resultTool[String](Chunk.empty).map { (resultTools, _) =>
                 Abort.run[AIException](Abort.run[HttpException](
@@ -282,11 +282,11 @@ class LLMIntegrationTest extends BaseAITest:
         for
             markerA <- marker
             markerB <- marker
-            result <- Abort.run[AIException] {
+            result  <- Abort.run[AIException] {
                 for
                     aiA <- AI.init
                     aiB <- AI.init
-                    _ <- aiA.systemMessage(
+                    _   <- aiA.systemMessage(
                         s"This conversation's marker is '$markerA' and display label is alpha. Use only this conversation's marker."
                     )
                     _ <- aiB.systemMessage(
@@ -301,12 +301,12 @@ class LLMIntegrationTest extends BaseAITest:
                             "label in label. Write the VALUES themselves, never the words describing them."
                     )
                     a1 <- aiA.gen[IsolationAnswer]
-                    _ <- aiB.userMessage(
+                    _  <- aiB.userMessage(
                         "Return this conversation's marker and display label, the marker in marker and the " +
                             "label in label. Write the VALUES themselves, never the words describing them."
                     )
                     b1 <- aiB.gen[IsolationAnswer]
-                    _ <- aiA.userMessage(
+                    _  <- aiA.userMessage(
                         "Using this conversation history only, set marker and label to exactly the same two " +
                             "values you returned before. Copy each verbatim."
                     )
@@ -385,72 +385,74 @@ class LLMIntegrationTest extends BaseAITest:
 
     // A CLI transport property, so it holds for every command-harness backend rather than the one it
     // was first written against.
-    "kill-on-call: the CLI process is destroyForcibly'd on the first captured result and no request follows it, first capture wins" - runBackendsWhere(
-        _.cli.isDefined
-    ) { backend =>
-        // The kill timing itself (destroyForcibly on first capture, no follow-up request) is proven at the
-        // unit level (ClaudeCodeWireTest's set-once resultCapture semantics, ClaudeCodeCompletionTest's
-        // bridge partition). This end-to-end proof is the observable behavioral consequence: a turn that
-        // could attempt a second result call still resolves to exactly the first answer, and an immediate
-        // repeat generation is deterministic (set-once parity holds across turns too).
-        for
-            marker <- marker
-            result <- Abort.run[AIException] {
-                Kyo.lift(()).andThen {
-                    AI.initWith { ai =>
-                        for
-                            _ <- ai.userMessage(
-                                s"Return marker $marker and answer 1. Call the result tool exactly once; " +
-                                    "if you are tempted to call it again, do not, the first call is final."
-                            )
-                            first  <- ai.gen[ThoughtAnswer]
-                            _      <- ai.userMessage(s"Repeat: return marker $marker and answer 1 again.")
-                            second <- ai.gen[ThoughtAnswer]
-                        yield (first, second)
+    "kill-on-call: the CLI process is destroyForcibly'd on the first captured result and no request follows it, first capture wins" -
+        runBackendsWhere(
+            _.cli.isDefined
+        ) { backend =>
+            // The kill timing itself (destroyForcibly on first capture, no follow-up request) is proven at the
+            // unit level (ClaudeCodeWireTest's set-once resultCapture semantics, ClaudeCodeCompletionTest's
+            // bridge partition). This end-to-end proof is the observable behavioral consequence: a turn that
+            // could attempt a second result call still resolves to exactly the first answer, and an immediate
+            // repeat generation is deterministic (set-once parity holds across turns too).
+            for
+                marker <- marker
+                result <- Abort.run[AIException] {
+                    Kyo.lift(()).andThen {
+                        AI.initWith { ai =>
+                            for
+                                _ <- ai.userMessage(
+                                    s"Return marker $marker and answer 1. Call the result tool exactly once; " +
+                                        "if you are tempted to call it again, do not, the first call is final."
+                                )
+                                first  <- ai.gen[ThoughtAnswer]
+                                _      <- ai.userMessage(s"Repeat: return marker $marker and answer 1 again.")
+                                second <- ai.gen[ThoughtAnswer]
+                            yield (first, second)
+                        }
                     }
                 }
-            }
-            (first, second) <- unwrap(backend, result)
-            _ = assert(first == ThoughtAnswer(marker, 1), s"first result mismatch: $first")
-            _ = assert(second == ThoughtAnswer(marker, 1), s"repeat result mismatch (first-wins/set-once parity): $second")
-        yield ()
-        end for
-    }
+                (first, second) <- unwrap(backend, result)
+                _ = assert(first == ThoughtAnswer(marker, 1), s"first result mismatch: $first")
+                _ = assert(second == ThoughtAnswer(marker, 1), s"repeat result mismatch (first-wins/set-once parity): $second")
+            yield ()
+            end for
+        }
 
     // Scoped to the one harness whose session inherits an ambient credential: the guarantee is about
     // that inheritance, not about command harnesses in general.
-    "the subscription guarantee holds: a bad ambient ANTHROPIC_API_KEY does not reach the CC session by default and the flag opt-in inherits it" - runBackendsWhere(
-        _.label == "Claude Code"
-    ) { backend =>
-        // inheritApiCredentials is a StaticFlag, resolved once at class load from the JVM's own launch-time
-        // system property; a deliberately-wrong ambient ANTHROPIC_API_KEY and the flag's value are both
-        // fixed at JVM launch, never toggled mid-run. This test observes whichever configuration it was
-        // launched under and asserts the matching outcome.
-        for
-            marker <- marker
-            result <- Abort.run[AIException] {
-                Kyo.lift(()).andThen {
-                    AI.initWith { ai =>
-                        for
-                            _      <- ai.userMessage(s"Return marker $marker and answer 1.")
-                            answer <- ai.gen[ThoughtAnswer]
-                        yield answer
+    "the subscription guarantee holds: a bad ambient ANTHROPIC_API_KEY does not reach the CC session by default and the flag opt-in inherits it" -
+        runBackendsWhere(
+            _.label == "Claude Code"
+        ) { backend =>
+            // inheritApiCredentials is a StaticFlag, resolved once at class load from the JVM's own launch-time
+            // system property; a deliberately-wrong ambient ANTHROPIC_API_KEY and the flag's value are both
+            // fixed at JVM launch, never toggled mid-run. This test observes whichever configuration it was
+            // launched under and asserts the matching outcome.
+            for
+                marker <- marker
+                result <- Abort.run[AIException] {
+                    Kyo.lift(()).andThen {
+                        AI.initWith { ai =>
+                            for
+                                _      <- ai.userMessage(s"Return marker $marker and answer 1.")
+                                answer <- ai.gen[ThoughtAnswer]
+                            yield answer
+                        }
                     }
                 }
-            }
-            _ <-
-                if kyo.ai.completion.inheritApiCredentials() then
-                    Kyo.lift(assert(result.isFailure, s"the opt-in run must fail on a bad ambient API key, got: $result"))
-                else
-                    unwrap(backend, result).map(answer =>
-                        assert(
-                            answer == ThoughtAnswer(marker, 1),
-                            s"the default (stripped) run must succeed via the CLI's own OAuth session: $answer"
+                _ <-
+                    if kyo.ai.completion.inheritApiCredentials() then
+                        Kyo.lift(assert(result.isFailure, s"the opt-in run must fail on a bad ambient API key, got: $result"))
+                    else
+                        unwrap(backend, result).map(answer =>
+                            assert(
+                                answer == ThoughtAnswer(marker, 1),
+                                s"the default (stripped) run must succeed via the CLI's own OAuth session: $answer"
+                            )
                         )
-                    )
-        yield ()
-        end for
-    }
+            yield ()
+            end for
+        }
 
     // The contract every backend must present identically: exactly one completion, the tool payload
     // parsed only in the eval loop (never by the backend), and the same typed result from the same
@@ -483,7 +485,7 @@ class LLMIntegrationTest extends BaseAITest:
             }
             statsAndAnswer <- unwrap(backend, result)
             (stats, _) = statsAndAnswer
-            _ = assert(
+            _          = assert(
                 stats.inputTokens > 0,
                 s"${backend.label} reported no input tokens for a completed turn: $stats"
             )

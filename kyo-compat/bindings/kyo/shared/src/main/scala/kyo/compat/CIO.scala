@@ -244,7 +244,7 @@ object CIO:
     ): CIO[A] =
         CIO.lift {
             Sync.Unsafe.defer {
-                val p = Promise.Unsafe.init[A, Abort[Throwable]]()
+                val p                             = Promise.Unsafe.init[A, Abort[Throwable]]()
                 val cb: scala.util.Try[A] => Unit = {
                     case scala.util.Success(a) => p.completeDiscard(Result.succeed(a))
                     case scala.util.Failure(t) => p.completeDiscard(Result.fail(t))

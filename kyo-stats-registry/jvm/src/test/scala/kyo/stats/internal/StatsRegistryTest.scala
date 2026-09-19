@@ -68,8 +68,8 @@ class StatsRegistryTest extends AnyFreeSpec {
 
     "counterGauge" - {
         "create and collect counter gauge" in {
-            val scope = StatsRegistry.scope("counterGauge", "create", "collect")
-            var value = 0L
+            val scope        = StatsRegistry.scope("counterGauge", "create", "collect")
+            var value        = 0L
             val counterGauge = scope.counterGauge("my_counter_gauge", "A test counter gauge") {
                 value += 1
                 value
@@ -79,8 +79,8 @@ class StatsRegistryTest extends AnyFreeSpec {
         }
 
         "handle overflow" in {
-            val scope = StatsRegistry.scope("counterGauge", "overflow")
-            var value = Long.MaxValue - 30
+            val scope        = StatsRegistry.scope("counterGauge", "overflow")
+            var value        = Long.MaxValue - 30
             val counterGauge = scope.counterGauge("my_counter_gauge", "A test counter gauge") {
                 value += 20
                 value

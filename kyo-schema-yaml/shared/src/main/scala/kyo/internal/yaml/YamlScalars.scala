@@ -19,7 +19,7 @@ private[kyo] object YamlScalars:
     def resolve(value: String, yamlVersion: Yaml.SpecVersion): Core =
         value match
             case "" | "~" | "null" | "Null" | "NULL" => Core.Null
-            case _ =>
+            case _                                   =>
                 parseBool(value, yamlVersion) match
                     case Present(value) => Core.Bool(value)
                     case Absent         => resolveNumber(value, yamlVersion)
@@ -73,7 +73,7 @@ private[kyo] object YamlScalars:
     private def resolveNumber(value: String, yamlVersion: Yaml.SpecVersion): Core =
         parseInt(value, yamlVersion) match
             case Present(number) => Core.Number(number)
-            case Absent =>
+            case Absent          =>
                 parseFloat(value, yamlVersion) match
                     case Present(number) => number
                     case Absent          => Core.Str(value)
@@ -92,7 +92,7 @@ private[kyo] object YamlScalars:
     private def parseYaml11Int(value: String): Maybe[String] =
         val (negative, body) = splitSign(value)
         val normalized       = body.filter(_ != '_')
-        val parsed =
+        val parsed           =
             if normalized.length > 2 && normalized.charAt(0) == '0' && normalized.charAt(1) == 'b' &&
                 digitsOnly(normalized, 2, 2)
             then Maybe(BigInt(normalized.drop(2), 2).toString)
@@ -169,7 +169,7 @@ private[kyo] object YamlScalars:
             var i     = 0
             var total = BigDecimal(0)
             while i < parts.length do
-                val part = parts(i)
+                val part   = parts(i)
                 val parsed =
                     if i == parts.length - 1 then
                         parseBigDecimal(part) match
@@ -194,7 +194,7 @@ private[kyo] object YamlScalars:
 
     private def canonicalDecimalInt(value: String): String =
         val negative = value.nonEmpty && value.charAt(0) == '-'
-        val start =
+        val start    =
             if value.nonEmpty && (value.charAt(0) == '-' || value.charAt(0) == '+') then 1
             else 0
         applySign(canonicalUnsignedDecimalInt(value.substring(start)), negative)
@@ -216,7 +216,7 @@ private[kyo] object YamlScalars:
         val suffix =
             if exponent >= 0 then value.substring(exponent)
             else ""
-        val mantissa = value.substring(0, mantissaEnd)
+        val mantissa           = value.substring(0, mantissaEnd)
         val normalizedMantissa =
             if mantissa.startsWith("-.") then "-0" + mantissa.substring(1)
             else if mantissa.startsWith(".") then "0" + mantissa

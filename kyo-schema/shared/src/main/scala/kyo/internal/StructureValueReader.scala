@@ -234,7 +234,7 @@ final class StructureValueReader(root: Structure.Value)(using _frame: Frame) ext
     def bytes(): Span[Byte] =
         currentValue match
             case Structure.Value.Bytes(value) => value
-            case Structure.Value.Str(s) =>
+            case Structure.Value.Str(s)       =>
                 Span.fromUnsafe(Base64s.decodeExact(s))
             case other => throw TypeMismatchException(Seq.empty, "Span[Byte]", other.toString)
 

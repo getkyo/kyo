@@ -65,7 +65,7 @@ object Lsp:
         Schema[X]
     ): Maybe[X] < (Sync & Abort[LspDecodeException]) =
         raw match
-            case Absent => Absent
+            case Absent     => Absent
             case Present(s) =>
                 Json.decode[X](s) match
                     case Result.Success(v) => Present(v)
@@ -75,7 +75,7 @@ object Lsp:
     private def ctx(method: String)(using Frame): RequestContext < Sync =
         local.use {
             case Present(c) => Sync.defer(c)
-            case Absent =>
+            case Absent     =>
                 Sync.defer(throw new IllegalStateException(s"Lsp.$method called outside an LSP route handler"))
         }
 
@@ -127,7 +127,7 @@ object Lsp:
     def extras[T](using Frame, Schema[T]): Maybe[T] < (Sync & Abort[LspInvalidParamsException]) =
         ctx("extras").map { c =>
             c.jsonRpc.extras match
-                case Absent => Absent
+                case Absent      => Absent
                 case Present(sv) =>
                     Structure.decode[T](sv) match
                         case Result.Success(v) => Present(v)
@@ -308,7 +308,7 @@ final private[kyo] class LspDocumentRegistryImpl private (
     )(using Frame): Unit < Sync =
         mapRef.updateAndGet { m =>
             m.get(uri) match
-                case None => m
+                case None      => m
                 case Some(doc) =>
                     m.updated(uri, LspHandler.LspDocument.applyChanges(doc, changes).copy(version = version))
         }.andThen(())

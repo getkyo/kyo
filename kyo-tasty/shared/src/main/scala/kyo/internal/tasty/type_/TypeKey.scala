@@ -16,7 +16,7 @@ import scala.collection.mutable
   * scoverage instrumentation overhead.
   */
 final class TypeKey(val hash: Int, val t: Tasty.Type):
-    override def hashCode(): Int = hash
+    override def hashCode(): Int             = hash
     override def equals(other: Any): Boolean = other match
         case that: TypeKey => TypeKey.structuralEquals(t, that.t)
         // Carve-out: Any is open; exhaustive enumeration not possible

@@ -449,7 +449,7 @@ class NavigationWatcherTest extends kyo.BrowserTest:
     private def statusServer[A, S](status: HttpStatus, path: String)(f: (String, Int) => A < (Browser & S))(using
         Frame
     ): A < (Browser & Scope & Abort[BrowserConnectionException] & Abort[HttpBindException] & Async & S) =
-        val body = Span.fromUnsafe(s"<html><body>status ${status.code}</body></html>".getBytes("UTF-8"))
+        val body    = Span.fromUnsafe(s"<html><body>status ${status.code}</body></html>".getBytes("UTF-8"))
         val handler = HttpRoute.getRaw(path).response(_.bodyBinary).handler { _ =>
             HttpResponse(status)
                 .addField("body", body)

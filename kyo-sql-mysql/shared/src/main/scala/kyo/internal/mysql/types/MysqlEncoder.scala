@@ -89,7 +89,7 @@ object MysqlEncoder:
     // --- Boolean → TINY (1 byte) ---
 
     val boolEncoder: MysqlEncoder[Boolean] = new MysqlEncoder[Boolean]:
-        def mysqlType: Int = TYPE_TINY
+        def mysqlType: Int                                      = TYPE_TINY
         def write(value: Boolean, buf: MysqlBufferWriter): Unit =
             buf.writeUInt8(if value then 1 else 0)
 
@@ -99,35 +99,35 @@ object MysqlEncoder:
     // bit pattern for negative shorts (e.g. Short.MinValue = -32768 → 0x8000 LE).
 
     val shortEncoder: MysqlEncoder[Short] = new MysqlEncoder[Short]:
-        def mysqlType: Int = TYPE_SHORT
+        def mysqlType: Int                                    = TYPE_SHORT
         def write(value: Short, buf: MysqlBufferWriter): Unit =
             buf.writeUInt16LE(value.toInt)
 
     // --- Int → LONG (4 bytes LE signed) ---
 
     val intEncoder: MysqlEncoder[Int] = new MysqlEncoder[Int]:
-        def mysqlType: Int = TYPE_LONG
+        def mysqlType: Int                                  = TYPE_LONG
         def write(value: Int, buf: MysqlBufferWriter): Unit =
             buf.writeUInt32LE(value.toLong)
 
     // --- Long → LONGLONG (8 bytes LE signed) ---
 
     val longEncoder: MysqlEncoder[Long] = new MysqlEncoder[Long]:
-        def mysqlType: Int = TYPE_LONGLONG
+        def mysqlType: Int                                   = TYPE_LONGLONG
         def write(value: Long, buf: MysqlBufferWriter): Unit =
             buf.writeUInt64LE(value)
 
     // --- Float → FLOAT (4 bytes IEEE 754 LE) ---
 
     val floatEncoder: MysqlEncoder[Float] = new MysqlEncoder[Float]:
-        def mysqlType: Int = TYPE_FLOAT
+        def mysqlType: Int                                    = TYPE_FLOAT
         def write(value: Float, buf: MysqlBufferWriter): Unit =
             buf.writeUInt32LE(java.lang.Float.floatToIntBits(value).toLong)
 
     // --- Double → DOUBLE (8 bytes IEEE 754 LE) ---
 
     val doubleEncoder: MysqlEncoder[Double] = new MysqlEncoder[Double]:
-        def mysqlType: Int = TYPE_DOUBLE
+        def mysqlType: Int                                     = TYPE_DOUBLE
         def write(value: Double, buf: MysqlBufferWriter): Unit =
             buf.writeUInt64LE(java.lang.Double.doubleToLongBits(value))
 
@@ -135,7 +135,7 @@ object MysqlEncoder:
     // MySQL binary protocol sends NEWDECIMAL as a length-encoded string.
 
     val bigDecimalEncoder: MysqlEncoder[BigDecimal] = new MysqlEncoder[BigDecimal]:
-        def mysqlType: Int = TYPE_NEWDECIMAL
+        def mysqlType: Int                                         = TYPE_NEWDECIMAL
         def write(value: BigDecimal, buf: MysqlBufferWriter): Unit =
             // Use Scala BigDecimal.toString, NOT value.underlying().toPlainString, Scala Native's
             // javalib zeros the integer digits in toPlainString. See PostgresEncoder.numericText.
@@ -147,7 +147,7 @@ object MysqlEncoder:
     // --- String → VAR_STRING (lenenc-string, UTF-8) ---
 
     val stringEncoder: MysqlEncoder[String] = new MysqlEncoder[String]:
-        def mysqlType: Int = TYPE_VAR_STRING
+        def mysqlType: Int                                     = TYPE_VAR_STRING
         def write(value: String, buf: MysqlBufferWriter): Unit =
             buf.writeLenencString(value)
 
@@ -156,14 +156,14 @@ object MysqlEncoder:
     // The wire format is identical to VAR_STRING but the type byte signals a JSON column to the server.
 
     val jsonEncoder: MysqlEncoder[String] = new MysqlEncoder[String]:
-        def mysqlType: Int = TYPE_JSON
+        def mysqlType: Int                                     = TYPE_JSON
         def write(value: String, buf: MysqlBufferWriter): Unit =
             buf.writeLenencString(value)
 
     // --- Span[Byte] → BLOB (lenenc-bytes) ---
 
     val bytesEncoder: MysqlEncoder[Span[Byte]] = new MysqlEncoder[Span[Byte]]:
-        def mysqlType: Int = TYPE_BLOB
+        def mysqlType: Int                                         = TYPE_BLOB
         def write(value: Span[Byte], buf: MysqlBufferWriter): Unit =
             buf.writeLenencInt(value.size.toLong)
             buf.writeBytes(value)
@@ -231,7 +231,7 @@ object MysqlEncoder:
     // For sub-second precision add 4 more bytes for microseconds (11 bytes total).
 
     val instantEncoder: MysqlEncoder[kyo.Instant] = new MysqlEncoder[kyo.Instant]:
-        def mysqlType: Int = TYPE_TIMESTAMP
+        def mysqlType: Int                                          = TYPE_TIMESTAMP
         def write(value: kyo.Instant, buf: MysqlBufferWriter): Unit =
             val jInstant = value.toJava
             val ldt      = java.time.LocalDateTime.ofInstant(jInstant, java.time.ZoneOffset.UTC)
@@ -242,7 +242,7 @@ object MysqlEncoder:
     // --- java.time.LocalDateTime → DATETIME (7-byte or 11-byte struct, naive) ---
 
     val localDateTimeEncoder: MysqlEncoder[java.time.LocalDateTime] = new MysqlEncoder[java.time.LocalDateTime]:
-        def mysqlType: Int = TYPE_DATETIME
+        def mysqlType: Int                                                      = TYPE_DATETIME
         def write(value: java.time.LocalDateTime, buf: MysqlBufferWriter): Unit =
             val micros = value.getNano / 1000
             writeDatetimeStruct(buf, value, micros)
@@ -251,7 +251,7 @@ object MysqlEncoder:
     // --- java.time.LocalDate → DATE (4-byte struct: year, month, day) ---
 
     val localDateEncoder: MysqlEncoder[java.time.LocalDate] = new MysqlEncoder[java.time.LocalDate]:
-        def mysqlType: Int = TYPE_DATE
+        def mysqlType: Int                                                  = TYPE_DATE
         def write(value: java.time.LocalDate, buf: MysqlBufferWriter): Unit =
             buf.writeUInt8(4)
             buf.writeUInt16LE(value.getYear)
@@ -263,7 +263,7 @@ object MysqlEncoder:
     // Wire: len(1) | is_negative(1) | days(4 LE) | hour(1) | min(1) | sec(1) [| micros(4 LE)]
 
     val localTimeEncoder: MysqlEncoder[java.time.LocalTime] = new MysqlEncoder[java.time.LocalTime]:
-        def mysqlType: Int = TYPE_TIME
+        def mysqlType: Int                                                  = TYPE_TIME
         def write(value: java.time.LocalTime, buf: MysqlBufferWriter): Unit =
             val micros = value.getNano / 1000
             writeTimeStruct(buf, isNegative = false, days = 0, value.getHour, value.getMinute, value.getSecond, micros)
@@ -278,7 +278,7 @@ object MysqlEncoder:
     // server substitutes its own ceiling and reports success. See MysqlTime.MaxSpanSeconds.
 
     val durationEncoder: MysqlEncoder[java.time.Duration] = new MysqlEncoder[java.time.Duration]:
-        def mysqlType: Int = TYPE_TIME
+        def mysqlType: Int                                                 = TYPE_TIME
         def write(value: java.time.Duration, buf: MysqlBufferWriter): Unit =
             val isNegative = value.isNegative
             val abs        = if isNegative then value.negated() else value

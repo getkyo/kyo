@@ -62,7 +62,7 @@ object Parse:
     def firstOf[In, Out, S](parsers: Seq[() => Out < (Parse[In] & S)])(using Tag[Parse[In]], Frame): Out < (Parse[In] & S) =
         Effect.defer:
             Loop(parsers):
-                case Seq() => fail("No branch succeeded")
+                case Seq()        => fail("No branch succeeded")
                 case head +: tail =>
                     attempt(head()).map:
                         case Present(value) => Loop.done(value)
@@ -245,7 +245,7 @@ object Parse:
     def readOne[In, Out](f: In => Result[Chunk[String], Out])(using Tag[Parse[In]], Frame): Out < Parse[In] =
         read(input =>
             input.headMaybe match
-                case Absent => Result.fail(Chunk(ParseFailure("EOF", input.position)))
+                case Absent         => Result.fail(Chunk(ParseFailure("EOF", input.position)))
                 case Present(token) =>
                     f(token) match
                         case Result.Failure(messages) => Result.fail(messages.map(ParseFailure(_, input.position)))
@@ -273,7 +273,7 @@ object Parse:
     ): Out < Parse[In] =
         modifyState(state =>
             f(state.input) match
-                case Result.Panic(error) => throw error
+                case Result.Panic(error)      => throw error
                 case Result.Failure(failures) =>
                     (state.copy(failures = state.failures ++ failures), Absent)
                 case Result.Success((newInput, out)) =>
@@ -329,7 +329,7 @@ object Parse:
     def anyMatch[A](using Frame)[In](pf: PartialFunction[In, A])(using Tag[Parse[In]]): A < Parse[In] =
         Parse.read(in =>
             in.headMaybe match
-                case Absent => Result.fail(Chunk(ParseFailure("Unexpected token, got EOF", in.position)))
+                case Absent         => Result.fail(Chunk(ParseFailure("Unexpected token, got EOF", in.position)))
                 case Present(token) =>
                     if pf.isDefinedAt(token) then Result.succeed((in.advance(1), pf(token)))
                     else Result.fail(Chunk(ParseFailure("Unexpected token", in.position)))
@@ -674,11 +674,11 @@ object Parse:
         allowTrailing: Boolean = false
     )(using Tag[Parse[In]]): Chunk[Out] < (Parse[In] & S) =
         attempt(element).map:
-            case Absent => Chunk.empty
+            case Absent         => Chunk.empty
             case Present(first) =>
                 Loop(Chunk(first)): acc =>
                     attempt(separator).map:
-                        case Absent => Loop.done(acc)
+                        case Absent     => Loop.done(acc)
                         case Present(_) =>
                             attempt(element).map:
                                 case Present(next) =>
@@ -874,7 +874,7 @@ object Parse:
         for
             result   <- parser
             maybeEnd <- attempt(end)
-            _ <-
+            _        <-
                 if maybeEnd.isDefined then Kyo.lift(())
                 else fail("Incomplete parse - remaining input not consumed")
         yield result
@@ -900,7 +900,7 @@ object Parse:
                         case Op.ModifyState(modify) =>
                             val (newState, optOut) = modify(state.copy(input = state.input.advanceWhile(state.isDiscarded)))
                             optOut match
-                                case Absent => Loop.done((newState, ParseResult.failure(newState.failures)))
+                                case Absent       => Loop.done((newState, ParseResult.failure(newState.failures)))
                                 case Present(out) =>
                                     Loop.continue(newState.copy(input = newState.input.advanceWhile(newState.isDiscarded)), cont(out))
                             end match

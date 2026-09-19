@@ -168,7 +168,7 @@ private[kyo] object UnsafeServerDispatch:
                             // directly, which is sufficient there since no handler-interrupt watcher is armed.
                             closeConnection match
                                 case Present(closeFn) => closeFn()
-                                case Absent =>
+                                case Absent           =>
                                     discard(inbound.close())
                                     discard(outbound.close())
                         case _ => () // Timer was interrupted (cancelled), do nothing
@@ -812,7 +812,7 @@ private[kyo] object UnsafeServerDispatch:
         error match
             case HttpRouter.FindError.NotFound =>
                 val bodyBytes = RouteUtil.encodeErrorBody(HttpStatus(404))
-                val writer = streamCtx.respond(
+                val writer    = streamCtx.respond(
                     HttpStatus(404),
                     withClose(
                         HttpHeaders.empty
@@ -829,7 +829,7 @@ private[kyo] object UnsafeServerDispatch:
                 end augmented
                 val allow     = augmented.map(_.name).mkString(", ")
                 val bodyBytes = RouteUtil.encodeErrorBody(HttpStatus(405))
-                val writer = streamCtx.respond(
+                val writer    = streamCtx.respond(
                     HttpStatus(405),
                     withClose(
                         HttpHeaders.empty
@@ -850,7 +850,7 @@ private[kyo] object UnsafeServerDispatch:
         streamCtx: Http1StreamContext
     )(using AllowUnsafe, Frame): Unit =
         val bodyBytes = RouteUtil.encodeErrorBody(HttpStatus(404))
-        val writer = streamCtx.respond(
+        val writer    = streamCtx.respond(
             HttpStatus(404),
             HttpHeaders.empty
                 .add("Content-Type", "application/json")
@@ -869,7 +869,7 @@ private[kyo] object UnsafeServerDispatch:
         streamCtx: Http1StreamContext,
         connectionClose: Boolean = false
     )(using AllowUnsafe, Frame): Unit =
-        val bodyBytes = RouteUtil.encodeErrorBody(HttpStatus(400))
+        val bodyBytes   = RouteUtil.encodeErrorBody(HttpStatus(400))
         val baseHeaders = HttpHeaders.empty
             .add("Content-Type", "application/json")
             .add("Content-Length", bodyBytes.size)
@@ -885,7 +885,7 @@ private[kyo] object UnsafeServerDispatch:
         streamCtx: Http1StreamContext,
         connectionClose: Boolean = false
     )(using AllowUnsafe, Frame): Unit =
-        val bodyBytes = RouteUtil.encodeErrorBody(HttpStatus(500))
+        val bodyBytes   = RouteUtil.encodeErrorBody(HttpStatus(500))
         val baseHeaders = HttpHeaders.empty
             .add("Content-Type", "application/json")
             .add("Content-Length", bodyBytes.size)
@@ -923,7 +923,7 @@ private[kyo] object UnsafeServerDispatch:
         streamCtx: Http1StreamContext,
         connectionClose: Boolean = false
     )(using AllowUnsafe, Frame): Unit =
-        val bodyBytes = RouteUtil.encodeErrorBody(HttpStatus(413))
+        val bodyBytes   = RouteUtil.encodeErrorBody(HttpStatus(413))
         val baseHeaders = HttpHeaders.empty
             .add("Content-Type", "application/json")
             .add("Content-Length", bodyBytes.size)
@@ -939,7 +939,7 @@ private[kyo] object UnsafeServerDispatch:
         streamCtx: Http1StreamContext,
         connectionClose: Boolean = false
     )(using AllowUnsafe, Frame): Unit =
-        val bodyBytes = RouteUtil.encodeErrorBody(HttpStatus(417))
+        val bodyBytes   = RouteUtil.encodeErrorBody(HttpStatus(417))
         val baseHeaders = HttpHeaders.empty
             .add("Content-Type", "application/json")
             .add("Content-Length", bodyBytes.size)
@@ -958,7 +958,7 @@ private[kyo] object UnsafeServerDispatch:
         streamCtx.outbound.offer(Span.fromUnsafe(continueBytes)) match
             case Result.Success(_)         => ()
             case Result.Failure(_: Closed) => ()
-            case Result.Panic(t) =>
+            case Result.Panic(t)           =>
                 Log.live.unsafe.error("UnsafeServerDispatch: panic writing 100 Continue", t)
         end match
     end writeContinue
@@ -973,11 +973,11 @@ private[kyo] object UnsafeServerDispatch:
     ): Dict[String, String] =
         if lookup.captureCount == 0 then Dict.empty[String, String]
         else
-            val builder = DictBuilder.init[String, String]
+            val builder                     = DictBuilder.init[String, String]
             @tailrec def loop(i: Int): Unit =
                 if i < lookup.captureCount && i < captureNames.size then
                     val segIdx = lookup.captureSegmentIndices(i)
-                    val value =
+                    val value  =
                         if i == lookup.restCaptureIdx then
                             // Rest capture: join all remaining segments with '/'
                             request.restPathAsString(segIdx)

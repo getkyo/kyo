@@ -242,7 +242,7 @@ private[kyo] object MutationSettlement:
                     .map { env =>
                         CdpEvalDecoder.extractValueOrFail(env).map { value =>
                             parseSettlementValue(value) match
-                                case SettlementResult.Done => ()
+                                case SettlementResult.Done                  => ()
                                 case SettlementResult.Timeout(count, delta) =>
                                     Abort.fail(
                                         BrowserAssertionTimedOutException.notQuiesced(
@@ -296,7 +296,7 @@ private[kyo] object MutationSettlement:
         Json.decode[SettlementWire](value) match
             case Result.Success(w) =>
                 w.tag match
-                    case "done" => SettlementResult.Done
+                    case "done"    => SettlementResult.Done
                     case "timeout" =>
                         (w.count, w.delta) match
                             case (Present(c), Present(d)) => SettlementResult.Timeout(c, d)

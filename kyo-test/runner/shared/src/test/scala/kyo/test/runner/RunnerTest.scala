@@ -38,8 +38,8 @@ class RTConcurrencySuite extends TestBase[Any]:
 end RTConcurrencySuite
 
 object RTConcurrencySuite:
-    val inFlight: AtomicInteger = new AtomicInteger(0)
-    val peak: AtomicInteger     = new AtomicInteger(0)
+    val inFlight: AtomicInteger  = new AtomicInteger(0)
+    val peak: AtomicInteger      = new AtomicInteger(0)
     def updatePeak(n: Int): Unit =
         var cur = peak.get()
         while n > cur && !peak.compareAndSet(cur, n) do cur = peak.get()
@@ -185,7 +185,7 @@ final class RecordingHeartbeatReporter extends kyo.test.TestReporter:
     def onLeafComplete(info: kyo.test.LeafInfo, result: TestResult): Unit             = ()
     def onSuiteComplete(info: kyo.test.SuiteInfo, report: kyo.test.SuiteReport): Unit = ()
     def onRunComplete(report: TestReport): Unit                                       = ()
-    override def onLeafHeartbeat(info: kyo.test.LeafInfo, elapsed: Duration): Unit =
+    override def onLeafHeartbeat(info: kyo.test.LeafInfo, elapsed: Duration): Unit    =
         beats.updateAndGet(_ :+ (info.path -> elapsed)): Unit
     def recorded: Vector[(Chunk[String], Duration)] = beats.get()
 end RecordingHeartbeatReporter
@@ -277,7 +277,7 @@ class RunnerTest extends AsyncFreeSpec with NonImplicitAssertions:
     }
 
     "Scenario 7: per-leaf Local context is visible inside the leaf fiber" in {
-        val local = Local.init("default")
+        val local                                            = Local.init("default")
         val computation: String < (Async & Abort[Throwable]) =
             local.let("leaf-ctx")(Fiber.initUnscoped(local.use(v => v)).flatMap(_.get))
         val asFuture: Future[String] < Sync =

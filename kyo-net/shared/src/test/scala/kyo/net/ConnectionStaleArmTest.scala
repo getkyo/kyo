@@ -91,7 +91,7 @@ class ConnectionStaleArmTest extends Test:
                     def awaitAccept(handle: Unit, promise: Promise.Unsafe[Int, Abort[Closed | NetException]])(using
                         AllowUnsafe,
                         Frame
-                    ): Unit = ()
+                    ): Unit                                                                                = ()
                     def write(handle: Unit, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult = WriteResult.Done
                     def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit                               = ()
                     def closeHandle(handle: Unit)(using AllowUnsafe, Frame): Unit                          = ()

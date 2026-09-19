@@ -19,7 +19,7 @@ class LspResultShapesTest extends Test:
     val pos0   = LspHandler.Position(0, 0)
     val range0 = LspHandler.Range(pos0, pos0)
     val loc0   = LspHandler.Location(LspHandler.LspDocument.Uri.fromWire("file:///test.scala"), range0)
-    val link0 = LspHandler.LocationLink(
+    val link0  = LspHandler.LocationLink(
         originSelectionRange = Absent,
         targetUri = LspHandler.LspDocument.Uri.fromWire("file:///test.scala"),
         targetRange = range0,
@@ -175,7 +175,7 @@ class LspResultShapesTest extends Test:
     // ---- WorkspaceDocumentDiagnosticReport ----
 
     "WorkspaceDocumentDiagnosticReport.Full round-trips" in {
-        val uri = LspHandler.LspDocument.Uri.fromWire("file:///test.scala")
+        val uri                                             = LspHandler.LspDocument.Uri.fromWire("file:///test.scala")
         val v: LspHandler.WorkspaceDocumentDiagnosticReport = LspHandler.WorkspaceDocumentDiagnosticReport.Full(
             uri = uri,
             items = Chunk.empty
@@ -184,7 +184,7 @@ class LspResultShapesTest extends Test:
     }
 
     "WorkspaceDocumentDiagnosticReport.Unchanged round-trips" in {
-        val uri = LspHandler.LspDocument.Uri.fromWire("file:///test.scala")
+        val uri                                             = LspHandler.LspDocument.Uri.fromWire("file:///test.scala")
         val v: LspHandler.WorkspaceDocumentDiagnosticReport = LspHandler.WorkspaceDocumentDiagnosticReport.Unchanged(
             uri = uri,
             resultId = "r1"

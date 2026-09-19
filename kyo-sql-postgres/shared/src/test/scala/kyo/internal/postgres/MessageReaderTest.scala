@@ -169,7 +169,7 @@ class MessageReaderTest extends Test:
         Abort.run[Closed](conn.inbound.safe.put(frame)).flatMap { _ =>
             Abort.run[SqlException](reader.readOne(conn, unmarshallers)).map {
                 case Result.Failure(_: SqlConnectionException) => succeed
-                case Result.Panic(t) =>
+                case Result.Panic(t)                           =>
                     fail(s"Expected SqlConnectionException but got panic: ${t.getMessage}")
                 case other =>
                     fail(s"Expected SqlConnectionException, got: $other")

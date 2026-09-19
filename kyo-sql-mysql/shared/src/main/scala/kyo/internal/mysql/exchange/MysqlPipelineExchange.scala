@@ -108,7 +108,7 @@ object MysqlPipelineExchange:
         }.flatMap {
             case Result.Success(r) => r
             case Result.Failure(e) => Result.Failure(e)
-            case Result.Panic(t) =>
+            case Result.Panic(t)   =>
                 Abort.error(Result.Panic(t))
         }
 

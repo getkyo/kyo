@@ -245,7 +245,7 @@ class ContainerTest extends BasePodTest:
         "non-empty composite picks head's schedule" in {
             val s1 = Schedule.fixed(123.millis).take(1)
             val s2 = Schedule.fixed(456.millis).take(2)
-            val a = new Container.HealthCheck:
+            val a  = new Container.HealthCheck:
                 def check(c: Container)(using Frame) = ()
                 def schedule: Schedule               = s1
             val b = new Container.HealthCheck:
@@ -809,8 +809,8 @@ class ContainerTest extends BasePodTest:
             val containers = tmpRoot / "containers"
             Path.run {
                 for
-                    _ <- containers.mkDir
-                    _ <- (containers / "auth.json").write("""{"auths":{"ghcr.io":"dGVzdA=="}}""")
+                    _    <- containers.mkDir
+                    _    <- (containers / "auth.json").write("""{"auths":{"ghcr.io":"dGVzdA=="}}""")
                     auth <- kyo.System.let(systemWith(
                         envOverrides = Map("XDG_RUNTIME_DIR" -> tmpRoot.toString, "DOCKER_CONFIG" -> ""),
                         propsOverrides = Map("user.home" -> "/nonexistent")
@@ -831,8 +831,8 @@ class ContainerTest extends BasePodTest:
             val containers = tmpRoot / "containers"
             Path.run {
                 for
-                    _ <- containers.mkDir
-                    _ <- (containers / "auth.json").write("not json")
+                    _    <- containers.mkDir
+                    _    <- (containers / "auth.json").write("not json")
                     auth <- kyo.System.let(systemWith(
                         envOverrides = Map("XDG_RUNTIME_DIR" -> tmpRoot.toString, "DOCKER_CONFIG" -> ""),
                         propsOverrides = Map("user.home" -> "/nonexistent")
@@ -1286,7 +1286,7 @@ class ContainerTest extends BasePodTest:
         "ContainerHealthCheckException.lastError shape: long reason truncated to cap per entry" in {
             val long = "x" * 1000
             // Simulate the runHealthCheck loop filling the buffer to capacity with the same long error.
-            val cap = Container.healthCheckRecentErrorsCapacity
+            val cap  = Container.healthCheckRecentErrorsCapacity
             val errs = (1 to cap).foldLeft(Seq.empty[String])((acc, _) =>
                 Container.appendRecentHealthCheckError(acc, Container.truncateHealthCheckError(long))
             )
@@ -1342,7 +1342,7 @@ class ContainerTest extends BasePodTest:
         // The gate that keeps the host-side SIGKILL from signalling an unrelated host process:
         // only a pid whose cgroup names this container is ever signalled.
         "accepts a rootless podman libpod scope" in {
-            val id = Container.Id("3f9a1c2b4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8")
+            val id     = Container.Id("3f9a1c2b4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8")
             val cgroup =
                 "0::/user.slice/user-1001.slice/user@1001.service/user.slice/libpod-3f9a1c2b4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8.scope\n"
             assert(Container.cgroupNamesContainer(cgroup, id))
@@ -1381,7 +1381,7 @@ class ContainerTest extends BasePodTest:
             for
                 calls     <- AtomicInt.init(0)
                 escalated <- AtomicInt.init(0)
-                _ <- Container.withUnreapedProcessFallback(escalated.incrementAndGet.andThen(true)) {
+                _         <- Container.withUnreapedProcessFallback(escalated.incrementAndGet.andThen(true)) {
                     calls.incrementAndGet.unit
                 }
                 callCount <- calls.get
@@ -1395,7 +1395,7 @@ class ContainerTest extends BasePodTest:
             for
                 calls     <- AtomicInt.init(0)
                 escalated <- AtomicInt.init(0)
-                result <- Abort.run[ContainerException] {
+                result    <- Abort.run[ContainerException] {
                     Container.withUnreapedProcessFallback(escalated.incrementAndGet.andThen(true)) {
                         calls.incrementAndGet.map { n =>
                             if n == 1 then
@@ -1414,7 +1414,7 @@ class ContainerTest extends BasePodTest:
 
         "re-raises the daemon failure when the escalation declines" in {
             for
-                calls <- AtomicInt.init(0)
+                calls  <- AtomicInt.init(0)
                 result <- Abort.run[ContainerException] {
                     Container.withUnreapedProcessFallback(false) {
                         calls.incrementAndGet.andThen(
@@ -1431,7 +1431,7 @@ class ContainerTest extends BasePodTest:
         "leaves an unrelated failure untouched" in {
             for
                 escalated <- AtomicInt.init(0)
-                result <- Abort.run[ContainerException] {
+                result    <- Abort.run[ContainerException] {
                     Container.withUnreapedProcessFallback(escalated.incrementAndGet.andThen(true)) {
                         Abort.fail(ContainerMissingException(Container.Id("gone")))
                     }
@@ -1446,7 +1446,7 @@ class ContainerTest extends BasePodTest:
 
         "surfaces a second failure from the retried call rather than looping" in {
             for
-                calls <- AtomicInt.init(0)
+                calls  <- AtomicInt.init(0)
                 result <- Abort.run[ContainerException] {
                     Container.withUnreapedProcessFallback(true) {
                         calls.incrementAndGet.andThen(

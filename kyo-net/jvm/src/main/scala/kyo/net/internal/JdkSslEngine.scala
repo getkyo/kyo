@@ -62,7 +62,7 @@ final private[net] class JdkSslEngine(engine: SSLEngine) extends TlsEngine:
     /** Append `src` (a read-mode buffer) into the read-mode accumulator `dst`, growing if needed. Returns the appended buffer in read mode. */
     private def appendRead(dst: ByteBuffer, src: ByteBuffer): ByteBuffer =
         val needed = dst.remaining() + src.remaining()
-        val out =
+        val out    =
             if needed > dst.capacity() then ByteBuffer.allocate(Math.max(needed, dst.capacity() * 2))
             else dst.duplicate()
         // Build in write mode then flip to read mode.

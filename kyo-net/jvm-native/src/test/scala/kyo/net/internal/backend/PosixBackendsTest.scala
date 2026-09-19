@@ -58,7 +58,7 @@ class PosixBackendsTest extends Test:
             else if PosixConstants.isMacOrBsd then ("kqueue", KqueueBackend.probe)
             else cancel("neither Linux nor macOS/BSD: no posix readiness backend applies on this host")
         outcome match
-            case CapabilityOutcome.Available => succeed
+            case CapabilityOutcome.Available                => succeed
             case CapabilityOutcome.NotBundled(id, platform) =>
                 cancel(s"$backend demoted because '$id' is not bundled for $platform, which is the honest outcome on this host")
             case other =>

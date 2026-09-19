@@ -8,9 +8,8 @@ object Board:
     val empty: Board = Vector.empty
 
     extension (b: Board)
-        def safe(row: Int, col: Int): Boolean =
-            (0 until row).forall: i =>
-                b(i) != col && abs(i - row) != abs(b(i) - col)
+        def safe(row: Int, col: Int): Boolean = (0 until row).forall: i =>
+            b(i) != col && abs(i - row) != abs(b(i) - col)
 
         def queens(n: Int, row: Int = 0): Board < Choice =
             if row == n then b
@@ -20,9 +19,9 @@ object Board:
                         (b :+ col).queens(n, row + 1)
 
         def show: String =
-            val n   = b.length
-            val top = "╭" + ("─┬" * (n - 1)) + "─╮"
-            val bot = "╰" + ("─┴" * (n - 1)) + "─╯"
+            val n    = b.length
+            val top  = "╭" + ("─┬" * (n - 1)) + "─╮"
+            val bot  = "╰" + ("─┴" * (n - 1)) + "─╯"
             val rows = (0 until n).map { r =>
                 b.indices.map(c => if b(r) == c then "♛" else "·").mkString("│", "│", "│")
             }

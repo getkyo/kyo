@@ -18,7 +18,7 @@ class FlowEngineSubflowTest extends FlowEngineSupport:
         "child output accessible downstream via nested record" in {
             withEngine { (engine, store, tc) =>
                 val child = Flow.input[Int]("a").output("b")(ctx => ctx.a * 10)
-                val flow = Flow.input[Int]("x")
+                val flow  = Flow.input[Int]("x")
                     .subflow("payment", child)(ctx => "a" ~ ctx.x)
                     .output("result")(ctx => ctx.payment.b)
                 for
@@ -38,7 +38,7 @@ class FlowEngineSubflowTest extends FlowEngineSupport:
         "child fields do not leak into parent namespace" in {
             withEngine { (engine, store, tc) =>
                 val child = Flow.input[Int]("a").output("b")(ctx => ctx.a * 10)
-                val flow = Flow.input[Int]("x")
+                val flow  = Flow.input[Int]("x")
                     .subflow("payment", child)(ctx => "a" ~ ctx.x)
                     .output("result")(ctx => ctx.x + 1) // uses parent field, not child
                 for
@@ -63,7 +63,7 @@ class FlowEngineSubflowTest extends FlowEngineSupport:
         "subflow replays correctly after suspension" in {
             withEngine { (engine, store, tc) =>
                 var childBodyCount = 0
-                val child = Flow.input[Int]("a").output("b") { ctx =>
+                val child          = Flow.input[Int]("a").output("b") { ctx =>
                     childBodyCount += 1
                     ctx.a * 10
                 }
@@ -95,7 +95,7 @@ class FlowEngineSubflowTest extends FlowEngineSupport:
             withEngine { (engine, store, tc) =>
                 val child1 = Flow.input[Int]("a").output("b")(ctx => ctx.a + 1)
                 val child2 = Flow.input[Int]("a").output("b")(ctx => ctx.a * 2)
-                val flow = Flow.input[Int]("x")
+                val flow   = Flow.input[Int]("x")
                     .subflow("first", child1)(ctx => "a" ~ ctx.x)
                     .subflow("second", child2)(ctx => "a" ~ ctx.x)
                     .output("result")(ctx => ctx.first.b + ctx.second.b)
@@ -164,7 +164,7 @@ class FlowEngineSubflowTest extends FlowEngineSupport:
 
         "nested subflow (subflow within subflow)" in {
             withEngine { (engine, store, tc) =>
-                val inner = Flow.input[Int]("a").output("b")(ctx => ctx.a * 3)
+                val inner  = Flow.input[Int]("a").output("b")(ctx => ctx.a * 3)
                 val middle = Flow.input[Int]("a")
                     .subflow("inner", inner)(ctx => "a" ~ ctx.a)
                     .output("c")(ctx => ctx.inner.b + 1)
@@ -189,7 +189,7 @@ class FlowEngineSubflowTest extends FlowEngineSupport:
         "inputMapper throws, so the parent fails" in {
             withEngine { (engine, store, tc) =>
                 val child = Flow.input[Int]("a").output("b")(ctx => ctx.a)
-                val flow = Flow.input[Int]("x")
+                val flow  = Flow.input[Int]("x")
                     .subflow("sub", child)(ctx =>
                         throw new RuntimeException("mapper fail"); "a" ~ 0
                     )
@@ -313,7 +313,7 @@ class FlowEngineSubflowTest extends FlowEngineSupport:
         "a child input is recorded under its path at the subflow's entry" in {
             withEngine { (engine, store, tc) =>
                 val child = Flow.input[Int]("amount").output("fee")(ctx => ctx.amount * 2)
-                val flow = Flow.input[Int]("x")
+                val flow  = Flow.input[Int]("x")
                     .subflow("review", child)(ctx => "amount" ~ ctx.x)
                     .output("done")(ctx => ctx.review.fee)
                 for
@@ -451,7 +451,7 @@ class FlowEngineSubflowTest extends FlowEngineSupport:
         "a re-entered subflow does not record its inputs twice" in {
             withEngine { (engine, store, tc) =>
                 val child = Flow.input[Int]("amount").output("fee")(ctx => ctx.amount * 2)
-                val flow = Flow.input[Int]("x")
+                val flow  = Flow.input[Int]("x")
                     .subflow("payment", child)(ctx => "amount" ~ ctx.x)
                     .input[String]("gate")
                     .output("done")(ctx => ctx.payment.fee)
@@ -545,7 +545,7 @@ class FlowEngineSubflowTest extends FlowEngineSupport:
             withEngine { (engine, store, tc) =>
                 AtomicInt.init(0).map { mapperRuns =>
                     val child = Flow.init("no-inputs").output("b")(_ => 7)
-                    val flow = Flow.init("empty-mapper")
+                    val flow  = Flow.init("empty-mapper")
                         .subflow("review", child)(_ => mapperRuns.incrementAndGet.andThen(Record.empty))
                         .output("done")(_ => "ok")
                     for
@@ -627,7 +627,7 @@ class FlowEngineSubflowTest extends FlowEngineSupport:
         "a child input cannot be signalled by either name" in {
             withEngine { (engine, store, tc) =>
                 val child = Flow.input[Int]("amount").output("fee")(ctx => ctx.amount * 2)
-                val flow = Flow.input[Int]("x")
+                val flow  = Flow.input[Int]("x")
                     .subflow("review", child)(ctx => "amount" ~ ctx.x)
                     .input[String]("gate")
                     .output("done")(_ => "ok")
@@ -684,7 +684,7 @@ class FlowEngineSubflowTest extends FlowEngineSupport:
             withEngine { (engine, store, tc) =>
                 AtomicInt.init(0).map { mapperRuns =>
                     val child = Flow.input[Int]("amount").output("fee")(ctx => ctx.amount * 2)
-                    val flow = Flow.init("resumed-unwind")
+                    val flow  = Flow.init("resumed-unwind")
                         .subflow("review", child)(_ => mapperRuns.incrementAndGet.andThen("amount" ~ 1))
                     for
                         eid <- Sync.defer(Flow.Id.Execution("exec-resumed-unwind-subflow"))

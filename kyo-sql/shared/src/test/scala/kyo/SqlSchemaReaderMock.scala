@@ -117,11 +117,12 @@ final class SqlSchemaReaderMock(
       * only when the answer is false, so answering true without consuming would leave the null column in front of the next field's read.
       */
     override def isNil(): Boolean =
-        idx < recorded.size && (recorded(idx) match
-            case Call.Nil =>
-                idx += 1
-                true
-            case _ => false)
+        idx < recorded.size &&
+            (recorded(idx) match
+                case Call.Nil =>
+                    idx += 1
+                    true
+                case _ => false)
 
     override def skip(): Unit = kyo.discard(next())
 

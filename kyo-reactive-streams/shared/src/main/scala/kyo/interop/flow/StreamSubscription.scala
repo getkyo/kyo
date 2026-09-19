@@ -54,7 +54,7 @@ final private[kyo] class StreamSubscription[V, S](
         @tailrec def stopLoop(): Unit =
             lifecycle.get() match
                 case _: Lifecycle.Stopped => ()
-                case prior =>
+                case prior                =>
                     if !lifecycle.compareAndSet(prior, Lifecycle.Stopped(prior)) then stopLoop()
                     else
                         discard(requestChannel.close())

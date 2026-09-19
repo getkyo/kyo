@@ -306,7 +306,7 @@ class Http1StreamContextTest extends kyo.BaseHttpTest:
             writer.writeChunk(Span.fromUnsafe("chunk".getBytes(StandardCharsets.US_ASCII)))
             writer.finish()
             outbound.poll() match
-                case Result.Success(Absent) => succeed("nothing followed the 500 head")
+                case Result.Success(Absent)        => succeed("nothing followed the 500 head")
                 case Result.Success(Present(span)) =>
                     fail(s"the discarded response wrote '${new String(span.toArray, StandardCharsets.US_ASCII)}' after the 500 head")
                 case other => fail(s"Expected an empty outbound, got: $other")

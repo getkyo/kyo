@@ -187,7 +187,7 @@ class EngineFifoSingleOwnerTest extends Test:
                         orderUnderPin    = probe.order
                         inFlightUnderPin = probe.inFlight.get()
                         _                = gate.countDown()
-                        _ = assert(
+                        _                = assert(
                             !orderUnderPin.contains(s"$name-B"),
                             s"[$name] op B ran on a second worker while op A held the single worker: $orderUnderPin"
                         )

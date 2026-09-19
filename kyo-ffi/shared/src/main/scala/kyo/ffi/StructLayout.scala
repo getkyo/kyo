@@ -52,7 +52,7 @@ object StructLayout:
 
     private[kyo] inline def fieldAccessors[Elems <: Tuple]: List[FieldAccessor] =
         inline erasedValue[Elems] match
-            case _: EmptyTuple => Nil
+            case _: EmptyTuple     => Nil
             case _: (head *: tail) =>
                 fieldAccessor[head] :: fieldAccessors[tail]
 

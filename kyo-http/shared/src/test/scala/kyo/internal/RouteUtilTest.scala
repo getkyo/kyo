@@ -76,15 +76,15 @@ class RouteUtilTest extends kyo.BaseHttpTest:
             val uuid      = UUID.parse("00112233-4455-4677-a899-aabbccddeeff").getOrThrow
             val generator = new FixedUUIDGenerator(uuid)
             val route     = HttpRoute.postRaw("upload").request(_.bodyMultipart)
-            val parts = Seq(
+            val parts     = Seq(
                 HttpRequest.Part("field", Absent, Absent, Span.fromUnsafe("value".getBytes("UTF-8")))
             )
             val request = HttpRequest.postRaw(HttpUrl.parse("http://localhost/upload").getOrThrow)
                 .addField("body", parts)
 
-            var callbackInvoked = false
-            var headers         = HttpHeaders.empty
-            var body            = Span.empty[Byte]
+            var callbackInvoked       = false
+            var headers               = HttpHeaders.empty
+            var body                  = Span.empty[Byte]
             val encoding: Unit < Sync =
                 RouteUtil.encodeRequest(route, request)(
                     onEmpty = (_, _) => fail("expected buffered"),
@@ -110,9 +110,9 @@ class RouteUtilTest extends kyo.BaseHttpTest:
         }
 
         "streaming multipart boundary is generated inside the scoped effect" in {
-            val uuid      = UUID.parse("ffeeddcc-bbaa-4988-b766-554433221100").getOrThrow
-            val generator = new FixedUUIDGenerator(uuid)
-            val route     = HttpRoute.postRaw("upload").request(_.bodyMultipartStream)
+            val uuid                                   = UUID.parse("ffeeddcc-bbaa-4988-b766-554433221100").getOrThrow
+            val generator                              = new FixedUUIDGenerator(uuid)
+            val route                                  = HttpRoute.postRaw("upload").request(_.bodyMultipartStream)
             val parts: Stream[HttpRequest.Part, Async] = Stream.init(Seq(
                 HttpRequest.Part("field", Absent, Absent, Span.fromUnsafe("value".getBytes("UTF-8")))
             ))
@@ -122,7 +122,7 @@ class RouteUtilTest extends kyo.BaseHttpTest:
             var callbackInvoked                 = false
             var headers                         = HttpHeaders.empty
             var body: Stream[Span[Byte], Async] = Stream.empty
-            val encoding: Unit < Sync =
+            val encoding: Unit < Sync           =
                 RouteUtil.encodeRequest(route, request)(
                     onEmpty = (_, _) => fail("expected streaming"),
                     onBuffered = (_, _, _) => fail("expected streaming"),
@@ -149,11 +149,11 @@ class RouteUtilTest extends kyo.BaseHttpTest:
 
         "buffered multipart uses the boundary supplied in the request Content-Type" in {
             val suppliedBoundary = "caller:request-boundary"
-            val generated =
+            val generated        =
                 UUID.parse("00112233-4455-4677-a899-aabbccddeeff").getOrThrow
             val generator = new FixedUUIDGenerator(generated)
             val route     = HttpRoute.postRaw("upload").request(_.bodyMultipart)
-            val request = HttpRequest
+            val request   = HttpRequest
                 .postRaw(HttpUrl.parse("http://localhost/upload").getOrThrow)
                 .setHeader("Content-Type", s"multipart/form-data; boundary=\"$suppliedBoundary\"")
                 .addField(
@@ -185,7 +185,7 @@ class RouteUtilTest extends kyo.BaseHttpTest:
             val uuid      = UUID.parse("00112233-4455-4677-a899-aabbccddeeff").getOrThrow
             val generator = new FixedUUIDGenerator(uuid)
             val route     = HttpRoute.postRaw("upload").request(_.bodyMultipart)
-            val request = HttpRequest
+            val request   = HttpRequest
                 .postRaw(HttpUrl.parse("http://localhost/upload").getOrThrow)
                 .setHeader("Content-Type", "multipart/form-data; boundary=\"abc;def\"")
                 .addField(
@@ -218,7 +218,7 @@ class RouteUtilTest extends kyo.BaseHttpTest:
             val uuid      = UUID.parse("00112233-4455-4677-a899-aabbccddeeff").getOrThrow
             val generator = new FixedUUIDGenerator(uuid)
             val route     = HttpRoute.postRaw("upload").request(_.bodyMultipart)
-            val request = HttpRequest
+            val request   = HttpRequest
                 .postRaw(HttpUrl.parse("http://localhost/upload").getOrThrow)
                 .setHeader("Content-Type", "multipart/form-data; boundary=abc:def")
                 .addField(
@@ -261,7 +261,7 @@ class RouteUtilTest extends kyo.BaseHttpTest:
         }
 
         "json body" in {
-            val route = HttpRoute.postRaw("users").request(_.bodyJson[User])
+            val route   = HttpRoute.postRaw("users").request(_.bodyJson[User])
             val request = HttpRequest.postRaw(HttpUrl.parse("http://localhost/users").getOrThrow)
                 .addField("body", User("Alice", 30))
 
@@ -282,7 +282,7 @@ class RouteUtilTest extends kyo.BaseHttpTest:
         }
 
         "text body" in {
-            val route = HttpRoute.postRaw("echo").request(_.bodyText)
+            val route   = HttpRoute.postRaw("echo").request(_.bodyText)
             val request = HttpRequest.postRaw(HttpUrl.parse("http://localhost/echo").getOrThrow)
                 .addField("body", "hello world")
 
@@ -301,7 +301,7 @@ class RouteUtilTest extends kyo.BaseHttpTest:
         }
 
         "path captures" in {
-            val route = HttpRoute.getRaw("users" / HttpPath.Capture[Int]("userId") / "posts")
+            val route   = HttpRoute.getRaw("users" / HttpPath.Capture[Int]("userId") / "posts")
             val request = HttpRequest(
                 HttpMethod.GET,
                 HttpUrl.parse("http://localhost/users/42/posts").getOrThrow,
@@ -319,7 +319,7 @@ class RouteUtilTest extends kyo.BaseHttpTest:
         }
 
         "query params" in {
-            val route = HttpRoute.getRaw("users").request(_.query[Int]("page").query[String]("sort"))
+            val route   = HttpRoute.getRaw("users").request(_.query[Int]("page").query[String]("sort"))
             val request = HttpRequest(
                 HttpMethod.GET,
                 HttpUrl.parse("http://localhost/users").getOrThrow,
@@ -338,7 +338,7 @@ class RouteUtilTest extends kyo.BaseHttpTest:
         }
 
         "header params" in {
-            val route = HttpRoute.getRaw("data").request(_.header[String]("apiKey", wireName = "X-Api-Key"))
+            val route   = HttpRoute.getRaw("data").request(_.header[String]("apiKey", wireName = "X-Api-Key"))
             val request = HttpRequest(
                 HttpMethod.GET,
                 HttpUrl.parse("http://localhost/data").getOrThrow,
@@ -356,7 +356,7 @@ class RouteUtilTest extends kyo.BaseHttpTest:
         }
 
         "cookie params" in {
-            val route = HttpRoute.getRaw("data").request(_.cookie[String]("session"))
+            val route   = HttpRoute.getRaw("data").request(_.cookie[String]("session"))
             val request = HttpRequest(
                 HttpMethod.GET,
                 HttpUrl.parse("http://localhost/data").getOrThrow,
@@ -374,7 +374,7 @@ class RouteUtilTest extends kyo.BaseHttpTest:
         }
 
         "optional param present" in {
-            val route = HttpRoute.getRaw("users").request(_.queryOpt[Int]("page"))
+            val route   = HttpRoute.getRaw("users").request(_.queryOpt[Int]("page"))
             val request = HttpRequest(
                 HttpMethod.GET,
                 HttpUrl.parse("http://localhost/users").getOrThrow,
@@ -392,7 +392,7 @@ class RouteUtilTest extends kyo.BaseHttpTest:
         }
 
         "optional param absent" in {
-            val route = HttpRoute.getRaw("users").request(_.queryOpt[Int]("page"))
+            val route   = HttpRoute.getRaw("users").request(_.queryOpt[Int]("page"))
             val request = HttpRequest(
                 HttpMethod.GET,
                 HttpUrl.parse("http://localhost/users").getOrThrow,
@@ -586,7 +586,7 @@ class RouteUtilTest extends kyo.BaseHttpTest:
             val uuid      = UUID.parse("00112233-4455-4677-a899-aabbccddeeff").getOrThrow
             val generator = new FixedUUIDGenerator(uuid)
             type MultipartOutput = "body" ~ Seq[HttpRequest.Part]
-            val base = HttpRoute.getRaw("download")
+            val base                                            = HttpRoute.getRaw("download")
             val route: HttpRoute[Any, MultipartOutput, Nothing] = HttpRoute(
                 base.method,
                 base.request,
@@ -599,9 +599,9 @@ class RouteUtilTest extends kyo.BaseHttpTest:
                 Seq(HttpRequest.Part("field", Absent, Absent, Span.fromUnsafe("value".getBytes("UTF-8"))))
             )
 
-            var callbackInvoked = false
-            var headers         = HttpHeaders.empty
-            var body            = Span.empty[Byte]
+            var callbackInvoked       = false
+            var headers               = HttpHeaders.empty
+            var body                  = Span.empty[Byte]
             val encoding: Unit < Sync =
                 RouteUtil.encodeResponse(route, response)(
                     onEmpty = (_, _) => fail("expected buffered"),
@@ -632,7 +632,7 @@ class RouteUtilTest extends kyo.BaseHttpTest:
             val uuid      = UUID.parse("ffeeddcc-bbaa-4988-b766-554433221100").getOrThrow
             val generator = new FixedUUIDGenerator(uuid)
             type MultipartOutput = "body" ~ Stream[HttpRequest.Part, Async]
-            val base = HttpRoute.getRaw("download")
+            val base                                            = HttpRoute.getRaw("download")
             val route: HttpRoute[Any, MultipartOutput, Nothing] = HttpRoute(
                 base.method,
                 base.request,
@@ -648,7 +648,7 @@ class RouteUtilTest extends kyo.BaseHttpTest:
             var callbackInvoked                 = false
             var headers                         = HttpHeaders.empty
             var body: Stream[Span[Byte], Async] = Stream.empty
-            val encoding: Unit < Sync =
+            val encoding: Unit < Sync           =
                 RouteUtil.encodeResponse(route, response)(
                     onEmpty = (_, _) => fail("expected streaming"),
                     onBuffered = (_, _, _) => fail("expected streaming"),
@@ -676,11 +676,11 @@ class RouteUtilTest extends kyo.BaseHttpTest:
 
         "buffered multipart uses the boundary supplied in the response Content-Type" in {
             val suppliedBoundary = "caller:response-boundary"
-            val generated =
+            val generated        =
                 UUID.parse("00112233-4455-4677-a899-aabbccddeeff").getOrThrow
             val generator = new FixedUUIDGenerator(generated)
             type MultipartOutput = "body" ~ Seq[HttpRequest.Part]
-            val base = HttpRoute.getRaw("download")
+            val base                                            = HttpRoute.getRaw("download")
             val route: HttpRoute[Any, MultipartOutput, Nothing] = HttpRoute(
                 base.method,
                 base.request,
@@ -719,7 +719,7 @@ class RouteUtilTest extends kyo.BaseHttpTest:
             val uuid      = UUID.parse("ffeeddcc-bbaa-4988-b766-554433221100").getOrThrow
             val generator = new FixedUUIDGenerator(uuid)
             type MultipartOutput = "body" ~ Seq[HttpRequest.Part]
-            val base = HttpRoute.getRaw("download")
+            val base                                            = HttpRoute.getRaw("download")
             val route: HttpRoute[Any, MultipartOutput, Nothing] = HttpRoute(
                 base.method,
                 base.request,
@@ -759,7 +759,7 @@ class RouteUtilTest extends kyo.BaseHttpTest:
             val uuid      = UUID.parse("ffeeddcc-bbaa-4988-b766-554433221100").getOrThrow
             val generator = new FixedUUIDGenerator(uuid)
             type MultipartOutput = "body" ~ Seq[HttpRequest.Part]
-            val base = HttpRoute.getRaw("download")
+            val base                                            = HttpRoute.getRaw("download")
             val route: HttpRoute[Any, MultipartOutput, Nothing] = HttpRoute(
                 base.method,
                 base.request,
@@ -827,7 +827,7 @@ class RouteUtilTest extends kyo.BaseHttpTest:
         }
 
         "with response header params" in {
-            val route = HttpRoute.getRaw("data").response(_.header[String]("requestId", wireName = "X-Request-Id").bodyText)
+            val route    = HttpRoute.getRaw("data").response(_.header[String]("requestId", wireName = "X-Request-Id").bodyText)
             val response = HttpResponse.ok
                 .addField("requestId", "req-456")
                 .addField("body", "ok")
@@ -893,7 +893,7 @@ class RouteUtilTest extends kyo.BaseHttpTest:
         }
 
         "URL-encoded special characters in query" in {
-            val route = HttpRoute.getRaw("search").request(_.query[String]("q"))
+            val route   = HttpRoute.getRaw("search").request(_.query[String]("q"))
             val request = HttpRequest(
                 HttpMethod.GET,
                 HttpUrl.parse("http://localhost/search").getOrThrow,
@@ -915,7 +915,7 @@ class RouteUtilTest extends kyo.BaseHttpTest:
         }
 
         "URL-encoded special characters in path capture" in {
-            val route = HttpRoute.getRaw("users" / HttpPath.Capture[String]("name"))
+            val route   = HttpRoute.getRaw("users" / HttpPath.Capture[String]("name"))
             val request = HttpRequest(
                 HttpMethod.GET,
                 HttpUrl.parse("http://localhost/users/x").getOrThrow,
@@ -936,7 +936,7 @@ class RouteUtilTest extends kyo.BaseHttpTest:
         "preserves existing request headers" in {
             val route           = HttpRoute.getRaw("data").request(_.header[String]("extra", wireName = "X-Extra"))
             val existingHeaders = HttpHeaders.empty.add("X-Existing", "keep-me")
-            val request = HttpRequest(
+            val request         = HttpRequest(
                 HttpMethod.GET,
                 HttpUrl.parse("http://localhost/data").getOrThrow,
                 existingHeaders,
@@ -954,7 +954,7 @@ class RouteUtilTest extends kyo.BaseHttpTest:
         }
 
         "optional header absent" in {
-            val route = HttpRoute.getRaw("data").request(_.headerOpt[String]("auth", wireName = "Authorization"))
+            val route   = HttpRoute.getRaw("data").request(_.headerOpt[String]("auth", wireName = "Authorization"))
             val request = HttpRequest(
                 HttpMethod.GET,
                 HttpUrl.parse("http://localhost/data").getOrThrow,
@@ -972,8 +972,8 @@ class RouteUtilTest extends kyo.BaseHttpTest:
         }
 
         "binary body" in {
-            val route = HttpRoute.postRaw("upload").request(_.bodyBinary)
-            val data  = Span.fromUnsafe(Array[Byte](1, 2, 3, 4))
+            val route   = HttpRoute.postRaw("upload").request(_.bodyBinary)
+            val data    = Span.fromUnsafe(Array[Byte](1, 2, 3, 4))
             val request = HttpRequest(
                 HttpMethod.POST,
                 HttpUrl.parse("http://localhost/upload").getOrThrow,
@@ -992,7 +992,7 @@ class RouteUtilTest extends kyo.BaseHttpTest:
         }
 
         "form body" in {
-            val route = HttpRoute.postRaw("login").request(_.bodyForm[LoginForm])
+            val route   = HttpRoute.postRaw("login").request(_.bodyForm[LoginForm])
             val request = HttpRequest(
                 HttpMethod.POST,
                 HttpUrl.parse("http://localhost/login").getOrThrow,
@@ -1013,8 +1013,8 @@ class RouteUtilTest extends kyo.BaseHttpTest:
         }
 
         "user-set Content-Type preserved for buffered request" in {
-            val route = HttpRoute.postRaw("api").request(_.bodyBinary)
-            val data  = Span.fromUnsafe("{ k1 }".getBytes("UTF-8"))
+            val route   = HttpRoute.postRaw("api").request(_.bodyBinary)
+            val data    = Span.fromUnsafe("{ k1 }".getBytes("UTF-8"))
             val request = HttpRequest(
                 HttpMethod.POST,
                 HttpUrl.parse("http://localhost/api").getOrThrow,
@@ -1031,8 +1031,8 @@ class RouteUtilTest extends kyo.BaseHttpTest:
         }
 
         "user-set Content-Type preserved for streaming request" in {
-            val route  = HttpRoute.postRaw("api").request(_.bodyStream)
-            val stream = kyo.Stream.init[Span[Byte], kyo.Async](Seq(Span.fromUnsafe("data".getBytes("UTF-8"))))
+            val route   = HttpRoute.postRaw("api").request(_.bodyStream)
+            val stream  = kyo.Stream.init[Span[Byte], kyo.Async](Seq(Span.fromUnsafe("data".getBytes("UTF-8"))))
             val request = HttpRequest(
                 HttpMethod.POST,
                 HttpUrl.parse("http://localhost/api").getOrThrow,
@@ -1360,7 +1360,7 @@ class RouteUtilTest extends kyo.BaseHttpTest:
         }
 
         "user-set Content-Type preserved for buffered response" in {
-            val route = HttpRoute.getRaw("data").response(_.bodyBinary)
+            val route    = HttpRoute.getRaw("data").response(_.bodyBinary)
             val response = HttpResponse.ok.addField("body", Span.fromUnsafe("hello".getBytes("UTF-8")))
                 .setHeader("Content-Type", "application/graphql-response+json")
 
@@ -1373,8 +1373,8 @@ class RouteUtilTest extends kyo.BaseHttpTest:
         }
 
         "user-set Content-Type preserved for streaming response" in {
-            val route  = HttpRoute.getRaw("events").response(_.bodyStream)
-            val stream = kyo.Stream.init[Span[Byte], kyo.Async](Seq(Span.fromUnsafe("data".getBytes("UTF-8"))))
+            val route    = HttpRoute.getRaw("events").response(_.bodyStream)
+            val stream   = kyo.Stream.init[Span[Byte], kyo.Async](Seq(Span.fromUnsafe("data".getBytes("UTF-8"))))
             val response = HttpResponse.ok.addField("body", stream)
                 .setHeader("Content-Type", "multipart/mixed; boundary=abc")
 
@@ -1463,8 +1463,8 @@ class RouteUtilTest extends kyo.BaseHttpTest:
         }
 
         "form body round-trip" in {
-            val route = HttpRoute.postRaw("login").request(_.bodyForm[LoginForm])
-            val form  = LoginForm("bob", "pass123")
+            val route   = HttpRoute.postRaw("login").request(_.bodyForm[LoginForm])
+            val form    = LoginForm("bob", "pass123")
             val request = HttpRequest(
                 HttpMethod.POST,
                 HttpUrl.parse("http://localhost/login").getOrThrow,
@@ -1490,7 +1490,7 @@ class RouteUtilTest extends kyo.BaseHttpTest:
 
     "SSE encoding" - {
         "encodeResponse produces SSE frames" in {
-            val route = HttpRoute.getRaw("events").response(_.bodySseJson[User])
+            val route                                             = HttpRoute.getRaw("events").response(_.bodySseJson[User])
             val events: kyo.Stream[HttpSseEvent[User], kyo.Async] = kyo.Stream.init(Seq(
                 HttpSseEvent(User("Alice", 30)),
                 HttpSseEvent(User("Bob", 25), event = Present("update")),
@@ -1530,10 +1530,10 @@ class RouteUtilTest extends kyo.BaseHttpTest:
 
     "SSE decoding" - {
         "decodeStreamingResponse parses SSE frames" in {
-            val route  = HttpRoute.getRaw("events").response(_.bodySseJson[User])
-            val frame1 = "data: {\"name\":\"Alice\",\"age\":30}\n\n"
-            val frame2 = "event: update\ndata: {\"name\":\"Bob\",\"age\":25}\n\n"
-            val frame3 = "id: 3\nretry: 5000\ndata: {\"name\":\"Carol\",\"age\":35}\n\n"
+            val route     = HttpRoute.getRaw("events").response(_.bodySseJson[User])
+            val frame1    = "data: {\"name\":\"Alice\",\"age\":30}\n\n"
+            val frame2    = "event: update\ndata: {\"name\":\"Bob\",\"age\":25}\n\n"
+            val frame3    = "id: 3\nretry: 5000\ndata: {\"name\":\"Carol\",\"age\":35}\n\n"
             val rawStream = kyo.Stream.init(Seq(
                 Span.fromUnsafe(frame1.getBytes("UTF-8")),
                 Span.fromUnsafe(frame2.getBytes("UTF-8")),
@@ -1572,7 +1572,7 @@ class RouteUtilTest extends kyo.BaseHttpTest:
     "multipart buffered decoding" - {
         "decodeBufferedRequest parses multipart body" in {
             val route = HttpRoute.postRaw("upload").request(_.bodyMultipart)
-            val body =
+            val body  =
                 "------TestBoundary123\r\nContent-Disposition: form-data; name=\"file\"; filename=\"test.txt\"\r\nContent-Type: text/plain\r\n\r\nhello world\r\n------TestBoundary123\r\nContent-Disposition: form-data; name=\"field\"\r\n\r\nvalue123\r\n------TestBoundary123--\r\n"
             val bytes   = Span.fromUnsafe(body.getBytes("UTF-8"))
             val headers = HttpHeaders.empty.add("Content-Type", "multipart/form-data; boundary=----TestBoundary123")
@@ -1595,9 +1595,9 @@ class RouteUtilTest extends kyo.BaseHttpTest:
 
         "decodeBufferedRequest accepts a quoted case-insensitive boundary after another parameter" in {
             val route = HttpRoute.postRaw("upload").request(_.bodyMultipart)
-            val body =
+            val body  =
                 "--abc:def\r\nContent-Disposition: form-data; name=\"field\"\r\n\r\nvalue\r\n--abc:def--\r\n"
-            val bytes = Span.fromUnsafe(body.getBytes("UTF-8"))
+            val bytes   = Span.fromUnsafe(body.getBytes("UTF-8"))
             val headers =
                 HttpHeaders.empty.add("Content-Type", "multipart/form-data; charset=utf-8; Boundary=\"abc:def\"")
 
@@ -1614,9 +1614,9 @@ class RouteUtilTest extends kyo.BaseHttpTest:
 
         "decodeBufferedRequest rejects a quoted boundary containing a parameter separator" in {
             val route = HttpRoute.postRaw("upload").request(_.bodyMultipart)
-            val body =
+            val body  =
                 "--abc\r\nContent-Disposition: form-data; name=\"field\"\r\n\r\nvalue\r\n--abc--\r\n"
-            val bytes = Span.fromUnsafe(body.getBytes("UTF-8"))
+            val bytes   = Span.fromUnsafe(body.getBytes("UTF-8"))
             val headers =
                 HttpHeaders.empty.add("Content-Type", "multipart/form-data; boundary=\"abc;def\"")
 
@@ -1642,9 +1642,9 @@ class RouteUtilTest extends kyo.BaseHttpTest:
     "multipart streaming decoding" - {
         "decodeStreamingRequest accepts a quoted case-insensitive boundary after another parameter" in {
             val route = HttpRoute.postRaw("upload").request(_.bodyMultipartStream)
-            val body =
+            val body  =
                 "--abc:def\r\nContent-Disposition: form-data; name=\"field\"\r\n\r\nvalue\r\n--abc:def--\r\n"
-            val stream = Stream.init[Span[Byte], Async](Seq(Span.fromUnsafe(body.getBytes("UTF-8"))))
+            val stream  = Stream.init[Span[Byte], Async](Seq(Span.fromUnsafe(body.getBytes("UTF-8"))))
             val headers =
                 HttpHeaders.empty.add("Content-Type", "multipart/form-data; charset=utf-8; Boundary=\"abc:def\"")
 
@@ -1662,9 +1662,9 @@ class RouteUtilTest extends kyo.BaseHttpTest:
 
         "decodeStreamingRequest rejects a quoted boundary with invalid trailing whitespace" in {
             val route = HttpRoute.postRaw("upload").request(_.bodyMultipartStream)
-            val body =
+            val body  =
                 "--abc\r\nContent-Disposition: form-data; name=\"field\"\r\n\r\nvalue\r\n--abc--\r\n"
-            val stream = Stream.init[Span[Byte], Async](Seq(Span.fromUnsafe(body.getBytes("UTF-8"))))
+            val stream  = Stream.init[Span[Byte], Async](Seq(Span.fromUnsafe(body.getBytes("UTF-8"))))
             val headers =
                 HttpHeaders.empty.add("Content-Type", "multipart/form-data; boundary=\"abc \"")
 
@@ -1676,7 +1676,7 @@ class RouteUtilTest extends kyo.BaseHttpTest:
 
         "decodeStreamingRequest rejects an unquoted boundary containing whitespace" in {
             val route = HttpRoute.postRaw("upload").request(_.bodyMultipartStream)
-            val body =
+            val body  =
                 "--abc def\r\nContent-Disposition: form-data; name=\"field\"\r\n\r\nvalue\r\n--abc def--\r\n"
             val stream  = Stream.init[Span[Byte], Async](Seq(Span.fromUnsafe(body.getBytes("UTF-8"))))
             val headers = HttpHeaders.empty.add("Content-Type", "multipart/form-data; boundary=abc def")
@@ -1692,8 +1692,8 @@ class RouteUtilTest extends kyo.BaseHttpTest:
 
     "NDJSON line splitting" - {
         "handles multiple lines in one chunk" in {
-            val route    = HttpRoute.getRaw("events").response(_.bodyNdjson[User])
-            val combined = "{\"name\":\"Alice\",\"age\":30}\n{\"name\":\"Bob\",\"age\":25}\n"
+            val route     = HttpRoute.getRaw("events").response(_.bodyNdjson[User])
+            val combined  = "{\"name\":\"Alice\",\"age\":30}\n{\"name\":\"Bob\",\"age\":25}\n"
             val rawStream = kyo.Stream.init(Seq(
                 Span.fromUnsafe(combined.getBytes("UTF-8"))
             ))
@@ -1720,9 +1720,9 @@ class RouteUtilTest extends kyo.BaseHttpTest:
         }
 
         "handles line split across chunks" in {
-            val route = HttpRoute.getRaw("events").response(_.bodyNdjson[User])
-            val part1 = "{\"name\":\"Ali"
-            val part2 = "ce\",\"age\":30}\n"
+            val route     = HttpRoute.getRaw("events").response(_.bodyNdjson[User])
+            val part1     = "{\"name\":\"Ali"
+            val part2     = "ce\",\"age\":30}\n"
             val rawStream = kyo.Stream.init(Seq(
                 Span.fromUnsafe(part1.getBytes("UTF-8")),
                 Span.fromUnsafe(part2.getBytes("UTF-8"))
@@ -1753,7 +1753,7 @@ class RouteUtilTest extends kyo.BaseHttpTest:
 
     "multipart streaming encoding" - {
         "includes closing boundary" in {
-            val route = HttpRoute.postRaw("upload").request(_.bodyMultipartStream)
+            val route                                          = HttpRoute.postRaw("upload").request(_.bodyMultipartStream)
             val parts: kyo.Stream[HttpRequest.Part, kyo.Async] = kyo.Stream.init(Seq(
                 HttpRequest.Part("field", Absent, Absent, Span.fromUnsafe("value".getBytes("UTF-8")))
             ))

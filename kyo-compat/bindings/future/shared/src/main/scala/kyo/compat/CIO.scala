@@ -366,7 +366,7 @@ object CIO:
     /** Bridges a one-shot completion callback into `CIO`; `register` receives a `Try[A] => Unit`. */
     inline def async[A](inline register: ((Try[A] => Unit) => Unit)): CIO[A] =
         (_: LocalCtx) =>
-            val p = Promise[A]()
+            val p                  = Promise[A]()
             val cb: Try[A] => Unit = t =>
                 val _ = p.tryComplete(t)
             try register(cb)

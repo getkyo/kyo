@@ -242,7 +242,7 @@ object Rollout {
             else {
                 val choice = entries(i)
                 choice.selector match {
-                    case Terminal => i
+                    case Terminal         => i
                     case ps: PathSelector =>
                         if (matchesPath(ps.segments, targetPath) && matchesPercent(ps, bucket))
                             i
@@ -401,8 +401,8 @@ object Rollout {
                     } else parts
 
                     if (hasPercent) {
-                        val digits = lastPart.substring(0, lastPart.length - 1)
-                        val rawPct = Integer.parseInt(digits) // already validated by validateSelectorSyntax
+                        val digits       = lastPart.substring(0, lastPart.length - 1)
+                        val rawPct       = Integer.parseInt(digits) // already validated by validateSelectorSyntax
                         val effectivePct =
                             if (needsNormalization) {
                                 val normalized = Math.round(rawPct.toDouble * 100.0 / totalRawWeight.toDouble).toInt
@@ -421,7 +421,8 @@ object Rollout {
                                     )
                                 } else {
                                     java.lang.System.err.println(
-                                        s"[kyo-config] Warning: DynamicFlag '$flagName': percentage $rawPct% exceeds 100%, clamping to ${100 - cumulWeight}%"
+                                        s"[kyo-config] Warning: DynamicFlag '$flagName': percentage $rawPct% exceeds 100%, clamping to ${100 -
+                                                cumulWeight}%"
                                     )
                                     100 - cumulWeight
                                 }
@@ -525,7 +526,7 @@ object Rollout {
         val parts      = splitOn(rawSelector, '/')
         val lastPart   = parts(parts.length - 1)
         val hasPercent = lastPart.endsWith("%")
-        val pathParts = if (hasPercent) {
+        val pathParts  = if (hasPercent) {
             val pp = new Array[String](parts.length - 1)
             java.lang.System.arraycopy(parts, 0, pp, 0, parts.length - 1)
             pp
@@ -651,7 +652,7 @@ object Rollout {
 
             percentage match {
                 case Left(error) => Left(error)
-                case Right(pct) =>
+                case Right(pct)  =>
                     val weight = if (pct >= 0) pct else 0
 
                     // If there are no path segments (just a percentage), path always matches

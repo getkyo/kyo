@@ -152,7 +152,7 @@ class MachineLinuxTest extends kyo.test.Test[Any]:
 
         "read exactly once per tick populates both memory and swap rows" in {
             var callCount = 0
-            val fixture =
+            val fixture   =
                 "MemTotal:       16384 kB\nMemAvailable:    8192 kB\nMemFree:  4096 kB\nSwapTotal:  2048 kB\nSwapFree: 1024 kB\n"
             val (fixtureBytes, fixtureLen) = span(fixture)
             // memTotal/swapTotal are LongGaugeCells: StatsRegistry keeps only the first-ever-registered
@@ -173,7 +173,7 @@ class MachineLinuxTest extends kyo.test.Test[Any]:
                     memAvailSumBefore = histogramSummary("mlinuxtest-meminfo-decode", "memory", "available").sum
                     memFreeSumBefore  = histogramSummary("mlinuxtest-meminfo-decode", "memory", "free").sum
                     swapFreeSumBefore = histogramSummary("mlinuxtest-meminfo-decode", "swap", "free").sum
-                    decode = new MachineSampler.Decode:
+                    decode            = new MachineSampler.Decode:
                         def apply(b: Span[Byte], n: Int)(using AllowUnsafe): Unit =
                             callCount += 1
                             LinuxDecoders.meminfo(b, n, handles)
@@ -209,7 +209,7 @@ class MachineLinuxTest extends kyo.test.Test[Any]:
                     availCountBefore          = histogramSummary("mlinuxtest-meminfo-missing", "memory", "available").count
                     swapFreeCountBefore       = histogramSummary("mlinuxtest-meminfo-missing", "swap", "free").count
                     swapTotalRegisteredBefore = gaugeRegistered("mlinuxtest-meminfo-missing", "swap", "total")
-                    decode = new MachineSampler.Decode:
+                    decode                    = new MachineSampler.Decode:
                         def apply(b: Span[Byte], n: Int)(using AllowUnsafe): Unit = LinuxDecoders.meminfo(b, n, handles)
                     ok = sampler.readInto(slot, decode)
                     _ <- dir.removeAll

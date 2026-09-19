@@ -42,7 +42,7 @@ object NotePad extends KyoApp:
                 if input.title.isBlank then Abort.fail(ValidationError("Title cannot be blank", "title"))
                 else
                     for
-                        now <- Clock.now
+                        now   <- Clock.now
                         store <- storeRef.updateAndGet { s =>
                             val note = Note(s.nextId, input.title, input.content, now.toString)
                             Store(s.notes + (s.nextId -> note), s.nextId + 1)
@@ -83,7 +83,7 @@ object NotePad extends KyoApp:
             .handler { req =>
                 val input = req.fields.body
                 for
-                    now <- Clock.now
+                    now   <- Clock.now
                     store <- storeRef.updateAndGet { s =>
                         s.notes.get(req.fields.id) match
                             case Some(existing) =>
@@ -195,7 +195,7 @@ object NotePadClient extends KyoApp:
 
                     _   <- Console.printLine("\n=== Final list ===")
                     all <- HttpClient.getJson[List[Note]]("/notes")
-                    _ <- Kyo.foreach(all) { n =>
+                    _   <- Kyo.foreach(all) { n =>
                         Console.printLine(s"  [${n.id}] ${n.title}: ${n.content}")
                     }
 

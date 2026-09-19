@@ -171,7 +171,7 @@ You must not use an intersection type, yet have provided scala.Int & scala.Doubl
                 "both" in runZIO {
                     val started = new CountDownLatch(2)
                     val done    = new CountDownLatch(2)
-                    val v =
+                    val v       =
                         for
                             _ <- ZIOs.get(zioLoop(started, done))
                             _ <- Fiber.initUnscoped(kyoLoop(started, done))
@@ -187,8 +187,8 @@ You must not use an intersection type, yet have provided scala.Int & scala.Doubl
                 }
 
                 "parallel loops" in runZIO {
-                    val started = new CountDownLatch(2)
-                    val done    = new CountDownLatch(2)
+                    val started        = new CountDownLatch(2)
+                    val done           = new CountDownLatch(2)
                     def parallelEffect =
                         ZIOs.run {
                             val loop1 = ZIOs.get(zioLoop(started, done))
@@ -206,8 +206,8 @@ You must not use an intersection type, yet have provided scala.Int & scala.Doubl
                 }
 
                 "race loops" in runZIO {
-                    val started = new CountDownLatch(2)
-                    val done    = new CountDownLatch(2)
+                    val started    = new CountDownLatch(2)
+                    val done       = new CountDownLatch(2)
                     def raceEffect =
                         ZIOs.run {
                             val loop1 = ZIOs.get(zioLoop(started, done))
@@ -233,7 +233,7 @@ You must not use an intersection type, yet have provided scala.Int & scala.Doubl
                     // path must still stop the bridged kyo fiber. Each iteration forks a busy spin loop and
                     // interrupts it immediately, maximizing that window; a dropped interrupt leaves a worker
                     // spinning, so progress keeps advancing after every fiber has been awaited.
-                    val progress = new java.util.concurrent.atomic.AtomicLong(0)
+                    val progress          = new java.util.concurrent.atomic.AtomicLong(0)
                     def spin: Unit < Sync =
                         Sync.defer {
                             discard(progress.incrementAndGet())
@@ -269,7 +269,7 @@ You must not use an intersection type, yet have provided scala.Int & scala.Doubl
                 "both" in runKyo {
                     val started = new CountDownLatch(2)
                     val done    = new CountDownLatch(2)
-                    val v =
+                    val v       =
                         for
                             _ <- ZIOs.get(zioLoop(started, done))
                             _ <- kyoLoop(started, done)
@@ -285,8 +285,8 @@ You must not use an intersection type, yet have provided scala.Int & scala.Doubl
                 }
 
                 "parallel loops" in runKyo {
-                    val started = new CountDownLatch(2)
-                    val done    = new CountDownLatch(2)
+                    val started        = new CountDownLatch(2)
+                    val done           = new CountDownLatch(2)
                     def parallelEffect =
                         val loop1 = ZIOs.get(zioLoop(started, done))
                         val loop2 = kyoLoop(started, done)
@@ -303,8 +303,8 @@ You must not use an intersection type, yet have provided scala.Int & scala.Doubl
                 }
 
                 "race loops" in runKyo {
-                    val started = new CountDownLatch(2)
-                    val done    = new CountDownLatch(2)
+                    val started    = new CountDownLatch(2)
+                    val done       = new CountDownLatch(2)
                     def raceEffect =
                         val loop1 = ZIOs.get(zioLoop(started, done))
                         val loop2 = kyoLoop(started, done)
@@ -349,7 +349,7 @@ You must not use an intersection type, yet have provided scala.Int & scala.Doubl
         }
 
         "nested ZIO failure in Kyo" in runKyo {
-            val nestedZIO: ZIO[Any, String, Int] = ZIO.fail("Nested ZIO failed")
+            val nestedZIO: ZIO[Any, String, Int]         = ZIO.fail("Nested ZIO failed")
             val kyoEffect: Int < (Abort[String] & Async) =
                 ZIOs.get(ZIO.succeed(ZIOs.get(nestedZIO))).flatten
             Abort.run(kyoEffect).map { result =>

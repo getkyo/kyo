@@ -209,7 +209,7 @@ object ColumnFromExpr:
         private def liftRecord(t: Term): Option[Record[?]] =
             try RecordFromExpr.fromExprRecord[Any].unapply(MacroSupport.expectExpr[Record[Any]](t.asExpr))
             catch
-                case _: scala.MatchError => None // expected: tree shape not a Record literal
+                case _: scala.MatchError   => None // expected: tree shape not a Record literal
                 case e: ClassCastException =>
                     report.warning(s"liftRecord shape mismatch: ${e.getMessage}")
                     None
@@ -256,9 +256,9 @@ object ColumnFromExpr:
         @tailrec
         private def unwrap(t: Term): Term =
             t match
-                case Inlined(_, _, inner) => unwrap(inner)
-                case Block(_, inner)      => unwrap(inner)
-                case Typed(inner, _)      => unwrap(inner)
+                case Inlined(_, _, inner)                                           => unwrap(inner)
+                case Block(_, inner)                                                => unwrap(inner)
+                case Typed(inner, _)                                                => unwrap(inner)
                 case TypeApply(Select(inner, "asInstanceOf" | "$asInstanceOf$"), _) =>
                     unwrap(inner)
                 case Apply(TypeApply(Select(_, "substituteCo" | "substituteContra"), _), List(i)) =>

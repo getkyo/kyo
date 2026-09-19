@@ -21,7 +21,7 @@ class BrowserSnapshotConfigLocalTest extends kyo.BrowserTest:
             readyStateStuckServer { (host, port) =>
                 Browser.use { tab =>
                     val targetUrl = s"http://$host:$port/page"
-                    val snap = Snapshot(
+                    val snap      = Snapshot(
                         url = targetUrl,
                         localStorage = Dict.empty[String, String],
                         sessionStorage = Dict.empty[String, String],

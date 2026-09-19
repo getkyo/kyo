@@ -117,7 +117,7 @@ class TreeUnpicklerTest extends kyo.test.Test[Any]:
                     case Some(symbol) =>
                         symbolBody(symbol, pass1) match
                             case Present(body) =>
-                                val tree = TreeUnpickler.decodeSync(body, toFinalSym(symbol), dummyLookup)
+                                val tree              = TreeUnpickler.decodeSync(body, toFinalSym(symbol), dummyLookup)
                                 val isInt42AtTopLevel = tree match
                                     case Tasty.Tree.Literal(Tasty.Constant.IntConst(42)) =>
                                         true
@@ -147,9 +147,9 @@ class TreeUnpicklerTest extends kyo.test.Test[Any]:
 
     private def containsApplyOrIdentOrLiteral(tree: Tasty.Tree): Boolean =
         tree match
-            case _: Tasty.Tree.Apply   => true
-            case _: Tasty.Tree.Ident   => true
-            case _: Tasty.Tree.Literal => true
+            case _: Tasty.Tree.Apply           => true
+            case _: Tasty.Tree.Ident           => true
+            case _: Tasty.Tree.Literal         => true
             case Tasty.Tree.Block(stats, expr) =>
                 stats.exists(containsApplyOrIdentOrLiteral) || containsApplyOrIdentOrLiteral(expr)
             case Tasty.Tree.Typed(inner, _)             => containsApplyOrIdentOrLiteral(inner)
@@ -163,7 +163,7 @@ class TreeUnpicklerTest extends kyo.test.Test[Any]:
         Abort.run[TastyError](runPass1(kyo.fixtures.Embedded.someObjectTasty)).map {
             case Result.Success(pass1) =>
                 import AllowUnsafe.embrace.danger
-                val methodSyms = pass1.symbols.filter(_.kind == SymbolKind.Method)
+                val methodSyms    = pass1.symbols.filter(_.kind == SymbolKind.Method)
                 val decodedBodies = methodSyms.flatMap { symbol =>
                     symbolBody(symbol, pass1) match
                         case Present(body) => Chunk(symbol -> TreeUnpickler.decodeSync(body, toFinalSym(symbol), dummyLookup))
@@ -280,7 +280,7 @@ class TreeUnpicklerTest extends kyo.test.Test[Any]:
                         symbolBody(symbol, pass1) match
                             case Present(body) =>
                                 val truncated = body.copy(bodyEnd = body.bodyStart + 1)
-                                val ok =
+                                val ok        =
                                     try
                                         TreeUnpickler.decodeSync(truncated, toFinalSym(symbol), dummyLookup)
                                         true
@@ -560,7 +560,7 @@ class TreeUnpicklerTest extends kyo.test.Test[Any]:
     "MATCHtype with 2 case nodes decodes into Tree.MatchType with cases.length==2" in {
         import kyo.internal.tasty.reader.TastyFormat
         import scala.collection.immutable.IntMap
-        var _symId = 10
+        var _symId             = 10
         def makeSym(n: String) =
             _symId += 1; LoadingSymbol.Materialising(id = _symId, kind = SymbolKind.Class, flags = Tasty.Flags.empty, name = Tasty.Name(n))
         val boundSym = makeSym("Bound")
@@ -569,7 +569,7 @@ class TreeUnpicklerTest extends kyo.test.Test[Any]:
         val case2Sym = makeSym("Case2")
         val names    = Array(Tasty.Name("scala"))
         val addrMap  = IntMap(1 -> boundSym, 2 -> scrutSym, 3 -> case1Sym, 4 -> case2Sym)
-        val pickle = Array[Byte](
+        val pickle   = Array[Byte](
             TastyFormat.MATCHtype.toByte,
             (8 | 0x80).toByte,
             TastyFormat.TERMREFdirect.toByte,
@@ -618,7 +618,7 @@ class TreeUnpicklerTest extends kyo.test.Test[Any]:
         val scalaSym = LoadingSymbol.Materialising(id = 4, kind = SymbolKind.Class, flags = Tasty.Flags.empty, name = Tasty.Name("scala"))
         val names    = Array(Tasty.Name("map"))
         val addrMap  = IntMap(1 -> listSym, 2 -> scalaSym)
-        val pickle = Array[Byte](
+        val pickle   = Array[Byte](
             TastyFormat.SELECTin.toByte,
             (6 | 0x80).toByte,
             (0 | 0x80).toByte,
@@ -679,7 +679,7 @@ class TreeUnpicklerTest extends kyo.test.Test[Any]:
     "APPLY with fun + 2 args decodes to Tree.Apply with fun and 2-element args chunk" in {
         import kyo.internal.tasty.reader.TastyFormat
         import scala.collection.immutable.IntMap
-        var _symId2 = 20
+        var _symId2            = 20
         def makeSym(n: String) =
             _symId2 += 1;
             LoadingSymbol.Materialising(id = _symId2, kind = SymbolKind.Method, flags = Tasty.Flags.empty, name = Tasty.Name(n))
@@ -688,7 +688,7 @@ class TreeUnpicklerTest extends kyo.test.Test[Any]:
         val arg2Sym = makeSym("arg2")
         val names   = Array(Tasty.Name("test"))
         val addrMap = IntMap(1 -> fnSym, 2 -> arg1Sym, 3 -> arg2Sym)
-        val pickle = Array[Byte](
+        val pickle  = Array[Byte](
             TastyFormat.APPLY.toByte,
             (6 | 0x80).toByte,
             TastyFormat.TERMREFdirect.toByte,
@@ -726,7 +726,7 @@ class TreeUnpicklerTest extends kyo.test.Test[Any]:
             tree match
                 case Tasty.Tree.Unknown(tag, _) if tag >= 128 => 1
                 case Tasty.Tree.Unknown(_, _)                 => 0
-                case Tasty.Tree.Block(stats, expr) =>
+                case Tasty.Tree.Block(stats, expr)            =>
                     stats.toList.map(countCat5Unknown).sum + countCat5Unknown(expr)
                 case Tasty.Tree.Apply(fun, args) =>
                     countCat5Unknown(fun) + args.toList.map(countCat5Unknown).sum

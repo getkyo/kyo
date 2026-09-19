@@ -126,7 +126,7 @@ class NullAbsenceSweepTest extends kyo.test.Test[Any]:
         val classId       = SymbolId(0)
         val parentId      = SymbolId(1)
         val termRefParent = Tasty.Type.TermRef(Tasty.Type.Named(parentId), Tasty.Name("x"))
-        val classSym = Tasty.Symbol.Class(
+        val classSym      = Tasty.Symbol.Class(
             id = classId,
             name = Tasty.Name("TestClass"),
             flags = Tasty.Flags.empty,

@@ -651,7 +651,7 @@ object Gate:
             AtomicLong.Unsafe.init(pack(phase, parties, arrived))
 
         extension (self: State)
-            def get()(using AllowUnsafe): Snapshot = AtomicLong.Unsafe.get(self)()
+            def get()(using AllowUnsafe): Snapshot                                    = AtomicLong.Unsafe.get(self)()
             def cas(expected: Snapshot, update: Snapshot)(using AllowUnsafe): Boolean =
                 AtomicLong.Unsafe.compareAndSet(self)(expected, update)
         end extension

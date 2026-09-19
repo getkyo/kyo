@@ -250,7 +250,7 @@ class DecoderFidelity5ExplorationTest extends kyo.test.Test[Any]:
             case Result.Failure(_: TastyError.MalformedSection)        => succeed
             case Result.Failure(_)                                     => succeed
             case Result.Success(_)                                     => succeed
-            case Result.Panic(t) =>
+            case Result.Panic(t)                                       =>
                 fail(s"Unexpected panic for random KRFL bytes: ${t.getMessage}")
         }
     }
@@ -305,7 +305,7 @@ class DecoderFidelity5ExplorationTest extends kyo.test.Test[Any]:
                 case None =>
                     succeed // no methods in fixture; vacuously green
                 case Some(m) =>
-                    val tps = m.typeParamIds.flatMap(id => classpath.symbol(id).toChunk)
+                    val tps         = m.typeParamIds.flatMap(id => classpath.symbol(id).toChunk)
                     val sentinelTps = tps.filter { tp =>
                         idVal(tp.id) == -1
                     }

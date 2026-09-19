@@ -19,7 +19,7 @@ class RuntimeReflectionDemoTest extends kyo.test.Test[Any]:
     /** Returns the declared members of the class at `fullName` as `(name, kind)` pairs. */
     private def membersOf(classpath: Tasty.Classpath, fullName: String): Maybe[Chunk[(String, String)]] =
         classpath.findClass(fullName) match
-            case Absent => Maybe.Absent
+            case Absent       => Maybe.Absent
             case Present(cls) =>
                 val decls = cls.declarationIds.flatMap(id => classpath.symbol(id).toChunk)
                 Maybe.Present(decls.map(d => (d.name.asString, d.kind.toString)))

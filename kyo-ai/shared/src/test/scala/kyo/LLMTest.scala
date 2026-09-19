@@ -130,8 +130,8 @@ class LLMTest extends kyo.test.Test[Any]:
         // model can be trusted to read, and a backend that compels the result call (forced tool_choice
         // with strict decoding) has no repair turn to recover in, so the directive must ride the forced
         // request itself. It is request-scoped: the stored conversation never contains it.
-        val directive = "This is the instruction to finalize"
-        val reminder  = "keep the finalize-ordering probe reminder last"
+        val directive                                                           = "This is the instruction to finalize"
+        val reminder                                                            = "keep the finalize-ordering probe reminder last"
         def check(mkConfig: String => Config, noResult: String, result: String) =
             TestCompletionServer.run { server =>
                 server.enqueueBody(noResult).andThen {
@@ -259,7 +259,7 @@ class LLMTest extends kyo.test.Test[Any]:
         // tool's dispatch, so its violation text arrives as the tool failure, not as a parallel system
         // message.
         TestCompletionServer.run { server =>
-            val config = serverConfig(server.baseUrl)
+            val config                    = serverConfig(server.baseUrl)
             given Schema[Structure.Value] = summon[Schema[Structure.Value]].withStructure(
                 Structure.Type.Product(
                     "Answer",
@@ -561,7 +561,7 @@ class LLMTest extends kyo.test.Test[Any]:
         // Retrying cannot help either, since the next attempt spends the same ceiling to stop in the
         // same place, so the request count is asserted too.
         TestCompletionServer.run { server =>
-            val config = serverConfig(server.baseUrl).maxTokens(256).retrySchedule(Schedule.repeat(3))
+            val config    = serverConfig(server.baseUrl).maxTokens(256).retrySchedule(Schedule.repeat(3))
             val truncated =
                 """{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"id":"c1",""" +
                     """"type":"function","function":{"name":"result_tool","arguments":"{\"resultValue\": \"abc"}}]},""" +
@@ -585,7 +585,7 @@ class LLMTest extends kyo.test.Test[Any]:
         // ceiling stops in the same place, having spent the whole ceiling again. Iterating is worse,
         // since the loop would do it once per allowed iteration. Exactly one request must be made.
         TestCompletionServer.run { server =>
-            val config = anthropicServerConfig(server.baseUrl).retrySchedule(Schedule.repeat(3))
+            val config      = anthropicServerConfig(server.baseUrl).retrySchedule(Schedule.repeat(3))
             val ceilingStop =
                 """{"id":"m","content":[],"model":"m","role":"assistant","stop_reason":"max_tokens","stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":1}}"""
             server.enqueueBody(ceilingStop).andThen {
@@ -681,7 +681,7 @@ class LLMTest extends kyo.test.Test[Any]:
             // attempt is confirmed over real I/O, and a short real settle lets its throttle response schedule the
             // backoff, before the advance; the advance itself carries the causal firing, so nothing races real time.
             val callTimeout = 5.seconds
-            val config = serverConfig(server.baseUrl)
+            val config      = serverConfig(server.baseUrl)
                 .timeout(callTimeout)
                 .retrySchedule(Schedule.exponentialBackoff(initial = callTimeout * 2, factor = 2, maxBackoff = 1.minute).take(10))
             def throttle(remaining: Int): Unit < Async =
@@ -699,7 +699,7 @@ class LLMTest extends kyo.test.Test[Any]:
                     yield
                         result match
                             case Result.Failure(_: AICompletionTimeoutException) => ()
-                            case other =>
+                            case other                                           =>
                                 fail(s"expected the call deadline to fire while retries were still pending, got: $other")
                         end match
                         assert(
@@ -779,7 +779,7 @@ class LLMTest extends kyo.test.Test[Any]:
             new Isolate[Sync, Any, Sync]:
                 type State        = Unit
                 type Transform[A] = A
-                def capture[A, S](f: Unit => A < S)(using Frame): A < (Sync & Any & S) = f(())
+                def capture[A, S](f: Unit => A < S)(using Frame): A < (Sync & Any & S)        = f(())
                 def isolate[A, S](state: Unit, v: A < (S & Sync))(using Frame): A < (Any & S) =
                     // Unsafe: sound because Sync (= Abort[Nothing]) is phantom at runtime; the row change is a
                     // type-level erasure with no value-level consequence (the isolate is a true pass-through).
@@ -788,7 +788,7 @@ class LLMTest extends kyo.test.Test[Any]:
         TestCompletionServer.run { server =>
             val config = serverConfig(server.baseUrl)
             AtomicRef.init(Maybe.empty[String]).map { captured =>
-                val thought = Thought.opening[City]((c: City) => captured.set(Present(c.name)))
+                val thought  = Thought.opening[City]((c: City) => captured.set(Present(c.name)))
                 val envelope =
                     """{"openingThoughts":{"City":{"name":"Lyon"}},"resultValue":"answer","closingThoughts":{}}"""
                 server.enqueueBody(resultToolBody(envelope)).andThen {
@@ -934,7 +934,7 @@ class LLMTest extends kyo.test.Test[Any]:
             // A tool whose run records a Check failure. enable[S] threads Check onto the row; when the model
             // calls the tool during gen, the Check effect must reach the enclosing Check.runChunk, not be erased.
             val checkTool: Tool[Check] = Tool.init[Int][Int, Check]("check_it")((_: Int) => Check.require(false, "tool-ran").andThen(0))
-            val turn1 =
+            val turn1                  =
                 """{"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"c1","type":"function","function":{"name":"check_it","arguments":"1"}}]}}]}"""
             server.enqueueBody(turn1).andThen {
                 server.enqueueBody(resultToolBody("""{"resultValue":7}""")).andThen {

@@ -4,7 +4,7 @@ object Repeat {
     val usage = "Usage: repeat <command> | repeat <number-of-times> <command>"
 
     private def executeCommand(command: String, state: State): (Boolean, State) = {
-        var success = true
+        var success  = true
         val newState = Command.process(
             command,
             state,

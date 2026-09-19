@@ -388,7 +388,7 @@ class SqlRunStaticTest extends Test:
                 DB.run(client)(Sql.from[Person]("p").select(c => c.p.name).runStatic)
             }
         }).map {
-            case Result.Failure(_: SqlConnectionException) => succeed
+            case Result.Failure(_: SqlConnectionException)                 => succeed
             case Result.Failure(e: SqlStaticRenderMissingDialectException) =>
                 fail(s"the client's dialect must be in the spliced set, got: ${e.getMessage}")
             case other => fail(s"expected the statement to reach the connection, got $other")

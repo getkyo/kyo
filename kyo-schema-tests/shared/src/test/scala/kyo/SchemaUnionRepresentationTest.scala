@@ -606,8 +606,8 @@ class SchemaUnionRepresentationTest extends kyo.test.Test[Any]:
         // An unexpected error thrown by a variant decoder (IllegalStateException) must surface as
         // Result.Panic, never be retried and masked as a no-match: a Panic is not a clean decode miss.
         // Replace the first variant decoder with one that throws to verify the Panic surfaces.
-        val base     = Schema[SSRUShape].untagged
-        val decoders = base.variantDecoders
+        val base                                 = Schema[SSRUShape].untagged
+        val decoders                             = base.variantDecoders
         val injectedDecoder: Codec.Reader => Any = (_: Codec.Reader) =>
             throw new IllegalStateException("injected unexpected decoder failure")
         val patched = Schema.copyWith(base)(
@@ -687,7 +687,7 @@ class SchemaUnionRepresentationTest extends kyo.test.Test[Any]:
         // sum-level rename would surface as item_count in the payload. Each payload-bearing representation
         // (External, Internal, Adjacent, Tuple) carries the payload as a named object, so a leak would be
         // wire-visible here. TupleFlat (positional) and Untagged (bare payload) are pinned separately.
-        val item: SSRUNamed = SSRUItem(42)
+        val item: SSRUNamed                         = SSRUItem(42)
         def wire(schema: Schema[SSRUNamed]): String =
             schema.renameAllFields(Schema.NameCase.SnakeCase).encodeString[Json](item)
 

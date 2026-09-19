@@ -12,7 +12,7 @@ import kyo.*
   */
 private[kyo] object PlatformFallback:
     def initFallback: Binding =
-        val classpath: String = java.lang.System.getProperty("java.class.path", "")
+        val classpath: String  = java.lang.System.getProperty("java.class.path", "")
         val roots: Seq[String] =
             classpath.split(java.io.File.pathSeparatorChar).toIndexedSeq.filter(_.nonEmpty)
         if roots.isEmpty then Binding.empty

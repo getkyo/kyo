@@ -146,7 +146,7 @@ private[sbt] object CCompiler {
             linkLibs.map { lib =>
                 val archiveName = s"lib$lib.a"
                 val resolved    = libDirs.map(d => new File(d, archiveName)).find(_.exists())
-                val path = resolved.map(_.getAbsolutePath).getOrElse(
+                val path        = resolved.map(_.getAbsolutePath).getOrElse(
                     libDirs.headOption.map(d => new File(d, archiveName).getAbsolutePath).getOrElse(archiveName)
                 )
                 s"-Wl,-force_load,$path"
@@ -291,7 +291,7 @@ private[sbt] object CCompiler {
       * whole path exists to prevent.
       */
     def parseOsArch(tag: String): (String, String) = {
-        val cut = tag.lastIndexOf('-')
+        val cut    = tag.lastIndexOf('-')
         val parsed =
             if (cut <= 0) None
             else {

@@ -35,7 +35,7 @@ abstract class Test extends kyo.test.Test[Any]:
                 // Topic.run hand it: Aeron deletes and recreates a driver directory that already exists,
                 // so a suite that pre-creates it pays that round trip on every leaf.
                 rt <- AeronPlatform.embedded((dir / AeronDriver.mediaDirName).unsafe.show)
-                _ <- Scope.ensure(
+                _  <- Scope.ensure(
                     Sync.Unsafe.defer {
                         rt.close()
                         discard(embeddedRuntimeReleases.incrementAndGet())
@@ -68,8 +68,8 @@ abstract class Test extends kyo.test.Test[Any]:
         Frame
     ): A < (Async & Abort[TopicException] & Scope) =
         for
-            release <- Latch.init(1)
-            ready   <- Latch.init(1)
+            release     <- Latch.init(1)
+            ready       <- Latch.init(1)
             driverFiber <- Fiber.initUnscoped {
                 AeronPlatform.embedded(dir.unsafe.show).map { runtime =>
                     // Signal readiness, then suspend on `release` so the driver stays alive for the body.

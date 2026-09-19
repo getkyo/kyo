@@ -18,7 +18,7 @@ class EmitCombinatorsTest extends kyo.test.Test[Any]:
         }
 
         "foreachEmit" in {
-            val emit = Loop(1)(i => if i == 4 then Loop.done else Emit.valueWith(i)(Loop.continue(i + 1))).andThen("done")
+            val emit   = Loop(1)(i => if i == 4 then Loop.done else Emit.valueWith(i)(Loop.continue(i + 1))).andThen("done")
             val effect = emit.foreachEmit(i => Var.update[Int](v => v + i).unit).map: result =>
                 Var.get[Int].map(v => (result, v))
             Var.run(0)(effect).map:

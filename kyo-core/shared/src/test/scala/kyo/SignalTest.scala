@@ -257,7 +257,7 @@ class SignalTest extends kyo.test.Test[Any]:
             val effectiveRepeats = if Platform.isNative then 5 else repeats
             {
                 (for
-                    ref <- Signal.initRef(0)
+                    ref     <- Signal.initRef(0)
                     readers <-
                         Fiber.initUnscoped(Async.fill(10, 10)(
                             Loop(0)(_ => ref.currentWith(v => if v < 10 then Loop.continue(v) else Loop.done(v)))
@@ -977,7 +977,7 @@ class SignalTest extends kyo.test.Test[Any]:
             sig = if useMap then ref.map(v => v) else ref
             lastSeen <- AtomicRef.init("")
             fiber    <- Fiber.initUnscoped(sig.observe(50.millis)(lastSeen.set(_)))
-            misses <- Kyo.foreach(Chunk.from(1 to iterations)) { i =>
+            misses   <- Kyo.foreach(Chunk.from(1 to iterations)) { i =>
                 val a = s"a$i"
                 val b = s"b$i"
                 for
@@ -1117,7 +1117,7 @@ class SignalTest extends kyo.test.Test[Any]:
                 child  <- Signal.initRef("c")
                 live   <- AtomicInt.init(0)
                 peak   <- AtomicInt.init(0)
-                fiber <- Fiber.initUnscoped(parent.observe { _ =>
+                fiber  <- Fiber.initUnscoped(parent.observe { _ =>
                     for
                         n <- Scope.acquireRelease(live.incrementAndGet)(_ => live.decrementAndGet.unit)
                         _ <- peak.updateAndGet(p => math.max(p, n))
@@ -1157,7 +1157,7 @@ class SignalTest extends kyo.test.Test[Any]:
                 child    <- Signal.initRef("c")
                 running  <- AtomicInt.init(0)
                 released <- AtomicRef.init(Chunk.empty[Int])
-                fiber <- Fiber.initUnscoped(parent.observe { v =>
+                fiber    <- Fiber.initUnscoped(parent.observe { v =>
                     Scope.ensure(released.updateAndGet(_.append(v)).unit).andThen {
                         // The child fiber increments `running` while alive; the per-value scope interrupts it on close.
                         Fiber.init(running.incrementAndGet.andThen(child.next)).unit
@@ -1182,7 +1182,7 @@ class SignalTest extends kyo.test.Test[Any]:
                 child    <- Signal.initRef("c")
                 running  <- AtomicInt.init(0)
                 released <- AtomicRef.init(false)
-                fiber <- Fiber.initUnscoped(parent.observe { _ =>
+                fiber    <- Fiber.initUnscoped(parent.observe { _ =>
                     Scope.ensure(released.set(true)).andThen {
                         Fiber.init(running.incrementAndGet.andThen(child.next)).unit
                     }
@@ -1203,7 +1203,7 @@ class SignalTest extends kyo.test.Test[Any]:
                 ticker   <- Signal.initRef(0)
                 live     <- AtomicInt.init(0)
                 released <- AtomicRef.init(false)
-                fiber <- Fiber.initUnscoped(parent.observe { _ =>
+                fiber    <- Fiber.initUnscoped(parent.observe { _ =>
                     Scope.acquireRelease(live.incrementAndGet)(_ => live.decrementAndGet.unit).andThen {
                         Scope.ensure(released.set(true)).unit
                     }

@@ -15,10 +15,10 @@ class PathPlatformSpecificLockJVMTest extends kyo.test.Test[Any]:
             val key      = path.toString
             val channel  = FileChannel.open(path, StandardOpenOption.READ, StandardOpenOption.WRITE)
             var attempts = 0
-            val lock = new FileLock(channel, 0L, Long.MaxValue, false):
+            val lock     = new FileLock(channel, 0L, Long.MaxValue, false):
                 private var valid    = true
                 def isValid: Boolean = valid
-                def release(): Unit =
+                def release(): Unit  =
                     attempts += 1
                     if attempts == 1 then throw new IOException("injected release failure")
                     valid = false
@@ -63,10 +63,10 @@ class PathPlatformSpecificLockJVMTest extends kyo.test.Test[Any]:
             val channel  = FileChannel.open(path, StandardOpenOption.READ, StandardOpenOption.WRITE)
             var releases = 0
             var closes   = 0
-            val lock = new FileLock(channel, 0L, Long.MaxValue, false):
+            val lock     = new FileLock(channel, 0L, Long.MaxValue, false):
                 private var valid    = true
                 def isValid: Boolean = valid
-                def release(): Unit =
+                def release(): Unit  =
                     releases += 1
                     valid = false
             try

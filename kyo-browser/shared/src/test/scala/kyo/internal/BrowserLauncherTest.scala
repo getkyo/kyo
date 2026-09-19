@@ -176,7 +176,7 @@ class BrowserLauncherTest extends BaseChromeTest:
         val timeout = 200.millis
         Scope.run {
             for
-                tmp <- Path.run(Path.tempDir("kyo-browser-pollDevTools-test-"))
+                tmp     <- Path.run(Path.tempDir("kyo-browser-pollDevTools-test-"))
                 outcome <- Abort.run[BrowserSetupException] {
                     BrowserLauncher.pollDevToolsActivePort(tmp, timeout, 50.millis)
                 }
@@ -264,7 +264,7 @@ class BrowserLauncherTest extends BaseChromeTest:
                         pid         <- proc.pid
                         aliveBefore <- isPidAlive(pid)
                         _           <- BrowserLauncher.killOrphans(pattern, command = "pgrep")
-                        killed <- Loop(0) { attempt =>
+                        killed      <- Loop(0) { attempt =>
                             isPidAlive(pid).map { alive =>
                                 if !alive then Loop.done(true)
                                 else if attempt >= 5 then Loop.done(false)

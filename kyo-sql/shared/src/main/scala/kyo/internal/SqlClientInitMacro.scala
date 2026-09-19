@@ -106,7 +106,7 @@ private[kyo] object SqlClientInitMacro:
     private[kyo] def refusalFor(scheme: String, verdict: Verdict): Maybe[String] =
         verdict match
             case Verdict.Claimed | Verdict.Undecided => Absent
-            case Verdict.NoBackend =>
+            case Verdict.NoBackend                   =>
                 Present(
                     s"No SQL backend is on the compile classpath, so '$scheme://...' can only open through a backend registered at run time. " +
                         "Add the kyo-sql backend artifact for the engine this URL names."

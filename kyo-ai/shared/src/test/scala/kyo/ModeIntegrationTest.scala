@@ -18,7 +18,8 @@ class ModeIntegrationTest extends BaseAITest:
                 val mode = Mode.init([A] =>
                     (ai, gen) =>
                         ai.systemMessage("A custom Kyo Mode added this instruction: modeSecret must be exactly mode_secret_29.")
-                            .andThen(gen))
+                            .andThen(gen)
+                )
                 AI.enable(mode) {
                     AI.initWith { ai =>
                         for

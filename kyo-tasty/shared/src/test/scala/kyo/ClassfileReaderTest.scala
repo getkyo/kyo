@@ -135,9 +135,9 @@ class ClassfileReaderTest extends kyo.test.Test[Any]:
         //     #4 Class #3
         //   access_flags = ACC_PUBLIC | ACC_INTERFACE | ACC_ABSTRACT = 0x0601
         //   this = #2, super = #4, 0 interfaces, 0 fields, 0 methods, 0 attrs
-        val clsName = "kyo/fixtures/MinimalIface".getBytes(java.nio.charset.StandardCharsets.UTF_8)
-        val supName = "java/lang/Object".getBytes(java.nio.charset.StandardCharsets.UTF_8)
-        val buffer  = new java.io.ByteArrayOutputStream()
+        val clsName                = "kyo/fixtures/MinimalIface".getBytes(java.nio.charset.StandardCharsets.UTF_8)
+        val supName                = "java/lang/Object".getBytes(java.nio.charset.StandardCharsets.UTF_8)
+        val buffer                 = new java.io.ByteArrayOutputStream()
         def writeInt(v: Int): Unit =
             buffer.write((v >>> 24) & 0xff); buffer.write((v >>> 16) & 0xff)
             buffer.write((v >>> 8) & 0xff); buffer.write(v & 0xff)
@@ -162,9 +162,9 @@ class ClassfileReaderTest extends kyo.test.Test[Any]:
     }
 
     "reading an enum classfile produces flags.contains(Flag.Enum)" in {
-        val clsName = "kyo/fixtures/MinimalEnum".getBytes(java.nio.charset.StandardCharsets.UTF_8)
-        val supName = "java/lang/Enum".getBytes(java.nio.charset.StandardCharsets.UTF_8)
-        val buffer  = new java.io.ByteArrayOutputStream()
+        val clsName                = "kyo/fixtures/MinimalEnum".getBytes(java.nio.charset.StandardCharsets.UTF_8)
+        val supName                = "java/lang/Enum".getBytes(java.nio.charset.StandardCharsets.UTF_8)
+        val buffer                 = new java.io.ByteArrayOutputStream()
         def writeInt(v: Int): Unit =
             buffer.write((v >>> 24) & 0xff); buffer.write((v >>> 16) & 0xff)
             buffer.write((v >>> 8) & 0xff); buffer.write(v & 0xff)
@@ -196,11 +196,11 @@ class ClassfileReaderTest extends kyo.test.Test[Any]:
         //          #5 Utf8 "VALUE", #6 Utf8 "I"
         //   access_flags = 0x0021 (ACC_PUBLIC | ACC_SUPER)
         //   1 field: access_flags=0x0019 (ACC_PUBLIC|ACC_STATIC|ACC_FINAL), name=#5, descriptor=#6, 0 attrs
-        val clsName   = "kyo/fixtures/StaticFieldHolder".getBytes(java.nio.charset.StandardCharsets.UTF_8)
-        val supName   = "java/lang/Object".getBytes(java.nio.charset.StandardCharsets.UTF_8)
-        val fieldName = "VALUE".getBytes(java.nio.charset.StandardCharsets.UTF_8)
-        val fieldDesc = "I".getBytes(java.nio.charset.StandardCharsets.UTF_8)
-        val buffer    = new java.io.ByteArrayOutputStream()
+        val clsName                = "kyo/fixtures/StaticFieldHolder".getBytes(java.nio.charset.StandardCharsets.UTF_8)
+        val supName                = "java/lang/Object".getBytes(java.nio.charset.StandardCharsets.UTF_8)
+        val fieldName              = "VALUE".getBytes(java.nio.charset.StandardCharsets.UTF_8)
+        val fieldDesc              = "I".getBytes(java.nio.charset.StandardCharsets.UTF_8)
+        val buffer                 = new java.io.ByteArrayOutputStream()
         def writeInt(v: Int): Unit =
             buffer.write((v >>> 24) & 0xff); buffer.write((v >>> 16) & 0xff)
             buffer.write((v >>> 8) & 0xff); buffer.write(v & 0xff)
@@ -254,11 +254,11 @@ class ClassfileReaderTest extends kyo.test.Test[Any]:
         //   pool: #1 Utf8 class name, #2 Class #1, #3 Utf8 "java/lang/Object", #4 Class #3, #5 Utf8 "count", #6 Utf8 "I"
         //   access_flags = ACC_PUBLIC | ACC_SUPER (0x0021)
         //   1 field: ACC_PUBLIC (0x0001) only -- not ACC_FINAL => Var
-        val clsName   = "kyo/fixtures/MutableFieldHolder".getBytes(java.nio.charset.StandardCharsets.UTF_8)
-        val supName   = "java/lang/Object".getBytes(java.nio.charset.StandardCharsets.UTF_8)
-        val fieldName = "count".getBytes(java.nio.charset.StandardCharsets.UTF_8)
-        val fieldDesc = "I".getBytes(java.nio.charset.StandardCharsets.UTF_8)
-        val buffer    = new java.io.ByteArrayOutputStream()
+        val clsName                = "kyo/fixtures/MutableFieldHolder".getBytes(java.nio.charset.StandardCharsets.UTF_8)
+        val supName                = "java/lang/Object".getBytes(java.nio.charset.StandardCharsets.UTF_8)
+        val fieldName              = "count".getBytes(java.nio.charset.StandardCharsets.UTF_8)
+        val fieldDesc              = "I".getBytes(java.nio.charset.StandardCharsets.UTF_8)
+        val buffer                 = new java.io.ByteArrayOutputStream()
         def writeInt(v: Int): Unit =
             buffer.write((v >>> 24) & 0xff); buffer.write((v >>> 16) & 0xff)
             buffer.write((v >>> 8) & 0xff); buffer.write(v & 0xff)
@@ -423,11 +423,11 @@ class ClassfileReaderTest extends kyo.test.Test[Any]:
         // RuntimeVisibleTypeAnnotations body: u2 num_annotations=1, one type_annotation with
         // target_type=0x13 (empty_target, CLASS_EXTENDS), type_path(0 entries), and
         // annotation: type_index=ref-to-Ljava/lang/Deprecated;, u2 pairs=0.
-        val attrName = "RuntimeVisibleTypeAnnotations".getBytes(java.nio.charset.StandardCharsets.UTF_8)
-        val clsName  = "SyntheticTypeAnn".getBytes(java.nio.charset.StandardCharsets.UTF_8)
-        val supName  = "java/lang/Object".getBytes(java.nio.charset.StandardCharsets.UTF_8)
-        val annDesc  = "Ljava/lang/Deprecated;".getBytes(java.nio.charset.StandardCharsets.UTF_8)
-        val buffer   = new java.io.ByteArrayOutputStream()
+        val attrName               = "RuntimeVisibleTypeAnnotations".getBytes(java.nio.charset.StandardCharsets.UTF_8)
+        val clsName                = "SyntheticTypeAnn".getBytes(java.nio.charset.StandardCharsets.UTF_8)
+        val supName                = "java/lang/Object".getBytes(java.nio.charset.StandardCharsets.UTF_8)
+        val annDesc                = "Ljava/lang/Deprecated;".getBytes(java.nio.charset.StandardCharsets.UTF_8)
+        val buffer                 = new java.io.ByteArrayOutputStream()
         def writeInt(v: Int): Unit =
             buffer.write((v >>> 24) & 0xff)
             buffer.write((v >>> 16) & 0xff)

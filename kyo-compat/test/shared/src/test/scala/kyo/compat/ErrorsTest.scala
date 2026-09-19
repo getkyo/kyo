@@ -10,7 +10,7 @@ class ErrorsTest extends CompatTest:
 
     "recover(handler) recovers from failure" in run {
         val src: CIO[String] = CIO.fail(TestError("oops"))
-        val c = src.recover {
+        val c                = src.recover {
             case te: TestError => CIO.defer { s"recovered: ${te.msg}" }
             case other         => CIO.fail(other)
         }
@@ -20,7 +20,7 @@ class ErrorsTest extends CompatTest:
     "recover doesn't fire on success" in run {
         val ctr           = new AtomicInteger(0)
         val src: CIO[Int] = CIO.defer { 42 }
-        val c = src.recover { _ =>
+        val c             = src.recover { _ =>
             val _ = ctr.incrementAndGet()
             CIO.defer { 0 }
         }
@@ -35,7 +35,7 @@ class ErrorsTest extends CompatTest:
 
     "fold on failure runs effectful onFail" in run {
         val src: CIO[Nothing] = CIO.fail(TestError("e"))
-        val c = src.fold(
+        val c                 = src.fold(
             (_: Int) => CIO.defer { 0 },
             {
                 case te: TestError => CIO.defer { te.msg.length }
@@ -93,7 +93,7 @@ class ErrorsTest extends CompatTest:
 
     "orElse doesn't fire on success" in run {
         val ctr = new AtomicInteger(0)
-        val c = CIO.defer { 42 }.orElse(CIO.defer {
+        val c   = CIO.defer { 42 }.orElse(CIO.defer {
             val _ = ctr.incrementAndGet()
             99
         })
@@ -102,7 +102,7 @@ class ErrorsTest extends CompatTest:
 
     "mapError transforms typed E" in run {
         val src: CIO[Int] = CIO.fail(TestError("oops"))
-        val c = src.mapError {
+        val c             = src.mapError {
             case te: TestError => new RuntimeException(s"wrapped: ${te.msg}")
             case other         => other
         }
@@ -180,7 +180,7 @@ class ErrorsTest extends CompatTest:
     "deep recover chain 100 nested propagates correctly" in run {
         val n                 = 100
         val initial: CIO[Int] = CIO.fail(TestError("init"))
-        val c = (1 to n).foldLeft(initial)((acc, i) =>
+        val c                 = (1 to n).foldLeft(initial)((acc, i) =>
             acc.recover(_ => CIO.fail(TestError(s"layer-$i")))
         )
         c.liftToTry.map { result =>

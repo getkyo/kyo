@@ -76,7 +76,7 @@ object TagTestMacro:
                     val kresult = $k1 =!= $k2
                     assert(
                         kresult != ${ Expr(compilerEquals) },
-                        failure("=!=", kresult, !${ Expr(compilerEquals) })($k2, $k1)
+                        failure("=!=", kresult, ! ${ Expr(compilerEquals) })($k2, $k1)
                     )
             )
 

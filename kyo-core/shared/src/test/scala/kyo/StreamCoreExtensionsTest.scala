@@ -50,7 +50,7 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
             val merges    = Math.max(16, Runtime.getRuntime.availableProcessors() * 4)
             val forceStop = new java.util.concurrent.atomic.AtomicBoolean(false)
             val spinning  = new java.util.concurrent.atomic.AtomicInteger(0)
-            val infinite = Stream(
+            val infinite  = Stream(
                 Loop(())(_ =>
                     if forceStop.get() then Sync.defer(spinning.incrementAndGet()).andThen(Loop.done)
                     else Emit.valueWith(Chunk(100))(Loop.continue(()))
@@ -113,7 +113,7 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
 
             "closes the stream when the scope ends" in {
                 var closed = false
-                val is = new java.io.ByteArrayInputStream("x".getBytes(java.nio.charset.StandardCharsets.UTF_8)):
+                val is     = new java.io.ByteArrayInputStream("x".getBytes(java.nio.charset.StandardCharsets.UTF_8)):
                     override def close(): Unit =
                         closed = true
                         super.close()
@@ -189,7 +189,7 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
             "should not halt if non-halting side completes".onlyJvm in {
                 val s1Set = Set.from(0 to 20)
                 val s2Set = Set(21, 22)
-                val s1 = Stream:
+                val s1    = Stream:
                     Async.sleep(10.millis).andThen((Kyo.foreachDiscard(s1Set.toSeq)(i => Emit.value(Chunk(i)))))
                 val s2 = Stream.init(s2Set.toSeq)
                 Choice.run {
@@ -235,7 +235,7 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
         "mapPar" - {
             "should map all elements preserving order" in {
                 val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8)).concat(Stream.init(9 to 12))
-                val test =
+                val test   =
                     for
                         par <- Choice.eval(1, 2, 4, Async.defaultConcurrency, 1024)
                         buf <- Choice.eval(1, par, 4, 5, 8, 12, Int.MaxValue)
@@ -252,7 +252,7 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
 
             "should preserve order when first transformation is delayed".notNative in {
                 val stream = Stream.init(1 to 4)
-                val test =
+                val test   =
                     for
                         par <- Choice.eval(2, 4, Async.defaultConcurrency, 1024)
                         buf <- Choice.eval(1, par, 4, 5, 8, 12, Int.MaxValue)
@@ -269,7 +269,7 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
 
             "should propagate errors" in {
                 val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8)).concat(Stream.init(9 to 12))
-                val test =
+                val test   =
                     for
                         par <- Choice.eval(2, 4, Async.defaultConcurrency, 1024)
                         buf <- Choice.eval(1, par, 4, 5, 8, 12, Int.MaxValue)
@@ -288,7 +288,7 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
         "mapParUnordered" - {
             "should map all elements" in {
                 val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8)).concat(Stream.init(9 to 12))
-                val test =
+                val test   =
                     for
                         par <- Choice.eval(1, 2, 4, Async.defaultConcurrency, 1024)
                         buf <- Choice.eval(1, 4, 5, 8, 12, Int.MaxValue)
@@ -305,7 +305,7 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
 
             "should not preserve order when first transformation is delayed".notNative in {
                 val stream = Stream.init(1 to 4)
-                val test =
+                val test   =
                     for
                         par <- Choice.eval(1, 2, 4, Async.defaultConcurrency, 1024)
                         buf <- Choice.eval(1, 4, 5, 8, 12, Int.MaxValue)
@@ -320,7 +320,7 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
 
             "should propagate errors" in {
                 val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8)).concat(Stream.init(9 to 12))
-                val test =
+                val test   =
                     for
                         par <- Choice.eval(2, 4, Async.defaultConcurrency, 1024)
                         buf <- Choice.eval(1, par, 4, 5, 8, 12, Int.MaxValue)
@@ -339,7 +339,7 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
         "mapChunkPar" - {
             "should map all chunks preserving order" in {
                 val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8)).concat(Stream.init(9 to 12))
-                val test =
+                val test   =
                     for
                         par <- Choice.eval(1, 2, 4, Async.defaultConcurrency, 1024)
                         buf <- Choice.eval(1, 4, 5, 8, 12, Int.MaxValue)
@@ -356,7 +356,7 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
 
             "should preserve order when first transformation is delayed".notNative in {
                 val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8))
-                val test =
+                val test   =
                     for
                         par <- Choice.eval(1, 2, 4, Async.defaultConcurrency, 1024)
                         buf <- Choice.eval(1, 4, 5, 8, 12, Int.MaxValue)
@@ -374,7 +374,7 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
 
             "should propagate errors" in {
                 val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8)).concat(Stream.init(9 to 12))
-                val test =
+                val test   =
                     for
                         par <- Choice.eval(2, 4, Async.defaultConcurrency, 1024)
                         buf <- Choice.eval(1, par, 4, 5, 8, 12, Int.MaxValue)
@@ -413,7 +413,7 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
         "mapChunkParUnordered" - {
             "should map all chunks" in {
                 val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8)).concat(Stream.init(9 to 12))
-                val test =
+                val test   =
                     for
                         par <- Choice.eval(1, 2, 4, Async.defaultConcurrency, 1024)
                         buf <- Choice.eval(1, 4, 5, 8, 12)
@@ -430,7 +430,7 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
 
             "should not preserve order when first transformation is delayed".notNative in {
                 val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8))
-                val test =
+                val test   =
                     for
                         par <- Choice.eval(2, 4, Async.defaultConcurrency, 1024)
                         s2 =
@@ -447,7 +447,7 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
 
             "should propagate errors" in {
                 val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8)).concat(Stream.init(9 to 12))
-                val test =
+                val test   =
                     for
                         par <- Choice.eval(2, 4, Async.defaultConcurrency, 1024)
                         buf <- Choice.eval(1, par, 4, 5, 8, 12, Int.MaxValue)
@@ -671,7 +671,7 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
                 }
 
                 "map with Choice" in {
-                    val it = Iterator("a", "b", "c")
+                    val it                                                       = Iterator("a", "b", "c")
                     val stream: Stream[String, Sync & Choice & Abort[Throwable]] =
                         Stream.fromIteratorCatching[Throwable](it, chunkSize).rechunk(10).map: str =>
                             Choice.eval(true, false).map:
@@ -754,7 +754,8 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
                                                 ).andThen:
                                                     runFiber.get.map: resultChunks =>
                                                         assert(
-                                                            resultChunks.size == 10 && resultChunks.toSet.size == 1 && resultChunks.head == (0 to 10)
+                                                            resultChunks.size == 10 && resultChunks.toSet.size == 1 &&
+                                                                resultChunks.head == (0 to 10)
                                                         )
                     }
                 }
@@ -790,7 +791,8 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
                                             ).andThen:
                                                 runFiber.get.map: resultChunks =>
                                                     assert(
-                                                        resultChunks.size == 10 && resultChunks.toSet.size == 1 && resultChunks.head == (0 to 10)
+                                                        resultChunks.size == 10 && resultChunks.toSet.size == 1 &&
+                                                            resultChunks.head == (0 to 10)
                                                     )
                     }
                 }
@@ -1036,7 +1038,7 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
         }
 
         "mapChunkPar propagates Closed as error" in {
-            val stream = Stream.init(1 to 12)
+            val stream  = Stream.init(1 to 12)
             val stream2 = stream.mapChunkPar(2)(chunk =>
                 if chunk.exists(_ == 5) then Abort.fail(Closed("test", summon[Frame]))
                 else chunk.map(_ + 1)
@@ -1045,7 +1047,7 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
         }
 
         "mapChunkParUnordered propagates Closed as error" in {
-            val stream = Stream.init(1 to 12)
+            val stream  = Stream.init(1 to 12)
             val stream2 = stream.mapChunkParUnordered(2)(chunk =>
                 if chunk.exists(_ == 5) then Abort.fail(Closed("test", summon[Frame]))
                 else chunk.map(_ + 1)
@@ -1055,7 +1057,7 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
 
         "mapPar cleans up resources on Closed" in {
             AtomicInt.init(0).map { counter =>
-                val stream = Stream.init(1 to 12)
+                val stream  = Stream.init(1 to 12)
                 val stream2 = stream.mapPar(2) { i =>
                     counter.incrementAndGet.map { _ =>
                         if i == 5 then Abort.fail(Closed("test", summon[Frame]))
@@ -1079,7 +1081,7 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
 
         "concurrent stream ops clean up fibers on error" in {
             AtomicInt.init(0).map { active =>
-                val stream = Stream.init(1 to 100)
+                val stream  = Stream.init(1 to 100)
                 val stream2 = stream.mapPar(4) { i =>
                     active.incrementAndGet.andThen {
                         if i == 50 then Abort.fail(Closed("test", summon[Frame]))
@@ -1098,7 +1100,7 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
         }
 
         "mapParUnordered propagates Closed as error" in {
-            val stream = Stream.init(1 to 12)
+            val stream  = Stream.init(1 to 12)
             val stream2 = stream.mapParUnordered(2)(i =>
                 if i == 5 then Abort.fail(Closed("test", summon[Frame]))
                 else i + 1

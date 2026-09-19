@@ -54,7 +54,7 @@ class BoringSslProviderConfiguredPemTest extends Test:
         kyo.test.AssertScope
     ): Unit =
         val config = NetTlsConfig(caCertPath = Present(certificateFreePath()))
-        val ex = intercept[NetTlsConfigException] {
+        val ex     = intercept[NetTlsConfigException] {
             val engine = create(config, "localhost", false)
             // Defensive, as above: a regression returns a live engine over an empty store rather than throwing.
             engine.free()
@@ -71,7 +71,7 @@ class BoringSslProviderConfiguredPemTest extends Test:
         kyo.test.AssertScope
     ): Unit =
         val config = NetTlsConfig(certChainPath = Present(certificateFreePath()), privateKeyPath = Present(TlsTestCert.keyPath))
-        val ex = intercept[NetTlsConfigException] {
+        val ex     = intercept[NetTlsConfigException] {
             val engine = create(config, "localhost", true)
             // Defensive, as above: a regression returns a live engine carrying no usable identity rather than throwing.
             engine.free()
@@ -88,7 +88,7 @@ class BoringSslProviderConfiguredPemTest extends Test:
       */
     private def assertCaFailsClosed(create: (NetTlsConfig, String, Boolean) => TlsEngine)(using Frame, kyo.test.AssertScope): Unit =
         val config = NetTlsConfig(caCertPath = Present(unreadablePath()))
-        val ex = intercept[NetTlsConfigException] {
+        val ex     = intercept[NetTlsConfigException] {
             val engine = create(config, "localhost", false)
             // Defensive: if the bug is present, createEngine returns a live engine instead of throwing; free it so a failing run leaks nothing.
             engine.free()
@@ -108,7 +108,7 @@ class BoringSslProviderConfiguredPemTest extends Test:
     ): Unit =
         val badCertConfig = NetTlsConfig(certChainPath = Present(unreadablePath()), privateKeyPath = Present(TlsTestCert.keyPath))
         val badKeyConfig  = NetTlsConfig(certChainPath = Present(TlsTestCert.certPath), privateKeyPath = Present(unreadablePath()))
-        val certEx = intercept[NetTlsConfigException] {
+        val certEx        = intercept[NetTlsConfigException] {
             val engine = create(badCertConfig, "localhost", true)
             engine.free()
         }
@@ -119,7 +119,8 @@ class BoringSslProviderConfiguredPemTest extends Test:
         assert(
             (certEx.getMessage.contains("PEM") || certEx.getMessage.contains("read")) &&
                 (keyEx.getMessage.contains("PEM") || keyEx.getMessage.contains("read")),
-            "server createEngine threw NetTlsConfigException but not for the configured-but-unreadable-PEM reason: cert=" + certEx.getMessage + " key=" + keyEx.getMessage
+            "server createEngine threw NetTlsConfigException but not for the configured-but-unreadable-PEM reason: cert=" +
+                certEx.getMessage + " key=" + keyEx.getMessage
         )
     end assertServerMaterialFailsClosed
 
@@ -214,7 +215,7 @@ class BoringSslProviderConfiguredPemTest extends Test:
     "BoringSSL: a verifying client with no caCertPath loads the platform trust store, not an empty store" in {
         if !TlsRealEngines.boringSslAvailable() then cancel("BoringSSL not staged for this host")
         presentCaBundle match
-            case Absent => cancel("no platform CA bundle on this host to exercise system trust")
+            case Absent          => cancel("no platform CA bundle on this host to exercise system trust")
             case Present(bundle) =>
                 Sync.defer {
                     val lib = Ffi.load[BoringSslBindings]

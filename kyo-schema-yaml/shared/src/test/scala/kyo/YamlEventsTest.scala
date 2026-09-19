@@ -70,7 +70,7 @@ class YamlEventsTest extends kyo.test.Test[Any]:
         }
 
         "renders transformed parser events through the public renderer" in {
-            val renderer = Yaml.Events.Renderer(Yaml.WriterConfig.Default)
+            val renderer  = Yaml.Events.Renderer(Yaml.WriterConfig.Default)
             val uppercase =
                 Yaml.Events.Processor.mapScalars[DecodeException]((value, meta) => Result.succeed((value.toUpperCase, meta)))
             val yaml =
@@ -111,7 +111,7 @@ class YamlEventsTest extends kyo.test.Test[Any]:
         }
 
         "writes schema events through processors into the public renderer" in {
-            val renderer = Yaml.Events.Renderer(Yaml.WriterConfig.Default)
+            val renderer  = Yaml.Events.Renderer(Yaml.WriterConfig.Default)
             val uppercase =
                 Yaml.Events.Processor.mapScalars[DecodeException]((value, meta) => Result.succeed((value.toUpperCase, meta)))
 

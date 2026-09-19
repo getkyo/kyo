@@ -356,7 +356,7 @@ class ToolIntegrationTest extends BaseAITest:
             statsAndCalls <- unwrap(backend, result)
             (stats, calls) = statsAndCalls
             _              = assert(calls >= 1, s"${backend.label} never called the tool, so this leaf proves nothing")
-            _ = assert(
+            _              = assert(
                 stats.turns >= calls + 1,
                 s"${backend.label} reported ${stats.turns} turns for $calls tool call(s); a call and its " +
                     s"answer are at least ${calls + 1} model turns: $stats"

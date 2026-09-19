@@ -708,7 +708,7 @@ class KyoTest extends kyo.test.Test[Any]:
         }
 
         "works with effects" in {
-            var count = 0
+            var count  = 0
             val result = TestEffect1.run(
                 Kyo.findFirst(Seq(1, 2, 3)) { v =>
                     TestEffect1(41).map { r =>
@@ -722,7 +722,7 @@ class KyoTest extends kyo.test.Test[Any]:
         }
 
         "short circuits" in {
-            var count = 0
+            var count  = 0
             val result = Kyo.findFirst(Seq(1, 2, 3, 4, 5)) { v =>
                 count += 1
                 if v == 2 then Maybe(v) else Maybe.empty

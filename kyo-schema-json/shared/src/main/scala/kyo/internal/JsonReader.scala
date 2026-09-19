@@ -88,7 +88,7 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
     override def lastFieldName(): String =
         if lastFieldLen <= 0 then ""
         else
-            val buf = new Array[Byte](lastFieldLen)
+            val buf                         = new Array[Byte](lastFieldLen)
             @tailrec def copy(i: Int): Unit =
                 if i < lastFieldLen then
                     buf(i) = input(lastFieldStart + i)
@@ -333,7 +333,7 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
             case '{'       => skipObject()
             case '['       => skipArray()
             case 't' | 'f' => discard(boolean())
-            case 'n' =>
+            case 'n'       =>
                 if !(pos + 4 <= input.size &&
                         input(pos) == 'n' &&
                         input(pos + 1) == 'u' &&
@@ -399,7 +399,7 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
 
     /** Read a quoted string when we know there are escapes (backslash found during fast scan). */
     private def readQuotedStringWithEscapes(): String =
-        val sb = new StringBuilder
+        val sb                    = new StringBuilder
         @tailrec def loop(): Unit =
             if pos < input.size && input(pos) != '"' then
                 if input(pos) == '\\' then
@@ -414,7 +414,7 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
                         case 't'  => sb.append('\t'); pos += 1
                         case 'b'  => sb.append('\b'); pos += 1
                         case 'f'  => sb.append('\f'); pos += 1
-                        case 'u' =>
+                        case 'u'  =>
                             pos += 1
                             if pos + 4 > input.size then error("Unexpected end of input in unicode escape")
                             val cp = parseHex4(pos)
@@ -469,9 +469,8 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
         sb.toString
     end readQuotedStringWithEscapes
 
-    private def parseHex4(p: Int): Int =
-        (hexDigit(input(p)) << 12) | (hexDigit(input(p + 1)) << 8) |
-            (hexDigit(input(p + 2)) << 4) | hexDigit(input(p + 3))
+    private def parseHex4(p: Int): Int = (hexDigit(input(p)) << 12) | (hexDigit(input(p + 1)) << 8) |
+        (hexDigit(input(p + 2)) << 4) | hexDigit(input(p + 3))
 
     private def hexDigit(b: Byte): Int =
         if b >= '0' && b <= '9' then b - '0'
@@ -491,8 +490,8 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
         loop()
         if pos == start then error("Expected number")
         // Number bytes are always ASCII, copy only the needed range
-        val len = pos - start
-        val arr = new Array[Byte](len)
+        val len                              = pos - start
+        val arr                              = new Array[Byte](len)
         @tailrec def copyBytes(i: Int): Unit =
             if i < len then
                 arr(i) = input(start + i)
@@ -593,12 +592,12 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
         if pos < input.size then error("Unexpected trailing content")
 
     private def error(msg: String): Nothing =
-        given Frame       = _frame
-        val contextRadius = 30
-        val start         = math.max(0, pos - contextRadius)
-        val end           = math.min(input.size, pos + contextRadius)
-        val len           = end - start
-        val arr           = new Array[Byte](len)
+        given Frame                          = _frame
+        val contextRadius                    = 30
+        val start                            = math.max(0, pos - contextRadius)
+        val end                              = math.min(input.size, pos + contextRadius)
+        val len                              = end - start
+        val arr                              = new Array[Byte](len)
         @tailrec def copyBytes(i: Int): Unit =
             if i < len then
                 arr(i) = input(start + i)
@@ -634,9 +633,9 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
         if pos >= input.size then error("Unexpected end of input while reading Structure.Value")
         peek() match
             case '{' =>
-                val size = objectStart()
-                val n    = if size >= 0 then size else 4
-                val acc  = scala.collection.mutable.ArrayBuffer.empty[(String, Structure.Value)]
+                val size                  = objectStart()
+                val n                     = if size >= 0 then size else 4
+                val acc                   = scala.collection.mutable.ArrayBuffer.empty[(String, Structure.Value)]
                 @tailrec def loop(): Unit =
                     if hasNextField() then
                         val name  = field()
@@ -648,9 +647,9 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
                 objectEnd()
                 Structure.Value.Record(Chunk.from(acc.toSeq))
             case '[' =>
-                val size = arrayStart()
-                val n    = if size >= 0 then size else 4
-                val acc  = scala.collection.mutable.ArrayBuffer.empty[Structure.Value]
+                val size                  = arrayStart()
+                val n                     = if size >= 0 then size else 4
+                val acc                   = scala.collection.mutable.ArrayBuffer.empty[Structure.Value]
                 @tailrec def loop(): Unit =
                     if hasNextElement() then
                         discard(acc.addOne(readStructure()))
@@ -661,7 +660,7 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
                 Structure.Value.Sequence(Chunk.from(acc.toSeq))
             case '"'       => Structure.Value.Str(string())
             case 't' | 'f' => Structure.Value.Bool(boolean())
-            case 'n' =>
+            case 'n'       =>
                 if !isNil() then error("Expected 'null'")
                 Structure.Value.Null
             case _ =>
@@ -701,8 +700,8 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
                 if name == fieldName then
                     val start = pos
                     skip()
-                    val len = pos - start
-                    val arr = new Array[Byte](len)
+                    val len                              = pos - start
+                    val arr                              = new Array[Byte](len)
                     @tailrec def copyBytes(j: Int): Unit =
                         if j < len then
                             arr(j) = input(start + j)

@@ -79,7 +79,7 @@ object PipelineExchange:
             stmts.foreach { ps =>
                 val paramFormats: Chunk[Short]            = ps.params.map(_.encoder.format.code)
                 val paramValues: Chunk[Maybe[Span[Byte]]] = ps.params.map(_.encoded)
-                val bindMsg = Bind(
+                val bindMsg                               = Bind(
                     portalName = "",
                     stmtName = ps.stmt.name,
                     paramFormats = paramFormats,
@@ -98,7 +98,7 @@ object PipelineExchange:
                     // Unsafe: increments the transport-local write counter (one increment = one TCP batch flush).
                     Sync.Unsafe.defer(discard(writeCount.incrementAndGet()))
                 case Result.Failure(_) => Abort.fail(SqlConnectionClosedException("writing (pipeline)"))
-                case Result.Panic(t) =>
+                case Result.Panic(t)   =>
                     Log.error(s"[kyo-sql] PipelineExchange: write panic: ${t.getMessage}").andThen(
                         Abort.fail(SqlConnectionWritePanicException(t))
                     )

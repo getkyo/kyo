@@ -329,7 +329,7 @@ private[kyo] object ChunkedBodyDecoder:
 
         /** Process the chunk size line. Returns true if phase transitioned. */
         private def processReadSize(): Boolean =
-            val end = writePos
+            val end                          = writePos
             @tailrec def findLf(i: Int): Int =
                 if i >= end then -1
                 else if buf(i) == LF then i
@@ -515,7 +515,7 @@ private[kyo] object ChunkedBodyDecoder:
             if i >= hexEnd then
                 if acc > Int.MaxValue then -1 else acc.toInt
             else
-                val b = lineBytes(i) & 0xff
+                val b     = lineBytes(i) & 0xff
                 val digit =
                     if b >= '0' && b <= '9' then b - '0'
                     else if b >= 'a' && b <= 'f' then b - 'a' + 10

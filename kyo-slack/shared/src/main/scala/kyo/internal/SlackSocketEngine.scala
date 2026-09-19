@@ -212,7 +212,7 @@ final private[kyo] class SlackSocketEngine private[kyo] (
         Frame
     ): Unit < (Async & Abort[SlackException]) =
         envelopeId(env) match
-            case Absent => Kyo.unit
+            case Absent      => Kyo.unit
             case Present(id) =>
                 val sendAck = SlackWire.encodeAck(id, ack).map { frame =>
                     Abort.recover[Closed] { (c: Closed) =>
@@ -424,7 +424,7 @@ private[kyo] object SlackSocketEngine:
                         }
                     }
                 }.map {
-                    case Result.Success(_) => Kyo.unit
+                    case Result.Success(_)                  => Kyo.unit
                     case Result.Failure(ex: SlackException) =>
                         connectReady.complete(Result.fail(ex)).unit
                     case Result.Failure(ex) =>
@@ -439,7 +439,7 @@ private[kyo] object SlackSocketEngine:
                         ))).unit
                 }
             }
-            _ <- connectReady.get
+            _    <- connectReady.get
             conn <- connRef.get.map {
                 case Present(c) => c: SlackTransport.Conn
                 case Absent     => Abort.fail(new SlackTransportException("connection not established after readiness"))

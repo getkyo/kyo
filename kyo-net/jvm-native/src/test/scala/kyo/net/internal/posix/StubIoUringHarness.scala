@@ -33,7 +33,7 @@ object StubSocketBindings extends SocketBindings:
         Ffi.Outcome.fromValueErrno[Int](0L, 0)
     override def fstat(fd: Int, buf: Buffer[Byte])(using AllowUnsafe): Ffi.Outcome[Int] =
         Ffi.Outcome.fromValueErrno[Int](0L, 0)
-    override def shutdown(fd: Int, how: Int)(using AllowUnsafe): Int = 0
+    override def shutdown(fd: Int, how: Int)(using AllowUnsafe): Int                                                        = 0
     override def connect(fd: Int, addr: Buffer[Byte], addrlen: Int)(using AllowUnsafe): Fiber.Unsafe[Ffi.Outcome[Int], Any] =
         Fiber.Unsafe.fromResult(Result.succeed(Ffi.Outcome.fromValueErrno[Int](0L, 0)))
     override def accept(fd: Int, addr: Buffer[Byte], addrlen: Buffer[Int])(using AllowUnsafe): Fiber.Unsafe[Ffi.Outcome[Int], Any] =
@@ -133,7 +133,7 @@ class StubIoUringBindings extends IoUringBindings:
     // --- real liburing exports ---
 
     override def io_uring_queue_init(entries: Int, ring: Buffer[Byte], flags: Int)(using AllowUnsafe): Int = 0
-    override def io_uring_queue_exit(ring: Buffer[Byte])(using AllowUnsafe): Unit =
+    override def io_uring_queue_exit(ring: Buffer[Byte])(using AllowUnsafe): Unit                          =
         discard(queueExitCount.getAndIncrement())
     override def io_uring_submit(ring: Buffer[Byte])(using AllowUnsafe): Int = 1
 
@@ -271,7 +271,7 @@ class StubIoUringBindings extends IoUringBindings:
         monitor.synchronized { woken = true; monitor.notifyAll() }
         0
 
-    override def kyo_uring_eventfd_read(fd: Int)(using AllowUnsafe): Int = 0
+    override def kyo_uring_eventfd_read(fd: Int)(using AllowUnsafe): Int  = 0
     override def kyo_uring_eventfd_close(fd: Int)(using AllowUnsafe): Int =
         discard(eventfdCloseCount.getAndIncrement())
         0

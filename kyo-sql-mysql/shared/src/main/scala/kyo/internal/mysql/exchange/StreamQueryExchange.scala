@@ -85,7 +85,7 @@ private[mysql] object StreamQueryExchange:
                                         // If the stream is terminated early, the cleanup must drain remaining row packets
                                         // before sending COM_STMT_CLOSE, to leave the connection in a clean state.
                                         AtomicRef.init(false).flatMap { terminatorSeen =>
-                                            val colTypes = columnDefs.map(_.columnType)
+                                            val colTypes                                            = columnDefs.map(_.columnType)
                                             val cleanupEffect: Unit < (Async & Abort[SqlException]) =
                                                 terminatorSeen.get.flatMap { done =>
                                                     if done then

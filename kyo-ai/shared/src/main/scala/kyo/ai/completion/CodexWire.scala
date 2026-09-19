@@ -213,7 +213,7 @@ private[completion] object CodexWire:
     def turnInput(context: Context): Chunk[TurnInput] =
         val messages = conversationMessages(context)
         val body     = conversationBody(context)
-        val request = body.lastMaybe match
+        val request  = body.lastMaybe match
             case Present(UserMessage(content, image)) =>
                 Chunk(TurnInput("text", text = Present(content))).concat(
                     image.map(img => Chunk(TurnInput("image", url = Present(s"data:image/jpeg;base64,${img.base64}")))).getOrElse(
@@ -331,7 +331,7 @@ private[completion] object CodexWire:
     end isTurnCompleted
 
     def eventSummary(event: RpcEvent)(using Frame): String =
-        val params = Json.encode(event.params)
+        val params  = Json.encode(event.params)
         val preview =
             if params.length <= 500 then params
             else params.take(500) + "..."

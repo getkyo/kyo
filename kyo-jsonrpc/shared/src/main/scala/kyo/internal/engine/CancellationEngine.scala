@@ -169,7 +169,7 @@ private[kyo] object CancellationEngine:
         writerChannel: Channel[WriterMsg]
     )(using Frame): Unit < (Async & Abort[Closed]) =
         Sync.defer(Maybe(callerRegistry.get(id))).map {
-            case Absent => Kyo.unit
+            case Absent        => Kyo.unit
             case Present(info) =>
                 val abortError = cancellation match
                     case Present(p) => p.cancelledError.getOrElse(JsonRpcCustomError(-32800, reason.getOrElse("Request cancelled")))

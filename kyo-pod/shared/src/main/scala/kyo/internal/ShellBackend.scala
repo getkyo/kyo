@@ -107,7 +107,7 @@ final private[kyo] class ShellBackend(
     /** Builds `-p` flag pairs for each port binding. Pure — no effects. */
     private def portArgs(ports: Chunk[Config.PortBinding]): Chunk[String] =
         ports.flatMap { pb =>
-            val proto = pb.protocol.cliName
+            val proto   = pb.protocol.cliName
             val binding = (pb.hostIp, pb.hostPort) match
                 case (ip, hp) if ip.nonEmpty && hp != 0 => s"$ip:$hp:${pb.containerPort}/$proto"
                 case ("", hp) if hp != 0                => s"$hp:${pb.containerPort}/$proto"
@@ -166,8 +166,8 @@ final private[kyo] class ShellBackend(
       * to race-read the still-Running entry. A short bounded poll closes that gap (mirrors the same fix in `HttpContainerBackend.stop`).
       */
     private def awaitTerminalState(id: Container.Id)(using Frame): Unit < (Async & Abort[ContainerException]) =
-        val maxAttempts = 20
-        val pollDelay   = 50.millis
+        val maxAttempts                                                    = 20
+        val pollDelay                                                      = 50.millis
         def loop(attempt: Int): Unit < (Async & Abort[ContainerException]) =
             state(id).map { s =>
                 if s == Container.State.Stopped || s == Container.State.Dead then ()
@@ -226,7 +226,7 @@ final private[kyo] class ShellBackend(
         else
             Abort.run[Timeout](Async.timeout(timeout)(call)).map {
                 case Result.Success(code) => code
-                case Result.Failure(_) =>
+                case Result.Failure(_)    =>
                     Abort.fail[ContainerException](
                         ContainerBackendException(s"waitForExit for ${id.value} exceeded $timeout")
                     )
@@ -301,7 +301,7 @@ final private[kyo] class ShellBackend(
         val portsSeq = dto.NetworkSettings.Ports.getOrElse(Map.empty).flatMap { case (portProto, mappings) =>
             val parts         = portProto.split("/")
             val containerPort = parts(0).toIntOption.getOrElse(0)
-            val protocol = if parts.length > 1 then
+            val protocol      = if parts.length > 1 then
                 parts(1) match
                     case "udp"  => Config.Protocol.UDP
                     case "sctp" => Config.Protocol.SCTP
@@ -460,7 +460,7 @@ final private[kyo] class ShellBackend(
         val (memUsage, memLimit)    = parseSlashPair(dto.MemUsage)
         val (blockRead, blockWrite) = parseSlashPair(dto.BlockIO)
         val (netRx, netTx)          = parseSlashPair(dto.NetIO)
-        val pidsVal =
+        val pidsVal                 =
             Result.catching[NumberFormatException](dto.PIDs.trim.toLong).getOrElse(0L)
 
         Stats(
@@ -570,7 +570,7 @@ final private[kyo] class ShellBackend(
                     if trimmed.length >= 2 then
                         val kindChar = trimmed.charAt(0)
                         val path     = trimmed.substring(2)
-                        val kind = kindChar match
+                        val kind     = kindChar match
                             case 'A' => FilesystemChange.Kind.Added
                             case 'C' => FilesystemChange.Kind.Modified
                             case 'D' => FilesystemChange.Kind.Deleted
@@ -601,7 +601,7 @@ final private[kyo] class ShellBackend(
         val schedule = Schedule.exponentialBackoff(initial = 50.millis, factor = 2, maxBackoff = 500.millis).take(3)
         def attempt(remaining: Schedule): A < (Async & Abort[ContainerException]) =
             Abort.runWith[ContainerException](v) {
-                case Result.Success(value) => value
+                case Result.Success(value)                                   => value
                 case Result.Failure(e: ContainerBackendUnavailableException) =>
                     Clock.now.map { now =>
                         remaining.next(now) match
@@ -830,7 +830,7 @@ final private[kyo] class ShellBackend(
     )(using Frame): Chunk[Container.LogEntry] < (Async & Abort[ContainerException]) =
         val needMerge           = stdout && stderr
         val effectiveTimestamps = timestamps || needMerge
-        val args = Chunk("logs") ++
+        val args                = Chunk("logs") ++
             (if tail != Int.MaxValue then Chunk("--tail", tail.toString) else Chunk.empty) ++
             (if since != Instant.Min then Chunk("--since", since.toString) else Chunk.empty) ++
             (if until != Instant.Max then Chunk("--until", until.toString) else Chunk.empty) ++
@@ -901,8 +901,8 @@ final private[kyo] class ShellBackend(
         val result                             = Seq.newBuilder[LogEntry]
         var lastSource: Maybe[LogEntry.Source] = Absent
         while outQ.nonEmpty && errQ.nonEmpty do
-            val o = outQ.head
-            val e = errQ.head
+            val o       = outQ.head
+            val e       = errQ.head
             val pickOut =
                 if key(o) < key(e) then true
                 else if key(e) < key(o) then false
@@ -1018,7 +1018,7 @@ final private[kyo] class ShellBackend(
             val parts = output.trim.split("\\|")
             if parts.length >= 4 then
                 // %N returns 'name' for regular files, or 'name' -> 'target' for symlinks
-                val rawName = parts(0)
+                val rawName            = parts(0)
                 val (name, linkTarget) =
                     val arrowIdx = rawName.indexOf(" -> ")
                     if arrowIdx >= 0 then
@@ -1043,7 +1043,7 @@ final private[kyo] class ShellBackend(
                     )
                 } match
                     case Result.Success(fs) => fs
-                    case Result.Failure(_) =>
+                    case Result.Failure(_)  =>
                         Abort.fail(ContainerDecodeException(
                             "Parse error in stat",
                             s"Invalid stat output for container ${id.value}: ${output.trim}"
@@ -1154,7 +1154,7 @@ final private[kyo] class ShellBackend(
         // Split protocol: "0.0.0.0:8080->80/tcp" -> ("0.0.0.0:8080->80", "tcp")
         val slashIdx      = entry.lastIndexOf('/')
         val (main, proto) = if slashIdx >= 0 then (entry.substring(0, slashIdx), entry.substring(slashIdx + 1)) else (entry, "tcp")
-        val protocol = proto match
+        val protocol      = proto match
             case "udp"  => Config.Protocol.UDP
             case "sctp" => Config.Protocol.SCTP
             case _      => Config.Protocol.TCP
@@ -1194,7 +1194,7 @@ final private[kyo] class ShellBackend(
     end parseDockerPortEntry
 
     private def mapDockerPsToSummary(dto: PsJsonDocker): Summary =
-        val names = if dto.Names.nonEmpty then Chunk.from(dto.Names.split(",")) else Chunk.empty[String]
+        val names                        = if dto.Names.nonEmpty then Chunk.from(dto.Names.split(",")) else Chunk.empty[String]
         val labels: Dict[String, String] = if dto.Labels.nonEmpty then
             Dict.from(dto.Labels.split(",").iterator.filter(_.contains("=")).map { pair =>
                 val kv = pair.split("=", 2)
@@ -1202,7 +1202,7 @@ final private[kyo] class ShellBackend(
             }.toMap)
         else Dict.empty
         val createdAt = if dto.CreatedAt.nonEmpty then parseTimestamp(dto.CreatedAt) else Instant.Epoch
-        val ports =
+        val ports     =
             if dto.Ports.nonEmpty then
                 Chunk.from(dto.Ports.split(",").iterator.map(_.trim).filter(_.nonEmpty).map(parseDockerPortEntry).collect {
                     case Present(pb) => pb
@@ -1231,7 +1231,7 @@ final private[kyo] class ShellBackend(
         val command    = dto.Command.getOrElse(Seq.empty).mkString(" ")
         val labels     = Dict.from(dto.Labels.getOrElse(Map.empty))
         val createdStr = if dto.Created.nonEmpty then dto.Created else dto.CreatedAt
-        val createdAt = if createdStr.isEmpty then Instant.Epoch
+        val createdAt  = if createdStr.isEmpty then Instant.Epoch
         else
             Result.catching[NumberFormatException](Instant.fromJava(java.time.Instant.ofEpochSecond(createdStr.toLong)))
                 .getOrElse(parseTimestamp(createdStr))
@@ -1278,8 +1278,8 @@ final private[kyo] class ShellBackend(
     def imagePull(image: ContainerImage, platform: Maybe[Container.Platform], auth: Maybe[ContainerImage.RegistryAuth])(
         using Frame
     ): Unit < (Async & Abort[ContainerException]) =
-        val ref = image.reference
-        val ctx = ResourceContext.Image(ref)
+        val ref      = image.reference
+        val ctx      = ResourceContext.Image(ref)
         val baseArgs = Chunk("pull") ++
             platform.map(p => Chunk("--platform", p.reference)).getOrElse(Chunk.empty) ++
             Chunk(ref)
@@ -1353,7 +1353,7 @@ final private[kyo] class ShellBackend(
                 run(Present(c))
             case Present(c) =>
                 // Docker: login → action → logout (best-effort).
-                val server = image.registry.map(_.value).getOrElse("docker.io")
+                val server           = image.registry.map(_.value).getOrElse("docker.io")
                 val (user, password) = c.split(":", 2) match
                     case Array(u, p) => (u, p)
                     case Array(u)    => (u, "")
@@ -1452,7 +1452,7 @@ final private[kyo] class ShellBackend(
                     val trimmed = line.trim
                     Json.decode[ImageListJsonDocker](trimmed) match
                         case Result.Success(dto) if dto.ID.nonEmpty => mapDockerImageListToSummary(dto)
-                        case Result.Failure(_) | Result.Success(_) =>
+                        case Result.Failure(_) | Result.Success(_)  =>
                             decodeJson[ImageListJsonPodman](trimmed).map(mapPodmanImageListToSummary)
                         case Result.Panic(t) =>
                             Log.warn(s"unexpected panic decoding Docker image list DTO: $t").andThen(
@@ -1614,7 +1614,7 @@ final private[kyo] class ShellBackend(
                         // Podman: IsOfficial/IsAutomated are booleans, StarCount is an int
                         Json.decode[ImageSearchJsonPodman](trimmed) match
                             case Result.Success(dto) if dto.Name.nonEmpty => mapPodmanImageSearchToResult(dto)
-                            case Result.Failure(_) | Result.Success(_) =>
+                            case Result.Failure(_) | Result.Success(_)    =>
                                 decodeJson[ImageSearchJsonDocker](trimmed).map(mapDockerImageSearchToResult)
                             case Result.Panic(t) =>
                                 Log.warn(s"unexpected panic decoding Podman image search DTO: $t").andThen(
@@ -1709,7 +1709,7 @@ final private[kyo] class ShellBackend(
         // Podman defaults to OCI image format which has no `Comment` field;
         // `-m` is rejected unless we also pass `-f docker`.
         val needsDockerFormat = comment.nonEmpty && cmd.endsWith("podman")
-        val args = Chunk("commit") ++
+        val args              = Chunk("commit") ++
             (if needsDockerFormat then Chunk("-f", "docker") else Chunk.empty) ++
             (if comment.nonEmpty then Chunk("-m", comment) else Chunk.empty) ++
             (if author.nonEmpty then Chunk("-a", author) else Chunk.empty) ++
@@ -1767,7 +1767,7 @@ final private[kyo] class ShellBackend(
                     // Podman: native types (booleans, labels as object)
                     Json.decode[NetworkListJsonPodman](trimmed) match
                         case Result.Success(dto) if dto.name.nonEmpty || dto.id.nonEmpty => mapPodmanNetworkListToInfo(dto)
-                        case Result.Failure(_) | Result.Success(_) =>
+                        case Result.Failure(_) | Result.Success(_)                       =>
                             decodeJson[NetworkListJsonDocker](trimmed).map(mapDockerNetworkListToInfo)
                         case Result.Panic(t) =>
                             Log.warn(s"unexpected panic decoding Podman network list DTO: $t").andThen(
@@ -1829,7 +1829,7 @@ final private[kyo] class ShellBackend(
                 else id.value
 
                 val containersMap = dto.Containers.orElse(dto.containers).getOrElse(Map.empty)
-                val containers = Dict.from(containersMap.map { case (cid, c) =>
+                val containers    = Dict.from(containersMap.map { case (cid, c) =>
                     Container.Id(cid) -> Info.NetworkEndpoint(
                         networkId = Network.Id(nid),
                         endpointId = c.EndpointID,
@@ -2065,8 +2065,8 @@ final private[kyo] class ShellBackend(
       *   Returns true for lines that represent a deleted item (backend-specific format)
       */
     private def parsePruneOutput(output: String, deletedFilter: String => Boolean): (Chunk[String], Long) =
-        val lines   = output.split("\n")
-        val deleted = Chunk.from(lines.filter(l => deletedFilter(l.trim)).map(_.trim))
+        val lines          = output.split("\n")
+        val deleted        = Chunk.from(lines.filter(l => deletedFilter(l.trim)).map(_.trim))
         val spaceReclaimed = lines.find(_.contains("reclaimed")).flatMap { line =>
             sizePattern.findFirstMatchIn(line).map(m => parseSizeString(m.group(0)))
         }.getOrElse(0L)
@@ -2202,7 +2202,7 @@ final private[kyo] class ShellBackend(
         // The regex anchors on `<ip>?:NNNN` so it never picks up unrelated digits.
         if matchesAny(ErrorPatterns.PortConflict) then
             val bindPattern = """(?:0\.0\.0\.0|\[::\]|::)?:(\d+)""".r
-            val port = bindPattern.findFirstMatchIn(output)
+            val port        = bindPattern.findFirstMatchIn(output)
                 .flatMap(m => m.group(1).toIntOption)
                 .getOrElse(0)
             ContainerPortConflictException(port, output)
@@ -2227,7 +2227,7 @@ final private[kyo] class ShellBackend(
                     // initializing source: multi-step string surgery to extract the image ref
                     else if lower.contains("initializing source") then
                         val dockerIdx = output.indexOf("docker://")
-                        val imageRef =
+                        val imageRef  =
                             if dockerIdx >= 0 then
                                 val afterPrefix = output.substring(dockerIdx + "docker://".length)
                                 val colonSpace  = afterPrefix.indexOf(": ")
@@ -2320,7 +2320,7 @@ final private[kyo] class ShellBackend(
     /** Decode JSON using a Schema[A] instance, stripping outer array brackets if present. */
     private def decodeJson[A](raw: String)(using schema: Schema[A], frame: Frame): A < Abort[ContainerException] =
         val trimmed = raw.trim
-        val obj = if trimmed.startsWith("[") then
+        val obj     = if trimmed.startsWith("[") then
             trimmed.stripPrefix("[").stripSuffix("]").trim
         else trimmed
         Json.decode[A](obj) match
@@ -2425,7 +2425,7 @@ private[kyo] object ShellBackend:
       *   The merged stdout+stderr of the failed `docker login` invocation
       */
     private[kyo] def classifyLoginError(server: String, output: String)(using Frame): ContainerException =
-        val lower = output.toLowerCase
+        val lower       = output.toLowerCase
         val isAuthError =
             lower.contains("denied") ||
                 lower.contains("unauthorized") ||

@@ -55,7 +55,7 @@ class TopicValidationTest extends Test:
         Topic.run {
             for
                 started <- Latch.init(2)
-                fiber1 <- Fiber.initUnscoped(using Topic.isolate)(
+                fiber1  <- Fiber.initUnscoped(using Topic.isolate)(
                     started.release.andThen(Topic.stream[PairMsg](uri1).take(msgs1.size).run)
                 )
                 fiber2 <- Fiber.initUnscoped(using Topic.isolate)(

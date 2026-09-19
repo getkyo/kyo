@@ -63,7 +63,7 @@ class PollerIoDriverStaleWritableTest extends Test:
                         // A stale writable for a recycled fd must resolve Closed (stale-dropped), never Success.
                         result match
                             case Result.Failure(_: Closed) => succeed
-                            case Result.Success(()) =>
+                            case Result.Success(())        =>
                                 fail(
                                     "stale writable delivered Success to the prior owner: dispatchWritable stale-id guard failed"
                                 )

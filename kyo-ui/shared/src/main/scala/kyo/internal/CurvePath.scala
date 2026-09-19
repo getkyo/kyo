@@ -115,7 +115,7 @@ private[kyo] object CurvePath:
     // The clamped index function duplicates endpoints (p(-1)==p(0), p(n)==p(n-1)) so the spline anchors at the
     // first and last data points instead of pulling away from them.
     private def basis(d: Svg.PathData, pts: Chunk[(Double, Double)]): Svg.PathData =
-        val n = pts.size
+        val n                          = pts.size
         val p: Int => (Double, Double) = idx =>
             val c = math.max(0, math.min(n - 1, idx))
             pts(c)
@@ -145,7 +145,7 @@ private[kyo] object CurvePath:
     // The clamped index function p(idx)=pts(clamp(0, n-1, idx)) supplies the ghost points the tangents need
     // beyond the endpoints (the point before the first is pts(0), the point after the last is pts(n-1)).
     private def catmullRom(d: Svg.PathData, pts: Chunk[(Double, Double)]): Svg.PathData =
-        val n = pts.size
+        val n                          = pts.size
         val p: Int => (Double, Double) = idx =>
             val c = math.max(0, math.min(n - 1, idx))
             pts(c)

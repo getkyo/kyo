@@ -389,7 +389,7 @@ class YamlParserTest extends kyo.test.Test[Any]:
                   |    driver: bridge
                   |""".stripMargin
 
-            val logging = YamlComposeLogging("json-file", Map("max-size" -> "10m", "max-file" -> "3"))
+            val logging  = YamlComposeLogging("json-file", Map("max-size" -> "10m", "max-file" -> "3"))
             val expected = YamlDockerCompose(
                 "3.9",
                 logging,
@@ -752,8 +752,8 @@ class YamlParserTest extends kyo.test.Test[Any]:
                   |    - 12.13
                   |""".stripMargin
 
-            val parsed = Yaml.parse(yaml).getOrThrow
-            val server = field(parsed, "server_config")
+            val parsed   = Yaml.parse(yaml).getOrThrow
+            val server   = field(parsed, "server_config")
             val versions = field(server, "allow_postgres_versions").asInstanceOf[Yaml.Node.Sequence].elements.map {
                 case Yaml.Node.Scalar(value, _) => value
                 case other                      => fail(s"Expected scalar version, got $other")

@@ -12,15 +12,14 @@ class TMapMultiKeyBench(parallelism: Int) extends ArenaBench.ForkOnly(parallelis
         STM.runtime[IO].flatMap { stm =>
             for
                 ref <- stm.commit(stm.TVar.of(Map.empty[Int, Int]))
-                _ <-
-                    (0 until parallelism).map { i =>
-                        stm.commit {
-                            for
-                                map <- ref.get
-                                _   <- ref.set(map.updated(i, map.getOrElse(i, 0) + 1))
-                            yield ()
-                        }
-                    }.toList.parSequence_
+                _   <- (0 until parallelism).map { i =>
+                    stm.commit {
+                        for
+                            map <- ref.get
+                            _   <- ref.set(map.updated(i, map.getOrElse(i, 0) + 1))
+                        yield ()
+                    }
+                }.toList.parSequence_
                 results <- stm.commit(ref.get.map(_.values.sum))
             yield results
         }
@@ -31,7 +30,7 @@ class TMapMultiKeyBench(parallelism: Int) extends ArenaBench.ForkOnly(parallelis
 
         for
             map <- TMap.init[Int, Int]
-            _ <-
+            _   <-
                 Async.foreach(0 until parallelism, parallelism) { i =>
                     STM.run {
                         for
@@ -51,7 +50,7 @@ class TMapMultiKeyBench(parallelism: Int) extends ArenaBench.ForkOnly(parallelis
 
         for
             map <- TMap.empty[Int, Int].commit
-            _ <-
+            _   <-
                 ZIO.collectAllParDiscard(
                     (0 until parallelism).map { i =>
                         STM.atomically {

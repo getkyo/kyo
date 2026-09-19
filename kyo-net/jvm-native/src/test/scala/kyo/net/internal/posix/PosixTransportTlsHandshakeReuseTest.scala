@@ -80,7 +80,7 @@ class PosixTransportTlsHandshakeReuseTest extends Test:
             assumeTlsReady()
             withTransport { transport =>
                 for
-                    ready <- Channel.init[Unit](1)
+                    ready    <- Channel.init[Unit](1)
                     listener <- transport.listenTls("127.0.0.1", 0, 16, serverTls) { serverConn =>
                         discard(Sync.Unsafe.evalOrThrow {
                             Fiber.initUnscoped {

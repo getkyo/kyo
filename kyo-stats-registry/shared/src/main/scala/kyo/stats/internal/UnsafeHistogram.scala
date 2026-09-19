@@ -73,8 +73,7 @@ class UnsafeHistogram(boundaries: Array[Double]) extends Serializable {
             addToSum(v)
     }
 
-    private def pack(min: Float, max: Float): Long =
-        (floatToIntBits(min).toLong << 32) | (floatToIntBits(max).toLong & 0xffffffffL)
+    private def pack(min: Float, max: Float): Long = (floatToIntBits(min).toLong << 32) | (floatToIntBits(max).toLong & 0xffffffffL)
 
     def observe(v: Long)(implicit _au: AllowUnsafe): Unit = observe(v.toDouble)
 
@@ -110,7 +109,7 @@ class UnsafeHistogram(boundaries: Array[Double]) extends Serializable {
     }
 
     def summary()(implicit _au: AllowUnsafe): Summary = {
-        val counts = new Array[Long](buckets.length)
+        val counts                                   = new Array[Long](buckets.length)
         @tailrec def loop(i: Int, total: Long): Long =
             if (i >= counts.length)
                 total

@@ -60,7 +60,7 @@ class ReferencesTest extends kyo.test.Test[Any]:
       * OccurrenceScanner.scanFile's own `if positions.nonEmpty` guard skip the decode untried.
       */
     private def corruptBody(ctx: DecodeContext, sym: Tasty.Symbol, sourceFile: String, corruptBytes: Array[Byte]): Unit =
-        val real = ctx.bodyStore.get(sym.id)
+        val real      = ctx.bodyStore.get(sym.id)
         val corrupted = SymbolBody(
             bodyStart = 0,
             bodyEnd = corruptBytes.length,
@@ -113,7 +113,7 @@ class ReferencesTest extends kyo.test.Test[Any]:
                 Tasty.classpath.map { classpath =>
                     val someTraitSym = classpath.findTrait("kyo.fixtures.SomeTrait").get
                     val computeSym   = classpath.findMember(someTraitSym, "compute", MemberScope.All).get
-                    val computeFile = computeSym.sourcePosition match
+                    val computeFile  = computeSym.sourcePosition match
                         case Maybe.Present(p) => p.sourceFile
                         case Maybe.Absent     => fail("expected SomeTrait.compute to have a sourcePosition")
                     Tasty.references(computeSym).map { refs =>
@@ -202,7 +202,7 @@ class ReferencesTest extends kyo.test.Test[Any]:
         Abort.run[TastyError](
             Tasty.withPickles(Chunk(crossFileTargetPickle, crossFileUserPickle)) {
                 Tasty.classpath.map { classpath =>
-                    val targetSym = classpath.findClass("kyo.fixtures.CrossFileTarget").get
+                    val targetSym  = classpath.findClass("kyo.fixtures.CrossFileTarget").get
                     val targetFile = targetSym.sourcePosition match
                         case Maybe.Present(p) => p.sourceFile
                         case Maybe.Absent     => fail("expected CrossFileTarget to have a sourcePosition")
@@ -213,7 +213,7 @@ class ReferencesTest extends kyo.test.Test[Any]:
                         )
                         val crossFileUse = refs.find(_.sourceFile != targetFile) match
                             case Some(r) => r
-                            case None =>
+                            case None    =>
                                 fail(s"expected a cross-file type-position use outside the declaring file ($targetFile); got $refs")
                         // The span covers the full `CrossFileTarget` name, not the zero-width point TASTy
                         // records for a type-level node, so a find-references highlight and a rename edit
@@ -240,7 +240,7 @@ class ReferencesTest extends kyo.test.Test[Any]:
                 Tasty.classpath.map { classpath =>
                     val someTraitSym = classpath.findTrait("kyo.fixtures.SomeTrait").get
                     val computeSym   = classpath.findMember(someTraitSym, "compute", MemberScope.All).get
-                    val declPos = computeSym.sourcePosition match
+                    val declPos      = computeSym.sourcePosition match
                         case Maybe.Present(p) => p
                         case Maybe.Absent     => fail("expected SomeTrait.compute to have a sourcePosition")
                     Tasty.references(computeSym).map { refs =>

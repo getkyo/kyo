@@ -153,7 +153,7 @@ private[kyo] object OccurrenceScanner:
             case Tasty.Tree.TermRefDirect(address)         => directId(address, body)
             case Tasty.Tree.TermRefSymbol(address, _)      => directId(address, body)
             case Tasty.Tree.Ident(_, Tasty.Type.Named(id)) => remapNamed(id, body)
-            case Tasty.Tree.Select(qual, name, _) =>
+            case Tasty.Tree.Select(qual, name, _)          =>
                 selectTarget(qual, name, body, classpath, addrToNode, unresolvedIdToFullName)
             case Tasty.Tree.SelectIn(qual, name, _) =>
                 selectTarget(qual, name, body, classpath, addrToNode, unresolvedIdToFullName)
@@ -174,7 +174,7 @@ private[kyo] object OccurrenceScanner:
         unresolvedIdToFullName: scala.collection.Map[Int, String]
     ): Maybe[SymbolId] =
         tpe match
-            case Tasty.Type.Named(id) => resolveTypeRefId(id.value, body, classpath, unresolvedIdToFullName)
+            case Tasty.Type.Named(id)           => resolveTypeRefId(id.value, body, classpath, unresolvedIdToFullName)
             case Tasty.Type.TypeRef(qual, name) =>
                 typeQualContainer(qual, body, owner, classpath, unresolvedIdToFullName)
                     .flatMap(container => classpath.findMember(container, name.asString, MemberScope.All))
@@ -195,7 +195,7 @@ private[kyo] object OccurrenceScanner:
     ): Maybe[Tasty.Symbol.ClassLike | Tasty.Symbol.Package] =
         qual match
             case Tasty.Type.Named(id) if id.value == -1 => enclosingPackageOf(owner, classpath)
-            case _ =>
+            case _                                      =>
                 resolveTypeUse(qual, body, owner, classpath, unresolvedIdToFullName)
                     .flatMap(classpath.symbol)
                     .flatMap {
@@ -364,9 +364,9 @@ private[kyo] object OccurrenceScanner:
       */
     private def classLikeOf(tpe: Tasty.Type, classpath: Tasty.Classpath): Maybe[Tasty.Symbol.ClassLike] =
         tpe match
-            case Tasty.Type.Applied(base, _) => classLikeOf(base, classpath)
+            case Tasty.Type.Applied(base, _)    => classLikeOf(base, classpath)
             case Tasty.Type.TypeRef(qual, name) =>
-                val qualSym = classpath.typeSymbol(qual)
+                val qualSym                                                     = classpath.typeSymbol(qual)
                 val owner: Maybe[Tasty.Symbol.ClassLike | Tasty.Symbol.Package] = qualSym match
                     case Maybe.Present(p: Tasty.Symbol.Package)   => Maybe(p)
                     case Maybe.Present(c: Tasty.Symbol.ClassLike) => Maybe(c)
@@ -378,7 +378,7 @@ private[kyo] object OccurrenceScanner:
             case _ =>
                 val sym = classpath.typeSymbol(tpe)
                 sym match
-                    case Maybe.Present(c: Tasty.Symbol.ClassLike) => Maybe(c)
+                    case Maybe.Present(c: Tasty.Symbol.ClassLike)  => Maybe(c)
                     case Maybe.Present(tp: Tasty.Symbol.TypeParam) =>
                         classLikeOf(tp.bounds.upper, classpath)
                     case _ => Maybe.Absent

@@ -105,7 +105,7 @@ object System:
                     Maybe(SystemPlatformSpecific.property(name))
                 def lineSeparator()(using AllowUnsafe): String = JSystem.lineSeparator()
                 def userName()(using AllowUnsafe): String      = JSystem.getProperty("user.name")
-                def operatingSystem()(using AllowUnsafe): OS =
+                def operatingSystem()(using AllowUnsafe): OS   =
                     // Delegate raw `os.name` lookup to the platform-specific shim: on JVM/Native this goes through
                     // `java.lang.System`; on Scala.js (which returns null for that property) it falls back to Node's
                     // `process.platform`. The classification below stays shared.

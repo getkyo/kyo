@@ -233,7 +233,7 @@ class SubjectTest extends kyo.test.Test[Any]:
                 promise = Subject.init(promiseSub)
                 channel <- Channel.init[String](100)
                 channelSub = Subject.init(channel)
-                customSub = Subject.init[String](
+                customSub  = Subject.init[String](
                     send = msg => results.add(s"Custom: $msg"),
                     trySend = msg => results.add(s"TryCustom: $msg").map(_ => true)
                 )

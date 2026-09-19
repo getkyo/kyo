@@ -41,7 +41,7 @@ object NativeManifestPlatform:
         try
             getClass.getPackage match
                 case null => Absent
-                case pkg =>
+                case pkg  =>
                     pkg.getImplementationVersion match
                         case null => Absent
                         case v    => Present(v)
@@ -71,7 +71,7 @@ object NativeManifestPlatform:
                 url.openConnection().nn match
                     case jarConn: java.net.JarURLConnection =>
                         jarConn.setUseCaches(false)
-                        val jar = jarConn.getJarFile.nn
+                        val jar    = jarConn.getJarFile.nn
                         val prefix = jarConn.getEntryName match
                             case null => ""
                             case n    => n

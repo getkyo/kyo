@@ -51,7 +51,7 @@ class ClockTest extends kyo.test.Test[Any]:
         "nested time control reuses current control" in {
             Clock.withTimeControl { outer =>
                 for
-                    _ <- outer.set(Instant.Epoch)
+                    _      <- outer.set(Instant.Epoch)
                     result <- Clock.withTimeControl { inner =>
                         for
                             _   <- inner.advance(1.second)
@@ -475,7 +475,7 @@ class ClockTest extends kyo.test.Test[Any]:
         "works with Schedule and state" in {
             for
                 channel <- Channel.init[Int](10)
-                task <- Clock.repeatWithDelay(Schedule.fixed(1.millis), 0) { state =>
+                task    <- Clock.repeatWithDelay(Schedule.fixed(1.millis), 0) { state =>
                     channel.put(state).andThen(state + 1)
                 }
                 numbers <- Kyo.fill(10)(channel.take)

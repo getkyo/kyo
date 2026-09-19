@@ -131,7 +131,7 @@ private def impl[A: Type](body: Expr[A])(using quotes: Quotes): Expr[Any] =
                 effects.reduce((a, b) => AndType(a, b))
     end pending
 
-    var genSym = 0
+    var genSym                          = 0
     def freshName(name: String): String =
         genSym = genSym + 1
         s"${name}_N$genSym"

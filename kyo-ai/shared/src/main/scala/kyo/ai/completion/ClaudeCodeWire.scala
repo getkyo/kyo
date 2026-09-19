@@ -235,7 +235,7 @@ private[completion] object ClaudeCodeWire:
                         case UserMessage(content, _) =>
                             (lines.append(s"[user]: $content"), images)
                         case AssistantMessage(content, calls) =>
-                            val withText = if content.nonEmpty then lines.append(s"[assistant]: $content") else lines
+                            val withText  = if content.nonEmpty then lines.append(s"[assistant]: $content") else lines
                             val withCalls = calls.foldLeft(withText) { (acc, call) =>
                                 acc.append(s"[assistant, tool call ${call.function}]: ${call.arguments}")
                             }

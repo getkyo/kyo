@@ -237,10 +237,10 @@ abstract private[kyo] class ContainerBackend(val meter: Meter):
       */
     final private[kyo] def verifyBuildProduced(tags: Chunk[String])(using Frame): Unit < (Async & Abort[ContainerException]) =
         tags.headOption match
-            case None => Kyo.unit
+            case None      => Kyo.unit
             case Some(tag) =>
                 Abort.run[ContainerException](imageInspect(ContainerImage(tag))).map {
-                    case Result.Success(_) => ()
+                    case Result.Success(_)                                 => ()
                     case Result.Failure(_: ContainerImageMissingException) =>
                         Abort.fail(ContainerBuildFailedException(
                             tag,
@@ -248,7 +248,7 @@ abstract private[kyo] class ContainerBackend(val meter: Meter):
                             new RuntimeException(s"tagged image '$tag' absent after build")
                         ))
                     case Result.Failure(e) => Abort.fail(e)
-                    case Result.Panic(e) =>
+                    case Result.Panic(e)   =>
                         Abort.fail(ContainerBuildFailedException(tag, "unexpected error verifying build", e))
                 }
 
@@ -376,7 +376,7 @@ private[kyo] object ContainerBackend:
     def parseInstant(s: Option[String]): Maybe[Instant] =
         s match
             case None | Some("") | Some("0001-01-01T00:00:00Z") => Absent
-            case Some(v) =>
+            case Some(v)                                        =>
                 Instant.parse(v).toMaybe.orElse {
                     Result.catching[java.time.format.DateTimeParseException](
                         Instant.fromJava(java.time.OffsetDateTime.parse(v).toInstant)
@@ -473,7 +473,7 @@ private[kyo] object ContainerBackend:
             case Result.Success((output, ExitCode.Success)) => transform(output.trim)
             case Result.Success((_, _))                     => Absent
             case Result.Failure(_: CommandException)        => Absent
-            case Result.Panic(ex) =>
+            case Result.Panic(ex)                           =>
                 Log.debug(s"CLI command failed unexpectedly: ${ex.getMessage}").andThen(
                     Absent: Maybe[A]
                 )
@@ -492,7 +492,7 @@ private[kyo] object ContainerBackend:
         Abort.run[ContainerException](HttpContainerBackend.detect(meter, apiVersion)).map {
             case Result.Success(backend) => backend: ContainerBackend
             case Result.Failure(_)       => detectShell(meter, streamBufferSize)
-            case Result.Panic(ex) =>
+            case Result.Panic(ex)        =>
                 Log.warn("Unexpected error during HTTP backend detection", ex).andThen(
                     detectShell(meter, streamBufferSize)
                 )

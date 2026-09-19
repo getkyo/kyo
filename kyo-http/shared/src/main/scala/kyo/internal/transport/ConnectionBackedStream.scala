@@ -19,7 +19,7 @@ final private[kyo] class ConnectionBackedStream(
         Abort.run[Closed](connection.outbound.safe.put(data)).map {
             case Result.Success(_)         => ()
             case Result.Failure(_: Closed) => ()
-            case Result.Panic(t) =>
+            case Result.Panic(t)           =>
                 Log.error("ConnectionBackedStream: write panic", t)
         }
 end ConnectionBackedStream

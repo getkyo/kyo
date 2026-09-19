@@ -74,7 +74,7 @@ class TextareaTest extends UITest:
     }
 
     "fill 500 chars" in {
-        val longText = "a" * 500
+        val longText        = "a" * 500
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -299,7 +299,7 @@ class TextareaTest extends UITest:
     }
 
     "very long text signal preserves all" in {
-        val longText = "x" * 500
+        val longText        = "x" * 500
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(

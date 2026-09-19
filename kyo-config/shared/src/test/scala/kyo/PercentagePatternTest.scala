@@ -200,7 +200,7 @@ class PercentagePatternTest extends AnyFreeSpec {
 
         "empty value before @ is a parse error" in {
             val flag = PctTestFlags.emptyValue
-            val ex = intercept[FlagException] {
+            val ex   = intercept[FlagException] {
                 flag.update("rollout:@prod/50%")
             }
             assert(ex.getMessage.contains("empty value"))

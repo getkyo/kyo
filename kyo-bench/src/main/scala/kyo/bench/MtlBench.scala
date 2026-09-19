@@ -57,7 +57,7 @@ class MtlBench extends BaseBench:
             loops.traverse_(_ =>
                 for
                     conf <- IndexedReaderWriterStateT.ask[F, EnvValue, Chain[Event], State].map(_.config)
-                    _ <- IndexedReaderWriterStateT.tell[F, EnvValue, Chain[Event], State](
+                    _    <- IndexedReaderWriterStateT.tell[F, EnvValue, Chain[Event], State](
                         Chain(Event(s"Env = $conf"))
                     )
                     _ <- IndexedReaderWriterStateT.modify[F, EnvValue, Chain[Event], State, State](state =>

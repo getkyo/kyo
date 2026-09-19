@@ -50,7 +50,7 @@ class McpHandlerTest extends Test:
 
     "completion factory produces a route with Kind.Custom" in {
         val ref = McpHandler.CompletionRef.Prompt("myPrompt")
-        val r = McpHandler.completion(ref) { arg =>
+        val r   = McpHandler.completion(ref) { arg =>
             McpHandler.CompletionOutcome(Chunk(arg.value), Absent, Absent)
         }
         assert(r.kind == McpHandler.Kind.Custom)
@@ -95,7 +95,7 @@ class McpHandlerTest extends Test:
     // template resource ResourceMatch carries matched URI
     "template resource ResourceMatch carries matched URI" in {
         val tpl = McpResourceUri.Template.parse("file:///d/{n}").get
-        val h = McpHandler.resourceTemplate(tpl, "d") { m =>
+        val h   = McpHandler.resourceTemplate(tpl, "d") { m =>
             m.requireVariable("n").map(n => Chunk(McpHandler.ResourceBody.text(s"c$n")))
         }
         h match

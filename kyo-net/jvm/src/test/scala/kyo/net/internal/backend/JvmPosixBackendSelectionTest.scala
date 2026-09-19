@@ -142,7 +142,7 @@ class JvmPosixBackendSelectionTest extends Test:
         else
             val javaBin = java.nio.file.Paths.get(sys.props("java.home"), "bin", "java").toString
             val cp      = sys.props("java.class.path")
-            val out = scala.sys.process.Process(Seq(
+            val out     = scala.sys.process.Process(Seq(
                 javaBin,
                 "-Dkyo.ffi.kyonet_posix_uring.path=/nonexistent-kyo-posix-shim",
                 "-cp",

@@ -29,7 +29,7 @@ object Duration:
     def parse(s: String)(using Frame): Result[InvalidDuration, Duration] =
         val pattern = """(\d+)\s*([a-zA-Z]+)""".r
         s.trim.toLowerCase match
-            case "infinity" | "inf" => Result.succeed(Infinity)
+            case "infinity" | "inf"   => Result.succeed(Infinity)
             case pattern(value, unit) =>
                 for
                     longValue <-
@@ -265,7 +265,7 @@ object Duration:
 
         def apply(s: String): Either[Throwable, Duration] =
             s.trim.toLowerCase match
-                case "infinity" | "inf" => Right(Duration.Infinity)
+                case "infinity" | "inf"   => Right(Duration.Infinity)
                 case pattern(value, unit) =>
                     val parsedLong: Either[Throwable, Long] =
                         try Right(value.toLong)
