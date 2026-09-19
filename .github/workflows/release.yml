@@ -42,8 +42,7 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || '' }}
-      # Same cache namespace and key as .github/actions/setup, so a producer restores what
-      # the far more frequent ci runs on this runner image already populated.
+      # Same key as .github/actions/setup, so producers reuse what ci already populated.
       - uses: actions/cache@v6
         env:
           FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -131,8 +130,7 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || '' }}
-      # Same cache namespace and key as .github/actions/setup, so a producer restores what
-      # the far more frequent ci runs on this runner image already populated.
+      # Same key as .github/actions/setup, so producers reuse what ci already populated.
       - uses: actions/cache@v6
         env:
           FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -172,7 +170,9 @@ jobs:
           # only busybox sh), plus liburing-dev for the posix_uring shim, util-linux-dev for the Aeron
           # driver's -luuid, and curl/tar for the sbt launcher, which is a JAR the musl JDK runs (no
           # glibc dependency).
-          docker run --rm -v "$PWD:/work" -w /work eclipse-temurin:25-jdk-alpine sh -c '
+          # Mount the cache in, or the container resolves into throwaway storage.
+          mkdir -p "$HOME/.cache/coursier"
+          docker run --rm -v "$PWD:/work" -v "$HOME/.cache/coursier:/root/.cache/coursier" -w /work eclipse-temurin:25-jdk-alpine sh -c '
             set -eu
             apk add --no-cache bash cmake go build-base git file binutils perl linux-headers liburing-dev util-linux-dev curl tar
             sbt_ver="$(sed -n "s/^sbt.version=//p" project/build.properties)"
@@ -219,8 +219,7 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || '' }}
-      # Same cache namespace and key as .github/actions/setup, so a producer restores what
-      # the far more frequent ci runs on this runner image already populated.
+      # Same key as .github/actions/setup, so producers reuse what ci already populated.
       - uses: actions/cache@v6
         env:
           FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -256,7 +255,9 @@ jobs:
       - name: Build linux-musl-aarch64 natives (Alpine)
         shell: bash
         run: |
-          docker run --rm -v "$PWD:/work" -w /work eclipse-temurin:25-jdk-alpine sh -c '
+          # Mount the cache in, or the container resolves into throwaway storage.
+          mkdir -p "$HOME/.cache/coursier"
+          docker run --rm -v "$PWD:/work" -v "$HOME/.cache/coursier:/root/.cache/coursier" -w /work eclipse-temurin:25-jdk-alpine sh -c '
             set -eu
             apk add --no-cache bash cmake go build-base git file binutils perl linux-headers liburing-dev util-linux-dev curl tar
             sbt_ver="$(sed -n "s/^sbt.version=//p" project/build.properties)"
@@ -312,8 +313,7 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || '' }}
-      # Same cache namespace and key as .github/actions/setup, so a producer restores what
-      # the far more frequent ci runs on this runner image already populated.
+      # Same key as .github/actions/setup, so producers reuse what ci already populated.
       - uses: actions/cache@v6
         env:
           FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -368,8 +368,7 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || '' }}
-      # Same cache namespace and key as .github/actions/setup, so a producer restores what
-      # the far more frequent ci runs on this runner image already populated.
+      # Same key as .github/actions/setup, so producers reuse what ci already populated.
       - uses: actions/cache@v6
         env:
           FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
