@@ -44,9 +44,9 @@ class DoltFileSystemTest extends Test:
         withFiles { (dolt, files) =>
             val conf = Path("etc", "app.conf")
             for
-                _ <- files.write(conf, "mode = live", options)
-                _ <- dolt.commit("baseline")
-                _ <- dolt.createBranch("draft")
+                _       <- files.write(conf, "mode = live", options)
+                _       <- dolt.commit("baseline")
+                _       <- dolt.createBranch("draft")
                 onDraft <- dolt.onBranch("draft") {
                     files.write(conf, "mode = draft", options)
                         .andThen(dolt.commit("switch to draft"))
@@ -154,7 +154,7 @@ class DoltFileSystemTest extends Test:
                 _     <- files.writeBytes(path, content, options)
                 back  <- files.readBytes(path)
                 slice <- Scope.run(files.openReadChannel(path).map(_.readAt(2L, 4)))
-                _ <- Scope.run(files.openWrite(path, append = false, options).map { h =>
+                _     <- Scope.run(files.openWrite(path, append = false, options).map { h =>
                     Sync.Unsafe.defer(h.close())
                 })
             yield

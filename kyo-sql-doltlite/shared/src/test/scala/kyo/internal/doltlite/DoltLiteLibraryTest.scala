@@ -35,7 +35,7 @@ class DoltLiteLibraryTest extends Test:
             bindings.flatMap { b =>
                 // "" rather than null: marshalling a String reads its bytes, so a null one throws before the call.
                 Sync.Unsafe.defer(b.openV2(":memory:", OpenReadWrite | OpenCreate, "")).map(_.safe.get).flatMap {
-                    case Absent => Abort.panic(new AssertionError("could not allocate a connection handle"))
+                    case Absent      => Abort.panic(new AssertionError("could not allocate a connection handle"))
                     case Present(db) =>
                         Scope.ensure(Sync.Unsafe.defer(b.closeV2(db)).map(_.safe.get).unit).andThen {
                             Sync.Unsafe.defer(b.configureConnection(db, 5000)).map(_.safe.get).flatMap(_ => f(b, db))
@@ -62,8 +62,8 @@ class DoltLiteLibraryTest extends Test:
                 inserted <- Sync.Unsafe.defer(b.execSimple(db, "INSERT INTO t VALUES (1, 'alice')")).map(_.safe.get)
                 _ = assert(inserted == Ok, s"INSERT answered $inserted")
                 stmt <- Sync.Unsafe.defer(b.prepareOne(db, "SELECT v FROM t", -1)).map(_.safe.get)
-                res <- stmt match
-                    case Absent => Abort.panic(new AssertionError("prepare produced no statement"))
+                res  <- stmt match
+                    case Absent     => Abort.panic(new AssertionError("prepare produced no statement"))
                     case Present(s) =>
                         Sync.Unsafe.defer(b.step(s)).map(_.safe.get).map { code =>
                             Sync.Unsafe.defer(b.finalizeStmt(s)).map { _ =>

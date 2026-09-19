@@ -83,11 +83,11 @@ final class DoltFileSystem private (
 
     private def parents(path: Path, create: Boolean)(using Frame): Unit < (Async & Abort[FileNotFoundException | FileIOException]) =
         path.parent match
-            case Absent => ()
+            case Absent          => ()
             case Present(parent) =>
                 store.node(parent).map {
                     case Present(_) => ()
-                    case Absent =>
+                    case Absent     =>
                         if !create then Abort.fail(FileNotFoundException(parent))
                         else
                             parents(parent, create).andThen {
@@ -240,7 +240,7 @@ final class DoltFileSystem private (
                     store.node(path).map {
                         case Present(node) if node.isDirectory => Abort.fail(FileIsADirectoryException(path))
                         case Present(node)                     => store.writeAt(path, node.sizeBytes, node.sizeBytes, value, at)
-                        case Absent =>
+                        case Absent                            =>
                             store.putNode(DoltVfsNode(path, Kind.File, Absent, value.size.toLong, at))
                                 .andThen(store.writeAll(path, value, at))
                     }
@@ -273,7 +273,7 @@ final class DoltFileSystem private (
                     store.node(path).map {
                         case Present(node) if node.isDirectory => Abort.fail(FileIsADirectoryException(path))
                         case Present(node) if append           => Sync.Unsafe.defer(newWriteHandle(path, node.sizeBytes))
-                        case _ =>
+                        case _                                 =>
                             store.putNode(DoltVfsNode(path, Kind.File, Absent, 0L, at))
                                 .andThen(store.writeAll(path, Span.empty[Byte], at))
                                 .andThen(Sync.Unsafe.defer(newWriteHandle(path, 0L)))
@@ -311,7 +311,7 @@ final class DoltFileSystem private (
             store.node(path).map {
                 case Present(node) if node.isDirectory => ()
                 case Present(_)                        => Abort.fail(FileAlreadyExistsException(path))
-                case Absent =>
+                case Absent                            =>
                     parents(path, create = true).andThen {
                         now.map(at => store.putNode(DoltVfsNode(path, Kind.Directory, Absent, 0L, at)))
                     }
@@ -322,7 +322,7 @@ final class DoltFileSystem private (
         drained {
             store.node(path).map {
                 case Present(_) => Abort.fail(FileAlreadyExistsException(path))
-                case Absent =>
+                case Absent     =>
                     parents(path, create = true).andThen {
                         now.map(at => store.putNode(DoltVfsNode(path, Kind.File, Absent, 0L, at)))
                     }
@@ -336,7 +336,7 @@ final class DoltFileSystem private (
         drained {
             store.node(link).map {
                 case Present(_) => Abort.fail(FileAlreadyExistsException(link))
-                case Absent =>
+                case Absent     =>
                     parents(link, create = true).andThen {
                         now.map(at => store.putNode(DoltVfsNode(link, Kind.Symlink, Present(DoltVfsStore.key(target)), 0L, at)))
                     }
@@ -398,7 +398,7 @@ final class DoltFileSystem private (
     def remove(path: Path)(using Frame): Boolean < (Async & Abort[FileReadException | FileStructureException]) =
         drained {
             store.node(path).map {
-                case Absent => false
+                case Absent        => false
                 case Present(node) =>
                     val guard =
                         if !node.isDirectory then Kyo.lift(())
@@ -486,7 +486,7 @@ final class DoltFileSystem private (
                         case (FileSystem.WriteOpen.CreateNew, Present(_)) => Abort.fail(FileAlreadyExistsException(path))
                         case (_, Present(node)) if node.isDirectory       => Abort.fail(FileIsADirectoryException(path))
                         case (_, Present(_))                              => Kyo.lift(())
-                        case _ =>
+                        case _                                            =>
                             parents(path, create = true).andThen {
                                 now.map(at =>
                                     store.putNode(DoltVfsNode(path, Kind.File, Absent, 0L, at))
@@ -529,7 +529,7 @@ final class DoltFileSystem private (
         FileSystem.awaitLock[Async](path, wait)(tryLock(path, mode, sentinelSuffix))
 
     private[kyo] def claim(path: Path, mode: Path.LockMode, owner: Path.LockOwnership)(using AllowUnsafe): Boolean =
-        val slot = DoltVfsStore.key(path)
+        val slot                     = DoltVfsStore.key(path)
         @tailrec def loop(): Boolean =
             val current = locks.get()
             current.get(slot) match
@@ -546,7 +546,7 @@ final class DoltFileSystem private (
 
     /** Drops one owner's claim, answering whether the owner still held it. */
     private[kyo] def surrender(path: Path, owner: Path.LockOwnership)(using AllowUnsafe): Boolean =
-        val slot = DoltVfsStore.key(path)
+        val slot                     = DoltVfsStore.key(path)
         @tailrec def loop(): Boolean =
             val current = locks.get()
             current.get(slot) match

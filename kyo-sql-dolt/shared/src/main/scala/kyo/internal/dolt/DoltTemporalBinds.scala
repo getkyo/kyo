@@ -39,7 +39,7 @@ private[kyo] object DoltTemporalBinds:
             case v: java.time.LocalDateTime  => Present(dateTime(v))
             case v: java.time.LocalTime      => Present(time(v))
             case v: java.time.OffsetDateTime => Present(dateTime(v.withOffsetSameInstant(java.time.ZoneOffset.UTC).toLocalDateTime))
-            case v: java.time.ZonedDateTime =>
+            case v: java.time.ZonedDateTime  =>
                 Present(dateTime(v.withZoneSameInstant(java.time.ZoneOffset.UTC).toLocalDateTime))
             // kyo.Instant is opaque over java.time.Instant, so this arm covers both.
             case v: java.time.Instant =>
