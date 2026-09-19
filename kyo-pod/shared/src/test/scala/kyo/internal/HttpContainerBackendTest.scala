@@ -88,7 +88,7 @@ class HttpContainerBackendTest extends BasePodTest:
                         Container.withBackendConfig(_.UnixSocket(Path(path))) {
                             for
                                 seen <- Container.list(all = true)
-                                out <- Command(runtime, "ps", "--all", "--format", "{{.ID}}")
+                                out  <- Command(runtime, "ps", "--all", "--format", "{{.ID}}")
                                     .envAppend(Map(envVar -> s"unix://$path"))
                                     .text
                             yield
