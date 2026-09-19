@@ -130,9 +130,20 @@ object DoltLite:
         // The binding is CALLED, not merely loaded. On the JS runtime a load resolves its dispatch table lazily, so
         // a missing engine leaves the load silent and a caller receives a client that fails at its first statement,
         // which is the panic this translation exists to prevent. `libversionNumber` is the cheapest call there is:
-        // no database, no handle, no allocation. `Throwable` rather than `FfiLoadError` alone, because absence also
-        // arrives as a `LinkageError` from a generated companion and as a JavaScript `TypeError` off a null table.
-        Abort.catching[Throwable](e => DoltLiteEngineUnavailableException(Maybe(e.getMessage).getOrElse(e.toString))) {
+        // no database, no handle, no allocation.
+        //
+        // Absence does not announce itself as one type. Where the loader can see the native is missing it raises
+        // `FfiLoadError.LibraryNotFound`; the JS runtime instead raises a `TypeError` off the null dispatch table.
+        // Hence `Throwable` rather than `FfiLoadError` alone. The widening is bounded: `Abort.catching` admits only
+        // what `NonFatal` allows, so a `VirtualMachineError` or an interrupt still passes through untranslated.
+        // The reason states the situation before quoting the cause, because only some runtimes describe it: the
+        // loader names the platform it looked for and every path it tried, while a null dispatch table yields
+        // nothing but a property name. The sentence that survives everywhere is the one that matters to a caller.
+        Abort.catching[Throwable](e =>
+            DoltLiteEngineUnavailableException(
+                s"it is not published for this platform. ${Maybe(e.getMessage).getOrElse(e.toString)}"
+            )
+        ) {
             Sync.Unsafe.defer {
                 val loaded = Ffi.load[DoltLiteBindings]
                 val _      = loaded.libversionNumber()

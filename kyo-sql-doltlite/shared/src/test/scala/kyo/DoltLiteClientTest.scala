@@ -184,6 +184,13 @@ class DoltLiteClientTest extends Test:
                     result.failure.exists(_.isInstanceOf[DoltLiteEngineUnavailableException]),
                     s"expected a typed unavailability, got $result"
                 )
+                // The type alone leaves a caller reading a bare property name where the runtime says nothing more,
+                // so the sentence that holds on every runtime is asserted rather than assumed.
+                val message = result.failure.fold("")(_.getMessage)
+                assert(
+                    message.contains("not published for this platform"),
+                    s"the failure does not say why: $message"
+                )
         }
     }
 

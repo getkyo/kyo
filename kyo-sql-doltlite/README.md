@@ -52,8 +52,9 @@ archive, and no import library. This driver links the archive INTO its shim so t
 a DLL cannot stand in, because the shim is extracted to a temp directory the DLL is not in and the link then
 fails at run time rather than at build time.
 
-Opening a `doltlite://` URL on Windows fails with `DoltLiteEngineUnavailableException`, naming the platform and
-where the loader looked, rather than failing deep inside a native call.
+Opening a `doltlite://` URL on Windows fails with `DoltLiteEngineUnavailableException` rather than deep inside a
+native call. The message always says the engine is not published for the platform, and carries the loader's
+search detail, the platform it looked for and every path it tried, on the runtimes that report it.
 
 [kyo-sql-sqlite](../kyo-sql-sqlite/README.md) is the embedded engine that does run everywhere. It compiles from C
 source, so it has no per-platform artifact and no such gap. What it does not have is version control.
