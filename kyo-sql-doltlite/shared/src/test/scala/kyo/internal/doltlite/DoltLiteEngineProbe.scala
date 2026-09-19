@@ -14,14 +14,20 @@ private[kyo] object DoltLiteEngineProbe:
 
     /** Resolved once, since the answer cannot change within a run and the failing path is the expensive one.
       *
-      * Catches `Throwable` rather than the loader's own error: a native missing at class-initialization time
-      * surfaces as a `LinkageError` from the generated companion, which is not an `FfiLoadError` and would escape a
-      * narrower catch. A probe that throws is worse than one that over-catches.
+      * Loading is not enough to answer this: on the JS runtime `Ffi.load` hands back a binding whose dispatch table
+      * is resolved on first use, so a missing native leaves the load silent and surfaces later as a
+      * `LibraryNotFound`, or as a `TypeError` reading a method off null. The probe therefore CALLS the engine.
+      * `libversionNumber` is the cheapest call that exists: no database, no handle, no allocation.
+      *
+      * Catches `Throwable` rather than the loader's own error, because the ways a missing native announces itself
+      * are not one type: an `FfiLoadError` from the loader, a `LinkageError` from a generated companion's class
+      * initialization, a `JavaScriptException` from a null dispatch table. A probe that throws is worse than one
+      * that over-catches.
       */
     val available: Boolean =
         try
             import AllowUnsafe.embrace.danger
-            val _ = Ffi.load[DoltLiteBindings]
+            val _ = Ffi.load[DoltLiteBindings].libversionNumber()
             true
         catch case _: Throwable => false
 
