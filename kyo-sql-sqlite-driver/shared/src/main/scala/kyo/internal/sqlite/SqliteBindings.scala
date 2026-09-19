@@ -9,12 +9,12 @@ import kyo.ffi.Ffi
 
 /** The SQLite C API this driver speaks, as declarations alone.
   *
-  * No `Ffi.Config` companion, deliberately: a config ties a binding to one library, and an engine-bound subtype
-  * carries it instead (`VendoredSqliteBindings` for the SQLite this build compiles). That split is what lets a
-  * second engine speaking the same C API bind its own library. On Scala Native an FFI module's C is compiled INTO
-  * the binary, so a module depending on an engine module links that engine in: with two present the sqlite3_*
-  * calls bind to whichever linked first, a binary that links and is quietly the wrong engine. Depending on
-  * declarations carries no C at all.
+  * No `Ffi.Config` companion, deliberately: a config ties a binding to one library, and the engine-bound subtypes
+  * carry it instead (`VendoredSqliteBindings` for the SQLite this build compiles, `DoltLiteBindings` for the
+  * prebuilt fork). That split is what keeps the two engines apart. On Scala Native an FFI module's C is compiled
+  * INTO the binary, so a module depending on an engine module links that engine in: with both present the
+  * sqlite3_* calls bind to the vendored SQLite while the Dolt archive contributes nothing, a binary that links and
+  * is quietly the wrong engine. Depending on declarations carries no C at all.
   *
   * Most methods bind a `sqlite3_*` symbol directly. The rest bind a `kyo_sqlite3_*` wrapper from `kyo_sqlite.c`,
   * which exists only where sqlite3.h has a shape this generator cannot express: an out-parameter that is not last,

@@ -3,6 +3,7 @@ package kyo.internal
 import com.example.stub.StubBackend
 import kyo.AllowUnsafe
 import kyo.AtomicBoolean
+import kyo.DoltServer
 import kyo.MysqlClient
 import kyo.PostgresClient
 import kyo.SqliteClient
@@ -24,6 +25,7 @@ object TestBackendRegistration:
         if done.compareAndSet(false, true) then
             PostgresClient.register()
             MysqlClient.register()
+            DoltServer.register()
             SqliteClient.register()
             Backend.register(new StubBackend())
             registerTestBackends()

@@ -26,6 +26,7 @@ class SqlBackendDiscoveryTest extends Test:
     private val postgresFactory = "kyo.internal.postgres.PostgresBackendFactory"
     private val mysqlFactory    = "kyo.internal.mysql.MysqlBackendFactory"
     private val sqliteFactory   = "kyo.internal.sqlite.SqliteBackendFactory"
+    private val doltFactory     = "kyo.internal.dolt.DoltBackendFactory"
     // The out-of-tree stub is register-only and shares this test program, so it may be in the discovered set. This
     // suite is about the SHIPPING backends, so it filters the stub out rather than pinning it, keeping the shipping
     // checks exact. `StubBackendTest` is what pins the stub.
@@ -56,7 +57,7 @@ class SqlBackendDiscoveryTest extends Test:
         val found    = SqlBackendDiscovery.factories.map(_.getClass.getName).toSeq
         val shipping = found.filterNot(_ == stubBackend).sorted
         assert(
-            shipping == Seq(mysqlFactory, postgresFactory, sqliteFactory),
+            shipping == Seq(doltFactory, mysqlFactory, postgresFactory, sqliteFactory),
             s"runtime discovery found $found (shipping $shipping). An empty or short shipping list means a backend declared " +
                 "in META-INF/services has no matching registration on this platform, which is silent everywhere else."
         )
@@ -95,14 +96,14 @@ class SqlBackendDiscoveryTest extends Test:
 
     "schemes on a registry with no compile-time factory names what discovery can open" in {
         val schemes = new Backend.Registry(Chunk.empty).schemes.toSeq.filterNot(_ == "stub").sorted
-        assert(schemes == Seq("mysql", "postgres", "postgresql", "sqlite", "sqlite3"), s"schemes were $schemes")
+        assert(schemes == Seq("dolt", "mysql", "postgres", "postgresql", "sqlite", "sqlite3"), s"schemes were $schemes")
     }
 
     "schemes lists the compile-time schemes first and adds only what discovery reaches" in {
         val schemes = new Backend.Registry(Chunk[Backend](new SchemeProbeFactory)).schemes
         assert(schemes.head == "postgres", s"the compile-time scheme must come first, schemes were ${schemes.toSeq}")
         assert(
-            schemes.toSeq.filterNot(_ == "stub").sorted == Seq("mysql", "postgres", "postgresql", "sqlite", "sqlite3"),
+            schemes.toSeq.filterNot(_ == "stub").sorted == Seq("dolt", "mysql", "postgres", "postgresql", "sqlite", "sqlite3"),
             s"schemes were ${schemes.toSeq}"
         )
         assert(schemes.toSeq.count(_ == "postgres") == 1, s"a scheme claimed by both tiers must be listed once, got ${schemes.toSeq}")
@@ -173,7 +174,7 @@ class SqlBackendDiscoveryTest extends Test:
             case Result.Failure(e: SqlConnectionUnsupportedSchemeException) =>
                 assert(e.scheme == "not-a-registered-scheme", s"the failure named ${e.scheme}")
                 assert(
-                    e.available.toSeq.filterNot(_ == "stub").sorted == Seq("mysql", "postgres", "postgresql", "sqlite", "sqlite3"),
+                    e.available.toSeq.filterNot(_ == "stub").sorted == Seq("dolt", "mysql", "postgres", "postgresql", "sqlite", "sqlite3"),
                     s"the failure must name what discovery can open, got ${e.available}"
                 )
             case other =>

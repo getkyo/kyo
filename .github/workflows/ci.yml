@@ -20,12 +20,11 @@ on:
     branches:
       - main
 
-# Both pull requests and main pushes dedup their in-flight runs. A pull request keys on the PR
-# number, so a new commit supersedes the run still validating the previous one. A push to main
-# keys on the branch ref (github.ref is a constant refs/heads/main), so a newer push cancels an
-# earlier main run that is still pending or in progress; only the latest commit is validated.
+# A pull request keys on the PR number, so a new commit supersedes the run validating the previous
+# one. A push to main keys on the commit, so every main commit is validated rather than only the
+# newest, which is what tells you which commit broke something.
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
+  group: ci-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: true
 
 jobs:

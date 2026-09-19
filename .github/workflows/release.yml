@@ -42,6 +42,19 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || '' }}
+      # Same key as .github/actions/setup, so producers reuse what ci already populated.
+      - uses: actions/cache@v6
+        env:
+          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+        with:
+          path: |
+            ~/.cache/coursier
+            ~/Library/Caches/Coursier
+            ~/AppData/Local/Coursier/Cache
+            ~/.sbt
+            ~/.ivy2/cache
+          key: deps-macos-arm64-${{ hashFiles('build.sbt', 'project/build.properties', 'project/plugins.sbt', 'project/*.scala') }}
+          restore-keys: deps-macos-arm64-
       - uses: coursier/setup-action@v3.0.3
         with:
           jvm: corretto:25
@@ -62,6 +75,10 @@ jobs:
           bash kyo-aeron/scripts/build-aeron.sh darwin-aarch64
           bash kyo-aeron/scripts/build-aeron.sh darwin-x86_64
           bash kyo-sql-sqlite/scripts/build-sqlite.sh
+          # Both Mac targets, like the two above it. SQLite needs one call because it stages C source
+          # that every target compiles; DoltLite stages a compiled library, so each target needs its own.
+          bash kyo-sql-doltlite/scripts/build-doltlite.sh darwin-aarch64
+          bash kyo-sql-doltlite/scripts/build-doltlite.sh darwin-x86_64
       # ONE compile for every FFI module. The plugin knows which projects declare ffiLibraries, so the
       # workflow does not enumerate them: adding an FFI module needs no edit here. Previously this job
       # carried a hand-written block per module (compile, collect, upload), which is how a module ends up
@@ -117,6 +134,19 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || '' }}
+      # Same key as .github/actions/setup, so producers reuse what ci already populated.
+      - uses: actions/cache@v6
+        env:
+          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+        with:
+          path: |
+            ~/.cache/coursier
+            ~/Library/Caches/Coursier
+            ~/AppData/Local/Coursier/Cache
+            ~/.sbt
+            ~/.ivy2/cache
+          key: deps-linux-x64-${{ hashFiles('build.sbt', 'project/build.properties', 'project/plugins.sbt', 'project/*.scala') }}
+          restore-keys: deps-linux-x64-
       - uses: coursier/setup-action@v3.0.3
         with:
           jvm: corretto:25
@@ -134,6 +164,7 @@ jobs:
           bash kyo-net/build/boringssl/build-boringssl.sh linux-x86_64
           bash kyo-aeron/scripts/build-aeron.sh linux-x86_64
           bash kyo-sql-sqlite/scripts/build-sqlite.sh
+          bash kyo-sql-doltlite/scripts/build-doltlite.sh
           sbt -Dplatform=JVM ffiCompileAll
           mkdir -p natives-out
           find . -path '*/target/ffi/lib*-linux-x86_64.so' -exec cp -n {} natives-out/ \;
@@ -144,15 +175,18 @@ jobs:
           # only busybox sh), plus liburing-dev for the posix_uring shim, util-linux-dev for the Aeron
           # driver's -luuid, and curl/tar for the sbt launcher, which is a JAR the musl JDK runs (no
           # glibc dependency).
-          docker run --rm -v "$PWD:/work" -w /work eclipse-temurin:25-jdk-alpine sh -c '
+          # Mount the cache in, or the container resolves into throwaway storage.
+          mkdir -p "$HOME/.cache/coursier"
+          docker run --rm -v "$PWD:/work" -v "$HOME/.cache/coursier:/root/.cache/coursier" -w /work eclipse-temurin:25-jdk-alpine sh -c '
             set -eu
-            apk add --no-cache bash cmake go build-base git file binutils perl linux-headers liburing-dev util-linux-dev curl tar
+            apk add --no-cache bash cmake go build-base git file binutils perl linux-headers liburing-dev util-linux-dev curl tar tcl
             sbt_ver="$(sed -n "s/^sbt.version=//p" project/build.properties)"
             curl -fsSL "https://github.com/sbt/sbt/releases/download/v${sbt_ver}/sbt-${sbt_ver}.tgz" | tar -xz -C /opt
             export PATH="/opt/sbt/bin:$PATH"
             bash kyo-net/build/boringssl/build-boringssl.sh linux-musl-x86_64
             bash kyo-aeron/scripts/build-aeron.sh linux-musl-x86_64
             bash kyo-sql-sqlite/scripts/build-sqlite.sh
+            bash kyo-sql-doltlite/scripts/build-doltlite.sh
             sbt -Dplatform=JVM ffiCompileAll
             mkdir -p natives-out
             find . -path "*/target/ffi/lib*-linux-musl-x86_64.so" -exec cp -n {} natives-out/ \;
@@ -191,6 +225,19 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || '' }}
+      # Same key as .github/actions/setup, so producers reuse what ci already populated.
+      - uses: actions/cache@v6
+        env:
+          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+        with:
+          path: |
+            ~/.cache/coursier
+            ~/Library/Caches/Coursier
+            ~/AppData/Local/Coursier/Cache
+            ~/.sbt
+            ~/.ivy2/cache
+          key: deps-linux-arm64-${{ hashFiles('build.sbt', 'project/build.properties', 'project/plugins.sbt', 'project/*.scala') }}
+          restore-keys: deps-linux-arm64-
       - uses: coursier/setup-action@v3.0.3
         with:
           jvm: corretto:25
@@ -208,21 +255,25 @@ jobs:
           bash kyo-net/build/boringssl/build-boringssl.sh linux-aarch64
           bash kyo-aeron/scripts/build-aeron.sh linux-aarch64
           bash kyo-sql-sqlite/scripts/build-sqlite.sh
+          bash kyo-sql-doltlite/scripts/build-doltlite.sh
           sbt -Dplatform=JVM ffiCompileAll
           mkdir -p natives-out
           find . -path '*/target/ffi/lib*-linux-aarch64.so' -exec cp -n {} natives-out/ \;
       - name: Build linux-musl-aarch64 natives (Alpine)
         shell: bash
         run: |
-          docker run --rm -v "$PWD:/work" -w /work eclipse-temurin:25-jdk-alpine sh -c '
+          # Mount the cache in, or the container resolves into throwaway storage.
+          mkdir -p "$HOME/.cache/coursier"
+          docker run --rm -v "$PWD:/work" -v "$HOME/.cache/coursier:/root/.cache/coursier" -w /work eclipse-temurin:25-jdk-alpine sh -c '
             set -eu
-            apk add --no-cache bash cmake go build-base git file binutils perl linux-headers liburing-dev util-linux-dev curl tar
+            apk add --no-cache bash cmake go build-base git file binutils perl linux-headers liburing-dev util-linux-dev curl tar tcl
             sbt_ver="$(sed -n "s/^sbt.version=//p" project/build.properties)"
             curl -fsSL "https://github.com/sbt/sbt/releases/download/v${sbt_ver}/sbt-${sbt_ver}.tgz" | tar -xz -C /opt
             export PATH="/opt/sbt/bin:$PATH"
             bash kyo-net/build/boringssl/build-boringssl.sh linux-musl-aarch64
             bash kyo-aeron/scripts/build-aeron.sh linux-musl-aarch64
             bash kyo-sql-sqlite/scripts/build-sqlite.sh
+            bash kyo-sql-doltlite/scripts/build-doltlite.sh
             sbt -Dplatform=JVM ffiCompileAll
             mkdir -p natives-out
             find . -path "*/target/ffi/lib*-linux-musl-aarch64.so" -exec cp -n {} natives-out/ \;
@@ -270,6 +321,19 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || '' }}
+      # Same key as .github/actions/setup, so producers reuse what ci already populated.
+      - uses: actions/cache@v6
+        env:
+          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+        with:
+          path: |
+            ~/.cache/coursier
+            ~/Library/Caches/Coursier
+            ~/AppData/Local/Coursier/Cache
+            ~/.sbt
+            ~/.ivy2/cache
+          key: deps-windows-x64-${{ hashFiles('build.sbt', 'project/build.properties', 'project/plugins.sbt', 'project/*.scala') }}
+          restore-keys: deps-windows-x64-
       - uses: coursier/setup-action@v3.0.3
         with:
           jvm: corretto:25
@@ -277,11 +341,13 @@ jobs:
       - uses: ./.github/actions/windows-native-setup
         with:
           os-arch: windows-x86_64
-      # SQLite stages one C source, which every target compiles for itself.
+      # SQLite only, as on the ARM leg below: it stages C source, which this toolchain compiles. DoltLite
+      # is absent on Windows by declaration (kyoSqlDoltLiteOsArchTargets), upstream publishing a DLL with
+      # no archive to link into the shim. The release guard reads that declaration and requires no
+      # DoltLite native here.
       - name: Stage vendored natives (windows-x86_64)
         shell: bash
-        run: |
-          bash kyo-sql-sqlite/scripts/build-sqlite.sh
+        run: bash kyo-sql-sqlite/scripts/build-sqlite.sh
       - name: Compile every module's windows-x86_64 natives
         shell: bash
         run: sbt -Dplatform=JVM ffiCompileAll
@@ -312,6 +378,19 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || '' }}
+      # Same key as .github/actions/setup, so producers reuse what ci already populated.
+      - uses: actions/cache@v6
+        env:
+          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+        with:
+          path: |
+            ~/.cache/coursier
+            ~/Library/Caches/Coursier
+            ~/AppData/Local/Coursier/Cache
+            ~/.sbt
+            ~/.ivy2/cache
+          key: deps-windows-arm64-${{ hashFiles('build.sbt', 'project/build.properties', 'project/plugins.sbt', 'project/*.scala') }}
+          restore-keys: deps-windows-arm64-
       # setup-java, not coursier: coursier publishes no aarch64-pc-win32 launcher, so setup-action 404s
       # trying to install itself here. sbt is preinstalled on this image; only the JDK needs replacing,
       # since the one it ships is 21. Microsoft's build because Amazon ships no Corretto for Windows on
@@ -325,7 +404,10 @@ jobs:
       - uses: ./.github/actions/windows-native-setup
         with:
           os-arch: windows-aarch64
-      # SQLite stages C source, which the ARM64 MSVC toolchain compiles like any other target.
+      # SQLite only: it stages C source, which the ARM64 MSVC toolchain compiles like any other target.
+      # DoltLite is absent here by declaration (kyoSqlDoltLiteOsArchTargets), because upstream publishes
+      # no win-arm64 library and its autoconf build has no toolchain on this runner. The release guard
+      # reads that declaration, so it requires no DoltLite native for this platform rather than failing.
       - name: Stage vendored natives (windows-aarch64)
         shell: bash
         run: |
