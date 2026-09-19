@@ -10,11 +10,11 @@ object Main extends KyoApp:
         val server = NetTlsConfig(certChainPath = Present("server.pem"), privateKeyPath = Present("server.key"))
         for
             plainListener <- NetPlatform.transport.listen("127.0.0.1", port = 0, backlog = 16) { conn =>
-                discard(conn.outbound.offer(Span.fromUnsafe("hello".getBytes)))
+                val _ = conn.outbound.offer(Span.fromUnsafe("hello".getBytes))
             }.safe.get
             plain <- roundTrip(NetPlatform.transport.connect("127.0.0.1", plainListener.port).safe.get)
             tlsListener <- NetPlatform.transport.listenTls("127.0.0.1", port = 0, backlog = 16, tls = server) { conn =>
-                discard(conn.outbound.offer(Span.fromUnsafe("hello".getBytes)))
+                val _ = conn.outbound.offer(Span.fromUnsafe("hello".getBytes))
             }.safe.get
             tls <- roundTrip(NetPlatform.transport.connectTls("127.0.0.1", tlsListener.port, NetTlsConfig(trustAll = true)).safe.get)
             _ <- Sync.defer {

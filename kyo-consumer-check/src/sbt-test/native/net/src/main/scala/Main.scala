@@ -10,7 +10,7 @@ object Main extends KyoApp:
     run {
         for
             listener <- NetPlatform.transport.listen("127.0.0.1", port = 0, backlog = 16) { conn =>
-                discard(conn.outbound.offer(Span.fromUnsafe("hello".getBytes)))
+                val _ = conn.outbound.offer(Span.fromUnsafe("hello".getBytes))
             }.safe.get
             plain <- Abort.run[Any] {
                 NetPlatform.transport.connect("127.0.0.1", listener.port).safe.get.map { conn =>
