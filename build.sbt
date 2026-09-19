@@ -3834,7 +3834,9 @@ lazy val `kyo-consumer-check` =
         .enablePlugins(ScriptedPlugin)
         .disablePlugins(MimaPlugin, KyoDoctestPlugin)
         .settings(
-            scalaVersion      := scala39Version,
+            // scripted-sbt is published for Scala 2.12 only. The fixtures take their Scala version from
+            // -Dkyo.scalaVersion below, not from this project.
+            scalaVersion      := "2.12.21",
             publish / skip    := true,
             scriptedBufferLog := false,
             scriptedLaunchOpts ++= Seq(
