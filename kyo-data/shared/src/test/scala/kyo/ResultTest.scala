@@ -1513,4 +1513,34 @@ class ResultTest extends kyo.test.Test[Any]:
 
     }
 
+    "a success carrying a Panic" - {
+        // The unboxed representation makes a success that carries an error indistinguishable from the error itself, which is
+        // what SuccessError exists to box. A Failure is boxed on construction; a Panic has to be as well, or a success whose
+        // value is a Panic (a fiber's result handed on as data, say) is read as the panic of whoever holds it.
+        val ex = new Exception("carried")
+
+        "Success keeps a Panic as its value" in {
+            val r: Result[Nothing, Result[Nothing, Int]] = Success(Panic(ex))
+            assert(r.isSuccess, s"the carried panic was read as the outer result's own: $r")
+            assert(r.exists(_.isPanic))
+        }
+
+        "succeed keeps a Panic as its value" in {
+            val r: Result[Nothing, Result[Nothing, Int]] = Result.succeed(Result.panic(ex))
+            assert(r.isSuccess, s"the carried panic was read as the outer result's own: $r")
+            assert(r.exists(_.isPanic))
+        }
+
+        "flatten of a success carrying a Panic is that Panic, and only after the flatten" in {
+            val r: Result[Nothing, Result[Nothing, Int]] = Success(Panic(ex))
+            assert(r.isSuccess)
+            assert(r.flatten.isPanic)
+        }
+
+        "map keeps a Panic produced as a value inside the success lane" in {
+            val r: Result[Nothing, Result[Nothing, Int]] = Success(1).map(_ => Panic(ex))
+            assert(r.isSuccess, s"the panic the function produced as a value was read as the outer result's own: $r")
+        }
+    }
+
 end ResultTest

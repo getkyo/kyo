@@ -1568,4 +1568,21 @@ class AbortTest extends kyo.test.Test[Any]:
         }
     }
 
+    "a Result carried as a value" - {
+        // The run boxes the body's value into the success lane, so a Result.Panic the body produces as a plain value
+        // (a fiber's `getResult`, say) has to come back as the success carrying it, never as the run's own panic. A
+        // stop's Interrupted carried this way is the shape every leaf that joins an interrupted fiber inside a run meets.
+        "a Result.Panic the body produces as a value is not taken as the run's own panic" in {
+            val ex                            = new Exception("carried")
+            val v: Result[Nothing, Int] < Any = Result.panic(ex)
+            val r                             = Abort.run[Throwable](v).eval
+            assert(r.isSuccess && r.exists(_.isPanic), s"the carried panic was taken as the run's own: $r")
+        }
+        "a Result.Failure the body produces as a value is not taken as the run's own failure" in {
+            val v: Result[String, Int] < Any = Result.fail("carried")
+            val r                            = Abort.run[String](v).eval
+            assert(r.isSuccess && r.exists(_.isFailure), s"the carried failure was taken as the run's own: $r")
+        }
+    }
+
 end AbortTest
