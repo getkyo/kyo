@@ -852,6 +852,15 @@ object KyoFfiPlugin extends AutoPlugin {
         // artifacts land under META-INF/native/{os}-{arch}/ for NativeLoader/koffi.
         Compile / resourceGenerators += ffiPackagedNatives.taskValue,
 
+        // Keep those binaries out of the sources jar. sbt's default `packageSrc` takes managed resources
+        // along with the sources, so every pole's shared library would ship a second time in an artifact that
+        // carries no source: at RC6 that made kyo-net's sources jar 44 MB, as large as its natives jar.
+        Compile / packageSrc / mappings := (Compile / packageSrc / mappings).value.filterNot {
+            case (_, path) =>
+                val p = path.replace('\\', '/')
+                p.startsWith("META-INF/native/") || p.startsWith("kyo-ffi/native/")
+        },
+
         // JVM/JS only: record what this build packages for each declared library id, so a packaging
         // completeness check reads a declaration instead of guessing from a file that is not there.
         Compile / resourceGenerators += ffiLibraryStateManifestGenerator.taskValue,
