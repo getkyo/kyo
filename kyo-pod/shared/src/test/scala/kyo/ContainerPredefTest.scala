@@ -7,6 +7,75 @@ import kyo.ContainerPredef.Postgres
 
 class ContainerPredefTest extends BasePodTest:
 
+    "container identity and connection URL" - {
+
+        "Postgres.Config carries a name and labels through to the container config" in {
+            // An unscoped fixture outlives the process that started it, so it is exactly the container that
+            // needs a durable handle. Without one the only identity is the daemon-assigned name
+            // (`relaxed_ellis`), and a teardown filtered by image reaches every other postgres:16-alpine on the
+            // same daemon, including another process's database.
+            val cfg   = Postgres.Config.default.name("e1-db").label("owner", "e1")
+            val built = Postgres.buildContainerConfig(cfg)
+            assert(built.name == Present("e1-db"))
+            assert(built.labels.get("owner") == Present("e1"))
+        }
+
+        "Postgres.Config layers onto the general container surface without losing the fixture's own settings" in {
+            val cfg = Postgres.Config.default
+                .name("e1-db")
+                .withContainer(_.memory(512L * 1024 * 1024).hostname("pg-host"))
+            val built = Postgres.buildContainerConfig(cfg)
+            // the caller's fields survive
+            assert(built.name == Present("e1-db"))
+            assert(built.memory == Present(512L * 1024 * 1024))
+            assert(built.hostname == Present("pg-host"))
+            // the fixture's own fields are applied on top
+            assert(built.image == Postgres.defaultImage)
+            assert(built.env.get("POSTGRES_USER") == Present("test"))
+            assert(built.env.get("POSTGRES_DB") == Present("test"))
+            assert(built.ports.exists(_.containerPort == 5432))
+            assert(built.command.isDefined)
+        }
+
+        "MySQL.Config carries a name and labels, and keeps its own env and server args" in {
+            val cfg   = MySQL.Config.default.name("e1-mysql").label("owner", "e1")
+            val built = MySQL.buildContainerConfig(cfg)
+            assert(built.name == Present("e1-mysql"))
+            assert(built.labels.get("owner") == Present("e1"))
+            assert(built.image == MySQL.defaultImage)
+            assert(built.env.get("MYSQL_DATABASE") == Present("test"))
+            assert(built.ports.exists(_.containerPort == 3306))
+        }
+
+        "MongoDB.Config carries a name and labels" in {
+            val built = MongoDB.buildContainerConfig(MongoDB.Config.default.name("e1-mongo").label("owner", "e1"))
+            assert(built.name == Present("e1-mongo"))
+            assert(built.labels.get("owner") == Present("e1"))
+            assert(built.image == MongoDB.defaultImage)
+        }
+
+        "an explicit image on the fixture wins over the one in the layered container config" in {
+            val cfg = Postgres.Config.default
+                .image(ContainerImage("postgres:15"))
+                .withContainer(_.name("pinned"))
+            val built = Postgres.buildContainerConfig(cfg)
+            assert(built.image == ContainerImage("postgres:15"))
+            assert(built.name == Present("pinned"))
+        }
+
+        "Postgres formats a wire-protocol URL, not only a JDBC one" in {
+            // kyo-sql has no JDBC underneath and parses `<scheme>://[user[:password]@]host:port/db`, so the
+            // jdbc: form fails on the scheme alone. This is the seam where a new user pastes the wrong one.
+            assert(Postgres.formatUrl("127.0.0.1", 38835, "e1", "pw", "e1") == "postgres://e1:pw@127.0.0.1:38835/e1")
+            assert(Postgres.formatJdbcUrl("127.0.0.1", 38835, "e1") == "jdbc:postgresql://127.0.0.1:38835/e1")
+        }
+
+        "MySQL formats a wire-protocol URL, not only a JDBC one" in {
+            assert(MySQL.formatUrl("127.0.0.1", 38761, "e1", "pw", "e1") == "mysql://e1:pw@127.0.0.1:38761/e1")
+            assert(MySQL.formatJdbcUrl("127.0.0.1", 38761, "e1") == "jdbc:mysql://127.0.0.1:38761/e1")
+        }
+    }
+
     "Postgres" - {
         "Config" - {
             "default has expected fields" in {
