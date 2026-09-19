@@ -1,5 +1,7 @@
 package kyo
 
+import kyo.internal.doltlite.DoltLiteEngineProbe
+
 /** The version-control behaviour of the filesystem: branching, committing, diffing and merging through ordinary `Path`
   * code. Filesystem correctness itself is settled by `DoltFileSystemConformanceTest`, so nothing here re-checks that a
   * write can be read back.
@@ -11,6 +13,8 @@ class DoltFileSystemTest extends Test:
     private def withFiles[A](f: (Dolt, DoltFileSystem) => A < (Async & Abort[SqlException | FileSystemException] & Scope & DB))(
         using Frame
     ): A < (Async & Abort[SqlException | FileSystemException]) =
+        // Cancelled where the engine is not published, rather than reporting a declared absence as a defect.
+        assume(DoltLiteEngineProbe.available, "the DoltLite engine is not published for this platform")
         Scope.run {
             SqlClient.init("doltlite://:memory:", SqlConfig(maxConnections = 1)).map { client =>
                 DB.run(client) {
@@ -18,6 +22,7 @@ class DoltFileSystemTest extends Test:
                 }
             }
         }
+    end withFiles
 
     private val options = Path.WriteOptions()
 
