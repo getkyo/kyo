@@ -929,7 +929,39 @@ ffiLibraries := Seq(
 
 `ffiPackage` bundles only the libraries the plugin compiles from your `cSources` shim into `META-INF/native/<os>-<arch>/`; it does not bundle a standalone third-party `.so`. To ship a third-party library, static-link it into your shim via `linkLibs` (above) so there is a single self-contained artifact, rather than relying on a separately-distributed shared object.
 
-> **Caution:** on Scala Native the plugin computes the link options but does not wire them into the build. A consumer using `ffiLibraries` with `linkLibs` / `libDirs` / `staticLink` must add `nativeConfig.linkingOptions ++= ffiNativeLinkingOptions.value` themselves, or the static link fails with undefined-reference errors. On JVM and JS the plugin links the shim directly and no manual wiring is needed.
+> **Caution:** on Scala Native the plugin computes the compile and link options but does not wire them into the build. A consumer using `ffiLibraries` with `linkLibs` / `libDirs` / `staticLink` must add `ffiNativeLinkingOptions` to `nativeConfig.linkingOptions` and `ffiNativeCompileOptions` to `nativeConfig.compileOptions` themselves, or the static link fails with undefined-reference errors. On JVM and JS the plugin links the shim directly and no manual wiring is needed.
+
+#### Native: gate a shim on its link, and declare what a consumer can link
+
+On Scala Native a module's C ships as source and compiles in whichever build links the binary, including a consumer's that has none of your `linkLibs`. A shim whose C calls into an external library therefore gates that code on `KYO_FFI_LINKED_<ID>` (the library id upper-cased, every other character `_`), which the plugin defines exactly where it links the library: in the JVM and JS `cc` command and in `ffiNativeCompileOptions`. The `#else` branch defines the same entry points as stubs, so a build that links nothing still links, and the binding reports the library unavailable at run time:
+
+```c
+#if defined(KYO_FFI_LINKED_MY_TLS)
+#include <openssl/ssl.h>
+int my_tls_available(void) { return 1; }
+/* ... real entry points ... */
+#else
+int my_tls_available(void) { return 0; }
+/* ... the same entry points, returning failure ... */
+#endif
+```
+
+For a library the consumer's machine may provide, declare it with `system`, which the Native artifact carries instead of this build's flags:
+
+```scala doctest:expect=skipped
+FfiLibrary(
+    id = "my_tls",
+    cSources = Seq(file("src/main/c/my_tls.c")),
+    linkLibs = Seq("ssl", "crypto"),
+    system = Some(FfiSystemLibrary(
+        headers = Seq("openssl/ssl.h"),
+        linkLibs = Seq("ssl", "crypto"),
+        prefixesByOs = Map("darwin" -> Seq("/opt/homebrew/opt/openssl@3"))
+    ))
+)
+```
+
+A consumer's build with the plugin compiles and links a probe against each declared library (the compiler's default paths first, then each prefix) and, for each one that links, adds the define, include and library paths, and link flags to `ffiNativeDependencyCompileOptions` and `ffiNativeDependencyLinkingOptions`. `show ffiNativeSystemLibraries` lists what it found. A library this build vendors (a staged archive) is not declared: no consumer machine has it.
 
 ### Cross-platform differences
 
@@ -1037,6 +1069,9 @@ Setting one of those at `ThisBuild` has no effect.
 | `ffiNpmBundleTemplate` | emit a `package.json` pinning `koffi` to `^2.7` (Scala.js) |
 | `ffiDumpCcCommand` | return the `cc` command-line that `ffiCompile` would invoke (diagnostic; does not run the compiler) |
 | `ffiNativeLinkingOptions` | compute the Native linking options to wire into `nativeConfig.linkingOptions` |
+| `ffiNativeCompileOptions` | compute the Native compile options (include paths and `KYO_FFI_LINKED_<ID>` defines) to wire into `nativeConfig.compileOptions` |
+| `ffiNativeDependencyLinkingOptions` / `ffiNativeDependencyCompileOptions` | the same for the bundled C of this project's dependencies, including the system libraries they declare |
+| `ffiNativeSystemLibraries` | the system libraries dependencies declare that this machine links, found by probe |
 | `ffiPackagingCheck` | verify each staged native matches the platform directory it sits in, and that every declared library has one for each `ffiRequiredPlatforms` entry |
 
 ### Release commands

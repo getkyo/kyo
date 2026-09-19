@@ -685,11 +685,11 @@ work:
   program opening several engines by computed URL also calls each driver's `register()`, because Native
   embeds a single services file. Literal URLs resolve at compile time and need none of this. The driver
   READMEs carry the snippets.
-- **The FFI plugin, on Scala Native.** Every connection goes through kyo-net, whose C shims are linked into
-  the binary rather than loaded, so a Native build also needs `addSbtPlugin("io.getkyo" % "kyo-ffi-plugin" %
-  kyoVersion)`, `.nativeConfigure(_.enablePlugins(kyo.ffi.sbt.KyoFfiPlugin))`, and the two
-  `ffiNativeDependency*Options` tasks folded into `nativeConfig`. Without them the link fails on undefined
-  symbols before any of the above matters. See kyo-net's
+- **TLS, on Scala Native.** Every connection goes through kyo-net, whose C shims are compiled into the binary.
+  Without further setup a Native build links and plaintext connections work, but TLS reports unavailable, so a
+  URL that requires TLS fails. TLS needs OpenSSL on the machine that links and the kyo FFI plugin to find it:
+  `addSbtPlugin("io.getkyo" % "kyo-ffi-plugin" % kyoVersion)`, `.nativeConfigure(_.enablePlugins(kyo.ffi.sbt.KyoFfiPlugin))`,
+  and the two `ffiNativeDependency*Options` tasks folded into `nativeConfig`. See kyo-net's
   [Scala Native builds](../kyo-net/README.md#scala-native-builds) for the exact block.
 - **A third engine is one artifact.** `db.Backend` (a scheme, a dialect, an `open`), a dialect written by
   overriding only what diverges from standard SQL (four members are abstract), and the registration above.

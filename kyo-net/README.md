@@ -39,7 +39,7 @@ val viaUnix: Connection < (Async & Abort[NetException]) =
     NetPlatform.transport.connectUnix("/tmp/app.sock").safe.get
 ```
 
-For a connection that is encrypted from its first byte, use the `connect` overload that takes a `NetTlsConfig`; that and the STARTTLS-style in-place upgrade are covered under [TLS](#tls).
+For a connection that is encrypted from its first byte, use `connectTls`, which takes a `NetTlsConfig`; that and the STARTTLS-style in-place upgrade are covered under [TLS](#tls).
 
 ## Reading and writing
 
@@ -97,13 +97,13 @@ val listening: Listener < (Async & Abort[NetException]) =
 
 Binding to port `0` asks the OS for a free port; the `Listener` reports the address it actually bound to, so read `listener.port` after `listen` returns to learn it. `close()` on the listener stops accepting new connections and releases the bound socket, but does NOT close connections already accepted (those are owned by their handler), so a graceful shutdown closes the listener first, then drains the live connections.
 
-A second `listen` overload takes a `NetTlsConfig` and terminates TLS for every accepted connection (see [TLS](#tls)), and `listenUnix` binds a Unix-domain server socket by path.
+`listenTls` takes a `NetTlsConfig` and terminates TLS for every accepted connection (see [TLS](#tls)), and `listenUnix` binds a Unix-domain server socket by path.
 
 ## TLS
 
 A connection carries plaintext until you secure it, and there are two moments to do that. When the protocol is encrypted from its first byte, terminate TLS at the point of connect or accept. When the protocol speaks plaintext first and then negotiates the switch in band, upgrade the live connection in place. One `NetTlsConfig` drives both, on both the client and the server side.
 
-When you control the endpoint and the protocol is TLS from the start (HTTPS, a TLS-only service), use `connect(tls)` on the client or `listen(tls)` on the server: the handshake completes before you see the first byte. When the protocol exchanges a plaintext preamble and then negotiates an upgrade (SMTP STARTTLS, an IMAP `STARTTLS`, a database `sslmode` handshake), use `upgradeToTls` on the already-open connection.
+When you control the endpoint and the protocol is TLS from the start (HTTPS, a TLS-only service), use `connectTls` on the client or `listenTls` on the server: the handshake completes before you see the first byte. When the protocol exchanges a plaintext preamble and then negotiates an upgrade (SMTP STARTTLS, an IMAP `STARTTLS`, a database `sslmode` handshake), use `upgradeToTls` on the already-open connection.
 
 ### Configuration
 
@@ -255,10 +255,10 @@ def request(host: String, port: Int, payload: Span[Byte]): Maybe[Span[Byte]] < (
 | JVM, Linux | io_uring / epoll | BoringSSL | NIO + JDK TLS |
 | JVM, macOS | kqueue | BoringSSL | NIO + JDK TLS |
 | JVM, Windows | (none) | (none) | NIO + JDK TLS |
-| Native, Linux/macOS/BSD | io_uring / epoll / kqueue | BoringSSL / system OpenSSL | link-time |
+| Native, Linux/macOS/BSD | io_uring / epoll / kqueue | system OpenSSL, with the kyo FFI plugin | epoll / kqueue, no TLS |
 | JS / Wasm, Node | koffi io_uring / epoll / kqueue | koffi BoringSSL | Node transport + Node TLS |
 
-The native I/O backend and BoringSSL are the primary on every posix platform; the Floor column is what runs when no native is available (the JVM main jar with no classifier dependency, a host with no staged native, Windows). Selection always prefers the native and degrades to the floor unless a `-D` property forces a choice.
+The native I/O backend is the primary on every posix platform, and so is BoringSSL on the JVM and Node; the Floor column is what runs when no native is available (the JVM main jar with no classifier dependency, a host with no staged native, a Scala Native build that found no system library, Windows). Selection always prefers the native and degrades to the floor unless a `-D` property forces a choice.
 
 - `stdio` is supported on every shipped transport: the posix transport, the pure-JDK NIO floor, and Node. It aborts `NetStdioAlreadyOpenException` if a stdio connection is already open (fds 0 and 1 are process-global, so only one can exist at a time); `NetStdioUnsupportedException` remains the contract for a transport with no byte stream to fds 0 and 1, such as an in-memory transport.
 - io_uring requires Linux with a usable ring; where it is unavailable the transport falls back to epoll/kqueue or the NIO floor automatically.
@@ -282,7 +282,9 @@ Migration: a consumer that upgrades to the classifier distribution without addin
 
 ## Scala Native builds
 
-A Scala Native build links kyo-net's C shims into the binary rather than loading a shared library, so the C compiles on the machine doing the link. Scala Native picks the sources up from the jar on its own; what it does not pick up is the libraries each shim needs at link time. Those travel as classpath manifests, and the kyo FFI plugin is what reads them, so a Native build of anything that reaches a socket needs the plugin and the two lines that fold its answer into `nativeConfig`:
+A Scala Native build links kyo-net's C shims into the binary rather than loading a shared library, so the C compiles on the machine doing the link. Scala Native picks the sources up from the jar on its own, and with nothing else a Native build links on any machine: the plain transport (epoll on Linux, kqueue on macOS and BSD) works, while the TLS and io_uring shims compile to stubs whose probes report unavailable, so `connectTls` fails closed with `NetTlsProviderUnavailableException` and the backend selection skips io_uring.
+
+TLS and io_uring come from libraries on the machine that links. kyo-net's artifact declares them, system OpenSSL and a static liburing on Linux, and the kyo FFI plugin looks for them in your build: it compiles and links a small probe against each, and for each one that links it enables the shim and adds the library to your link. The plugin needs the two lines that fold its answer into `nativeConfig`:
 
 ```
 // project/plugins.sbt
@@ -302,8 +304,13 @@ addSbtPlugin("io.getkyo" % "kyo-ffi-plugin" % kyoVersion)
 )
 ```
 
-`ffiNativeDependencyLinkingOptions` and `ffiNativeDependencyCompileOptions` are the flags kyo-net declares for its own shims, read off the manifests it ships. They have to be wired in explicitly because `nativeConfig` is per-project and does not cross a dependency edge, while the C does: Scala Native compiles kyo-net's shims into your binary, so your link is the one that needs their libraries. On Linux that is `-luring`; on macOS the shims need nothing beyond libc.
+`ffiNativeDependencyLinkingOptions` and `ffiNativeDependencyCompileOptions` carry, for each library found, the define that enables its shim, its include and library paths, and its link flags. They have to be wired in explicitly because `nativeConfig` is per-project and does not cross a dependency edge, while the C does: Scala Native compiles kyo-net's shims into your binary, so your link is the one that needs their libraries.
 
-`[kyo-ffi-plugin]` lines in the build output confirm the plugin is active. This is a build-time dependency only: nothing in the application imports it.
+What the plugin looks for:
 
-The I/O backend is chosen at runtime, as on every other platform, and the shims that do not apply to the target compile to stubs whose probes report unavailable, so a macOS binary links the same sources a Linux one does and selects kqueue. In-process TLS needs a staged BoringSSL or the host's OpenSSL; where neither is present the TLS provider reports unavailable and `connectTls` fails closed rather than falling back to plaintext.
+- OpenSSL: `openssl/ssl.h` with `-lssl -lcrypto`, in the compiler's default paths and then, on macOS, under Homebrew's `openssl@3` and `openssl` prefixes and MacPorts' `/opt/local`. Install `libssl-dev` (Debian, Ubuntu), `openssl-devel` (Fedora), or `brew install openssl@3`.
+- liburing, Linux only: `liburing.h` linked statically, so the binary carries no runtime liburing dependency. Install `liburing-dev`; a machine with only the shared library leaves io_uring off, and epoll serves.
+
+`sbt show ffiNativeSystemLibraries` lists the libraries found and the flags each adds, and a `[kyo-ffi-plugin]` line in the build output names each one that was not found. The plugin is a build-time dependency only: nothing in the application imports it.
+
+The I/O backend is chosen at runtime, as on every other platform, and the shims that do not apply to the target compile to stubs, so a macOS binary links the same sources a Linux one does and selects kqueue. BoringSSL, kyo-net's engine on the JVM and Node, is not delivered to Scala Native builds; Native TLS runs on the system OpenSSL.
