@@ -209,15 +209,13 @@ class SqlClientInterruptTest extends SqlContainerTest:
         }
     }
 
-    /** `closeAll` drains the idle ring in one step and installs the force-close of what it extracted in the next, so a stop landing between
-      * the two abandons connections the pool no longer holds and nothing else closes. The ring drain is microseconds, so the leaf's own
-      * fiber spins to a staggered offset from the step before the close and requests the stop directly. A round whose stop landed before
-      * the close began closes the client itself and proves nothing; one whose close began, which the pool's closed flag shows, must see
-      * the server's session count for the client's `application_name` reach zero within the bound.
+    /** `closeAll` drains the idle ring in one step and installs the force-close of what it extracted in the next, so a stop landing on the
+      * poll between the two would abandon connections the pool no longer holds. The ring drain is microseconds, so the leaf's own fiber
+      * spins to a staggered offset from the step before the close and requests the stop directly. A round whose stop landed before the
+      * close began closes the client itself and proves nothing; one whose close began, which the pool's closed flag shows, must see the
+      * server's session count for the client's `application_name` reach zero within the bound.
       */
-    "an interrupt landing as close extracts the idle ring strands no session".pendingUntilFixed(
-        "closeAll drains the idle ring in one step and installs the force-close of what it extracted in the next, so a stop landing between them abandons connections the pool no longer holds and nothing closes"
-    ).notJs.notWasm in {
+    "an interrupt landing as close extracts the idle ring strands no session".notJs.notWasm in {
         val rounds = 40
         val warm   = SqlConfig(maxConnections = 2, minConnections = 2, acquireTimeout = 10.seconds, queryTimeout = 10.seconds)
         containerUrl("kyo-sql-close-orphan") { url =>
@@ -243,7 +241,8 @@ class SqlClientInterruptTest extends SqlContainerTest:
                             _     <- fiber.getResult
                             began <- client.isClosed
                             gone <-
-                                if began then Abort.run[Timeout](Async.timeout(5.seconds)(assertEventually(sessions.map(_ == 0)))).map(_.isSuccess)
+                                if began then
+                                    Abort.run[Timeout](Async.timeout(5.seconds)(assertEventually(sessions.map(_ == 0)))).map(_.isSuccess)
                                 else Abort.run[SqlException](client.close).andThen(assertEventually(sessions.map(_ == 0))).andThen(true)
                         yield
                             assert(gone, s"round $i: sessions of the client whose close was stopped are still open on the server")
