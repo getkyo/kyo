@@ -85,7 +85,7 @@ class DragScenarioItTest extends UITest:
                 selection <- Signal.initRef(selected)
                 decisions <- AtomicRef.init(Chunk.empty[Drag.Decision])
                 root      <- ReactiveUI.normalize(KanbanDemo.boardView(state, selection), Seq.empty)
-                result <- DragCommands.resolveSink.let(
+                result    <- DragCommands.resolveSink.let(
                     Present((_, decision) => decisions.getAndUpdate(_.append(decision)).unit)
                 ) {
                     ReactiveUI.subscribe(root, new NoopExchange).map(sub => f(state, sub.handle, decisions))
@@ -248,7 +248,7 @@ class DragScenarioItTest extends UITest:
                 selection <- Signal.initRef(selected)
                 decisions <- AtomicRef.init(Chunk.empty[Drag.Decision])
                 root      <- ReactiveUI.normalize(InventoryGridDemo.gridView(state, selection), Seq.empty)
-                result <- DragCommands.resolveSink.let(
+                result    <- DragCommands.resolveSink.let(
                     Present((_, decision) => decisions.getAndUpdate(_.append(decision)).unit)
                 ) {
                     ReactiveUI.subscribe(root, new NoopExchange).map(sub => f(state, sub.handle, decisions))
@@ -435,7 +435,7 @@ class DragScenarioItTest extends UITest:
     "embedded pointer drag reorders the served list" in {
         for
             state <- Signal.initRef(Chunk("a", "b", "c"))
-            _ <- withUI(sortableApp(state)) {
+            _     <- withUI(sortableApp(state)) {
                 for
                     _ <- Browser.evalBoolean(pointerDragJs)
                     // The runtime coalesces moves on an animation frame; the CDP round trip between the two
@@ -451,7 +451,7 @@ class DragScenarioItTest extends UITest:
     "embedded keyboard drag matches the pointer result" in {
         for
             state <- Signal.initRef(Chunk("a", "b", "c"))
-            _ <- withUI(sortableApp(state)) {
+            _     <- withUI(sortableApp(state)) {
                 for
                     _ <- Browser.click(Browser.Selector.id("it-a"))
                     _ <- Browser.press(Browser.Selector.id("it-a"), Browser.Key.Enter)
@@ -468,7 +468,7 @@ class DragScenarioItTest extends UITest:
     "embedded Escape leaves the server state unchanged" in {
         for
             state <- Signal.initRef(Chunk("a", "b", "c"))
-            _ <- withUI(sortableApp(state)) {
+            _     <- withUI(sortableApp(state)) {
                 for
                     _ <- Browser.click(Browser.Selector.id("it-a"))
                     _ <- Browser.press(Browser.Selector.id("it-a"), Browser.Key.Enter)
@@ -512,7 +512,7 @@ class DragScenarioItTest extends UITest:
         for
             state     <- Signal.initRef(Board(todo = Chunk.empty, doing = Chunk(Card("1", "Only card")), done = Chunk.empty))
             selection <- Signal.initRef(Set.empty[String])
-            _ <- withUI(KanbanDemo.boardView(state, selection)) {
+            _         <- withUI(KanbanDemo.boardView(state, selection)) {
                 for
                     _ <- Browser.evalBoolean(emptyLaneDragJs)
                     // The runtime coalesces moves on an animation frame; the CDP round trip between the two

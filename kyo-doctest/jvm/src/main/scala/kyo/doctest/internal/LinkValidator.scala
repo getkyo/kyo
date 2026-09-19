@@ -73,7 +73,7 @@ private[kyo] object LinkValidator:
                     )): Chunk[Doctest.Failure] < (Sync & Abort[Doctest.Error])
                 case true =>
                     anchorPart match
-                        case None => Chunk.empty
+                        case None         => Chunk.empty
                         case Some(anchor) =>
                             validateRemoteAnchor(file, link, resolved, anchor)
             }

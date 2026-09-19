@@ -62,7 +62,7 @@ object PositionsUnpickler:
         try Result.Success(readSpansSync(view, sectionOffset, sourceFile))
         catch
             case ex: ArrayIndexOutOfBoundsException =>
-                val msg = ex.getMessage
+                val msg    = ex.getMessage
                 val reason =
                     if msg != null && msg.contains("exceeds Int.MaxValue") then msg
                     else "unexpected end of Positions section"
@@ -188,7 +188,7 @@ object PositionsUnpickler:
         try Result.Success(readSync(view, addrMap, sourceFile, sectionOffset))
         catch
             case ex: ArrayIndexOutOfBoundsException =>
-                val msg = ex.getMessage
+                val msg    = ex.getMessage
                 val reason =
                     if msg != null && msg.contains("exceeds Int.MaxValue") then msg
                     else "unexpected end of Positions section"

@@ -12,7 +12,7 @@ class SubtypeTest extends kyo.test.Test[Any]:
     import kyo.Tasty.SymbolId
 
     // Counter for assigning unique SymbolIds in tests.
-    private var nextId: Int = 0
+    private var nextId: Int         = 0
     private def freshId(): SymbolId =
         val id = nextId
         nextId += 1
@@ -167,10 +167,10 @@ class SubtypeTest extends kyo.test.Test[Any]:
 
     "TypeLambda([T], C[T]).isSubtypeOf(TypeLambda([U], C[U])) Sub (alpha-equiv)" in {
         nextId = 0
-        val cSym  = makeSym("test.C")
-        val cType = Tasty.Type.Named(cSym.id)
-        val tSym  = makeCovParam("T")
-        val uSym  = makeCovParam("U")
+        val cSym    = makeSym("test.C")
+        val cType   = Tasty.Type.Named(cSym.id)
+        val tSym    = makeCovParam("T")
+        val uSym    = makeCovParam("U")
         val lambda1 = Tasty.Type.TypeLambda(
             Chunk(tSym.id),
             Tasty.Type.Applied(cType, Chunk(Tasty.Type.Named(tSym.id)))

@@ -28,7 +28,7 @@ class TastyErrorWireFormatTest extends kyo.test.Test[Any]:
       * inspect tag bytes, varint prefixes, and round-tripped field values.
       */
     private def snapshotBytesWithErrors(errors: Chunk[TastyError]): Array[Byte] =
-        val rootSym = Tasty.Symbol.Package(SymbolId(0), Tasty.Name(""), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
+        val rootSym   = Tasty.Symbol.Package(SymbolId(0), Tasty.Name(""), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
         val classpath = Tasty.Classpath.make(
             symbols = Chunk(rootSym),
             rootSymbolId = SymbolId(0),
@@ -333,7 +333,7 @@ class TastyErrorWireFormatTest extends kyo.test.Test[Any]:
         assert(errors.size == 19)
 
         val snapshotBytes = snapshotBytesWithErrors(errors)
-        val digest = Array[Byte](
+        val digest        = Array[Byte](
             0x10.toByte,
             0x11.toByte,
             0x12.toByte,

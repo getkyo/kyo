@@ -104,9 +104,9 @@ class UnifiedModelTest extends kyo.test.Test[Any]:
     }
 
     "SymbolKind.Trait appears for Java interface and Scala trait" in {
-        val clsName = "kyo/fixtures/SyntheticRunnable".getBytes(java.nio.charset.StandardCharsets.UTF_8)
-        val supName = "java/lang/Object".getBytes(java.nio.charset.StandardCharsets.UTF_8)
-        val buffer  = new java.io.ByteArrayOutputStream()
+        val clsName                = "kyo/fixtures/SyntheticRunnable".getBytes(java.nio.charset.StandardCharsets.UTF_8)
+        val supName                = "java/lang/Object".getBytes(java.nio.charset.StandardCharsets.UTF_8)
+        val buffer                 = new java.io.ByteArrayOutputStream()
         def writeInt(v: Int): Unit =
             buffer.write((v >>> 24) & 0xff); buffer.write((v >>> 16) & 0xff)
             buffer.write((v >>> 8) & 0xff); buffer.write(v & 0xff)
@@ -258,10 +258,10 @@ class UnifiedModelTest extends kyo.test.Test[Any]:
             accessFlags: Int,
             fields: Seq[(String, String, Int)]
         ): Array[Byte] =
-            val entries = scala.collection.mutable.ArrayBuffer[(Int, Array[Byte])]() // (tag, bytes)
-            val supName = "java/lang/Object".getBytes(java.nio.charset.StandardCharsets.UTF_8)
-            val clsName = clsNameStr.getBytes(java.nio.charset.StandardCharsets.UTF_8)
-            val pool    = scala.collection.mutable.ArrayBuffer[Array[Byte]]()
+            val entries                   = scala.collection.mutable.ArrayBuffer[(Int, Array[Byte])]() // (tag, bytes)
+            val supName                   = "java/lang/Object".getBytes(java.nio.charset.StandardCharsets.UTF_8)
+            val clsName                   = clsNameStr.getBytes(java.nio.charset.StandardCharsets.UTF_8)
+            val pool                      = scala.collection.mutable.ArrayBuffer[Array[Byte]]()
             def utf8(s: Array[Byte]): Int =
                 val idx = pool.length + 1
                 pool += (Array(1.toByte) ++ Array(((s.length >> 8) & 0xff).toByte, (s.length & 0xff).toByte) ++ s)
@@ -272,16 +272,16 @@ class UnifiedModelTest extends kyo.test.Test[Any]:
                 pool += Array(7.toByte, ((nameIdx >> 8) & 0xff).toByte, (nameIdx & 0xff).toByte)
                 idx
             end clazz
-            val clsUtf = utf8(clsName)
-            val clsRef = clazz(clsUtf)
-            val supUtf = utf8(supName)
-            val supRef = clazz(supUtf)
+            val clsUtf    = utf8(clsName)
+            val clsRef    = clazz(clsUtf)
+            val supUtf    = utf8(supName)
+            val supRef    = clazz(supUtf)
             val fieldInfo = fields.map { (fname, fdesc, fflags) =>
                 val ni = utf8(fname.getBytes(java.nio.charset.StandardCharsets.UTF_8))
                 val di = utf8(fdesc.getBytes(java.nio.charset.StandardCharsets.UTF_8))
                 (ni, di, fflags)
             }
-            val buffer = new java.io.ByteArrayOutputStream()
+            val buffer           = new java.io.ByteArrayOutputStream()
             def wi(v: Int): Unit =
                 buffer.write((v >>> 24) & 0xff); buffer.write((v >>> 16) & 0xff)
                 buffer.write((v >>> 8) & 0xff); buffer.write(v & 0xff)

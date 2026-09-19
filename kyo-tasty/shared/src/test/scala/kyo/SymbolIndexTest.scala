@@ -141,8 +141,8 @@ class SymbolIndexTest extends kyo.test.Test[Any]:
     }
 
     "absent sourcePosition contributes to no bySourceFile entry" in {
-        val rootSym = Tasty.Symbol.Package(SymbolId(0), Tasty.Name(""), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
-        val pkgSym  = Tasty.Symbol.Package(SymbolId(1), Tasty.Name("test"), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
+        val rootSym  = Tasty.Symbol.Package(SymbolId(0), Tasty.Name(""), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
+        val pkgSym   = Tasty.Symbol.Package(SymbolId(1), Tasty.Name("test"), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
         val noPosSym = Tasty.Symbol.Class(
             SymbolId(2),
             Tasty.Name("NoPos"),

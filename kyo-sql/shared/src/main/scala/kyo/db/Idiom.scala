@@ -102,22 +102,22 @@ abstract class Idiom:
       */
     def castTypeName(target: SqlType.Type): Maybe[String] =
         target match
-            case SqlType.Type.Text             => Maybe("TEXT")
-            case SqlType.Type.SmallInt         => Maybe("SMALLINT")
-            case SqlType.Type.Int              => Maybe("INTEGER")
-            case SqlType.Type.BigInt           => Maybe("BIGINT")
-            case SqlType.Type.Boolean          => Maybe("BOOLEAN")
-            case SqlType.Type.Float32          => Maybe("REAL")
-            case SqlType.Type.Float64          => Maybe("DOUBLE PRECISION")
-            case SqlType.Type.Bytes            => Maybe("BYTEA")
-            case SqlType.Type.Uuid             => Maybe("UUID")
-            case SqlType.Type.Json             => Maybe("JSONB")
-            case SqlType.Type.Date             => Maybe("DATE")
-            case SqlType.Type.Time             => Maybe("TIME")
-            case SqlType.Type.TimeWithOffset   => Maybe("TIME WITH TIME ZONE")
-            case SqlType.Type.DateTime         => Maybe("TIMESTAMP")
-            case SqlType.Type.Timestamp        => Maybe("TIMESTAMPTZ")
-            case SqlType.Type.CalendarInterval => Maybe("INTERVAL")
+            case SqlType.Type.Text                      => Maybe("TEXT")
+            case SqlType.Type.SmallInt                  => Maybe("SMALLINT")
+            case SqlType.Type.Int                       => Maybe("INTEGER")
+            case SqlType.Type.BigInt                    => Maybe("BIGINT")
+            case SqlType.Type.Boolean                   => Maybe("BOOLEAN")
+            case SqlType.Type.Float32                   => Maybe("REAL")
+            case SqlType.Type.Float64                   => Maybe("DOUBLE PRECISION")
+            case SqlType.Type.Bytes                     => Maybe("BYTEA")
+            case SqlType.Type.Uuid                      => Maybe("UUID")
+            case SqlType.Type.Json                      => Maybe("JSONB")
+            case SqlType.Type.Date                      => Maybe("DATE")
+            case SqlType.Type.Time                      => Maybe("TIME")
+            case SqlType.Type.TimeWithOffset            => Maybe("TIME WITH TIME ZONE")
+            case SqlType.Type.DateTime                  => Maybe("TIMESTAMP")
+            case SqlType.Type.Timestamp                 => Maybe("TIMESTAMPTZ")
+            case SqlType.Type.CalendarInterval          => Maybe("INTERVAL")
             case SqlType.Type.Numeric(precision, scale) =>
                 (precision, scale) match
                     case (Maybe.Present(p), Maybe.Present(s)) => Maybe(s"NUMERIC($p, $s)")
@@ -138,10 +138,18 @@ abstract class Idiom:
     /** True when this flavor has SQL:1999's grouping-set constructs, `GROUP BY CUBE (...)` and `GROUP BY GROUPING SETS (...)`. Defaults to
       * true, and is not version-gated: a flavor that lacks them lacks them at every release.
       *
-      * `GROUP BY ... WITH ROLLUP` is not covered here. Rollup is a spelling difference rather than a missing construct, so a flavor that
-      * spells it its own way overrides [[groupBy]].
+      * Rollup has its own flag: a flavor can lack the grouping-set constructs and still have rollup, which is where MySQL sits. See
+      * [[supportsRollup]].
       */
     def supportsGroupingSets: Boolean =
+        true
+
+    /** True when this flavor can group by a rollup at all, however it spells one. Defaults to true, and is not version-gated.
+      *
+      * Independent of [[supportsGroupingSets]]: MySQL has rollup and no grouping sets, and a flavor can have neither. A flavor that answers
+      * false here has [[groupByClause]] refuse for it, so the flag and the behaviour cannot drift apart.
+      */
+    def supportsRollup: Boolean =
         true
 
     /** The release that introduced `LATERAL` subqueries, or `Absent`, the default, when every version of this flavor has them. */
@@ -261,13 +269,13 @@ abstract class Idiom:
             case ar: Sql.Arithmetic[?]       => arithmetic(ctx, ar)
             case sm: Sql.StringMatch         => stringMatch(ctx, sm)
             case n: Sql.Not                  => ctx.append("(NOT "); term(ctx, n.expr); ctx.append(")")
-            case bt: Sql.BoolTest =>
+            case bt: Sql.BoolTest            =>
                 ctx.append("("); term(ctx, bt.expr); ctx.append(" "); ctx.append(boolTestPredicate(bt.pred)); ctx.append(")")
             case ia: Sql.IsAbsent[?]   => ctx.append("("); term(ctx, ia.expr); ctx.append(" IS NULL)")
             case ip: Sql.IsPresent[?]  => ctx.append("("); term(ctx, ip.expr); ctx.append(" IS NOT NULL)")
             case iu: Sql.IsUnknown     => ctx.append("("); term(ctx, iu.expr); ctx.append(" IS UNKNOWN)")
             case inu: Sql.IsNotUnknown => ctx.append("("); term(ctx, inu.expr); ctx.append(" IS NOT UNKNOWN)")
-            case b: Sql.Between[?] =>
+            case b: Sql.Between[?]     =>
                 ctx.append("("); term(ctx, b.expr); ctx.append(" BETWEEN "); term(ctx, b.low)
                 ctx.append(" AND "); term(ctx, b.high); ctx.append(")")
             case iv: Sql.InValues[?]       => inList(ctx, iv.expr, iv.values, negated = false)
@@ -277,7 +285,7 @@ abstract class Idiom:
             case e: Sql.Exists             => ctx.append("EXISTS ("); query(ctx, e.subquery); ctx.append(")")
             case ne: Sql.NotExists         => ctx.append("NOT EXISTS ("); query(ctx, ne.subquery); ctx.append(")")
             case ss: Sql.ScalarSub[?]      => ctx.append("("); query(ctx, ss.subquery); ctx.append(")")
-            case co: Sql.Coalesce[?] =>
+            case co: Sql.Coalesce[?]       =>
                 ctx.append("COALESCE(")
                 ctx.joinWith(", ")(co.exprs)(e => term(ctx, e))
                 ctx.append(")")
@@ -291,7 +299,7 @@ abstract class Idiom:
             case ce: Sql.CaseExpr[?]       => caseExpr(ctx, ce)
             case cen: Sql.CaseExprMaybe[?] => caseExprMaybe(ctx, cen)
             case c: Sql.Cast[?, ?]         => cast(ctx, c)
-            case fc: Sql.FunctionCall[?] =>
+            case fc: Sql.FunctionCall[?]   =>
                 ctx.append(fc.name); ctx.append("(")
                 ctx.joinWith(", ")(fc.args)(a => term(ctx, a))
                 ctx.append(")")
@@ -404,7 +412,7 @@ abstract class Idiom:
     def orderBy(ctx: Idiom.Ctx, o: Sql.OrderBy[?]): Unit =
         o.sql match
             case s: Sql.Select[?, ?, ?] => select(ctx, s)
-            case other =>
+            case other                  =>
                 appendSelectStarFor(ctx, other)
                 ctx.append(" FROM ")
                 innerSource(ctx, other)
@@ -490,7 +498,7 @@ abstract class Idiom:
         a.source match
             case f: Sql.From[?, ?]  => from(ctx, f)
             case w: Sql.Where[?, ?] => from(ctx, w.sql); ctx.append(" WHERE "); term(ctx, w.predicate)
-            case other =>
+            case other              =>
                 ctx.append("(")
                 query(ctx, other)
                 ctx.append(")")
@@ -523,6 +531,7 @@ abstract class Idiom:
                 ctx.append(" GROUP BY ")
                 groupByKeys(ctx, g.keys)
             case Sql.GroupBy.Kind.Rollup =>
+                if !supportsRollup then ctx.unsupported("GROUP BY ROLLUP", Maybe.Absent)
                 ctx.append(" GROUP BY ROLLUP (")
                 groupByKeys(ctx, g.keys)
                 ctx.append(")")
@@ -571,7 +580,7 @@ abstract class Idiom:
         }
         i.returning match
             case Maybe.Present(cols) => returning(ctx, cols)
-            case Maybe.Absent =>
+            case Maybe.Absent        =>
                 if supportsReturning then
                     i.autoKey.foreach { col =>
                         ctx.append(" RETURNING ")
@@ -859,7 +868,7 @@ abstract class Idiom:
       */
     def cast(ctx: Idiom.Ctx, c: Sql.Cast[?, ?]): Unit =
         castTypeName(c.target) match
-            case Maybe.Absent => ctx.unsupported(s"CAST AS ${c.target}", Maybe.Absent)
+            case Maybe.Absent        => ctx.unsupported(s"CAST AS ${c.target}", Maybe.Absent)
             case Maybe.Present(name) =>
                 ctx.append("CAST(")
                 term(ctx, c.expr)
@@ -981,7 +990,7 @@ abstract class Idiom:
             case _: Sql.WindowFunction.DenseRank.type   => ctx.append("DENSE_RANK()")
             case _: Sql.WindowFunction.PercentRank.type => ctx.append("PERCENT_RANK()")
             case _: Sql.WindowFunction.CumeDist.type    => ctx.append("CUME_DIST()")
-            case nt: Sql.WindowFunction.Ntile =>
+            case nt: Sql.WindowFunction.Ntile           =>
                 ctx.append("NTILE(")
                 term(ctx, nt.n)
                 ctx.append(")")
@@ -1253,13 +1262,13 @@ abstract class Idiom:
       */
     private def innerSource(ctx: Idiom.Ctx, q: Sql.SelectSource[?]): Unit =
         q match
-            case f: Sql.From[?, ?] => from(ctx, f)
+            case f: Sql.From[?, ?]  => from(ctx, f)
             case w: Sql.Where[?, ?] =>
                 from(ctx, w.sql)
                 ctx.append(" WHERE ")
                 term(ctx, w.predicate)
             case g: Sql.GroupBy[?, ?] => groupBy(ctx, g)
-            case o: Sql.OrderBy[?] =>
+            case o: Sql.OrderBy[?]    =>
                 innerSource(ctx, o.sql)
                 ctx.append(" ORDER BY ")
                 ordering(ctx, o.specs)
@@ -1303,7 +1312,13 @@ abstract class Idiom:
         query(ctx, body)
     end cte
 
-    private def overrideFor(overrides: Chunk[Sql.SetSpec[?, ?]], column: String): Maybe[Sql.SetSpec[?, ?]] =
+    /** The override, if any, that names `column`.
+      *
+      * `private[kyo]` so a flavor that restructures an insert around its overrides, rather than substituting a cell, can reach it. SQLite
+      * has no DEFAULT keyword, so a defaulted column leaves the column list entirely and it must know which columns are overridden before
+      * rendering any cell.
+      */
+    def overrideFor(overrides: Chunk[Sql.SetSpec[?, ?]], column: String): Maybe[Sql.SetSpec[?, ?]] =
         overrides.foldLeft(Maybe.empty[Sql.SetSpec[?, ?]]) { (found, spec) =>
             if found.isDefined || spec.column.sqlName != column then found else Maybe(spec)
         }
@@ -1400,10 +1415,9 @@ object Idiom:
         /** Packs a `(major, minor, patch)` triple. Each component contributes its low bits, an upper bound far above any real server
           * version.
           */
-        def apply(major: Int, minor: Int, patch: Int): ServerVersion =
-            ((major.toLong & componentMask) << (componentBits * 2)) |
-                ((minor.toLong & componentMask) << componentBits) |
-                (patch.toLong & componentMask)
+        def apply(major: Int, minor: Int, patch: Int): ServerVersion = ((major.toLong & componentMask) << (componentBits * 2)) |
+            ((minor.toLong & componentMask) << componentBits) |
+            (patch.toLong & componentMask)
 
         /** Reads the leading version out of the string a server reports at handshake, `Absent` when it carries none.
           *
@@ -1419,16 +1433,13 @@ object Idiom:
 
         extension (self: ServerVersion)
             /** The major component. */
-            def major: Int =
-                ((self >>> (componentBits * 2)) & componentMask).toInt
+            def major: Int = ((self >>> (componentBits * 2)) & componentMask).toInt
 
             /** The minor component. */
-            def minor: Int =
-                ((self >>> componentBits) & componentMask).toInt
+            def minor: Int = ((self >>> componentBits) & componentMask).toInt
 
             /** The patch component. */
-            def patch: Int =
-                (self & componentMask).toInt
+            def patch: Int = (self & componentMask).toInt
 
             /** The triple as `"major.minor.patch"`. */
             def show: String =
@@ -1446,8 +1457,7 @@ object Idiom:
         private val componentBits: Int =
             20
 
-        private val componentMask: Long =
-            (1L << componentBits) - 1
+        private val componentMask: Long = (1L << componentBits) - 1
 
         private def components(reported: String): Maybe[(Int, Int, Int)] =
             val leading = reported.takeWhile(c => c.isDigit || c == '.')

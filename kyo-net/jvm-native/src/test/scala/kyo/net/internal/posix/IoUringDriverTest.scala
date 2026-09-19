@@ -216,8 +216,8 @@ class IoUringDriverTest extends Test:
         // three depths return 0; on a restricted host depth-256 returns a negative -errno.
         "depth-{2,32,256} init measurement: asserting concrete per-depth return value" in {
             if !PosixConstants.isLinux then cancel("io_uring is Linux-only")
-            val uring  = Ffi.load[IoUringBindings]
-            val depths = Seq(2, 32, 256)
+            val uring   = Ffi.load[IoUringBindings]
+            val depths  = Seq(2, 32, 256)
             val results = depths.map { depth =>
                 val ring = Buffer.alloc[Byte](uring.kyo_uring_sizeof().toInt)
                 val rc   = uring.io_uring_queue_init(depth, ring, 0)
@@ -821,7 +821,7 @@ class IoUringDriverTest extends Test:
 
                         def readEach(remaining: List[Array[Byte]]): Unit < (Abort[Closed] & Async) =
                             remaining match
-                                case Nil => Sync.defer(())
+                                case Nil         => Sync.defer(())
                                 case msg :: rest =>
                                     val cipher = TlsEngineLoopback.encrypt(clientEngine, msg)
                                     assert(sock.sendNow(

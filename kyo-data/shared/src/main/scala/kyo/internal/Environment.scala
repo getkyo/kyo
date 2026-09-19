@@ -31,7 +31,7 @@ private[kyo] object Environment:
         sys.props.get("kyo.development").map(_.toLowerCase) match
             case Some("true") => true
             case Some(_)      => false
-            case None =>
+            case None         =>
                 sys.props.get("java.class.path").exists(_.contains("org.scala-sbt"))
 
 end Environment

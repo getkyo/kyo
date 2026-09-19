@@ -85,7 +85,7 @@ object IonSpecAnnotated:
     private val fieldName    = "value"
     private val valueFieldId = kyo.internal.CodecMacro.fieldId(fieldName)
 
-    private val rootAnnotations = Chunk(IonSpecCustomTypeAnnotation())
+    private val rootAnnotations  = Chunk(IonSpecCustomTypeAnnotation())
     private val fieldAnnotations = Chunk(
         IonSpecInt32Annotation(),
         IonSpecDegreesAnnotation(),

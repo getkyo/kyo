@@ -39,8 +39,10 @@ class ReactiveUITeardownTest extends kyo.test.Test[Any]:
 
     "bound element replacement does not recursively subscribe to itself" in {
         for
-            ref     <- Signal.initRef("")
-            renders <- AtomicInt.init(0)
+            ref           <- Signal.initRef("")
+            renders       <- AtomicInt.init(0)
+            secondEntered <- Promise.init[Unit, Any]
+            releaseSecond <- Promise.init[Unit, Any]
             exchange = new UIExchange:
                 def onChange(
                     region: ReactiveRegion,
@@ -49,27 +51,40 @@ class ReactiveUITeardownTest extends kyo.test.Test[Any]:
                     parentContext: ReactiveRegion.ParentContext,
                     previous: Maybe[UI],
                     ui: UI
-                )(using Frame): Unit < Async = renders.incrementAndGet.unit
-            fiber <- Fiber.initUnscoped(Scope.run {
-                for
-                    root <- ReactiveUI.normalize(UI.textarea.value(ref), Seq.empty)
-                    _    <- ReactiveUI.subscribe(root, exchange)
-                    _    <- Async.never
-                yield ()
-            })
-            _              <- assertEventually(renders.get.map(_ == 1))
-            _              <- assertEventually(ref.waiters.map(_ == 1))
-            initialWaiters <- ref.waiters
-            _              <- ref.set("next")
-            _              <- assertEventually(renders.get.map(_ == 2))
-            finalRenders   <- renders.get
-            finalWaiters   <- ref.waiters
-            _              <- fiber.interrupt
-            _              <- fiber.getResult
+                )(using Frame): Unit < Async =
+                    renders.incrementAndGet.map { count =>
+                        if count == 2 then secondEntered.completeUnitDiscard.andThen(releaseSecond.get)
+                        else ()
+                    }
+            // Freeze the subscription's repair timer so only the signal update can rearm this observer.
+            // The driver keeps its live clock for assertEventually retries.
+            fiber <- Clock.withTimeControl { _ =>
+                Fiber.init(Scope.run {
+                    for
+                        root <- ReactiveUI.normalize(UI.textarea.value(ref), Seq.empty)
+                        _    <- ReactiveUI.subscribe(root, exchange)
+                        _    <- Async.never
+                    yield ()
+                })
+            }
+            _                <- assertEventually(renders.get.map(_ == 1))
+            _                <- assertEventually(ref.waiters.map(_ == 1))
+            initialWaiters   <- ref.waiters
+            _                <- ref.set("next")
+            _                <- secondEntered.get
+            renderingWaiters <- ref.waiters
+            _                <- releaseSecond.completeUnitDiscard
+            // Rendering finishes before observe registers its next waiter. Fence that registration separately.
+            _            <- assertEventually(ref.waiters.map(_ == 1))
+            finalWaiters <- ref.waiters
+            finalRenders <- renders.get
+            _            <- fiber.interrupt
+            _            <- fiber.getResult
         yield
             assert(initialWaiters == 1)
+            assert(renderingWaiters == 0)
             assert(finalRenders == 2)
-            assert(finalWaiters == 1)
+            assert(finalWaiters == 1, s"expected the replacement observer to be parked, got $finalWaiters waiters")
         end for
     }
 
@@ -151,7 +166,7 @@ class ReactiveUITeardownTest extends kyo.test.Test[Any]:
         for
             ref    <- Signal.initRef("value")
             closed <- AtomicBoolean.init(false)
-            _ <- Async.race(
+            _      <- Async.race(
                 Scope.run {
                     for
                         root <- ReactiveUI.normalize(ref.map(UI.span(_)), Seq.empty)
@@ -222,7 +237,7 @@ class ReactiveUITeardownTest extends kyo.test.Test[Any]:
                     )(using Frame): Unit < Async =
                         HtmlRenderer.render(ui, path).map(html => rendered.updateAndGet(_.append(html)).unit)
             tree = UI.input.id("i").value(ref)
-            live <- AtomicInt.init(0)
+            live  <- AtomicInt.init(0)
             fiber <- Fiber.initUnscoped(Scope.run {
                 for
                     _    <- Scope.acquireRelease(live.incrementAndGet)(_ => live.decrementAndGet.unit)
@@ -304,7 +319,7 @@ class ReactiveUITeardownTest extends kyo.test.Test[Any]:
             outerRef <- Signal.initRef(true)
             childRef <- Signal.initRef("init")
             tree = UI.when(outerRef)(UI.div(childRef.map(s => UI.span(s))))
-            live <- AtomicInt.init(0)
+            live  <- AtomicInt.init(0)
             fiber <- Fiber.initUnscoped(Scope.run {
                 for
                     _    <- Scope.acquireRelease(live.incrementAndGet)(_ => live.decrementAndGet.unit)
@@ -344,7 +359,7 @@ class ReactiveUITeardownTest extends kyo.test.Test[Any]:
             inner    <- Signal.initRef(true)
             grandRef <- Signal.initRef("v")
             tree = UI.when(outer)(UI.when(inner)(UI.div(grandRef.map(s => UI.span(s)))))
-            live <- AtomicInt.init(0)
+            live  <- AtomicInt.init(0)
             fiber <- Fiber.initUnscoped(Scope.run {
                 for
                     _    <- Scope.acquireRelease(live.incrementAndGet)(_ => live.decrementAndGet.unit)

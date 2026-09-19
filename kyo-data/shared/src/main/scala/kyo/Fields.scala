@@ -114,7 +114,7 @@ object Fields:
         // to hang when used inside inline recursive methods, likely due to cascading inline expansion.
         private inline def summonLoop[T <: Tuple, F[_]]: Map[String, F[Any]] =
             inline erasedValue[T] match
-                case _: EmptyTuple => Map.empty
+                case _: EmptyTuple                                                 => Map.empty
                 case _: ((n1 ~ v1) *: (n2 ~ v2) *: (n3 ~ v3) *: (n4 ~ v4) *: rest) =>
                     summonLoop[rest, F]
                         .updated(constValue[n1 & String], summonInline[F[v1]].asInstanceOf[F[Any]])

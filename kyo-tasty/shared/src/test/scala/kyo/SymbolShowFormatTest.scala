@@ -87,9 +87,9 @@ class SymbolShowFormatTest extends kyo.test.Test[Any]:
       */
     private def buildFixture(using Frame): Tasty.Classpath < Sync =
         Sync.defer {
-            val pkg  = makePackage(0, "scala.collection")
-            val tpA  = makeTypeParam(2, "A", ownerId = 1)
-            val clsD = makeClass(3, "D", ownerId = 0)
+            val pkg     = makePackage(0, "scala.collection")
+            val tpA     = makeTypeParam(2, "A", ownerId = 1)
+            val clsD    = makeClass(3, "D", ownerId = 0)
             val clsList = makeClass(
                 1,
                 "List",
@@ -97,7 +97,7 @@ class SymbolShowFormatTest extends kyo.test.Test[Any]:
                 parentTypes = Chunk(Tasty.Type.Named(SymbolId(3))),
                 tpIds = Chunk(SymbolId(2))
             )
-            val param = makeParameter(5, "x", ownerId = 4, tpe = Tasty.Type.Named(SymbolId(1)))
+            val param     = makeParameter(5, "x", ownerId = 4, tpe = Tasty.Type.Named(SymbolId(1)))
             val methodFoo = makeMethod(
                 4,
                 "foo",

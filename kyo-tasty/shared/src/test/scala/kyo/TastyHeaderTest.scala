@@ -8,7 +8,7 @@ import kyo.internal.tasty.reader.TastyHeader
   * Nat encoding reminder (TASTy big-endian base-128, stop-bit on last byte) {
   *  }
   *   value v < 128: single byte = (v & 0x7f) | 0x80
-  *   e.g. 28 -> 0x9C, 8 -> 0x88, 0 -> 0x80, 7 -> 0x87, 9 -> 0x89
+  *   e.g. 28 -> 0x9C, 9 -> 0x89, 0 -> 0x80, 7 -> 0x87, 10 -> 0x8A
   *
   * Version compatibility (verbatim dotty rule) {
   *  }
@@ -16,10 +16,10 @@ import kyo.internal.tasty.reader.TastyHeader
   *     (fileMinor == compilerMinor && fileExperimental == compilerExperimental
   *     || fileMinor < compilerMinor && fileExperimental == 0
   *     )
-  *   Supported: Version(28, 8, 0). So:
-  *     minor=7, exp=0 -> OK (7 < 8 && exp==0)
-  *     minor=9, exp=0 -> FAIL (9 > 8, neither condition satisfied)
-  *     minor=8, exp=1 -> FAIL (minor==8 but exp!=0)
+  *   Supported: Version(28, 9, 0). So:
+  *     minor=7, exp=0 -> OK (7 < 9 && exp==0)
+  *     minor=10, exp=0 -> FAIL (10 > 9, neither condition satisfied)
+  *     minor=9, exp=1 -> FAIL (minor==9 but exp!=0)
   */
 class TastyHeaderTest extends kyo.test.Test[Any]:
 
@@ -61,14 +61,14 @@ class TastyHeaderTest extends kyo.test.Test[Any]:
     private val validMagic = Array(0x5c.toByte, 0xa1.toByte, 0xab.toByte, 0x1f.toByte)
     private val wrongMagic = Array(0xde.toByte, 0xad.toByte, 0xbe.toByte, 0xef.toByte)
 
-    "reading correct magic + Version(28,8,0) succeeds and returns Data with those values" in {
+    "reading correct magic + Version(28,9,0) succeeds and returns Data with those values" in {
         import AllowUnsafe.embrace.danger
-        val bytes = headerBytes(validMagic, 28, 8, 0, Array.empty, zeroUuid)
+        val bytes = headerBytes(validMagic, 28, 9, 0, Array.empty, zeroUuid)
         val view  = ByteView(bytes)
         TastyHeader.read(view) match
             case Result.Success(data) =>
                 assert(data.major == 28)
-                assert(data.minor == 8)
+                assert(data.minor == 9)
                 assert(data.experimental == 0)
             case Result.Failure(e) =>
                 fail(s"Expected success but got failure: $e")
@@ -118,22 +118,22 @@ class TastyHeaderTest extends kyo.test.Test[Any]:
         end match
     }
 
-    // (minor=9 > supportedMinor=8, so forward-incompatible per dotty rule)
-    "reading minor=9 experimental=0 produces UnsupportedVersion (forward incompatible)" in {
+    // (minor=10 > supportedMinor=9, so forward-incompatible per dotty rule)
+    "reading minor=10 experimental=0 produces UnsupportedVersion (forward incompatible)" in {
         import AllowUnsafe.embrace.danger
-        val bytes = headerBytes(validMagic, 28, 9, 0, Array.empty, zeroUuid)
+        val bytes = headerBytes(validMagic, 28, 10, 0, Array.empty, zeroUuid)
         val view  = ByteView(bytes)
         TastyHeader.read(view) match
             case Result.Failure(TastyError.UnsupportedVersion(found, _)) =>
-                assert(found.minor == 9)
+                assert(found.minor == 10)
             case other =>
-                fail(s"Expected UnsupportedVersion for minor=9 but got: $other")
+                fail(s"Expected UnsupportedVersion for minor=10 but got: $other")
         end match
     }
 
     "reading experimental=1 when supportedExperimental=0 produces UnsupportedVersion" in {
         import AllowUnsafe.embrace.danger
-        val bytes = headerBytes(validMagic, 28, 8, 1, Array.empty, zeroUuid)
+        val bytes = headerBytes(validMagic, 28, 9, 1, Array.empty, zeroUuid)
         val view  = ByteView(bytes)
         TastyHeader.read(view) match
             case Result.Failure(TastyError.UnsupportedVersion(found, _)) =>
@@ -165,7 +165,7 @@ class TastyHeaderTest extends kyo.test.Test[Any]:
             0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
             0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10
         )
-        val bytes = headerBytes(validMagic, 28, 8, 0, Array.empty, uuidBytes)
+        val bytes = headerBytes(validMagic, 28, 9, 0, Array.empty, uuidBytes)
         val view  = ByteView(bytes)
         TastyHeader.read(view) match
             case Result.Success(data) =>
@@ -182,7 +182,7 @@ class TastyHeaderTest extends kyo.test.Test[Any]:
         import AllowUnsafe.embrace.danger
         // "scalac" = [0x73, 0x63, 0x61, 0x6c, 0x61, 0x63]
         val tooling = Array[Byte](0x73, 0x63, 0x61, 0x6c, 0x61, 0x63)
-        val bytes   = headerBytes(validMagic, 28, 8, 0, tooling, zeroUuid)
+        val bytes   = headerBytes(validMagic, 28, 9, 0, tooling, zeroUuid)
         val view    = ByteView(bytes)
         TastyHeader.read(view) match
             case Result.Success(data) =>

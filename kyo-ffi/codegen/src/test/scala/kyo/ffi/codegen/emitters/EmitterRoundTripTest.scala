@@ -309,9 +309,9 @@ class EmitterRoundTripTest extends kyo.test.Test[Any]:
             assert(src.contains("AbiCheck.verify"))
         }
 
-        "output contains NativeLoader.jsResolve" in {
+        "output loads through the transport dispatcher" in {
             val src = JsEmitter.emit(simpleSpec)
-            assert(src.contains("NativeLoader.jsResolve"))
+            assert(src.contains("NativeFacade.load("))
         }
 
         "output has balanced braces" in {

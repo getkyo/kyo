@@ -8,7 +8,7 @@ import kyo.*
 ```
 -->
 
-`kyo-ai` is an LLM integration where a call to a language model is a typed value you compose, not a request you orchestrate. You describe the result type and the tools the model may call; the module derives the JSON schema, runs the tool-call loop, decodes the reply, threads the conversation, retries transport failures, and parses streaming deltas. The boilerplate that a mainstream SDK leaves to you (schema authoring, the agentic while-loop, message-list threading, SSE parsing) is gone. What is left is the part that carries meaning: the type you want back and the capabilities you grant.
+`kyo-ai` is an LLM integration where a call to a language model is a typed value you compose, not a request you orchestrate. You describe the result type and the tools the model may call; the module derives the JSON schema, runs the tool-call loop, decodes the reply, threads the conversation, retries transport failures, and parses streaming deltas. The boilerplate that a mainstream SDK leaves to you (schema authoring, the agentic while-loop, message-list threading, SSE parsing) is gone. What is left is the part that carries meaning: the type you want back and the capabilities you grant. When what you want back is a judgment rather than text (which tool next, is this state broken, how severe), [decisions](#decisions) ask for it as a typed value too, with a calibrated probability behind it when the backend has one.
 
 Here is a complete example. A typed result, a tool the model can call, one line to generate:
 
@@ -45,7 +45,7 @@ Three types frame the whole module. They differ by what each adds along a single
 - **`AI` is a conversation that remembers.** You mint an instance with `AI.init`; every `ai.gen` on that instance accumulates into its own history, so a later turn sees the earlier ones. Memory lasts for one `LLM.run`. Reach for it when one call needs to know what an earlier call said.
 - **`Agent` is a persistent, addressable entity.** It lives behind an actor, holds its conversation across many `ask` calls, and processes one input at a time. Reach for it when the conversation must outlive a single `run` and you want a long-lived thing to send inputs to.
 
-The sections below climb in that order: one-shot `gen` first, then remembering instances, then agents, with the generation-shaping surface (tools, prompts, thoughts, modes) layered in between.
+The sections below climb in that order: one-shot `gen` first, then remembering instances, then agents, with the generation-shaping surface (tools, prompts, thoughts, modes) layered in between, and the non-generative surfaces (streaming, decisions) after.
 
 ## One-shot generation
 
@@ -382,6 +382,90 @@ def rendersProgressively(config: kyo.ai.Config): Boolean =
 
 Read it to choose between rendering progressively and showing a pending state. A stream written against either kind is correct; only the pacing differs.
 
+## Decisions
+
+Some calls do not want text back. They want a judgment: does this state satisfy a condition, which of these handlers should take the next step, how severe is this failure. `Decider` asks such questions as typed values. Its three question kinds are TypeSafe AI's primitives (a `noul` is a yes/no probability, a `choice` picks one of a set, a `score` rates against ordered levels), so that vendor's documentation and cookbooks (https://docs.typesafe.ai) apply directly; which model answers is a config setting, covered in [Which model decides](#which-model-decides).
+
+```scala
+import kyo.schema.doc
+
+enum Handler derives Schema, CanEqual:
+    @doc("Runs a shell command on the host") case Shell
+    @doc("Queries the users database") case Database
+    case Manual
+end Handler
+
+case class Fs(manifest: Chunk[String], lastWrite: String) derives Schema
+
+def route(fs: Fs): Handler < LLM =
+    Decider.choose(fs, "Which handler takes the next step?", Handler.values.toSeq)
+
+def corrupted(fs: Fs): Boolean < LLM =
+    Decider.check(fs, "The filesystem state is corrupted")
+
+def severity(report: String): Double < LLM =
+    Decider.score(report, "How severe is the failure?", Seq("Cosmetic", "Degraded, with a workaround", "Blocking"))
+```
+
+The context (`fs`, `report`) is any value with a `Schema`, sent as JSON; so are the question, the options and the levels, and a plain `String` works in every slot. `choose` returns one of the values you passed: a choice option's wire key is inferred from how it encodes, so an enum case is keyed by its case name, a string by itself, and anything else positionally with the whole value as its description. An enum case's `@doc` is its description, and descriptions are the accuracy knob: TypeSafe reads the option names and their descriptions, and a description that separates the options from each other measurably raises the confidence of the answer. A level is described the same way (a string level is its own description). `score` returns the position on the levels, the probability-weighted index, which can fall between two levels; `math.round` on it is the index of the nearest level. `check` is a noul thresholded at 0.5, or at the threshold you give it (within `[0, 1]`). Leave the context out and the question stands alone.
+
+The full answers, with the probability distribution and the backend's confidence, come from `noul`, `query` and `batch`. `Decider.Query` builds the questions, and `Query.noul` also takes descriptions of what each side means, for a boundary the question alone does not pin down. `batch` sends several questions in one request and answers them in order: two to four questions of different kinds come back as a tuple, and any number of questions of one kind (score every line of a document, rank every candidate) come back as a `Chunk`.
+
+```scala
+import Decider.Query
+
+def triage(fs: Fs): (Double, Decider.Decision[Handler], Decider.Score[String]) < LLM =
+    Decider.batch(
+        fs,
+        Query.noul("The last write completed", "the write is on disk", "the write is missing or partial"),
+        Query.choice("Which handler takes the next step?", Handler.values.toSeq),
+        Query.score("How healthy is the state?", Seq("Healthy", "Degraded", "Corrupt"))
+    )
+
+def relevant(document: String, lines: Seq[String]): Chunk[Double] < LLM =
+    Decider.batch(document, lines.map(line => Query.noul(s"Line '$line' is relevant to the question asked")))
+```
+
+A `Decision` carries `best`, the backend's `confidence`, and every option's probability in the order you gave them, with `probabilityOf`, `ranked`, `isConfident` (against 0.70, or a threshold you pass) and `isAmbiguous` (within a 0.15 margin, or one you pass) on top. `confidence` is a concentration statistic over the distribution, not the winner's probability, so `isAmbiguous` compares the top two probabilities; TypeSafe leaves its formula unspecified, and the completion backend's is one minus the distribution's normalized entropy (a single peak scores 1, a flat distribution 0), so the 0.70 default is a convention: tune it against your own decisions and pin the model version once you have. A `Score` carries the position (`value`), the `level` nearest it, `normalized` onto `[0, 1]`, and the per-level probabilities. The position compares against a threshold or another score well; TypeSafe advises against reading the fraction between two levels as an exact quantity.
+
+On an instance, the conversation is the context, and the question and its answer join the history as two messages, so a later `gen` sees what was decided:
+
+```scala
+def plan(ai: AI): String < LLM =
+    for
+        _       <- ai.userMessage("list which rows of the users table changed in the last commit")
+        handler <- ai.choose("Which handler takes this?", Handler.values.toSeq)
+        next    <- ai.gen[String](s"Use $handler.")
+    yield next
+```
+
+A decision fails the way a generation does. `AIInvalidQuestionException` when the question itself is out of bounds (no options or more than 255, fewer than 2 or more than 10 levels, two options whose inferred keys collide, a threshold outside `[0, 1]`), raised before any request. The ordinary transport, auth, key and decode leaves otherwise. All of them ride `Abort[AIGenException]` on `LLM.run`'s residual, so you recover a decision outside the run, not inside it.
+
+### Which model decides
+
+By default, the config's own completion provider decides: one generation per decision asks the model, by structured output, for a probability on every offered key of every question (yes and no for a noul, the options of a choice, the levels of a score), so every question kind and every batch works with any provider, in one request. Those probabilities are the model's own estimate, not calibrated ones: a threshold away from 0.5 and a confidence cutoff discriminate only as well as the model guesses, and a distribution it reports as peaked can still be wrong.
+
+Setting `decider` on `AI.Config` routes decisions to a dedicated decision provider instead, one whose models are built to answer these questions with calibrated probabilities. `AI.DeciderConfig` is shaped like `AI.Config`: a provider with a catalog of entries and a `default`, and `AI.DeciderConfig.Provider.all` lists the providers. The first is TypeSafe AI's System One endpoint, whose Jev models answer every question kind in one request per call, however many questions it carries: `AI.DeciderConfig.TypeSafe.default` is `jevLatest`, `jevPreview` is the other catalog entry, and `modelName` pins a versioned id (the vendor's advice once you have tuned thresholds against one). Its key comes from `TYPESAFE_API_KEY` (a system property, then the environment) or `apiKey`, and `apiUrl` re-points it at a proxy. `decider(Absent)` returns to the config's own model. Selection by key works here as it does for completion providers: `AI.Config.default` (and so the no-argument `LLM.run`) enables the first decision provider whose key is present, so with `TYPESAFE_API_KEY` in the environment decisions go to Jev without any configuration, and without it the completion model decides.
+
+```scala
+def withTypeSafe[A](v: A < LLM): A < (Async & Abort[AIGenException]) =
+    LLM.run(_.decider(AI.DeciderConfig.TypeSafe.default))(v)
+
+def withPreview[A](v: A < LLM): A < LLM =
+    AI.withConfig(_.decider(AI.DeciderConfig.TypeSafe.jevPreview))(v)
+```
+
+A decision's `timeout`, `meter` and `retrySchedule` default to the surrounding config's and can be set apart from them on the `DeciderConfig`: a decision endpoint answers in a fraction of a second and has its own rate limits, so the knobs sized for a completion provider are rarely the right ones. A rate-limited response's `Retry-After` is waited out, under the deadline, before the schedule's own backoff.
+
+```scala
+def quickDecisions[A](v: A < LLM): A < (Async & Abort[AIGenException]) =
+    LLM.run(_.decider(AI.DeciderConfig.TypeSafe.default.timeout(5.seconds).retrySchedule(Schedule.repeat(3))))(v)
+```
+
+What either model sees is the same conversation a generation would: the instance's messages, with the instructions and reminders of every enabled prompt around them; a one-shot's context is its single user message. Tool calls are part of it too, so a decision about an agent's conversation sees what the agent did; images are not (TypeSafe reads text only), and tool definitions reach only the config's own model, which may call them like any `gen`.
+
+Three things to know about the TypeSafe backend. An instance decision sends the whole conversation as the state, and TypeSafe charges input tokens, so a long history is resent on every decision, and each recorded decision (two JSON messages, the questions and the answers) becomes part of that history in turn; ask on a one-shot with a filtered context when the history is not the point. The state and the questions together are bounded by the model's window (64k tokens, 32k for the state plus the longest question), beyond which the request is rejected, and the vendor notes that accuracy falls as the state grows with content unrelated to the decision. And the model reads the state literally, injected instructions included, so a decision that has side effects (launching a tool, changing a system) should choose only among options fixed in code, never options derived from the state, and act on a confident answer only.
+
 ## Parallel generation
 
 `AI.gen` over `< LLM` composes with the structured-concurrency combinators (`Async.foreach`, `Async.fill`, `Async.race`) through one public given. Bring it into scope and fan out.
@@ -415,7 +499,7 @@ def perAgent(researcher: AI, writer: AI): (Dict[AI, AIStats], String) < (LLM & S
     }
 ```
 
-Counting is a side effect at the source: each turn is recorded on the fiber that ran it, at the moment the wire reply is read. So a rolled-back `AI.forget` block, a losing `Async.race` branch, and an `AI.gen` one-shot all count the turns they completed, and nothing can un-spend them. A turn interrupted before its reply arrives is uncounted (no number ever reached this side of the wire), and an abandoned stream records nothing. One placement rule for streams: a scope-enabled observer covers a streamed turn only when the stream is consumed inside the enabling bracket, while an instance-enabled observer covers its instance's streams wherever they are consumed.
+Counting is a side effect at the source: each turn is recorded on the fiber that ran it, at the moment the wire reply is read. So a rolled-back `AI.forget` block, a losing `Async.race` branch, an `AI.gen` one-shot, and a one-shot decision on the TypeSafe backend all count the turns they completed, and nothing can un-spend them. A turn interrupted before its reply arrives is uncounted (no number ever reached this side of the wire), and an abandoned stream records nothing. One placement rule for streams: a scope-enabled observer covers a streamed turn only when the stream is consumed inside the enabling bracket, while an instance-enabled observer covers its instance's streams wherever they are consumed.
 
 Underneath sits the fifth enablement kind: `Observe`, a wire-tier counterpart of `Mode` that cannot change control flow. Where a mode receives the generation as a value and returns what the caller sees, an observer receives each completed turn's reply (its messages and usage) and returns `Unit`. Enable one on a scope or an instance like any other enablement:
 
@@ -549,7 +633,7 @@ def initConfig: AI.Config < Sync =
     )
 ```
 
-The no-argument `LLM.run` resolves its config with `AI.Config.default`, which probes provider markers and API keys (system properties first, then environment variables) and selects the first present, falling back to Anthropic. Retries and timeouts are wired into the eval loop, configured here: the completion call is wrapped meter, then retry, then timeout.
+The no-argument `LLM.run` resolves its config with `AI.Config.default`, which probes provider markers and API keys (system properties first, then environment variables) and selects the first present, falling back to Anthropic; it probes the decision providers' keys the same way and enables the first present as the `decider` (see [Which model decides](#which-model-decides)). Retries and timeouts are wired into the eval loop, configured here: the completion call is wrapped meter, then retry, then timeout.
 
 ```scala
 def reliable(q: Question): Answer < (Async & Abort[AIGenException]) =
@@ -568,7 +652,7 @@ kyo-ai gen backend=Claude Code model=sonnet messages=3 tools=1 thoughts=0 forceR
 
 The runnable demos at the end of this README print the resolved provider and model so a forked run can be checked directly.
 
-The error model is principled and typed. A generation's failures ride `run`'s residual as `Abort[AIGenException]`, a sealed hierarchy whose leaves name the specific failure: a transport error is an `AITransportException` (wrapping the kyo-http `HttpException`), eval-loop exhaustion an `AIEvalExhaustedException`, an invalid thought name an `AIInvalidThoughtException`, an undecodable reply an `AIDecodeException`, a missing API key an `AIMissingApiKeyException`. Streaming failures are typed in the stream's own row as `Abort[AIStreamException]`: a malformed delta is an `AIStreamDeltaException`, a stream that ends without a decodable value an `AIStreamIncompleteException`. The super-types track operations, the leaves track failures, and a failure shared by both operations (a missing key, a transport error) belongs to both. Misuse stays off the rows: using an `AI` outside the `LLM.run` that created it panics with `AICrossRunException`.
+The error model is principled and typed. A generation's failures ride `run`'s residual as `Abort[AIGenException]`, a sealed hierarchy whose leaves name the specific failure: a transport error is an `AITransportException` (wrapping the kyo-http `HttpException`), eval-loop exhaustion an `AIEvalExhaustedException`, an invalid thought name an `AIInvalidThoughtException`, an undecodable reply an `AIDecodeException`, an out-of-bounds decider question an `AIInvalidQuestionException`, a missing API key an `AIMissingApiKeyException`. Streaming failures are typed in the stream's own row as `Abort[AIStreamException]`: a malformed delta is an `AIStreamDeltaException`, a stream that ends without a decodable value an `AIStreamIncompleteException`. The super-types track operations, the leaves track failures, and a failure shared by both operations (a missing key, a transport error) belongs to both. Misuse stays off the rows: using an `AI` outside the `LLM.run` that created it panics with `AICrossRunException`.
 
 ## Conversation data types
 
@@ -646,7 +730,7 @@ The categories removed wholesale: JSON-schema authoring and the parse-and-valida
 
 ## How it works
 
-`LLM` is a custom `ArrowEffect` whose operations carry data: a program typed `A < LLM` is a tree of virtual operations with no `Async` in its row, reading and appending to per-instance conversation histories held in one threaded `State`. The single operation that reaches the world is `Gen`, whose handler runs the eval loop; that is where `Async` and `Abort[AIGenException]` enter, riding out on `run`'s residual. The completion call is wrapped meter, then retry, then timeout, and four backend adapters sit behind `AI.Config.Provider`: an OpenAI-compatible HTTP adapter shared by six providers, an Anthropic HTTP adapter, plus Claude Code and Codex command harness adapters. The eval boundary emits debug logs through `kyo.Log` naming the selected backend, model, message count, tool count, and streaming mode. For the operation GADT, the state-threading handler, and the asymmetric `Isolate` that backs parallel branches, see `kyo-ai/shared/src/main/scala/kyo/LLM.scala` and CONTRIBUTING.md.
+`LLM` is a custom `ArrowEffect` whose operations carry data: a program typed `A < LLM` is a tree of virtual operations with no `Async` in its row, reading and appending to per-instance conversation histories held in one threaded `State`. The operations that reach the world are `Gen`, whose handler runs the eval loop, and `Decide`, whose handler runs the decision glue; that is where `Async` and `Abort[AIGenException]` enter, riding out on `run`'s residual. The completion call is wrapped meter, then retry, then timeout, and four backend adapters sit behind `AI.Config.Provider`: an OpenAI-compatible HTTP adapter shared by six providers, an Anthropic HTTP adapter, plus Claude Code and Codex command harness adapters. The eval boundary emits debug logs through `kyo.Log` naming the selected backend, model, message count, tool count, and streaming mode. For the operation GADT, the state-threading handler, and the asymmetric `Isolate` that backs parallel branches, see `kyo-ai/shared/src/main/scala/kyo/LLM.scala` and CONTRIBUTING.md.
 
 ## Demos
 
@@ -656,6 +740,7 @@ Runnable end-to-end demos live in [`shared/src/test/scala/demo`](shared/src/test
 - [**ConversationDemo**](shared/src/test/scala/demo/ConversationDemo.scala): one persistent `AI` instance carrying multi-turn history.
 - [**ToolCallDemo**](shared/src/test/scala/demo/ToolCallDemo.scala): Kyo tool registration, model tool calls, tool execution, and final typed answer.
 - [**StreamingDemo**](shared/src/test/scala/demo/StreamingDemo.scala): text-chunk streaming and object-by-object streaming.
+- [**DecisionDemo**](shared/src/test/scala/demo/DecisionDemo.scala): routing, checking and scoring a ticket as typed decisions, with the distributions behind them when `TYPESAFE_API_KEY` is set.
 - [**HarnessCompletionDemo**](shared/src/test/scala/demo/HarnessCompletionDemo.scala): command-backed harness providers with image input and retained history. It prints the resolved provider and model before running.
 - [**AgentDemo**](shared/src/test/scala/demo/AgentDemo.scala): a small typed `Agent` retaining its own conversation.
 - [**SamplingDemo**](shared/src/test/scala/demo/SamplingDemo.scala): parallel sampling and synthesis.

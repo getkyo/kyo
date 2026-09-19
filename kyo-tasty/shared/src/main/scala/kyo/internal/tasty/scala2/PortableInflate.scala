@@ -334,11 +334,10 @@ object PortableInflate:
     end adler32
 
     /** Read a 4-byte big-endian unsigned value from bytes at offset. The ZLIB Adler-32 trailer is big-endian. */
-    private def readU32BE(bytes: Array[Byte], offset: Int): Long =
-        ((bytes(offset) & 0xffL) << 24) |
-            ((bytes(offset + 1) & 0xffL) << 16) |
-            ((bytes(offset + 2) & 0xffL) << 8) |
-            (bytes(offset + 3) & 0xffL)
+    private def readU32BE(bytes: Array[Byte], offset: Int): Long = ((bytes(offset) & 0xffL) << 24) |
+        ((bytes(offset + 1) & 0xffL) << 16) |
+        ((bytes(offset + 2) & 0xffL) << 8) |
+        (bytes(offset + 3) & 0xffL)
     end readU32BE
 
 end PortableInflate

@@ -74,7 +74,7 @@ private[kyo] object LspCatalog:
         val seenCustoms = scala.collection.mutable.Set[String]()
         handlers.foreach { h =>
             val handlerDir = h.direction
-            val allowed = handlerDir == LspHandler.Direction.Either ||
+            val allowed    = handlerDir == LspHandler.Direction.Either ||
                 handlerDir == expectedDirection
             if !allowed then
                 throw LspWrongDirectionException(h.kind, expectedDirection)

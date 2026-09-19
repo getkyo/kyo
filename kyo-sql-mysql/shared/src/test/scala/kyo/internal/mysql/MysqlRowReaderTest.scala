@@ -20,6 +20,7 @@ import kyo.SqlRow
 import kyo.SqlUnsupportedTypeOnBackendException
 import kyo.Test
 import kyo.db.Idiom
+import kyo.internal.SqlJsonArray
 import kyo.internal.mysql.types.MysqlEncoder
 
 /** Verifies that [[MysqlRowReader]] decodes raw binary wire bytes from a [[kyo.SqlRow]] into the correct Scala values.
@@ -286,7 +287,7 @@ class MysqlRowReaderTest extends Test:
         // dialect other than the active one is rejected; naming a real sibling engine over-specifies that and
         // would make this suite depend on the other backend's module.
         val foreign = Idiom.Id("acme")
-        val ex = intercept[SqlUnsupportedTypeOnBackendException] {
+        val ex      = intercept[SqlUnsupportedTypeOnBackendException] {
             val _ = r.nextExtension(foreign, "geometry")
         }
         assert(ex.dialect == foreign)
@@ -461,7 +462,7 @@ class MysqlRowReaderTest extends Test:
     "a partial zero DATE struct is refused rather than rewritten to a real date" in {
         // 2024-00-15: year present, month zero. Substituting 1 for the month would produce a real-looking 2024-01-15.
         val body = Array[Byte]((2024 & 0xff).toByte, ((2024 >> 8) & 0xff).toByte, 0x00.toByte, 15.toByte)
-        val ex = intercept[SqlDecodeTemporalException] {
+        val ex   = intercept[SqlDecodeTemporalException] {
             MysqlRowReader.decodeDate(Span.from(body), Format.Binary)
         }
         assert(ex.year == 2024, s"expected the year reported, got ${ex.year}")
@@ -471,7 +472,7 @@ class MysqlRowReaderTest extends Test:
 
     "a partial zero DATETIME struct is refused" in {
         val body = Array[Byte]((2024 & 0xff).toByte, ((2024 >> 8) & 0xff).toByte, 6.toByte, 0x00.toByte)
-        val ex = intercept[SqlDecodeTemporalException] {
+        val ex   = intercept[SqlDecodeTemporalException] {
             MysqlRowReader.decodeDatetime(Span.from(body), Format.Binary)
         }
         assert(ex.day == 0, s"expected day 0 reported, got ${ex.day}")
@@ -571,7 +572,7 @@ class MysqlRowReaderTest extends Test:
     "container columns" - {
 
         // A container column is a whole-column read through the vocabulary: MySQL has no array column type, so a
-        // Chunk travels as a JSON array in a text column, which `MysqlJsonArray` formats and parses. Every leaf
+        // Chunk travels as a JSON array in a text column, which `SqlJsonArray` formats and parses. Every leaf
         // here also pins that the column is ONE column however many elements it holds, by reading a trailing
         // scalar after it.
 

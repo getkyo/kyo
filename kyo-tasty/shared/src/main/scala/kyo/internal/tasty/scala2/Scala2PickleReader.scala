@@ -324,7 +324,7 @@ object Scala2PickleReader:
         val flags    = baseFlags.union(pickleFlags2TastyFlags(rawFlags))
         // METHOD flag in Scala 2 pickle is bit 18 (0x40000)
         val isMethod = (rawFlags & METH_FLAG) != 0
-        val kind =
+        val kind     =
             if isMethod then SymbolKind.Method
             else if (rawFlags & FINAL_FLAG) != 0 then SymbolKind.Val
             else SymbolKind.Field
@@ -356,7 +356,7 @@ object Scala2PickleReader:
         // declaredType is set at construction time via makePickleSymWithType.
         // Use a placeholder stringSym (declaredType = Absent default).
         val stringSym = makePickleSym(SymbolKind.Class, baseFlags, "String")
-        val symbol = makePickleSymWithType(
+        val symbol    = makePickleSymWithType(
             SymbolKind.TypeAlias,
             flags,
             symName,
@@ -447,7 +447,7 @@ object Scala2PickleReader:
             // If the entry is itself a name entry, return its value directly.
             Maybe.fromOption(nameTable.get(entryIdx)) match
                 case Present(name) => name
-                case Absent =>
+                case Absent        =>
                     if entryIdx < 0 || entryIdx >= entries.length then ""
                     else
                         val refEntry = entries(entryIdx)
@@ -456,7 +456,7 @@ object Scala2PickleReader:
                             val nameRef     = if c.remaining > 0 then c.readNat() else 0
                             val ownerRefOpt = if c.remaining > 0 then Present(c.readNat()) else Absent
                             val rawName     = nameTable.getOrElse(nameRef, "")
-                            val leafName =
+                            val leafName    =
                                 if refEntry.tag == EXTMODCLASSref && !rawName.endsWith("$") then rawName + "$"
                                 else rawName
                             val nextVisited   = visited + entryIdx

@@ -65,7 +65,7 @@ private[kyo] object WebSocketCodec:
                 opcode match
                     case OpText   => f(HttpWebSocket.Payload.Text(new String(payload.toArrayUnsafe, Utf8)), remaining)
                     case OpBinary => f(HttpWebSocket.Payload.Binary(payload), remaining)
-                    case OpClose =>
+                    case OpClose  =>
                         val (code, reason) = decodeClosePayload(payload)
                         onClose((code, reason)).andThen(
                             Abort.fail(new Closed("HttpWebSocket", summon[Frame], s"Close frame received: $code $reason"))
@@ -144,7 +144,7 @@ private[kyo] object WebSocketCodec:
     )(using Frame): A < (S & Async & Abort[HttpException]) =
         unsendableField(path, host, headers) match
             case Present(ex) => Abort.fail(ex)
-            case Absent =>
+            case Absent      =>
                 unsendableSubprotocol(config, headers) match
                     case Present(ex) => Abort.fail(ex)
                     case Absent      => writeUpgradeRequestWith(conn, host, path, headers, config)(f)
@@ -261,7 +261,7 @@ private[kyo] object WebSocketCodec:
     private[internal] def unmask(payload: Span[Byte], maskKey: Span[Byte]): Span[Byte] =
         if maskKey.size < 4 then payload
         else
-            val result = new Array[Byte](payload.size)
+            val result                           = new Array[Byte](payload.size)
             @tailrec def applyMask(i: Int): Unit =
                 if i < payload.size then
                     result(i) = (payload(i) ^ maskKey(i % 4)).toByte
@@ -316,7 +316,7 @@ private[kyo] object WebSocketCodec:
         else
             val code      = ((payload(0) & 0xff) << 8) | (payload(1) & 0xff)
             val reasonLen = payload.size - 2
-            val reason =
+            val reason    =
                 if reasonLen <= 0 then ""
                 else new String(payload.toArrayUnsafe, 2, reasonLen, Utf8)
             (code, reason)

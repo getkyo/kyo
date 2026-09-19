@@ -64,7 +64,8 @@ class PosixTransportShutdownReclaimTest extends Test:
             // Captured BEFORE close(), per closeWake's documented contract: it notifies whatever promise is installed at the moment it runs,
             // so installing one after close() races the driver's terminal exit and can never be notified.
             val closeWakeDone = backend.closeWakeDone()
-            PosixTestSockets.loopbackPair().map { case (client, accepted) =>
+            // Closes the driver on any path that ends before the explicit driver.close() below. Idempotent.
+            Scope.ensure(Sync.defer(driver.close())).andThen(PosixTestSockets.loopbackPair()).map { case (client, accepted) =>
                 // A listener that is ALREADY closed, standing in for one that closed inside handleAccepted's window: the accept-side
                 // registration happens on the driver carrier at the end of handleAccepted, and dischargeListenerHandshakes runs on the
                 // closing carrier, so a close anywhere in that window sweeps an empty map and this registration arrives afterwards.
@@ -133,7 +134,7 @@ class PosixTransportShutdownReclaimTest extends Test:
             val driver   = TestDrivers.forBackend(backend, pollerFd, spy)
             // A want-read engine parks the connect handshake on its first read; the peer sends nothing, so the abandoned caller's promise
             // settlement is the only route that can release the fd and engine. Built before the transport and injected through buildEngine.
-            val engine = new ParkedWantReadEngine
+            val engine    = new ParkedWantReadEngine
             val transport =
                 TestTransports.forTesting(
                     driver,
@@ -197,12 +198,12 @@ class PosixTransportShutdownReclaimTest extends Test:
         "a stalled accept handshake with no deadline is released when its listener closes" in {
             PosixTestSockets.assumePoller()
             assumeTlsReady()
-            val spy      = RecordingSocketBindings(Ffi.load[SocketBindings])
-            val real     = PollerBackend.default()
-            val pollerFd = real.create()
-            val backend  = RecordingPollerBackend(real)
-            val driver   = TestDrivers.forBackend(backend, pollerFd, spy)
-            val captured = new AtomicReference[RecordingTlsEngine]()
+            val spy       = RecordingSocketBindings(Ffi.load[SocketBindings])
+            val real      = PollerBackend.default()
+            val pollerFd  = real.create()
+            val backend   = RecordingPollerBackend(real)
+            val driver    = TestDrivers.forBackend(backend, pollerFd, spy)
+            val captured  = new AtomicReference[RecordingTlsEngine]()
             val transport = TestTransports.forTesting(
                 driver,
                 spy,
@@ -214,7 +215,11 @@ class PosixTransportShutdownReclaimTest extends Test:
             )
             discard(driver.start())
             val unbounded = serverTls.copy(handshakeTimeout = Duration.Infinity)
-            transport.listenTls("127.0.0.1", 0, 4, unbounded)(_ => ()).safe.get.map { listener =>
+            // Closes the driver on any path that ends before the explicit driver.close() below (a failed assertEventually, a timeout).
+            // Registered first, so it runs after the listener and client fd guards. Idempotent.
+            Scope.ensure(Sync.defer(driver.close())).andThen(
+                transport.listenTls("127.0.0.1", 0, 4, unbounded)(_ => ()).safe.get
+            ).map { listener =>
                 // Guards the listener even on a path that fails before the explicit close()/driver.close() below run (e.g. connectRaw or
                 // an assertEventually failing). Idempotent, so it is a harmless no-op after the explicit listener.close() on the success path.
                 Scope.ensure(Sync.defer(listener.close())).andThen {

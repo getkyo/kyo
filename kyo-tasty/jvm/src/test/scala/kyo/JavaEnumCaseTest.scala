@@ -19,7 +19,7 @@ class JavaEnumCaseTest extends kyo.test.Test[Any]:
         loadRetentionPolicy.map { classpath =>
             classpath.findClass("java.lang.annotation.RetentionPolicy") match
                 case Maybe.Present(rp) =>
-                    val allDecls = rp.declarationIds.flatMap(id => classpath.symbol(id).toChunk)
+                    val allDecls      = rp.declarationIds.flatMap(id => classpath.symbol(id).toChunk)
                     val enumCaseDecls = allDecls.collect {
                         case e: Tasty.Symbol.EnumCase => e
                     }

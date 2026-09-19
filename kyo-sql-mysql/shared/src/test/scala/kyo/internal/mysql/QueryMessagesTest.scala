@@ -76,10 +76,10 @@ class QueryMessagesTest extends Test:
     "ErrPacketUnmarshaller decodes error code 1045" in {
         // After 0xFF: uint16 LE(1045) + '#' + 5-char sqlState + message
         val errorCode = 1045 // 0x0415
-        val body = Array[Byte](
-            (errorCode & 0xff).toByte,        // low byte
+        val body      = Array[Byte](
+            (errorCode & 0xff).toByte, // low byte
             ((errorCode >> 8) & 0xff).toByte, // high byte
-            '#'.toByte,                       // marker
+            '#'.toByte, // marker
             '2'.toByte,
             '8'.toByte,
             '0'.toByte,
@@ -107,7 +107,7 @@ class QueryMessagesTest extends Test:
     // ErrPacketUnmarshaller decodes SQLSTATE
     "ErrPacketUnmarshaller decodes SQLSTATE 42000" in {
         val errorCode = 1064 // 0x0428
-        val body = Array[Byte](
+        val body      = Array[Byte](
             (errorCode & 0xff).toByte,
             ((errorCode >> 8) & 0xff).toByte,
             '#'.toByte,
@@ -129,7 +129,7 @@ class QueryMessagesTest extends Test:
     "ErrPacketUnmarshaller decodes error message from rest of packet" in {
         val errorCode = 2000
         val message   = "Unknown error"
-        val body =
+        val body      =
             val w = new MysqlBufferWriter
             w.writeUInt16LE(errorCode)
             w.writeByte('#'.toByte)

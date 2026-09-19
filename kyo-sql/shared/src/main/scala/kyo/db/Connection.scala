@@ -331,9 +331,14 @@ object Connection:
       * names an account is the server's judgment.
       */
     def requireUser(address: SqlConfig.Address)(using Frame): String < Abort[SqlException] =
-        address.user match
-            case Present(user) => user
-            case Absent        => Abort.fail(SqlConnectionUserRequiredException(address.scheme))
+        address match
+            case a: SqlConfig.Address.Network =>
+                a.user match
+                    case Present(user) => user
+                    case Absent        => Abort.fail(SqlConnectionUserRequiredException(a.scheme))
+            // An embedded address names no user because its engine has no handshake to send one to. A factory that
+            // asked anyway is a factory calling the wrong helper, so it fails rather than inventing a name.
+            case a: SqlConfig.Address.Local => Abort.fail(SqlConnectionUserRequiredException(a.scheme))
 
     /** The exit-edge view of a handled `outcome`: a success is [[kyo.Absent]], a failure and a panic are each themselves.
       *
@@ -356,7 +361,7 @@ object Connection:
     private[kyo] def parseServerVersion(reported: String)(using Frame): Idiom.ServerVersion < Abort[SqlConnectionProtocolDecodeException] =
         Idiom.ServerVersion.parse(reported) match
             case Present(version) => version
-            case Absent =>
+            case Absent           =>
                 Abort.fail(
                     SqlConnectionProtocolDecodeException(
                         "server version",

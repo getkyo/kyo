@@ -280,7 +280,7 @@ class JvmEmitterTest extends kyo.test.Test[Any]:
             )),
             structs = List(fiveOut)
         )
-        val src = JvmEmitter.emit(spec)
+        val src        = JvmEmitter.emit(spec)
         val allocSites =
             raw"__kyoScratch\.alloc\b".r.findAllMatchIn(src).size
         // 1 for errnoSeg + 1 coalesced multi-out block = 2 total. The former 5-per-field count would be 6.
@@ -457,7 +457,7 @@ class JvmEmitterTest extends kyo.test.Test[Any]:
         // 256 bytes = 32 Long fields (8 bytes each). All primitives, no nested / String / Buffer fields,
         // so the struct qualifies for the bulk-write path. The default threshold is 128 bytes.
         val fields = (1 to 32).map(i => StructField(s"f$i", TypeRef.LongT)).toList
-        val big = StructSpec(
+        val big    = StructSpec(
             "kyo.example.Big",
             "Big",
             fields,

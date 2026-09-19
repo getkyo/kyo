@@ -38,7 +38,7 @@ class TypeAdtVariantCoverageTest extends kyo.test.Test[Any]:
         val n          = Tasty.Type.Named(SymbolId(0))
         val id0        = SymbolId(0)
         val annotation = Tasty.Annotation(n, Chunk.empty, Tasty.Name(""))
-        val cases = List[Tasty.Type](
+        val cases      = List[Tasty.Type](
             Tasty.Type.Named(id0),
             Tasty.Type.TermRef(n, Tasty.Name("x")),
             Tasty.Type.TypeRef(n, Tasty.Name("T")),

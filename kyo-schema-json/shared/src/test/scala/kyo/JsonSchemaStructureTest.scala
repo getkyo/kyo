@@ -118,7 +118,7 @@ class JsonSchemaStructureTest extends kyo.test.Test[Any]:
         end match
 
         val tpe = JsonSchema.toStructure(schema)
-        val ok = Structure.Value.Sequence(Chunk(
+        val ok  = Structure.Value.Sequence(Chunk(
             Structure.Value.Record(Chunk("name" -> Structure.Value.Str("a")))
         ))
         assert(conforms(ok, tpe))

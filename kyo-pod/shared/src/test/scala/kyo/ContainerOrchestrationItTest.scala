@@ -81,7 +81,7 @@ class ContainerOrchestrationItTest extends BasePodTest:
         "scope cleanup runs even when computation aborts" - runBackend {
             for
                 idRef <- AtomicRef.init[Container.Id](Container.Id(""))
-                _ <- Abort.run[ContainerException] {
+                _     <- Abort.run[ContainerException] {
                     Scope.run {
                         Container.init(alpinePersistent(alpine)).map { c =>
                             idRef.set(c.id).andThen {
@@ -329,7 +329,7 @@ class ContainerOrchestrationItTest extends BasePodTest:
                             s"exec on restored container should succeed, got exit=${result.exitCode}"
                         )
                 }.map {
-                    case Result.Success(_) => ()
+                    case Result.Success(_)                                 => ()
                     case Result.Failure(_: ContainerNotSupportedException) =>
                         succeed("CRIU not available on this system; the checkpoint/restore path is a graceful no-op")
                     case Result.Failure(e) =>
@@ -398,7 +398,7 @@ class ContainerOrchestrationItTest extends BasePodTest:
 
     "scope cleanup" - {
         "scope cleanup works when container crashes" - runBackend {
-            val name = uniqueName("kyo-crash")
+            val name   = uniqueName("kyo-crash")
             val config = Container.Config("alpine")
                 .command("sh", "-c", "exit 1")
                 .name(name)
@@ -453,7 +453,8 @@ class ContainerOrchestrationItTest extends BasePodTest:
                     assert(!h, "Expected isHealthy to return false after rm")
                     assert(
                         after - before == 1,
-                        s"Expected isHealthy to invoke the health check exactly once (single-shot), not run the retry schedule; got ${after - before} invocations"
+                        s"Expected isHealthy to invoke the health check exactly once (single-shot), not run the retry schedule; got ${after -
+                                before} invocations"
                     )
             }
         }
@@ -463,7 +464,7 @@ class ContainerOrchestrationItTest extends BasePodTest:
         // The container auto-removes ~300ms in while the healthcheck always fails; once gone, isContainerAlive must stop the loop. The
         // counter asserts it: fewer than the full 30 attempts run (zero is an accepted degenerate pass), proving the schedule never exhausted.
         val attempts = new java.util.concurrent.atomic.AtomicInteger(0)
-        val config = Container.Config("alpine")
+        val config   = Container.Config("alpine")
             .command("sh", "-c", "sleep 0.3; exit 0")
             .autoRemove(true)
             .healthCheck(Container.HealthCheck.init(Schedule.fixed(100.millis).take(30)) { _ =>
@@ -505,7 +506,7 @@ class ContainerOrchestrationItTest extends BasePodTest:
         // Written by the container once its trap is armed. It is both the barrier (the leaf never signals a shell that has not
         // installed its USR1 handler yet) and the discriminator when `sig` is missing: no `ready` at all means the bind mount was
         // never visible to the container, so the signal was never testable; `ready` without `sig` means the signal did not arrive.
-        val ready = hostDir / "ready"
+        val ready  = hostDir / "ready"
         val config = Container.Config("alpine")
             .command("sh", "-c", "trap 'touch /m/sig; sleep 3' USR1; touch /m/ready; sleep infinity & wait")
             .bind(hostDir, Path("/m"))

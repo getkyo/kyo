@@ -730,7 +730,7 @@ object UpcallBridge:
         val retCls: Class[?] = d.returnLayout().nn.orElse(null) match
             case null            => classOf[Unit]
             case vl: ValueLayout => layoutClass(vl)
-            case other =>
+            case other           =>
                 throw new IllegalArgumentException(s"UpcallBridge: unsupported callback return layout: $other")
         val argLayouts                = d.argumentLayouts().nn
         val argClses: Array[Class[?]] = new Array[Class[?]](argLayouts.size())

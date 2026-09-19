@@ -1,5 +1,8 @@
 package kyo.ai.completion
 
+import java.time.Instant as JInstant
+import java.time.format.DateTimeFormatter
+import java.time.format.DateTimeParseException
 import kyo.*
 import kyo.Json.JsonSchema
 import kyo.Tool
@@ -134,26 +137,106 @@ object Completion:
       * their own classification). The per-status mapping is below.
       */
     private[kyo] def classifyHttp(config: Config, e: HttpException)(using Frame): AIGenException & AIStreamException =
-        val provider = config.provider.name
+        e match
+            // An endpoint that refuses a tool call it judges invalid reports it as a 400 with its own code
+            // in the body. Matched, this leaf carries the failure to the eval loop, which spends a turn on
+            // the correction just as for an endpoint that returns the malformed call. FAIL CLOSED: any
+            // doubt (no declaration, absent/undecodable body, absent/different code) stays an ordinary
+            // rejected request, so a genuinely bad request is never respun as repairable.
+            case e: HttpStatusException if e.status.code == 400 && rejectedToolCall(config, e) =>
+                AIToolCallRejectedException(config.provider.name, e.getMessage)
+            case e => classifyHttp(config.provider.name, e)
+
+    /** The status mapping every HTTP wire shares, keyed by the provider name that the leaves report. The
+      * decider's TypeSafe wire classifies through this form: it has no completion config and no tool
+      * calls, so the rejected-tool-call reading above never applies to it. A raw exception carries no
+      * headers, so a rate limit classified here has no `retryAfter`; a wire that has the response in hand
+      * classifies through [[statusFailure]] instead.
+      */
+    private[kyo] def classifyHttp(provider: String, e: HttpException)(using Frame): AIGenException & AIStreamException =
         e match
             case e: HttpTimeoutException => AICompletionTimeoutException(provider, e.duration)
-            case e: HttpStatusException =>
-                e.status.code match
-                    case 401 | 403     => AIProviderAuthException(provider, e.getMessage)
-                    case 429           => AIRateLimitException(provider, e.getMessage)
-                    case c if c >= 500 => AIProviderUnavailableException(provider, e.getMessage)
-                    // An endpoint that refuses a tool call it judges invalid reports it as a 400 with its
-                    // own code in the body. Matched, this leaf carries the failure to the eval loop, which
-                    // spends a turn on the correction just as for an endpoint that returns the malformed
-                    // call. FAIL CLOSED: any doubt (no declaration, absent/undecodable body, absent/different
-                    // code) stays an ordinary rejected request, so a genuinely bad request is never respun
-                    // as repairable.
-                    case 400 if rejectedToolCall(config, e) =>
-                        AIToolCallRejectedException(provider, e.getMessage)
-                    case c => AIRequestRejectedException(provider, c, e.getMessage)
-            case e => AITransportException(e)
+            case e: HttpStatusException  => classifyStatus(provider, e.status.code, e.getMessage, Absent)
+            case e                       => AITransportException(e)
         end match
     end classifyHttp
+
+    /** A non-2xx response as the module's leaf, with the response in hand: the body keeps its request id
+      * (`prefix`, put ahead of the body so a long rejection cannot push it out of the message) and a rate
+      * limit keeps its `Retry-After`. A wire reads the response with `failOnError = false` and raises
+      * this in place of the client's own status exception.
+      */
+    private[kyo] def statusFailure(
+        provider: String,
+        method: String,
+        url: String,
+        response: HttpResponse["body" ~ String],
+        prefix: String
+    )(using Frame): (AIGenException & AIStreamException) < Sync =
+        val message = HttpStatusException(response.status, method, url, prefix + response.fields.body).getMessage
+        Clock.now.map(now => classifyStatus(provider, response.status.code, message, retryAfterOf(response.headers, now)))
+    end statusFailure
+
+    /** Posts a completion request and returns the response body; a non-2xx response is classified with
+      * its headers in hand, the rejected-tool-call reading of a 400 included, so every HTTP completion
+      * backend shares one status path and one `Retry-After` reading.
+      */
+    private[kyo] def post(config: Config, url: String, body: String, headers: Seq[(String, String)])(using
+        Frame
+    ): String < (Async & Abort[HttpException | AIGenException]) =
+        HttpClient.postTextResponse(url, body, headers, failOnError = false).map { response =>
+            if response.status.isSuccess then response.fields.body
+            else
+                val status = HttpStatusException(response.status, "POST", url, response.fields.body)
+                if response.status.code == 400 && rejectedToolCall(config, status) then
+                    Abort.fail(AIToolCallRejectedException(config.provider.name, status.getMessage))
+                else statusFailure(config.provider.name, "POST", url, response, "").map(Abort.fail(_))
+        }
+
+    // 408 (the server gave up waiting for the request) and 429 are transient like 5xx; the vendor SDKs
+    // retry exactly this set.
+    private def classifyStatus(provider: String, code: Int, message: String, retryAfter: Maybe[Duration])(using
+        Frame
+    ): AIGenException & AIStreamException =
+        code match
+            case 401 | 403     => AIProviderAuthException(provider, message)
+            case 408           => AIProviderUnavailableException(provider, message)
+            case 429           => AIRateLimitException(provider, message, retryAfter)
+            case c if c >= 500 => AIProviderUnavailableException(provider, message)
+            case c             => AIRequestRejectedException(provider, c, message)
+
+    /** The wait a rate-limited response asks for: `retry-after-ms`, else `retry-after` as delta-seconds or
+      * as an HTTP-date (read against the response's own `date` header when it has one, so clock skew
+      * cancels; else against `now`). Absent when neither header parses.
+      */
+    private[kyo] def retryAfterOf(headers: HttpHeaders, now: Instant): Maybe[Duration] =
+        def millis(s: String): Maybe[Duration] =
+            Maybe.fromOption(s.trim.toLongOption).filter(_ >= 0).map(_.millis)
+        def seconds(s: String): Maybe[Duration] =
+            Maybe.fromOption(s.trim.toLongOption).filter(_ >= 0).map(_.seconds)
+        def httpDate(s: String): Maybe[Instant] =
+            Result.catching[DateTimeParseException](
+                Instant.fromJava(JInstant.from(DateTimeFormatter.RFC_1123_DATE_TIME.parse(s.trim)))
+            ).toMaybe
+        def until(at: Instant): Duration =
+            val reference = headers.get("date").flatMap(httpDate).getOrElse(now)
+            if at <= reference then Duration.Zero else at - reference
+        headers.get("retry-after-ms").flatMap(millis)
+            .orElse(headers.get("retry-after").flatMap(v => seconds(v).orElse(httpDate(v).map(until))))
+    end retryAfterOf
+
+    /** Waits out a rate limit's `Retry-After` before re-raising it, so the retry schedule's next attempt
+      * lands at or after the moment the server asked for. Bounded by the deadline the caller runs under:
+      * a wait longer than `timeout` is cut to it, and the deadline then decides. Sits between the
+      * classification and the retry clause in every HTTP wire's handler chain.
+      */
+    private[kyo] def awaitRetryAfter[A, S](timeout: Duration)(v: A < (S & Abort[AIGenException]))(using
+        Frame
+    ): A < (S & Async & Abort[AIGenException]) =
+        Abort.recover[AIGenException] {
+            case e @ AIRateLimitException(_, _, Present(wait)) => Async.sleep(wait.min(timeout)).andThen(Abort.fail(e))
+            case e                                             => Abort.fail(e)
+        }(v)
 
     private case class ErrorDetail(
         code: Maybe[String] = Absent,
@@ -329,13 +412,13 @@ object Completion:
                                                             else Absent
                                                         streamError match
                                                             case Present(exc) => Abort.fail(exc)
-                                                            case Absent =>
+                                                            case Absent       =>
                                                                 parseDeltaArguments(event.data) match
                                                                     case Result.Success(Delta.Fragment(fragment)) =>
                                                                         Present(StreamElement.Fragment(fragment))
                                                                     case Result.Success(Delta.Usage(stats)) =>
                                                                         Present(StreamElement.Usage(stats))
-                                                                    case Result.Success(Delta.Skip) => Maybe.empty[StreamElement]
+                                                                    case Result.Success(Delta.Skip)        => Maybe.empty[StreamElement]
                                                                     case Result.Success(Delta.OutputLimit) =>
                                                                         Abort.fail(AIOutputLimitException(
                                                                             config.provider.name,

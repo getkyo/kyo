@@ -137,7 +137,7 @@ object HttpServer:
             val listenFiber = Unsafe.init(transport, config, filteredHandlers)
             Abort.run[NetException](listenFiber.safe.get).map {
                 case Result.Success(server) => server.safe
-                case Result.Failure(netEx) =>
+                case Result.Failure(netEx)  =>
                     val bindTarget = config.unixSocket match
                         case Present(path) => path
                         case Absent        => config.host
@@ -209,7 +209,7 @@ object HttpServer:
             // the listening socket, so an accepted keep-alive connection would otherwise stay open until a 60s idle timer
             // fires (it leaks whenever the peer keeps its side pooled rather than sending an EOF). The shared registry is
             // the same mechanism HttpClientBackend uses for the connections it creates.
-            val registry = new kyo.internal.ConnectionRegistry[kyo.net.Connection]
+            val registry                                = new kyo.internal.ConnectionRegistry[kyo.net.Connection]
             def tracked(conn: kyo.net.Connection): Unit =
                 // Prune closed entries on accept (no per-connection close hook), then register this one. register closes
                 // the connection itself and returns false when a shutdown races this accept, so the connection is
@@ -234,7 +234,7 @@ object HttpServer:
                 )
                 end if
             end tracked
-            val netConfig = NetConfigTranslation.toNetConfig(config.transportConfig)
+            val netConfig   = NetConfigTranslation.toNetConfig(config.transportConfig)
             val listenFiber = (config.unixSocket, config.tls) match
                 case (Present(path), _) =>
                     transport.listenUnix(path, config.backlog, netConfig)(tracked)

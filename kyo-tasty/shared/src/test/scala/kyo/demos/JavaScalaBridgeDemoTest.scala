@@ -21,7 +21,7 @@ class JavaScalaBridgeDemoTest extends kyo.test.Test[Any]:
 
     private def summarize(classpath: Tasty.Classpath, fullName: String): Maybe[ClassSummary] =
         classpath.findClass(fullName) match
-            case Absent => Maybe.Absent
+            case Absent       => Maybe.Absent
             case Present(cls) =>
                 val fullNameVal = classpath.fullName(cls)
                 val parents     = cls.parentTypes.map(_.toString)

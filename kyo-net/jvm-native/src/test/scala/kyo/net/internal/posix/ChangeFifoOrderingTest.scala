@@ -121,7 +121,7 @@ class ChangeFifoOrderingTest extends Test:
                             // never leave the pinned change worker parked (it would wedge every later test on this scheduler).
                             logUnderPin = backend.callLog
                             _           = gate.countDown()
-                            _ = assert(
+                            _           = assert(
                                 !logUnderPin.contains(s"registerRead($secondFd)"),
                                 s"the second change ran while the first held the worker: $logUnderPin"
                             )

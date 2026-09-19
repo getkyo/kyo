@@ -144,7 +144,7 @@ private[kyo] object McpEngine:
         // Lift user McpHandler carriers to JsonRpcRoute, wrapping each dispatch in Mcp.local.let
         // so the handler closure can reach the per-request context through Mcp.*.
         val userJsonRpcRoutes: Seq[JsonRpcRoute[?, ?, ?]] = userHandlers.map(h => McpHandlerLift.lift(h, serverRef))
-        val allRoutes: Seq[JsonRpcRoute[?, ?, ?]] =
+        val allRoutes: Seq[JsonRpcRoute[?, ?, ?]]         =
             Seq(initializeRoute, initializedNotifRoute, rootsListChangedRoute, pingRoute) ++ builtinRoutes ++ userJsonRpcRoutes
 
         // Config and reserved-error-code validation already ran (throwing); build and publish the live server.

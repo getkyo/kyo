@@ -25,7 +25,7 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
     // A worker mounts by submitting ITSELF here, so wrapping the executor lets afterEach count in-flight run() invocations and
     // wait for zero, not a fixed settle. The InternalClock ticker also runs here but is not a Worker, so the isInstanceOf filter excludes it.
     private val activeWorkers = new AtomicInteger(0)
-    val executor: Executor = command =>
+    val executor: Executor    = command =>
         TestExecutors.cached.execute { () =>
             val isWorker = command.isInstanceOf[Worker]
             if (isWorker) { val _ = activeWorkers.incrementAndGet() }
@@ -148,7 +148,7 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
                 val victim = TestTask(_run = () => { order.add("victim"); Done })
                 victim.addRuntime(1000000)
 
-                var resetYet = false
+                var resetYet                     = false
                 def busy(name: String): TestTask = {
                     var n = 0
                     TestTask(_run = () => {
@@ -190,7 +190,7 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
                 val victim = TestTask(_run = () => { order.add("victim"); Done })
                 victim.addRuntime(1000000)
 
-                var resetYet = false
+                var resetYet                     = false
                 def busy(name: String): TestTask = {
                     var n = 0
                     TestTask(_run = () => {
@@ -264,7 +264,7 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
                 val victim = TestTask(_run = () => { order.add("victim"); Done })
                 victim.addRuntime(1000000)
 
-                var resetYet = false
+                var resetYet                     = false
                 def busy(name: String): TestTask = {
                     var n = 0
                     TestTask(_run = () => {
@@ -300,7 +300,7 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
             val victim = TestTask(_run = () => { order.add("victim"); Done })
             victim.addRuntime(1000000)
 
-            var resetYet = false
+            var resetYet                     = false
             def busy(name: String): TestTask = {
                 var n = 0
                 TestTask(_run = () => {
@@ -453,7 +453,7 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
         "executing a task that gets preempted" in {
             val worker      = createWorker()
             var preemptions = 0
-            val task = TestTask(
+            val task        = TestTask(
                 _run = () =>
                     if (preemptions < 10) {
                         preemptions += 1
@@ -490,7 +490,7 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
         "sets worker local" in {
             val worker    = createWorker()
             var w: Worker = null
-            val task = TestTask(_run = () => {
+            val task      = TestTask(_run = () => {
                 w = Worker.current()
                 Task.Done
             })
@@ -509,7 +509,7 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
             val worker = createWorker(executor)
             val cdl1   = new CountDownLatch(1)
             val cdl2   = new CountDownLatch(1)
-            val task = TestTask(_run = () => {
+            val task   = TestTask(_run = () => {
                 cdl1.countDown()
                 cdl2.await()
                 Done
@@ -524,7 +524,7 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
         "pending task" in {
             val worker = createWorker(executor)
             val cdl    = new CountDownLatch(1)
-            val task = TestTask(_run = () => {
+            val task   = TestTask(_run = () => {
                 cdl.await()
                 Done
             })
@@ -540,7 +540,7 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
                 val worker = createWorker(executor)
                 val cdl1   = new CountDownLatch(1)
                 val cdl2   = new CountDownLatch(1)
-                val task = TestTask(_run = () => {
+                val task   = TestTask(_run = () => {
                     cdl1.countDown()
                     cdl2.await()
                     Done
@@ -557,7 +557,7 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
                 val worker = createWorker(executor)
                 val cdl1   = new CountDownLatch(1)
                 val cdl2   = new CountDownLatch(1)
-                val task = TestTask(_run = () => {
+                val task   = TestTask(_run = () => {
                     cdl1.countDown()
                     cdl2.await(1, TimeUnit.DAYS)
                     Done
@@ -573,7 +573,7 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
             "blocked thread" in {
                 val worker = createWorker(executor)
                 val thread = new AtomicReference[Thread]
-                val task = TestTask(_run = () => {
+                val task   = TestTask(_run = () => {
                     thread.set(Thread.currentThread())
                     LockSupport.park()
                     Done
@@ -589,7 +589,7 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
             "only if not forced" in {
                 val worker = createWorker(executor)
                 val thread = new AtomicReference[Thread]
-                val task = TestTask(_run = () => {
+                val task   = TestTask(_run = () => {
                     thread.set(Thread.currentThread())
                     LockSupport.park()
                     Done
@@ -606,7 +606,7 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
 
         "blocked worker is drained" in {
             val drained = new ConcurrentLinkedQueue[Task]
-            val worker = createWorker(
+            val worker  = createWorker(
                 executor,
                 (t, w) => {
                     drained.add(t)
@@ -631,8 +631,8 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
         }
 
         "steal a task from another worker" in {
-            val cdl1 = new CountDownLatch(1)
-            val cdl2 = new CountDownLatch(1)
+            val cdl1  = new CountDownLatch(1)
+            val cdl2  = new CountDownLatch(1)
             val task1 = TestTask(_run = () => {
                 cdl1.await()
                 Done
@@ -686,7 +686,7 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
         val scheduled = new AtomicInteger
 
         def withWorker[A](testCode: Worker => A): A = {
-            val clock = InternalClock(executor)
+            val clock  = InternalClock(executor)
             val worker = new Worker(0, executor, (_, _) => { scheduled.incrementAndGet(); () }, _ => null, clock, 10) {
                 def currentInterruptEpoch(): Long = 0L
                 def shouldStop()                  = false
@@ -706,7 +706,7 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
         }
 
         "when task is running longer than time slice" in withWorker { worker =>
-            val cdl = new CountDownLatch(1)
+            val cdl             = new CountDownLatch(1)
             val longRunningTask = TestTask(_run = () => {
                 while (cdl.getCount() > 0) {}
                 Task.Done
@@ -717,7 +717,7 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
         }
 
         "when worker is blocked" in withWorker { worker =>
-            val cdl = new CountDownLatch(1)
+            val cdl         = new CountDownLatch(1)
             val blockedTask = TestTask(_run = () => {
                 cdl.await()
                 Task.Done
@@ -728,7 +728,7 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
         }
 
         "drains queue when transitioning to stalled state" in withWorker { worker =>
-            val cdl = new CountDownLatch(1)
+            val cdl         = new CountDownLatch(1)
             val stalledTask = TestTask(_run = () => {
                 cdl.await()
                 Task.Done
@@ -744,7 +744,7 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
         }
 
         "preempts long-running task if queue isn't empty" in withWorker { worker =>
-            var preempted = false
+            var preempted       = false
             val longRunningTask = TestTask(
                 _run = () => {
                     while (!preempted) {}
@@ -765,7 +765,7 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
             // on another (blocked) worker's queue (the scheduler-wedge fix: the pinned worker is the
             // only one that can make progress, but with an empty queue it had no reason to yield).
             // The task here exits once preempted.
-            var preempted = false
+            var preempted       = false
             val longRunningTask = TestTask(
                 _run = () => {
                     while (!preempted) {}
@@ -779,28 +779,37 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
                 assert(preempted)
             }
         }
-        "drains queue only once when transitioning to stalled state" in withWorker { worker =>
-            scheduled.set(0)
-            val cdl = new CountDownLatch(1)
-            val stalledTask = TestTask(_run = () => {
-                cdl.await()
-                Task.Done
-            })
-            worker.enqueue(stalledTask)
+        "drains the queue on the transition to stalled and again for what arrives while the task stays over its slice" in withWorker {
+            worker =>
+                scheduled.set(0)
+                val cdl         = new CountDownLatch(1)
+                val stalledTask = TestTask(_run = () => {
+                    cdl.await()
+                    Task.Done
+                })
+                worker.enqueue(stalledTask)
 
-            for (_ <- 1 to 5) {
+                for (_ <- 1 to 5) {
+                    worker.enqueue(TestTask())
+                }
+
+                // The first check past the slice takes the Running -> Stalled edge and drains the five queued tasks.
+                eventually(assert(!worker.checkAvailability(System.currentTimeMillis())))
+                assert(scheduled.get() == 5)
+                // The worker is already Stalled, and its task is still over its slice: a task that arrives now is drained
+                // by the next check rather than left behind a task that is not yielding. A check with nothing queued drains
+                // nothing.
+                assert(!worker.checkAvailability(System.currentTimeMillis()))
+                assert(scheduled.get() == 5)
                 worker.enqueue(TestTask())
-            }
+                assert(!worker.checkAvailability(System.currentTimeMillis()))
+                assert(scheduled.get() == 6)
+                worker.enqueue(TestTask())
+                assert(!worker.checkAvailability(System.currentTimeMillis()))
+                assert(scheduled.get() == 7)
 
-            eventually(assert(!worker.checkAvailability(System.currentTimeMillis())))
-            worker.enqueue(TestTask())
-            assert(!worker.checkAvailability(System.currentTimeMillis()))
-            worker.enqueue(TestTask())
-            assert(!worker.checkAvailability(System.currentTimeMillis()))
-
-            assert(scheduled.get() == 5)
-            cdl.countDown()
-            eventually(assert(worker.checkAvailability(System.currentTimeMillis())))
+                cdl.countDown()
+                eventually(assert(worker.checkAvailability(System.currentTimeMillis())))
         }
         "a Stalled worker still preempts its CPU-bound task when fresh work queues up (wedge regression)" in withWorker { worker =>
             // Regression for the scheduler wedge (kyo-core AsyncTest hang under CPU-bound load):
@@ -810,7 +819,7 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
             // checkStalling must run for any non-blocked worker, Stalled or not.
             @volatile var preempts = 0
             val release            = new CountDownLatch(1)
-            val cpuBound = TestTask(
+            val cpuBound           = TestTask(
                 _preempt = () => preempts += 1,
                 // CPU-bound spin that ignores preemption, modelling a fiber pinned mid-time-slice.
                 _run = () => {
@@ -841,7 +850,7 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
             val drained = new java.util.concurrent.ConcurrentLinkedQueue[Task]()
             val started = new CountDownLatch(1)
             val done    = new CountDownLatch(1)
-            val worker = createWorker(
+            val worker  = createWorker(
                 executor = executor,
                 scheduleTask = (t, _) => { val _ = drained.add(t) }
             )
@@ -877,7 +886,7 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
             val drained = new java.util.concurrent.ConcurrentLinkedQueue[Task]()
             val started = new CountDownLatch(1)
             val done    = new CountDownLatch(1)
-            val worker = createWorker(
+            val worker  = createWorker(
                 executor = executor,
                 scheduleTask = (t, _) => { val _ = drained.add(t) }
             )
@@ -917,6 +926,46 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
             eventually(assert(blocking.executions == 1))
         }
 
+        "a task enqueued after the worker stalled on a task that ignores preemption is still drained" in {
+            val drained = new java.util.concurrent.ConcurrentLinkedQueue[Task]()
+            val started = new CountDownLatch(1)
+            val release = new CountDownLatch(1)
+            val worker  = createWorker(
+                executor = executor,
+                scheduleTask = (t, _) => { val _ = drained.add(t) }
+            )
+            // Runs past its slice without honoring the preemption issued for it, the way a nested evaluation (a
+            // finalizer, an unsafe run) or a step with no suspension point does. It spins rather than parks, so the
+            // BlockingMonitor never flags the worker blocked: the worker is Stalled and nothing else.
+            val spinning = TestTask(_run = () => {
+                started.countDown()
+                while (release.getCount() > 0) {}
+                Task.Done
+            })
+            worker.enqueue(spinning)
+            assert(started.await(5, TimeUnit.SECONDS))
+
+            // First check past the slice takes the Running -> Stalled edge and drains whatever was queued at that instant.
+            eventually {
+                assert(!worker.checkAvailability(System.currentTimeMillis()))
+            }
+            drained.clear()
+
+            // A task lands here now, with the worker already Stalled and its task not yielding. Only the worker itself
+            // serves its queue, and it will not before the task yields, so without a drain the task sits for as long as
+            // the spin lasts, however many other workers are idle: an idle worker is only woken by an enqueue onto itself.
+            val stranded = TestTask()
+            worker.enqueue(stranded)
+            val _ = worker.checkAvailability(System.currentTimeMillis())
+            assert(
+                drained.contains(stranded),
+                "a task enqueued onto a stalled worker whose task ignores preemption must be drained, or it strands until that task yields"
+            )
+
+            release.countDown()
+            eventually(assert(spinning.executions == 1))
+        }
+
         "cleared blocked flag restores availability" in {
             val worker = createWorker(executor = executor)
             // No task running, checkStalling won't trigger
@@ -932,7 +981,7 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
             val mountIdDuringRun = new java.util.concurrent.atomic.AtomicLong(0)
             val done             = new CountDownLatch(1)
             val worker           = createWorker(executor = executor)
-            val task = TestTask(_run = () => {
+            val task             = TestTask(_run = () => {
                 mountIdDuringRun.set(worker.mountId)
                 done.countDown()
                 Task.Done
@@ -947,7 +996,7 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
     "runTask clears interrupt flag" in {
         val flagAfterTask = new AtomicBoolean(false)
         val latch         = new CountDownLatch(1)
-        val task1 = TestTask(_run = () => {
+        val task1         = TestTask(_run = () => {
             Thread.currentThread().interrupt() // set interrupt flag
             Task.Done
         })
@@ -968,8 +1017,8 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
     "run clears a stale interrupt left on the reused thread" in {
         // A reused thread can come back still carrying an interrupt from unrelated work; Worker.run clears it on mount. This
         // executor hands its single thread back with the flag intact (j.u.c pools clear it before dispatch, hiding the hand-back; one thread makes the reuse exact).
-        val pending = new ConcurrentLinkedQueue[Runnable]()
-        val stopped = new AtomicBoolean(false)
+        val pending        = new ConcurrentLinkedQueue[Runnable]()
+        val stopped        = new AtomicBoolean(false)
         val pool: Executor = r => {
             pending.add(r)
             ()
@@ -996,7 +1045,7 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
             assert(stained.await(5, TimeUnit.SECONDS))
 
             val testStop = globalStop
-            val worker = new Worker(0, pool, (_, _) => ???, _ => null, clock, 5) {
+            val worker   = new Worker(0, pool, (_, _) => ???, _ => null, clock, 5) {
                 def currentInterruptEpoch(): Long = 0L
                 def shouldStop()                  = testStop.get()
             }
@@ -1004,7 +1053,7 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
             val flagOnEntry = new AtomicBoolean(false)
             val ranOn       = new AtomicReference[Thread](null)
             val done        = new CountDownLatch(1)
-            val task = TestTask(_run = () => {
+            val task        = TestTask(_run = () => {
                 ranOn.set(Thread.currentThread())
                 flagOnEntry.set(Thread.interrupted())
                 done.countDown()
@@ -1039,7 +1088,7 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
         val worker = createWorker(executor = executor)
 
         val mountThread = new AtomicReference[Thread](null)
-        val fatalTask = TestTask(_run = () => {
+        val fatalTask   = TestTask(_run = () => {
             mountThread.set(Thread.currentThread())
             throw new LinkageError("simulated NoClassDefFoundError")
         })
@@ -1076,7 +1125,7 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
         // Dispatched -> Running edge. An executor that counts dispatches without running them models a handoff
         // the pool accepted and dropped, so run() below stands in for the arrival that eventually mounts.
         "a second arrival for the same dispatch loses the claim and bows out" in {
-            val dispatches = new AtomicInteger(0)
+            val dispatches            = new AtomicInteger(0)
             val lostHandoff: Executor = command =>
                 if (command.isInstanceOf[Worker]) { val _ = dispatches.incrementAndGet() }
             val worker = createWorker(executor = lostHandoff)
@@ -1095,7 +1144,7 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
         }
 
         "a worker emptied by a thief before its arrival parks Idle and accepts the next wakeup" in {
-            val dispatches = new AtomicInteger(0)
+            val dispatches            = new AtomicInteger(0)
             val lostHandoff: Executor = command =>
                 if (command.isInstanceOf[Worker]) { val _ = dispatches.incrementAndGet() }
             val worker = createWorker(executor = lostHandoff)

@@ -136,8 +136,8 @@ final private class WorkerQueue extends AtomicBoolean {
                         // pollLocked already removed the head and decremented count, so size()
                         // is the number of elements remaining after the head. Transfer
                         // floor(s/2) of those to `to` (head + that many leave this queue).
-                        val s = size()
-                        val i = s - Math.ceil(s.toDouble / 2).intValue()
+                        val s                                   = size()
+                        val i                                   = s - Math.ceil(s.toDouble / 2).intValue()
                         @tailrec def transfer(moved: Int): Unit =
                             if (moved < i) {
                                 to.addLocked(pollLocked())
@@ -247,7 +247,7 @@ final private class WorkerQueue extends AtomicBoolean {
     @tailrec private def siftDownLocked(i: Int): Unit = {
         val first = (i << 2) + 1
         if (first < count) {
-            val last = Math.min(first + 3, count - 1)
+            val last                                      = Math.min(first + 3, count - 1)
             @tailrec def minChild(c: Int, best: Int): Int =
                 if (c > last) best
                 else minChild(c + 1, if (lessThan(c, best)) c else best)

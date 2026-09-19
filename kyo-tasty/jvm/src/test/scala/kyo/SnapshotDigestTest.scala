@@ -111,7 +111,7 @@ class SnapshotDigestTest extends kyo.test.Test[Any]:
     "snapshot serialization is digest-stable across two calls" in {
         import kyo.Tasty.SymbolId
         val rootSym = Tasty.Symbol.Package(SymbolId(0), Tasty.Name(""), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
-        val errors = Chunk[TastyError](
+        val errors  = Chunk[TastyError](
             TastyError.UnhandledSubtypingCase("Applied-TermRef-_", Tasty.Type.Any, Tasty.Type.Nothing, "X.tasty"),
             TastyError.UnresolvedReference("x.Y", 7)
         )

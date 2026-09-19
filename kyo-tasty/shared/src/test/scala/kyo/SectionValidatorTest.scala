@@ -33,7 +33,7 @@ class SectionValidatorTest extends kyo.test.Test[Any]:
         val headerSize       = SnapshotFormat.headerSize + sectionIndexSize
 
         var offset = headerSize.toLong
-        val meta = sections.map { (name, bytes) =>
+        val meta   = sections.map { (name, bytes) =>
             val e = (name, offset, bytes.length.toLong)
             offset += bytes.length
             e
@@ -71,7 +71,7 @@ class SectionValidatorTest extends kyo.test.Test[Any]:
         Abort.run[TastyError](SnapshotReader.readFromBytes(out, "mem/sv-oob.krfl")).map {
             case Result.Failure(_: TastyError.MalformedSection)    => succeed
             case Result.Failure(_: TastyError.SnapshotFormatError) => succeed // defense-in-depth also acceptable
-            case Result.Panic(t) =>
+            case Result.Panic(t)                                   =>
                 fail(s"BUG: OOB section entry panics instead of giving structured TastyError: ${t.getClass.getName}: ${t.getMessage}")
             case other => succeed
         }
@@ -103,7 +103,7 @@ class SectionValidatorTest extends kyo.test.Test[Any]:
         SnapshotFormat.writeInt32LE(out, 32, Int.MaxValue)
         Abort.run[TastyError](SnapshotReader.readFromBytes(out, "mem/sv-maxcount.krfl")).map {
             case Result.Failure(_: TastyError.SnapshotFormatError) => succeed
-            case Result.Panic(t) =>
+            case Result.Panic(t)                                   =>
                 fail(s"BUG: sectionCount=Int.MaxValue panics: ${t.getClass.getName}: ${t.getMessage}")
             case Result.Failure(other) => fail(s"expected SnapshotFormatError, got: $other")
             case Result.Success(_)     => fail("expected failure for corrupt sectionCount")

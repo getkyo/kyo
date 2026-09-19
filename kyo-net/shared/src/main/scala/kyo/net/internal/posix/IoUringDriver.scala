@@ -635,7 +635,7 @@ final private[net] class IoUringDriver private[posix] (
         val buf =
             handle.rawPending match
                 case Present(b) => b
-                case Absent =>
+                case Absent     =>
                     val b = new GrowableByteBuffer
                     handle.rawPending = Present(b)
                     b
@@ -660,7 +660,7 @@ final private[net] class IoUringDriver private[posix] (
             () // a send SQE is already outstanding; its onRawSendComplete re-flushes any bytes appended meanwhile
         else
             handle.rawPending match
-                case Absent => () // nothing buffered
+                case Absent       => () // nothing buffered
                 case Present(buf) =>
                     val unsentLen = buf.size - handle.rawPendingSent
                     if unsentLen <= 0 then
@@ -749,7 +749,7 @@ final private[net] class IoUringDriver private[posix] (
         val buf =
             handle.pendingCipher match
                 case Present(b) => b
-                case Absent =>
+                case Absent     =>
                     val b = new GrowableByteBuffer
                     handle.pendingCipher = Present(b)
                     b
@@ -798,7 +798,7 @@ final private[net] class IoUringDriver private[posix] (
             ()
         else
             handle.pendingCipher match
-                case Absent => () // nothing buffered (e.g. an engine that produced no ciphertext this write)
+                case Absent       => () // nothing buffered (e.g. an engine that produced no ciphertext this write)
                 case Present(buf) =>
                     val unsentLen = buf.size - handle.pendingCipherSent
                     if unsentLen <= 0 then
@@ -869,7 +869,7 @@ final private[net] class IoUringDriver private[posix] (
         // The one outstanding send has reaped: clear the guard FIRST so the re-flush below (or a later write's flush) can submit the next SQE.
         handle.sendInFlight = false
         handle.pendingCipher match
-            case Absent => () // tail already cleared (e.g. by a concurrent close)
+            case Absent       => () // tail already cleared (e.g. by a concurrent close)
             case Present(buf) =>
                 if res < 0 && -res == PosixConstants.EINTR && sendEintrCount(handle) < maxTransientIoRetries then
                     // EINTR send CQE: a signal interrupted the send before any byte moved (POSIX send(2)); nothing was transferred, so re-flush the
@@ -928,7 +928,7 @@ final private[net] class IoUringDriver private[posix] (
         // The one outstanding send has reaped: clear the guard FIRST so the re-flush below can submit the next SQE.
         handle.rawSendInFlight = false
         handle.rawPending match
-            case Absent => () // tail already cleared (e.g. by a concurrent close)
+            case Absent       => () // tail already cleared (e.g. by a concurrent close)
             case Present(buf) =>
                 if res < 0 && -res == PosixConstants.EINTR && sendEintrCount(handle) < maxTransientIoRetries then
                     // EINTR send CQE: a signal interrupted the send before any byte moved (POSIX send(2)); nothing was transferred, so re-flush the
@@ -1924,8 +1924,8 @@ final private[net] class IoUringDriver private[posix] (
                 batch.poll() match
                     case PendingOp.Read(promise, h, eintrRetries, handshakeOwned, armedPostUpgrade, _) =>
                         submitRecv(h, promise, eintrRetries, handshakeOwned, armedPostUpgrade)
-                    case PendingOp.Accept(promise, h, noAddr, noLen) => submitAccept(promise, h, noAddr, noLen)
-                    case PendingOp.Connect(promise, h)               => submitConnect(promise, h)
+                    case PendingOp.Accept(promise, h, noAddr, noLen)               => submitAccept(promise, h, noAddr, noLen)
+                    case PendingOp.Connect(promise, h)                             => submitConnect(promise, h)
                     case PendingOp.Write(_, _, _, _) | PendingOp.TlsWrite(_, _, _) =>
                         () // sends park in stalledSends / the in-flight send tail, never here
                 end match
@@ -2064,7 +2064,7 @@ final private[net] class IoUringDriver private[posix] (
                                             try
                                                 val buf         = if armedForStaging then recvStagingFor(h) else h.readBuffer
                                                 var fatalRecord = false
-                                                val plain = feedAndDecrypt(
+                                                val plain       = feedAndDecrypt(
                                                     engine,
                                                     buf,
                                                     res,
@@ -2176,7 +2176,7 @@ final private[net] class IoUringDriver private[posix] (
                                                 // (shared across every close reason for this handle) synchronously, so checking pendingCloses here
                                                 // would also misfire for an unrelated concurrent close racing a read that decoded cleanly.
                                                 var fatalRecord = false
-                                                val plain = feedAndDecrypt(
+                                                val plain       = feedAndDecrypt(
                                                     engine,
                                                     staging,
                                                     res,
@@ -2442,7 +2442,7 @@ final private[net] class IoUringDriver private[posix] (
       */
     override def onInboundClosedDuringRead(handle: PosixHandle, bytes: Span[Byte])(using AllowUnsafe, Frame): Unit =
         if handle.upgrading then
-            val arr = bytes.toArrayUnsafe
+            val arr       = bytes.toArrayUnsafe
             val delivered = handle.lastPlaintextRead.get() match
                 case p @ Present(last) if last eq arr => handle.lastPlaintextRead.compareAndSet(p, Absent)
                 case _                                => false
@@ -2453,7 +2453,7 @@ final private[net] class IoUringDriver private[posix] (
                             val cipherBuf = Buffer.fromArray[Byte](arr)
                             try
                                 var fatalRecord = false
-                                val plain = feedAndDecrypt(
+                                val plain       = feedAndDecrypt(
                                     engine,
                                     cipherBuf,
                                     arr.length,
@@ -2582,7 +2582,7 @@ final private[net] class IoUringDriver private[posix] (
     private def drainEngineOps()(using AllowUnsafe, Frame): Unit =
         engineQueue.poll() match
             case null => ()
-            case op =>
+            case op   =>
                 try op()
                 catch
                     // Contain ANY throw (not just NonFatal): the engine FIFO must not let one connection's
@@ -2647,7 +2647,7 @@ final private[net] class IoUringDriver private[posix] (
     private def recvStagingFor(handle: PosixHandle)(using AllowUnsafe): Buffer[Byte] =
         handle.recvStaging match
             case Present(buf) => buf
-            case Absent =>
+            case Absent       =>
                 val buf = Buffer.alloc[Byte](handle.readBufferSize)
                 handle.recvStaging = Present(buf)
                 // Ownership tag (see PosixHandle.recvStagingOwnerId): stamped once, at allocation, with the SAME handle whose field this is.
@@ -2663,7 +2663,7 @@ final private[net] class IoUringDriver private[posix] (
     private def flushMirrorFor(handle: PosixHandle, size: Int)(using AllowUnsafe): Buffer[Byte] =
         handle.flushMirror match
             case Present(buf) if buf.size >= size => buf
-            case _ =>
+            case _                                =>
                 handle.flushMirror.foreach(_.close())
                 val buf = Buffer.alloc[Byte](size)
                 handle.flushMirror = Present(buf)

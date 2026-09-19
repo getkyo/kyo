@@ -666,7 +666,7 @@ class LoopTest extends kyo.test.Test[Any]:
 
         "with suspended condition" in {
             var counter = 0
-            val result = Loop.whileTrue(Effect.defer(counter < 3)) {
+            val result  = Loop.whileTrue(Effect.defer(counter < 3)) {
                 counter += 1
             }
             result.eval
@@ -675,7 +675,7 @@ class LoopTest extends kyo.test.Test[Any]:
 
         "with suspended body" in {
             var counter = 0
-            val result = Loop.whileTrue(counter < 3) {
+            val result  = Loop.whileTrue(counter < 3) {
                 Effect.defer(counter += 1)
             }
             result.eval
@@ -694,7 +694,7 @@ class LoopTest extends kyo.test.Test[Any]:
         "stack safety with suspended operations" in {
             var counter     = 0
             val largeNumber = 10000
-            val result = Loop.whileTrue(Effect.defer(counter < largeNumber)) {
+            val result      = Loop.whileTrue(Effect.defer(counter < largeNumber)) {
                 Effect.defer(counter += 1)
             }
             result.eval

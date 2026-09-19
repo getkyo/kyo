@@ -272,9 +272,9 @@ class UpcallBridgeTest extends Test:
 
     "stubShape_II_U creates specialized stub and receives both args" in {
         Using.arena { arena =>
-            @volatile var seenA: Int = -1
-            @volatile var seenB: Int = -1
-            val fd                   = FunctionDescriptor.ofVoid(JAVA_INT, JAVA_INT).nn
+            @volatile var seenA: Int  = -1
+            @volatile var seenB: Int  = -1
+            val fd                    = FunctionDescriptor.ofVoid(JAVA_INT, JAVA_INT).nn
             val f: (Int, Int) => Unit = (a: Int, b: Int) =>
                 seenA = a; seenB = b
             val stub = UpcallBridge.stubShape_II_U(f, fd, arena, "kyo.example.Spec", "testMethod", "transient")

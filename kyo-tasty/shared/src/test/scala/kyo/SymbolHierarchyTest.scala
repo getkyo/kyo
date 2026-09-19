@@ -76,9 +76,10 @@ class SymbolHierarchyTest extends kyo.test.Test[Any]:
             javaMetadata = Maybe.Absent
         )
         assert(symbol.isInstanceOf[Tasty.Symbol.Method])
-        assert(symbol.isInstanceOf[Tasty.Symbol.Method] || symbol.isInstanceOf[Tasty.Symbol.Val] || symbol.isInstanceOf[
-            Tasty.Symbol.Var
-        ] || symbol.isInstanceOf[Tasty.Symbol.Field] || symbol.isInstanceOf[Tasty.Symbol.Parameter])
+        assert(symbol.isInstanceOf[Tasty.Symbol.Method] || symbol.isInstanceOf[Tasty.Symbol.Val] ||
+            symbol.isInstanceOf[
+                Tasty.Symbol.Var
+            ] || symbol.isInstanceOf[Tasty.Symbol.Field] || symbol.isInstanceOf[Tasty.Symbol.Parameter])
         assert(!symbol.isInstanceOf[Tasty.Symbol.ClassLike])
         val m = symbol match
             case m: Tasty.Symbol.Method => m
@@ -101,9 +102,10 @@ class SymbolHierarchyTest extends kyo.test.Test[Any]:
         )
         assert(symbol.isInstanceOf[Tasty.Symbol.Val])
         assert(symbol.isLazy)
-        assert(symbol.isInstanceOf[Tasty.Symbol.Method] || symbol.isInstanceOf[Tasty.Symbol.Val] || symbol.isInstanceOf[
-            Tasty.Symbol.Var
-        ] || symbol.isInstanceOf[Tasty.Symbol.Field] || symbol.isInstanceOf[Tasty.Symbol.Parameter])
+        assert(symbol.isInstanceOf[Tasty.Symbol.Method] || symbol.isInstanceOf[Tasty.Symbol.Val] ||
+            symbol.isInstanceOf[
+                Tasty.Symbol.Var
+            ] || symbol.isInstanceOf[Tasty.Symbol.Field] || symbol.isInstanceOf[Tasty.Symbol.Parameter])
         assert(!symbol.isInstanceOf[Tasty.Symbol.Method])
         succeed
     }
@@ -125,9 +127,10 @@ class SymbolHierarchyTest extends kyo.test.Test[Any]:
             case other                      => fail(s"expected Symbol.TypeAlias, got $other")
         assert(ta.body == Maybe.Present(Tasty.Type.Named(SymbolId(50))))
         assert(symbol.isInstanceOf[Tasty.Symbol.TypeAlias])
-        assert(symbol.isInstanceOf[Tasty.Symbol.TypeAlias] || symbol.isInstanceOf[Tasty.Symbol.OpaqueType] || symbol.isInstanceOf[
-            Tasty.Symbol.AbstractType
-        ] || symbol.isInstanceOf[Tasty.Symbol.TypeParam])
+        assert(symbol.isInstanceOf[Tasty.Symbol.TypeAlias] || symbol.isInstanceOf[Tasty.Symbol.OpaqueType] ||
+            symbol.isInstanceOf[
+                Tasty.Symbol.AbstractType
+            ] || symbol.isInstanceOf[Tasty.Symbol.TypeParam])
         succeed
     }
 
@@ -210,9 +213,10 @@ class SymbolHierarchyTest extends kyo.test.Test[Any]:
         assert(p.declaredType == Maybe.Present(Tasty.Type.Named(SymbolId(70))))
         assert(p.defaultArgId == Maybe(SymbolId(71)))
         assert(symbol.isInstanceOf[Tasty.Symbol.Parameter])
-        assert(symbol.isInstanceOf[Tasty.Symbol.Method] || symbol.isInstanceOf[Tasty.Symbol.Val] || symbol.isInstanceOf[
-            Tasty.Symbol.Var
-        ] || symbol.isInstanceOf[Tasty.Symbol.Field] || symbol.isInstanceOf[Tasty.Symbol.Parameter])
+        assert(symbol.isInstanceOf[Tasty.Symbol.Method] || symbol.isInstanceOf[Tasty.Symbol.Val] ||
+            symbol.isInstanceOf[
+                Tasty.Symbol.Var
+            ] || symbol.isInstanceOf[Tasty.Symbol.Field] || symbol.isInstanceOf[Tasty.Symbol.Parameter])
         succeed
     }
 

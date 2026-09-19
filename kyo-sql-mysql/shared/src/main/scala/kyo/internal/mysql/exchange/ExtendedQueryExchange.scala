@@ -229,7 +229,7 @@ private[mysql] object ExtendedQueryExchange:
         channel.resetSeq()
         val encodedParams = params.map(_.encoded)
         val paramTypes    = params.map(p => (p.encoder.mysqlType, p.encoder.unsigned))
-        val executeMsg = ComStmtExecute(
+        val executeMsg    = ComStmtExecute(
             stmtId = stmt.stmtId,
             flags = 0, // no cursor
             params = encodedParams,

@@ -330,7 +330,7 @@ class HttpClientUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
         }
 
         "GET JSON response" in {
-            val route = HttpRoute.getRaw("user").response(_.bodyJson[UserOutput])
+            val route   = HttpRoute.getRaw("user").response(_.bodyJson[UserOutput])
             val handler = route.handler { _ =>
                 HttpResponse.ok.addField("body", UserOutput(1, "alice"))
             }
@@ -412,7 +412,7 @@ class HttpClientUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
         }
 
         "path captures" in {
-            val route = HttpRoute.getRaw("users" / Capture[Int]("id")).response(_.bodyText)
+            val route   = HttpRoute.getRaw("users" / Capture[Int]("id")).response(_.bodyText)
             val handler = route.handler { req =>
                 HttpResponse.ok(s"user ${req.fields.id}")
             }
@@ -490,7 +490,7 @@ class HttpClientUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
         }
 
         "500 for handler error" in {
-            val route = HttpRoute.getRaw("boom").response(_.bodyText)
+            val route   = HttpRoute.getRaw("boom").response(_.bodyText)
             val handler = route.handler { _ =>
                 throw new RuntimeException("boom")
                 HttpResponse.ok("unreachable")
@@ -512,7 +512,7 @@ class HttpClientUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
         }
 
         "handler returns custom error status" in {
-            val route = HttpRoute.getRaw("bad").response(_.bodyText)
+            val route   = HttpRoute.getRaw("bad").response(_.bodyText)
             val handler = route.handler { _ =>
                 HttpResponse.halt(HttpResponse(HttpStatus.BadRequest))
             }
@@ -723,7 +723,7 @@ class HttpClientUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
                 val backend = internal.HttpTestPlatformBackend.client
                 HttpClient.init(maxConnectionsPerHost = 2).map { client1 =>
                     HttpClient.init(maxConnectionsPerHost = 2).map { client2 =>
-                        val url = mkUrl(sockPath, "/shared")
+                        val url    = mkUrl(sockPath, "/shared")
                         val fiber1 = Fiber.initUnscoped(
                             HttpClient.let(client1) {
                                 Kyo.foreach(1 to 5) { _ =>
@@ -786,7 +786,7 @@ class HttpClientUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
         }
 
         "unix socket timeout mentions socket path" in {
-            val route = HttpRoute.getRaw("slow").response(_.bodyText)
+            val route   = HttpRoute.getRaw("slow").response(_.bodyText)
             val handler = route.handler { _ =>
                 Async.sleep(10.seconds).andThen(HttpResponse.ok("done"))
             }

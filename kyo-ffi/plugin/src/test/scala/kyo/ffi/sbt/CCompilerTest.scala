@@ -175,7 +175,7 @@ class CCompilerTest extends AnyFunSuite with Matchers {
         val src    = new File("/tmp/kyo_aeron.c")
         val out    = new File("/tmp/kyo_aeron-windows-x86_64.dll")
         val libDir = new File("/tmp/staged/lib")
-        val cmd = CCompiler.buildCommand(
+        val cmd    = CCompiler.buildCommand(
             cc = "cl",
             family = CCompiler.Msvc,
             cFlags = Seq("/MD"),
@@ -511,7 +511,7 @@ class CCompilerTest extends AnyFunSuite with Matchers {
         val out    = new File("/tmp/libkyonet_boringssl-linux-aarch64.so")
         val incDir = new File("/tmp/bssl/include")
         val libDir = new File("/tmp/bssl/lib")
-        val cmd = CCompiler.buildCommand(
+        val cmd    = CCompiler.buildCommand(
             cc = "cc",
             family = CCompiler.Gcc,
             cFlags = Seq("-O2", "-fPIC"),
@@ -536,7 +536,7 @@ class CCompilerTest extends AnyFunSuite with Matchers {
         val out    = new File("/tmp/libkyonet_boringssl-darwin-aarch64.dylib")
         val incDir = new File("/tmp/bssl/include")
         val libDir = new File("/tmp/bssl/lib")
-        val cmd = CCompiler.buildCommand(
+        val cmd    = CCompiler.buildCommand(
             cc = "clang",
             family = CCompiler.Clang,
             cFlags = Seq("-O2", "-fPIC"),
@@ -580,8 +580,8 @@ class CCompilerTest extends AnyFunSuite with Matchers {
     // --- Includes translation across families --------------------------------
 
     test("includes: multiple -I dirs (POSIX)") {
-        val a = new File("/tmp/inc-a")
-        val b = new File("/tmp/inc-b")
+        val a   = new File("/tmp/inc-a")
+        val b   = new File("/tmp/inc-b")
         val cmd = CCompiler.buildCommand(
             cc = "gcc",
             family = CCompiler.Gcc,
@@ -598,8 +598,8 @@ class CCompilerTest extends AnyFunSuite with Matchers {
     }
 
     test("includes: multiple /I dirs (MSVC)") {
-        val a = new File("C:/tmp/inc-a")
-        val b = new File("C:/tmp/inc-b")
+        val a   = new File("C:/tmp/inc-a")
+        val b   = new File("C:/tmp/inc-b")
         val cmd = CCompiler.buildCommand(
             cc = "cl.exe",
             family = CCompiler.Msvc,

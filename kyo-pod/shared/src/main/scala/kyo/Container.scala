@@ -95,7 +95,7 @@ final class Container private[kyo] (
         else
             pendingExit.get.map {
                 case Present(_) => ()
-                case Absent =>
+                case Absent     =>
                     Latch.init(1).map { latch =>
                         // autoRemove-tracking observer: the container may live for hours, so pass
                         // `Duration.Infinity`. If the caller wants an upper bound they cancel the
@@ -176,7 +176,7 @@ final class Container private[kyo] (
     def awaitHealthy(using Frame): Unit < (Async & Abort[ContainerException]) =
         healthState.get.map { state =>
             state.check match
-                case Absent => ()
+                case Absent      => ()
                 case Present(hc) =>
                     Retry[ContainerException](hc.schedule)(hc.check(this)).andThen {
                         healthState.set(ContainerHealthState(Present(hc))).unit
@@ -551,7 +551,7 @@ object Container:
         healthCheck: HealthCheck = HealthCheck.running
     )(using Frame): Container < (Async & Abort[ContainerException] & Scope) =
         val portBindings = Chunk.from(ports.map { case (container, host) => Config.PortBinding(container, host) })
-        val config = Config.default.copy(
+        val config       = Config.default.copy(
             image = image,
             command = command,
             name = name,
@@ -1168,7 +1168,7 @@ object Container:
                 def check(container: Container)(using Frame): Unit < (Async & Abort[ContainerException]) =
                     container.backend.state(container.id).map {
                         case State.Running => ()
-                        case other =>
+                        case other         =>
                             Abort.fail(ContainerHealthCheckException(
                                 container.id,
                                 s"container is in state $other, expected Running",
@@ -1199,8 +1199,8 @@ object Container:
                         // Compose the failure detail with whichever streams produced output, so the
                         // recent-errors buffer captures the actual failure reason (not just the exit code).
                         def detail(prefix: String): String =
-                            val out = result.stdout.trim
-                            val err = result.stderr.trim
+                            val out   = result.stdout.trim
+                            val err   = result.stderr.trim
                             val parts =
                                 Seq(prefix) ++
                                     (if out.nonEmpty then Seq(s"stdout: $out") else Seq.empty) ++
@@ -2233,7 +2233,7 @@ object Container:
             case Result.Success(info) if info.pid > 0 =>
                 hostPidBelongsTo(id, info.pid).map {
                     case false => false
-                    case true =>
+                    case true  =>
                         Abort.run[CommandException](hostKillCommand(info.pid).redirectErrorStream(true).textWithExitCode).map {
                             case Result.Success((_, ExitCode.Success)) =>
                                 Log.warn(
@@ -2380,7 +2380,7 @@ object Container:
                                                 case Present((delay, nextSchedule)) =>
                                                     Async.sleep(delay).andThen(loop(nextSchedule, nextAttempts, updatedErrors))
                                                 case Absent =>
-                                                    val elapsed = now.toJava.toEpochMilli - startTime.toJava.toEpochMilli
+                                                    val elapsed    = now.toJava.toEpochMilli - startTime.toJava.toEpochMilli
                                                     val elapsedStr =
                                                         if elapsed >= elapsedMillisFormatThreshold then s"${elapsed / 1000}s"
                                                         else s"${elapsed}ms"
@@ -2560,7 +2560,7 @@ object Container:
             Kyo.foreachDiscard(hostPorts) { hostPort =>
                 Loop(portMappingMinPoll.toMillis) { pollMs =>
                     probeHostPort(container.host, hostPort).map {
-                        case true => Loop.done(())
+                        case true  => Loop.done(())
                         case false =>
                             Clock.now.map { now =>
                                 if now.toJava.toEpochMilli >= deadlineMs then
@@ -2605,7 +2605,7 @@ object Container:
                     Clock.now.map { now =>
                         val nowMs = now.toJava.toEpochMilli
                         if nowMs >= deadlineMs then
-                            val elapsedMs = nowMs - startedAt.toJava.toEpochMilli
+                            val elapsedMs  = nowMs - startedAt.toJava.toEpochMilli
                             val configured =
                                 container.config.ports.map(p => s"${p.containerPort}/${p.protocol.cliName}").mkString(", ")
                             val observed =

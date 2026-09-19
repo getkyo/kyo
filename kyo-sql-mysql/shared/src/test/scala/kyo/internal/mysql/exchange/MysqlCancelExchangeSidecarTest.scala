@@ -104,7 +104,7 @@ class MysqlCancelExchangeSidecarTest extends kyo.Test:
 
         def loop(id: Long, carry: Chunk[Byte]): Unit < Async =
             readPacket(conn, carry).flatMap {
-                case Absent => report(s"closed:$id")
+                case Absent                        => report(s"closed:$id")
                 case Present((seq, payload, rest)) =>
                     val command = payload.headMaybe.map(_ & 0xff).getOrElse(-1)
                     if command == 0x03 then
@@ -129,7 +129,7 @@ class MysqlCancelExchangeSidecarTest extends kyo.Test:
             report(s"accepted:$id").andThen {
                 Abort.run[Closed](conn.outbound.safe.put(Span.from(handshakeV10(id)))).andThen {
                     readPacket(conn, Chunk.empty).flatMap {
-                        case Absent => report(s"closed:$id")
+                        case Absent                => report(s"closed:$id")
                         case Present((_, _, rest)) =>
                             report(s"authenticated:$id").andThen {
                                 Abort.run[Closed](conn.outbound.safe.put(Span.from(okPacket(2)))).andThen(loop(id, rest))
@@ -180,7 +180,7 @@ class MysqlCancelExchangeSidecarTest extends kyo.Test:
         Channel.initUnscoped[String](64).flatMap { events =>
             AtomicInt.init(0).flatMap { arrivals =>
                 FakeServer.listenPort(serve(events, arrivals, killError)).flatMap { listener =>
-                    val address = SqlConfig.Address("mysql", "127.0.0.1", listener.port, "probe", Present("probe"))
+                    val address = SqlConfig.Address.Network("mysql", "127.0.0.1", listener.port, "probe", Present("probe"))
                     val options = SqlConfig.Url.Options.default
                     MysqlSqlConnection.connect(address, Present("probe"), config, options).flatMap { conn =>
                         conn.connectionId.get.flatMap { cid =>

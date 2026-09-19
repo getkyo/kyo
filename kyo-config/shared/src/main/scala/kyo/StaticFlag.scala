@@ -71,16 +71,16 @@ abstract class StaticFlag[A](default: A, validate: A => Either[Throwable, A] = (
                     Some(reader.parse(name, initialExpression))
                 }
             parsed match {
-                case None => validatedDefault
+                case None      => validatedDefault
                 case Some(raw) =>
                     try validate(raw) match {
                             case Right(a) => a
-                            case Left(e) =>
+                            case Left(e)  =>
                                 throw FlagValidationFailedException(name, String.valueOf(raw), source.toString, e)
                         }
                     catch {
                         case e: FlagException => throw e
-                        case e: Throwable =>
+                        case e: Throwable     =>
                             throw FlagValidationFailedException(name, String.valueOf(raw), source.toString, e)
                     }
             }

@@ -139,7 +139,7 @@ class EngineThrowFifoContinuesTest extends Test:
             try
                 // Stub TlsEngine whose feedCiphertext throws. This models the JDK SSLEngine raising
                 // SSLHandshakeException on a received fatal TLS alert during an unwrap call.
-                val alertThrow = new RuntimeException("received_fatal_alert: certificate_unknown")
+                val alertThrow             = new RuntimeException("received_fatal_alert: certificate_unknown")
                 val throwOnFeed: TlsEngine = new TlsEngine:
                     def handshakeStep()(using AllowUnsafe): Int                              = 0
                     def feedCiphertext(buf: Buffer[Byte], len: Int)(using AllowUnsafe): Int  = throw alertThrow

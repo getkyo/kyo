@@ -112,7 +112,7 @@ private[kyo] object NavigationWatcher:
                     Scope.acquireRelease(snapshotState)(_ => releaseWatcher(tab)).map { snapshot =>
                         Clock.nowMonotonic.map(_ + timeout).map { deadline =>
                             pollNavigated(snapshot, deadline).map {
-                                case true => awaitSettle(Absent, settle, deadline, throwOnFailure = true)
+                                case true  => awaitSettle(Absent, settle, deadline, throwOnFailure = true)
                                 case false =>
                                     Abort.fail(
                                         BrowserNavigationFailedException("(none)", s"no navigation within ${timeout}")
@@ -179,7 +179,7 @@ private[kyo] object NavigationWatcher:
       */
     private[internal] def decodeSnapshotState(raw: String)(using Frame): NavSnapshot < Abort[BrowserReadException] =
         Json.decode[NavSnapshotWire](raw) match
-            case Result.Success(w) => NavSnapshot(url = w.url, pushStateCount = w.pushStateCount, beforeUnload = w.beforeUnload)
+            case Result.Success(w)   => NavSnapshot(url = w.url, pushStateCount = w.pushStateCount, beforeUnload = w.beforeUnload)
             case Result.Failure(err) =>
                 Abort.fail(
                     BrowserProtocolErrorException.unexpectedReply(

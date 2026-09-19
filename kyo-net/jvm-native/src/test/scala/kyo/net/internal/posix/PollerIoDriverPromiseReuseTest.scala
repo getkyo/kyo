@@ -36,7 +36,7 @@ class PollerIoDriverPromiseReuseTest extends Test:
     final private class ReusedReadPromise(driver: PollerIoDriver, handle: PosixHandle) extends IOPromise[Closed, ReadOutcome]:
         private val self: Promise.Unsafe[ReadOutcome, Abort[Closed]] = this.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]]
         def arm()(using AllowUnsafe, Frame): Unit                    = driver.awaitRead(handle, self)
-        def rearm()(using AllowUnsafe, Frame): Unit =
+        def rearm()(using AllowUnsafe, Frame): Unit                  =
             discard(becomeAvailable())
             driver.awaitRead(handle, self)
         end rearm
@@ -56,7 +56,7 @@ class PollerIoDriverPromiseReuseTest extends Test:
                     val reused    = new ReusedReadPromise(driver, acceptedH)
 
                     // Part 1 -- REUSE correctness: N back-to-back reads on the reused promise, each delivering its own distinct payload.
-                    val n = 4
+                    val n                                                       = 4
                     def writeAndReadOne(i: Int): Unit < (Abort[Closed] & Async) =
                         val payload = Array.tabulate[Byte](8)(j => ((j + i) & 0xff).toByte)
                         assert(driver.write(clientH, Span.fromUnsafe(payload), 0) == WriteResult.Done)

@@ -72,8 +72,8 @@ private[kyo] object PlatformModuleOps:
             else
                 // Fully-qualified class names to keep, as module-relative `.class` paths
                 // (e.g. "java.lang.annotation.RetentionPolicy" -> "java/lang/annotation/RetentionPolicy.class").
-                val classPaths = classFilter.map(_.replace('.', '/') + ".class")
-                val results    = mutable.ArrayBuffer.empty[String]
+                val classPaths                                = classFilter.map(_.replace('.', '/') + ".class")
+                val results                                   = mutable.ArrayBuffer.empty[String]
                 val moduleRoots: Iterator[java.nio.file.Path] =
                     if moduleFilter.isEmpty then
                         // Walk all modules (production path).

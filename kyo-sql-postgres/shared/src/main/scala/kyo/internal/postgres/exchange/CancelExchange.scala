@@ -32,7 +32,7 @@ private[kyo] object CancelExchange:
       *   the TLS settings to negotiate with, [[Absent]] when the caller configured none
       */
     def cancel(
-        address: SqlConfig.Address,
+        address: SqlConfig.Address.Network,
         tlsMode: TlsMode,
         tls: Maybe[NetTlsConfig],
         processId: Int,
@@ -65,7 +65,7 @@ private[kyo] object CancelExchange:
       * a server declining the upgrade, answering nothing, or failing the handshake. Under a mode demanding encryption those are the ordinary
       * outcomes rather than exotic ones, so a bracket placed only around a successful negotiation would miss the common path.
       */
-    private def onFreshConnection[A](address: SqlConfig.Address)(
+    private def onFreshConnection[A](address: SqlConfig.Address.Network)(
         body: kyo.net.Connection => A < (Async & Abort[SqlException])
     )(using Frame): A < (Async & Abort[SqlException]) =
         // The pool's cancel budget can interrupt this, so a finalizer closes a connection the interrupt drops before
@@ -145,7 +145,7 @@ private[kyo] object CancelExchange:
       * an opportunistic mode plaintext IS a legitimate outcome, and [[InitSSLExchange.runPrefer]] reuses the socket for it exactly as the
       * pooled `prefer` path does through [[kyo.internal.postgres.TlsNegotiator]].
       */
-    private def negotiate(rawConn: kyo.net.Connection, address: SqlConfig.Address, tlsMode: TlsMode, tls: NetTlsConfig)(using
+    private def negotiate(rawConn: kyo.net.Connection, address: SqlConfig.Address.Network, tlsMode: TlsMode, tls: NetTlsConfig)(using
         Frame
     ): kyo.net.Connection < (Async & Abort[SqlException]) =
         if tlsMode.demandsEncryption then InitSSLExchange.run(rawConn, address.host, address.port, tls)
@@ -156,7 +156,7 @@ private[kyo] object CancelExchange:
         CancelRequestMarshaller.write(CancelRequest(processId, secretKey), buf)
         Abort.run[Closed](conn.outbound.safe.put(buf.toSpan)).flatMap {
             case Result.Success(_) | Result.Failure(_) => () // Failure = server closed, acceptable for cancel
-            case Result.Panic(t) =>
+            case Result.Panic(t)                       =>
                 Log.error(s"[kyo-sql] CancelExchange: write panic: ${t.getMessage}").andThen(
                     Abort.fail(SqlConnectionWritePanicException(t))
                 )

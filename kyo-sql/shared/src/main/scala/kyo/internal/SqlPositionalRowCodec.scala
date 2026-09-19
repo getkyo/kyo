@@ -37,7 +37,7 @@ abstract class SqlPositionalRowCodec extends SqlRow.Codec:
       * One [[kyo.SqlRow.ColumnKind.Float]] covers both widths, and they do not render alike: reading a four-byte column at the wider type
       * widens 0.1 to 0.10000000149011612 before it is rendered. A backend with a single width leaves this alone.
       */
-    private[kyo] def isSingleWidthFloat(typeToken: Int): Boolean = false
+    def isSingleWidthFloat(typeToken: Int): Boolean = false
 
     /** Renders one column as the string [[kyo.SqlRow.text]] promises: one per stored value, whatever carried the row.
       *
@@ -59,13 +59,13 @@ abstract class SqlPositionalRowCodec extends SqlRow.Codec:
             // BigInt, not Long: an unsigned 64-bit column reaches past what a signed Long holds.
             case ColumnKind.Integer => read[BigInt].map(SqlValue.Integer(_))
             case ColumnKind.Decimal => read[BigDecimal].map(SqlValue.Decimal(_))
-            case ColumnKind.Float =>
+            case ColumnKind.Float   =>
                 if isSingleWidthFloat(typeToken) then read[Float].map(SqlValue.Float4(_))
                 else read[Double].map(SqlValue.Float8(_))
-            case ColumnKind.Bool => read[Boolean].map(SqlValue.Bool(_))
-            case ColumnKind.Text => read[String].map(SqlValue.Text(_))
-            case ColumnKind.Json => read[JsonText].map(j => SqlValue.Json(j.text))
-            case ColumnKind.Uuid => read[java.util.UUID].map(SqlValue.Uuid(_))
+            case ColumnKind.Bool      => read[Boolean].map(SqlValue.Bool(_))
+            case ColumnKind.Text      => read[String].map(SqlValue.Text(_))
+            case ColumnKind.Json      => read[JsonText].map(j => SqlValue.Json(j.text))
+            case ColumnKind.Uuid      => read[java.util.UUID].map(SqlValue.Uuid(_))
             case ColumnKind.Timestamp =>
                 read[java.time.Instant].map(i => SqlValue.Timestamp(i.getEpochSecond, i.getNano / 1000))
             case ColumnKind.Bytes => read[kyo.Span[Byte]].map(SqlValue.Bytes(_))
@@ -97,14 +97,14 @@ abstract class SqlPositionalRowCodec extends SqlRow.Codec:
     final def read[A](schema: SqlSchema[A], row: SqlRow, offset: Int, naming: Maybe[SqlNaming], fieldMatch: SqlRow.FieldMatch)(using
         Frame
     ): A < Abort[SqlDecodeException] =
-        val sliced = row.slice(offset, offset + schema.width)
+        val sliced  = row.slice(offset, offset + schema.width)
         val missing =
             fieldMatch match
                 case SqlRow.FieldMatch.ByName => SqlFieldMatcher.missingByName(schema.fieldNames, sliced.columnNames, naming)
                 case _                        => Maybe.empty[String]
         missing match
             case Maybe.Present(name) => Abort.fail(SqlDecodeColumnNotFoundException(name, sliced.columnNames))
-            case Maybe.Absent =>
+            case Maybe.Absent        =>
                 SqlRow.Codec.catching(
                     schema.read(newReader(sliced, Maybe(SqlFieldMatcher.of(schema.fieldNames, sliced.columnNames, naming, fieldMatch))))
                 )

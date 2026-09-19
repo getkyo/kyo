@@ -20,7 +20,7 @@ class HttpStyleTest extends JsonRpcTest:
         // Unsafe: AtomicRef.Unsafe.init for thread-safe envelope accumulation outside effect context
         val sent = AtomicRef.Unsafe.init(List.empty[JsonRpcEnvelope])(using AllowUnsafe.embrace.danger)
 
-        def send(env: JsonRpcEnvelope)(using Frame): Unit < (Async & Abort[Closed]) =
+        def send(env: JsonRpcEnvelope)(using Frame): Unit < (Async & Abort[Closed | JsonRpcError]) =
             Sync.defer(discard(sent.getAndUpdate(env :: _)(using AllowUnsafe.embrace.danger))).andThen(inner.send(env))
 
         def incoming(using Frame): Stream[JsonRpcEnvelope, Async & Abort[Closed]] =
@@ -56,7 +56,7 @@ class HttpStyleTest extends JsonRpcTest:
     "notification triggers handler and no reply frame arrives on wire" in {
         // Unsafe: AtomicInt.Unsafe.init for handler run counter
         val handlerRan = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
-        val logMethod = JsonRpcRoute.request[LogMsg, Unit]("log") {
+        val logMethod  = JsonRpcRoute.request[LogMsg, Unit]("log") {
             (_, _) => Sync.defer(discard(handlerRan.incrementAndGet()(using AllowUnsafe.embrace.danger)))
         }
         JsonRpcTransport.inMemory.map { (ta, tb) =>

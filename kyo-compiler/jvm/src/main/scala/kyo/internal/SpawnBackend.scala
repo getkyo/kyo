@@ -150,11 +150,10 @@ private[kyo] object SpawnBackend:
     private[kyo] def spawnWorker(config: Compiler.Config, driver: AeronDriver, reqStreamId: Int, respStreamId: Int)(using
         Frame
     ): Process < (Sync & Abort[CompilerException]) =
-        val targetClasspath =
-            (config.classpath ++ config.toolchain.compilerClasspath).map(_.toString).mkString(Path.pathSeparator)
+        val targetClasspath = (config.classpath ++ config.toolchain.compilerClasspath).map(_.toString).mkString(Path.pathSeparator)
         // The current JVM's own java launcher, not whatever a bare "java" resolves to on PATH.
         val javaBin = Path(java.lang.System.getProperty("java.home"), "bin", "java").toString
-        val args =
+        val args    =
             Chunk(javaBin) ++
                 moduleArgs ++
                 Chunk(

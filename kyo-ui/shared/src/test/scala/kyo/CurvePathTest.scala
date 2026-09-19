@@ -102,12 +102,12 @@ class CurvePathTest extends kyo.test.Test[Any]:
 
     "1-point degrade to single lineTo, no crash" in {
         // With 1 remaining point, append degrades to a single lineTo.
-        val pts    = Chunk((1.0, 2.0))
-        val curves = Seq(Curve.basis, Curve.catmullRom, Curve.monotone, Curve.stepAfter, Curve.stepBefore)
+        val pts     = Chunk((1.0, 2.0))
+        val curves  = Seq(Curve.basis, Curve.catmullRom, Curve.monotone, Curve.stepAfter, Curve.stepBefore)
         val results = curves.map: curve =>
             val pd      = CurvePath.append(Svg.PathData.from(0.0, 0.0), pts, curve)
             val noCubic = !hasCubic(pd)
-            val cmds = Svg.PathData.commands(pd).toSeq.filterNot:
+            val cmds    = Svg.PathData.commands(pd).toSeq.filterNot:
                 case PathCommand.MoveTo(_, _) => true
                 case _                        => false
             (curve, noCubic, cmds.nonEmpty)
@@ -126,8 +126,8 @@ class CurvePathTest extends kyo.test.Test[Any]:
     "monotone on 2 remaining points emits exactly 1 cubicTo" in {
         // append receives pts (the remaining points after moveTo anchor).
         // With 2 remaining points, n=2, n-1=1 segment => 1 cubicTo.
-        val pts = Chunk((1.0, 1.0), (2.0, 3.0))
-        val pd  = CurvePath.append(Svg.PathData.from(0.0, 0.0), pts, Curve.monotone)
+        val pts    = Chunk((1.0, 1.0), (2.0, 3.0))
+        val pd     = CurvePath.append(Svg.PathData.from(0.0, 0.0), pts, Curve.monotone)
         val cubics = Svg.PathData.commands(pd).toSeq.count:
             case _: PathCommand.CubicTo => true
             case _                      => false
@@ -136,8 +136,8 @@ class CurvePathTest extends kyo.test.Test[Any]:
 
     "basis loop anchors at first and last point (n-1 segments for n remaining points)" in {
         // With 3 remaining points: n=3, loop runs i=1 to i<3 => 2 cubicTo segments.
-        val pts = Chunk((1.0, 0.0), (2.0, 0.0), (3.0, 0.0))
-        val pd  = CurvePath.append(Svg.PathData.from(0.0, 0.0), pts, Curve.basis)
+        val pts    = Chunk((1.0, 0.0), (2.0, 0.0), (3.0, 0.0))
+        val pd     = CurvePath.append(Svg.PathData.from(0.0, 0.0), pts, Curve.basis)
         val cubics = Svg.PathData.commands(pd).toSeq.count:
             case _: PathCommand.CubicTo => true
             case _                      => false

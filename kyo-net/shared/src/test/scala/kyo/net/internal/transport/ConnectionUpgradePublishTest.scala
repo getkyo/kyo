@@ -46,7 +46,7 @@ class ConnectionUpgradePublishTest extends Test:
         val upgraded: kyo.net.Connection = connection
 
         for
-            latch <- Latch.init(1)
+            latch    <- Latch.init(1)
             observed <- Fiber.init {
                 // Distinct carrier: this body parks on the latch, so it reads upgradeFn/isServerOrigin only after the writer published them.
                 latch.await.map { _ =>

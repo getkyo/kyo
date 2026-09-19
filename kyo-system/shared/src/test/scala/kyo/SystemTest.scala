@@ -116,7 +116,7 @@ class SystemTest extends kyo.test.Test[Any]:
 
     "custom System implementation" in {
         val customSystem = new System:
-            def unsafe: Unsafe = ???
+            def unsafe: Unsafe                                                                   = ???
             def env[E, A](name: String)(using Parser[E, A], Frame): Maybe[A] < (Abort[E] & Sync) =
                 Sync.defer(Maybe("custom_env").asInstanceOf[Maybe[A]])
             def property[E, A](name: String)(using Parser[E, A], Frame): Maybe[A] < (Abort[E] & Sync) =

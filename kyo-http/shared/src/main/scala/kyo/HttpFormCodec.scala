@@ -40,7 +40,7 @@ object HttpFormCodec:
             val values = new Array[Any](fieldNames.length)
             val map    = new java.util.HashMap[String, String](fieldNames.length * 2)
             if s.nonEmpty then
-                val pairs = s.split('&')
+                val pairs                             = s.split('&')
                 @tailrec def parsePairs(i: Int): Unit =
                     if i < pairs.length then
                         val pair  = pairs(i)
@@ -70,7 +70,7 @@ object HttpFormCodec:
         end decode
 
         def encode(a: A): String =
-            val sb = new java.lang.StringBuilder()
+            val sb                          = new java.lang.StringBuilder()
             @tailrec def loop(i: Int): Unit =
                 if i < fieldNames.length then
                     if i > 0 then kyo.discard(sb.append('&'))
@@ -86,13 +86,13 @@ object HttpFormCodec:
     private inline def summonFieldCodecs[T <: Tuple]: Array[HttpCodec[Any]] =
         inline erasedValue[T] match
             case _: EmptyTuple => Array.empty[HttpCodec[Any]]
-            case _: (h *: t) =>
+            case _: (h *: t)   =>
                 summonInline[HttpCodec[h]].asInstanceOf[HttpCodec[Any]] +: summonFieldCodecs[t]
 
     private inline def collectFieldNames[T <: Tuple]: Array[String] =
         inline erasedValue[T] match
             case _: EmptyTuple => Array.empty[String]
-            case _: (h *: t) =>
+            case _: (h *: t)   =>
                 constValue[h & String] +: collectFieldNames[t]
 
 end HttpFormCodec

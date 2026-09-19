@@ -107,8 +107,8 @@ object DocsSearch:
     // keeps a query like `Abort` resolving to the canonical effect docs (kyo-prelude, "Foundation")
     // rather than to an integration's bridge section that merely names the type in its heading. The tier
     // applies to section hits only, so module-name queries are unaffected.
-    private val CoreGroups: Set[String]       = Set("foundation", "application runtime")
-    private val PeripheralGroups: Set[String] = Set("interop with other effect stacks", "scheduler embedding for other runtimes")
+    private val CoreGroups: Set[String]           = Set("foundation", "application runtime")
+    private val PeripheralGroups: Set[String]     = Set("interop with other effect stacks", "scheduler embedding for other runtimes")
     private def tierWeight(group: String): Double =
         val g = group.toLowerCase
         if CoreGroups.contains(g) then 1.5
@@ -164,12 +164,13 @@ object DocsSearch:
                         score += c
                     }
                     if matchedAll && score > 0.0 then
-                        scored += ((
-                            score * tierWeight(e.group),
-                            1,
-                            si,
-                            Hit(e.slug, e.title, s"${moduleRoute(e)}#${s.slug}", Present(s.heading))
-                        ))
+                        scored +=
+                            ((
+                                score * tierWeight(e.group),
+                                1,
+                                si,
+                                Hit(e.slug, e.title, s"${moduleRoute(e)}#${s.slug}", Present(s.heading))
+                            ))
                     end if
                 }
             }

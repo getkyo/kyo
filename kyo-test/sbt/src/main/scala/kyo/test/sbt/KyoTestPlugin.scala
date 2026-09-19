@@ -9,7 +9,7 @@ import sbt.Keys._
   * Native plugin enabled, [[KyoTestJsPlugin]] / [[KyoTestNativePlugin]] auto-trigger and swap the JVM entry for the matching JS / Native
   * framework class.
   *
-  * '''External users''' should enable [[SbtKyoTestPlugin]] instead. It extends this plugin and automatically adds
+  * '''External users''' should enable `SbtKyoTestPlugin` instead. It extends this plugin and automatically adds
   * `"io.getkyo" %% "kyo-test-runner" % version % Test` to `libraryDependencies`, so no manual dep wiring is needed:
   * {{{
   * // project/plugins.sbt
@@ -26,7 +26,7 @@ import sbt.Keys._
   *   .dependsOn(`kyo-test-runner` % Test)
   * }}}
   *
-  * This plugin does NOT add `kyo-test-runner` as a test dep; that is handled by [[SbtKyoTestPlugin]] for external consumers.
+  * This plugin does NOT add `kyo-test-runner` as a test dep; that is handled by `SbtKyoTestPlugin` for external consumers.
   */
 object KyoTestPlugin extends AutoPlugin {
     override def trigger  = noTrigger

@@ -46,7 +46,7 @@ private[kyo] object FlowGraph:
     end build
 
     def build(flow: Flow[?, ?, ?], progress: FlowEngine.Progress): FlowGraph =
-        val graph = build(flow)
+        val graph     = build(flow)
         val annotated = graph.nodes.map { node =>
             progress.nodeByName(node.name) match
                 case Present(np) => node.copy(status = statusName(np.status))
@@ -106,8 +106,8 @@ private[kyo] object FlowGraph:
 
             def onDispatch[V](name: String, branchInfos: Seq[Flow.BranchInfo], frame: Frame, meta: Flow.Meta)(using Tag[V], Schema[V]) =
                 (counter: Int) =>
-                    val (did, c1) = nextId(counter)
-                    val (jid, c2) = nextId(c1)
+                    val (did, c1)         = nextId(counter)
+                    val (jid, c2)         = nextId(c1)
                     val (branchNodes, c3) = branchInfos.foldLeft((Seq.empty[BranchNode], c2)) { case ((acc, c), bi) =>
                         val (bid, cn) = nextId(c)
                         (acc :+ BranchNode(bid, bi.name), cn)
@@ -251,8 +251,8 @@ private[kyo] object FlowGraph:
                         val (sub, cn) = builder(c)
                         (acc :+ sub, cn)
                     }
-                    val (fid, c2) = nextId(c1)
-                    val (jid, c3) = nextId(c2)
+                    val (fid, c2)       = nextId(c1)
+                    val (jid, c3)       = nextId(c2)
                     val (forkEdges, c4) = subs.foldLeft((Seq.empty[Edge], c3)) { case ((acc, c), sub) =>
                         val (eid, cn) = nextId(c)
                         (acc :+ Edge(eid, fid, sub.start), cn)

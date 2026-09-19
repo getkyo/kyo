@@ -16,7 +16,7 @@ class JsonRpcTransportTest extends JsonRpcTest:
         entered: Fiber.Promise[Unit, Any],
         entersOn: JsonRpcEnvelope => Boolean
     ) extends JsonRpcTransport:
-        def send(env: JsonRpcEnvelope)(using Frame): Unit < (Async & Abort[Closed]) =
+        def send(env: JsonRpcEnvelope)(using Frame): Unit < (Async & Abort[Closed | JsonRpcError]) =
             val signal: Unit < Sync = if entersOn(env) then entered.completeUnitDiscard else Kyo.unit
             signal.andThen(inner.send(env))
 
@@ -26,6 +26,48 @@ class JsonRpcTransportTest extends JsonRpcTest:
         def close(using Frame): Unit < Async =
             inner.close
     end SignalingTransport
+
+    "send reports an envelope it could not encode" - {
+
+        // Both cases reach the wire adapter's Structure.encode and are unrepresentable there, so the
+        // frame never leaves. send must say so: reporting success would tell the caller a message was
+        // transmitted that no peer will ever see.
+
+        "a Malformed message, which only decoding a peer's garbage ever produces" in {
+            JsonRpcTransport.fromWire(JsonRpcWireTransport.empty, JsonRpcFramer.lineDelimited).map { transport =>
+                val unsendable = JsonRpcMalformedMessage(Absent, "inbound only", Structure.Value.Str("x"))
+                Abort.run[JsonRpcError](transport.send(unsendable)).map {
+                    case Result.Failure(e: JsonRpcInternalError) =>
+                        assert(e.message.contains("Malformed"), s"message was: ${e.message}")
+                    case other => fail(s"expected a JsonRpcInternalError, got $other")
+                }
+            }
+        }
+
+        "extras carrying a key the envelope reserves" in {
+            JsonRpcTransport.fromWire(
+                JsonRpcWireTransport.empty,
+                JsonRpcFramer.lineDelimited,
+                JsonRpcEnvelope.lenientSchema
+            ).map { transport =>
+                val extras = Structure.Value.Record(Chunk("id" -> Structure.Value.Str("collides")))
+                val req    = JsonRpcRequest(JsonRpcId.Num(1L), "ping", Absent, Present(extras))
+                Abort.run[JsonRpcError](transport.send(req)).map {
+                    case Result.Failure(e: JsonRpcInvalidRequestError) =>
+                        // The offending key is carried as the error's data, which is what a peer would
+                        // be told; `message` is the protocol's fixed "Invalid Request" text.
+                        assert(
+                            e.data.exists {
+                                case Structure.Value.Str(s) => s.contains("'id' is reserved")
+                                case _                      => false
+                            },
+                            s"data was: ${e.data}"
+                        )
+                    case other => fail(s"expected a JsonRpcInvalidRequestError, got $other")
+                }
+            }
+        }
+    }
 
     "a send on transport A is received via incoming on transport B" in {
         for
@@ -157,8 +199,8 @@ class JsonRpcTransportTest extends JsonRpcTest:
             })
         }.map { outerResult =>
             outerResult match
-                case Result.Failure(_) => fail("timed out - incoming did not close on EOF")
-                case Result.Panic(t)   => fail(s"panic: ${t.getMessage}")
+                case Result.Failure(_)           => fail("timed out - incoming did not close on EOF")
+                case Result.Panic(t)             => fail(s"panic: ${t.getMessage}")
                 case Result.Success(innerResult) =>
                     innerResult match
                         case Result.Success(chunk: Chunk[?]) => assert(chunk.isEmpty)

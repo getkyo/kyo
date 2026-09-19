@@ -34,7 +34,7 @@ class HttpSecurityTest extends kyo.BaseHttpTest:
         val builder               = new ParsedRequestBuilder
         var result: ParsedRequest = null.asInstanceOf[ParsedRequest]
         var closedCalled: Boolean = false
-        val parser = new Http1Parser(
+        val parser                = new Http1Parser(
             channel,
             builder,
             maxHeaderSize,

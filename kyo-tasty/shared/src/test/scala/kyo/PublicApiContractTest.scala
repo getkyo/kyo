@@ -38,7 +38,7 @@ class PublicApiContractTest extends kyo.test.Test[Any]:
     // Annotation fixture: Package "scala" (id=0), Class "deprecated" (id=1), Method "doWork" carrying @deprecated (id=2).
     private def buildAnnotationFixture(using Frame): Tasty.Classpath < Sync =
         Sync.defer {
-            val scalaPkg = Tasty.Symbol.Package(SymbolId(0), Tasty.Name("scala"), Tasty.Flags.empty, SymbolId(-1), Chunk.empty)
+            val scalaPkg  = Tasty.Symbol.Package(SymbolId(0), Tasty.Name("scala"), Tasty.Flags.empty, SymbolId(-1), Chunk.empty)
             val deprClass = Tasty.Symbol.Class(
                 SymbolId(1),
                 Tasty.Name("deprecated"),
@@ -55,7 +55,7 @@ class PublicApiContractTest extends kyo.test.Test[Any]:
                 Chunk.empty
             )
             val scalaDeprecatedAnnot = Tasty.Annotation(Tasty.Type.Named(SymbolId(1)), Chunk.empty, Tasty.Name("scala.deprecated"))
-            val methodDoWork = Tasty.Symbol.Method(
+            val methodDoWork         = Tasty.Symbol.Method(
                 SymbolId(2),
                 Tasty.Name("doWork"),
                 Tasty.Flags.empty,

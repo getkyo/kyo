@@ -129,7 +129,7 @@ class ConnectionTest extends Test:
     // ── requireUser ───────────────────────────────────────────────────────────
 
     "requireUser returns the declared user".timeout(10.seconds) in {
-        val address = SqlConfig.Address("stub", "localhost", 5432, "app", Present("alice"))
+        val address = SqlConfig.Address.Network("stub", "localhost", 5432, "app", Present("alice"))
         Connection.requireUser(address).map { user =>
             assert(user == "alice")
         }
@@ -137,14 +137,14 @@ class ConnectionTest extends Test:
 
     // A declared empty user is what the URL said; whether it names an account is the server's judgment.
     "requireUser returns a declared empty user as it stands".timeout(10.seconds) in {
-        val address = SqlConfig.Address("stub", "localhost", 5432, "app", Present(""))
+        val address = SqlConfig.Address.Network("stub", "localhost", 5432, "app", Present(""))
         Connection.requireUser(address).map { user =>
             assert(user == "")
         }
     }
 
     "requireUser refuses an absent user".timeout(10.seconds) in {
-        val address = SqlConfig.Address("stub", "localhost", 5432, "app", Absent)
+        val address = SqlConfig.Address.Network("stub", "localhost", 5432, "app", Absent)
         Abort.run[SqlException](Connection.requireUser(address)).map { outcome =>
             outcome match
                 case Result.Failure(e: SqlConnectionUserRequiredException) => assert(e.scheme == "stub")

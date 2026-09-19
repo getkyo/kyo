@@ -74,11 +74,11 @@ class LogTest extends kyo.test.Test[Any]:
         // This test verifies that Log.withConsoleLogger binds the named logger in scope and that
         // level gating (trace is below debug) blocks the trace call before dispatch.
         import AllowUnsafe.embrace.danger
-        val captured = AtomicRef.Unsafe.init(List.empty[String])
+        val captured    = AtomicRef.Unsafe.init(List.empty[String])
         val captureSink = new Log.Unsafe:
-            val level: Log.Level                = Log.Level.debug
-            val name: String                    = "test.logger"
-            def withName(n: String): Log.Unsafe = this
+            val level: Log.Level                                                     = Log.Level.debug
+            val name: String                                                         = "test.logger"
+            def withName(n: String): Log.Unsafe                                      = this
             private def record(pfx: String, msg: => String)(using AllowUnsafe): Unit =
                 discard(captured.getAndUpdate(s"$pfx:$msg" :: _))
             def trace(msg: => String)(using Frame, AllowUnsafe): Unit                  = record("trace", msg)
@@ -180,11 +180,11 @@ class LogTest extends kyo.test.Test[Any]:
         // on its own thread, which does not inherit thread-local DynamicVariable Console streams.
         // Verifies: warn-level messages reach the sink; debug-level messages are silently dropped.
         import AllowUnsafe.embrace.danger
-        val captured = AtomicRef.Unsafe.init(List.empty[String])
+        val captured    = AtomicRef.Unsafe.init(List.empty[String])
         val captureSink = new Log.Unsafe:
-            val level: Log.Level                = Log.Level.warn
-            val name: String                    = "test"
-            def withName(n: String): Log.Unsafe = this
+            val level: Log.Level                                                     = Log.Level.warn
+            val name: String                                                         = "test"
+            def withName(n: String): Log.Unsafe                                      = this
             private def record(pfx: String, msg: => String)(using AllowUnsafe): Unit =
                 discard(captured.getAndUpdate(s"$pfx:$msg" :: _))
             def trace(msg: => String)(using Frame, AllowUnsafe): Unit                  = record("trace", msg)
@@ -355,7 +355,7 @@ class LogTest extends kyo.test.Test[Any]:
         val testLog = Log(new TestBackend("test-backend", Log.Level.debug))
         for
             ch <- Channel.init[String](2)
-            _ <- Log.let(testLog) {
+            _  <- Log.let(testLog) {
                 Fiber.init {
                     Log.get.map(log => ch.put(log.name))
                 }.map(_.get)
@@ -751,10 +751,10 @@ class LogTest extends kyo.test.Test[Any]:
             // starts, so the throwing event is dispatched first and the ordering is deterministic.
             val captured = AtomicRef.Unsafe.init(List.empty[String])
             val throwOn  = "boom"
-            val sink = new Log.Unsafe:
-                val level: Log.Level                = Log.Level.trace
-                val name: String                    = "throwing-sink"
-                def withName(n: String): Log.Unsafe = this
+            val sink     = new Log.Unsafe:
+                val level: Log.Level                                        = Log.Level.trace
+                val name: String                                            = "throwing-sink"
+                def withName(n: String): Log.Unsafe                         = this
                 private def record(msg: => String)(using AllowUnsafe): Unit =
                     val m = msg
                     // A fatal throwable (NonFatal returns false), which the drain must still contain.
@@ -849,9 +849,9 @@ class LogTest extends kyo.test.Test[Any]:
             val throwingToString = new RuntimeException("sink exploded"):
                 override def toString: String = throw new RuntimeException("toString itself threw")
             val sink = new Log.Unsafe:
-                val level: Log.Level                = Log.Level.trace
-                val name: String                    = "throwing-tostring-sink"
-                def withName(n: String): Log.Unsafe = this
+                val level: Log.Level                                        = Log.Level.trace
+                val name: String                                            = "throwing-tostring-sink"
+                def withName(n: String): Log.Unsafe                         = this
                 private def record(msg: => String)(using AllowUnsafe): Unit =
                     val m = msg
                     if m == "boom-tostring" then throw throwingToString

@@ -117,7 +117,7 @@ class ChatScenarioItTest extends UITest:
     }
 
     "very long message signal preserves" in {
-        val longMsg = "x" * 500
+        val longMsg         = "x" * 500
         val app: UI < Async =
             for
                 input <- Signal.initRef("")

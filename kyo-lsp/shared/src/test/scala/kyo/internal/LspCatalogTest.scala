@@ -22,7 +22,7 @@ class LspCatalogTest extends Test:
     "LspCatalogTest" - {
 
         "ClientHandled handler on server init throws WrongDirection" in {
-            val h = showMessageHandler
+            val h      = showMessageHandler
             val result = scala.util.Try(
                 LspCatalog.fromHandlers(Seq(h), LspHandler.Direction.ServerHandled)
             )
@@ -31,7 +31,7 @@ class LspCatalogTest extends Test:
         }
 
         "Direction.Either handler is accepted on server" in {
-            val h = LspHandler.initNotification[Unit, Nothing]("$/cancelRequest", LspHandler.Kind.CancelRequest, _ => ())
+            val h      = LspHandler.initNotification[Unit, Nothing]("$/cancelRequest", LspHandler.Kind.CancelRequest, _ => ())
             val result = scala.util.Try(
                 LspCatalog.fromHandlers(Seq(h), LspHandler.Direction.ServerHandled)
             )
@@ -39,7 +39,7 @@ class LspCatalogTest extends Test:
         }
 
         "Direction.Either handler is accepted on client" in {
-            val h = LspHandler.initNotification[Unit, Nothing]("$/cancelRequest", LspHandler.Kind.CancelRequest, _ => ())
+            val h      = LspHandler.initNotification[Unit, Nothing]("$/cancelRequest", LspHandler.Kind.CancelRequest, _ => ())
             val result = scala.util.Try(
                 LspCatalog.fromHandlers(Seq(h), LspHandler.Direction.ClientHandled)
             )
@@ -47,7 +47,7 @@ class LspCatalogTest extends Test:
         }
 
         "Reserved method in CustomHandler throws ReservedMethod" in {
-            val h = LspHandler.custom[Unit]("initialize")(_ => ())
+            val h      = LspHandler.custom[Unit]("initialize")(_ => ())
             val result = scala.util.Try(
                 LspCatalog.fromHandlers(Seq(h), LspHandler.Direction.ServerHandled)
             )
@@ -58,7 +58,7 @@ class LspCatalogTest extends Test:
         "All reserved method names are blocked" in {
             val reserved = Seq("initialize", "initialized", "shutdown", "exit", "$/cancelRequest", "$/progress", "$/setTrace")
             reserved.foreach { name =>
-                val h = LspHandler.custom[Unit](name)(_ => ())
+                val h      = LspHandler.custom[Unit](name)(_ => ())
                 val result = scala.util.Try(
                     LspCatalog.fromHandlers(Seq(h), LspHandler.Direction.ServerHandled)
                 )
@@ -69,8 +69,8 @@ class LspCatalogTest extends Test:
         }
 
         "Duplicate Kind (non-Custom) throws DuplicateHandler" in {
-            val h1 = serverHandler(LspHandler.Kind.Completion, "textDocument/completion")
-            val h2 = serverHandler(LspHandler.Kind.Completion, "textDocument/completion")
+            val h1     = serverHandler(LspHandler.Kind.Completion, "textDocument/completion")
+            val h2     = serverHandler(LspHandler.Kind.Completion, "textDocument/completion")
             val result = scala.util.Try(
                 LspCatalog.fromHandlers(Seq(h1, h2), LspHandler.Direction.ServerHandled)
             )
@@ -79,8 +79,8 @@ class LspCatalogTest extends Test:
         }
 
         "Duplicate Custom name throws DuplicateHandler" in {
-            val h1 = LspHandler.custom[Unit]("vendor/foo")(_ => ())
-            val h2 = LspHandler.custom[Unit]("vendor/foo")(_ => ())
+            val h1     = LspHandler.custom[Unit]("vendor/foo")(_ => ())
+            val h2     = LspHandler.custom[Unit]("vendor/foo")(_ => ())
             val result = scala.util.Try(
                 LspCatalog.fromHandlers(Seq(h1, h2), LspHandler.Direction.ServerHandled)
             )

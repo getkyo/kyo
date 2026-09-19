@@ -21,7 +21,7 @@ class MaxInFlightTest extends JsonRpcTest:
         // Unsafe: AtomicRef.Unsafe.init used for thread-safe envelope accumulation outside effect context
         val sent = AtomicRef.Unsafe.init(List.empty[JsonRpcEnvelope])(using AllowUnsafe.embrace.danger)
 
-        def send(env: JsonRpcEnvelope)(using Frame): Unit < (Async & Abort[Closed]) =
+        def send(env: JsonRpcEnvelope)(using Frame): Unit < (Async & Abort[Closed | JsonRpcError]) =
             Sync.defer(discard(sent.getAndUpdate(env :: _)(using AllowUnsafe.embrace.danger))).andThen {
                 val notifySignal: Unit < Sync =
                     if signalOn(env) then

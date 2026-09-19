@@ -31,7 +31,7 @@ class ReadOutcomeTest extends Test:
     }
 
     "ReadOutcome.WouldBlock is not a terminal outcome (re-arm, not EOF)" in {
-        val r = ReadOutcome.WouldBlock
+        val r          = ReadOutcome.WouldBlock
         val isTerminal = r match
             case ReadOutcome.WouldBlock => false
             case ReadOutcome.PeerFin | ReadOutcome.LocalShutdown |
@@ -42,7 +42,7 @@ class ReadOutcomeTest extends Test:
     }
 
     "ReadOutcome.PeerFin is a terminal outcome" in {
-        val r = ReadOutcome.PeerFin
+        val r          = ReadOutcome.PeerFin
         val isTerminal = r match
             case ReadOutcome.WouldBlock | ReadOutcome.Bytes(_) => false
             case _                                             => true

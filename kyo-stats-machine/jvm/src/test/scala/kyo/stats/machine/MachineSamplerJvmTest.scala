@@ -148,9 +148,9 @@ class MachineSamplerJvmTest extends kyo.test.Test[Any]:
                 _ <- memFile.write(
                     "MemTotal:       16384 kB\nMemAvailable:    8192 kB\nMemFree:  4096 kB\nSwapTotal:  2048 kB\nSwapFree: 1024 kB\n"
                 )
-                sampler  = new MachineSampler(handles)
-                statSlot = sampler.openSlot(statFile)
-                memSlot  = sampler.openSlot(memFile)
+                sampler   = new MachineSampler(handles)
+                statSlot  = sampler.openSlot(statFile)
+                memSlot   = sampler.openSlot(memFile)
                 decodeCpu = new MachineSampler.Decode:
                     def apply(b: Span[Byte], n: Int)(using AllowUnsafe): Unit = LinuxDecoders.cpu(b, n, 1L, handles)
                 decodeMem = new MachineSampler.Decode:
@@ -175,12 +175,12 @@ class MachineSamplerJvmTest extends kyo.test.Test[Any]:
         // warmup), with a single fixed mount pair; every call after that returns the same count without
         // rewriting the buffer, exactly matching a real host whose mount table does not change between reads.
         val mountsWritten = new Array[Boolean](1)
-        val stub = new MacosBindings:
+        val stub          = new MacosBindings:
             def hostCpuLoad(out: Buffer[Long])(using AllowUnsafe): Int          = 1
             def vmStatistics(out: Buffer[Long])(using AllowUnsafe): Int         = 1
             def swapUsage(out: Buffer[Long])(using AllowUnsafe): Int            = 1
             def getloadavg(out: Buffer[Double], n: Int)(using AllowUnsafe): Int = 0
-            def mounts(out: Buffer[Byte], cap: Int)(using AllowUnsafe): Int =
+            def mounts(out: Buffer[Byte], cap: Int)(using AllowUnsafe): Int     =
                 if !mountsWritten(0) then
                     MachineSamplerJvmTest.rootApfsPair.zipWithIndex.foreach { case (b, i) => out.set(i, b) }
                     mountsWritten(0) = true
@@ -262,7 +262,7 @@ class MachineSamplerJvmTest extends kyo.test.Test[Any]:
             def isEnabled: Boolean                  = false
             def enable(): Unit                      = ()
             def currentThreadAllocatedBytes(): Long = 0L
-        val acc = new Array[Long](1)
+        val acc     = new Array[Long](1)
         val failure = intercept[AssertionFailed] {
             AllocationProbe.assertBoundedPerOp(unsupported, warmupIters, measuredIters, 0.0, 0L) {
                 acc(0) = acc(0) + 1L
@@ -281,7 +281,7 @@ class MachineSamplerJvmTest extends kyo.test.Test[Any]:
                 sampler      = new MachineSampler(isolated)
                 baselineSlot = sampler.openSlot(baselineFile)
                 tickSlot     = sampler.openSlot(tickFile)
-                decode = new MachineSampler.Decode:
+                decode       = new MachineSampler.Decode:
                     def apply(b: Span[Byte], n: Int)(using AllowUnsafe): Unit = LinuxDecoders.cpu(b, n, 1L, isolated)
                 // Baselines the RateCell's prior with no observation recorded yet (RateCell's first-ever
                 // observe call only baselines), so the FIRST probe-driven call below records the one genuine

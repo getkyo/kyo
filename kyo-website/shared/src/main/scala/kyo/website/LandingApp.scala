@@ -252,7 +252,7 @@ object LandingApp:
         def xOf(i: Int): Double    = left + (i.toDouble / (n - 1).toDouble) * plotW
         def yOf(f: Double): Double = top + (1.0 - f) * plotH
 
-        val pts = failure.zipWithIndex.map((f, i) => (xOf(i), yOf(f)))
+        val pts      = failure.zipWithIndex.map((f, i) => (xOf(i), yOf(f)))
         val linePath =
             pts.drop(1).foldLeft(Svg.PathData.from(pts.head._1, pts.head._2))((acc, p) => acc.lineTo(p._1, p._2))
         val areaPath = linePath.lineTo(pts.last._1, baseY).lineTo(pts.head._1, baseY).close
@@ -764,8 +764,8 @@ object LandingApp:
     // connector: the `platformsConnect` lines fan down from its center to the four cards. The band is always
     // dark, so the glyph strokes are fixed light values (not theme vars); the 120x46 viewBox renders ~1:1.
     private def platformsSource(using Frame): UI =
-        val faint = Svg.Paint.Color(Style.Color.rgba(255, 255, 255, 0.32))
-        val frame = Svg.Paint.Color(Style.Color.rgba(255, 255, 255, 0.18))
+        val faint     = Svg.Paint.Color(Style.Color.rgba(255, 255, 255, 0.32))
+        val frame     = Svg.Paint.Color(Style.Color.rgba(255, 255, 255, 0.18))
         val codeLines = Seq(64.0, 44.0, 54.0).zipWithIndex.map { (lineW, i) =>
             val ly = 16.0 + i * 9.0
             Svg.line.x1(16).y1(ly).x2(16.0 + lineW).y2(ly).stroke(faint).strokeWidth(2.0).strokeLinecap(Svg.StrokeLinecap.Round)
@@ -805,7 +805,7 @@ object LandingApp:
         val topY    = 3.0
         val botY    = 49.0
         val midY    = (topY + botY) / 2.0
-        val fans = targets.zipWithIndex.map { (tx, i) =>
+        val fans    = targets.zipWithIndex.map { (tx, i) =>
             // A vertical-tangent cubic: it leaves the box straight down, curves out across the middle band,
             // and arrives at the card straight down, so the four strokes fan symmetrically with no hard angle.
             val d = Svg.PathData.from(srcX, topY).cubicTo(srcX, midY, tx, midY, tx, botY)

@@ -5,8 +5,7 @@ import java.util.concurrent.atomic.AtomicReference
 import kyo.*
 import scala.util.control.NonFatal
 
-/** The test-backend descriptors this run can actually exercise: the registered set when a container runtime is reachable, empty when it is
-  * not.
+/** The test-backend descriptors this run can actually exercise: the registered set filtered by whether each one is reachable here.
   *
   * A caller reads [[available]] and iterates it. An empty result is meaningful and is the caller's to react to: `SqlBackendTest.forEachBackend`
   * turns it into a failing leaf rather than a silent green, because a conformance run with no backend to exercise has verified nothing.
@@ -16,15 +15,14 @@ import scala.util.control.NonFatal
   */
 object SqlTestBackends:
 
-    /** The descriptors to run this pass, computed once: every registered descriptor when [[containerRuntimeReachable]] holds, and none when it
-      * does not, so an unreachable runtime yields an empty set rather than descriptors whose containers cannot start.
+    /** The descriptors to run this pass: those the registry carries that can also be exercised here.
       *
-      * Forcing [[TestBackendRegistration.ensure]] first is what makes the register-fallback platforms (JS, Wasm, and the second backend on
-      * Native) contribute their descriptors before the registry is read; the services scan reaches the rest.
+      * Reachability is asked of each descriptor rather than of the host, since a server engine needs a container daemon and an embedded one
+      * needs nothing: one probe standing in for "can this run" would exclude every backend that never needed a daemon. See
+      * [[SqlTestBackend.reachable]].
       */
     lazy val available: Seq[SqlTestBackend] =
-        TestBackendRegistration.ensure()
-        if containerRuntimeReachable then SqlTestBackendRegistry.all else Seq.empty
+        registered.filter(_.reachable)
 
     /** Every descriptor this build ships, whether or not a container runtime can start one.
       *
@@ -37,12 +35,6 @@ object SqlTestBackends:
     lazy val registered: Seq[SqlTestBackend] =
         TestBackendRegistration.ensure()
         SqlTestBackendRegistry.all
-
-    /** Whether a container runtime is reachable, delegated to [[kyo.internal.ContainerRuntimeProbe]]. A host with no
-      * reachable daemon reads as unreachable, which under the fail-on-empty rule above surfaces as a RED failing leaf
-      * rather than a silent green, the safe direction.
-      */
-    private lazy val containerRuntimeReachable: Boolean = ContainerRuntimeProbe.reachable
 
 end SqlTestBackends
 

@@ -25,7 +25,7 @@ class CallbackIntegrationTest extends Test:
             val cmp  = (a: Int, b: Int) => a - b
             val stub = UpcallBridge.stub2(cmp, fd, arena, "kyo.example.Spec", "testMethod", "transient")
             assert(!stub.equals(MemorySegment.NULL))
-            val cbMh = linker.downcallHandle(stub, fd).nn
+            val cbMh  = linker.downcallHandle(stub, fd).nn
             val out10 = cbMh.invokeWithArguments(java.lang.Integer.valueOf(10), java.lang.Integer.valueOf(4))
                 .asInstanceOf[java.lang.Integer]
             assert(out10.intValue() == 6)
@@ -56,8 +56,8 @@ class CallbackIntegrationTest extends Test:
     "MemorySegment-passing callback: receives an ADDRESS argument unboxed to MemorySegment" in {
         val arena = Arena.ofConfined().nn
         try
-            val fd                       = FunctionDescriptor.ofVoid(ADDRESS, JAVA_INT).nn
-            @volatile var seenValue: Int = -1
+            val fd                                  = FunctionDescriptor.ofVoid(ADDRESS, JAVA_INT).nn
+            @volatile var seenValue: Int            = -1
             val onBuf: (MemorySegment, Int) => Unit = (seg, len) =>
                 // Scala sees the raw pointer as a MemorySegment; re-interpret to read the first `len` bytes.
                 val sized = seg.reinterpret(len.toLong).nn

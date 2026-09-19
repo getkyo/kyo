@@ -75,7 +75,7 @@ class PostgresRowCodecTest extends Test:
     "an interrupt raised by a decoder propagates instead of being reported as a decode failure" in {
         val interrupt              = new InterruptedException()
         given PostgresDecoder[Int] = throwing(interrupt)
-        val thrown = intercept[InterruptedException] {
+        val thrown                 = intercept[InterruptedException] {
             val _ = Abort.run[SqlDecodeException](PostgresRowCodec.columnDecoded[Int](oneColumnRow, 0)).eval
         }
         assert(thrown eq interrupt)

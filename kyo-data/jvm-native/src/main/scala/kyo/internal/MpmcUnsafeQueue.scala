@@ -19,9 +19,9 @@ final private[kyo] class MpmcUnsafeQueue[A](requestedCapacity: Int) extends Unsa
     private val mask           = actualCapacity - 1
     private val lookAheadStep  = Math.max(2, Math.min(actualCapacity / 4, 4096))
     // No init needed: AtomicReferenceArray defaults to null, which is the empty sentinel.
-    private val buffer = new AtomicReferenceArray[AnyRef](actualCapacity)
+    private val buffer         = new AtomicReferenceArray[AnyRef](actualCapacity)
     private val sequenceBuffer =
-        val b = new AtomicLongArray(actualCapacity)
+        val b                           = new AtomicLongArray(actualCapacity)
         @tailrec def init(i: Int): Unit =
             if i < actualCapacity then
                 b.lazySet(i, i.toLong)

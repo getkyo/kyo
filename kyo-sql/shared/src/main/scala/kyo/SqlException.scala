@@ -101,8 +101,8 @@ object SqlConnectionUrlParseException:
       * over-masking a diagnostic beats leaking a credential.
       */
     private[kyo] def redactUserInfo(url: String): String =
-        val schemeSep = url.indexOf("://")
-        val start     = if schemeSep < 0 then 0 else schemeSep + 3
+        val schemeSep    = url.indexOf("://")
+        val start        = if schemeSep < 0 then 0 else schemeSep + 3
         val authorityEnd =
             if schemeSep < 0 then url.length
             else
@@ -225,13 +225,31 @@ final case class SqlConnectionAcquireTimeoutException(acquireTimeout: Duration)(
   * @param budgetSource
   *   where the budget came from: the URL's `connectTimeout`, or the config's `acquireTimeout` standing in for it
   */
-final case class SqlConnectionEstablishTimeoutException(timeout: Duration, host: String, port: Int, budgetSource: String)(using Frame)
+final case class SqlConnectionEstablishTimeoutException(timeout: Duration, address: SqlConfig.Address, budgetSource: String)(using Frame)
     extends SqlConnectionException(
-        s"Opening a connection to $host:$port timed out after ${timeout.show}. The budget covers the TCP connect and the " +
-            s"authentication handshake together, so this does not by itself mean the server was unreachable. Raise it with $budgetSource."
+        // The address rather than a host and port, because an embedded engine has neither and its open can still time
+        // out on the file. What the budget COVERS differs the same way, so the sentence naming it does too.
+        s"Opening a connection to ${SqlConnectionEstablishTimeoutException.describe(address)} timed out after ${timeout.show}. " +
+            SqlConnectionEstablishTimeoutException.budgetCovers(address) +
+            s" Raise it with $budgetSource."
     ) with SqlRetryable
 
 object SqlConnectionEstablishTimeoutException:
+
+    private def describe(address: SqlConfig.Address): String =
+        address match
+            case a: SqlConfig.Address.Network => s"${a.host}:${a.port}"
+            case a: SqlConfig.Address.Local   => a.path
+
+    private def budgetCovers(address: SqlConfig.Address): String =
+        address match
+            case _: SqlConfig.Address.Network =>
+                "The budget covers the TCP connect and the authentication handshake together, so this does not by itself " +
+                    "mean the server was unreachable."
+            case _: SqlConfig.Address.Local =>
+                "The budget covers opening the database and preparing the session, so this does not by itself mean the " +
+                    "path was unreachable."
+
     /** The budget came from the config's `acquireTimeout`, which stands in when the URL declares no `connectTimeout`. */
     val fromAcquireTimeout: String = "`acquireTimeout` on SqlConfig (or `connectTimeout` in the URL, which takes precedence)"
 

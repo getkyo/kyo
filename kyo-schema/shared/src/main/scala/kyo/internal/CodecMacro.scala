@@ -14,8 +14,7 @@ object CodecMacro:
       * The ID is a 21-bit positive integer (0 to 2,097,151), which fits within protobuf's field number range (1 to 536,870,911) while
       * providing good collision resistance for typical schemas.
       */
-    def fieldId(name: String): Int =
-        (XXHash.hash32(name) & 0x1fffff) + 1
+    def fieldId(name: String): Int = (XXHash.hash32(name) & 0x1fffff) + 1
 
     /** Creates Array[Array[Byte]] without ClassTag (avoids scala.Array.apply varargs allocation) */
     def mkFieldBytesPublic(exprs: List[Expr[Array[Byte]]])(using Quotes): Expr[Array[Array[Byte]]] =
@@ -25,7 +24,7 @@ object CodecMacro:
         val arrSym  = Symbol.newVal(Symbol.spliceOwner, "$fieldBytesArr", arrType, Flags.EmptyFlags, Symbol.noSymbol)
         val arrDef  = ValDef(arrSym, Some('{ new Array[Array[Byte]](${ Expr(n) }) }.asTerm))
         val arrRef  = Ref(arrSym)
-        val sets = exprs.zipWithIndex.map { (e, i) =>
+        val sets    = exprs.zipWithIndex.map { (e, i) =>
             Apply(Select.unique(arrRef, "update"), List(Literal(IntConstant(i)), e.asTerm))
         }
         Block(arrDef :: sets, arrRef).asExprOf[Array[Array[Byte]]]

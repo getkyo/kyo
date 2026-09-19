@@ -35,7 +35,7 @@ class EmitterGoldenTest extends kyo.test.Test[Any]:
         // The codegen module lives at kyo-ffi/codegen. The forked test JVM's cwd is that module dir; a repo-root cwd
         // resolves into it. If cwd already ends with kyo-ffi/codegen use it, otherwise resolve it as a child of cwd.
         val marker = Paths.get("kyo-ffi", "codegen")
-        val base =
+        val base   =
             if cwd.endsWith(marker) then cwd
             else cwd.resolve(marker)
         base.resolve("src/test/resources/golden")
@@ -268,7 +268,7 @@ class EmitterGoldenTest extends kyo.test.Test[Any]:
                 val expectedLines = expected.linesIterator.toList
                 val actualLines   = actual.linesIterator.toList
                 val firstDiff     = expectedLines.zip(actualLines).zipWithIndex.find { case ((e, a), _) => e != a }
-                val where = firstDiff match
+                val where         = firstDiff match
                     case Some(((e, a), idx)) => s"line ${idx + 1}:\n  expected: $e\n  actual:   $a"
                     case None                => s"lengths differ: expected=${expectedLines.size}, actual=${actualLines.size}"
                 val excerpt = actualLines.take(10).mkString("\n")

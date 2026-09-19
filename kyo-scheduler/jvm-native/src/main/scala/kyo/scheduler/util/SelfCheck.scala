@@ -99,7 +99,7 @@ final class SelfCheck(
         )
 
     def runClient(): Unit = {
-        val cdl = new CountDownLatch(1)
+        val cdl  = new CountDownLatch(1)
         val task = Task {
             var acc       = 0d
             val startTime = System.currentTimeMillis()

@@ -23,7 +23,7 @@ class SslLibProviderTest extends Test:
     "a malformed configured PEM path throws NetTlsConfigException carrying the path and the read cause" in {
         if !TlsRealEngines.boringSslAvailable() then cancel("BoringSSL not staged for this host")
         val path = unreadablePath()
-        val ex = intercept[NetTlsConfigException] {
+        val ex   = intercept[NetTlsConfigException] {
             val engine = BoringSslProvider.createEngine(NetTlsConfig(caCertPath = Present(path)), "localhost", isServer = false)
             engine.free()
         }

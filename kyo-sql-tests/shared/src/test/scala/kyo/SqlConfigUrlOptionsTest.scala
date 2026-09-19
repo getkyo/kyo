@@ -2,6 +2,7 @@ package kyo
 
 import kyo.internal.SqlSharedContainers
 import kyo.internal.SqlSharedContainers.Backend
+import kyo.internal.network
 import kyo.net.Connection
 
 /** Asserts that each option a URL declares reaches the code that applies it.
@@ -89,7 +90,7 @@ class SqlConfigUrlOptionsTest extends SqlContainerTest:
                                     e.timeout == 1.second,
                                     s"establishment must be bounded by the URL's connectTimeout, was bounded by ${e.timeout}"
                                 )
-                                assert(e.port == listener.port)
+                                assert(e.address.network.port == listener.port)
                                 // The failure names the knob that supplied the budget, which is the URL's here, and says
                                 // that authentication shares it: this server answers the TCP connect and then nothing, so
                                 // a message pointing only at reachability would send a reader to the wrong place.

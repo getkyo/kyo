@@ -37,7 +37,7 @@ final class SystemExitException(val code: Int)(using Frame) extends kyo.KyoExcep
   * @see
   *   [[kyo.test.RunConfig]] the configuration object assembled from parsed arguments
   * @see
-  *   [[kyo.test.TestFilter]] populated from `--include`, `--exclude`, and `--tag` flags
+  *   [[kyo.test.TestFilter]] populated from `--filter=<glob>`, `--tag=<name>` and `--exclude-tag=<name>` flags
   */
 object Cli:
 

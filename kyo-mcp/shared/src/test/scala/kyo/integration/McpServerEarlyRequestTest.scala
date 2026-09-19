@@ -32,7 +32,7 @@ class McpServerEarlyRequestTest extends Test:
         Structure.Value.Record(Chunk(
             "protocolVersion" -> Structure.Value.Str(protocolVersion),
             "capabilities"    -> Structure.Value.Record(Chunk.empty),
-            "clientInfo" -> Structure.Value.Record(Chunk(
+            "clientInfo"      -> Structure.Value.Record(Chunk(
                 "name"    -> Structure.Value.Str("early-client"),
                 "version" -> Structure.Value.Str("0.0.0")
             ))
@@ -40,7 +40,7 @@ class McpServerEarlyRequestTest extends Test:
 
     private def callParams: Structure.Value =
         Structure.Value.Record(Chunk(
-            "name" -> Structure.Value.Str("run_select"),
+            "name"      -> Structure.Value.Str("run_select"),
             "arguments" -> Structure.Value.Record(Chunk(
                 "sql" -> Structure.Value.Str("select 1")
             ))
@@ -50,7 +50,7 @@ class McpServerEarlyRequestTest extends Test:
         McpHandler.tool[Query]("run_select", "Run a query")(q => Rows(q.sql.length))
 
     /** Queues the whole burst, starts the server, and returns the responses it sent back. */
-    private def burst(using Frame): Chunk[JsonRpcResponse] < (Async & Scope & Abort[Closed | McpException]) =
+    private def burst(using Frame): Chunk[JsonRpcResponse] < (Async & Scope & Abort[Closed | McpException | JsonRpcError]) =
         JsonRpcTransport.inMemory.flatMap { (serverSide, clientSide) =>
             for
                 // Pipelined, with no wait for the initialize response: the burst is already sitting on

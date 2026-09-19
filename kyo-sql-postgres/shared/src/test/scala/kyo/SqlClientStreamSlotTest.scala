@@ -117,7 +117,7 @@ class SqlClientStreamSlotTest extends Test:
             // observability accessors do.
             (client.runtime.pool.slotPermits(client.url.address), client.runtime.pool.slotCapacity(client.url.address)) match
                 case (Present(available), Present(capacity)) => (available, capacity)
-                case _ =>
+                case _                                       =>
                     fail(s"no slot channel exists for ${client.url.address}, so no lease ever reached the pool")
         }
 

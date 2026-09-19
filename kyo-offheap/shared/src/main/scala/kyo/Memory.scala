@@ -217,7 +217,7 @@ object Memory:
                 l.set(self, index * l.size, value)
 
             inline def fill(value: A)(using AllowUnsafe): Unit =
-                val len = size
+                val len                         = size
                 @tailrec def loop(i: Int): Unit =
                     if i < len then
                         set(i, value)
@@ -226,7 +226,7 @@ object Memory:
             end fill
 
             inline def fold[B](z: B)(inline f: (B, A) => B)(using AllowUnsafe): B =
-                val len = size
+                val len                              = size
                 @tailrec def loop(i: Int, acc: B): B =
                     if i < len then
                         loop(i + 1, f(acc, get(i)))
@@ -235,7 +235,7 @@ object Memory:
             end fold
 
             inline def findIndex(inline f: A => Boolean)(using AllowUnsafe): Maybe[Int] =
-                val len = size
+                val len                               = size
                 @tailrec def loop(i: Int): Maybe[Int] =
                     if i < len then
                         if f(get(i)) then Present(i)

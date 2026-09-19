@@ -187,7 +187,7 @@ class PostgresEncoderTest extends kyo.Test:
 
     "NUMERIC binary NaN throws SqlDecodeException with NaN in the message" in {
         val bytes = numericSpecialBytes(0xc000)
-        val ex = intercept[SqlDecodeException] {
+        val ex    = intercept[SqlDecodeException] {
             PostgresDecoder.numeric.read(Format.Binary, bytes)
         }
         assert(ex.getMessage.contains("NaN"), s"expected NaN in message, got: ${ex.getMessage}")
@@ -195,13 +195,13 @@ class PostgresEncoderTest extends kyo.Test:
 
     "NUMERIC binary +Infinity and -Infinity throw SqlDecodeException with Infinity in the messages" in {
         val posInfBytes = numericSpecialBytes(0xd000)
-        val posEx = intercept[SqlDecodeException] {
+        val posEx       = intercept[SqlDecodeException] {
             PostgresDecoder.numeric.read(Format.Binary, posInfBytes)
         }
         assert(posEx.getMessage.contains("Infinity"), s"expected Infinity in message, got: ${posEx.getMessage}")
 
         val negInfBytes = numericSpecialBytes(0xf000)
-        val negEx = intercept[SqlDecodeException] {
+        val negEx       = intercept[SqlDecodeException] {
             PostgresDecoder.numeric.read(Format.Binary, negInfBytes)
         }
         assert(negEx.getMessage.contains("Infinity"), s"expected Infinity in message, got: ${negEx.getMessage}")

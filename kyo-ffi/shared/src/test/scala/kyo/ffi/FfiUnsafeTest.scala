@@ -18,7 +18,7 @@ class FfiUnsafeTest extends Test:
             // (Scala.js boxes primitive integers to narrower Java types like `java.lang.Byte`, use a String subject instead).
             class Marker
             val other: AnyRef = new Marker
-            val thrown = intercept[FfiInternalError](
+            val thrown        = intercept[FfiInternalError](
                 FfiUnsafe.expect[java.lang.String](
                     other,
                     classOf[String],

@@ -184,7 +184,7 @@ object ChartShowcaseDemo extends KyoApp:
             // equality against each series path's representative row, which lowerLine tags as the series'
             // FIRST row, so we select Beta's first row (x = 0). Driving from one explicit click makes the
             // before/after deterministic instead of racing a timer against page load.
-            betaRow = Maybe.fromOption(lineData.find(p => p.series == Series.Beta && p.x == 0))
+            betaRow       = Maybe.fromOption(lineData.find(p => p.series == Series.Beta && p.x == 0))
             animateAction =
                 revSignal.set(revEnd)
                     .andThen(areaSignal.set(areaEnd))

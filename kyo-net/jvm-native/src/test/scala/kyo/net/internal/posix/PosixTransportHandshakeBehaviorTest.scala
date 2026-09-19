@@ -101,7 +101,7 @@ class PosixTransportHandshakeBehaviorTest extends Test:
             withTransport { transport =>
                 for
                     handlerReady <- Channel.init[Unit](1)
-                    listener <- transport.listenTls("127.0.0.1", 0, 16, serverTls) { serverConn =>
+                    listener     <- transport.listenTls("127.0.0.1", 0, 16, serverTls) { serverConn =>
                         discard(Sync.Unsafe.evalOrThrow {
                             Fiber.initUnscoped {
                                 Abort.run[Closed] {
@@ -146,7 +146,7 @@ class PosixTransportHandshakeBehaviorTest extends Test:
             assumeTlsReady()
             withTransport { transport =>
                 for
-                    ready <- Channel.init[Unit](1)
+                    ready    <- Channel.init[Unit](1)
                     listener <- transport.listenTls("127.0.0.1", 0, 16, serverTls) { serverConn =>
                         discard(Sync.Unsafe.evalOrThrow {
                             Fiber.initUnscoped {
@@ -218,7 +218,7 @@ class PosixTransportHandshakeBehaviorTest extends Test:
                 for
                     // Count how many handlers have started, each completes a promise from the channel.
                     handlerCounter <- Channel.init[Unit](n)
-                    listener <- transport.listen("127.0.0.1", 0, n * 2) { serverConn =>
+                    listener       <- transport.listen("127.0.0.1", 0, n * 2) { serverConn =>
                         // Echo once then close.
                         discard(Sync.Unsafe.evalOrThrow {
                             Fiber.initUnscoped {
@@ -328,7 +328,7 @@ class PosixTransportHandshakeBehaviorTest extends Test:
             assumePollerReady()
             withTransport { transport =>
                 for
-                    ready <- Channel.init[Unit](1)
+                    ready    <- Channel.init[Unit](1)
                     listener <- transport.listen("127.0.0.1", 0, 16) { serverConn =>
                         discard(Sync.Unsafe.evalOrThrow {
                             Fiber.initUnscoped {

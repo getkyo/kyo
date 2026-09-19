@@ -36,7 +36,7 @@ class HttpServerBench extends ArenaBench.ForkOnly("pong"):
         given CanEqual[Method, Method]     = CanEqual.derived
         given CanEqual[Uri.Path, Uri.Path] = CanEqual.derived
         given LoggerFactory[IO]            = Slf4jFactory.create[IO]
-        val routes = org.http4s.HttpRoutes.of[IO] {
+        val routes                         = org.http4s.HttpRoutes.of[IO] {
             case GET -> Root / "ping" => Ok("pong")
         }
         EmberServerBuilder.default[IO]

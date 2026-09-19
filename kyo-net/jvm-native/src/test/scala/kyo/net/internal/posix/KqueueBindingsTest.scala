@@ -44,8 +44,8 @@ class KqueueBindingsTest extends Test:
                 finally
                     out.close()
                     ol.close()
-            val client   = sock.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
-            val (ca, cl) = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", port).getOrElse(fail("encode failed"))
+            val client    = sock.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
+            val (ca, cl)  = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", port).getOrElse(fail("encode failed"))
             val connected =
                 Sync.ensure(Sync.defer(ca.close()))(sock.connect(client, ca, cl).safe.get.map(r => assert(r.value == 0)))
             connected.andThen {
@@ -70,7 +70,7 @@ class KqueueBindingsTest extends Test:
                 pair <- loopbackPair()
                 (client, accepted) = pair
                 change             = Buffer.alloc[Byte](KEvent.size)
-                _ = KEvent.encodeChange(
+                _                  = KEvent.encodeChange(
                     change,
                     accepted,
                     PosixConstants.EVFILT_READ,

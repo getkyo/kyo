@@ -39,7 +39,7 @@ class ClasspathAnnotatedJavaTest extends kyo.test.Test[Any]:
             )
             // Symbol 3: class "A" carrying a JavaAnnotation whose annotationClass is symbol 2
             val javaAnnot = Tasty.Java.Annotation(annotCls, Chunk.empty, Tasty.Name("java.lang.Deprecated"))
-            val clsA = Tasty.Symbol.Class(
+            val clsA      = Tasty.Symbol.Class(
                 SymbolId(3),
                 Tasty.Name("A"),
                 Tasty.Flags.empty,

@@ -184,8 +184,8 @@ class TimeTest extends CompatTest:
     "concurrent sleeps overlap (peak-concurrency canary)" in run {
         // Parallelism is overlap, not duration. Each leg marks itself active and samples the peak before sleeping past a
         // shared barrier, so the second to arrive samples 2 race-free; a sequential zip fails through testTimeout instead.
-        val active = new AtomicInteger(0)
-        val peak   = new AtomicInteger(0)
+        val active                                             = new AtomicInteger(0)
+        val peak                                               = new AtomicInteger(0)
         def leg(d: FiniteDuration, barrier: CLatch): CIO[Unit] =
             CIO.defer {
                 val cur = active.incrementAndGet()

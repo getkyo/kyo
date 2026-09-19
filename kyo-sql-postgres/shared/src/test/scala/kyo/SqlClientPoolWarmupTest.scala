@@ -302,8 +302,8 @@ class SqlClientPoolWarmupTest extends SqlContainerTest:
                 kyo.internal.FakeServer.listenPort { conn =>
                     openCount.incrementAndGet.unit.andThen(pgTrustHandler(conn))
                 }.flatMap { listener =>
-                    val port = listener.port
-                    val url  = fakeUrl(port)
+                    val port   = listener.port
+                    val url    = fakeUrl(port)
                     val config = SqlConfig(
                         maxConnections = 5,
                         minConnections = 3,
@@ -470,7 +470,7 @@ class SqlClientPoolWarmupTest extends SqlContainerTest:
                                 // connections were closed.
                                 Abort.run[Timeout](Async.timeout(5.seconds)(clientClosedLatch.await)).map {
                                     case Result.Success(_) => succeed
-                                    case _ =>
+                                    case _                 =>
                                         fail(
                                             "the 2 successful warmUp connections were not closed after partial failure"
                                         )

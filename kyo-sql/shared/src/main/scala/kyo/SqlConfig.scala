@@ -237,26 +237,66 @@ object SqlConfig:
       *   backends treat them differently: a handshake that requires a user name refuses an [[Absent]] one before opening a socket
       *   (see [[SqlConnectionUserRequiredException]]), while an empty one is sent and the server rules on whether it names an account.
       */
-    final case class Address(
-        scheme: String,
-        host: String,
-        port: Int,
-        database: String,
-        user: Maybe[String]
-    ) derives CanEqual
+    sealed trait Address derives CanEqual:
+        /** The URL scheme this address was spelled with, which is what resolves it to a backend. */
+        def scheme: String
 
     object Address:
+
+        /** An endpoint reached over the network, which is every server engine.
+          *
+          * @param host
+          *   hostname or IP address
+          * @param port
+          *   TCP port number
+          * @param database
+          *   database name
+          * @param user
+          *   the authentication user name the endpoint declared, with the [[Absent]] and empty spellings distinguished as above
+          */
+        final case class Network(
+            scheme: String,
+            host: String,
+            port: Int,
+            database: String,
+            user: Maybe[String]
+        ) extends Address derives CanEqual
+
+        /** A database the process opens directly, which is every embedded engine.
+          *
+          * Kept separate from [[Network]] so a network backend can never be handed a path and an embedded one can never be handed a port.
+          *
+          * @param path
+          *   whatever coordinate the engine opens: a file path, or a name with a meaning the engine defines
+          */
+        final case class Local(
+            scheme: String,
+            path: String
+        ) extends Address derives CanEqual
+
         /** Renders the address back into the URL form it came from, so an absent user produces no `user@` component at all.
           *
           * The three spellings stay distinguishable, which is the point of the field being a [[Maybe]]: `postgres://alice@h:5432/db` for a named
           * user, `postgres://@h:5432/db` for a declared empty one, and `postgres://h:5432/db` for none. Reporting an absent user as the literal
           * `Absent`, as a bare `@`, or as an empty string before one would each put a spelling on the page that no URL parses back to.
           */
-        given Render[Address] = Render.from { a =>
-            val userInfo = a.user match
-                case Present(user) => s"$user@"
-                case Absent        => ""
-            s"${a.scheme}://$userInfo${a.host}:${a.port}/${a.database}"
+        /** Narrows to a [[Network]] address, failing typed when handed a local one.
+          *
+          * A network backend narrows once at its factory entry so the layers beneath it need not re-check. The failure is unreachable
+          * through [[kyo.SqlClient.init]], which routes by scheme and hands a backend only the addresses its own scheme parses.
+          */
+        def requireNetwork(address: Address)(using Frame): Network < Abort[SqlException] =
+            address match
+                case n: Network => n
+                case l: Local   => Abort.fail(SqlConnectionUrlParseException(Render.asString(l), l.scheme))
+
+        given Render[Address] = Render.from {
+            case a: Network =>
+                val userInfo = a.user match
+                    case Present(user) => s"$user@"
+                    case Absent        => ""
+                s"${a.scheme}://$userInfo${a.host}:${a.port}/${a.database}"
+            case a: Local => s"${a.scheme}://${a.path}"
         }
     end Address
 
@@ -435,12 +475,12 @@ object SqlConfig:
                 Frame
             ): Result[SqlConnectionException, Maybe[Duration]] =
                 Maybe.fromOption(pairs.get(key)) match
-                    case Absent => Result.Success(Absent)
+                    case Absent       => Result.Success(Absent)
                     case Present(raw) =>
                         raw.toIntOption match
                             case Some(0)          => Result.Success(Present(Duration.Infinity))
                             case Some(n) if n > 0 => Result.Success(Present(n.seconds))
-                            case Some(_) =>
+                            case Some(_)          =>
                                 Result.fail(SqlConnectionUrlOptionException(
                                     key,
                                     raw,
@@ -449,7 +489,7 @@ object SqlConfig:
                             case None =>
                                 Duration.parse(raw) match
                                     case Result.Success(d) => Result.Success(Present(d))
-                                    case _ =>
+                                    case _                 =>
                                         Result.fail(SqlConnectionUrlOptionException(
                                             key,
                                             raw,
@@ -468,13 +508,28 @@ object SqlConfig:
                             case "require"     => Result.Success(Present(TlsMode.Require))
                             case "verify-ca"   => Result.Success(Present(TlsMode.VerifyCa))
                             case "verify-full" => Result.Success(Present(TlsMode.VerifyFull))
-                            case _ =>
+                            case _             =>
                                 Result.fail(SqlConnectionUrlOptionException(
                                     "sslmode",
                                     raw,
                                     "one of disable, allow, prefer, require, verify-ca, verify-full"
                                 ))
         end Options
+
+        /** The scheme `raw` declares, lowercased, or a parse failure when it declares none.
+          *
+          * Resolving a backend needs only this much; the rest of the URL's shape is the backend's own, since an embedded engine's
+          * coordinate is a path that the network parser below would reject. Lowercased per character, so an upper-cased scheme resolves the
+          * same under a tr or az default locale.
+          */
+        def schemeOf(raw: String)(using Frame): Result[SqlConnectionException, String] =
+            val schemeEnd = raw.indexOf("://")
+            if schemeEnd < 0 then Result.fail(SqlConnectionUrlParseException(raw, ""))
+            else
+                val scheme = raw.substring(0, schemeEnd).map(_.toLower)
+                if scheme.isEmpty then Result.fail(SqlConnectionUrlParseException(raw, scheme)) else Result.succeed(scheme)
+            end if
+        end schemeOf
 
         /** Parses a URL string into a [[Url]].
           *
@@ -515,7 +570,7 @@ object SqlConfig:
                     // `user:@host` said "empty password" and is Present("").
                     val (user, password) =
                         userInfo match
-                            case Absent => (Maybe.empty[String], Maybe.empty[String])
+                            case Absent        => (Maybe.empty[String], Maybe.empty[String])
                             case Present(info) =>
                                 info.indexOf(':') match
                                     case -1  => (Present(info), Maybe.empty[String])
@@ -543,7 +598,7 @@ object SqlConfig:
                                                 Result.fail(SqlConnectionUrlParseException(raw, scheme))
                                             case Some(port) =>
                                                 Options.parse(queryString).map { options =>
-                                                    Url(Address(scheme, h, port, db, user), password, options)
+                                                    Url(Address.Network(scheme, h, port, db, user), password, options)
                                                 }
                                     end if
                                 end if
@@ -562,7 +617,7 @@ object SqlConfig:
                                                 case Some(port) =>
                                                     val host = hostPort.substring(0, portIdx)
                                                     Options.parse(queryString).map { options =>
-                                                        Url(Address(scheme, host, port, db, user), password, options)
+                                                        Url(Address.Network(scheme, host, port, db, user), password, options)
                                                     }
                                         end if
                             end if

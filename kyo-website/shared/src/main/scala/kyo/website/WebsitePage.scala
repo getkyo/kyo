@@ -91,7 +91,8 @@ object WebsitePage:
     private def fontLinks: Seq[(String, String)] = Seq(
         "preconnect" -> "https://fonts.googleapis.com",
         "preconnect" -> "https://fonts.gstatic.com",
-        "stylesheet" -> "https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+        "stylesheet" ->
+            "https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
     )
 
 end WebsitePage

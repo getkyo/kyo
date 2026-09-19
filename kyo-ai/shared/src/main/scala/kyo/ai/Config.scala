@@ -80,12 +80,18 @@ final case class Config private (
     // default applies, so an untouched config states nothing and never warns; a warning fires only on a
     // STATED amount the encoding cannot express. Held rather than dropped where it cannot ride, since
     // one config re-aims across providers, and held while reasoning is off.
-    reasoningAmount: Maybe[Config.Amount] = Absent
+    reasoningAmount: Maybe[Config.Amount] = Absent,
+    // A dedicated decision provider for Decider questions. Absent (the default): this config's own
+    // completion provider answers them by structured output; Present: that provider's model answers them
+    // with calibrated probabilities.
+    decider: Maybe[DeciderConfig] = Absent
 ):
-    def apiUrl(url: String): Config              = copy(apiUrl = url)
-    def apiKey(key: String): Config              = copy(apiKey = Present(key))
-    def apiOrg(org: String): Config              = copy(apiOrg = Present(org))
-    def temperature(temperature: Double): Config = copy(temperature = Present(temperature.max(0).min(2)))
+    def apiUrl(url: String): Config                   = copy(apiUrl = url)
+    def apiKey(key: String): Config                   = copy(apiKey = Present(key))
+    def apiOrg(org: String): Config                   = copy(apiOrg = Present(org))
+    def decider(config: DeciderConfig): Config        = copy(decider = Present(config))
+    def decider(config: Maybe[DeciderConfig]): Config = copy(decider = config)
+    def temperature(temperature: Double): Config      = copy(temperature = Present(temperature.max(0).min(2)))
 
     /** The output-token ceiling this request asks for, clamped to the model's declared maximum.
       *
@@ -176,7 +182,7 @@ final case class Config private (
         if !reasoningEnabled then
             modelReasoning match
                 case Config.ReasoningEncoding.Unavailable => Absent
-                case _ =>
+                case _                                    =>
                     reasoningOff match
                         // Every other encoding has bytes for "off"; this one does not, so a wire that
                         // reasons by default keeps reasoning.
@@ -260,7 +266,7 @@ final case class Config private (
         // not a target: a reply that finishes early costs what it costs, so a cap below the model's
         // maximum buys nothing and manufactures stops. Every entry declares the maximum its model
         // accepts, so the unset case has a real answer rather than a fixed constant.
-        val base = maxTokens.getOrElse(modelMaxOutputTokens)
+        val base      = maxTokens.getOrElse(modelMaxOutputTokens)
         val requested =
             resolvedAmount match
                 case Present(Config.Amount.Budget(tokens)) =>
@@ -360,20 +366,28 @@ object Config:
     /** Resolves the default config by probing provider flags and API keys (sys props first, then env), via
       * `kyo.System`. The static `kyo.ai.provider` flag can force a provider by name. Without an explicit
       * provider, command harnesses are selected only when their marker variables are present, then API
-      * providers are selected by key presence.
+      * providers are selected by key presence. The decider is selected the same way: the first decision
+      * provider in `DeciderConfig.Provider.all` whose key is present becomes the `decider`, so a
+      * `TYPESAFE_API_KEY` in the environment routes decisions to Jev; without one the completion
+      * provider decides.
       */
     def default(using Frame): Config < Sync =
-        val selected = provider().trim
-        providerByName(selected.toLowerCase) match
-            case Present(p) =>
-                credentialed(p.default)
-            case Absent if selected.nonEmpty =>
-                throw IllegalArgumentException(s"Unsupported kyo.ai provider '$selected'.")
-            case Absent =>
-                Kyo.foreach(Provider.defaultCandidates)(p => read(p.keyName).map(_.isDefined -> p)).map { probes =>
-                    probes.collectFirst { case (true, p) => p }.getOrElse(Anthropic)
-                }.map(p => credentialed(p.default))
-        end match
+        val selected                  = provider().trim
+        val completion: Config < Sync =
+            providerByName(selected.toLowerCase) match
+                case Present(p) =>
+                    p.default
+                case Absent if selected.nonEmpty =>
+                    throw IllegalArgumentException(s"Unsupported kyo.ai provider '$selected'.")
+                case Absent =>
+                    Kyo.foreach(Provider.defaultCandidates)(p => read(p.keyName).map(_.isDefined -> p)).map { probes =>
+                        probes.collectFirst { case (true, p) => p }.getOrElse(Anthropic).default
+                    }
+        completion.map { config =>
+            Kyo.foreach(DeciderConfig.Provider.all)(p => read(p.keyName).map(_.isDefined -> p)).map { probes =>
+                probes.collectFirst { case (true, p) => p }.fold(config)(p => config.decider(p.default))
+            }.map(credentialed)
+        }
     end default
 
     def init(
@@ -400,15 +414,26 @@ object Config:
         ))
 
     /** Attaches the provider's credentials to an already-declared config, so a catalog entry's facts
-      * travel with it instead of being re-listed at every call site.
+      * travel with it instead of being re-listed at every call site. A credential already set on the
+      * config is kept; only an absent one is read from the provider's variables.
       */
     private[kyo] def credentialed(config: Config)(using Frame): Config < Sync =
-        if config.provider.usesApiKey then
-            for
-                key <- read(config.provider.keyName)
-                org <- read(config.provider.orgKey)
-            yield config.copy(apiKey = key, apiOrg = org)
-        else config
+        val provider: Config < Sync =
+            if config.provider.usesApiKey then
+                for
+                    key <- read(config.provider.keyName)
+                    org <- read(config.provider.orgKey)
+                yield config.copy(apiKey = config.apiKey.orElse(key), apiOrg = config.apiOrg.orElse(org))
+            else config
+        // The decider's key rides the same resolution, so a catalog entry stays pure and one call fills
+        // every credential the config needs.
+        provider.map { c =>
+            c.decider match
+                case Present(decider) if decider.apiKey.isEmpty =>
+                    read(decider.provider.keyName).map(key => c.copy(decider = Present(decider.credentialed(key))))
+                case _ => c
+        }
+    end credentialed
 
     /** A purely-constructed config for a provider's catalog entry (key/org left absent; filled at use via
       * the provider default path). The catalog values use this so a model literal is pure.
@@ -766,7 +791,7 @@ object Config:
             acceptsTemperature = false,
             acceptsImages = true
         )
-        def default: Config = opus_4_8
+        def default: Config                     = opus_4_8
         private[kyo] val entries: Chunk[Config] =
             Chunk(opus_4_8, sonnet_4_6, haiku_4_5, fable_5, sonnet_5)
     end Anthropic
@@ -820,7 +845,7 @@ object Config:
                 acceptsTemperature = true,
                 acceptsImages = true
             )
-        def default: Config = gpt_5_4
+        def default: Config                     = gpt_5_4
         private[kyo] val entries: Chunk[Config] =
             Chunk(gpt_5_5, gpt_5_4, gpt_5_4_mini)
     end OpenAI
@@ -876,7 +901,7 @@ object Config:
             acceptsTemperature = true,
             acceptsImages = false
         )
-        def default: Config = deepseek_v4_flash
+        def default: Config                     = deepseek_v4_flash
         private[kyo] val entries: Chunk[Config] =
             Chunk(deepseek_v4_flash, deepseek_v4_pro)
     end DeepSeek
@@ -928,7 +953,7 @@ object Config:
             acceptsTemperature = true,
             acceptsImages = true
         )
-        def default: Config = gemini_3_5_flash
+        def default: Config                     = gemini_3_5_flash
         private[kyo] val entries: Chunk[Config] =
             Chunk(gemini_3_5_flash, gemini_3_1_flash_lite, gemini_2_5_pro)
     end Gemini
@@ -983,7 +1008,7 @@ object Config:
             acceptsTemperature = true,
             acceptsImages = false
         )
-        def default: Config = gpt_oss_120b
+        def default: Config                     = gpt_oss_120b
         private[kyo] val entries: Chunk[Config] =
             Chunk(gpt_oss_120b, gpt_oss_20b)
     end Groq
@@ -1032,7 +1057,7 @@ object Config:
             // Measured against this endpoint: a request stating none cuts the reasoning body from 94 characters to 5; this endpoint counts no reasoning tokens for the model at all. An image part is refused outright.
             reasoningOff = Present(ReasoningOff.Level("none"))
         )
-        def default: Config = deepseek_v4_pro
+        def default: Config                     = deepseek_v4_pro
         private[kyo] val entries: Chunk[Config] =
             Chunk(deepseek_v4_pro, gpt_oss_120b)
     end Baseten
@@ -1149,7 +1174,7 @@ object Config:
             // Measured against this endpoint: none is refused as mandatory here, and the lowest level is accepted.
             reasoningOff = Present(ReasoningOff.CannotDisable("minimal"))
         )
-        def default: Config = deepseek_v4_pro
+        def default: Config                     = deepseek_v4_pro
         private[kyo] val entries: Chunk[Config] =
             Chunk(
                 deepseek_v4_pro,
@@ -1211,7 +1236,7 @@ object Config:
             // does, which is why the encoding lives here rather than on the provider.
             reasoningOff = Present(ReasoningOff.Level("none"))
         )
-        def default: Config = grok_4_5
+        def default: Config                     = grok_4_5
         private[kyo] val entries: Chunk[Config] =
             Chunk(grok_4_5, grok_4_3)
     end XAI
@@ -1269,7 +1294,7 @@ object Config:
             // entry rather than for the provider.
             forcedToolChoice = Present(ForcedToolChoice.RefusedWhileReasoning)
         )
-        def default: Config = kimi_k3
+        def default: Config                     = kimi_k3
         private[kyo] val entries: Chunk[Config] =
             Chunk(kimi_k3, kimi_k2_6)
     end Moonshot
@@ -1316,7 +1341,7 @@ object Config:
                 acceptsTemperature = true,
                 acceptsImages = true
             )
-        def default: Config = sonnet
+        def default: Config                     = sonnet
         private[kyo] val entries: Chunk[Config] =
             Chunk(opus, sonnet, haiku)
     end ClaudeCode
@@ -1369,7 +1394,7 @@ object Config:
                 acceptsTemperature = true,
                 acceptsImages = true
             )
-        def default: Config = auto
+        def default: Config                     = auto
         private[kyo] val entries: Chunk[Config] =
             Chunk(auto, gpt_5_5, gpt_5_4)
     end Codex

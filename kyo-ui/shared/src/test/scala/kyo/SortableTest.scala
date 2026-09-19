@@ -20,7 +20,7 @@ class SortableTest extends kyo.test.Test[Any]:
     "move" - {
         "moves forward within one collection" in {
             val collection = Chunk("a", "b", "c", "d")
-            val request = move(
+            val request    = move(
                 Chunk("b"),
                 Present("d"),
                 Position.After,
@@ -32,7 +32,7 @@ class SortableTest extends kyo.test.Test[Any]:
 
         "moves backward within one collection" in {
             val collection = Chunk("a", "b", "c", "d")
-            val request = move(
+            val request    = move(
                 Chunk("d"),
                 Present("b"),
                 Position.Before,
@@ -44,7 +44,7 @@ class SortableTest extends kyo.test.Test[Any]:
 
         "moves multiple keys within one collection in visible source order" in {
             val collection = Chunk("a", "b", "c", "d", "e")
-            val request = move(
+            val request    = move(
                 Chunk("d", "b"),
                 Present("e"),
                 Position.After,
@@ -451,7 +451,7 @@ class SortableTest extends kyo.test.Test[Any]:
         }
 
         "rejects locked keys and locked anchors" in {
-            val moved = Sortable.moveGroups(lanes, laneMove(Chunk("1"), "todo", "done"), locked = Set("1"))
+            val moved    = Sortable.moveGroups(lanes, laneMove(Chunk("1"), "todo", "done"), locked = Set("1"))
             val anchored =
                 Sortable.moveGroups(lanes, laneMove(Chunk("1"), "todo", "done", Present("4"), Position.Before), locked = Set("4"))
             assert(moved == Result.Failure(Rejection.Application("Locked keys cannot move or anchor a move.")))

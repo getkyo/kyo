@@ -44,7 +44,7 @@ class BlockingBridgeTest extends Test:
     }
 
     "a Unit-returning blocking call surfaces as a fiber of Unit" in {
-        var sideEffect = 0
+        var sideEffect                     = 0
         val fiber: Fiber.Unsafe[Unit, Any] = BlockingBridge.run {
             sideEffect = 99
             ()
@@ -56,7 +56,7 @@ class BlockingBridgeTest extends Test:
     "the carrier thread runs the thunk inline (already complete by the time run returns)" in {
         val runner      = Thread.currentThread()
         var ran: Thread = null
-        val fiber = BlockingBridge.run {
+        val fiber       = BlockingBridge.run {
             ran = Thread.currentThread()
             1
         }

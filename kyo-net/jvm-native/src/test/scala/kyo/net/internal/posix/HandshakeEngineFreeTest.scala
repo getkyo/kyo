@@ -78,7 +78,7 @@ class HandshakeEngineFreeTest extends Test:
         var count = 0
         var fd    = 3
         while fd < fdScanCeiling do
-            val st = Buffer.alloc[Byte](PosixConstants.statSize)
+            val st   = Buffer.alloc[Byte](PosixConstants.statSize)
             val live =
                 try sockets.fstat(fd, st).value == 0
                 finally st.close()
@@ -222,7 +222,7 @@ class HandshakeEngineFreeTest extends Test:
                 // handshake reads EOF and fails, and the failure path must close the detached plaintext fd it kept open.
                 loopbackPair().map { case (clientFd, peerFd) =>
                     closeRaw(shim, peerFd)
-                    val handle = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                    val handle    = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     val plaintext =
                         transport.openWith(handle, transportDriver(transport), transportConfig.channelCapacity)
                     plaintext.start()
@@ -257,7 +257,7 @@ class HandshakeEngineFreeTest extends Test:
                         soak(k) { _ =>
                             loopbackPair().map { case (cFd, pFd) =>
                                 closeRaw(shim, pFd)
-                                val h = PosixHandle.socket(cFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                                val h  = PosixHandle.socket(cFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                                 val pc =
                                     transport.openWith(h, transportDriver(transport), transportConfig.channelCapacity)
                                 pc.start()
@@ -372,8 +372,8 @@ class HandshakeEngineFreeTest extends Test:
                 finally
                     out.close()
                     ol.close()
-            val client   = sock.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
-            val (ca, cl) = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", port).getOrElse(fail("encode failed"))
+            val client    = sock.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
+            val (ca, cl)  = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", port).getOrElse(fail("encode failed"))
             val connected =
                 Sync.ensure(Sync.defer(ca.close()))(sock.connect(client, ca, cl).safe.get.map(r => assert(r.value == 0)))
             connected.andThen {

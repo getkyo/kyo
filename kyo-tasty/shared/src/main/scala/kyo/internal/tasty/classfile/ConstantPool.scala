@@ -284,10 +284,8 @@ object ConstantPool:
     // Classfiles use fixed-width big-endian integers, NOT TASTy LEB128.
     def readU1(view: ByteView)(using AllowUnsafe): Int = view.readByte() & 0xff
     def readU2(view: ByteView)(using AllowUnsafe): Int = (readU1(view) << 8) | readU1(view)
-    def readU4(view: ByteView)(using AllowUnsafe): Int =
-        (readU1(view) << 24) | (readU1(view) << 16) | (readU1(view) << 8) | readU1(view)
-    def readU8(view: ByteView)(using AllowUnsafe): scala.Long =
-        (readU4(view).toLong << 32) | (readU4(view).toLong & 0xffffffffL)
+    def readU4(view: ByteView)(using AllowUnsafe): Int = (readU1(view) << 24) | (readU1(view) << 16) | (readU1(view) << 8) | readU1(view)
+    def readU8(view: ByteView)(using AllowUnsafe): scala.Long = (readU4(view).toLong << 32) | (readU4(view).toLong & 0xffffffffL)
 
     /** Read the constant pool from `view` starting at the current cursor position.
       *

@@ -61,12 +61,10 @@ class TypeUnpicklerTest extends kyo.test.Test[Any]:
     private def cat3(tag: Int, subBytes: Array[Byte]): Array[Byte] = tag.toByte +: subBytes
 
     /** Build bytes for a Category 4 node: tag + Nat + sub-tree bytes. */
-    private def cat4(tag: Int, n: Int, subBytes: Array[Byte]): Array[Byte] =
-        (tag.toByte +: encodeNat(n)) ++ subBytes
+    private def cat4(tag: Int, n: Int, subBytes: Array[Byte]): Array[Byte] = (tag.toByte +: encodeNat(n)) ++ subBytes
 
     /** Build bytes for a Category 5 node: tag + length Nat + payload bytes. */
-    private def cat5(tag: Int, payload: Array[Byte]): Array[Byte] =
-        (tag.toByte +: encodeNat(payload.length)) ++ payload
+    private def cat5(tag: Int, payload: Array[Byte]): Array[Byte] = (tag.toByte +: encodeNat(payload.length)) ++ payload
 
     /** Decode a single type node from raw bytes.
       *

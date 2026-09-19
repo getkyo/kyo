@@ -110,7 +110,11 @@ final class PostgresClient private[kyo] (runtime: Runtime[PostgresSqlConnection]
     def notifications(channel: String)(using Frame): Stream[PostgresClient.Notification, Async & Abort[SqlException] & Scope] =
         Stream[PostgresClient.Notification, Async & Abort[SqlException] & Scope](
             self.useConfig { config =>
-                PostgresSqlConnection.notificationStream(runtime.pool, self.url.address, self.url.password, channel, config).emit
+                // Narrowed here rather than held narrowed on the client: the client's address is the SPI's, and only
+                // this listener needs the host and port a network address carries.
+                SqlConfig.Address.requireNetwork(self.url.address).map { address =>
+                    PostgresSqlConnection.notificationStream(runtime.pool, address, self.url.password, channel, config)
+                }.flatMap(_.emit)
             }
         )
 

@@ -23,11 +23,9 @@ class AnnotationEagerArgsTest extends kyo.test.Test[Any]:
         else if n < 16384 then Array((n >> 7).toByte, ((n & 0x7f) | 0x80).toByte)
         else Array((n >> 14).toByte, ((n >> 7) & 0x7f).toByte, ((n & 0x7f) | 0x80).toByte)
 
-    private def cat2(tag: Int, n: Int): Array[Byte] = tag.toByte +: encodeNat(n)
-    private def cat4(tag: Int, n: Int, subBytes: Array[Byte]): Array[Byte] =
-        (tag.toByte +: encodeNat(n)) ++ subBytes
-    private def cat5(tag: Int, payload: Array[Byte]): Array[Byte] =
-        (tag.toByte +: encodeNat(payload.length)) ++ payload
+    private def cat2(tag: Int, n: Int): Array[Byte]                        = tag.toByte +: encodeNat(n)
+    private def cat4(tag: Int, n: Int, subBytes: Array[Byte]): Array[Byte] = (tag.toByte +: encodeNat(n)) ++ subBytes
+    private def cat5(tag: Int, payload: Array[Byte]): Array[Byte]          = (tag.toByte +: encodeNat(payload.length)) ++ payload
 
     private def decodeType(
         bytes: Array[Byte],

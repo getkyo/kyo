@@ -11,15 +11,13 @@ class ParsedRequestBuilderTest extends kyo.BaseHttpTest:
     import AllowUnsafe.embrace.danger
 
     // Helper: read big-endian short from byte array
-    private def readShort(arr: Array[Byte], offset: Int): Int =
-        ((arr(offset) & 0xff) << 8) | (arr(offset + 1) & 0xff)
+    private def readShort(arr: Array[Byte], offset: Int): Int = ((arr(offset) & 0xff) << 8) | (arr(offset + 1) & 0xff)
 
     // Helper: read big-endian int from byte array
-    private def readInt(arr: Array[Byte], offset: Int): Int =
-        ((arr(offset) & 0xff) << 24) |
-            ((arr(offset + 1) & 0xff) << 16) |
-            ((arr(offset + 2) & 0xff) << 8) |
-            (arr(offset + 3) & 0xff)
+    private def readInt(arr: Array[Byte], offset: Int): Int = ((arr(offset) & 0xff) << 24) |
+        ((arr(offset + 1) & 0xff) << 16) |
+        ((arr(offset + 2) & 0xff) << 8) |
+        (arr(offset + 3) & 0xff)
 
     // Helper: extract the raw byte array from a ParsedRequest via headersAsPacked
     // We'll use a different approach: build and read fields using ParsedRequest accessors

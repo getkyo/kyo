@@ -54,9 +54,9 @@ import kyo.scheduler.Task
   *
   * The change FIFO carries packed primitive `long` commands rather than closures: each command encodes an opcode (RegisterRead /
   * RegisterWrite / Rearm / Deregister) plus fd and direction bits into one `long`. This eliminates the per-change closure allocation. The
-  * FIFO is an unboxed [[kyo.net.internal.util.MpscLongQueue]] (multi-producer, single change-worker consumer) that stores the raw `long` and
-  * recycles drained nodes, so enqueueing a change allocates nothing in steady state; a `ConcurrentLinkedQueue[java.lang.Long]` would box each
-  * command on every offer (a `java.lang.Long` per enqueue a JFR alloc profile flagged on the poller hot path).
+  * FIFO is an unboxed [[kyo.net.internal.util.MpscLongQueue]] (multi-producer, single change-worker consumer) that stores the raw `long` in
+  * an array chunk, so enqueueing a change allocates nothing until a burst outgrows the chunk; a `ConcurrentLinkedQueue[java.lang.Long]` would
+  * box each command on every offer (a `java.lang.Long` per enqueue a JFR alloc profile flagged on the poller hot path).
   *
   * The pending read and accept promises are stored directly on the [[PosixHandle]] (`pendingReadPromise`, `pendingAcceptPromise`) rather than
   * as `(promise, handle)` tuple pairs in the pending maps. This removes the per-await `Tuple2` allocation; the maps now hold `PosixHandle`
@@ -231,9 +231,9 @@ final private[net] class PollerIoDriver private[posix] (
     //
     // Element type: primitive long, in an unboxed MpscLongQueue (many producers, the single change worker as consumer). Each entry packs an
     // opcode + fd + direction bits into one long (see packCmd / OpXxx constants). This eliminates BOTH a per-change Function0 closure
-    // allocation AND the java.lang.Long boxing a ConcurrentLinkedQueue[java.lang.Long] would incur per offer (the queue
-    // recycles drained nodes, so a steady-state enqueue allocates nothing). The MpscLongQueue.offer is the happens-before barrier the awaitRead
-    // promise-store relies on, the same barrier a ConcurrentLinkedQueue.offer provides.
+    // allocation AND the java.lang.Long boxing a ConcurrentLinkedQueue[java.lang.Long] would incur per offer (the queue holds
+    // commands in an array chunk it reuses as a ring, so a cycle the chunk fits allocates nothing). The MpscLongQueue.offer is the
+    // happens-before barrier the awaitRead promise-store relies on, the same barrier a ConcurrentLinkedQueue.offer provides.
     // Exposed for allocation-seam tests: the unboxed long element type proves neither a closure nor a boxed Long is allocated per change.
     //
     // Single-consumer drain model (mirrors IoUringDriver's engine FIFO over its reap loop): the change FIFO and the engine FIFO below are drained
@@ -717,7 +717,7 @@ final private[net] class PollerIoDriver private[posix] (
         // change command. The poll fiber drains regIntake before processing the register command, so the map entry is in place when dispatchCmd
         // runs (the registration is published before the command via the change-queue happens-before, and the intake drain precedes the command).
         // rc<0 failure is handled inside dispatchCmd, which reads pendingReads and fails the stored promise. The pendingReadPromise store
-        // happens-before the changeQueue.offer (the MpscLongQueue offer tail swap is the barrier), so the change worker sees it on rc<0.
+        // happens-before the changeQueue.offer (the MpscLongQueue slot store is the release barrier), so the change worker sees it on rc<0.
         regIntake.offer(Registration(handle, RegKind.Read))
         submitChange(packCmd(OpRegisterRead, handle.readFd))
         // Offer-then-recheck against [[terminal]], mirroring the poll-fiber-confined idiom this file already uses elsewhere
@@ -1026,7 +1026,7 @@ final private[net] class PollerIoDriver private[posix] (
     private def sendMirrorFor(handle: PosixHandle, size: Int)(using AllowUnsafe): Buffer[Byte] =
         handle.sendMirror match
             case Present(buf) if buf.size >= size => buf
-            case _ =>
+            case _                                =>
                 handle.sendMirror.foreach(_.close())
                 val buf = Buffer.alloc[Byte](size)
                 handle.sendMirror = Present(buf)
@@ -1086,7 +1086,7 @@ final private[net] class PollerIoDriver private[posix] (
         val buf =
             handle.pendingCipher match
                 case Present(b) => b
-                case Absent =>
+                case Absent     =>
                     val b = new GrowableByteBuffer
                     handle.pendingCipher = Present(b)
                     b
@@ -1108,7 +1108,7 @@ final private[net] class PollerIoDriver private[posix] (
       */
     private def flushPending(handle: PosixHandle)(using AllowUnsafe, Frame): Unit =
         handle.pendingCipher match
-            case Absent => () // nothing buffered (the common one-pass write never allocated a tail)
+            case Absent       => () // nothing buffered (the common one-pass write never allocated a tail)
             case Present(buf) =>
                 val flags    = PosixConstants.MSG_NOSIGNAL
                 var continue = true
@@ -1173,7 +1173,7 @@ final private[net] class PollerIoDriver private[posix] (
     private def flushMirrorFor(handle: PosixHandle, size: Int)(using AllowUnsafe): Buffer[Byte] =
         handle.flushMirror match
             case Present(buf) if buf.size >= size => buf
-            case _ =>
+            case _                                =>
                 handle.flushMirror.foreach(_.close())
                 val buf = Buffer.alloc[Byte](size)
                 handle.flushMirror = Present(buf)
@@ -1999,7 +1999,7 @@ final private[net] class PollerIoDriver private[posix] (
     private def stagingFor(handle: PosixHandle)(using AllowUnsafe): Buffer[Byte] =
         handle.recvStaging match
             case Present(buf) => buf
-            case Absent =>
+            case Absent       =>
                 val buf = Buffer.alloc[Byte](handle.readBufferSize)
                 handle.recvStaging = Present(buf)
                 buf
@@ -2055,7 +2055,7 @@ final private[net] class PollerIoDriver private[posix] (
                     // engine throws instead, caught below), so the completion delivers the typed decrypt failure rather than a bare Closed.
                     // Mirrors the io_uring feed op.
                     var fatalRecord = false
-                    val onFatal = () =>
+                    val onFatal     = () =>
                         fatalRecord = true
                         claimAndDeferFdClose(handle)
                         handle.requestClose()
@@ -2071,7 +2071,8 @@ final private[net] class PollerIoDriver private[posix] (
                     // re-arming for an edge that never fires. Mirrors the io_uring driver's awaitRead re-arm; without it a multi-record / bulk TLS
                     // transfer strands on the poller under load.
                     // Stops on fatalRecord too: the stream is corrupt and the connection is being torn down, so no further ciphertext is fed.
-                    while !fatalRecord && plain.length == 0 && !eof && errno == 0 && handle.halfClose != HalfCloseState.PeerCleanClose && !drained
+                    while !fatalRecord && plain.length == 0 && !eof && errno == 0 && handle.halfClose != HalfCloseState.PeerCleanClose &&
+                        !drained
                     do
                         val r  = recvNowWithRetry(fd, staging, handle.readBufferSize.toLong, PosixConstants.MSG_DONTWAIT)
                         val rN = r.value.toInt
@@ -2089,9 +2090,8 @@ final private[net] class PollerIoDriver private[posix] (
                     // decrypted and delivered, the consumer-paced drain must call recv again to observe the FIN (recv returns 0) and surface
                     // PeerFin. Without this, a connection that half-closes with partial ciphertext in the same edge strands the consumer
                     // waiting for an EPOLLRDHUP edge that epoll ET will not re-fire.
-                    handle.readMightHaveMore =
-                        (!drained && !eof && errno == 0 && handle.halfClose != HalfCloseState.PeerCleanClose) ||
-                            (handle.halfClose == HalfCloseState.PeerHalfClosePending)
+                    handle.readMightHaveMore = (!drained && !eof && errno == 0 && handle.halfClose != HalfCloseState.PeerCleanClose) ||
+                        (handle.halfClose == HalfCloseState.PeerHalfClosePending)
                     if fatalRecord then
                         // A fatal record (RFC 5246 7.2.2) tears the connection down as the typed decrypt failure, identical to io_uring. Completed
                         // with a bare completeDiscard BEFORE endDispatch: onFatal's requestClose set the close bit, so finishDispatch / rearmOwned's
@@ -2358,17 +2358,17 @@ final private[net] class PollerIoDriver private[posix] (
       * take an OpRegisterRead's registration from the correct kind (awaitRead vs awaitAccept) without a separate side channel, so a recycled fd
       * reused across an accept and a read is never mismatched.
       */
-    private def packCmd(op: Long, fd: Int, fdClosing: Boolean = false, accept: Boolean = false): Long =
-        (op << 34) |
-            (fd.toLong & 0xffffffffL) |
-            (if fdClosing then 1L << 36 else 0L) |
-            (if accept then 1L << 37 else 0L)
+    private def packCmd(op: Long, fd: Int, fdClosing: Boolean = false, accept: Boolean = false): Long = (op << 34) |
+        (fd.toLong & 0xffffffffL) |
+        (if fdClosing then 1L << 36 else 0L) |
+        (if accept then 1L << 37 else 0L)
 
     /** Whether `reg`'s fd matches `fd` for the given `kind`. Read and Accept key on `readFd`, Write on `writeFd` (matching the await methods). */
     private def regMatches(reg: Registration, fd: Int, kind: RegKind): Boolean =
-        reg.kind == kind && (kind match
-            case RegKind.Read | RegKind.Accept => reg.handle.readFd == fd
-            case RegKind.Write                 => reg.handle.writeFd == fd)
+        reg.kind == kind &&
+            (kind match
+                case RegKind.Read | RegKind.Accept => reg.handle.readFd == fd
+                case RegKind.Write                 => reg.handle.writeFd == fd)
 
     /** Remove and return the first registration in `regIntake` matching `(fd, kind)`, scanning head-first so registrations for the same `(fd, kind)`
       * are consumed in offer order (a rapid arm/cancel/re-arm leaves two such entries; consecutive register commands take them oldest-first). Returns
@@ -2727,7 +2727,7 @@ final private[net] class PollerIoDriver private[posix] (
     private def drainEngineOps()(using AllowUnsafe, Frame): Unit =
         engineQueue.poll() match
             case null => ()
-            case op =>
+            case op   =>
                 try op()
                 catch
                     // Contain ANY throw (not just NonFatal): the engine FIFO must not let one connection's

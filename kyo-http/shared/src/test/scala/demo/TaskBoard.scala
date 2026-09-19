@@ -172,7 +172,7 @@ object TaskBoardClient extends KyoApp:
 
                     _     <- Console.printLine("\n=== Listing all tasks ===")
                     tasks <- HttpClient.getJson[List[Task]]("/tasks")
-                    _ <- Kyo.foreach(tasks) { t =>
+                    _     <- Kyo.foreach(tasks) { t =>
                         Console.printLine(s"  [${t.id}] ${t.title} (${t.column}, ${t.assignee.getOrElse("unassigned")})")
                     }
                 yield ()
@@ -181,7 +181,7 @@ object TaskBoardClient extends KyoApp:
             // Error handling demos
             _ <- HttpClient.withConfig(_.baseUrl(baseUrl).timeout(5.seconds)) {
                 for
-                    _ <- Console.printLine("\n=== Error handling: duplicate title ===")
+                    _         <- Console.printLine("\n=== Error handling: duplicate title ===")
                     dupResult <- Abort.run[HttpException](
                         HttpClient.postJson[Task]("/tasks", CreateTask("Design API", None, None))
                     )
@@ -190,7 +190,7 @@ object TaskBoardClient extends KyoApp:
                         case Result.Error(fail) => Console.printLine(s"  Expected error: ${fail.getMessage}")
                         case Result.Panic(ex)   => Console.printLine(s"  Panic: ${ex.getMessage}")
 
-                    _ <- Console.printLine("\n=== Error handling: invalid column ===")
+                    _      <- Console.printLine("\n=== Error handling: invalid column ===")
                     badCol <- Abort.run[HttpException](
                         HttpClient.putJson[Task]("/tasks/1", UpdateTask("Design API", "invalid", None))
                     )
@@ -203,7 +203,7 @@ object TaskBoardClient extends KyoApp:
                     _          <- HttpClient.deleteText("/tasks/2")
                     _          <- Console.printLine("  Deleted task 2")
                     finalTasks <- HttpClient.getJson[List[Task]]("/tasks")
-                    _ <- Kyo.foreach(finalTasks) { t =>
+                    _          <- Kyo.foreach(finalTasks) { t =>
                         Console.printLine(s"  [${t.id}] ${t.title} (${t.column})")
                     }
                 yield ()

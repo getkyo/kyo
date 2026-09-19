@@ -19,12 +19,11 @@ class RecordTest extends kyo.test.Test[Any]:
         }
 
         "arbitrary field names (reserved names)" in {
-            val r =
-                ("&" ~ "and") &
-                    ("toMap" ~ "map") &
-                    ("equals" ~ "eq") &
-                    ("getField" ~ "gf") &
-                    ("" ~ "empty")
+            val r = ("&" ~ "and") &
+                ("toMap" ~ "map") &
+                ("equals" ~ "eq") &
+                ("getField" ~ "gf") &
+                ("" ~ "empty")
             assert(r.getField("&") == "and")
             assert(r.getField("toMap") == "map")
             assert(r.getField("equals") == "eq")
@@ -133,10 +132,11 @@ class RecordTest extends kyo.test.Test[Any]:
         "mapFields receives field metadata" in {
             val r          = ("name" ~ "Alice") & ("age" ~ 30)
             var fieldNames = List.empty[String]
-            val mapped = r.mapFields([t] =>
+            val mapped     = r.mapFields([t] =>
                 (field: Field[?, t], v: t) =>
                     fieldNames = field.name :: fieldNames
-                    Option(v))
+                    Option(v)
+            )
             assert(mapped.name == Some("Alice"))
             assert(mapped.age == Some(30))
             assert(fieldNames.toSet == Set("name", "age"))
@@ -511,7 +511,8 @@ class RecordTest extends kyo.test.Test[Any]:
             type Person = "name" ~ String & "age" ~ Int
             val columns = Record.stage[Person].using[AsColumn]([v] =>
                 (field: Field[?, v], ac: AsColumn[v]) =>
-                    Column[v](field.name, ac.sqlType))
+                    Column[v](field.name, ac.sqlType)
+            )
             assert(columns.name == Column[String]("name", "text"))
             assert(columns.age == Column[Int]("age", "bigint"))
         }

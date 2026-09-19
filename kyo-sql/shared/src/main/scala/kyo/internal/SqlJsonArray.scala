@@ -1,16 +1,18 @@
-package kyo.internal.mysql
+package kyo.internal
 
 import kyo.Chunk
 import kyo.discard
 
-/** The MySQL array wire: a `JSON` column holding a one-dimensional array, formatted and parsed here so the backend owns its own wire.
+/** The array wire for an engine with no array type: a JSON column holding a one-dimensional array.
+  *
+  * Shared by MySQL and SQLite, which both map the three array kinds onto `JSON`, so a value written by either is read by either.
   *
   * Encoding matches the canonical compact JSON form (`[1,2,3]`, `["a","b"]`): no whitespace, standard string escapes (`\"`, `\\`, control
   * characters as their short escapes or `\u00XX`), non-ASCII text left raw in UTF-8. Parsing accepts standard JSON arrays, including
   * whitespace and `\uXXXX` escapes; a malformed document is reported through `fail`, which the reader binds to its own typed decode
   * exception and frame.
   */
-private[kyo] object MysqlJsonArray:
+object SqlJsonArray:
 
     def encodeInts(values: Chunk[Int]): String =
         values.mkString("[", ",", "]")
@@ -58,9 +60,9 @@ private[kyo] object MysqlJsonArray:
                     else if c == '"' then inString = false
                 else
                     c match
-                        case '"'       => inString = true
-                        case '[' | '{' => depth += 1
-                        case ']' | '}' => depth -= 1
+                        case '"'               => inString = true
+                        case '[' | '{'         => depth += 1
+                        case ']' | '}'         => depth -= 1
                         case ',' if depth == 0 =>
                             out += body.substring(start, i).trim
                             start = i + 1
@@ -95,10 +97,10 @@ private[kyo] object MysqlJsonArray:
                     case 'n'  => sb.append('\n'); i += 2
                     case 'r'  => sb.append('\r'); i += 2
                     case 't'  => sb.append('\t'); i += 2
-                    case 'u' =>
+                    case 'u'  =>
                         if i + 6 > e then fail("truncated unicode escape in JSON string")
                         val hex = t.substring(i + 2, i + 6)
-                        val cp =
+                        val cp  =
                             try Integer.parseInt(hex, 16)
                             catch case _: NumberFormatException => fail(s"invalid unicode escape '\\u$hex'")
                         sb.append(cp.toChar); i += 6
@@ -125,7 +127,7 @@ private[kyo] object MysqlJsonArray:
                 case '\n' => sb.append("\\n")
                 case '\r' => sb.append("\\r")
                 case '\t' => sb.append("\\t")
-                case c =>
+                case c    =>
                     if c < 0x20 then sb.append(f"\\u${c.toInt}%04x")
                     else sb.append(c)
             end match
@@ -135,4 +137,4 @@ private[kyo] object MysqlJsonArray:
         ()
     end quoteInto
 
-end MysqlJsonArray
+end SqlJsonArray

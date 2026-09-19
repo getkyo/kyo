@@ -612,7 +612,17 @@ class SqlCodecConformanceTest extends SqlBackendTest:
             yield
                 assert(rows.size == 1, s"expected 1 row, got ${rows.size}")
                 val decoded = Json.decode[Structure.Value](rows.head.v.text).getOrThrow
-                assert(decoded == document, s"expected the document back, got ${rows.head.v.text}")
+                // Key ORDER is a storage property, not a correctness one: JSON objects are unordered, and one engine sorts them. So the
+                // ordered comparison runs where the order survives, and elsewhere the same fields are compared as a set.
+                if backend.jsonPreservesKeyOrder then
+                    assert(decoded == document, s"${backend.label}: expected the document back, got ${rows.head.v.text}")
+                else
+                    (decoded, document) match
+                        case (Structure.Value.Record(got), Structure.Value.Record(want)) =>
+                            assert(got.toSeq.sortBy(_._1) == want.toSeq.sortBy(_._1), s"${backend.label}: got ${rows.head.v.text}")
+                        case _ =>
+                            fail(s"${backend.label}: expected a record back, got $decoded")
+                end if
         }
     }
 

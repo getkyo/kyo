@@ -698,8 +698,8 @@ class QueryApiTest extends kyo.test.Test[Any]:
                 }
             }
         captureResult.map {
-            case Result.Failure(e) => Kyo.lift(fail(s"Unexpected failure: $e"))
-            case Result.Panic(t)   => throw t
+            case Result.Failure(e)      => Kyo.lift(fail(s"Unexpected failure: $e"))
+            case Result.Panic(t)        => throw t
             case Result.Success(symbol) =>
                 Tasty.withPickles(Chunk.empty)(Tasty.classpath).map { classpath =>
                     val companion = classpath.companion(symbol)
@@ -716,7 +716,7 @@ class QueryApiTest extends kyo.test.Test[Any]:
     "symbol.declaredType for PlainClass.x (val x: Int) returns a type" in {
         Abort.run[TastyError](openFixtureClasspath.map { classpath =>
             classpath.findClass("kyo.fixtures.PlainClass") match
-                case Absent => Abort.fail(TastyError.NotImplemented("PlainClass not found"))
+                case Absent            => Abort.fail(TastyError.NotImplemented("PlainClass not found"))
                 case Present(classSym) =>
                     val allSym = classpath.symbols
                     // In Scala 3.8 TASTy, x is a Parameter symbol in classpath.symbols (not in class declarationIds)
@@ -747,10 +747,10 @@ class QueryApiTest extends kyo.test.Test[Any]:
             Tasty.withPickles(Chunk(someTraitPickle)) {
                 Tasty.classpath.map { classpath =>
                     classpath.findClassLike("kyo.fixtures.SomeTrait") match
-                        case Absent => Abort.fail(TastyError.NotImplemented("SomeTrait not found"))
+                        case Absent            => Abort.fail(TastyError.NotImplemented("SomeTrait not found"))
                         case Present(traitSym) =>
-                            val declIds = symDeclarationIds(traitSym)
-                            val allSym  = classpath.symbols
+                            val declIds    = symDeclarationIds(traitSym)
+                            val allSym     = classpath.symbols
                             val computeOpt = declIds.map(id => allSym(id.value)).find(s =>
                                 s.name.asString == "compute" && s.kind == SymbolKind.Method
                             )

@@ -76,7 +76,7 @@ private[kyo] object ReactiveUI:
 
             case ui: Foreach[?, ?] @unchecked =>
                 val contentContext = regionIdentity
-                val sig =
+                val sig            =
                     ui.signal.map { items =>
                         val arr = items.toSeq.zipWithIndex.map { (item, i) =>
                             val key = if ui.key.nonEmpty then ui.key.get(item) else i.toString
@@ -231,7 +231,7 @@ private[kyo] object ReactiveUI:
                 yield
                     val reactiveChildren = childWalks.flatMap(_._1)
                     val staticHandlers   = childWalks.flatMap(_._2)
-                    val handle: Handler = (targetPath, event) =>
+                    val handle: Handler  = (targetPath, event) =>
                         dispatch(elem, basePath, targetPath, event, reactiveChildren, staticHandlers)
                     (reactiveChildren, handle)
                 end for
@@ -252,7 +252,7 @@ private[kyo] object ReactiveUI:
                 yield
                     val allKids    = childWalks.flatMap(_._1)
                     val allHandles = childWalks.zipWithIndex.map { case ((_, h), i) => (i, h) }
-                    val keyMap = children.toSeq.zipWithIndex.collect {
+                    val keyMap     = children.toSeq.zipWithIndex.collect {
                         case (kc: KeyedChild[?], i) => kc.key -> i
                     }.toMap
                     val handle: Handler = (targetPath, event) =>
@@ -392,7 +392,7 @@ private[kyo] object ReactiveUI:
                     case Present(Bound.Const(s)) => Kyo.lift(s)
                     case _                       => Kyo.lift("")
                 currentIdx = values.indexOf(current).max(0)
-                nextIdx =
+                nextIdx    =
                     if forward then (currentIdx + 1)    % values.size
                     else (currentIdx - 1 + values.size) % values.size
                 newValue = values(nextIdx)
@@ -452,15 +452,14 @@ private[kyo] object ReactiveUI:
                 else
                     val seg = targetPath(nodePath.size)
                     fe.applyTyped {
-                        [T] =>
-                            (signal, keyFn, renderFn) =>
-                                signal.current(using fe.frame).map { items =>
-                                    val idx = keyFn match
-                                        case Present(f) => items.indexWhere(it => f(it) == seg)
-                                        case Absent     => Maybe.fromOption(seg.toIntOption).getOrElse(-1)
-                                    if idx >= 0 && idx < items.size then
-                                        targetSatisfies(renderFn(idx, items(idx)), nodePath :+ seg, targetPath, predicate)
-                                    else false
+                        [T] => (signal, keyFn, renderFn) =>
+                            signal.current(using fe.frame).map { items =>
+                                val idx = keyFn match
+                                    case Present(f) => items.indexWhere(it => f(it) == seg)
+                                    case Absent     => Maybe.fromOption(seg.toIntOption).getOrElse(-1)
+                                if idx >= 0 && idx < items.size then
+                                    targetSatisfies(renderFn(idx, items(idx)), nodePath :+ seg, targetPath, predicate)
+                                else false
                             }
                     }
             case e: Element =>
@@ -512,7 +511,7 @@ private[kyo] object ReactiveUI:
                 if isTarget && (isDisabled(elem) || isHidden(elem)) then true
                 else
                     val mouse = UI.MouseEvent(ev.mouse.targetId, ev.mouse.modifiers)
-                    val self = if isTarget then
+                    val self  = if isTarget then
                         invoke(attrs.onClickSelf).andThen(invokeWith(attrs.onClickSelfEvt, mouse))
                     else Kyo.lift(())
                     // Checkbox/radio toggle is handled by UIControlSession.click() which dispatches
@@ -578,7 +577,9 @@ private[kyo] object ReactiveUI:
                     else Kyo.lift(())
                     // ArrowDown/ArrowUp/Space/Enter on Select cycles through options (browser behavior)
                     val selectCycle =
-                        if isTarget && (e.keyboard.key == "ArrowDown" || e.keyboard.key == "ArrowUp" || e.keyboard.key == " " || e.keyboard.key == "Enter")
+                        if isTarget &&
+                            (e.keyboard.key == "ArrowDown" || e.keyboard.key == "ArrowUp" || e.keyboard.key == " " ||
+                                e.keyboard.key == "Enter")
                         then
                             elem match
                                 case sel: Select => cycleSelectOption(sel, forward = e.keyboard.key != "ArrowUp")
@@ -695,7 +696,7 @@ private[kyo] object ReactiveUI:
             case _: UIEvent.DragEnter => dispatchDragEvent(elem, attrs.onDragEnter, attrs.onDragEnterEvt, "drag enter")
             case _: UIEvent.DragLeave => dispatchDragEvent(elem, attrs.onDragLeave, attrs.onDragLeaveEvt, "drag leave")
             case _: UIEvent.DragOver  => dispatchDragEvent(elem, attrs.onDragOver, attrs.onDragOverEvt, "drag over")
-            case _: UIEvent.Drop =>
+            case _: UIEvent.Drop      =>
                 DragCommands.current.use {
                     case Present(DragCommands.Dispatch(DragCommands.Payload.Event(value), decisions)) =>
                         invokeDecision(attrs.onDrop, decisions, "The drop handler failed.")
@@ -747,9 +748,9 @@ private[kyo] object ReactiveUI:
         handler.fold((): Unit < Async) { effect =>
             for
                 result <- Abort.run[Any](effect)
-                _ <- result match
+                _      <- result match
                     case Result.Success(decision) => recordDecision(decisions, decision)
-                    case Result.Failure(err) =>
+                    case Result.Failure(err)      =>
                         Log.error(s"Drag decision handler error: $err").andThen(failDecision(decisions, failure))
                     case Result.Panic(panic) =>
                         Log.error(s"Drag decision handler panic: ${panic.getMessage}").andThen(failDecision(decisions, failure))
@@ -762,7 +763,7 @@ private[kyo] object ReactiveUI:
         ref.fold((): Unit < Sync)(_.getAndUpdate {
             case failed: DragCommands.DecisionState.Failed     => failed
             case rejected: DragCommands.DecisionState.Rejected => rejected
-            case _ =>
+            case _                                             =>
                 decision match
                     case Drag.Decision.Accept         => DragCommands.DecisionState.Accepted
                     case reject: Drag.Decision.Reject => DragCommands.DecisionState.Rejected(reject)
@@ -943,12 +944,13 @@ private[kyo] object ReactiveUI:
                                 Absent
                             )
                             Clock.now.map { now =>
-                                sessions.set(current + (data.sessionId -> DragSession(
-                                    domain,
-                                    terminalResolved = false,
-                                    now + limits.lifetime,
-                                    resolver
-                                )))
+                                sessions.set(current +
+                                    (data.sessionId -> DragSession(
+                                        domain,
+                                        terminalResolved = false,
+                                        now + limits.lifetime,
+                                        resolver
+                                    )))
                                     .andThen(wakeExpiryScheduler(expiryWake))
                                     .andThen(DragCommands.current.let(Present(DragCommands.Dispatch(
                                         DragCommands.Payload.Event(domain),
@@ -985,7 +987,7 @@ private[kyo] object ReactiveUI:
                     case Some(session) if !session.terminalResolved =>
                         for
                             decisions <- AtomicRef.init[DragCommands.DecisionState](DragCommands.DecisionState.None)
-                            _ <- DragCommands.current.let(Present(DragCommands.Dispatch(
+                            _         <- DragCommands.current.let(Present(DragCommands.Dispatch(
                                 DragCommands.Payload.Move(move),
                                 Present(decisions)
                             ))) {
@@ -1075,7 +1077,7 @@ private[kyo] object ReactiveUI:
                     for
                         decisions <- AtomicRef.init[DragCommands.DecisionState](DragCommands.DecisionState.None)
                         _         <- sessions.getAndUpdate(_ + (data.sessionId -> session.copy(event = domain)))
-                        _ <- DragCommands.current.let(Present(DragCommands.Dispatch(
+                        _         <- DragCommands.current.let(Present(DragCommands.Dispatch(
                             DragCommands.Payload.Event(domain),
                             Present(decisions)
                         ))) {
@@ -1173,19 +1175,18 @@ private[kyo] object ReactiveUI:
                 yield resolved
             case fe: Foreach[?, ?] @unchecked =>
                 fe.applyTyped {
-                    [T] =>
-                        (signal, keyFn, renderFn) =>
-                            for
-                                items <- signal.current(using fe.frame)
-                                children = items.toSeq.zipWithIndex.map { (item, i) =>
-                                    val key = keyFn match
-                                        case Present(f) => f(item)
-                                        case Absent     => i.toString
-                                    KeyedChild[UI](key, renderFn(i, item))
-                                }
-                                resolved <- Kyo.foreach(children)(resolveReactives)
-                            yield Fragment[UI](Chunk.from(resolved))
-                            end for
+                    [T] => (signal, keyFn, renderFn) =>
+                        for
+                            items <- signal.current(using fe.frame)
+                            children = items.toSeq.zipWithIndex.map { (item, i) =>
+                                val key = keyFn match
+                                    case Present(f) => f(item)
+                                    case Absent     => i.toString
+                                KeyedChild[UI](key, renderFn(i, item))
+                            }
+                            resolved <- Kyo.foreach(children)(resolveReactives)
+                        yield Fragment[UI](Chunk.from(resolved))
+                        end for
                 }
             case elem: Element =>
                 Kyo.foreach(elem.children.toSeq)(resolveReactives).map { resolved =>
@@ -1303,7 +1304,7 @@ private[kyo] object ReactiveUI:
                 if i >= children.size then Absent
                 else
                     val childPath = if currentPath.isEmpty then i.toString else s"$currentPath.$i"
-                    val child = children(i) match
+                    val child     = children(i) match
                         case kc: KeyedChild[?] => kc.child
                         case c                 => c
                     findPathById(child, id, childPath) match
@@ -1323,7 +1324,7 @@ private[kyo] object ReactiveUI:
     /** Find all focusable element IDs in document order from a resolved UI tree. Skips disabled and hidden elements.
       */
     def findAllFocusableIds(ui: UI): Seq[String] =
-        val builder = Seq.newBuilder[String]
+        val builder              = Seq.newBuilder[String]
         def walk(node: UI): Unit = node match
             case elem: Element =>
                 val disabled = elem match
@@ -1392,7 +1393,7 @@ private[kyo] object ReactiveUI:
                 })
                 keyIdx match
                     case Present(child) => Present(child)
-                    case Absent =>
+                    case Absent         =>
                         Maybe.fromOption(segment.toIntOption) match
                             case Present(i) if i >= 0 && i < children.size =>
                                 children(i) match

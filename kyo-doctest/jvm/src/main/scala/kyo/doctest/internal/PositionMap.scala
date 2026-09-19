@@ -18,7 +18,7 @@ final private[kyo] class PositionMap private (records: Map[kyo.Path, Map[Int, (B
       */
     def translate(synthFile: kyo.Path, synthLine: Int): Maybe[(Block, Int)] =
         records.get(synthFile) match
-            case None => Absent
+            case None          => Absent
             case Some(lineMap) =>
                 lineMap.get(synthLine) match
                     case None                       => Absent
@@ -27,10 +27,10 @@ final private[kyo] class PositionMap private (records: Map[kyo.Path, Map[Int, (B
     /** Translates a runtime stack frame to the block and README line that supplied the executed code. */
     def translateRuntime(synthFile: kyo.Path, synthLine: Int): Maybe[(Block, Int)] =
         records.get(synthFile) match
-            case None => Absent
+            case None          => Absent
             case Some(lineMap) =>
                 lineMap.get(synthLine) match
-                    case None => Absent
+                    case None                                      => Absent
                     case Some((block, blockBodyLine, setupBlocks)) =>
                         if blockBodyLine >= 1 then Present((block, block.lineStart + blockBodyLine))
                         else backMapPreludePosition(synthLine, lineMap, setupBlocks)
@@ -47,10 +47,10 @@ final private[kyo] class PositionMap private (records: Map[kyo.Path, Map[Int, (B
       */
     def translateDiagnostic(d: Driver.Diagnostic): Maybe[PositionMap.MappedDiagnostic] =
         records.get(d.file) match
-            case None => Absent
+            case None          => Absent
             case Some(lineMap) =>
                 lineMap.get(d.line) match
-                    case None => Absent
+                    case None                                      => Absent
                     case Some((block, blockBodyLine, setupBlocks)) =>
                         val (readmeLine, message) =
                             if blockBodyLine >= 1 then
@@ -104,7 +104,7 @@ final private[kyo] class PositionMap private (records: Map[kyo.Path, Map[Int, (B
         @scala.annotation.tailrec
         def loop(remaining: Int, blocks: List[Block]): Maybe[(Block, Int)] =
             blocks match
-                case Nil => Absent
+                case Nil                => Absent
                 case setupBlock :: rest =>
                     val lineCount = setupBlock.body.linesIterator.length
                     if remaining < lineCount then Present((setupBlock, setupBlock.lineStart + 1 + remaining))
@@ -159,7 +159,7 @@ object PositionMap:
     def init(wrappedBlocks: Chunk[WrappedBlock]): PositionMap =
         val records = wrappedBlocks.toSeq.foldLeft(Map.empty[kyo.Path, Map[Int, (Block, Int, Chunk[Block])]]) {
             (acc, wb) =>
-                val fileMap = acc.getOrElse(wb.synthFile, Map.empty)
+                val fileMap    = acc.getOrElse(wb.synthFile, Map.empty)
                 val newFileMap = wb.lineMap.toSeq.foldLeft(fileMap) { (fm, entry) =>
                     val (synthLine, blockBodyLine) = entry
                     fm.updated(synthLine, (wb.block, blockBodyLine, wb.setupBlocks))

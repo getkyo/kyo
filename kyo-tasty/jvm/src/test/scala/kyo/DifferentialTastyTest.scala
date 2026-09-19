@@ -5,7 +5,7 @@ import tastyquery.Contexts.Context
 import tastyquery.Symbols.ClassSymbol
 import tastyquery.Symbols.PackageSymbol
 
-/** Differential testing: kyo-tasty vs tasty-query 1.7.0.
+/** Differential testing: kyo-tasty vs tasty-query 1.9.0.
   *
   * For each fixture set loaded via TestClasspaths.kyoTastyFixtures, loads the same TASTy files through both implementations and diffs
   * the decoded top-level class fully-qualified names. Any disagreement is a real kyo-tasty bug.
@@ -32,8 +32,8 @@ class DifferentialTastyTest extends kyo.test.Test[Any]:
 
     /** Collect all top-level ClassSymbol fully-qualified names from a tasty-query Context by walking the package tree. */
     private def tqTopLevelFullNames(ctx: Context): Set[String] =
-        given Context   = ctx
-        val accumulator = new scala.collection.mutable.ArrayBuffer[String]()
+        given Context                       = ctx
+        val accumulator                     = new scala.collection.mutable.ArrayBuffer[String]()
         def visit(pkg: PackageSymbol): Unit =
             val decls: List[tastyquery.Symbols.Symbol] =
                 try pkg.declarations
@@ -69,7 +69,7 @@ class DifferentialTastyTest extends kyo.test.Test[Any]:
         classpath.topLevelClasses.flatMap { symbol =>
             // For Object kind, prefer the $-ending binary fully-qualified name (equivalent to tasty-query's ObjectClassTypeName).
             // For other kinds, any fullNameIndex entry is fine (non-Object fully-qualified names don't end with $).
-            val isObject = symbol.isInstanceOf[Tasty.Symbol.Object]
+            val isObject  = symbol.isInstanceOf[Tasty.Symbol.Object]
             val preferred = classpath.indices.byFullName.find {
                 (fullName, id) => id == symbol.id && (if isObject then fullName.endsWith("$") else true)
             }.map(_._1).toOption

@@ -67,7 +67,7 @@ private[kyo] object FtlParser:
             else
                 line match
                     case KeyLine(key, value) => st.copy(key = Present(key), buf = value, done = flush(st))
-                    case _ =>
+                    case _                   =>
                         st.key match
                             case Present(_) if line.startsWith(" ") || line.startsWith("\t") =>
                                 st.copy(buf = s"${st.buf} ${line.trim}")

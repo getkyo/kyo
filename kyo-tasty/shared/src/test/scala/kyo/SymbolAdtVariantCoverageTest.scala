@@ -212,7 +212,7 @@ class SymbolAdtVariantCoverageTest extends kyo.test.Test[Any]:
 
         for symbol <- withAbsent do
             symbol.sourcePosition match
-                case Maybe.Absent => ()
+                case Maybe.Absent     => ()
                 case Maybe.Present(p) =>
                     fail(s"${symbol.getClass.getSimpleName}: expected Absent sourcePosition but got Present($p)")
             end match

@@ -27,8 +27,8 @@ class PostgresTestBackend extends SqlTestBackend:
 
     def urlScheme: String = "postgres"
 
-    def containerConfig: Container.Config =
-        ContainerPredef.Postgres.buildContainerConfig(ContainerPredef.Postgres.Config.default)
+    def containerConfig: Maybe[Container.Config] =
+        Present(ContainerPredef.Postgres.buildContainerConfig(ContainerPredef.Postgres.Config.default))
 
     // Matches PostgresDialect.quoteIdent: wrap in double quotes and double any embedded quote.
     def quoteIdent(name: String): String =
@@ -86,6 +86,19 @@ class PostgresTestBackend extends SqlTestBackend:
 
     def bytesLiteral(hexDigits: String): String = s"'\\x$hexDigits'"
 
+    /** The offset form, which this engine reads as the offset it is. */
+    def instantLiteral(wallClockUtc: String): String = s"'$wallClockUtc+00:00'"
+
+    /** `jsonb` normalises whitespace and duplicate keys but keeps the order the document was written in. */
+    def jsonPreservesKeyOrder: Boolean = true
+
+    def computesRangeOffsetFrames: Boolean = true
+
+    def defaultPreventsLostUpdate: Boolean = true
+
+    /** A violated reference fails whatever the conflict clause says, which is the correct behaviour. */
+    def conflictClauseEnforcesForeignKeys: Boolean = true
+
     // Each of these changes what the simple protocol writes for a value this engine already stores: the float's digit
     // count and the byte string's spelling. Both are set to their non-default value, so a rendering that passed the
     // server's text through instead of parsing it would answer something else here.
@@ -101,6 +114,16 @@ class PostgresTestBackend extends SqlTestBackend:
     def instantWireCarriesOffset: Boolean = true
 
     def hasNativeArrayColumns: Boolean = true
+
+    def caseFoldingReachesPastAscii: Boolean = true
+
+    def likeFollowsColumnCollation: Boolean = true
+
+    def boundedTextColumn(name: String, maxChars: Int): String = s"$name VARCHAR($maxChars) NOT NULL"
+
+    def allowsConcurrentWriteTransactions: Boolean = true
+
+    def hasAdvisoryLocks: Boolean = true
 
     /** PostgreSQL's `time` is a time of day: it reaches `24:00:00` and no further, and never below zero. */
     def timeColumnIsSignedSpan: Boolean = false
@@ -163,10 +186,21 @@ class PostgresTestBackend extends SqlTestBackend:
 
     def uniqueViolationSqlState: String = "23505"
 
-    def sessionIdSql: String = "pg_backend_pid()"
+    def sessionIdSql: Maybe[String] = Present("pg_backend_pid()")
+
+    // A named zone rather than a numeric offset: PostgreSQL reads a bare `-03:00` with POSIX sign inversion, which lands three hours
+    // EAST and would quietly assert the wrong thing.
+    def sessionZoneStatements: Maybe[SqlTestBackend.SessionZone] =
+        Present(SqlTestBackend.SessionZone(west = "SET TimeZone='America/Sao_Paulo'", utc = "SET TimeZone='UTC'"))
 
     // Answers lower case with a space, e.g. `read committed`.
-    def isolationIntrospectionSql: String = "SHOW transaction_isolation"
+    def isolationIntrospectionSql: Maybe[String] = Present("SHOW transaction_isolation")
+
+    // Every standard level, and PostgreSQL maps READ UNCOMMITTED onto READ COMMITTED rather than refusing it.
+    def honouredIsolationLevels: Set[SqlClient.IsolationLevel] = SqlClient.IsolationLevel.values.toSet
+
+    /** The driver pins it at connect rather than leaving the server default in play. */
+    def defaultIsolationLevel: SqlClient.IsolationLevel = SqlClient.IsolationLevel.ReadCommitted
 
     def withFreshSchema[A, S](f: SqlTestBackend.Schema => A < S)(using
         Frame
@@ -233,7 +267,7 @@ class PostgresTestBackend extends SqlTestBackend:
             Abort.run[SqlException](
                 admin.simpleExecute(s"""DROP DATABASE IF EXISTS "$schema"""")
             ).flatMap {
-                case Result.Success(_) => Kyo.unit
+                case Result.Success(_)                                                               => Kyo.unit
                 case Result.Failure(s: SqlServerException) if s.sqlState == "55006" && remaining > 0 =>
                     Async.sleep(50.millis).andThen(attempt(remaining - 1))
                 case Result.Failure(e) => Abort.fail(e)

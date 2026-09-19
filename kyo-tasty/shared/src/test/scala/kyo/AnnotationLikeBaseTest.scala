@@ -67,7 +67,7 @@ class AnnotationLikeBaseTest extends kyo.test.Test[Any]:
     "pattern-match over AnnotationLike maps both concrete subtypes" in {
         val pkg                        = Tasty.Symbol.Package(SymbolId(-1), Tasty.Name("p"), Tasty.Flags.empty, SymbolId(-1), Chunk.empty)
         val base: Tasty.AnnotationLike = Tasty.Java.Annotation(pkg, Chunk.empty, Tasty.Name("p"))
-        val result: String = base match
+        val result: String             = base match
             case _: Tasty.Annotation      => "scala"
             case _: Tasty.Java.Annotation => "java"
             case other                    => fail(s"unexpected AnnotationLike subtype: $other")
@@ -131,7 +131,7 @@ class AnnotationLikeBaseTest extends kyo.test.Test[Any]:
     // findAnnotation returns Present(Annotation) with correct annotationFullName via classpath fixture.
     "findAnnotation on Scala-annotated method returns Present(Annotation) with annotationFullName" in {
         // Build a minimal classpath: pkg "scala"(0), class "deprecated"(1), method "m"(2) with @deprecated.
-        val scalaPkg = Tasty.Symbol.Package(SymbolId(0), Tasty.Name("scala"), Tasty.Flags.empty, SymbolId(-1), Chunk(SymbolId(1)))
+        val scalaPkg      = Tasty.Symbol.Package(SymbolId(0), Tasty.Name("scala"), Tasty.Flags.empty, SymbolId(-1), Chunk(SymbolId(1)))
         val deprecatedCls = Tasty.Symbol.Class(
             SymbolId(1),
             Tasty.Name("deprecated"),
@@ -180,7 +180,7 @@ class AnnotationLikeBaseTest extends kyo.test.Test[Any]:
 
     // annotationFullName on a loaded Annotation is consistent with typeFullNameString.
     "Annotation.annotationFullName is consistent with the type fully-qualified name" in {
-        val scalaPkg = Tasty.Symbol.Package(SymbolId(0), Tasty.Name("scala"), Tasty.Flags.empty, SymbolId(-1), Chunk.empty)
+        val scalaPkg      = Tasty.Symbol.Package(SymbolId(0), Tasty.Name("scala"), Tasty.Flags.empty, SymbolId(-1), Chunk.empty)
         val deprecatedCls = Tasty.Symbol.Class(
             SymbolId(1),
             Tasty.Name("deprecated"),
@@ -216,8 +216,8 @@ class AnnotationLikeBaseTest extends kyo.test.Test[Any]:
 
     // Java.Annotation.annotationFullName is consistent with computeFullName on annotationClass.
     "Java.Annotation.annotationFullName is consistent with computeFullName on annotationClass" in {
-        val jlPkg   = Tasty.Symbol.Package(SymbolId(0), Tasty.Name("java"), Tasty.Flags.empty, SymbolId(-1), Chunk.empty)
-        val langPkg = Tasty.Symbol.Package(SymbolId(1), Tasty.Name("lang"), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
+        val jlPkg       = Tasty.Symbol.Package(SymbolId(0), Tasty.Name("java"), Tasty.Flags.empty, SymbolId(-1), Chunk.empty)
+        val langPkg     = Tasty.Symbol.Package(SymbolId(1), Tasty.Name("lang"), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
         val overrideCls = Tasty.Symbol.Class(
             SymbolId(2),
             Tasty.Name("Override"),

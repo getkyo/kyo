@@ -163,7 +163,7 @@ object ImageProxyClient extends KyoApp:
 
                     _    <- Console.printLine("\n=== Listing images ===")
                     imgs <- HttpClient.getJson[List[ImageMeta]]("/images")
-                    _ <- Kyo.foreach(imgs) { m =>
+                    _    <- Kyo.foreach(imgs) { m =>
                         Console.printLine(s"  [${m.id}] ${m.name} (${m.size} bytes)")
                     }
 

@@ -80,7 +80,7 @@ class LibCTest extends ItTestBase:
         // strcmp is not spec'd to return specifically -1/+1, only sign matters,
         // which is the portable invariant.
         "table-driven: equal pairs return 0" in {
-            val libc = Ffi.load[LibCBindings]
+            val libc  = Ffi.load[LibCBindings]
             val pairs = Seq(
                 ("", ""),
                 ("x", "x"),
@@ -117,7 +117,7 @@ class LibCTest extends ItTestBase:
         }
 
         "table-driven: symmetric reversed pairs return positive" in {
-            val libc = Ffi.load[LibCBindings]
+            val libc         = Ffi.load[LibCBindings]
             val greaterPairs = Seq(
                 ("b", "a"),
                 ("ab", "aa"),
@@ -225,7 +225,7 @@ class LibCTest extends ItTestBase:
 
         // Table-driven abs rows. `Int.MinValue` is UB so we skip it.
         "table-driven: varied signed inputs" in {
-            val libc = Ffi.load[LibCBindings]
+            val libc                   = Ffi.load[LibCBindings]
             val cases: Seq[(Int, Int)] = Seq(
                 0             -> 0,
                 1             -> 1,
@@ -297,7 +297,7 @@ class LibCTest extends ItTestBase:
         // Table-driven labs rows.
         "table-driven: varied signed long inputs" in {
             assumeLp64Long()
-            val libc = Ffi.load[LibCBindings]
+            val libc                     = Ffi.load[LibCBindings]
             val cases: Seq[(Long, Long)] = Seq(
                 0L                   -> 0L,
                 1L                   -> 1L,

@@ -615,7 +615,7 @@ class ReactiveTest extends UITest:
             for
                 trigger <- Signal.initRef(0)
                 content <- Signal.initRef("before")
-                _ <- Fiber.initUnscoped {
+                _       <- Fiber.initUnscoped {
                     Loop.forever {
                         for
                             _ <- trigger.next

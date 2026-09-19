@@ -200,7 +200,7 @@ class PostgresChannelTest extends Test:
                     Async.timeout(1.second)(Abort.run[SqlException](channel.receiveSkipCheck))
                 ).map {
                     case Result.Failure(_: Timeout) => succeed
-                    case other =>
+                    case other                      =>
                         fail(s"a cleared bound must not cut a read off; expected the outer guard to fire, got: $other")
                 }
             }

@@ -324,7 +324,7 @@ class SymbolResolutionTest extends kyo.test.Test[Any]:
         val pkgSym = makePkgSym9(id = 0, name = "pkg")
         val fooSym = makeClassSym9(id = 1, name = "Foo", ownerId = 0)
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(pkgSym, fooSym)).map { classpath =>
-            val ownerSym = classpath.owner(fooSym)
+            val ownerSym                        = classpath.owner(fooSym)
             val parentList: Chunk[Tasty.Symbol] =
                 fooSym.parentTypes.flatMap { case Tasty.Type.Named(pid) => classpath.symbol(pid).toChunk; case _ => Chunk.empty }
             val methodList: Chunk[Tasty.Symbol] =
@@ -342,7 +342,7 @@ class SymbolResolutionTest extends kyo.test.Test[Any]:
             // All resolution accessors via pure Classpath instance methods; no effect row, no AllowUnsafe.
             val _typeParams: Chunk[Tasty.Symbol] = symbol.typeParamIds.flatMap(id => classpath.symbol(id).toChunk)
             val _decls: Chunk[Tasty.Symbol]      = symbol.declarationIds.flatMap(id => classpath.symbol(id).toChunk)
-            val _methods: Chunk[Tasty.Symbol] =
+            val _methods: Chunk[Tasty.Symbol]    =
                 symbol.declarationIds.flatMap(id => classpath.symbol(id).toChunk).filter(_.isInstanceOf[Tasty.Symbol.Method])
             val _vals: Chunk[Tasty.Symbol] =
                 symbol.declarationIds.flatMap(id => classpath.symbol(id).toChunk).filter(_.isInstanceOf[Tasty.Symbol.Val])

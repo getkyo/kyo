@@ -117,11 +117,12 @@ final class SqlSchemaReaderMock(
       * only when the answer is false, so answering true without consuming would leave the null column in front of the next field's read.
       */
     override def isNil(): Boolean =
-        idx < recorded.size && (recorded(idx) match
-            case Call.Nil =>
-                idx += 1
-                true
-            case _ => false)
+        idx < recorded.size &&
+            (recorded(idx) match
+                case Call.Nil =>
+                    idx += 1
+                    true
+                case _ => false)
 
     override def skip(): Unit = kyo.discard(next())
 
@@ -204,7 +205,7 @@ final class SqlSchemaReaderMock(
       * matches. A reader built with no column names never leaves the positional answer, which is what a single-column read and a
       * declaration-order replay both want.
       */
-    override private[kyo] def fieldIndex(index: Int, names: Chunk[String]): Int =
+    override def fieldIndex(index: Int, names: Chunk[String]): Int =
         var j = 0
         while j < names.size do
             if matches(index, names(j)) then return j

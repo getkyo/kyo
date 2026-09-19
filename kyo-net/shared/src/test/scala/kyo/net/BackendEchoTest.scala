@@ -59,43 +59,44 @@ class BackendEchoTest extends Test:
         end for
     }
 
-    "concurrent full-duplex echo over many connections round-trips every byte in order (no dropped submission under overlap)" - eachBackend {
-        transport =>
-            // Plaintext + full-duplex on purpose: on io_uring a write's get_sqe runs on the engine-FIFO worker while a read re-arm's get_sqe runs
-            // on the reap carrier (a plaintext read completes inline on the reap carrier, unlike TLS which re-arms on the FIFO worker), so the two
-            // overlap across all connections at once. If the single submission ring is not single-producer-safe, an SQE is dropped and a side hangs
-            // to the deadline; a correct driver round-trips every byte in order. This is the cross-backend concurrency guard: it must also pass on
-            // epoll/kqueue/nio, where the selector loop is the sole submitter.
-            val conns     = 8
-            val chunkSize = 128
-            val chunkN    = 128 // 16 KB per connection
-            val total     = chunkSize * chunkN
-            for
-                listener <- transport.listen("127.0.0.1", 0, 128)(echo).safe.get
-                _        <- Scope.ensure(Sync.defer(listener.close()))
-                _ <- Async.foreach(0 until conns, conns) { c =>
-                    val body: Unit < (Async & Abort[NetException | Closed] & Scope) =
-                        transport.connect("127.0.0.1", listener.port).safe.get.map { conn =>
-                            Scope.ensure(Sync.defer(conn.close())).andThen {
-                                val payload = Array.tabulate[Byte](total)(i => ((c * 131 + i) % 251).toByte)
-                                val writer = Async.foreach(payload.grouped(chunkSize).toSeq, 1) { ch =>
-                                    conn.outbound.safe.put(Span.fromUnsafe(ch))
-                                }.unit
-                                val reader = collect(conn, total)
-                                Async.zip(writer, reader).map { case (_, echoed) =>
-                                    conn.close()
-                                    assert(
-                                        echoed.sameElements(payload),
-                                        s"conn $c full-duplex echo mismatch: ${echoed.length}/$total bytes round-tripped"
-                                    )
+    "concurrent full-duplex echo over many connections round-trips every byte in order (no dropped submission under overlap)" -
+        eachBackend {
+            transport =>
+                // Plaintext + full-duplex on purpose: on io_uring a write's get_sqe runs on the engine-FIFO worker while a read re-arm's get_sqe runs
+                // on the reap carrier (a plaintext read completes inline on the reap carrier, unlike TLS which re-arms on the FIFO worker), so the two
+                // overlap across all connections at once. If the single submission ring is not single-producer-safe, an SQE is dropped and a side hangs
+                // to the deadline; a correct driver round-trips every byte in order. This is the cross-backend concurrency guard: it must also pass on
+                // epoll/kqueue/nio, where the selector loop is the sole submitter.
+                val conns     = 8
+                val chunkSize = 128
+                val chunkN    = 128 // 16 KB per connection
+                val total     = chunkSize * chunkN
+                for
+                    listener <- transport.listen("127.0.0.1", 0, 128)(echo).safe.get
+                    _        <- Scope.ensure(Sync.defer(listener.close()))
+                    _        <- Async.foreach(0 until conns, conns) { c =>
+                        val body: Unit < (Async & Abort[NetException | Closed] & Scope) =
+                            transport.connect("127.0.0.1", listener.port).safe.get.map { conn =>
+                                Scope.ensure(Sync.defer(conn.close())).andThen {
+                                    val payload = Array.tabulate[Byte](total)(i => ((c * 131 + i) % 251).toByte)
+                                    val writer  = Async.foreach(payload.grouped(chunkSize).toSeq, 1) { ch =>
+                                        conn.outbound.safe.put(Span.fromUnsafe(ch))
+                                    }.unit
+                                    val reader = collect(conn, total)
+                                    Async.zip(writer, reader).map { case (_, echoed) =>
+                                        conn.close()
+                                        assert(
+                                            echoed.sameElements(payload),
+                                            s"conn $c full-duplex echo mismatch: ${echoed.length}/$total bytes round-tripped"
+                                        )
+                                    }
                                 }
                             }
-                        }
-                    body
-                }
-            yield succeed
-            end for
-    }
+                        body
+                    }
+                yield succeed
+                end for
+        }
 
     "TLS echo round-trips a message" - eachBackendTls { (transport, serverTls, clientTls) =>
         for
@@ -116,43 +117,44 @@ class BackendEchoTest extends Test:
         end for
     }
 
-    "bulk TLS transfer spanning many records round-trips intact (exercises the partial-record read re-arm on every backend)" - eachBackendTls {
-        (transport, serverTls, clientTls) =>
-            // A single TLS record carries at most ~16 KB of plaintext, so a 64 KB-per-connection payload spans multiple records and, with TCP
-            // segmentation plus a finite read buffer, reliably delivers records split across recvs. On a split record the decrypt yields zero
-            // plaintext and the driver must RE-ARM the read rather than complete it with an empty Span (which the ReadPump reads as EOF and tears
-            // the connection down). If that re-arm were broken on any backend, this transfer would truncate, hang to the deadline, or close early;
-            // a byte-exact full round-trip proves the re-arm holds end-to-end through the public API. This is the cross-backend proof that the
-            // TLS read path is correct without lifting the decrypt out of the driver. Full-duplex (concurrent writer + reader) so the in-flight
-            // transfer never deadlocks on channel/socket backpressure.
-            val conns     = 4
-            val perConn   = 64 * 1024
-            val chunkSize = 4 * 1024
-            for
-                listener <- transport.listenTls("127.0.0.1", 0, 64, serverTls)(echo).safe.get
-                _        <- Scope.ensure(Sync.defer(listener.close()))
-                _ <- Async.foreach(0 until conns, conns) { c =>
-                    val body: Unit < (Async & Abort[NetException | Closed] & Scope) =
-                        transport.connectTls("127.0.0.1", listener.port, clientTls).safe.get.map { conn =>
-                            Scope.ensure(Sync.defer(conn.close())).andThen {
-                                val payload = Array.tabulate[Byte](perConn)(i => ((c * 131 + i) % 251).toByte)
-                                val writer = Async.foreach(payload.grouped(chunkSize).toSeq, 1) { ch =>
-                                    conn.outbound.safe.put(Span.fromUnsafe(ch))
-                                }.unit
-                                val reader = collect(conn, perConn)
-                                Async.zip(writer, reader).map { case (_, echoed) =>
-                                    conn.close()
-                                    assert(
-                                        echoed.sameElements(payload),
-                                        s"conn $c TLS bulk mismatch: ${echoed.length}/$perConn bytes round-tripped"
-                                    )
+    "bulk TLS transfer spanning many records round-trips intact (exercises the partial-record read re-arm on every backend)" -
+        eachBackendTls {
+            (transport, serverTls, clientTls) =>
+                // A single TLS record carries at most ~16 KB of plaintext, so a 64 KB-per-connection payload spans multiple records and, with TCP
+                // segmentation plus a finite read buffer, reliably delivers records split across recvs. On a split record the decrypt yields zero
+                // plaintext and the driver must RE-ARM the read rather than complete it with an empty Span (which the ReadPump reads as EOF and tears
+                // the connection down). If that re-arm were broken on any backend, this transfer would truncate, hang to the deadline, or close early;
+                // a byte-exact full round-trip proves the re-arm holds end-to-end through the public API. This is the cross-backend proof that the
+                // TLS read path is correct without lifting the decrypt out of the driver. Full-duplex (concurrent writer + reader) so the in-flight
+                // transfer never deadlocks on channel/socket backpressure.
+                val conns     = 4
+                val perConn   = 64 * 1024
+                val chunkSize = 4 * 1024
+                for
+                    listener <- transport.listenTls("127.0.0.1", 0, 64, serverTls)(echo).safe.get
+                    _        <- Scope.ensure(Sync.defer(listener.close()))
+                    _        <- Async.foreach(0 until conns, conns) { c =>
+                        val body: Unit < (Async & Abort[NetException | Closed] & Scope) =
+                            transport.connectTls("127.0.0.1", listener.port, clientTls).safe.get.map { conn =>
+                                Scope.ensure(Sync.defer(conn.close())).andThen {
+                                    val payload = Array.tabulate[Byte](perConn)(i => ((c * 131 + i) % 251).toByte)
+                                    val writer  = Async.foreach(payload.grouped(chunkSize).toSeq, 1) { ch =>
+                                        conn.outbound.safe.put(Span.fromUnsafe(ch))
+                                    }.unit
+                                    val reader = collect(conn, perConn)
+                                    Async.zip(writer, reader).map { case (_, echoed) =>
+                                        conn.close()
+                                        assert(
+                                            echoed.sameElements(payload),
+                                            s"conn $c TLS bulk mismatch: ${echoed.length}/$perConn bytes round-tripped"
+                                        )
+                                    }
                                 }
                             }
-                        }
-                    body
-                }
-            yield succeed
-            end for
-    }
+                        body
+                    }
+                yield succeed
+                end for
+        }
 
 end BackendEchoTest

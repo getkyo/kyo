@@ -2,8 +2,18 @@ package kyo.internal
 
 import kyo.*
 import kyo.Ansi.*
+import scala.annotation.publicInBinary
 import scala.quoted.*
 
+/** Builds dependency compositions for [[kyo.Layer]].
+  *
+  * The public inline layer factory invokes this implementation while compiling a caller.
+  * It resolves the supplied layers into a graph for the requested target type.
+  * Missing inputs, ambiguous inputs, and dependency cycles produce compilation errors.
+  *
+  * Public binary visibility supports inline callers while Scala access remains restricted to kyo.
+  */
+@publicInBinary
 private[kyo] object LayerMacros:
 
     transparent inline def reflect(using q: Quotes): q.reflectModule = q.reflect
@@ -40,7 +50,7 @@ private[kyo] object LayerMacros:
                 val nodes = layers.map(layerToNode(_))
                 val graph = Graph(nodes.toSet)(_ <:< _)
 
-                val targets = flattenAnd(TypeRepr.of[Target])
+                val targets     = flattenAnd(TypeRepr.of[Target])
                 val targetLayer = graph.buildTargets(targets, None) match
                     case Validated.Success(value) =>
                         value
@@ -197,7 +207,7 @@ private[kyo] object LayerMacros:
             seen: Set[Node[Key, Value]] = Set.empty
         ): Validated[GraphError[Key, Value], LayerLike[Node[Key, Value]]] =
             for
-                nodes <- findNodesWithOutputs(targets, parent, seen)
+                nodes  <- findNodesWithOutputs(targets, parent, seen)
                 values <- Validated.traverse(nodes) { node =>
                     if node.inputs.isEmpty then Validated.succeed(LayerLike.Value(node))
                     else

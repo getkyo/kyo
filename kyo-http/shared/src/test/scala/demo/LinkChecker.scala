@@ -40,12 +40,12 @@ object LinkChecker extends KyoApp:
         val targetUrl = "https://www.scala-lang.org"
 
         for
-            _ <- Console.printLine(s"Fetching $targetUrl...")
+            _    <- Console.printLine(s"Fetching $targetUrl...")
             html <- HttpClient.withConfig(_.timeout(15.seconds)) {
                 HttpClient.getText(targetUrl)
             }
             links = extractLinks(html, targetUrl)
-            _ <- Console.printLine(s"Found ${links.size} links. Checking...")
+            _       <- Console.printLine(s"Found ${links.size} links. Checking...")
             results <- Async.foreach(links, links.size) { url =>
                 Abort.run[HttpException](checkLink(url)).map {
                     case kyo.Result.Success(r) => r

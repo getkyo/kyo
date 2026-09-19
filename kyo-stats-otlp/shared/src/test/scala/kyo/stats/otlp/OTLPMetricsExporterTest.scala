@@ -100,7 +100,7 @@ class OTLPMetricsExporterTest extends kyo.test.Test[Any]:
                             allMetrics.find(_.name == s"test.export.$uniqueName") match
                                 case Some(m)       => Loop.done(m)
                                 case None if i < 9 => Loop.continue
-                                case None => throw new AssertionError(
+                                case None          => throw new AssertionError(
                                         s"Counter test.export.$uniqueName not found after ${i + 1} exports"
                                     )
                             end match
@@ -138,7 +138,7 @@ class OTLPMetricsExporterTest extends kyo.test.Test[Any]:
                             allMetrics.find(_.name == s"test.export.$uniqueName") match
                                 case Some(m)       => Loop.done(m)
                                 case None if i < 9 => Loop.continue
-                                case None => throw new AssertionError(
+                                case None          => throw new AssertionError(
                                         s"Histogram test.export.$uniqueName not found after ${i + 1} exports"
                                     )
                             end match
@@ -167,7 +167,7 @@ class OTLPMetricsExporterTest extends kyo.test.Test[Any]:
                             allMetrics.find(_.name == s"test.export.$uniqueName") match
                                 case Some(m)       => Loop.done(m)
                                 case None if i < 9 => Loop.continue
-                                case None => throw new AssertionError(
+                                case None          => throw new AssertionError(
                                         s"Gauge test.export.$uniqueName not found after ${i + 1} exports"
                                     )
                             end match

@@ -133,7 +133,7 @@ class AeronTransportTest extends Test:
         maxAttempts: Int
     )(using Frame): Maybe[Ffi.Handle[AeronPublication]] < Async =
         Sync.Unsafe.defer(bindings.asyncAddPublication(client, uri, streamId)).map {
-            case Absent => (Absent: Maybe[Ffi.Handle[AeronPublication]])
+            case Absent       => (Absent: Maybe[Ffi.Handle[AeronPublication]])
             case Present(tok) =>
                 Loop.indexed { i =>
                     if i >= maxAttempts then Loop.done(Absent: Maybe[Ffi.Handle[AeronPublication]])
@@ -159,7 +159,7 @@ class AeronTransportTest extends Test:
         maxAttempts: Int
     )(using Frame): Maybe[Ffi.Handle[AeronSubscription]] < Async =
         Sync.Unsafe.defer(bindings.asyncAddSubscription(client, uri, streamId)).map {
-            case Absent => (Absent: Maybe[Ffi.Handle[AeronSubscription]])
+            case Absent       => (Absent: Maybe[Ffi.Handle[AeronSubscription]])
             case Present(tok) =>
                 Loop.indexed { i =>
                     if i >= maxAttempts then Loop.done(Absent: Maybe[Ffi.Handle[AeronSubscription]])
@@ -225,21 +225,46 @@ class AeronTransportTest extends Test:
         @volatile var interruptTook: Boolean     = false
         @volatile var doneObserved: Boolean      = false
 
+        /** Set on entry, before anything in the poll can release the leaf, so a fixture that never armed the window
+          * is told apart from one whose later flags are still being written.
+          */
+        @volatile var pollEntered: Boolean = false
+
+        /** Completed when the poll returns. Interrupting completes the fiber's own promise, which releases the leaf's
+          * `getResult` while the poll is still running, so the leaf waits on this before reading what the poll set.
+          */
+        val polled: Promise.Unsafe[Unit, Any] =
+            import AllowUnsafe.embrace.danger
+            Promise.Unsafe.init[Unit, Any]()
+        end polled
+
+        /** Completed once the add has unwound past the finalizer that owns the token. The free this leaf counts happens
+          * in that finalizer, and an interrupt completes the fiber's promise without waiting for the unwind, so a count
+          * read on `getResult` alone could be zero only because the finalizer had not run yet. The leaf waits on this
+          * instead, which the enclosing `Sync.ensure` completes after the token finalizer nested inside it.
+          */
+        val unwound: Promise.Unsafe[Unit, Any] =
+            import AllowUnsafe.embrace.danger
+            Promise.Unsafe.init[Unit, Any]()
+        end unwound
+
         val freesAfterDone = new java.util.concurrent.atomic.AtomicInteger(0)
 
-        def asyncAddPublication(uri: String, streamId: Int)(using AllowUnsafe): Maybe[AsyncPub] = Present(streamId)
+        def asyncAddPublication(uri: String, streamId: Int)(using AllowUnsafe): Maybe[AsyncPub]         = Present(streamId)
         def pollAddPublication(async: AsyncPub)(using AllowUnsafe): AeronTransport.AddPoll[Publication] =
+            pollEntered = true
             interruptTook = interrupter()
             doneObserved = true
+            polled.completeDiscard(Result.succeed(()))
             AeronTransport.AddPoll.Done(async)
         end pollAddPublication
         def freeAsyncPub(async: AsyncPub)(using AllowUnsafe): Unit =
             if doneObserved then discard(freesAfterDone.incrementAndGet())
-        def publicationIsConnected(pub: Publication)(using AllowUnsafe): Boolean                 = false
-        def offer(pub: Publication, message: Array[Byte])(using AllowUnsafe): Long               = 0L
-        def maxMessageLength(pub: Publication)(using AllowUnsafe): Int                           = 0
-        def closePublication(pub: Publication)(using AllowUnsafe): Unit                          = ()
-        def asyncAddSubscription(uri: String, streamId: Int)(using AllowUnsafe): Maybe[AsyncSub] = Present(streamId)
+        def publicationIsConnected(pub: Publication)(using AllowUnsafe): Boolean                          = false
+        def offer(pub: Publication, message: Array[Byte])(using AllowUnsafe): Long                        = 0L
+        def maxMessageLength(pub: Publication)(using AllowUnsafe): Int                                    = 0
+        def closePublication(pub: Publication)(using AllowUnsafe): Unit                                   = ()
+        def asyncAddSubscription(uri: String, streamId: Int)(using AllowUnsafe): Maybe[AsyncSub]          = Present(streamId)
         def pollAddSubscription(async: AsyncSub)(using AllowUnsafe): AeronTransport.AddPoll[Subscription] =
             AeronTransport.AddPoll.Awaiting
         def freeAsyncSub(async: AsyncSub)(using AllowUnsafe): Unit                 = ()
@@ -261,7 +286,7 @@ class AeronTransportTest extends Test:
           */
         val pubFrees = new java.util.concurrent.atomic.AtomicInteger(0)
         val subFrees = new java.util.concurrent.atomic.AtomicInteger(0)
-        def asyncAddPublication(uri: String, streamId: Int)(using AllowUnsafe): Maybe[AsyncPub] = Present(streamId)
+        def asyncAddPublication(uri: String, streamId: Int)(using AllowUnsafe): Maybe[AsyncPub]         = Present(streamId)
         def pollAddPublication(async: AsyncPub)(using AllowUnsafe): AeronTransport.AddPoll[Publication] =
             AeronTransport.AddPoll.Awaiting
         def freeAsyncPub(async: AsyncPub)(using AllowUnsafe): Unit                               = discard(pubFrees.incrementAndGet())
@@ -297,15 +322,15 @@ class AeronTransportTest extends Test:
         type Subscription = Int
         type AsyncPub     = Int
         type AsyncSub     = Int
-        def asyncAddPublication(uri: String, streamId: Int)(using AllowUnsafe): Maybe[AsyncPub] = Present(streamId)
+        def asyncAddPublication(uri: String, streamId: Int)(using AllowUnsafe): Maybe[AsyncPub]         = Present(streamId)
         def pollAddPublication(async: AsyncPub)(using AllowUnsafe): AeronTransport.AddPoll[Publication] =
             AeronTransport.AddPoll.Awaiting
-        def freeAsyncPub(async: AsyncPub)(using AllowUnsafe): Unit                               = ()
-        def publicationIsConnected(pub: Publication)(using AllowUnsafe): Boolean                 = false
-        def offer(pub: Publication, message: Array[Byte])(using AllowUnsafe): Long               = AeronSentinels.Closed
-        def maxMessageLength(pub: Publication)(using AllowUnsafe): Int                           = 0
-        def closePublication(pub: Publication)(using AllowUnsafe): Unit                          = ()
-        def asyncAddSubscription(uri: String, streamId: Int)(using AllowUnsafe): Maybe[AsyncSub] = Present(streamId)
+        def freeAsyncPub(async: AsyncPub)(using AllowUnsafe): Unit                                        = ()
+        def publicationIsConnected(pub: Publication)(using AllowUnsafe): Boolean                          = false
+        def offer(pub: Publication, message: Array[Byte])(using AllowUnsafe): Long                        = AeronSentinels.Closed
+        def maxMessageLength(pub: Publication)(using AllowUnsafe): Int                                    = 0
+        def closePublication(pub: Publication)(using AllowUnsafe): Unit                                   = ()
+        def asyncAddSubscription(uri: String, streamId: Int)(using AllowUnsafe): Maybe[AsyncSub]          = Present(streamId)
         def pollAddSubscription(async: AsyncSub)(using AllowUnsafe): AeronTransport.AddPoll[Subscription] =
             AeronTransport.AddPoll.Awaiting
         def freeAsyncSub(async: AsyncSub)(using AllowUnsafe): Unit                 = ()
@@ -372,7 +397,7 @@ class AeronTransportTest extends Test:
                 connected <- awaitTrue(5000)(Sync.Unsafe.defer(transport.publicationIsConnected(pub)))
                 _ = assert(connected, "publication did not connect after subscriber was added within 5s")
                 connectedPosition <- offerUntil(5000)(Sync.Unsafe.defer(transport.offer(pub, payload)))
-                _ <- Sync.Unsafe.defer {
+                _                 <- Sync.Unsafe.defer {
                     transport.closePublication(pub)
                     transport.closeSubscription(sub)
                 }
@@ -402,7 +427,7 @@ class AeronTransportTest extends Test:
                 subConnected <- awaitTrue(5000)(Sync.Unsafe.defer(transport.subscriptionIsConnected(sub)))
                 _ = assert(subConnected, "subscription did not connect within 5s")
                 result <- Sync.Unsafe.defer(transport.pollOne(sub))
-                _ <- Sync.Unsafe.defer {
+                _      <- Sync.Unsafe.defer {
                     transport.closePublication(pub)
                     transport.closeSubscription(sub)
                 }
@@ -468,7 +493,7 @@ class AeronTransportTest extends Test:
                 pub      = pubMaybe.get
                 payload  = Array[Byte](0)
                 result <- Sync.Unsafe.defer(transport.offer(pub, payload))
-                _ <- Sync.Unsafe.defer {
+                _      <- Sync.Unsafe.defer {
                     transport.closePublication(pub)
                 }
             yield
@@ -518,7 +543,7 @@ class AeronTransportTest extends Test:
                     "Int subscription did not receive its own message within 5000 poll attempts"
                 )
                 stringResult <- Sync.Unsafe.defer(transport.pollOne(subString))
-                _ <- Sync.Unsafe.defer {
+                _            <- Sync.Unsafe.defer {
                     transport.closePublication(pubInt)
                     transport.closeSubscription(subInt)
                     transport.closeSubscription(subString)
@@ -689,9 +714,13 @@ class AeronTransportTest extends Test:
         Latch.initWith(1) { gate =>
             Fiber.initUnscoped(
                 gate.await.andThen(
-                    Abort.run[TopicTransportException](
-                        Topic.addPublicationDeadline(transport, ipcUri, tokenOwnershipStreamId, 10.seconds)
-                    )
+                    // Wraps the add, so the token finalizer inside it unwinds first and this fires once the free the
+                    // leaf counts either happened or was correctly skipped.
+                    Sync.ensure(Sync.Unsafe.defer(transport.unwound.completeDiscard(Result.succeed(())))) {
+                        Abort.run[TopicTransportException](
+                            Topic.addPublicationDeadline(transport, ipcUri, tokenOwnershipStreamId, 10.seconds)
+                        )
+                    }
                 )
             ).flatMap { fiber =>
                 Sync.Unsafe.defer {
@@ -702,23 +731,34 @@ class AeronTransportTest extends Test:
                     .andThen(gate.release)
                     .andThen(fiber.getResult)
                     .map { result =>
-                        assert(transport.doneObserved, "the poll never reported Done, so the fixture never armed the window")
-                        assert(
-                            transport.interruptTook,
-                            "the fixture's interrupt did not take, so a zero free count says nothing about the window"
-                        )
-                        // The outcome is what separates the two readings of a zero free count: an interrupted add proves the
-                        // interrupt was OBSERVED and the flag still won, while a completed add proves only that the add
-                        // outran the interrupt and the window was never entered at all.
-                        assert(
-                            result.isPanic,
-                            s"the add was not interrupted, so this leaf did not exercise the ownership window: $result"
-                        )
-                        assert(
-                            transport.freesAfterDone.get() == 0,
-                            s"the async token was freed ${transport.freesAfterDone.get()} time(s) after the transport had " +
-                                "already taken ownership of it on a Done poll"
-                        )
+                        // Checked before the wait below, so a fixture that never armed is reported rather than left
+                        // waiting on a poll that never ran.
+                        assert(transport.pollEntered, "the poll never ran, so the fixture never armed the window")
+                        // getResult can return while the poll is still running, so the rest of its flags are readable
+                        // only once it has finished.
+                        transport.polled.safe.get.andThen {
+                            assert(transport.doneObserved, "the poll never reported Done, so the fixture never armed the window")
+                            assert(
+                                transport.interruptTook,
+                                "the fixture's interrupt did not take, so a zero free count says nothing about the window"
+                            )
+                            // The outcome is what separates the two readings of a zero free count: an interrupted add proves the
+                            // interrupt was OBSERVED and the flag still won, while a completed add proves only that the add
+                            // outran the interrupt and the window was never entered at all.
+                            assert(
+                                result.isPanic,
+                                s"the add was not interrupted, so this leaf did not exercise the ownership window: $result"
+                            )
+                            // Read only once the add has unwound past the token finalizer, so a zero count means the
+                            // finalizer declined to free rather than that it had not run.
+                            transport.unwound.safe.get.andThen {
+                                assert(
+                                    transport.freesAfterDone.get() == 0,
+                                    s"the async token was freed ${transport.freesAfterDone.get()} time(s) after the transport had " +
+                                        "already taken ownership of it on a Done poll"
+                                )
+                            }
+                        }
                     }
             }
         }
@@ -852,39 +892,67 @@ class AeronTransportTest extends Test:
     // loop polled to its 10s deadline and the publish/stream loops retried their backoff schedule forever,
     // keeping a carrier busy long after the client was gone. Both watchdogs are far below the 10s add
     // deadline, so a missing gate surfaces as the Timeout winning rather than as a hang.
+    /** Ticks virtual time until `fiber` settles.
+      *
+      * The closed-client exit these two leaves cover takes no sleep at all, so a correct run settles in the
+      * first ticks with the clock barely touched. Ticking anyway is what keeps a regression legible: one
+      * that fell through to the backoff loop reaches its 10s add deadline after about ten ticks and aborts
+      * with its own error, which the leaf then names, instead of hanging until the suite budget.
+      */
+    private def advanceUntilSettled[A](clock: Clock.TimeControl, fiber: Fiber[A, Any])(using Frame): Unit < Async =
+        Loop.indexed { i =>
+            fiber.done.map {
+                case true                         => Loop.done(())
+                case false if i >= maxSettleTicks =>
+                    fiber.interrupt.andThen(
+                        Abort.panic(new AssertionError(s"the add never settled across $maxSettleTicks ticks of virtual time"))
+                    )
+                case false => clock.advance(1.second).andThen(Loop.continue)
+            }
+        }
+
+    /** Ticks a single [[advanceUntilSettled]] allows. Well past the ten a run that polls to the add
+      * deadline needs, so reaching it means the add stopped making progress rather than that it was slow.
+      */
+    private val maxSettleTicks = 100
+
     "a publish whose client is closed aborts terminally instead of polling to the add deadline" in {
         val transport = new ClosedClientTransport
-        Abort.run[Timeout | TopicException] {
-            Async.timeout(2.seconds) {
-                Topic.runWith(transport) {
-                    Topic.publish[Int](ipcUri, streamId = Present(closedClientPubStreamId))(Stream.init(Seq(1)))
+        Clock.withTimeControl { clock =>
+            Fiber.initUnscoped(
+                Abort.run[TopicException] {
+                    Topic.runWith(transport) {
+                        Topic.publish[Int](ipcUri, streamId = Present(closedClientPubStreamId))(Stream.init(Seq(1)))
+                    }
+                }
+            ).map { fiber =>
+                advanceUntilSettled(clock, fiber).andThen(fiber.get).map {
+                    case Result.Failure(_: TopicPublicationClosedException) =>
+                        succeed
+                    case other =>
+                        fail(s"expected TopicPublicationClosedException, got $other")
                 }
             }
-        }.map {
-            case Result.Failure(_: TopicPublicationClosedException) =>
-                succeed
-            case Result.Failure(_: Timeout) =>
-                fail("publish kept polling past the 2s watchdog instead of aborting on the closed client")
-            case other =>
-                fail(s"expected TopicPublicationClosedException, got $other")
         }
     }
 
     "a stream whose client is closed aborts terminally instead of polling to the add deadline" in {
         val transport = new ClosedClientTransport
-        Abort.run[Timeout | TopicException] {
-            Async.timeout(2.seconds) {
-                Topic.runWith(transport) {
-                    Topic.stream[Int](ipcUri, streamId = Present(closedClientSubStreamId)).take(1).run
+        Clock.withTimeControl { clock =>
+            Fiber.initUnscoped(
+                Abort.run[TopicException] {
+                    Topic.runWith(transport) {
+                        Topic.stream[Int](ipcUri, streamId = Present(closedClientSubStreamId)).take(1).run
+                    }
+                }
+            ).map { fiber =>
+                advanceUntilSettled(clock, fiber).andThen(fiber.get).map {
+                    case Result.Failure(_: TopicBackpressureExhaustedException) =>
+                        succeed
+                    case other =>
+                        fail(s"expected TopicBackpressureExhaustedException, got $other")
                 }
             }
-        }.map {
-            case Result.Failure(_: TopicBackpressureExhaustedException) =>
-                succeed
-            case Result.Failure(_: Timeout) =>
-                fail("stream kept polling past the 2s watchdog instead of aborting on the closed client")
-            case other =>
-                fail(s"expected TopicBackpressureExhaustedException, got $other")
         }
     }
 
@@ -896,7 +964,7 @@ class AeronTransportTest extends Test:
         val deadline        = 500.millis
         val transport       = new NeverConfirmTransport
         for
-            counter <- AtomicInt.init(0)
+            counter     <- AtomicInt.init(0)
             tickerFiber <- Fiber.initUnscoped {
                 Loop.indexed { i =>
                     if i >= tickerThreshold then Loop.done(())
@@ -1084,7 +1152,7 @@ class AeronTransportTest extends Test:
             // The three guarded reads, each on a now-freed inner handle.
             pubConnected <- Sync.Unsafe.defer(bindings.publicationIsConnected(pub))
             subConnected <- Sync.Unsafe.defer(bindings.subscriptionIsConnected(sub))
-            polled <- Sync.Unsafe.defer {
+            polled       <- Sync.Unsafe.defer {
                 Buffer.useArray(new Array[Byte](pollDstCap)) { buf =>
                     bindings.subscriptionPoll(sub, buf, pollDstCap)
                 }
@@ -1166,7 +1234,7 @@ class AeronTransportTest extends Test:
                 pubConnected <- awaitTrue(5000)(Sync.Unsafe.defer(transport.publicationIsConnected(pub)))
                 _ = assert(pubConnected, "publication did not connect within 5s")
                 result <- Abort.run[Throwable](Sync.Unsafe.defer(transport.offer(pub, oversize)))
-                _ <- Sync.Unsafe.defer {
+                _      <- Sync.Unsafe.defer {
                     transport.closePublication(pub)
                     transport.closeSubscription(sub)
                 }
@@ -1204,7 +1272,7 @@ class AeronTransportTest extends Test:
                 pubConnected <- awaitTrue(5000)(Sync.Unsafe.defer(transport.publicationIsConnected(pub)))
                 _ = assert(pubConnected, "publication did not connect within 5s")
                 result <- Abort.run[Throwable](Sync.Unsafe.defer(transport.offer(pub, oversize)))
-                _ <- Sync.Unsafe.defer {
+                _      <- Sync.Unsafe.defer {
                     transport.closePublication(pub)
                     transport.closeSubscription(sub)
                 }
@@ -1249,7 +1317,7 @@ class AeronTransportTest extends Test:
         withEmbeddedRuntime() { rt =>
             val transport = rt.transport
             for
-                _ <- Sync.Unsafe.defer(transport.injectError(-1000, "driver timeout"))
+                _      <- Sync.Unsafe.defer(transport.injectError(-1000, "driver timeout"))
                 result <- Abort.run[TopicException] {
                     Topic.runWith(transport) {
                         Topic.publish[Int](ipcUri, Schedule.never)(Stream.init(Seq(42)))
@@ -1276,7 +1344,7 @@ class AeronTransportTest extends Test:
         withEmbeddedRuntime() { rt =>
             val transport = rt.transport
             for
-                _ <- Sync.Unsafe.defer(transport.injectError(-1000, "driver timeout"))
+                _      <- Sync.Unsafe.defer(transport.injectError(-1000, "driver timeout"))
                 result <- Abort.run[TopicException] {
                     Topic.runWith(transport) {
                         Topic.stream[Int](ipcUri, Schedule.never).take(1).run

@@ -283,9 +283,9 @@ class MysqlSqlConfigTlsModeIntegrationTest extends SqlContainerTest:
                 // reasons that have nothing to do with certificate validation. Leaf 8 below is the positive
                 // control on the same container: the matching CA must connect AND report a non-empty Ssl_cipher.
                 case Result.Failure(_: SqlConnectionConnectFailedException) => succeed
-                case Result.Success(_) =>
+                case Result.Success(_)                                      =>
                     fail("expected the handshake to fail: the server chain was not signed by the supplied CA")
-                case Result.Panic(t) => fail(s"unexpected panic verifying an untrusted CA: ${t.getMessage}")
+                case Result.Panic(t)       => fail(s"unexpected panic verifying an untrusted CA: ${t.getMessage}")
                 case Result.Failure(other) =>
                     fail(s"expected SqlConnectionConnectFailedException from chain validation, got: $other")
             }
@@ -316,9 +316,9 @@ class MysqlSqlConfigTlsModeIntegrationTest extends SqlContainerTest:
                 }
             }.map {
                 case Result.Failure(_: SqlConnectionConnectFailedException) => succeed
-                case Result.Success(_) =>
+                case Result.Success(_)                                      =>
                     fail("expected the handshake to fail: 127.0.0.1 does not match the certificate's CN=localhost")
-                case Result.Panic(t) => fail(s"unexpected panic verifying a hostname mismatch: ${t.getMessage}")
+                case Result.Panic(t)       => fail(s"unexpected panic verifying a hostname mismatch: ${t.getMessage}")
                 case Result.Failure(other) =>
                     fail(s"expected SqlConnectionConnectFailedException from hostname verification, got: $other")
             }
@@ -397,7 +397,7 @@ object MysqlSqlConfigTlsModeIntegrationTest:
     ): A < (S & Async & Abort[ContainerException]) =
         tlsRef.use {
             case Maybe.Present(p) => p.get.flatMap(f)
-            case Maybe.Absent =>
+            case Maybe.Absent     =>
                 Promise.init[TlsCtx, Abort[ContainerException]].flatMap { p =>
                     tlsRef.compareAndSet(Maybe.empty, Maybe.Present(p)).flatMap {
                         case false =>
@@ -461,7 +461,7 @@ object MysqlSqlConfigTlsModeIntegrationTest:
     ): A < (S & Async & Abort[ContainerException]) =
         certRef.use {
             case Maybe.Present(p) => p.get.flatMap(f)
-            case Maybe.Absent =>
+            case Maybe.Absent     =>
                 Promise.init[CertCtx, Abort[ContainerException]].flatMap { p =>
                     certRef.compareAndSet(Maybe.empty, Maybe.Present(p)).flatMap {
                         case false =>
@@ -497,8 +497,8 @@ object MysqlSqlConfigTlsModeIntegrationTest:
             // bind-mounted into is a singleton that outlives this `Scope.run`, so a scope-registered
             // removal would delete the certs while the server is still reading them.
             Abort.run[FileStructureException](Path.tempDirUnscoped(prefix = "kyo-sql-mysql-certs-")).flatMap {
-                case Result.Failure(e) => Abort.fail(ContainerBackendException(s"temp dir creation failed: ${e.getMessage}"))
-                case Result.Panic(t)   => Abort.fail(ContainerBackendException(s"temp dir creation panic: ${t.getMessage}"))
+                case Result.Failure(e)           => Abort.fail(ContainerBackendException(s"temp dir creation failed: ${e.getMessage}"))
+                case Result.Panic(t)             => Abort.fail(ContainerBackendException(s"temp dir creation panic: ${t.getMessage}"))
                 case Result.Success(tempDirPath) =>
                     val tempDir = tempDirPath.toString
                     openssl(tempDir, "localhost", "server").andThen {
@@ -559,11 +559,11 @@ object MysqlSqlConfigTlsModeIntegrationTest:
       * `mysqld` to any argv whose first element starts with a dash.
       */
     private def startCertContainer(tempDirPath: Path)(using Frame): CertCtx < (Async & Abort[ContainerException] & Scope) =
-        val tempDir  = tempDirPath.toString
-        val username = "test"
-        val password = "test"
-        val database = "test"
-        val predef   = ContainerPredef.MySQL.Config.default.copy(username = username, password = password, database = database)
+        val tempDir       = tempDirPath.toString
+        val username      = "test"
+        val password      = "test"
+        val database      = "test"
+        val predef        = ContainerPredef.MySQL.Config.default.copy(username = username, password = password, database = database)
         val wrapperScript =
             "cp /etc/ssl-my/server.crt /etc/ssl-my/server.key /etc/ssl-my/ca.pem /tmp/ && " +
                 "chmod 600 /tmp/server.key && " +

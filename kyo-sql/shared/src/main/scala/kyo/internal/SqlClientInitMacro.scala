@@ -5,6 +5,7 @@ import kyo.Absent
 import kyo.Maybe
 import kyo.Present
 import kyo.db.Backend
+import scala.annotation.publicInBinary
 import scala.quoted.*
 import scala.util.control.NonFatal
 
@@ -26,7 +27,10 @@ import scala.util.control.NonFatal
   * constructed withholds every scheme it claims, so a scheme set that is empty and a scheme set missing the one asked for are equally
   * unproven while one factory is outstanding: the artifact IS a dependency, and the classloader compiling a call site is not the one that
   * will run it. Neither refusal fires until every declared factory has answered, which is why [[Verdict]] has four cases and not three.
+  *
+  * Public binary visibility supports inline callers while Scala access remains restricted to kyo.
   */
+@publicInBinary
 private[kyo] object SqlClientInitMacro:
 
     /** Checks `rawUrl` against the backends on the compile classpath, warning at the call site when nothing there can open it. */
@@ -102,7 +106,7 @@ private[kyo] object SqlClientInitMacro:
     private[kyo] def refusalFor(scheme: String, verdict: Verdict): Maybe[String] =
         verdict match
             case Verdict.Claimed | Verdict.Undecided => Absent
-            case Verdict.NoBackend =>
+            case Verdict.NoBackend                   =>
                 Present(
                     s"No SQL backend is on the compile classpath, so '$scheme://...' can only open through a backend registered at run time. " +
                         "Add the kyo-sql backend artifact for the engine this URL names."

@@ -54,7 +54,8 @@ class MysqlDialectRenderTest extends Test:
         val q  = Sql.from[Person]("p").where(c => c.p.age >= 18 && c.p.name != "")
         val rm = q.render(MysqlDialect)
         assert(
-            rm.onlySql.get == "SELECT `p`.`id`, `p`.`name`, `p`.`age`, `p`.`deptId` FROM `person` `p` WHERE ((`p`.`age` >= ?) AND (`p`.`name` <> ?))"
+            rm.onlySql.get ==
+                "SELECT `p`.`id`, `p`.`name`, `p`.`age`, `p`.`deptId` FROM `person` `p` WHERE ((`p`.`age` >= ?) AND (`p`.`name` <> ?))"
         )
         assert(rm.params.size == 2)
         val bv0: kyo.Sql.BoundValue[?] = rm.params(0)
@@ -70,7 +71,7 @@ class MysqlDialectRenderTest extends Test:
         // `Select` carries the source's column record now, so the hand-built node takes it from the source
         // rather than inventing one. `B` appears only in `extends Query[B]` and so cannot be inferred from any
         // argument; the ascription supplies it, while `A` comes from `src` and `F` from `src.columns`.
-        val src = Sql.from[Person]("p")
+        val src              = Sql.from[Person]("p")
         val q: Query[String] = Select(
             src,
             src.columns,
@@ -92,7 +93,8 @@ class MysqlDialectRenderTest extends Test:
             .limit(10)
         val rm = q.render(MysqlDialect)
         assert(
-            rm.onlySql.get == "SELECT `p`.`id`, `p`.`name`, `p`.`age`, `p`.`deptId` FROM `person` `p` WHERE (`p`.`age` >= ?) ORDER BY `p`.`age` IS NOT NULL, `p`.`age` DESC LIMIT 10"
+            rm.onlySql.get ==
+                "SELECT `p`.`id`, `p`.`name`, `p`.`age`, `p`.`deptId` FROM `person` `p` WHERE (`p`.`age` >= ?) ORDER BY `p`.`age` IS NOT NULL, `p`.`age` DESC LIMIT 10"
         )
         assert(rm.params.size == 1)
         val bv: kyo.Sql.BoundValue[?] = rm.params.head
@@ -185,7 +187,8 @@ class MysqlDialectRenderTest extends Test:
         )
         val rm = q.render(MysqlDialect)
         assert(
-            rm.onlySql.get == "SELECT `p`.`id`, `p`.`name`, `p`.`age`, `p`.`deptId` FROM `person` `p` WHERE (((`p`.`age` >= ?) AND (`p`.`name` <> ?)) AND (`p`.`deptId` = ?))"
+            rm.onlySql.get ==
+                "SELECT `p`.`id`, `p`.`name`, `p`.`age`, `p`.`deptId` FROM `person` `p` WHERE (((`p`.`age` >= ?) AND (`p`.`name` <> ?)) AND (`p`.`deptId` = ?))"
         )
         assert(rm.params.size == 3)
     }

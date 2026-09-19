@@ -1,4 +1,4 @@
-ThisBuild / scalaVersion := "3.8.3"
+ThisBuild / scalaVersion := sys.props("kyo.scalaVersion")
 ThisBuild / version      := "0.1.0-SNAPSHOT"
 
 lazy val checkBuildLevelDefaults = taskKey[Unit]("Fail unless every build-wide FFI key resolves at ThisBuild.")

@@ -139,8 +139,8 @@ class AITest extends kyo.test.Test[Any]:
         LLM.run {
             AI.initWith { ai =>
                 for
-                    _ <- ai.userMessage("seeded")
-                    _ <- ai.enable(Tool.init[Int]("t")(_ => 1))
+                    _                       <- ai.userMessage("seeded")
+                    _                       <- ai.enable(Tool.init[Int]("t")(_ => 1))
                     (innerMsgs, innerTools) <- AI.fresh(
                         for
                             c    <- ai.context
@@ -162,8 +162,8 @@ class AITest extends kyo.test.Test[Any]:
             AI.init.map { a =>
                 AI.init.map { b =>
                     for
-                        _ <- a.userMessage("a-seed")
-                        _ <- b.userMessage("b-seed")
+                        _                <- a.userMessage("a-seed")
+                        _                <- b.userMessage("b-seed")
                         (aInner, bInner) <- AI.fresh(a)(
                             for
                                 ac <- a.context
@@ -292,7 +292,7 @@ class AITest extends kyo.test.Test[Any]:
     "AI.enable of a tool, prompt, thought, or mode adds LLM to the row" in {
         val thought: Unit < LLM = AI.enable(Thought.reflective)(Kyo.unit)
         val prompt: Unit < LLM  = AI.enable(Prompt.empty)(Kyo.unit)
-        val mode: Unit < LLM = AI.enable(new Mode[Any]:
+        val mode: Unit < LLM    = AI.enable(new Mode[Any]:
             def apply[A: Schema](ai: AI, gen: Maybe[A] < (LLM & Async & Abort[AIGenException]))(using
                 Frame
             ): Maybe[A] < (LLM & Async & Abort[AIGenException]) = gen)(Kyo.unit)

@@ -161,7 +161,7 @@ class PollerIoDriverTlsInboundBioBoundTest extends Test:
                             // which is exactly the coalesced-burst load this bound is about. The distinct per-record/per-index pattern makes any
                             // corruption or reorder a concrete byte mismatch.
                             val recordSize = 16000
-                            val records =
+                            val records    =
                                 Array.tabulate(n)(k => Array.tabulate[Byte](recordSize)(i => ((k * 31 + i) % 251).toByte))
                             val expectedPlain = records.foldLeft(Array.emptyByteArray)(_ ++ _)
                             def encryptAll(k: Int, acc: Array[Byte]): Array[Byte] < (Abort[Closed] & Async) =

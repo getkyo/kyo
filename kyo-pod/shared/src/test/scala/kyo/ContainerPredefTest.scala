@@ -290,7 +290,7 @@ class ContainerPredefTest extends BasePodTest:
                 attempts <- AtomicInt.init(0)
                 down     <- AtomicInt.init(0)
                 failed   <- AtomicInt.init(0)
-                _ <- Abort.run[ContainerException](ContainerPredef.readinessAttempt(
+                _        <- Abort.run[ContainerException](ContainerPredef.readinessAttempt(
                     () => attempts.getAndIncrement.map(i => probes(math.min(i, probes.size - 1))),
                     () => state,
                     _ => down.incrementAndGet.unit,
@@ -347,7 +347,7 @@ class ContainerPredefTest extends BasePodTest:
             for
                 attempts <- AtomicInt.init(0)
                 failed   <- AtomicInt.init(0)
-                outcome <- Abort.run[ContainerException](ContainerPredef.readinessAttempt(
+                outcome  <- Abort.run[ContainerException](ContainerPredef.readinessAttempt(
                     () => attempts.getAndIncrement.andThen(Result.fail(daemon)),
                     () => Result.panic(boom),
                     _ => Kyo.unit,

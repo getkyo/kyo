@@ -107,9 +107,11 @@ private[kyo] object HostFileSystem:
             Sync.Unsafe.defer(path.unsafe.isSymbolicLink())
         def realPath(path: Path)(using
             Frame
-        ): Path < (Sync & Abort[
-            FileInvalidPathException | FileNotFoundException | FileAccessDeniedException | FileIOException
-        ]) =
+        ): Path <
+            (Sync &
+                Abort[
+                    FileInvalidPathException | FileNotFoundException | FileAccessDeniedException | FileIOException
+                ]) =
             // Unsafe: bridges Path.Unsafe.realPath; the Result maps to Abort[FileSystemException]
             Sync.Unsafe.defer(Abort.get(path.unsafe.realPath()))
         def read(path: Path)(using Frame): String < (Sync & Abort[FileReadException]) =
@@ -266,7 +268,7 @@ private[kyo] object HostFileSystem:
                 private val write = writeChannelFrom(path, raw)
                 def readAt(position: Long, length: Int)(using Frame): Span[Byte] < (Sync & Abort[FileReadException]) =
                     read.readAt(position, length)
-                def size(using Frame): Long < (Sync & Abort[FileReadException]) = read.size
+                def size(using Frame): Long < (Sync & Abort[FileReadException])                                        = read.size
                 def writeAt(position: Long, bytes: Span[Byte])(using Frame): Unit < (Sync & Abort[FileWriteException]) =
                     write.writeAt(position, bytes)
                 def sync(metadata: Boolean)(using Frame): Unit < (Sync & Abort[FileWriteException]) = write.sync(metadata)
@@ -419,7 +421,7 @@ private[kyo] object HostFileSystem:
                                     case Path.LockAttempt.Failed(error) => error
                             }.map {
                                 case Result.Success(Present(lock)) => lock
-                                case Result.Success(Absent) =>
+                                case Result.Success(Absent)        =>
                                     if remaining <= 0 then Abort.fail(FileLockUnavailableException(path))
                                     else Async.sleep(pendingLockRetryDelay).andThen(attempt(remaining - 1))
                                 case failed => Abort.get(failed.map(_ => null.asInstanceOf[Path.Lock]))

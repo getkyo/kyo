@@ -99,11 +99,11 @@ private[kyo] object ClasspathFingerprint:
             // A class is matched to its TASTy by the outermost name, before any `$`, so a Scala
             // class contributes only its TASTy while its companion, anonymous and nested classes
             // are all excluded with it.
-            val tastyFiles = allPaths.filter(_.toString.endsWith(".tasty"))
-            val tastyStems = tastyFiles.map(p => p.toString.stripSuffix(".tasty")).toSet
-            val classFiles = allPaths.filter(_.toString.endsWith(".class"))
+            val tastyFiles  = allPaths.filter(_.toString.endsWith(".tasty"))
+            val tastyStems  = tastyFiles.map(p => p.toString.stripSuffix(".tasty")).toSet
+            val classFiles  = allPaths.filter(_.toString.endsWith(".class"))
             val javaClasses = classFiles.filterNot { p =>
-                val stem = p.toString.stripSuffix(".class")
+                val stem      = p.toString.stripSuffix(".class")
                 val outermost = stem.indexOf('$') match
                     case -1 => stem
                     case i  => stem.substring(0, i)

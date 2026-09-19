@@ -84,7 +84,7 @@ class BrowserLauncherCleanupJvmTest extends BaseChromeTest:
                 val args = ph.info().arguments().orElse(Array.empty[String])
                 // We require BOTH the sentinel tag AND a `--user-data-dir=<...>` arg. The user-data-dir arg is what
                 // we actually want to capture. If the argv doesn't contain a tag match, this process isn't ours.
-                val hasTag = args.exists(_.contains(tag))
+                val hasTag                          = args.exists(_.contains(tag))
                 val captured: Maybe[(Long, String)] =
                     if !hasTag then Absent
                     else
@@ -119,7 +119,7 @@ class BrowserLauncherCleanupJvmTest extends BaseChromeTest:
       * effect chaining is appropriate.
       */
     private def waitUntil(timeoutMs: Long, stepMs: Long = 50)(cond: () => Boolean): Boolean =
-        val deadline = java.lang.System.currentTimeMillis() + timeoutMs
+        val deadline                 = java.lang.System.currentTimeMillis() + timeoutMs
         @tailrec def loop(): Boolean =
             if cond() then true
             else if java.lang.System.currentTimeMillis() >= deadline then false
@@ -264,7 +264,7 @@ class BrowserLauncherCleanupJvmTest extends BaseChromeTest:
                                 _    <- Browser.eval("1+1")
                                 live <- Sync.defer(chromesByTag(tag))
                                 _    <- capturedRef.set(live)
-                                _ <- Sync.defer {
+                                _    <- Sync.defer {
                                     // Externally drop Chrome's process tree. After this point the CDP WebSocket
                                     // is half-open from the launcher's perspective; the next CDP send (or the
                                     // scope finalizer's disposeBrowserContext call) raises Closed → ConnectionLost.
@@ -286,7 +286,7 @@ class BrowserLauncherCleanupJvmTest extends BaseChromeTest:
                     // The action MUST have aborted: the killed Chrome cannot service a follow-up CDP request.
                     runResult match
                         case Result.Failure(_) | Result.Panic(_) => ()
-                        case Result.Success(_) =>
+                        case Result.Success(_)                   =>
                             fail("test: expected an abort/panic after externally killing Chrome, got Success")
                     end match
                     assert(captured.nonEmpty, "test: captured no Chrome process for our tag")
@@ -344,7 +344,7 @@ class BrowserLauncherCleanupJvmTest extends BaseChromeTest:
         Scope.run {
             for
                 r1 <- firstRun
-                _ <- Sync.defer {
+                _  <- Sync.defer {
                     r1 match
                         case Result.Failure(ex) if ex.getMessage == "first deliberate boom" =>
                             assert(ex.getMessage == "first deliberate boom", s"sentinel message mismatch: ${ex.getMessage}")
@@ -352,7 +352,7 @@ class BrowserLauncherCleanupJvmTest extends BaseChromeTest:
                     end match
                 }
                 r2 <- trivialRun(tag2)
-                _ <- Sync.defer {
+                _  <- Sync.defer {
                     r2 match
                         case Result.Success(v) =>
                             assert(v == "42", s"test: second run expected '42' but got '$v'")
@@ -360,7 +360,7 @@ class BrowserLauncherCleanupJvmTest extends BaseChromeTest:
                     end match
                 }
                 r3 <- trivialRun(tag3)
-                _ <- Sync.defer {
+                _  <- Sync.defer {
                     r3 match
                         case Result.Success(v) =>
                             assert(v == "42", s"test: third run expected '42' but got '$v'")

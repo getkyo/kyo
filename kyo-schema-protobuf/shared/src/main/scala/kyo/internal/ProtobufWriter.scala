@@ -455,10 +455,8 @@ final class ProtobufWriter extends Writer:
         loop(0)
     end writeFixedInt
 
-    private def encodeZigZag32(n: Int): Long =
-        ((n << 1) ^ (n >> 31)).toLong & 0xffffffffL
+    private def encodeZigZag32(n: Int): Long = ((n << 1) ^ (n >> 31)).toLong & 0xffffffffL
 
-    private def encodeZigZag64(n: Long): Long =
-        (n << 1) ^ (n >> 63)
+    private def encodeZigZag64(n: Long): Long = (n << 1) ^ (n >> 63)
 
 end ProtobufWriter

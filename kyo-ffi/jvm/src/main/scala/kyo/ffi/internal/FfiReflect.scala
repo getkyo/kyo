@@ -27,7 +27,7 @@ object FfiReflect:
                     Some(() => ctor.newInstance().asInstanceOf[AnyRef])
                 catch
                     case _: ClassNotFoundException => None
-                    case _: NoSuchMethodException =>
+                    case _: NoSuchMethodException  =>
                         throw new IllegalStateException(FfiPlatformErrors.implMissingNullaryCtorJvm(name, traitFqn))
             ,
             FfiPlatformErrors.implClassNotFoundJvm

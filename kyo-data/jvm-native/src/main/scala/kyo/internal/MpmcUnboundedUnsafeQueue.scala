@@ -367,9 +367,9 @@ private[kyo] object MpmcUnboundedUnsafeQueue:
         // Using null (not Absent) avoids a visibility race on ARM: chunks are published via
         // lazySet (StoreStore only), so Absent writes might not be visible when a consumer
         // first reads the new chunk. Java's null default is safe because it requires no writes.
-        val buffer = new AtomicReferenceArray[AnyRef](chunkCapacity)
+        val buffer                    = new AtomicReferenceArray[AnyRef](chunkCapacity)
         val sequence: AtomicLongArray = if pooled then
-            val b = new AtomicLongArray(chunkCapacity)
+            val b                           = new AtomicLongArray(chunkCapacity)
             @tailrec def init(i: Int): Unit =
                 if i < chunkCapacity then
                     b.lazySet(i, -1L) // sentinel: "not yet written in this round"

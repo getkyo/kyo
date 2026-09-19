@@ -535,11 +535,11 @@ object Log extends kyo.internal.LogPlatformSpecific:
 
     /** Parses `-Dkyo.Log.defaultLevel`: one of the `Log.Level` names, any casing, whitespace trimmed. */
     private[kyo] given Flag.Reader[Level] with
-        def typeName: String = "Log.Level"
+        def typeName: String                           = "Log.Level"
         def apply(s: String): Either[Throwable, Level] =
             Maybe.fromOption(Level.values.find(_.toString.equalsIgnoreCase(s.trim))) match
                 case Present(level) => Right(level)
-                case Absent =>
+                case Absent         =>
                     Left(new IllegalArgumentException(
                         s"unknown log level: ${s.trim} (expected one of ${Level.values.map(_.toString).mkString(", ")})"
                     ))
@@ -547,10 +547,10 @@ object Log extends kyo.internal.LogPlatformSpecific:
 
     /** Parses `-Dkyo.Log.asyncLogging.overflow`: `"SyncFallback"` or `"DropBelow:<level>"`. */
     private[kyo] given Flag.Reader[Overflow] with
-        def typeName: String = "Log.Overflow"
+        def typeName: String                              = "Log.Overflow"
         def apply(s: String): Either[Throwable, Overflow] =
             s.trim match
-                case "SyncFallback" => Right(Overflow.SyncFallback)
+                case "SyncFallback"                          => Right(Overflow.SyncFallback)
                 case other if other.startsWith("DropBelow:") =>
                     val token = other.stripPrefix("DropBelow:")
                     Maybe.fromOption(Level.values.find(_.toString == token)) match

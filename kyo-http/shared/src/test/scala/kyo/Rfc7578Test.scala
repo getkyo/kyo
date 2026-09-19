@@ -272,7 +272,7 @@ class Rfc7578Test extends BaseHttpTest:
         }
         withServer(ep) { port =>
             val binaryData = Array[Byte](0, 1, 127, -128, -1)
-            val part = HttpRequest.Part(
+            val part       = HttpRequest.Part(
                 "bin",
                 Present("binary.dat"),
                 Present("application/octet-stream"),

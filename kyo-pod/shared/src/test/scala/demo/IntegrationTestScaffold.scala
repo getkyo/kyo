@@ -85,7 +85,7 @@ object IntegrationTestScaffold extends KyoApp:
             // bash's /dev/tcp probe.
             crossRes <- pg.exec("sh", "-c", s"getent hosts $redisAlias || (exec 3<>/dev/tcp/$redisAlias/6379 && echo connected)")
             _        <- Console.printLine(s"[postgres] ready=${pgRes.exitCode.isSuccess} exit=${pgRes.exitCode.toInt}")
-            _ <- Console.printLine(
+            _        <- Console.printLine(
                 s"[redis]    ready=${redisRes.exitCode.isSuccess && redisRes.stdout.trim.equalsIgnoreCase("PONG")} stdout='${redisRes.stdout.trim}'"
             )
             _ <- Console.printLine(s"[dns]      pg→redis exit=${crossRes.exitCode.toInt} stdout='${crossRes.stdout.trim}'")

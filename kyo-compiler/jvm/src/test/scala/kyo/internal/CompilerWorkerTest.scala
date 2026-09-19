@@ -19,7 +19,7 @@ class CompilerWorkerTest extends kyo.test.Test[Any]:
         // The diagnostics flag is set by Wire.compileParams on this side too, so a type error
         // and a syntax error each surface a diagnostic while a clean buffer surfaces none.
         val pcClasspath = Seq(findJar("scala3-library"), findJar("scala-library")).mkString(Path.pathSeparator)
-        java.lang.System.setProperty("kyo.internal.WorkerFlags.scalaVersion", "3.8.4")
+        java.lang.System.setProperty("kyo.internal.WorkerFlags.scalaVersion", CompilerPool.ownVersion)
         java.lang.System.setProperty("kyo.internal.WorkerFlags.classpath", pcClasspath)
         java.lang.System.setProperty("kyo.internal.WorkerFlags.options", "")
         Scope.run {

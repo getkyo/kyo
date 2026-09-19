@@ -8,7 +8,7 @@ import scala.scalajs.js.annotation.*
 import scala.scalajs.js.typedarray.*
 import scala.scalajs.reflect.annotation.EnableReflectiveInstantiation
 import kyo.ffi.*
-import kyo.ffi.internal.{AbiCheck, JsRawSegment, KoffiFacade, KoffiFn, NativeLoader, StructAbiCheck}
+import kyo.ffi.internal.{AbiCheck, JsRawSegment, KoffiFacade, KoffiFn, NativeFacade, NativeLoader, StructAbiCheck}
 
 @EnableReflectiveInstantiation final class BufferBindingsImpl extends BufferBindings:
     import BufferBindingsImpl.*
@@ -23,8 +23,8 @@ end BufferBindingsImpl
 
 object BufferBindingsImpl:
     AbiCheck.verify(1, "kyo.example.BufferBindings")
-    private val facade = KoffiFacade.load(
-        NativeLoader.jsResolve("kyo_buf"),
+    private val facade = NativeFacade.load(
+        "kyo_buf",
         Seq(
             KoffiFn("process", "process", "int", Seq[js.Any]("void*".asInstanceOf[js.Any], "int".asInstanceOf[js.Any]))
         )

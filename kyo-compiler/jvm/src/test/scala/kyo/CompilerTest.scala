@@ -57,7 +57,7 @@ class CompilerTest extends kyo.test.Test[Any]:
         val sigRt = roundTrip(sig)
         assert(sigRt == sig)
 
-        val uri = Uri("Main.scala")
+        val uri        = Uri("Main.scala")
         val symWithDef = SymbolInfo(
             name = "foo",
             fullName = "kyo.foo",
@@ -77,7 +77,7 @@ class CompilerTest extends kyo.test.Test[Any]:
         assert(symNoDefRt.localDefinition == Absent)
 
         // A field-only leaf (no Throwable) round-trips to an equal value.
-        val errReady: CompilerException = CompilerWorkerReadyException("3.8.4", 30.seconds)
+        val errReady: CompilerException = CompilerWorkerReadyException("3.0.0", 30.seconds)
         assert(roundTrip(errReady) == errReady)
 
         // A Throwable-carrying leaf round-trips to the same type with the cause preserved as text
@@ -109,8 +109,8 @@ class CompilerTest extends kyo.test.Test[Any]:
         import Compiler.*
         val settings = Pool.Settings.default
         assert(settings == Pool.Settings(true, 4, 16, 5.minutes))
-        val toolchain = Toolchain("3.8.4", Chunk.empty)
-        val config = Config(
+        val toolchain = Toolchain("3.0.0", Chunk.empty)
+        val config    = Config(
             toolchain = toolchain,
             classpath = Chunk.empty,
             scalacOptions = Chunk.empty,

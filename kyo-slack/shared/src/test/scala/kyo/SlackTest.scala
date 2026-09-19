@@ -28,8 +28,8 @@ class SlackTest extends kyo.test.Test[Any]:
         )
     }
 
-    private val cfg = SlackConfig(SlackToken.AppLevel("xapp-1"), SlackToken.Bot("xoxb-1"))
-    private val url = "wss://test/socket"
+    private val cfg        = SlackConfig(SlackToken.AppLevel("xapp-1"), SlackToken.Bot("xoxb-1"))
+    private val url        = "wss://test/socket"
     private val helloFrame =
         """{"type":"hello","num_connections":1,"connection_info":{"app_id":"A1"}}"""
     private val eventFrame =
@@ -130,7 +130,7 @@ class SlackTest extends kyo.test.Test[Any]:
                 val conn = new SlackTransport.Conn:
                     private[kyo] def put(text: String)(using Frame): Unit < (Async & Abort[Closed]) = recorded.put(text)
                     private[kyo] def stream(using Frame): Stream[String, Async]                     = feed.streamUntilClosed()
-                    private[kyo] def close(using Frame): Unit < Async =
+                    private[kyo] def close(using Frame): Unit < Async                               =
                         // Close only the inbound feed (stopping the receiver). Leave the
                         // recorded ack sink OPEN so a test can drain pre-teardown acks
                         // without racing a Closed on the sink.

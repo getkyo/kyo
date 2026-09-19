@@ -16,17 +16,13 @@ class MachineTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
-    /** The registered `machine.*` keys across all four stores. Enumerates keys directly rather than through
-      * `MachineRegistrySnapshot.read`, which dereferences each entry's `WeakReference` and is JVM-only:
-      * Scala.js has no linkable `java.lang.ref.Reference`, and on Scala Native `WeakReference` does not
-      * extend it (a `ClassCastException` at the dereference), so `MachineRegistrySnapshot`'s every other
-      * caller is `.onlyJvm`-gated. This leaf needs no VALUE, only the registered key set, so a plain
-      * `ConcurrentHashMap.keySet()` walk (a standard, cross-platform-safe collections call) sidesteps the
-      * dereference entirely and stays genuinely cross-platform.
+    /** The registered `machine.*` keys across all four stores. This reads keys without dereferencing the
+      * stored weak references, so the null-reader check also runs on Scala.js and Wasm, which lack
+      * `java.lang.ref.Reference`. Registry value readers run on JVM and Native.
       */
     private def machineKeys(): Set[List[String]] =
-        val registry = kyo.stats.internal.StatsRegistry.internal
-        val keys     = collection.mutable.HashSet.empty[List[String]]
+        val registry                                           = kyo.stats.internal.StatsRegistry.internal
+        val keys                                               = collection.mutable.HashSet.empty[List[String]]
         def collect(map: java.util.Map[List[String], ?]): Unit =
             map.keySet().forEach { k =>
                 if k.headOption.contains("machine") then discard(keys.add(k))
@@ -38,8 +34,7 @@ class MachineTest extends kyo.test.Test[Any]:
         keys.toSet
     end machineKeys
 
-    // Value readers for a metric path (scope, family, leaf), mirroring the other suites' helpers. The
-    // WeakReference dereference these perform is JVM-only, so their callers are `.onlyJvm`-gated.
+    // Registry value readers use the platform WeakReference implementation on JVM and Native.
     private def gaugePath(path: String*): Double =
         StatsRegistry.internal.gauges.get(path.toList.reverse, "", new UnsafeGauge(() => -1d)).collect()
 
@@ -61,7 +56,7 @@ class MachineTest extends kyo.test.Test[Any]:
         assert(after == before)
     }
 
-    "the fully assembled host reader runs one tick and populates every family the host produces (standing-invariant re-verify anchor)".onlyJvm in {
+    "the fully assembled host reader runs one tick and populates every family the host produces (standing-invariant re-verify anchor)".notJs.notWasm in {
         val hostOs = System.live.unsafe.operatingSystem()
         assume(
             hostOs == System.OS.Linux || hostOs == System.OS.MacOS || hostOs == System.OS.Windows,
@@ -100,7 +95,7 @@ class MachineTest extends kyo.test.Test[Any]:
         end for
     }
 
-    "the assembled host reader wires memory.total in bytes: a plausible RAM total dominating available and free".onlyJvm in {
+    "the assembled host reader wires memory.total in bytes: a plausible RAM total dominating available and free".notJs.notWasm in {
         val hostOs = System.live.unsafe.operatingSystem()
         assume(
             hostOs == System.OS.Linux || hostOs == System.OS.MacOS || hostOs == System.OS.Windows,

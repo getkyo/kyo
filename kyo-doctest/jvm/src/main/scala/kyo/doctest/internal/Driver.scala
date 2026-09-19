@@ -268,7 +268,7 @@ private[kyo] object Driver:
         freshDriver: Boolean,
         outputDir: kyo.Path
     ): Driver =
-        val cpArg = classpath.map(_.toString).iterator.mkString(java.io.File.pathSeparator)
+        val cpArg    = classpath.map(_.toString).iterator.mkString(java.io.File.pathSeparator)
         val baseArgs = Array(
             "-classpath",
             cpArg,
@@ -285,7 +285,7 @@ private[kyo] object Driver:
         // The blocking .get() has been replaced by CompletableFuture.supplyAsync +
         // Async.fromCompletionStage so the Kyo carrier yields instead of blocking.
         val compilerThread = Executors.newSingleThreadExecutor()
-        val setupResult = compilerThread.submit(new Callable[(Context, Compiler)]:
+        val setupResult    = compilerThread.submit(new Callable[(Context, Compiler)]:
             def call(): (Context, Compiler) =
                 val initContext = dottyDrv.publicInitCtx
                 dottyDrv.setup(allArgs, initContext) match

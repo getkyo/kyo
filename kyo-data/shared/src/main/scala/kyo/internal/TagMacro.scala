@@ -5,11 +5,21 @@ import kyo.Tag.*
 import kyo.Tag.internal.*
 import kyo.Tag.internal.Type.*
 import kyo.Tag.internal.Type.Entry.*
+import scala.annotation.publicInBinary
 import scala.annotation.tailrec
 import scala.collection.immutable
 import scala.collection.immutable.HashMap
 import scala.quoted.{Type as SType, *}
 
+/** Derives the type encodings used by [[kyo.Tag]].
+  *
+  * The public inline factories invoke this implementation while compiling a caller.
+  * Static types become encoded constants; abstract types can retain dynamic tag inputs.
+  * The resulting tags use the same comparison and rendering operations at run time.
+  *
+  * Public binary visibility supports inline callers while Scala access remains restricted to kyo.
+  */
+@publicInBinary
 private[kyo] object TagMacro:
     // Per-compilation-run memo of the derived static encoding. The cache key is the
     // dealiased type's normalized `show` string concatenated with the source-position
@@ -56,7 +66,7 @@ private[kyo] object TagMacro:
             else true
         end isLocallyDefined
         def symPositions(t: TypeRepr): String =
-            val sym = t.typeSymbol
+            val sym     = t.typeSymbol
             val symPart =
                 if sym.isNoSymbol || !isLocallyDefined(sym) then ""
                 else sym.pos.map(p => "@" + p.start).getOrElse("")
@@ -155,7 +165,7 @@ private[kyo] object TagMacro:
             // collapses to its underlying constructor rather than to an applied type, so there are
             // no arguments at this node to read back.
             case lambda: TypeLambda if lambda =:= node => Some(Nil)
-            case _ =>
+            case _                                     =>
                 val (pattern, holes) =
                     underlying match
                         case lambda: TypeLambda => (lambda.resType, Array.fill[Option[TypeRepr]](lambda.paramNames.size)(None))
@@ -194,7 +204,7 @@ private[kyo] object TagMacro:
                     (if allowExtra then patterns.size <= values.size else patterns.size == values.size) && {
                         def search(remaining: List[TypeRepr], available: List[TypeRepr]): Boolean =
                             remaining match
-                                case Nil => allowExtra || available.isEmpty
+                                case Nil             => allowExtra || available.isEmpty
                                 case pattern :: rest =>
                                     available.indices.exists { i =>
                                         val snapshot = holes.clone()
@@ -313,11 +323,11 @@ private[kyo] object TagMacro:
 
             def check(node: TypeRepr): Unit =
                 candidates(node) match
-                    case Nil => descend(node)
+                    case Nil  => descend(node)
                     case syms =>
-                        val names   = syms.map(_.name)
-                        val opaques = if syms.size == 1 then s"opaque type ${names.head}" else s"opaque types ${names.mkString(" and ")}"
-                        val where   = if node =:= root then "" else s" Its part ${node.show} is the problem:"
+                        val names    = syms.map(_.name)
+                        val opaques  = if syms.size == 1 then s"opaque type ${names.head}" else s"opaque types ${names.mkString(" and ")}"
+                        val where    = if node =:= root then "" else s" Its part ${node.show} is the problem:"
                         val eitherOf =
                             if syms.size == 1 then s"${names.head} or ${node.show}" else s"${names.mkString(", ")} or ${node.show}"
                         report.errorAndAbort(
@@ -371,7 +381,7 @@ private[kyo] object TagMacro:
             val tpe = t.dealiasKeepOpaques.simplified.dealiasKeepOpaques
             val key =
                 tpe.typeSymbol.isNoSymbol match
-                    case true => tpe
+                    case true  => tpe
                     case false =>
                         seen.get(tpe.typeSymbol) match
                             case None                      => tpe.typeSymbol
@@ -403,7 +413,7 @@ private[kyo] object TagMacro:
                             loop(body.dealias.simplified)
 
                         case TypeLambda(names, bounds, body) =>
-                            val params = names.map(_.toString)
+                            val params      = names.map(_.toString)
                             val lowerBounds = bounds.map {
                                 case TypeBounds(low, high) => visit(low)
                             }
@@ -418,9 +428,9 @@ private[kyo] object TagMacro:
                             )
 
                         case tpe if tpe.typeSymbol.isClassDef =>
-                            val symbol = tpe.typeSymbol
-                            val name   = symbol.fullName
-                            val params = tpe.typeArgs.map(visit)
+                            val symbol    = tpe.typeSymbol
+                            val name      = symbol.fullName
+                            val params    = tpe.typeArgs.map(visit)
                             val variances =
                                 symbol.declaredTypes.flatMap { v =>
                                     if !v.isTypeParam then None

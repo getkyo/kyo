@@ -18,7 +18,7 @@ class IsolatePreludeTest extends kyo.test.Test[Any]:
 
         "with Memo isolate" in {
             var count = 0
-            val f = Memo[Int, Int, Any] { x =>
+            val f     = Memo[Int, Int, Any] { x =>
                 count += 1
                 x * 2
             }
@@ -70,7 +70,7 @@ class IsolatePreludeTest extends kyo.test.Test[Any]:
 
         "composing Memo and Var isolates" in {
             var count = 0
-            val f = Memo[Int, Int, Any] { x =>
+            val f     = Memo[Int, Int, Any] { x =>
                 count += 1
                 x * 2
             }
@@ -101,7 +101,7 @@ class IsolatePreludeTest extends kyo.test.Test[Any]:
             val memoIsolate = Memo.isolate
 
             var count = 0
-            val f = Memo[Int, Int, Any] { x =>
+            val f     = Memo[Int, Int, Any] { x =>
                 count += 1
                 x * 2
             }
@@ -135,7 +135,7 @@ class IsolatePreludeTest extends kyo.test.Test[Any]:
                 Abort.run {
                     for
                         start <- Var.get[Int]
-                        _ <- Var.isolate.update[Int].run {
+                        _     <- Var.isolate.update[Int].run {
                             for
                                 _ <- Var.set(start + 1)
                                 _ <- Abort.fail("Failed")
@@ -169,7 +169,7 @@ class IsolatePreludeTest extends kyo.test.Test[Any]:
 
         "Memo isolate preserves cache isolation on abort" in {
             var count = 0
-            val f = Memo[Int, Int, Any] { x =>
+            val f     = Memo[Int, Int, Any] { x =>
                 count += 1
                 x * 2
             }
@@ -226,7 +226,7 @@ class IsolatePreludeTest extends kyo.test.Test[Any]:
 
         "multiple effects maintain consistency on abort" in {
             var memoCount = 0
-            val f = Memo[Int, Int, Any] { x =>
+            val f         = Memo[Int, Int, Any] { x =>
                 memoCount += 1
                 x * 2
             }

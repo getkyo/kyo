@@ -322,7 +322,7 @@ private[runner] object LeakCheck:
     def describeSocket(target: String): String =
         if !target.startsWith("socket:[") then ""
         else
-            val inode = target.stripPrefix("socket:[").stripSuffix("]")
+            val inode                                = target.stripPrefix("socket:[").stripSuffix("]")
             def scanTcp(path: String): Maybe[String] =
                 try
                     val lines              = java.nio.file.Files.readAllLines(Paths.get(path)).asScala
@@ -404,9 +404,9 @@ private[runner] object LeakCheck:
       * Order: the scheduler/fiber probe first (it owns the settle window), then a `System.gc()` plus settle so Cleaner-closed abandoned
       * channels and finished threads drop out before the descriptor and thread diffs (a genuine leak stays referenced and survives the gc, so
       * this trims false positives without hiding real leaks). The fiber probe builds a per-busy-worker dump (each worker's rendered kyo trace,
-      * when its task carries one, plus its JVM thread stack) and matches the allowlist against EITHER the kyo trace or the JVM stack of any busy
-      * worker, so an OS-independent kyo frame or a stable JVM-stack frame can excuse an expected event loop; the descriptor probe enumerates
-      * `/proc/self/fd` and reports the exact leaked targets with no count tolerance.
+      * when its task carries one, plus its JVM thread stack) and matches the allowlist against either the kyo trace or the JVM stack of each busy
+      * worker. Every busy worker must match before the finding is excused, so one expected event loop cannot hide another worker's leak.
+      * The descriptor probe enumerates `/proc/self/fd` and reports the exact leaked targets with no count tolerance.
       */
     def detect(
         baseline: Baseline,
@@ -427,24 +427,27 @@ private[runner] object LeakCheck:
         // descriptor diffs run, which trims false positives for every category. Record a fiber finding only when that category is enabled.
         awaitSchedulerIdle(idleBudgetNanos, settleNanos, pollNanos, effectiveAllowlist) match
             case IdleResult.Idle | IdleResult.Accounted(_) => ()
-            case IdleResult.Busy(la, frame) =>
+            case IdleResult.Busy(la, frame)                =>
                 if checkFibers then
-                    val busy = Scheduler.get.busyFiberTraces()
+                    val busy      = Scheduler.get.busyFiberTraces()
                     val perWorker =
                         busy.map { w =>
                             val header     = s"  worker thread ${w.mount}:"
                             val kyoSection = if w.fiberTrace.nonEmpty then s"\n    kyo trace:\n${w.fiberTrace}" else ""
-                            val stack = stackOfThread(w.mount).map { st =>
+                            val stack      = stackOfThread(w.mount).map { st =>
                                 st.linesIterator.take(30).map(f => s"        at $f").mkString("\n")
                             }.getOrElse("        <stack unavailable>")
                             s"$header$kyoSection\n    thread stack:\n$stack"
                         }.mkString("\n")
-                    val matchText   = busy.map(w => w.fiberTrace + "\n" + stackOfThread(w.mount).getOrElse("")).mkString("\n")
-                    val allowlisted = effectiveAllowlist.exists(matchText.contains)
+                    val allowlisted = busy.nonEmpty && busy.forall { w =>
+                        val matchText = w.fiberTrace + "\n" + stackOfThread(w.mount).getOrElse("")
+                        effectiveAllowlist.exists(matchText.contains)
+                    }
                     if !allowlisted then
-                        findings += s"fiber leak: scheduler still busy (loadAvg=$la) after settle; running at ${frame.getOrElse("<unknown frame>")}" +
-                            s"\n  per-busy-worker fiber dump:\n$perWorker" +
-                            s"\n  all running threads (worker and non-worker) at probe time:${runningThreadsDump()}"
+                        findings +=
+                            s"fiber leak: scheduler still busy (loadAvg=$la) after settle; running at ${frame.getOrElse("<unknown frame>")}" +
+                                s"\n  per-busy-worker fiber dump:\n$perWorker" +
+                                s"\n  all running threads (worker and non-worker) at probe time:${runningThreadsDump()}"
                     end if
         end match
 

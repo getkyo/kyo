@@ -86,7 +86,7 @@ object HttpCodec:
         val e        = enc; val d = dec; val r = regex; val desc = description
         val compiled = r.r
         new HttpCodec[A]:
-            def encode(value: A) = e(value)
+            def encode(value: A)                          = e(value)
             def decode(raw: String): Result[Throwable, A] =
                 if compiled.matches(raw) then Result.catching[Throwable](d(raw))
                 else Result.fail(new IllegalArgumentException(s"expected a value matching $r, got: $raw"))

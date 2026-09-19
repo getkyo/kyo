@@ -49,7 +49,7 @@ class FormDemoRenderItTest extends UITest:
                 if items.isEmpty then UI.span("No entries").id("empty"): HtmlContent
                 else
                     val header = UI.tr(UI.th("Name"), UI.th("Email"), UI.th("Role"))
-                    val rows = items.toSeq.map { case (n, e, r) =>
+                    val rows   = items.toSeq.map { case (n, e, r) =>
                         UI.tr(UI.td(n), UI.td(e), UI.td(r))
                     }
                     UI.table((header +: rows).map(UI.Ast.HtmlChildVal.lift(_))*).id("table"): HtmlContent

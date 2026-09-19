@@ -14,15 +14,16 @@ import kyo.stats.machine.MachineRegistrySnapshot
   * enumerates it exactly as `OTLPMetricsExporter` does, and reports the machine.* families it found with real
   * values sampled off THIS host.
   *
-  * The read is non-destructive on purpose: histograms are read via `summary()` (bucket sums, no reset) and
-  * cumulative CPU counters via their retained baseline (`getLast()`), so reading the registry does not drain
-  * the values a real exporter would later flush.
+  * Histograms are read via `summary()` without resetting their buckets. Counters are read via `delta()`,
+  * draining their accumulated values as an exporter would. This demo reads them once, after sampling, and
+  * does not run another exporter alongside the snapshot.
   *
   * This is a standalone `main` meant to run on YOUR classpath with kyo-stats-machine present: run it from,
-  * or copy it into, an application that depends on the module. It runs on the JVM only, because its
-  * `MachineRegistrySnapshot` readback dereferences a `WeakReference`, which does not link under Scala.js/Wasm
-  * and throws under Scala Native; the module itself is cross-platform (the test suites cover js, wasm, and
-  * native). It is not runnable through this repository's own build, whose test configuration sets the
+  * or copy it into, an application that depends on the module. Its `MachineRegistrySnapshot` readback works
+  * on JVM and Scala Native, using their platform `WeakReference` implementations. Native also needs the
+  * service-provider configuration described in the module README. Scala.js and Wasm lack the
+  * `java.lang.ref.Reference` required by this readback helper. It is not runnable through this repository's
+  * own build, whose test configuration sets the
   * `KYO_MACHINE_DISABLED` opt-out so the module's suites never race a live sampler; under that lever the
   * sampler stays off, the snapshot is empty, and `validate` rejects it. Setting that same env var on your
   * own run is how you watch the opt-out suppress the sampler.
@@ -66,7 +67,7 @@ object MachineStatsDemo:
             }
             // Wait past the first sampler tick (which only records the cumulative baseline) plus a couple more,
             // so histograms have observations and CPU counters carry a real cumulative advance.
-            _ <- Async.sleep((ticksToObserve + 1).seconds)
+            _       <- Async.sleep((ticksToObserve + 1).seconds)
             sampled <- Sync.defer {
                 import AllowUnsafe.embrace.danger
                 MachineRegistrySnapshot.read
@@ -81,7 +82,7 @@ object MachineStatsDemo:
     /** Assembles the observed readings into the Report that `validate` checks field by field against real host facts. */
     def report(os: String, sampled: Chunk[MachineRegistrySnapshot.Reading]): Report =
         def valueOf(p: String): Maybe[Double] = Maybe.fromOption(sampled.find(_.path == p).map(_.value))
-        val diskMounts =
+        val diskMounts                        =
             sampled.map(_.path).filter(_.startsWith("machine.disk.")).map(_.split('.').lift(2).getOrElse("")).distinct
         Report(
             os = os,
@@ -149,7 +150,7 @@ object MachineStatsDemoApp extends KyoApp:
             report <- MachineStatsDemo.flow
             _      <- Console.printLine(s"host OS: ${report.os}")
             _      <- Console.printLine(s"machine.* metrics observed: ${report.sampled.size}")
-            _ <- Kyo.foreachDiscard(report.sampled) { m =>
+            _      <- Kyo.foreachDiscard(report.sampled) { m =>
                 Console.printLine(f"  ${m.path}%-40s ${m.kind}%-14s value=${m.value}%,.1f  obs=${m.observations}")
             }
             _ <- Console.printLine(s"cgroup family present: ${report.cgroupPresent} (Linux-only)")
