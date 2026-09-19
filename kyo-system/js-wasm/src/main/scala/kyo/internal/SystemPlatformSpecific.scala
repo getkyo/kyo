@@ -65,4 +65,60 @@ private[kyo] object SystemPlatformSpecific:
         else ""
         end if
     end osArch
+
+    /** The number of logical processors available to this runtime.
+      *
+      * Scala.js's `Runtime.getRuntime.availableProcessors()` is a stub that answers 1 on every host, so every
+      * per-core normalisation built on it silently divided by the wrong number. Three sources are tried in
+      * order, each reporting the count available to THIS process (the container-aware figure the JVM also
+      * reports) rather than the machine's raw socket count:
+      *
+      *   - Node's `os.availableParallelism()`, falling back to `os.cpus().length` on a Node older than 18.14.
+      *     Reached through `require`, which the CommonJS backend has.
+      *   - `navigator.hardwareConcurrency`, the same value under a name browsers, Deno and Node 21 and later
+      *     expose as a global, which is what the ESModule backend the Wasm target mandates can reach.
+      *   - the Java stub, so a runtime with neither still yields 1 instead of an error.
+      */
+    def availableProcessors()(using AllowUnsafe): Int =
+        val fromNode = nodeProcessors()
+        if fromNode > 0 then fromNode
+        else
+            val fromNavigator = navigatorProcessors()
+            if fromNavigator > 0 then fromNavigator
+            else Runtime.getRuntime.availableProcessors()
+        end if
+    end availableProcessors
+
+    /** Node's own count through `require("os")`, or 0 when `require` or the module is unavailable. */
+    private def nodeProcessors(): Int =
+        try
+            val require = js.Dynamic.global.selectDynamic("require")
+            if js.typeOf(require) == "undefined" || require == null then 0
+            else
+                val os = require.asInstanceOf[js.Function1[String, js.Dynamic]]("os")
+                if js.isUndefined(os) || os == null then 0
+                else if js.typeOf(os.selectDynamic("availableParallelism")) == "function" then
+                    val n = os.applyDynamic("availableParallelism")()
+                    if js.isUndefined(n) || n == null then 0 else n.asInstanceOf[Int]
+                else
+                    val cpus = os.applyDynamic("cpus")()
+                    if js.isUndefined(cpus) || cpus == null then 0
+                    else cpus.asInstanceOf[js.Array[js.Dynamic]].length
+                end if
+            end if
+        catch case ex: Throwable if scala.util.control.NonFatal(ex) => 0
+    end nodeProcessors
+
+    /** `navigator.hardwareConcurrency`, or 0 when there is no such global. */
+    private def navigatorProcessors(): Int =
+        try
+            val nav = js.Dynamic.global.selectDynamic("navigator")
+            if js.typeOf(nav) == "undefined" || nav == null then 0
+            else
+                val n = nav.selectDynamic("hardwareConcurrency")
+                if js.typeOf(n) != "number" then 0 else n.asInstanceOf[Int]
+            end if
+        catch case ex: Throwable if scala.util.control.NonFatal(ex) => 0
+    end navigatorProcessors
+
 end SystemPlatformSpecific
