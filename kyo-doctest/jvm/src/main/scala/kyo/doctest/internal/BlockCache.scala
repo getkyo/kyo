@@ -98,7 +98,7 @@ final private[kyo] class BlockCache private (root: kyo.Path):
         scalacOpts: Chunk[String],
         result: Driver.Outcome
     )(using Frame): Unit < Sync =
-        val key = cacheKey(block, scopeClosure, classpathFingerprint, scalaVersion, scalacOpts)
+        val key                 = cacheKey(block, scopeClosure, classpathFingerprint, scalaVersion, scalacOpts)
         val (filePath, content) = result match
             case Driver.Outcome.Ok(warnings) =>
                 (root / s"$key.ok", serializeDiagnostics(warnings))
@@ -116,7 +116,7 @@ final private[kyo] class BlockCache private (root: kyo.Path):
         scalaVersion: String,
         scalacOpts: Chunk[String]
     ): String =
-        val md = MessageDigest.getInstance("SHA-256")
+        val md                    = MessageDigest.getInstance("SHA-256")
         def feed(s: String): Unit =
             val bytes = s.getBytes(StandardCharsets.UTF_8)
             md.update((bytes.length >>> 24).toByte)
@@ -180,7 +180,7 @@ final private[kyo] class BlockCache private (root: kyo.Path):
         s"${d.severity}|${d.file}|${d.line}|${d.col}|$msg"
 
     private def deserializeDiagnostic(line: String): Driver.Diagnostic =
-        val parts = line.split("\\|", 5)
+        val parts    = line.split("\\|", 5)
         val severity = parts(0) match
             case "Error"   => Driver.Diagnostic.Severity.Error
             case "Warning" => Driver.Diagnostic.Severity.Warning

@@ -90,10 +90,10 @@ class CheckedBorrowsGlobalTest extends Test:
             try
                 Buffer.use[Byte, Unit](16) { owned =>
                     import java.lang.foreign.MemorySegment
-                    val raw     = owned.raw
-                    val seg     = Buffer.Raw.unwrap(raw).asInstanceOf[MemorySegment]
-                    val addrSeg = MemorySegment.ofAddress(seg.address())
-                    val owner   = new BorrowOwner("global-checked-borrows-test")
+                    val raw      = owned.raw
+                    val seg      = Buffer.Raw.unwrap(raw).asInstanceOf[MemorySegment]
+                    val addrSeg  = MemorySegment.ofAddress(seg.address())
+                    val owner    = new BorrowOwner("global-checked-borrows-test")
                     val borrowed =
                         Buffer.Unsafe.wrapBorrowedChecked[Byte](addrSeg, size = 16, owner)
                     try

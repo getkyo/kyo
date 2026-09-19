@@ -868,7 +868,7 @@ object HttpClient:
     private def applyQuery(url: HttpUrl, query: HttpQueryParams): HttpUrl =
         if query.isEmpty then url
         else
-            val qs = query.toQueryString
+            val qs     = query.toQueryString
             val merged = url.rawQuery match
                 case Present(existing) => s"$existing&$qs"
                 case Absent            => qs

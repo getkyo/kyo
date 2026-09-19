@@ -76,7 +76,7 @@ class ChartSpecTest extends kyo.test.Test[Any]:
     "by(_.group) drives a Stack that accumulates the two groups at a shared x slot" in {
         case class Row(month: String, group: String, revenue: Double)
         given CanEqual[Row, Row] = CanEqual.derived
-        val rows = Chunk(
+        val rows                 = Chunk(
             Row("Jan", "A", 300.0),
             Row("Jan", "B", 700.0)
         )
@@ -97,7 +97,7 @@ class ChartSpecTest extends kyo.test.Test[Any]:
     "by(_.group, normalize = true) drives a Stack that fills the full plot height" in {
         case class Row(month: String, group: String, revenue: Double)
         given CanEqual[Row, Row] = CanEqual.derived
-        val rows = Chunk(
+        val rows                 = Chunk(
             Row("Jan", "A", 300.0),
             Row("Jan", "B", 700.0)
         )

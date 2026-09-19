@@ -23,7 +23,7 @@ object BatchRunner extends KyoApp:
     run {
         val runBatch =
             McpHandler.tool[RunIn]("run-batch", "Process items one by one with progress, logging, and cancellation") { in =>
-                val total = in.items.size
+                val total                                                             = in.items.size
                 def loop(i: Int): Int < (Async & Abort[McpConnectionClosedException]) =
                     if i >= total then i
                     else

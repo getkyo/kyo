@@ -181,7 +181,7 @@ private[kyo] object OpenApiMacro:
                         case '[a] =>
                             val codec = Expr.summon[kyo.HttpCodec[a]] match
                                 case Some(c) => c
-                                case None =>
+                                case None    =>
                                     report.errorAndAbort(
                                         s"No HttpCodec[${codecType.show}] found for ${param.in} parameter '${param.name}'$context. " +
                                             s"Hint: add `given HttpCodec[${codecType.show}]` in scope."
@@ -216,7 +216,7 @@ private[kyo] object OpenApiMacro:
                             fieldExprs = fieldExprs :+ fieldExpr.asInstanceOf[Expr[kyo.HttpRoute.Field[?]]]
 
                             // Accumulate type: In & "name" ~ A or In & "name" ~ Maybe[A]
-                            val tildeType = TypeRepr.of[kyo.Record.~].appliedTo(List(nameType, codecType))
+                            val tildeType      = TypeRepr.of[kyo.Record.~].appliedTo(List(nameType, codecType))
                             val tildeMaybeType =
                                 TypeRepr.of[kyo.Record.~].appliedTo(List(nameType, TypeRepr.of[kyo.Maybe].appliedTo(codecType)))
                             resultType = AndType(resultType, if optional then tildeMaybeType else tildeType)
@@ -234,7 +234,7 @@ private[kyo] object OpenApiMacro:
                     case '[pathType] => term.asExprOf[kyo.HttpPath[pathType]]
 
         val reqDefType = TypeRepr.of[kyo.HttpRoute.RequestDef].appliedTo(resultType)
-        val reqTerm = innerType(pathTerm) match
+        val reqTerm    = innerType(pathTerm) match
             case '[pathType] =>
                 val p = pathTerm.asExprOf[kyo.HttpPath[pathType]]
                 '{
@@ -263,7 +263,7 @@ private[kyo] object OpenApiMacro:
                     case '[a] =>
                         val s = Expr.summon[kyo.Schema[a]] match
                             case Some(s) => s
-                            case None =>
+                            case None    =>
                                 report.errorAndAbort(
                                     s"No Schema[${codecType.show}] found for response body$context. " +
                                         s"Hint: add `derives Schema` on ${codecType.show}, or provide a `given Schema[${codecType.show}]` in scope."
@@ -276,7 +276,7 @@ private[kyo] object OpenApiMacro:
                                 ""
                             )
                         }
-                        val fields = '{ kyo.Chunk.empty[kyo.HttpRoute.Field[?]].append($bodyField) }
+                        val fields   = '{ kyo.Chunk.empty[kyo.HttpRoute.Field[?]].append($bodyField) }
                         val respTerm = '{
                             kyo.HttpRoute.ResponseDef[Any](
                                 kyo.HttpStatus($statusCode),
@@ -344,7 +344,7 @@ private[kyo] object OpenApiMacro:
                     case '[a] =>
                         val codec = Expr.summon[kyo.HttpCodec[a]] match
                             case Some(c) => c
-                            case None =>
+                            case None    =>
                                 report.errorAndAbort(
                                     s"No HttpCodec[${codecType.show}] found for path parameter '$paramName'$context. " +
                                         s"Hint: add `given HttpCodec[${codecType.show}]` in scope."

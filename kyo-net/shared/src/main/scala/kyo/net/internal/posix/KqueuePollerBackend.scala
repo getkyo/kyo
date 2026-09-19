@@ -317,7 +317,7 @@ private[net] object KqueuePollerBackend extends PollerBackend:
                 val n =
                     result match
                         case Result.Success(outcome) => decodeReady(outcome.eval, scratch, data)
-                        case _ =>
+                        case _                       =>
                             Log.live.unsafe.error(s"kevent fiber failed pollerFd=$pollerFd: $result")
                             scratch.readyCount = 0
                             0

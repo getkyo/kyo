@@ -17,7 +17,7 @@ private[kyo] object RateLimitEngine:
         meter: Maybe[Meter]
     )(eff: => A < (S & Abort[JsonRpcError | Closed]))(using Frame): A < (S & Async & Abort[JsonRpcError | Closed]) =
         meter match
-            case Absent => eff
+            case Absent     => eff
             case Present(m) =>
                 m.run(Abort.run[JsonRpcError | Closed](eff)).map {
                     case Result.Success(v) => v

@@ -186,7 +186,7 @@ object AstUnpickler:
         val nextId: () => Int =
             nextGlobalId match
                 case Maybe.Present(f) => f
-                case Maybe.Absent =>
+                case Maybe.Absent     =>
                     var idCounter = 0
                     () =>
                         val id = idCounter
@@ -310,7 +310,7 @@ object AstUnpickler:
                     val pkgName   = extractPackageName(view, names)
                     val owner     = currentOwner(ownerStack)
                     val bodyStart = view.positionInt
-                    val symbol =
+                    val symbol    =
                         InternalSymbol.makeSymbol(id = nextId(), kind = SymbolKind.Package, flags = Tasty.Flags.empty, name = pkgName)
                     ownerBySymbol(symbol.id.toLong) = owner
                     bodyDataByAddr(symbol.id.toLong) = (bodyStart, Math.toIntExact(payloadEnd))
@@ -471,7 +471,7 @@ object AstUnpickler:
                         // on each parent_Type entry. TYPEPARAM/PARAM nodes (class type/term params)
                         // are skipped first; scanning stops at SELFDEF, VALDEF, DEFDEF, TYPEDEF, or
                         // any modifier tag (which signals the start of the stat section).
-                        val parentScanView = view.subView(templateBodyStart, templatePayloadEnd)
+                        val parentScanView                   = view.subView(templateBodyStart, templatePayloadEnd)
                         val (decodedParents, parentRefAddrs) =
                             decodeTemplateParents(parentScanView, templatePayloadEnd, sectionOffset, typeSession)
                         // Advance the outer view past the TEMPLATE payload so that readModifiers
@@ -729,7 +729,8 @@ object AstUnpickler:
             var skip = true
             while skip && returnTypeScanView.position < end do
                 val tag = returnTypeScanView.peekByte(returnTypeScanView.position) & 0xff
-                if tag == TastyFormat.TYPEPARAM || tag == TastyFormat.PARAM || tag == TastyFormat.EMPTYCLAUSE || tag == TastyFormat.SPLITCLAUSE
+                if tag == TastyFormat.TYPEPARAM || tag == TastyFormat.PARAM || tag == TastyFormat.EMPTYCLAUSE ||
+                    tag == TastyFormat.SPLITCLAUSE
                 then
                     discard(returnTypeScanView.readByte()) // consume tag
                     if tag == TastyFormat.EMPTYCLAUSE || tag == TastyFormat.SPLITCLAUSE then
@@ -890,7 +891,7 @@ object AstUnpickler:
                     discard(parentScanView.readByte()) // consume APPLY tag
                     val applyEnd = parentScanView.readEnd()
                     val childTag = parentScanView.peekByte(parentScanView.position) & 0xff
-                    val decoded =
+                    val decoded  =
                         if isTermTagInTypePosition(childTag) then
                             TreeUnpickler.decodeTermTagInTypePosition(parentScanView, typeSession, childTag, sectionOffset)
                         else if isTreeTptTag(childTag) then
@@ -910,7 +911,7 @@ object AstUnpickler:
                 // A parent like `extends SomeTrait` may have a NEW or SELECT tag at the head.
                 try
                     val parentTag = parentScanView.peekByte(parentScanView.position) & 0xff
-                    val decoded =
+                    val decoded   =
                         if isTermTagInTypePosition(parentTag) then
                             TreeUnpickler.decodeTermTagInTypePosition(parentScanView, typeSession, parentTag, sectionOffset)
                         else if isTreeTptTag(parentTag) then
@@ -1038,7 +1039,7 @@ object AstUnpickler:
         sectionBytes: Array[Byte]
     )(using Frame, AllowUnsafe): Maybe[Tasty.Annotation] =
         if view.position >= annEnd then return Absent
-        val nextTag = view.peekByte(view.position) & 0xff
+        val nextTag                        = view.peekByte(view.position) & 0xff
         val tyconResult: Maybe[Tasty.Type] =
             try
                 if isTreeTptTag(nextTag) then
@@ -1150,7 +1151,7 @@ object AstUnpickler:
             // Use readTypeIntoSessionWithBytes so that SHAREDtype cache misses can re-decode
             // from sectionBytes rather than falling back to the unresolved sentinel.
             val typeArgTag = view.peekByte(view.position) & 0xff
-            val subT =
+            val subT       =
                 if isTreeTptTag(typeArgTag) then
                     TreeUnpickler.decodeTptAsType(view, typeSession, typeArgTag, sectionOffset)
                 else if isTermTagInTypePosition(typeArgTag) then
@@ -1166,11 +1167,10 @@ object AstUnpickler:
         end try
     end decodeChildAnnotationType
 
-    private def isModifierTag(tag: Int): Boolean =
-        (tag >= 1 && tag <= 59) ||
-            tag == TastyFormat.PRIVATEqualified ||
-            tag == TastyFormat.PROTECTEDqualified ||
-            tag == TastyFormat.ANNOTATION
+    private def isModifierTag(tag: Int): Boolean = (tag >= 1 && tag <= 59) ||
+        tag == TastyFormat.PRIVATEqualified ||
+        tag == TastyFormat.PROTECTEDqualified ||
+        tag == TastyFormat.ANNOTATION
 
     /** Skip exactly one tree node from the current position (tag not yet consumed). */
     private def skipTree(view: ByteView)(using AllowUnsafe): Unit =

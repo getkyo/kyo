@@ -126,7 +126,7 @@ class ItBuffersTest extends ItTestBase:
         "table-driven: fill across varied buffer lengths and values" in {
             // Each (n, value) row fills a fresh buffer then reads ALL slots via
             // Buffer.get. Every row crosses the FFI boundary via the fill call.
-            val b = Ffi.load[ItBuffersBindings]
+            val b                      = Ffi.load[ItBuffersBindings]
             val cases: Seq[(Int, Int)] = Seq(
                 (1, 0),
                 (1, Int.MaxValue),

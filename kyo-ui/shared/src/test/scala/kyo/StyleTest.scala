@@ -21,7 +21,7 @@ class StyleTest extends kyo.test.Test[Any]:
     private def focusOf(s: Style): Maybe[Style]    = s.find[FocusProp].map(_.style)
     private def activeOf(s: Style): Maybe[Style]   = s.find[ActiveProp].map(_.style)
     private def disabledOf(s: Style): Maybe[Style] = s.find[DisabledProp].map(_.style)
-    private def basePropsOf(s: Style): Style =
+    private def basePropsOf(s: Style): Style       =
         s.filter {
             case _: HoverProp | _: FocusProp | _: ActiveProp | _: DisabledProp => false
             case _                                                             => true
@@ -1169,7 +1169,7 @@ class StyleTest extends kyo.test.Test[Any]:
 
     "background gradient" - {
         "basic gradient" in {
-            val s = Style.bgGradient(GradientDirection.toRight, (Color.hex("#fff").get, 0.pct), (Color.hex("#000").get, 100.pct))
+            val s    = Style.bgGradient(GradientDirection.toRight, (Color.hex("#fff").get, 0.pct), (Color.hex("#000").get, 100.pct))
             val prop = s.props(0) match
                 case p: Style.Prop.BgGradientProp => p
                 case other                        => fail(s"Expected BgGradientProp, got ${other.getClass.getSimpleName}")
@@ -1206,7 +1206,7 @@ class StyleTest extends kyo.test.Test[Any]:
         }
 
         "parallel spans avoid tuple boxing" in {
-            val s = Style.bgGradient(GradientDirection.toRight, (Color.hex("#fff").get, 0.pct), (Color.hex("#000").get, 100.pct))
+            val s    = Style.bgGradient(GradientDirection.toRight, (Color.hex("#fff").get, 0.pct), (Color.hex("#000").get, 100.pct))
             val prop = s.props(0) match
                 case p: Style.Prop.BgGradientProp => p
                 case other                        => fail(s"Expected BgGradientProp, got ${other.getClass.getSimpleName}")
@@ -1224,7 +1224,7 @@ class StyleTest extends kyo.test.Test[Any]:
         }
 
         "default color space is srgb" in {
-            val s = Style.bgGradient(GradientDirection.toBottom, (Color.hex("#fff").get, 0.pct), (Color.hex("#000").get, 100.pct))
+            val s    = Style.bgGradient(GradientDirection.toBottom, (Color.hex("#fff").get, 0.pct), (Color.hex("#000").get, 100.pct))
             val prop = s.props(0) match
                 case p: Style.Prop.BgGradientProp => p
                 case other                        => fail(s"Expected BgGradientProp, got ${other.getClass.getSimpleName}")
@@ -1477,8 +1477,8 @@ class StyleTest extends kyo.test.Test[Any]:
         }
 
         "bgGradient" in {
-            val a = Style.bgGradient(GradientDirection.toRight, (Color.hex("#fff").get, 0.pct), (Color.hex("#000").get, 100.pct))
-            val b = Style.empty.bgGradient(GradientDirection.toRight, (Color.hex("#fff").get, 0.pct), (Color.hex("#000").get, 100.pct))
+            val a  = Style.bgGradient(GradientDirection.toRight, (Color.hex("#fff").get, 0.pct), (Color.hex("#000").get, 100.pct))
+            val b  = Style.empty.bgGradient(GradientDirection.toRight, (Color.hex("#fff").get, 0.pct), (Color.hex("#000").get, 100.pct))
             val pa = a.props(0) match
                 case p: Style.Prop.BgGradientProp => p
                 case other                        => fail(s"Expected BgGradientProp, got ${other.getClass.getSimpleName}")

@@ -83,20 +83,20 @@ final class IonBinaryWriter private (private val config: Ion.Config) extends Wri
         end match
     end field
 
-    def string(value: String): Unit             = appendValue(StringValue(value))
-    def int(value: Int): Unit                   = appendValue(IntValue(BigInt(value)))
-    def long(value: Long): Unit                 = appendValue(IntValue(BigInt(value)))
-    def short(value: Short): Unit               = appendValue(IntValue(BigInt(value.toInt)))
-    def byte(value: Byte): Unit                 = appendValue(IntValue(BigInt(value.toInt)))
-    def char(value: Char): Unit                 = appendValue(StringValue(value.toString))
-    def float(value: Float): Unit               = appendValue(FloatValue(value.toDouble, 4))
-    def double(value: Double): Unit             = appendValue(FloatValue(value, 8))
-    def boolean(value: Boolean): Unit           = appendValue(Bool(value))
-    def nil(): Unit                             = appendValue(NullValue)
-    def bytes(value: Span[Byte]): Unit          = appendValue(BlobValue(value.toArray))
-    def bigInt(value: BigInt): Unit             = appendValue(IntValue(value))
-    def bigDecimal(value: BigDecimal): Unit     = appendValue(DecimalValue(value))
-    def instant(value: java.time.Instant): Unit = appendValue(TimestampValue(value))
+    def string(value: String): Unit               = appendValue(StringValue(value))
+    def int(value: Int): Unit                     = appendValue(IntValue(BigInt(value)))
+    def long(value: Long): Unit                   = appendValue(IntValue(BigInt(value)))
+    def short(value: Short): Unit                 = appendValue(IntValue(BigInt(value.toInt)))
+    def byte(value: Byte): Unit                   = appendValue(IntValue(BigInt(value.toInt)))
+    def char(value: Char): Unit                   = appendValue(StringValue(value.toString))
+    def float(value: Float): Unit                 = appendValue(FloatValue(value.toDouble, 4))
+    def double(value: Double): Unit               = appendValue(FloatValue(value, 8))
+    def boolean(value: Boolean): Unit             = appendValue(Bool(value))
+    def nil(): Unit                               = appendValue(NullValue)
+    def bytes(value: Span[Byte]): Unit            = appendValue(BlobValue(value.toArray))
+    def bigInt(value: BigInt): Unit               = appendValue(IntValue(value))
+    def bigDecimal(value: BigDecimal): Unit       = appendValue(DecimalValue(value))
+    def instant(value: java.time.Instant): Unit   = appendValue(TimestampValue(value))
     def duration(value: java.time.Duration): Unit =
         appendValue(StructValue(Vector(
             "seconds" -> IntValue(BigInt(value.getSeconds)),

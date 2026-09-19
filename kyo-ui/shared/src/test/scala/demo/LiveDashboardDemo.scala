@@ -132,8 +132,8 @@ object LiveDashboardDemo extends KyoApp:
         val newP50    = clamp(lastP50 + d50, 20.0, latMax * 0.6)
         val newP99    = clamp(math.max(lastP99 + d99, newP50 + 20.0), newP50 + 20.0, latMax)
         // Reconstruct the per-slot p50/p99 series, drop the oldest slot, append the newest, re-index to -30..0.
-        val p50s = cur.filter(_.series == "p50").map(_.ms).drop(1).append(newP50)
-        val p99s = cur.filter(_.series == "p99").map(_.ms).drop(1).append(newP99)
+        val p50s    = cur.filter(_.series == "p50").map(_.ms).drop(1).append(newP50)
+        val p99s    = cur.filter(_.series == "p99").map(_.ms).drop(1).append(newP99)
         val rebuilt = Chunk.from((0 until window).flatMap { i =>
             val t = i - (window - 1)
             Chunk(LatPoint(t, "p50", p50s(i)), LatPoint(t, "p99", p99s(i)))
@@ -208,8 +208,8 @@ object LiveDashboardDemo extends KyoApp:
     private val tileStyle =
         Style.column.gap(6.px).padding(16.px).bg(panelBg).rounded(10.px).border(1.px, rule)
             .flexGrow(1.0).flexBasis(0.px)
-    private val tileLabel = Style.fontSize(12.px).color(mutedCol)
-    private val bigNumber = Style.fontSize(34.px).fontWeight(_.bold)
+    private val tileLabel  = Style.fontSize(12.px).color(mutedCol)
+    private val bigNumber  = Style.fontSize(34.px).fontWeight(_.bold)
     private val panelStyle =
         Style.column.gap(8.px).padding(12.px).bg(panelBg).rounded(10.px).border(1.px, rule)
             .flexGrow(1.0).flexBasis(0.px).maxWidth(panelMaxW.px)

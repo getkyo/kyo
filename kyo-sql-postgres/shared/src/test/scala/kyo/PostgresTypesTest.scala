@@ -157,7 +157,7 @@ class PostgresTypesTest extends Test:
         // "the empty range" out of a range holding ten values. With the format on the payload the refusal names
         // what is actually missing, which is a text-range parser.
         val text = "[1,10)".getBytes(java.nio.charset.StandardCharsets.UTF_8).toSeq
-        val ex = intercept[SqlUnsupportedDialectFeatureException] {
+        val ex   = intercept[SqlUnsupportedDialectFeatureException] {
             val _ = readColumn[PostgresTypes.Range[Int]](text, SqlCodec.Format.Text)
         }
         assert(ex.feature == "reading a range value in the text wire format", s"unexpected feature: ${ex.feature}")

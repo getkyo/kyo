@@ -50,7 +50,7 @@ class WritePumpTest extends Test:
             PosixTestSockets.loopbackPair().map { case (clientFd, peerFd) =>
                 val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 val channel = Channel.Unsafe.init[Span[Byte]](N + 1)
-                val pump = new WritePump(
+                val pump    = new WritePump(
                     handle,
                     spy,
                     channel,
@@ -106,7 +106,7 @@ class WritePumpTest extends Test:
                 val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 val channel = Channel.Unsafe.init[Span[Byte]](16)
                 val closed  = scala.collection.mutable.ListBuffer[String]()
-                val pump = new WritePump(
+                val pump    = new WritePump(
                     handle,
                     spy,
                     channel,
@@ -150,7 +150,7 @@ class WritePumpTest extends Test:
                 val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 val channel = Channel.Unsafe.init[Span[Byte]](16)
                 val closed  = scala.collection.mutable.ListBuffer[String]()
-                val pump = new WritePump(
+                val pump    = new WritePump(
                     handle,
                     spy,
                     channel,
@@ -202,7 +202,7 @@ class WritePumpTest extends Test:
                 val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 val channel = Channel.Unsafe.init[Span[Byte]](16)
                 val closed  = scala.collection.mutable.ListBuffer[String]()
-                val pump = new WritePump(
+                val pump    = new WritePump(
                     handle,
                     spy,
                     channel,
@@ -247,7 +247,7 @@ class WritePumpTest extends Test:
                 val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 val channel = Channel.Unsafe.init[Span[Byte]](64)
                 val closed  = scala.collection.mutable.ListBuffer[String]()
-                val pump = new WritePump(
+                val pump    = new WritePump(
                     handle,
                     spy,
                     channel,
@@ -303,7 +303,7 @@ class WritePumpTest extends Test:
                 val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 val channel = Channel.Unsafe.init[Span[Byte]](16)
                 val closed  = scala.collection.mutable.ListBuffer[String]()
-                val pump = new WritePump(
+                val pump    = new WritePump(
                     handle,
                     spy,
                     channel,
@@ -336,7 +336,7 @@ class WritePumpTest extends Test:
                 val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 val channel = Channel.Unsafe.init[Span[Byte]](16)
                 val closed  = scala.collection.mutable.ListBuffer[String]()
-                val pump = new WritePump(
+                val pump    = new WritePump(
                     handle,
                     spy,
                     channel,
@@ -367,7 +367,7 @@ class WritePumpTest extends Test:
                 val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 val channel = Channel.Unsafe.init[Span[Byte]](16)
                 val closed  = scala.collection.mutable.ListBuffer[String]()
-                val pump = new WritePump(
+                val pump    = new WritePump(
                     handle,
                     spy,
                     channel,
@@ -416,7 +416,7 @@ class WritePumpTest extends Test:
                 val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 val channel = Channel.Unsafe.init[Span[Byte]](64)
                 val closed  = scala.collection.mutable.ListBuffer[String]()
-                val pump = new WritePump(
+                val pump    = new WritePump(
                     handle,
                     spy,
                     channel,
@@ -469,7 +469,7 @@ class WritePumpTest extends Test:
                 val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 val channel = Channel.Unsafe.init[Span[Byte]](16)
                 val closed  = scala.collection.mutable.ListBuffer[String]()
-                val pump = new WritePump(
+                val pump    = new WritePump(
                     handle,
                     spy,
                     channel,
@@ -529,7 +529,7 @@ class WritePumpTest extends Test:
                 val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 val channel = Channel.Unsafe.init[Span[Byte]](16)
                 val closed  = scala.collection.mutable.ListBuffer[String]()
-                val pump = new WritePump(
+                val pump    = new WritePump(
                     handle,
                     spy,
                     channel,
@@ -623,7 +623,7 @@ class WritePumpTest extends Test:
                 // is "no write AFTER teardown", not "exactly one write ever": the injected close races a genuine writable event, and when the
                 // writable wins the pump legitimately resumes its captured tail once before tearing down.
                 val writesAtTeardown = new java.util.concurrent.atomic.AtomicInteger(-1)
-                val pump = new WritePump(
+                val pump             = new WritePump(
                     handle,
                     spy,
                     channel,

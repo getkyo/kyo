@@ -101,7 +101,7 @@ object ContextEffect:
         inline f: Safepoint ?=> A => B < S
     )(using inline _frame: Frame): B < S =
         new KyoDefer[B, S]:
-            def frame = _frame
+            def frame                                             = _frame
             def apply(v: Unit, context: Context)(using Safepoint) =
                 Safepoint.handle(v)(
                     suspend = this,
@@ -154,9 +154,9 @@ object ContextEffect:
             v match
                 case kyo: KyoSuspend[IX, OX, EX, Any, B, S] @unchecked =>
                     new KyoContinue[IX, OX, EX, Any, B, S](kyo):
-                        def frame = _frame
+                        def frame                                                = _frame
                         def apply(v: OX[Any], context: Context)(using Safepoint) =
-                            val tag = effectTag // avoid inlining the tag multiple times
+                            val tag     = effectTag // avoid inlining the tag multiple times
                             val updated =
                                 if !context.contains(tag) then context.set(tag, ifUndefined)
                                 else context.set(tag, ifDefined(context.get(tag)))

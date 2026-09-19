@@ -69,7 +69,7 @@ private[kyo] object FramerImpl:
         var done    = false
         while !done do
             parseOneContentLengthFrame(rest) match
-                case Maybe.Absent => done = true
+                case Maybe.Absent              => done = true
                 case Maybe.Present((frame, r)) =>
                     builder += frame
                     rest = r
@@ -78,9 +78,9 @@ private[kyo] object FramerImpl:
     end splitContentLength
 
     private def parseOneContentLengthFrame(buf: Chunk[Byte]): Maybe[(Chunk[Byte], Chunk[Byte])] =
-        val arr  = buf.toArray
-        val sep1 = indexOf(arr, "\r\n\r\n".getBytes("UTF-8"))
-        val sep2 = indexOf(arr, "\n\n".getBytes("UTF-8"))
+        val arr    = buf.toArray
+        val sep1   = indexOf(arr, "\r\n\r\n".getBytes("UTF-8"))
+        val sep2   = indexOf(arr, "\n\n".getBytes("UTF-8"))
         val sepIdx = (sep1, sep2) match
             case (-1, -1) => -1
             case (a, -1)  => a

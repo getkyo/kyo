@@ -115,7 +115,7 @@ class I18nTest extends kyo.test.Test[Any]:
     "now (active locale, point-in-time)" - {
         "follows the active locale" in {
             for
-                h <- I18n.initInMemory(bundles, en)
+                h      <- I18n.initInMemory(bundles, en)
                 result <- I18n.let(h) {
                     for
                         before <- I18n.now("hello")
@@ -130,7 +130,7 @@ class I18nTest extends kyo.test.Test[Any]:
     "t (reactive leaf)" - {
         "current reflects the active locale, before and after a switch" in {
             for
-                h <- I18n.initInMemory(bundles, en)
+                h      <- I18n.initInMemory(bundles, en)
                 result <- I18n.let(h) {
                     for
                         v1 <- I18n.t("hello").current

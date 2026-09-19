@@ -545,7 +545,7 @@ age: 30
         end cstScalar
 
         "decodes through a per-document CST transform stage" in {
-            val yaml = "name: Alice\nage: 30\n"
+            val yaml   = "name: Alice\nage: 30\n"
             val rename =
                 Yaml.pipeline.throughCst(_.replace(Yaml.Cst.Path.root / "name", cstScalar("Alicia")))
 
@@ -562,7 +562,7 @@ age: 30
         }
 
         "runs the CST transform before event processors" in {
-            val yaml = "name: placeholder\nage: 30\n"
+            val yaml     = "name: placeholder\nage: 30\n"
             val pipeline =
                 Yaml.pipeline
                     .throughCst(_.replace(Yaml.Cst.Path.root / "name", cstScalar("Alice")))
@@ -572,7 +572,7 @@ age: 30
         }
 
         "applies a stream transform before per-document handling" in {
-            val yaml = "---\nname: Alice\nage: 30\n---\nname: Bob\nage: 25\n"
+            val yaml      = "---\nname: Alice\nage: 30\n---\nname: Bob\nage: 25\n"
             val dropFirst =
                 Yaml.pipeline.throughCstStream(stream => Result.succeed(stream.copy(documents = stream.documents.drop(1))))
 
@@ -582,7 +582,7 @@ age: 30
         }
 
         "applies stream transform first then per-document transform on survivors" in {
-            val yaml = "---\nname: Alice\nage: 30\n---\nname: Bob\nage: 25\n"
+            val yaml     = "---\nname: Alice\nage: 30\n---\nname: Bob\nage: 25\n"
             val pipeline =
                 Yaml.pipeline
                     .throughCstStream(stream => Result.succeed(stream.copy(documents = stream.documents.drop(1))))
@@ -595,7 +595,7 @@ age: 30
         }
 
         "preserves a surviving document's comment when a stream transform drops another" in {
-            val yaml = "---\nname: Alice\n---\n# keep\nname: Bob\nage: 25\n"
+            val yaml      = "---\nname: Alice\n---\n# keep\nname: Bob\nage: 25\n"
             val dropFirst =
                 Yaml.pipeline.throughCstStream(stream => Result.succeed(stream.copy(documents = stream.documents.drop(1))))
             val rendered = dropFirst.render(yaml).getOrThrow
@@ -641,7 +641,7 @@ age: 30
         }
 
         "decodes a single value selected from a stream transform" in {
-            val yaml = "---\nname: Alice\nage: 30\n---\nname: Bob\nage: 25\n"
+            val yaml   = "---\nname: Alice\nage: 30\n---\nname: Bob\nage: 25\n"
             val config =
                 Yaml.ReaderConfig.Default.copy(documentIndex = Maybe(Yaml.DocumentIndex(1)))
             val pipeline =
@@ -651,7 +651,7 @@ age: 30
         }
 
         "propagates a failing CST transform across a stream render" in {
-            val yaml = "---\nname: Alice\n---\nname: Bob\n"
+            val yaml     = "---\nname: Alice\n---\nname: Bob\n"
             val pipeline =
                 Yaml.pipeline
                     .throughCstStream(stream => Result.succeed(stream))

@@ -28,7 +28,7 @@ object EmbeddedClassfiles:
             case "java/lang/constant/ClassDesc.class"                        => javaLangConstantClassDescClass
             case "java/lang/module/ModuleDescriptor$Requires$Modifier.class" => javaLangModuleModuleDescriptorRequiresModifierClass
             case "java/lang/Deprecated.class"                                => javaLangDeprecatedClass
-            case other =>
+            case other                                                       =>
                 throw new RuntimeException(
                     s"EmbeddedClassfiles.loadJdkClass: no embedded class for '$other'; add it to EmbeddedClassfiles.scala"
                 )

@@ -92,7 +92,7 @@ object Thought:
         // in opening -> resultValue -> closing order. Assembling per-thought schemas directly preserves each
         // field's @doc description, which a Structure.Type.Product round-trip through fromStructure would drop.
         def resultJson[A](thoughts: Chunk[Info[?, ?]], resultSchema: JsonSchema): JsonSchema =
-            val (opening, closing) = thoughts.partition(_.position == Position.Opening)
+            val (opening, closing)                                    = thoughts.partition(_.position == Position.Opening)
             def group(name: String, l: Chunk[Info[?, ?]]): JsonSchema =
                 JsonSchema.Obj(
                     // cast: each info's existential schema renders its own thought type's jsonSchema; erasing to

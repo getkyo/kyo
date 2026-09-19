@@ -34,7 +34,7 @@ class JsonRpcHandlerIdStrategyTest extends JsonRpcTest:
 
     "Custom forwards verbatim to the supplied next function" in {
         // Unsafe: AtomicLong.Unsafe.init for in-test counter outside effect context
-        val counter = AtomicLong.Unsafe.init(99L)(using AllowUnsafe.embrace.danger)
+        val counter                        = AtomicLong.Unsafe.init(99L)(using AllowUnsafe.embrace.danger)
         val custom: () => JsonRpcId < Sync =
             () => Sync.Unsafe.defer(JsonRpcId.Num(counter.incrementAndGet()))
         val next = IdStrategyEngine.mkNextId(JsonRpcIdStrategy.Custom(custom))

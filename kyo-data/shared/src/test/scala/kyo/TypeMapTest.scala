@@ -306,7 +306,7 @@ val p = e.prune[Exception]
 
     ".show" - {
         "many" in {
-            val t = TypeMap("str", true, 42, 'c').add(None).add(List[Any]()).add(Map('k' -> 'v'))
+            val t        = TypeMap("str", true, 42, 'c').add(None).add(List[Any]()).add(Map('k' -> 'v'))
             val expected =
                 "TypeMap(" +
                     "java.lang.String -> str, " +
@@ -380,7 +380,7 @@ object TypeMapTestScoped:
         val tag: Tag[Meters]            = Tag.derive[Meters]
 
         def buildInside(value: Meters): TypeMap[Meters] = TypeMap[Meters](value)(using tag)
-        def readInside(map: TypeMap[Meters]): Meters =
+        def readInside(map: TypeMap[Meters]): Meters    =
             map.get[Meters](using tag, summon[kyo.internal.NotIntersection[Meters]])
     end Meters
 end TypeMapTestScoped

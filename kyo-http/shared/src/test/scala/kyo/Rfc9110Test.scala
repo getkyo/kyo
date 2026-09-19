@@ -130,7 +130,7 @@ class Rfc9110Test extends BaseHttpTest:
         // RFC 9110 §9.3.3: "If one or more resources has been created [...] the origin server
         // SHOULD send a 201 (Created) response [...] and an identifier for the primary resource created"
         val route = HttpRoute.postRaw("users").request(_.bodyJson[User]).response(_.bodyJson[User])
-        val ep = route.handler { req =>
+        val ep    = route.handler { req =>
             val user = req.fields.body
             HttpResponse(HttpStatus.Created)
                 .setHeader("Location", s"/users/${user.id}")
@@ -261,7 +261,7 @@ class Rfc9110Test extends BaseHttpTest:
 
     "Section 15.4.5 - 304 MUST NOT contain body" in {
         val route = HttpRoute.getRaw("cached").response(_.bodyText)
-        val ep = route.handler(_ =>
+        val ep    = route.handler(_ =>
             HttpResponse.halt(HttpResponse.notModified.etag("\"abc123\"").cacheControl("max-age=3600"))
         )
         withServer(ep) { port =>
@@ -276,7 +276,7 @@ class Rfc9110Test extends BaseHttpTest:
 
     "Section 15.4.5 - 304 preserves ETag and Cache-Control" in {
         val route = HttpRoute.getRaw("cached").response(_.bodyText)
-        val ep = route.handler(_ =>
+        val ep    = route.handler(_ =>
             HttpResponse.halt(HttpResponse.notModified.etag("\"abc123\"").cacheControl("max-age=3600"))
         )
         withServer(ep) { port =>
@@ -402,7 +402,7 @@ class Rfc9110Test extends BaseHttpTest:
         // This test validates the RFC requirement — it may fail if not implemented.
         val postRoute = HttpRoute.postRaw("submit").request(_.bodyText).response(_.bodyText)
         val getRoute  = HttpRoute.getRaw("result").response(_.bodyText)
-        val postEp = postRoute.handler(_ =>
+        val postEp    = postRoute.handler(_ =>
             HttpResponse.halt(HttpResponse(HttpStatus.SeeOther).setHeader("Location", "/result"))
         )
         val getEp = getRoute.handler(_ => HttpResponse.ok("result page"))
@@ -410,7 +410,7 @@ class Rfc9110Test extends BaseHttpTest:
             HttpClient.withConfig(noTimeout) {
                 withClient { c =>
                     val textRoute = HttpRoute.postText("")
-                    val req = HttpRequest(HttpMethod.POST, HttpUrl(Present("http"), "localhost", port, "/submit", Absent))
+                    val req       = HttpRequest(HttpMethod.POST, HttpUrl(Present("http"), "localhost", port, "/submit", Absent))
                         .addField("body", "data")
                     c.sendWith(textRoute, req) { resp =>
                         // After 303, client MUST use GET for the redirect target
@@ -430,7 +430,7 @@ class Rfc9110Test extends BaseHttpTest:
         // an automatic redirection to that URI."
         val postRoute1 = HttpRoute.postRaw("old").request(_.bodyText).response(_.bodyText)
         val postRoute2 = HttpRoute.postRaw("new").request(_.bodyText).response(_.bodyText)
-        val ep1 = postRoute1.handler(_ =>
+        val ep1        = postRoute1.handler(_ =>
             HttpResponse.halt(HttpResponse(HttpStatus.TemporaryRedirect).setHeader("Location", "/new"))
         )
         val ep2 = postRoute2.handler(req => HttpResponse.ok(s"received: ${req.fields.body}"))
@@ -438,7 +438,7 @@ class Rfc9110Test extends BaseHttpTest:
             HttpClient.withConfig(noTimeout) {
                 withClient { c =>
                     val textRoute = HttpRoute.postText("")
-                    val req = HttpRequest(HttpMethod.POST, HttpUrl(Present("http"), "localhost", port, "/old", Absent))
+                    val req       = HttpRequest(HttpMethod.POST, HttpUrl(Present("http"), "localhost", port, "/old", Absent))
                         .addField("body", "payload")
                     c.sendWith(textRoute, req)(_.fields.body).map { body =>
                         assert(body == "received: payload", s"307 should preserve POST method and body, got: $body")
@@ -453,7 +453,7 @@ class Rfc9110Test extends BaseHttpTest:
         // it does not allow changing the request method from POST to GET."
         val postRoute1 = HttpRoute.postRaw("old").request(_.bodyText).response(_.bodyText)
         val postRoute2 = HttpRoute.postRaw("new").request(_.bodyText).response(_.bodyText)
-        val ep1 = postRoute1.handler(_ =>
+        val ep1        = postRoute1.handler(_ =>
             HttpResponse.halt(HttpResponse(HttpStatus.PermanentRedirect).setHeader("Location", "/new"))
         )
         val ep2 = postRoute2.handler(req => HttpResponse.ok(s"received: ${req.fields.body}"))
@@ -461,7 +461,7 @@ class Rfc9110Test extends BaseHttpTest:
             HttpClient.withConfig(noTimeout) {
                 withClient { c =>
                     val textRoute = HttpRoute.postText("")
-                    val req = HttpRequest(HttpMethod.POST, HttpUrl(Present("http"), "localhost", port, "/old", Absent))
+                    val req       = HttpRequest(HttpMethod.POST, HttpUrl(Present("http"), "localhost", port, "/old", Absent))
                         .addField("body", "payload")
                     c.sendWith(textRoute, req)(_.fields.body).map { body =>
                         assert(body == "received: payload", s"308 should preserve POST method and body, got: $body")
@@ -490,7 +490,7 @@ class Rfc9110Test extends BaseHttpTest:
         // RFC 9110 §15.4: "the Location header field [...] MAY be a relative reference"
         val route1 = HttpRoute.getRaw("old").response(_.bodyText)
         val route2 = HttpRoute.getRaw("new").response(_.bodyText)
-        val ep1 = route1.handler(_ =>
+        val ep1    = route1.handler(_ =>
             HttpResponse.halt(HttpResponse(HttpStatus.Found).setHeader("Location", "/new"))
         )
         val ep2 = route2.handler(_ => HttpResponse.ok("arrived"))
@@ -685,7 +685,7 @@ class Rfc9110Test extends BaseHttpTest:
     "Section 15.4.2 - 301 Moved Permanently redirect followed" in {
         val route1 = HttpRoute.getRaw("old-path").response(_.bodyText)
         val route2 = HttpRoute.getRaw("new-path").response(_.bodyText)
-        val ep1 = route1.handler(_ =>
+        val ep1    = route1.handler(_ =>
             HttpResponse.halt(HttpResponse.movedPermanently("/new-path"))
         )
         val ep2 = route2.handler(_ => HttpResponse.ok("new location"))
@@ -704,7 +704,7 @@ class Rfc9110Test extends BaseHttpTest:
     "Section 15.4.3 - 302 Found redirect followed" in {
         val route1 = HttpRoute.getRaw("temp").response(_.bodyText)
         val route2 = HttpRoute.getRaw("target").response(_.bodyText)
-        val ep1 = route1.handler(_ =>
+        val ep1    = route1.handler(_ =>
             HttpResponse.halt(HttpResponse.redirect("/target"))
         )
         val ep2 = route2.handler(_ => HttpResponse.ok("target reached"))
@@ -802,7 +802,7 @@ class Rfc9110Test extends BaseHttpTest:
 
     "Section 8.3 - Handler-set Content-Type preserved" in {
         val route = HttpRoute.getRaw("custom-ct").response(_.bodyText)
-        val ep = route.handler(_ =>
+        val ep    = route.handler(_ =>
             HttpResponse.ok("<html>hi</html>").setHeader("Content-Type", "text/html")
         )
         withServer(ep) { port =>
@@ -998,7 +998,7 @@ class Rfc9110Test extends BaseHttpTest:
         // RFC 9110 §15.4.4: applies to any method, not just POST
         val deleteRoute = HttpRoute.deleteRaw("item-del").response(_.bodyText)
         val getRoute    = HttpRoute.getRaw("item-status").response(_.bodyText)
-        val deleteEp = deleteRoute.handler(_ =>
+        val deleteEp    = deleteRoute.handler(_ =>
             HttpResponse.halt(HttpResponse(HttpStatus.SeeOther).setHeader("Location", "/item-status"))
         )
         val getEp = getRoute.handler(_ => HttpResponse.ok("item deleted"))
@@ -1027,7 +1027,7 @@ class Rfc9110Test extends BaseHttpTest:
         withServer(route1.handler(_ => HttpResponse.halt(HttpResponse(HttpStatus.Found))), ep2) { port =>
             // We need the port to construct the absolute URL, so use a different approach
             val route1b = HttpRoute.getRaw("abs-redir2").response(_.bodyText)
-            val ep1b = route1b.handler(_ =>
+            val ep1b    = route1b.handler(_ =>
                 HttpResponse.halt(HttpResponse(HttpStatus.Found).setHeader("Location", s"http://127.0.0.1:$port/abs-dest"))
             )
             withServer(ep1b, ep2) { port2 =>
@@ -1047,7 +1047,7 @@ class Rfc9110Test extends BaseHttpTest:
 
     "Section 8.1 - Custom response headers preserved" in {
         val route = HttpRoute.getRaw("custom-hdr").response(_.bodyText)
-        val ep = route.handler(_ =>
+        val ep    = route.handler(_ =>
             HttpResponse.ok("ok")
                 .setHeader("X-Custom-Header", "custom-value")
                 .setHeader("X-Request-Id", "abc-123")

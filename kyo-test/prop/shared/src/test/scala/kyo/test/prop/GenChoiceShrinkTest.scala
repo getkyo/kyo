@@ -37,7 +37,7 @@ object NatGen:
     // The lazy val avoids the eager initialization cycle: genDerived is only forced on the first
     // sample() call, by which point the given val natGen is already fully initialized.
     private lazy val genDerived: Gen[Nat] = Gen.derive[Nat]
-    given natGen: Gen[Nat] = new Gen[Nat]:
+    given natGen: Gen[Nat]                = new Gen[Nat]:
         def sample(seed: Seed, size: Int): Tree[Nat] = genDerived.sample(seed, size)
 end NatGen
 
@@ -101,8 +101,8 @@ class GenChoiceShrinkTest extends AsyncFreeSpec with NonImplicitAssertions:
     }
 
     "oneOf value is always one of the choices (regression)" in {
-        val choices = Set(1, 2, 3)
-        val g       = Gen.oneOf(1, 2, 3)
+        val choices    = Set(1, 2, 3)
+        val g          = Gen.oneOf(1, 2, 3)
         val violations = (0 to 1000).flatMap { i =>
             val tree = g.sample(Seed(i.toLong), 10)
             val root = tree.value

@@ -103,7 +103,7 @@ class JsonRpcEnvelopeSchemaTest extends JsonRpcTest:
             "jsonrpc" -> Str("2.0"),
             "id"      -> Integer(1L),
             "result"  -> Record(Chunk.empty),
-            "error" -> Record(Chunk(
+            "error"   -> Record(Chunk(
                 "code"    -> Integer(-32600L),
                 "message" -> Str("Invalid Request")
             ))
@@ -116,14 +116,14 @@ class JsonRpcEnvelopeSchemaTest extends JsonRpcTest:
         val raw = Record(Chunk(
             "jsonrpc" -> Str("2.0"),
             "id"      -> Null,
-            "error" -> Record(Chunk(
+            "error"   -> Record(Chunk(
                 "code"    -> Integer(-32700L),
                 "message" -> Str("Parse error")
             ))
         ))
         decode(raw, strict) match
             case JsonRpcMalformedMessage(_, _, _) => succeed
-            case other => fail(
+            case other                            => fail(
                     s"expected Malformed (null-id Response cannot be represented as Response, JsonRpcResponse.id has type JsonRpcId not Maybe), got: $other"
                 )
         end match

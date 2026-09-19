@@ -29,7 +29,7 @@ object Mcp:
     private def ctx(method: String)(using Frame): RequestContext < Sync =
         local.use {
             case Present(c) => Sync.defer(c)
-            case Absent =>
+            case Absent     =>
                 Sync.defer(throw new IllegalStateException(s"Mcp.$method called outside an MCP route handler"))
         }
 
@@ -109,7 +109,7 @@ object Mcp:
       */
     def extras[T](using Schema[T], Frame): Maybe[T] < (Sync & Abort[McpDecodeException]) =
         extras.map {
-            case Absent => Maybe.empty
+            case Absent      => Maybe.empty
             case Present(sv) =>
                 Structure.decode[T](sv) match
                     case Result.Success(t) => Present(t)

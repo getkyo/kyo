@@ -53,7 +53,7 @@ class PollerConnectStrandTest extends Test:
         // production code. Accepted fds are closed immediately (the test only needs the connect side to become writable).
         val acceptStop = new AtomicBoolean(false)
         val accepted   = new AtomicInteger(0)
-        val acceptor = new Thread(() =>
+        val acceptor   = new Thread(() =>
             import AllowUnsafe.embrace.danger
             val addr = Buffer.alloc[Byte](SockAddr.inet4Size)
             val alen = Buffer.alloc[Int](1)

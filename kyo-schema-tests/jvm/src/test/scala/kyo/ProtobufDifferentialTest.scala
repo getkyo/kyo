@@ -176,7 +176,7 @@ class ProtobufDifferentialTest extends kyo.test.Test[Any]:
         }
 
         "scalars: oracle bytes decode to the same value in kyo" in {
-            val d = descriptor("PDScalars")
+            val d           = descriptor("PDScalars")
             val oracleBytes = DynamicMessage.newBuilder(d)
                 .setField(fd(d, "i"), -2)
                 .setField(fd(d, "l"), 300L)
@@ -237,13 +237,13 @@ class ProtobufDifferentialTest extends kyo.test.Test[Any]:
             val parsed      = parseWithOracle("PDMaps", Protobuf.encode(value))
             val d           = parsed.getDescriptorForType
             val byNameEntry = d.findNestedTypeByName("ByNameEntry")
-            val byName = parsed.getField(fd(d, "byName")).asInstanceOf[java.util.List[?]].asScala.toList
+            val byName      = parsed.getField(fd(d, "byName")).asInstanceOf[java.util.List[?]].asScala.toList
                 .map(_.asInstanceOf[DynamicMessage])
                 .map(m => m.getField(fd(byNameEntry, "key")) -> m.getField(fd(byNameEntry, "value")))
                 .toMap
             assert(byName == Map("a" -> 1, "b" -> -2))
             val byIdEntry = d.findNestedTypeByName("ByIdEntry")
-            val byId = parsed.getField(fd(d, "byId")).asInstanceOf[java.util.List[?]].asScala.toList
+            val byId      = parsed.getField(fd(d, "byId")).asInstanceOf[java.util.List[?]].asScala.toList
                 .map(_.asInstanceOf[DynamicMessage])
                 .map(m => m.getField(fd(byIdEntry, "key")) -> m.getField(fd(byIdEntry, "value")))
                 .toMap

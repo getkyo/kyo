@@ -187,7 +187,7 @@ object UUIDGenerator:
 
     private def toUUID(state: V7State): UUID =
         state match
-            case V7State.Empty => UUID.nil
+            case V7State.Empty                                           => UUID.nil
             case V7State.Value(effectiveMillis, payloadHigh, payloadLow) =>
                 val mostSignificantBits  = (effectiveMillis << 16) | 0x7000L | payloadHigh
                 val leastSignificantBits = 0x8000000000000000L | payloadLow

@@ -38,12 +38,12 @@ private[kyo] trait LowPrioritySqlSchema:
     private inline def columnsOf[Labels <: Tuple, Types <: Tuple]: List[SqlSchema.Column[?]] =
         inline erasedValue[Types] match
             case _: EmptyTuple => Nil
-            case _: (t *: ts) =>
+            case _: (t *: ts)  =>
                 inline erasedValue[Labels] match
                     case _: (l *: ls) =>
                         val head = summonFrom {
                             case c: SqlSchema.Column[`t`] => c
-                            case _ =>
+                            case _                        =>
                                 error(
                                     "Field '" + constValue[l & String] +
                                         "' is not a single-column SQL type. Supported column types are the SqlSchema base set, " +

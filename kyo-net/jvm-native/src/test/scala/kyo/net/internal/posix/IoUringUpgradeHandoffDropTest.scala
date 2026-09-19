@@ -175,7 +175,7 @@ class IoUringUpgradeHandoffDropTest extends Test:
                             end match
                             handle.upgradeHandoff.get() match
                                 case PosixHandle.UpgradeHandoff.Idle => ()
-                                case other =>
+                                case other                           =>
                                     fail(s"upgradeHandoff must return to Idle after fulfilling the waiter, got $other")
                             end match
                             succeed
@@ -202,7 +202,7 @@ class IoUringUpgradeHandoffDropTest extends Test:
                         // slot must stay Idle without needing to wait for the reap carrier.
                         handle.upgradeHandoff.get() match
                             case PosixHandle.UpgradeHandoff.Idle => ()
-                            case other =>
+                            case other                           =>
                                 fail(s"bytes must be discarded (not staged) on a non-upgrade close, got $other")
                         end match
                         succeed

@@ -106,7 +106,7 @@ object SqlMacros:
                 val fieldExprs = fieldNames.map { fn =>
                     renameOf(renames, fn) match
                         case Maybe.Present(w) => Expr(w)
-                        case Maybe.Absent =>
+                        case Maybe.Absent     =>
                             '{
                                 $namingRuntime match
                                     case Maybe.Present(n) => n.columnName(${ Expr(fn) })
@@ -137,10 +137,10 @@ object SqlMacros:
             val rename                        = renameOf(fieldRenames[T], scalaName)
             namingStatic match
                 case Some(naming) => '{ Maybe(${ Expr(resolveColumnName(scalaName, rename, naming)) }) }
-                case None =>
+                case None         =>
                     rename match
                         case Maybe.Present(w) => '{ Maybe(${ Expr(w) }) }
-                        case Maybe.Absent =>
+                        case Maybe.Absent     =>
                             '{
                                 Maybe($namingRuntime match
                                     case Maybe.Present(n) => n.columnName(${ Expr(scalaName) })
@@ -173,11 +173,11 @@ object SqlMacros:
         import quotes.reflect.*
         val rowExprs: Seq[Expr[T]] = rows match
             case Varargs(es) => es
-            case _ =>
+            case _           =>
                 report.errorAndAbort("rowValues requires a literal sequence of rows (varargs).")
-        val caseFields = TypeRepr.of[T].typeSymbol.caseFields
+        val caseFields                                 = TypeRepr.of[T].typeSymbol.caseFields
         val rowChunks: Seq[Expr[Chunk[BoundValue[?]]]] = rowExprs.map: rowExpr =>
-            val rowTerm = rowExpr.asTerm
+            val rowTerm                          = rowExpr.asTerm
             val cells: List[Expr[BoundValue[?]]] = caseFields.map: field =>
                 val fieldType = TypeRepr.of[T].memberType(field)
                 fieldType.asType match
@@ -210,7 +210,7 @@ object SqlMacros:
     private def resolveColumnName(scalaName: String, rename: Maybe[String], naming: Maybe[SqlNaming]): String =
         rename match
             case Maybe.Present(w) => w
-            case Maybe.Absent =>
+            case Maybe.Absent     =>
                 naming match
                     case Maybe.Present(n) => n.columnName(scalaName)
                     case Maybe.Absent     => scalaName
@@ -250,7 +250,7 @@ object SqlMacros:
     private def sqlFieldNamesImpl[T: Type](using Quotes): Expr[Seq[String]] =
         import quotes.reflect.*
         val renames = fieldRenames[T]
-        val names = TypeRepr.of[T].typeSymbol.caseFields.map { f =>
+        val names   = TypeRepr.of[T].typeSymbol.caseFields.map { f =>
             renames.getOrElse(f.name, f.name)
         }
         Expr(names)
@@ -272,7 +272,7 @@ object SqlMacros:
       */
     private def sqlNaming(using Quotes): (Expr[Maybe[SqlNaming]], Option[Maybe[SqlNaming]]) =
         Expr.summon[SqlNaming] match
-            case None => ('{ Maybe.empty[SqlNaming] }, Some(Maybe.empty))
+            case None    => ('{ Maybe.empty[SqlNaming] }, Some(Maybe.empty))
             case Some(e) =>
                 val static = kyo.internal.FromExprDerived.resolveStableGiven[SqlNaming](e).map(n => Maybe(n))
                 ('{ Maybe($e) }, static)

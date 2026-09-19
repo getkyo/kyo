@@ -76,12 +76,12 @@ class TransportResilienceTest extends Test:
         // Many long-lived connections with reads in flight while the server goes away all at once, RST-ing every
         // in-flight read simultaneously: modeled by closing EVERY currently-connected server side in one sweep,
         // repeatedly, while sustained concurrent clients round-trip and reconnect.
-        val serverConns = java.util.concurrent.ConcurrentHashMap.newKeySet[Connection]()
-        val stop        = new JAtomicBoolean(false)
-        val clients     = 48
-        val iters       = 40
-        val perConn     = 6
-        val msg         = "ping".getBytes("UTF-8")
+        val serverConns                             = java.util.concurrent.ConcurrentHashMap.newKeySet[Connection]()
+        val stop                                    = new JAtomicBoolean(false)
+        val clients                                 = 48
+        val iters                                   = 40
+        val perConn                                 = 6
+        val msg                                     = "ping".getBytes("UTF-8")
         def registeringEcho(conn: Connection): Unit =
             discard(serverConns.add(conn))
             discard(Sync.Unsafe.evalOrThrow {
@@ -169,7 +169,7 @@ class TransportResilienceTest extends Test:
             _              <- Scope.ensure(Sync.defer(cleanListener.close()))
             silentListener <- transport.listen("127.0.0.1", 0, 128)(drain).safe.get
             _              <- Scope.ensure(Sync.defer(silentListener.close()))
-            _ <- Async.foreach(0 until 300, 48) { _ =>
+            _              <- Async.foreach(0 until 300, 48) { _ =>
                 Abort.run[NetException | Closed] {
                     transport.connect("127.0.0.1", silentListener.port).safe.get.map { conn =>
                         // Race a close against an armed read: start the read, close concurrently.
@@ -190,11 +190,11 @@ class TransportResilienceTest extends Test:
         for
             cleanListener <- transport.listen("127.0.0.1", 0, 64)(echo).safe.get
             _             <- Scope.ensure(Sync.defer(cleanListener.close()))
-            _ <- Loop(0) { round =>
+            _             <- Loop(0) { round =>
                 if round >= 40 then Loop.done(())
                 else
                     transport.listen("127.0.0.1", 0, 128)(echo).safe.get.map { churnListener =>
-                        val port = churnListener.port
+                        val port     = churnListener.port
                         val connects = Async.foreach(0 until 16, 16) { _ =>
                             Abort.run[NetException | Closed] {
                                 transport.connect("127.0.0.1", port).safe.get.map { conn =>
@@ -235,7 +235,7 @@ class TransportResilienceTest extends Test:
                 _             <- Scope.ensure(Sync.defer(cleanListener.close()))
                 mixedListener <- transport.listen("127.0.0.1", 0, 128)(mixed).safe.get
                 _             <- Scope.ensure(Sync.defer(mixedListener.close()))
-                _ <- Async.foreach(0 until 200, 40) { _ =>
+                _             <- Async.foreach(0 until 200, 40) { _ =>
                     Abort.run[NetException | Closed] {
                         transport.connect("127.0.0.1", mixedListener.port).safe.get.map { conn =>
                             conn.outbound.safe.put(Span.fromUnsafe(msg))
@@ -261,7 +261,7 @@ class TransportResilienceTest extends Test:
             _              <- Scope.ensure(Sync.defer(cleanListener.close()))
             silentListener <- transport.listen("127.0.0.1", 0, 128)(drain).safe.get
             _              <- Scope.ensure(Sync.defer(silentListener.close()))
-            _ <- Async.foreach(0 until 300, 48) { _ =>
+            _              <- Async.foreach(0 until 300, 48) { _ =>
                 Abort.run[NetException | Closed] {
                     transport.connect("127.0.0.1", silentListener.port).safe.get.map { conn =>
                         Fiber.init(Abort.run[Closed](conn.inbound.safe.take).unit).map { readFiber =>
@@ -286,7 +286,7 @@ class TransportResilienceTest extends Test:
             _              <- Scope.ensure(Sync.defer(cleanListener.close()))
             silentListener <- transport.listen("127.0.0.1", 0, 128)(drain).safe.get
             _              <- Scope.ensure(Sync.defer(silentListener.close()))
-            _ <- Async.foreach(0 until 200, 40) { _ =>
+            _              <- Async.foreach(0 until 200, 40) { _ =>
                 Abort.run[NetException | Closed] {
                     transport.connect("127.0.0.1", silentListener.port).safe.get.map { conn =>
                         // Catch the timeout inside the Abort so conn.close ALWAYS runs: an uncaught Timeout would

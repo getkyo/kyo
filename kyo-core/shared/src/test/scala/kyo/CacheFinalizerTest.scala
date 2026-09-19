@@ -42,7 +42,7 @@ class CacheFinalizerTest extends kyo.test.Test[Any]:
             for
                 clock <- Clock.get
                 expiredCount = new AtomicInteger(0)
-                store = Cache.Unsafe.init[Int, Int](
+                store        = Cache.Unsafe.init[Int, Int](
                     maxSize = 8,
                     expireAfterAccess = 10.seconds,
                     clock = clock.unsafe,

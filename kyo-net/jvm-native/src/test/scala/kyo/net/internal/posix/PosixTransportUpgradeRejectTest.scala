@@ -56,7 +56,7 @@ class PosixTransportUpgradeRejectTest extends Test:
                     plaintext.close()
                     second match
                         case Result.Failure(_: NetException) => succeed
-                        case Result.Failure(_: Timeout) =>
+                        case Result.Failure(_: Timeout)      =>
                             assert(false, "the engine-carrying re-upgrade hung instead of failing typed (the reject is missing)")
                         case other =>
                             assert(false, s"an upgrade over an engine-carrying handle must fail typed; got $other")
@@ -87,7 +87,7 @@ class PosixTransportUpgradeRejectTest extends Test:
                     plaintext.close()
                     second match
                         case Result.Failure(_: NetException) => succeed
-                        case Result.Failure(_: Timeout) =>
+                        case Result.Failure(_: Timeout)      =>
                             assert(false, "the re-upgrade hung instead of failing typed (the reject is missing)")
                         case other =>
                             assert(false, s"a second upgrade of an upgraded handle must fail typed; got $other")

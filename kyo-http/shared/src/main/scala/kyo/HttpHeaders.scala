@@ -64,14 +64,12 @@ object HttpHeaders:
 
     // --- Packed array helpers ---
 
-    private def packedHeaderCount(packed: Array[Byte]): Int =
-        ((packed(0) & 0xff) << 8) | (packed(1) & 0xff)
+    private def packedHeaderCount(packed: Array[Byte]): Int = ((packed(0) & 0xff) << 8) | (packed(1) & 0xff)
 
     private def packedRawOffset(packed: Array[Byte]): Int =
         2 + packedHeaderCount(packed) * 8
 
-    private def packedReadShort(packed: Array[Byte], pos: Int): Int =
-        ((packed(pos) & 0xff) << 8) | (packed(pos + 1) & 0xff)
+    private def packedReadShort(packed: Array[Byte], pos: Int): Int = ((packed(pos) & 0xff) << 8) | (packed(pos + 1) & 0xff)
 
     private def packedHeaderNameOff(packed: Array[Byte], i: Int): Int = packedReadShort(packed, 2 + i * 8)
     private def packedHeaderNameLen(packed: Array[Byte], i: Int): Int = packedReadShort(packed, 2 + i * 8 + 2)
@@ -98,10 +96,10 @@ object HttpHeaders:
     /** Converts any HttpHeaders to Chunk[String] representation. */
     private def toChunk(h: HttpHeaders): Chunk[String] =
         if isPacked(h) then
-            val packed  = asPacked(h)
-            val count   = packedHeaderCount(packed)
-            val rawOff  = packedRawOffset(packed)
-            val builder = ChunkBuilder.init[String]
+            val packed                      = asPacked(h)
+            val count                       = packedHeaderCount(packed)
+            val rawOff                      = packedRawOffset(packed)
+            val builder                     = ChunkBuilder.init[String]
             @tailrec def loop(i: Int): Unit =
                 if i < count then
                     val nameOff = packedHeaderNameOff(packed, i) + rawOff
@@ -135,9 +133,9 @@ object HttpHeaders:
         /** Returns the value of the first header matching `name` (case-insensitive). */
         def get(name: String): Maybe[String] =
             if isPacked(self) then
-                val packed = asPacked(self)
-                val count  = packedHeaderCount(packed)
-                val rawOff = packedRawOffset(packed)
+                val packed                               = asPacked(self)
+                val count                                = packedHeaderCount(packed)
+                val rawOff                               = packedRawOffset(packed)
                 @tailrec def loop(i: Int): Maybe[String] =
                     if i >= count then Absent
                     else
@@ -151,7 +149,7 @@ object HttpHeaders:
                         end if
                 loop(0)
             else
-                val chunk = asChunk(self)
+                val chunk                                = asChunk(self)
                 @tailrec def loop(i: Int): Maybe[String] =
                     if i >= chunk.length then Absent
                     else if chunk(i).equalsIgnoreCase(name) then Present(chunk(i + 1))
@@ -162,10 +160,10 @@ object HttpHeaders:
         /** Returns all values for headers matching `name` (case-insensitive). */
         def getAll(name: String): Seq[String] =
             if isPacked(self) then
-                val packed  = asPacked(self)
-                val count   = packedHeaderCount(packed)
-                val rawOff  = packedRawOffset(packed)
-                val builder = Chunk.newBuilder[String]
+                val packed                             = asPacked(self)
+                val count                              = packedHeaderCount(packed)
+                val rawOff                             = packedRawOffset(packed)
+                val builder                            = Chunk.newBuilder[String]
                 @tailrec def loop(i: Int): Seq[String] =
                     if i >= count then builder.result()
                     else
@@ -179,8 +177,8 @@ object HttpHeaders:
                         loop(i + 1)
                 loop(0)
             else
-                val chunk   = asChunk(self)
-                val builder = Chunk.newBuilder[String]
+                val chunk                              = asChunk(self)
+                val builder                            = Chunk.newBuilder[String]
                 @tailrec def loop(i: Int): Seq[String] =
                     if i >= chunk.length then builder.result()
                     else
@@ -193,9 +191,9 @@ object HttpHeaders:
         /** Whether a header with the given name exists (case-insensitive). */
         def contains(name: String): Boolean =
             if isPacked(self) then
-                val packed = asPacked(self)
-                val count  = packedHeaderCount(packed)
-                val rawOff = packedRawOffset(packed)
+                val packed                         = asPacked(self)
+                val count                          = packedHeaderCount(packed)
+                val rawOff                         = packedRawOffset(packed)
                 @tailrec def loop(i: Int): Boolean =
                     if i >= count then false
                     else
@@ -205,7 +203,7 @@ object HttpHeaders:
                         else loop(i + 1)
                 loop(0)
             else
-                val chunk = asChunk(self)
+                val chunk                          = asChunk(self)
                 @tailrec def loop(i: Int): Boolean =
                     if i >= chunk.length then false
                     else if chunk(i).equalsIgnoreCase(name) then true
@@ -225,8 +223,8 @@ object HttpHeaders:
 
         /** Replaces any existing header with the same name, then appends. */
         def set(name: String, value: String): HttpHeaders =
-            val chunk   = toChunk(self)
-            val builder = ChunkBuilder.init[String]
+            val chunk                       = toChunk(self)
+            val builder                     = ChunkBuilder.init[String]
             @tailrec def loop(i: Int): Unit =
                 if i < chunk.length then
                     if !chunk(i).equalsIgnoreCase(name) then
@@ -250,8 +248,8 @@ object HttpHeaders:
 
         /** Removes all headers with the given name (case-insensitive). */
         def remove(name: String): HttpHeaders =
-            val chunk   = toChunk(self)
-            val builder = ChunkBuilder.init[String]
+            val chunk                       = toChunk(self)
+            val builder                     = ChunkBuilder.init[String]
             @tailrec def loop(i: Int): Unit =
                 if i < chunk.length then
                     if !chunk(i).equalsIgnoreCase(name) then
@@ -265,9 +263,9 @@ object HttpHeaders:
         /** Iterates over all headers as name-value pairs. */
         def foreach(f: (String, String) => Unit): Unit =
             if isPacked(self) then
-                val packed = asPacked(self)
-                val count  = packedHeaderCount(packed)
-                val rawOff = packedRawOffset(packed)
+                val packed                      = asPacked(self)
+                val count                       = packedHeaderCount(packed)
+                val rawOff                      = packedRawOffset(packed)
                 @tailrec def loop(i: Int): Unit =
                     if i < count then
                         val nameOff = packedHeaderNameOff(packed, i) + rawOff
@@ -278,7 +276,7 @@ object HttpHeaders:
                         loop(i + 1)
                 loop(0)
             else
-                val chunk = asChunk(self)
+                val chunk                       = asChunk(self)
                 @tailrec def loop(i: Int): Unit =
                     if i < chunk.length then
                         f(chunk(i), chunk(i + 1))
@@ -295,9 +293,9 @@ object HttpHeaders:
           */
         def writeToBuffer(buf: kyo.net.internal.util.GrowableByteBuffer): Unit =
             if isPacked(self) then
-                val packed = asPacked(self)
-                val count  = packedHeaderCount(packed)
-                val rawOff = packedRawOffset(packed)
+                val packed                      = asPacked(self)
+                val count                       = packedHeaderCount(packed)
+                val rawOff                      = packedRawOffset(packed)
                 @tailrec def loop(i: Int): Unit =
                     if i < count then
                         val nameOff = packedHeaderNameOff(packed, i) + rawOff
@@ -311,7 +309,7 @@ object HttpHeaders:
                         loop(i + 1)
                 loop(0)
             else
-                val chunk = asChunk(self)
+                val chunk                       = asChunk(self)
                 @tailrec def loop(i: Int): Unit =
                     if i < chunk.length then
                         buf.writeAscii(chunk(i))
@@ -338,7 +336,7 @@ object HttpHeaders:
         private[kyo] def invalidField: Maybe[String] =
             if isPacked(self) then Absent
             else
-                val chunk = asChunk(self)
+                val chunk                                = asChunk(self)
                 @tailrec def loop(i: Int): Maybe[String] =
                     if i >= chunk.length then Absent
                     else if !HttpHeaders.isToken(chunk(i)) then Present(s"the name of the header at index ${i / 2}")
@@ -350,9 +348,9 @@ object HttpHeaders:
         /** Folds over all headers as name-value pairs. */
         def foldLeft[A](init: A)(f: (A, String, String) => A): A =
             if isPacked(self) then
-                val packed = asPacked(self)
-                val count  = packedHeaderCount(packed)
-                val rawOff = packedRawOffset(packed)
+                val packed                           = asPacked(self)
+                val count                            = packedHeaderCount(packed)
+                val rawOff                           = packedRawOffset(packed)
                 @tailrec def loop(i: Int, acc: A): A =
                     if i >= count then acc
                     else
@@ -363,7 +361,7 @@ object HttpHeaders:
                         loop(i + 1, f(acc, decodeString(packed, nameOff, nameLen), decodeString(packed, valOff, valLen)))
                 loop(0, init)
             else
-                val chunk = asChunk(self)
+                val chunk                            = asChunk(self)
                 @tailrec def loop(i: Int, acc: A): A =
                     if i >= chunk.length then acc
                     else loop(i + 2, f(acc, chunk(i), chunk(i + 1)))
@@ -404,7 +402,7 @@ object HttpHeaders:
 
         /** Returns the value of a response cookie by name, parsed from Set-Cookie headers. */
         def responseCookie(name: String): Maybe[String] =
-            val setCookies = self.getAll("Set-Cookie")
+            val setCookies                           = self.getAll("Set-Cookie")
             @tailrec def loop(i: Int): Maybe[String] =
                 if i >= setCookies.size then Absent
                 else
@@ -450,7 +448,9 @@ object HttpHeaders:
       * Takes a char rather than a String so a parser can test raw bytes against it without decoding them.
       */
     private[kyo] def isTokenChar(c: Char): Boolean =
-        (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || TokenSymbols.indexOf(c) >= 0
+        (c >= 'a' && c <= 'z') ||
+            (c >= 'A' && c <= 'Z') ||
+            (c >= '0' && c <= '9') || TokenSymbols.indexOf(c) >= 0
 
     /** Whether `s` is a `token`, the grammar a field name must satisfy: `token = 1*tchar` (RFC 9110 sections 5.1 and 5.6.2).
       *
@@ -509,7 +509,7 @@ object HttpHeaders:
     end findCookieValue
 
     private def parseCookieHeader(header: String, strict: Boolean): Seq[(String, String)] =
-        val builder = Seq.newBuilder[(String, String)]
+        val builder                                        = Seq.newBuilder[(String, String)]
         @tailrec def loop(pos: Int): Seq[(String, String)] =
             if pos >= header.length then builder.result()
             else

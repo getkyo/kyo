@@ -105,7 +105,7 @@ private[kyo] object ChartLegend:
         domainOv: Maybe[(Double, Double)],
         gradPrefix: String
     )(using Frame): Chunk[Svg.SvgElement] =
-        val gradId = s"$gradPrefix-grad-0"
+        val gradId   = s"$gradPrefix-grad-0"
         val gradient = Svg.linearGradient
             .withSvg(Svg.linearGradient.svgAttrs.copy(defId = Present(gradId)))
             .x1(0).y1(0).x2(1).y2(0)
@@ -118,7 +118,7 @@ private[kyo] object ChartLegend:
             case LegendPosition.Bottom => (layout.plotX, layout.plotBaseline + (LegendReservedH - SwatchSize) / 2.0)
             case LegendPosition.Left   => (60.0 / 2.0 - SwatchSize, layout.plotY)
             case LegendPosition.Right  => (layout.plotX + layout.plotW + 8.0, layout.plotY)
-        val swatchW = SwatchSize * 4.0
+        val swatchW                = SwatchSize * 4.0
         val swatch: Svg.SvgElement =
             Svg.rect
                 .x(legendX)
@@ -130,9 +130,9 @@ private[kyo] object ChartLegend:
         // the left (min) and right (max) of the swatch, vertically centred on it, so they stay inside the thin
         // reserved band (placing them below the swatch would spill into the plot area). They use the axis-tick
         // chrome color and the same NumberFormat the tick/size legends use.
-        val (domLo, domHi) = domainExtentOf(categories, domainOv)
-        val labelColor     = ChartAxes.axisChromeColor(spec.theme)
-        val labelY         = legendY + SwatchSize / 2.0
+        val (domLo, domHi)                                                           = domainExtentOf(categories, domainOv)
+        val labelColor                                                               = ChartAxes.axisChromeColor(spec.theme)
+        val labelY                                                                   = legendY + SwatchSize / 2.0
         def label(value: Double, lx: Double, anchor: Svg.TextAnchor): Svg.SvgElement =
             withFont(
                 spec.theme,
@@ -287,8 +287,8 @@ private[kyo] object ChartLegend:
             r => ChartFoundations.categoryKey(colorEnc.tag, colorEnc.accessor(r))
         )
         val triples = distinct.zipWithIndex.map: (pair, encounterIdx) =>
-            val raw   = colorEnc.accessor(pair._2)
-            val label = raw.toString
+            val raw     = colorEnc.accessor(pair._2)
+            val label   = raw.toString
             val ordinal = raw match
                 case e: scala.reflect.Enum => e.ordinal
                 case _                     => encounterIdx // stable encounter-order index
@@ -339,13 +339,13 @@ private[kyo] object ChartLegend:
     private def domainExtentOf(categories: Chunk[(String, Any)], domainOv: Maybe[(Double, Double)]) =
         domainOv match
             case Present(d) => d
-            case Absent =>
+            case Absent     =>
                 @scala.annotation.tailrec
                 def fold(i: Int, lo: Double, hi: Double): (Double, Double) =
                     if i >= categories.size then (lo, hi)
                     else
                         val raw = categories(i)._2
-                        val v = raw match
+                        val v   = raw match
                             case n: Double => n
                             case n: Int    => n.toDouble
                             case n: Long   => n.toDouble
@@ -481,8 +481,8 @@ private[kyo] object ChartLegend:
         def loop(i: Int, curX: Double, curY: Double, acc: Chunk[Svg.SvgElement]): Chunk[Svg.SvgElement] =
             if i >= categories.size then acc
             else
-                val (cat, _) = categories(i)
-                val color    = if i < palette.size then palette(i) else ChartAxes.DefaultPalette(i % ChartAxes.DefaultPalette.size)
+                val (cat, _)   = categories(i)
+                val color      = if i < palette.size then palette(i) else ChartAxes.DefaultPalette(i % ChartAxes.DefaultPalette.size)
                 val clickAttrs = toggleAction(i) match
                     case Present(a) => UI.Ast.Attrs(onClick = Present(a))
                     case Absent     => UI.Ast.Attrs()
@@ -515,7 +515,7 @@ private[kyo] object ChartLegend:
                             .fill(Svg.Paint.Color(labelColor))
                             .withAttrs(clickAttrs)
                     ).apply(cat)
-                val approxLabelW = cat.length.toDouble * 7.0
+                val approxLabelW   = cat.length.toDouble * 7.0
                 val (nextX, nextY) =
                     if vertical then (curX, curY + LegendRowH)
                     else (curX + SwatchSize + SwatchLabelGap + approxLabelW + itemGap, curY)

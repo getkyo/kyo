@@ -422,7 +422,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         //   C: bandX = 60 + 2*slot + (slot-bandW)/2 = 442.666...
         case class Cat(label: String, value: Double)
         given CanEqual[Cat, Cat] = CanEqual.derived
-        val rows = Chunk(
+        val rows                 = Chunk(
             Cat("A", 1000.0),
             Cat("B", 2000.0),
             Cat("C", 1500.0)
@@ -463,7 +463,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         // 100 => rgb(255,255,255). These are Style.Color.Rgb, NOT the categorical blue/orange Hex fills.
         case class Heat(month: String, revenue: Double, level: Double)
         given CanEqual[Heat, Heat] = CanEqual.derived
-        val rows = Chunk(
+        val rows                   = Chunk(
             Heat("Jan", 1000.0, 0.0),
             Heat("Jan", 2000.0, 50.0),
             Heat("Jan", 1500.0, 100.0)
@@ -476,7 +476,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
 
             // The grouped bars are positioned left-to-right by color-category index (encounter order:
             // level 0.0, 50.0, 100.0). Order rects by x to recover that mapping.
-            val byX = rects.toSeq.sortBy(r => numOf(r.svgAttrs.x))
+            val byX                              = rects.toSeq.sortBy(r => numOf(r.svgAttrs.x))
             def fillOf(r: Svg.Rect): Style.Color =
                 r.svgAttrs.fill match
                     case Present(Svg.Paint.Color(c)) => c
@@ -509,7 +509,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         val naColor   = Style.Color.hex("#e63946").getOrElse(fail("bad hex naColor"))   // red
         val euColor   = Style.Color.hex("#2a9d8f").getOrElse(fail("bad hex euColor"))   // teal
         val apacColor = Style.Color.hex("#e9c46a").getOrElse(fail("bad hex apacColor")) // yellow
-        val rows = Chunk(
+        val rows      = Chunk(
             Sale("Jan", Usd(1000), Region.NA),
             Sale("Jan", Usd(2000), Region.EU),
             Sale("Jan", Usd(1500), Region.APAC)
@@ -525,7 +525,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
             assert(rects.size == 3, s"Expected 3 bar rects (one per region) but got ${rects.size}")
 
             // Sort rects by x position to recover NA/EU/APAC encounter order.
-            val byX = rects.toSeq.sortBy(r => numOf(r.svgAttrs.x))
+            val byX                              = rects.toSeq.sortBy(r => numOf(r.svgAttrs.x))
             def fillOf(r: Svg.Rect): Style.Color =
                 r.svgAttrs.fill match
                     case Present(Svg.Paint.Color(c)) => c
@@ -625,7 +625,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         case class Combo(month: String, revenue: Double, growth: Double)
         given CanEqual[Combo, Combo] = CanEqual.derived
         val rows                     = Chunk(Combo("Jan", 1000.0, 10.0), Combo("Feb", 2000.0, 20.0))
-        val spec = Chart(rows)(
+        val spec                     = Chart(rows)(
             bar(x = _.month, y = _.revenue),
             line(x = _.month, y = _.growth, axis = Axis.Right)
         )
@@ -685,7 +685,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         // Neutral light text color used on the dark theme (must match ChartLower.DarkThemeTextColor).
         val lightText = Style.Color.hex("#e5e7eb").getOrElse(Style.Color.white)
         val rows      = Chunk(Sale("Jan", Usd(1000)), Sale("Feb", Usd(2000)))
-        val spec = Chart(rows)(bar(x = _.month, y = _.revenue))
+        val spec      = Chart(rows)(bar(x = _.month, y = _.revenue))
             .yAxis(_.ticks(3))
             .xAxis(_.label("Month"))
             .theme(_.dark)
@@ -750,7 +750,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
             case g: Svg.G =>
                 g.children.flatMap:
                     case c: Svg.Circle => Chunk(c)
-                    case gg: Svg.G =>
+                    case gg: Svg.G     =>
                         gg.children.flatMap:
                             case c: Svg.Circle => Chunk(c)
                             case _             => Chunk.empty
@@ -762,7 +762,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
             case g: Svg.G =>
                 g.children.flatMap:
                     case p: Svg.Path => Chunk(p)
-                    case gg: Svg.G =>
+                    case gg: Svg.G   =>
                         gg.children.flatMap:
                             case p: Svg.Path => Chunk(p)
                             case _           => Chunk.empty
@@ -774,7 +774,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
             case g: Svg.G =>
                 g.children.flatMap:
                     case t: Svg.Text => Chunk(t)
-                    case gg: Svg.G =>
+                    case gg: Svg.G   =>
                         gg.children.flatMap:
                             case t: Svg.Text => Chunk(t)
                             case _           => Chunk.empty
@@ -1255,7 +1255,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         val rows = Chunk(Pt(1, Present(5.0)), Pt(2, Absent))
         // EncodingMaybe from gap accessor
         val gapCh = EncodingMaybe.fromMaybe[Pt, Double](_.y, summon[Plottable[Double]], summon[ConcreteTag[Double]])
-        val m = Mark.Text(
+        val m     = Mark.Text(
             Encoding[Pt, Int](_.x, summon[Plottable[Int]], summon[ConcreteTag[Int]]),
             gapCh,
             _.x.toString,
@@ -1430,8 +1430,8 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         (spec).lower.map { root =>
             val ls = linesIn(root)
             assert(ls.size == 6, s"Expected 6 lines but got ${ls.size}")
-            val px2 = PlotX + (2.0 / 10.0) * PlotW // 172.0
-            val px8 = PlotX + (8.0 / 10.0) * PlotW // 508.0
+            val px2                                        = PlotX + (2.0 / 10.0) * PlotW // 172.0
+            val px8                                        = PlotX + (8.0 / 10.0) * PlotW // 508.0
             def dbl(m: Maybe[Double], lbl: String): Double = m match
                 case Present(v) => v
                 case Absent     => fail(s"$lbl absent")
@@ -1487,7 +1487,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
     private def colorComponents(c: Style.Color): (Int, Int, Int) = c match
         case Style.Color.Rgb(r, g, b)     => (r, g, b)
         case Style.Color.Rgba(r, g, b, _) => (r, g, b)
-        case Style.Color.Hex(v) =>
+        case Style.Color.Hex(v)           =>
             val body = if v.startsWith("#") then v.substring(1) else v
             (
                 Integer.parseInt(body.substring(0, 2), 16),
@@ -1763,8 +1763,8 @@ class ChartLowerTest extends kyo.test.Test[Any]:
     // ---- legend(_.hidden) suppresses the whole legend region ----
 
     "legend(_.hidden) suppresses the legend swatches and labels" in {
-        val rows      = Chunk(CatRow("p", 1.0, "a"), CatRow("q", 2.0, "b"))
-        val shownSpec = Chart(rows)(bar(x = _.x, y = _.y, color = _.cat))
+        val rows       = Chunk(CatRow("p", 1.0, "a"), CatRow("q", 2.0, "b"))
+        val shownSpec  = Chart(rows)(bar(x = _.x, y = _.y, color = _.cat))
         val hiddenSpec = Chart(rows)(bar(x = _.x, y = _.y, color = _.cat))
             .legend(_.hidden)
         for
@@ -1849,7 +1849,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         // DefaultPalette would give blue (#3b82f6) and orange (#f97316).
         val purple = Style.Color.hex("#cc00cc").getOrElse(fail("bad hex"))
         val teal   = Style.Color.hex("#00cccc").getOrElse(fail("bad hex"))
-        val rows = Chunk(
+        val rows   = Chunk(
             Sale("Jan", Usd(1000), Region.NA),
             Sale("Jan", Usd(2000), Region.EU)
         )
@@ -1907,7 +1907,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         // DefaultPalette would give blue (#3b82f6) and orange (#f97316).
         val purple = Style.Color.hex("#cc00cc").getOrElse(fail("bad hex"))
         val teal   = Style.Color.hex("#00cccc").getOrElse(fail("bad hex"))
-        val rows = Chunk(
+        val rows   = Chunk(
             Sale("Jan", Usd(1000), Region.NA),
             Sale("Feb", Usd(2000), Region.EU)
         )
@@ -1944,7 +1944,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         case class EbSale(x: String, mean: Double, lo: Double, hi: Double, region: Region)
         val purple = Style.Color.hex("#cc00cc").getOrElse(fail("bad hex"))
         val teal   = Style.Color.hex("#00cccc").getOrElse(fail("bad hex"))
-        val rows = Chunk(
+        val rows   = Chunk(
             EbSale("a", 6.0, 4.0, 8.0, Region.NA),
             EbSale("b", 3.0, 1.0, 5.0, Region.EU)
         )
@@ -1982,7 +1982,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         // lowerLine reads themePalette(spec.theme) and must use the custom colors.
         val magenta = Style.Color.hex("#ff00ff").getOrElse(fail("bad hex"))
         val cyan    = Style.Color.hex("#00ffff").getOrElse(fail("bad hex"))
-        val rows = Chunk(
+        val rows    = Chunk(
             Sale("Jan", Usd(1000), Region.NA),
             Sale("Feb", Usd(2000), Region.NA),
             Sale("Jan", Usd(500), Region.EU),
@@ -2025,7 +2025,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         case class SRow(x: Double, y: Double, series: String) derives CanEqual
         val cyan  = Style.Color.rgb(6, 182, 212)
         val amber = Style.Color.rgb(245, 158, 11)
-        val rows = Chunk(
+        val rows  = Chunk(
             SRow(0.0, 1.0, "a"),
             SRow(1.0, 2.0, "a"),
             SRow(0.0, 3.0, "b"),
@@ -2063,7 +2063,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         // DefaultPalette would give blue (#3b82f6) and orange (#f97316).
         val purple = Style.Color.hex("#cc00cc").getOrElse(fail("bad hex"))
         val teal   = Style.Color.hex("#00cccc").getOrElse(fail("bad hex"))
-        val rows = Chunk(
+        val rows   = Chunk(
             Sale("Jan", Usd(1000), Region.NA),
             Sale("Feb", Usd(1500), Region.NA),
             Sale("Jan", Usd(2000), Region.EU),
@@ -2213,7 +2213,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         case class P(x: Double, y: Double, heat: Double)
         given CanEqual[P, P] = CanEqual.derived
         val rows             = Chunk(P(0.0, 0.0, 10.0), P(1.0, 1.0, 50.0), P(2.0, 2.0, 90.0))
-        val spec = Chart(rows)(point(x = _.x, y = _.y, color = _.heat))
+        val spec             = Chart(rows)(point(x = _.x, y = _.y, color = _.heat))
             .legend(_.colorScaleSequential(Style.Color.black, Style.Color.white))
         (spec).lower.map { root =>
             // Collect every text anywhere in the tree (legend labels are direct root children, not under a G).
@@ -2236,7 +2236,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         case class P(x: Double, y: Double, heat: Double)
         given CanEqual[P, P] = CanEqual.derived
         val rows             = Chunk(P(0.0, 0.0, 10.0), P(1.0, 1.0, 50.0), P(2.0, 2.0, 90.0))
-        val spec = Chart(rows)(point(x = _.x, y = _.y, color = _.heat))
+        val spec             = Chart(rows)(point(x = _.x, y = _.y, color = _.heat))
             .legend(_.colorScaleSequential(Style.Color.black, Style.Color.white))
         spec.lowerWithScales.map { (root, scales) =>
             val plotY = scales.plot.y
@@ -2305,7 +2305,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         // merged path instead of one path per series) would unambiguously fail the purple assertion.
         val naColor = Style.Color.red    // #ef4444 -> NA
         val euColor = Style.Color.purple // #a855f7 -> EU
-        val rows = Chunk(
+        val rows    = Chunk(
             Sale("Jan", Usd(1000), Region.NA),
             Sale("Feb", Usd(2000), Region.EU)
         )
@@ -2323,7 +2323,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
             // each path is closed (the PathData ends with a Close command)
             areaPaths.zipWithIndex.foreach: (p, i) =>
                 p.svgAttrs.d match
-                    case Absent => fail(s"area path $i has no d attribute")
+                    case Absent      => fail(s"area path $i has no d attribute")
                     case Present(pd) =>
                         val cmds = Svg.PathData.commands(pd)
                         assert(
@@ -2383,7 +2383,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
                 s"the single area path must have fill-opacity=0.7 but got ${paths(0).svgAttrs.fillOpacity}"
             )
             paths(0).svgAttrs.d match
-                case Absent => fail("area path must have a d attribute")
+                case Absent      => fail("area path must have a d attribute")
                 case Present(pd) =>
                     val cmds = Svg.PathData.commands(pd)
                     assert(
@@ -2403,7 +2403,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
     "text mark with categorical colorScale uses the scale colors, not DefaultPalette" in {
         val naColor = Style.Color.hex("#e63946").getOrElse(fail("bad hex naColor"))
         val euColor = Style.Color.hex("#2a9d8f").getOrElse(fail("bad hex euColor"))
-        val rows = Chunk(
+        val rows    = Chunk(
             Sale("Jan", Usd(1000), Region.NA),
             Sale("Feb", Usd(2000), Region.EU)
         )
@@ -2458,7 +2458,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         val euColor = Style.Color.hex("#2a9d8f").getOrElse(fail("bad hex euColor"))
         case class EbSale(x: String, mean: Double, lo: Double, hi: Double, region: Region)
         given CanEqual[EbSale, EbSale] = CanEqual.derived
-        val rows = Chunk(
+        val rows                       = Chunk(
             EbSale("a", 6.0, 4.0, 8.0, Region.NA),
             EbSale("b", 3.0, 1.0, 5.0, Region.EU)
         )
@@ -2525,7 +2525,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
 
             // Center marker circles: fill is set to the stroke color (lowerErrorBar uses fill(stroke)).
             // Circle cx is Maybe[Double] (not Maybe[Coord]), extract directly and sort by cx.
-            val circlesByX = circles.toSeq.sortBy(c => lineCoord(c.svgAttrs.cx, "cx"))
+            val circlesByX   = circles.toSeq.sortBy(c => lineCoord(c.svgAttrs.cx, "cx"))
             val naCircleFill = circlesByX(0).svgAttrs.fill match
                 case Present(Svg.Paint.Color(c)) => c
                 case other                       => fail(s"expected circle fill Color but got $other")
@@ -2563,7 +2563,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         // With legend reserved: plotY = MarginTop(20) + LegendReservedH(20) = 40.0.
         val naColor = Style.Color.hex("#e63946").getOrElse(fail("bad hex naColor"))
         val euColor = Style.Color.hex("#2a9d8f").getOrElse(fail("bad hex euColor"))
-        val rows = Chunk(
+        val rows    = Chunk(
             Sale("Jan", Usd(4000), Region.NA), // revenue at top of scale => glyph y == plotY
             Sale("Feb", Usd(2000), Region.EU)
         )
@@ -2646,7 +2646,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         // DefaultPalette entries for comparison.
         val blueCss   = "#3b82f6"
         val orangeCss = "#f97316"
-        val rows = Chunk(
+        val rows      = Chunk(
             ARow(0.0, 1.0, "a"),
             ARow(1.0, 2.0, "a"),
             ARow(0.0, 3.0, "b"),
@@ -2713,7 +2713,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
     "animated stacked area honors custom theme.palette colors, matching the static twin" in {
         val purple = Style.Color.hex("#cc00cc").getOrElse(fail("bad hex"))
         val teal   = Style.Color.hex("#00cccc").getOrElse(fail("bad hex"))
-        val rows = Chunk(
+        val rows   = Chunk(
             Sale("Jan", Usd(1000), Region.NA),
             Sale("Feb", Usd(1500), Region.NA),
             Sale("Jan", Usd(2000), Region.EU),
@@ -2755,7 +2755,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         val indigo    = Style.Color.rgb(99, 102, 241)
         val blueCss   = "#3b82f6"
         val orangeCss = "#f97316"
-        val rows = Chunk(
+        val rows      = Chunk(
             Sale("Jan", Usd(1000), Region.NA),
             Sale("Feb", Usd(1500), Region.NA),
             Sale("Jan", Usd(2000), Region.EU),
@@ -2813,7 +2813,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         (spec).lower.map { root =>
             val rects = rectsIn(root)
             assert(rects.size == 2, s"expected 2 bar rects but got ${rects.size}")
-            val byX = rects.toSeq.sortBy(r => numOf(r.svgAttrs.x))
+            val byX                              = rects.toSeq.sortBy(r => numOf(r.svgAttrs.x))
             def fillOf(r: Svg.Rect): Style.Color = r.svgAttrs.fill match
                 case Present(Svg.Paint.Color(c)) => c
                 case other                       => fail(s"expected color fill but got $other")
@@ -2969,7 +2969,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
                 case Present(v) => v
                 case Absent     => fail("circle coord absent")
             val circlesByX = circles.toSeq.sortBy(c => circleCoord(c.svgAttrs.cx))
-            val fillA = circlesByX(0).svgAttrs.fill match
+            val fillA      = circlesByX(0).svgAttrs.fill match
                 case Present(Svg.Paint.Color(c)) => c
                 case other                       => fail(s"circle fill expected Color but got $other")
             val fillB = circlesByX(1).svgAttrs.fill match
@@ -3066,7 +3066,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
             // y scale: stackedAreaYExtent sums 10+30=40, niceTicks [0,40] -> nHi=40.
             // Scale.Linear(0,40,baseline=440,top=40): ys(40)=40, ys(60)=40+(60/40)*(440-40)-440=-160 (above plot, NEGATIVE).
             // In correct case: min path y = ys(40) = 40.0. In buggy case: min path y = -160 (way above the plot).
-            val plotYEff = 40.0 // plotY with legend reserve
+            val plotYEff               = 40.0 // plotY with legend reserve
             val allPathYs: Seq[Double] = areaPaths.toSeq.flatMap: p =>
                 Svg.PathData.commands(p.svgAttrs.d.getOrElse(Svg.PathData.empty)).toSeq.collect:
                     case PathCommand.MoveTo(_, y) => y
@@ -3115,7 +3115,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
             assert(xs(0) != xs(1), s"grouped bar: the two bars must be at different x positions (dodged), but both at ${xs(0)}")
 
             // The two bars must have distinct fill colors.
-            val fills = rects.map(r => numOf(r.svgAttrs.x)).toSeq
+            val fills      = rects.map(r => numOf(r.svgAttrs.x)).toSeq
             val fillColors = rects.map(r =>
                 r.svgAttrs.fill match
                     case Present(Svg.Paint.Color(c)) => c

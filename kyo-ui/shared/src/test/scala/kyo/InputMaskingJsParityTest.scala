@@ -31,7 +31,7 @@ class InputMaskingJsParityTest extends UITest:
             for
                 _   <- Browser.evalDiscard(loadMirror)
                 got <- Browser.evalJson[Seq[String]](table)
-                _ = assert(got.length == cases.length, s"expected ${cases.length} results, got ${got.length}")
+                _          = assert(got.length == cases.length, s"expected ${cases.length} results, got ${got.length}")
                 mismatches = cases.zip(got).collect {
                     case (c, actual) if actual != c.expected =>
                         s"${c.call}: js=$actual expected=${c.expected}"

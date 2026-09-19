@@ -4,9 +4,9 @@ case class TestTask(
     _preempt: () => Unit = () => {},
     _run: () => Task.Result = () => Task.Done
 ) extends Task {
-    @volatile var executions  = 0
-    @volatile var preemptions = 0
-    @volatile var interrupted = false
+    @volatile var executions       = 0
+    @volatile var preemptions      = 0
+    @volatile var interrupted      = false
     override def doPreempt(): Unit =
         _preempt()
     // Real IOTasks derive needsInterrupt from their promise; this test hook lets a

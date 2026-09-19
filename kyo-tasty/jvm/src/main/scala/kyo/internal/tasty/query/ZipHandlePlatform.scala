@@ -43,7 +43,7 @@ private[kyo] object ZipHandlePlatform:
                     // The named pass-through is the same proof; no widening of the unsafe boundary.
                     val au: AllowUnsafe = AllowUnsafe.embrace.danger
                     TastyPerfStats.jarOpens.inc()(using au)
-                    val t0 = java.lang.System.nanoTime()
+                    val t0     = java.lang.System.nanoTime()
                     val reader = activePoolMaybe match
                         case Maybe.Present(pool) => pool.get(jarPath)
                         case Maybe.Absent        => JarMappedReader.init(jarPath)

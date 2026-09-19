@@ -332,7 +332,7 @@ object Focus:
         innerSetter: (Value, Value2) => Value,
         innerSegments: Seq[String]
     ): Focus[Root, Value2, Chunk] =
-        val combinedPath = outer.path ++ innerSegments
+        val combinedPath                    = outer.path ++ innerSegments
         val getterFn: Root => Chunk[Value2] = root =>
             outer.getter(root).flatMap(v => innerGetter(v).fold(Chunk.empty[Value2])(v2 => Chunk(v2)))
         val setterFn: (Root, Chunk[Value2]) => Root = (root, v2s) =>
@@ -394,13 +394,13 @@ object Focus:
         innerSetter: (Value, C) => Value,
         innerSegments: Seq[String]
     ): Focus[Root, E, Chunk] =
-        val combinedPath = outer.path ++ innerSegments
+        val combinedPath               = outer.path ++ innerSegments
         val getterFn: Root => Chunk[E] = root =>
             outer.getter(root).flatMap(v =>
                 Chunk.from(innerGetter(v).getOrElse(Chunk.empty).asInstanceOf[Seq[E]])
             )
         val setterFn: (Root, Chunk[E]) => Root = (root, es) =>
-            val vs = outer.getter(root)
+            val vs           = outer.getter(root)
             val (updated, _) = vs.foldLeft((Chunk.empty[Value], 0)) { case ((acc, offset), v) =>
                 val inner   = innerGetter(v).getOrElse(Chunk.empty).asInstanceOf[Seq[E]]
                 val slice   = es.slice(offset, offset + inner.size)

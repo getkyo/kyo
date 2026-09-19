@@ -249,7 +249,7 @@ class StmtMessagesTest extends Test:
         // null-bitmap: (3+2+7)/8 = 12/8 = 1 byte (integer division in the implementation)
         // col0 null → bit (0+2)=2 → byte 0, bit 2 → 0b00000100 = 0x04
         val bitmapByte = 0x04.toByte
-        val body = Array[Byte](
+        val body       = Array[Byte](
             bitmapByte,
             42,
             0,

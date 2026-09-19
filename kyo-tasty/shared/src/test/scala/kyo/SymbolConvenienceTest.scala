@@ -52,8 +52,8 @@ class SymbolConvenienceTest extends kyo.test.Test[Any]:
 
     "fullNameString returns dotted fully-qualified name" in {
         Sync.defer {
-            val pkg = makePackage(0, "scala.collection", ownerId = -1, Chunk(SymbolId(1)))
-            val cls = makeClass(1, "List", ownerId = 0)
+            val pkg       = makePackage(0, "scala.collection", ownerId = -1, Chunk(SymbolId(1)))
+            val cls       = makeClass(1, "List", ownerId = 0)
             val classpath = Tasty.Classpath.make(
                 symbols = Chunk(pkg, cls),
                 rootSymbolId = SymbolId(-1),
@@ -80,11 +80,11 @@ class SymbolConvenienceTest extends kyo.test.Test[Any]:
     }
 
     "ownersChain returns self-first chain" in {
-        val pkg  = makePackage(0, "pkg", ownerId = -1, Chunk(SymbolId(1)))
-        val clsA = makeClass(1, "A", ownerId = 0, Chunk(SymbolId(2)))
-        val clsB = makeClass(2, "B", ownerId = 1, Chunk(SymbolId(3)))
-        val clsC = makeClass(3, "C", ownerId = 2, Chunk(SymbolId(4)))
-        val clsD = makeClass(4, "D", ownerId = 3)
+        val pkg       = makePackage(0, "pkg", ownerId = -1, Chunk(SymbolId(1)))
+        val clsA      = makeClass(1, "A", ownerId = 0, Chunk(SymbolId(2)))
+        val clsB      = makeClass(2, "B", ownerId = 1, Chunk(SymbolId(3)))
+        val clsC      = makeClass(3, "C", ownerId = 2, Chunk(SymbolId(4)))
+        val clsD      = makeClass(4, "D", ownerId = 3)
         val classpath = Tasty.Classpath.make(
             symbols = Chunk(pkg, clsA, clsB, clsC, clsD),
             rootSymbolId = SymbolId(-1),
@@ -102,7 +102,7 @@ class SymbolConvenienceTest extends kyo.test.Test[Any]:
     }
 
     "ownersChain stops on self-loop" in {
-        val pkg = makePackage(5, "root", ownerId = 5, Chunk.empty)
+        val pkg       = makePackage(5, "root", ownerId = 5, Chunk.empty)
         val classpath = Tasty.Classpath.make(
             symbols = Chunk(pkg),
             rootSymbolId = SymbolId(5),
@@ -121,8 +121,8 @@ class SymbolConvenienceTest extends kyo.test.Test[Any]:
 
     "owner returns Present for method with owner" in {
         Sync.defer {
-            val cls = makeClass(0, "A", ownerId = -1)
-            val m   = makeMethod(1, "foo", ownerId = 0)
+            val cls       = makeClass(0, "A", ownerId = -1)
+            val m         = makeMethod(1, "foo", ownerId = 0)
             val classpath = Tasty.Classpath.make(
                 symbols = Chunk(cls, m),
                 rootSymbolId = SymbolId(-1),

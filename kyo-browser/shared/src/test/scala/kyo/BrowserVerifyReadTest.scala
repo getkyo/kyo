@@ -97,12 +97,12 @@ class BrowserVerifyReadTest extends BrowserTest:
                         }
                     }
                 for
-                    _ <- Browser.eval("(window.__reads = 0, 'ok')")
+                    _       <- Browser.eval("(window.__reads = 0, 'ok')")
                     resultA <- Browser.withConfig(
                         _.retrySchedule(Schedule.fixed(50.millis).maxDuration(200.millis)).assertionStabilityWindow(80.millis)
                     )(runSettle)
-                    readsA <- Browser.eval("String(window.__reads)")
-                    _      <- Browser.eval("(window.__reads = 0, 'ok')")
+                    readsA  <- Browser.eval("String(window.__reads)")
+                    _       <- Browser.eval("(window.__reads = 0, 'ok')")
                     resultB <- Browser.withConfig(
                         _.retrySchedule(Schedule.fixed(50.millis).maxDuration(600.millis)).assertionStabilityWindow(80.millis)
                     )(runSettle)
@@ -128,7 +128,7 @@ class BrowserVerifyReadTest extends BrowserTest:
             </body></html>""") {
                 Browser.boundingRect(Browser.Selector.css(".panel")).map { result =>
                     result match
-                        case Absent => fail("expected Present(Bounds) but got Absent")
+                        case Absent     => fail("expected Present(Bounds) but got Absent")
                         case Present(b) =>
                             assert(b.x == 20.0, s"expected x=20.0 but got ${b.x}")
                             assert(b.y == 30.0, s"expected y=30.0 but got ${b.y}")
@@ -175,7 +175,7 @@ class BrowserVerifyReadTest extends BrowserTest:
                 ) {
                     Browser.boundingRect(Browser.Selector.css(".box")).map { result =>
                         result match
-                            case Absent => fail("expected Present(Bounds) but got Absent")
+                            case Absent     => fail("expected Present(Bounds) but got Absent")
                             case Present(b) =>
                                 assert(b.x > 150.0, s"expected settled x > 150.0 (near 200.0) but got ${b.x}")
                     }

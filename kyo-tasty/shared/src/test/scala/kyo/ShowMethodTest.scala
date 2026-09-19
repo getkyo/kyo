@@ -230,10 +230,10 @@ class ShowMethodTest extends kyo.test.Test[Any] with TastyTestSupport:
         // id=2: Class "List" (self-owned)
         // id=3: Parameter "f" with declaredType = A => B
         // id=4: Method "map" with typeParamIds=[1], paramListIds=[[3]], declaredType=List[B]
-        val symA    = typeParam(0, "A")
-        val symB    = typeParam(1, "B")
-        val symList = selfOwnedClass(2, "List")
-        val paramF  = param(3, "f", Tasty.Type.Function(Chunk(Tasty.Type.Named(SymbolId(0))), Tasty.Type.Named(SymbolId(1))))
+        val symA      = typeParam(0, "A")
+        val symB      = typeParam(1, "B")
+        val symList   = selfOwnedClass(2, "List")
+        val paramF    = param(3, "f", Tasty.Type.Function(Chunk(Tasty.Type.Named(SymbolId(0))), Tasty.Type.Named(SymbolId(1))))
         val mapMethod = method(
             4,
             "map",
@@ -253,8 +253,8 @@ class ShowMethodTest extends kyo.test.Test[Any] with TastyTestSupport:
         // id=0: TypeParam "A" (self-owned)
         // id=1: TypeParam "B" (self-owned)
         // id=2: Method "pair" with declaredType=Tuple(A, B)
-        val symA = typeParam(0, "A")
-        val symB = typeParam(1, "B")
+        val symA       = typeParam(0, "A")
+        val symB       = typeParam(1, "B")
         val pairMethod = method(
             2,
             "pair",
@@ -275,9 +275,9 @@ class ShowMethodTest extends kyo.test.Test[Any] with TastyTestSupport:
         // id=1: Class "Unit" (self-owned)
         // id=2: Parameter "xs" with declaredType=Array[Int]
         // id=3: Method "fill" with declaredType=Unit
-        val symInt  = selfOwnedClass(0, "Int")
-        val symUnit = selfOwnedClass(1, "Unit")
-        val paramXs = param(2, "xs", Tasty.Type.Array(Tasty.Type.Named(SymbolId(0))))
+        val symInt     = selfOwnedClass(0, "Int")
+        val symUnit    = selfOwnedClass(1, "Unit")
+        val paramXs    = param(2, "xs", Tasty.Type.Array(Tasty.Type.Named(SymbolId(0))))
         val fillMethod = method(
             3,
             "fill",
@@ -299,9 +299,9 @@ class ShowMethodTest extends kyo.test.Test[Any] with TastyTestSupport:
         // id=2: TypeParam "C" (self-owned)
         // id=3: Parameter "f" with declaredType=(A, B) => C
         // id=4: Method "combine" with declaredType=C
-        val symA = typeParam(0, "A")
-        val symB = typeParam(1, "B")
-        val symC = typeParam(2, "C")
+        val symA   = typeParam(0, "A")
+        val symB   = typeParam(1, "B")
+        val symC   = typeParam(2, "C")
         val paramF = param(
             3,
             "f",
@@ -326,8 +326,8 @@ class ShowMethodTest extends kyo.test.Test[Any] with TastyTestSupport:
         // id=0: Class "Int" (self-owned)
         // id=1: Parameter "x" with declaredType==> Int
         // id=2: Method "eval" with declaredType=Int
-        val symInt = selfOwnedClass(0, "Int")
-        val paramX = param(1, "x", Tasty.Type.ByName(Tasty.Type.Named(SymbolId(0))))
+        val symInt     = selfOwnedClass(0, "Int")
+        val paramX     = param(1, "x", Tasty.Type.ByName(Tasty.Type.Named(SymbolId(0))))
         val evalMethod = method(
             2,
             "eval",

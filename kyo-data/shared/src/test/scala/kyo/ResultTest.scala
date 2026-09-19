@@ -31,7 +31,7 @@ class ResultTest extends kyo.test.Test[Any]:
         }
 
         "union of exception types" in {
-            val ex = new IllegalStateException("test")
+            val ex     = new IllegalStateException("test")
             val result = Result.catching[IllegalArgumentException | IllegalStateException] {
                 throw ex
             }
@@ -49,7 +49,7 @@ class ResultTest extends kyo.test.Test[Any]:
         "union + intersection" in {
             trait SomeTrait
             class CustomException extends RuntimeException("inner") with SomeTrait
-            val ex = new CustomException
+            val ex     = new CustomException
             val result = Result.catching[IllegalArgumentException | (RuntimeException & SomeTrait)] {
                 throw ex
             }
@@ -504,7 +504,7 @@ class ResultTest extends kyo.test.Test[Any]:
         "matching with guards" - {
             "should match Success with a guard" in {
                 val tryy: Result[Nothing, Int] = Success(2)
-                val result = tryy match
+                val result                     = tryy match
                     case Success(x) if x > 1 => "greater than 1"
                     case Success(_)          => "less than or equal to 1"
                     case Failure(_)          => "failure"
@@ -513,7 +513,7 @@ class ResultTest extends kyo.test.Test[Any]:
 
             "should match Failure with a guard" in {
                 val tryy: Result[String, Int] = Failure("error")
-                val result = tryy match
+                val result                    = tryy match
                     case Failure(e) if e.length > 5 => "long error"
                     case Failure(_)                 => "short error"
                     case Success(_)                 => "success"
@@ -578,7 +578,7 @@ class ResultTest extends kyo.test.Test[Any]:
         "should not handle exceptions in ifError" in {
             val tryy      = Success(1)
             val exception = new RuntimeException("exception")
-            val result =
+            val result    =
                 try
                     tryy.foldError(_ => throw exception, _ => throw exception)
                     "no exception"
@@ -590,7 +590,7 @@ class ResultTest extends kyo.test.Test[Any]:
         "should not handle exceptions in ifPanic" in {
             val tryy      = Result.panic(ex)
             val exception = new RuntimeException("exception")
-            val result =
+            val result    =
                 try
                     tryy.foldError(_ => throw exception, _ => throw exception)
                     "no exception"
@@ -602,7 +602,7 @@ class ResultTest extends kyo.test.Test[Any]:
         "should handle exceptions in ifSuccess" in {
             val tryy      = Success(1)
             val exception = new RuntimeException("exception")
-            val result =
+            val result    =
                 try
                     tryy.foldError(_ => throw exception, _ => 0)
                     "no exception"
@@ -614,7 +614,7 @@ class ResultTest extends kyo.test.Test[Any]:
         "should handle exceptions during map" in {
             val tryy      = Success(1)
             val exception = new RuntimeException("exception")
-            val result =
+            val result    =
                 try
                     tryy.map(_ => throw exception)
                     "no exception"
@@ -626,7 +626,7 @@ class ResultTest extends kyo.test.Test[Any]:
         "should handle exceptions during flatMap" in {
             val tryy      = Success(1)
             val exception = new RuntimeException("exception")
-            val result =
+            val result    =
                 try
                     tryy.flatMap(_ => throw exception)
                     "no exception"
@@ -951,7 +951,7 @@ class ResultTest extends kyo.test.Test[Any]:
             }
 
             "should not handle non-matching exception from union" in {
-                val ex = new TestException2("error")
+                val ex                                                                    = new TestException2("error")
                 val result: Result[TestException1 | TestException2 | TestException3, Int] =
                     Result.fail(ex)
 
@@ -991,7 +991,7 @@ class ResultTest extends kyo.test.Test[Any]:
             }
 
             "should not handle exception outside of specified union" in {
-                val ex = new TestException3("error")
+                val ex                                                                    = new TestException3("error")
                 val result: Result[TestException1 | TestException2 | TestException3, Int] =
                     Result.fail(ex)
 
@@ -1068,7 +1068,7 @@ class ResultTest extends kyo.test.Test[Any]:
             }
 
             "should not handle non-matching exception from union" in {
-                val ex = new TestException2("error")
+                val ex                                                                    = new TestException2("error")
                 val result: Result[TestException1 | TestException2 | TestException3, Int] =
                     Result.fail(ex)
 
@@ -1095,7 +1095,7 @@ class ResultTest extends kyo.test.Test[Any]:
             }
 
             "should not handle exception outside of specified union" in {
-                val ex = new TestException3("error")
+                val ex                                                                    = new TestException3("error")
                 val result: Result[TestException1 | TestException2 | TestException3, Int] =
                     Result.fail(ex)
 
@@ -1191,7 +1191,7 @@ class ResultTest extends kyo.test.Test[Any]:
         }
 
         "Panic encountered" in {
-            val ex = new Exception("panic")
+            val ex      = new Exception("panic")
             val results = Seq(
                 Result.succeed(1),
                 Result.panic(ex),
@@ -1235,8 +1235,8 @@ class ResultTest extends kyo.test.Test[Any]:
 
         "should handle exceptions during sequence traversal" in {
             val results = new Seq[Result[String, Int]]:
-                def length: Int                          = throw new RuntimeException("length error")
-                def apply(idx: Int): Result[String, Int] = Result.succeed(idx)
+                def length: Int                             = throw new RuntimeException("length error")
+                def apply(idx: Int): Result[String, Int]    = Result.succeed(idx)
                 def iterator: Iterator[Result[String, Int]] =
                     throw new RuntimeException("iterator error")
             val collected = Result.collect(results)

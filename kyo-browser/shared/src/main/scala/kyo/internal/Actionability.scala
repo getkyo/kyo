@@ -282,7 +282,7 @@ private[kyo] object Actionability:
     )(using Frame): Result[Reason, ActionableRef] < (Sync & Abort[BrowserReadException]) =
         resp.exceptionDetails match
             case Present(_) => Result.Failure(Reason.NotAttached)
-            case Absent =>
+            case Absent     =>
                 (resp.result.flatMap(_.value): @unchecked) match
                     case Present(v) => decodeValue(v, ref)
                     case Absent     => Result.Failure(Reason.NotAttached)
@@ -317,14 +317,14 @@ private[kyo] object Actionability:
     ): Reason < (Sync & Abort[BrowserReadException]) =
         s match
             case "NotAttached" => Reason.NotAttached
-            case "NotVisible" =>
+            case "NotVisible"  =>
                 val causeEffect: Reason.NotVisibleCause < Sync =
                     v.notVisibleCause match
                         case Present("DisplayNone")      => Reason.NotVisibleCause.DisplayNone
                         case Present("VisibilityHidden") => Reason.NotVisibleCause.VisibilityHidden
                         case Present("OpacityZero")      => Reason.NotVisibleCause.OpacityZero
                         case Present("ZeroComputedSize") => Reason.NotVisibleCause.ZeroComputedSize
-                        case Present(other) =>
+                        case Present(other)              =>
                             Log.warn(s"Actionability: unknown notVisibleCause '$other'; preserving as Other")
                                 .andThen(Reason.NotVisibleCause.Other(other))
                         case Absent =>
@@ -335,7 +335,7 @@ private[kyo] object Actionability:
                 val w = v.rect.map(_.width).getOrElse(0)
                 val h = v.rect.map(_.height).getOrElse(0)
                 Reason.ZeroSizedElement(w, h)
-            case "Unstable" => Reason.Unstable
+            case "Unstable"         => Reason.Unstable
             case "OutsideHitTarget" =>
                 Reason.OutsideHitTarget(v.actualHit.getOrElse("unknown"))
             case "Disabled" =>
@@ -345,7 +345,7 @@ private[kyo] object Actionability:
                         case Present("AriaDisabled")      => Reason.DisabledKind.AriaDisabled
                         case Present("FieldsetDisabled")  => Reason.DisabledKind.FieldsetDisabled
                         case Present("PointerEventsNone") => Reason.DisabledKind.PointerEventsNone
-                        case Present(other) =>
+                        case Present(other)               =>
                             Log.warn(s"Actionability: unknown disabledKind '$other'; preserving as Other")
                                 .andThen(Reason.DisabledKind.Other(other))
                         case Absent =>
@@ -354,7 +354,7 @@ private[kyo] object Actionability:
                 kindEffect.map(Reason.Disabled(_))
             case "NotFillable" =>
                 Reason.NotFillable(v.tagName.getOrElse("unknown"))
-            case "FillDesync" => Reason.FillDesync
+            case "FillDesync"    => Reason.FillDesync
             case "NotInViewport" =>
                 (v.rect, v.viewportRect) match
                     case (Present(rect), Present(vp)) =>
@@ -403,7 +403,7 @@ private[kyo] object Actionability:
         using Frame
     ): A < (Browser & Async & Abort[BrowserReadException] & S) =
         Actionability.check(selector, requireFillable, requireEnabled).map {
-            case Result.Success(ref) => action(ref)
+            case Result.Success(ref)    => action(ref)
             case Result.Failure(reason) =>
                 enrichDescriptionForReason(selector, reason).map { desc =>
                     Abort.fail(BrowserElementNotActionableException(desc, reason))

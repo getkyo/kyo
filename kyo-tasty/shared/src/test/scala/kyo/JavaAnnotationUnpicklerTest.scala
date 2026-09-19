@@ -43,8 +43,8 @@ class JavaAnnotationUnpicklerTest extends kyo.test.Test[Any]:
         val poolBytes = buildUtf8OnlyPool("Ljava/lang/Deprecated;")
         val poolView  = ByteView(poolBytes)
         ConstantPool.read(poolView, "<test>") match
-            case Result.Failure(err) => fail(s"Pool read failed: $err")
-            case Result.Panic(ex)    => fail(s"Pool read panicked: $ex")
+            case Result.Failure(err)  => fail(s"Pool read failed: $err")
+            case Result.Panic(ex)     => fail(s"Pool read panicked: $ex")
             case Result.Success(pool) =>
                 val annBytes = Array[Byte](
                     0x00, 0x01, // num_annotations = 1
@@ -53,8 +53,8 @@ class JavaAnnotationUnpicklerTest extends kyo.test.Test[Any]:
                 )
                 val annView = ByteView(annBytes)
                 JavaAnnotationUnpickler.readAnnotations(annView, pool) match
-                    case Result.Failure(err) => fail(s"readAnnotations failed: $err")
-                    case Result.Panic(ex)    => fail(s"readAnnotations panicked: $ex")
+                    case Result.Failure(err)  => fail(s"readAnnotations failed: $err")
+                    case Result.Panic(ex)     => fail(s"readAnnotations panicked: $ex")
                     case Result.Success(anns) =>
                         assert(anns.size == 1, s"Expected 1 annotation, got ${anns.size}")
                         val annotation = anns.head
@@ -72,8 +72,8 @@ class JavaAnnotationUnpicklerTest extends kyo.test.Test[Any]:
         val poolBytes = buildUtf8OnlyPool("LFoo;", "value", "a", "b")
         val poolView  = ByteView(poolBytes)
         ConstantPool.read(poolView, "<test>") match
-            case Result.Failure(err) => fail(s"Pool read failed: $err")
-            case Result.Panic(ex)    => fail(s"Pool read panicked: $ex")
+            case Result.Failure(err)  => fail(s"Pool read failed: $err")
+            case Result.Panic(ex)     => fail(s"Pool read panicked: $ex")
             case Result.Success(pool) =>
                 val annBytes = Array[Byte](
                     0x00,
@@ -96,8 +96,8 @@ class JavaAnnotationUnpicklerTest extends kyo.test.Test[Any]:
                 )
                 val annView = ByteView(annBytes)
                 JavaAnnotationUnpickler.readAnnotations(annView, pool) match
-                    case Result.Failure(err) => fail(s"readAnnotations failed: $err")
-                    case Result.Panic(ex)    => fail(s"readAnnotations panicked: $ex")
+                    case Result.Failure(err)  => fail(s"readAnnotations failed: $err")
+                    case Result.Panic(ex)     => fail(s"readAnnotations panicked: $ex")
                     case Result.Success(anns) =>
                         assert(anns.size == 1, s"Expected 1 annotation, got ${anns.size}")
                         val annotation = anns.head

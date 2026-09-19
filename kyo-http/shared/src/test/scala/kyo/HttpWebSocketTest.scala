@@ -1165,7 +1165,7 @@ class HttpWebSocketTest extends BaseHttpTest with internal.UnixSocketTestHelperI
                 echo,
                 ws =>
                     // Send and receive concurrently to avoid deadlock on bounded channel
-                    val sender = Kyo.foreach(1 to count)(i => ws.put(HttpWebSocket.Payload.Text(i.toString)))
+                    val sender   = Kyo.foreach(1 to count)(i => ws.put(HttpWebSocket.Payload.Text(i.toString)))
                     val receiver = Kyo.foreach(1 to count)(i =>
                         ws.take().map(f => discard(assert(f == HttpWebSocket.Payload.Text(i.toString))))
                     )
@@ -1497,7 +1497,7 @@ class HttpWebSocketTest extends BaseHttpTest with internal.UnixSocketTestHelperI
             // saw in the upgrade request; we assert that value is the single header value the user provided and
             // not a comma-joined duplicate.
             val srvConfig = HttpWebSocket.Config(subprotocols = Seq("chat"))
-            val handler = HttpHandler.webSocket("ws/proto-dedup", srvConfig) { (req, ws) =>
+            val handler   = HttpHandler.webSocket("ws/proto-dedup", srvConfig) { (req, ws) =>
                 val seen = req.headers.get("Sec-WebSocket-Protocol").toOption.getOrElse("ABSENT")
                 ws.put(HttpWebSocket.Payload.Text(seen))
                     .andThen(Abort.recover[Closed](_ => ()) {

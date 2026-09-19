@@ -27,7 +27,7 @@ object ConstantPoolEntry:
         def decode()(using AllowUnsafe): String =
             cached.get() match
                 case Present(s) => s
-                case Absent =>
+                case Absent     =>
                     val fresh = Utf8.decode(bytes, offset, length)
                     cached.set(Present(fresh))
                     fresh

@@ -130,7 +130,7 @@ class ScramIntegrationTest extends SqlContainerTest:
     "StartupExchange trust auth still works after SCRAM addition, regression".tagged("kyo.OwnContainer") in {
         Scope.run {
             // Verify cleartext (password) auth still works after adding SCRAM support.
-            val regPredefConfig = ContainerPredef.Postgres.Config.default.password("regpw")
+            val regPredefConfig    = ContainerPredef.Postgres.Config.default.password("regpw")
             val regContainerConfig = ContainerPredef.Postgres.buildContainerConfig(regPredefConfig)
                 .env("POSTGRES_HOST_AUTH_METHOD", "password")
             // Through `SqlTestContainers` rather than `Container.init` directly, so the container carries the

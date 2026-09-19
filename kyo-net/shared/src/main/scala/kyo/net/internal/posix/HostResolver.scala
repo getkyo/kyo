@@ -84,7 +84,7 @@ private[net] object HostResolver:
                         e match
                             case ex: NetDnsResolutionException => out.completeDiscard(Result.fail(ex))
                             case t: Throwable                  => out.completeDiscard(Result.panic(t))
-                            case other =>
+                            case other                         =>
                                 out.completeDiscard(Result.panic(NetDnsResolutionException(
                                     host,
                                     s"unexpected non-typed fiber failure: $other"

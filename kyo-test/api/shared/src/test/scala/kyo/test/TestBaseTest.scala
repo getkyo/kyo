@@ -29,7 +29,7 @@ class OverriddenHooks extends kyo.test.Test[Any]:
     override protected def name: String       = "custom-name"
     override protected def randomize: Boolean = true
     override protected val randomSeed: Long   = 42L
-    override def config: RunConfig =
+    override def config: RunConfig            =
         RunConfig.default.copy(parallelism = 4)
     def readName       = name
     def readRandomize  = randomize

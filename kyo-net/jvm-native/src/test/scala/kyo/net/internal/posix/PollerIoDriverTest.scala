@@ -55,8 +55,8 @@ class PollerIoDriverTest extends Test:
                 finally
                     out.close()
                     ol.close()
-            val client   = sock.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
-            val (ca, cl) = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", port).getOrElse(fail("encode failed"))
+            val client    = sock.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
+            val (ca, cl)  = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", port).getOrElse(fail("encode failed"))
             val connected =
                 Sync.ensure(Sync.defer(ca.close()))(sock.connect(client, ca, cl).safe.get.map(r => assert(r.value == 0)))
             connected.andThen {
@@ -566,7 +566,7 @@ class PollerIoDriverTest extends Test:
                                             import scala.jdk.CollectionConverters.*
                                             // Capture recvStaging and the recorded feed buffers BEFORE closeHandle frees the per-handle buffers.
                                             val feedBufs = recordingServer.feedBufs.iterator().asScala.toList
-                                            val staging =
+                                            val staging  =
                                                 acceptedH.recvStaging.getOrElse(fail("recvStaging must be Present after TLS reads"))
                                             driver.submitEngineOp(() => clientEngine.free())
                                             driver.closeHandle(acceptedH)

@@ -382,7 +382,7 @@ private[kyo] object MysqlSqlConnection:
                     )
                 case TlsMode.Allow =>
                     Abort.run[SqlException](plainConnect(address, user, password, config, Absent, readTimeout)).flatMap {
-                        case Result.Success(conn) => conn
+                        case Result.Success(conn)                            => conn
                         case Result.Failure(e) if requiresSecureTransport(e) =>
                             config.tls match
                                 case Present(_) =>

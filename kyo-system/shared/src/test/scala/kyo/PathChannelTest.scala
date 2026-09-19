@@ -90,8 +90,8 @@ class PathChannelTest extends kyo.test.Test[Any]:
     "open policies distinguish existing, create, and create-new" in {
         Scope.run {
             hostTempDir("kyo-channel-open-policy").map { dir =>
-                val fs   = FileSystem.host
-                val path = dir / "policy.bin"
+                val fs      = FileSystem.host
+                val path    = dir / "policy.bin"
                 val missing = Seq(
                     Abort.run[FileSystemException](fs.openReadChannel(path)),
                     Abort.run[FileSystemException](fs.openWriteChannel(path, FileSystem.WriteOpen.Existing)),
@@ -128,7 +128,7 @@ class PathChannelTest extends kyo.test.Test[Any]:
     "CreateNew admits exactly one concurrent creator" in {
         def contend(fs: FileSystem.Write[Sync], path: Path)(using Frame): Int < (Sync & Async & Scope) =
             for
-                gate <- Latch.init(1)
+                gate   <- Latch.init(1)
                 fibers <- Kyo.fill(32)(Fiber.initUnscoped {
                     gate.await.andThen(Abort.run[FileSystemException](fs.openWriteChannel(path, FileSystem.WriteOpen.CreateNew)))
                 })
@@ -210,7 +210,7 @@ class PathChannelTest extends kyo.test.Test[Any]:
                     ready  <- Latch.init(1)
                     hold   <- Latch.init(1)
                     closes <- AtomicInt.init(0)
-                    fiber <- Fiber.initUnscoped {
+                    fiber  <- Fiber.initUnscoped {
                         Scope.run {
                             fs.openReadChannelUnscoped(path).map { case (channel, release) =>
                                 Scope.acquireRelease(channel)(_ => release().andThen(closes.incrementAndGet.unit)).map { _ =>

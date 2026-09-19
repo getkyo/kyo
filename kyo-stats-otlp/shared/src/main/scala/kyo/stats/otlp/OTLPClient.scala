@@ -64,9 +64,8 @@ object OTLPClient:
     /** Builds the OTLP resource with service name, SDK metadata, and any custom resource attributes from config. */
     private[otlp] def buildResource(config: OTLPConfig): OTLPResource =
         OTLPResource(
-            attributes =
-                (KeyValue("service.name", AnyValue.string(config.serviceName)) +: sdkAttributes)
-                    ++ config.resourceAttributes.map { case (k, v) => KeyValue(k, AnyValue.string(v)) }
+            attributes = (KeyValue("service.name", AnyValue.string(config.serviceName)) +: sdkAttributes)
+                ++ config.resourceAttributes.map { case (k, v) => KeyValue(k, AnyValue.string(v)) }
         )
 
     private def send[A: Schema, B: Schema](
@@ -84,7 +83,7 @@ object OTLPClient:
                     .retryOn(status => status.code == 429 || status.isServerError)
             ) {
                 HttpUrl.parse(url) match
-                    case Result.Failure(err) => Abort.fail(err)
+                    case Result.Failure(err)       => Abort.fail(err)
                     case Result.Success(parsedUrl) =>
                         val request =
                             config.headers.foldLeft(
@@ -98,7 +97,7 @@ object OTLPClient:
             }
         }.map {
             case Result.Success(response) => onSuccess(response)
-            case Result.Failure(err) =>
+            case Result.Failure(err)      =>
                 failureCounter.inc
                     .andThen(Log.error(s"OTLP export failed: $err"))
         }
@@ -127,7 +126,7 @@ object OTLPClient:
             producer <- Clock.repeatAtInterval(interval, interval) {
                 safeTrigger.offer(()).unit
             }
-            _ <- Scope.ensure(producer.interrupt.unit)
+            _        <- Scope.ensure(producer.interrupt.unit)
             consumer <- Fiber.initUnscoped {
                 Loop.forever {
                     safeTrigger.take.andThen {

@@ -31,8 +31,8 @@ private[kyo] object ChartContrast:
             case Style.Color.Var(_)           => Absent
 
     private def hexRgb(value: String): Maybe[(Int, Int, Int)] =
-        val v                 = if value.startsWith("#") then value.substring(1) else value
-        def pair(i: Int): Int = Integer.parseInt(v.substring(i, i + 2), 16)
+        val v                   = if value.startsWith("#") then value.substring(1) else value
+        def pair(i: Int): Int   = Integer.parseInt(v.substring(i, i + 2), 16)
         def single(i: Int): Int =
             val d = Integer.parseInt(v.substring(i, i + 1), 16); d * 16 + d
         try
@@ -75,7 +75,7 @@ private[kyo] object ChartContrast:
     private[kyo] def reconcile(color: Style.Color, background: Style.Color, minRatio: Double = MinRatio): Style.Color =
         val current = contrastRatio(color, background)
         (current, rgbOf(color), relativeLuminance(background)) match
-            case (Present(ratio), _, _) if ratio >= minRatio => color
+            case (Present(ratio), _, _) if ratio >= minRatio      => color
             case (Present(_), Present((r, g, b)), Present(bgLum)) =>
                 val toward                        = if bgLum < 0.5 then 255 else 0
                 def blend(v: Int, t: Double): Int = math.round(v + (toward - v) * t).toInt

@@ -93,7 +93,7 @@ final private[kyo] class CompilerPool(
                 .handle(Abort.run[Timeout])
                 .map {
                     case Result.Success(response) => response
-                    case Result.Failure(_) =>
+                    case Result.Failure(_)        =>
                         instances.remove(config).andThen(
                             Abort.fail(CompilerUnresponsiveException(settings.stuckTimeout))
                         )

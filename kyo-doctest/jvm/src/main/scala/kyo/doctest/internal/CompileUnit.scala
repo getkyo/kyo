@@ -69,12 +69,12 @@ private[kyo] object CompileUnit:
             }
         }.sortBy(_.synthLine)
 
-        val markersByLine = markers.groupMap(_.synthLine)(_.blockLine)
-        val sourceLines   = unit.syntheticSource.content.split(Newline, -1).toList.dropRight(1)
+        val markersByLine       = markers.groupMap(_.synthLine)(_.blockLine)
+        val sourceLines         = unit.syntheticSource.content.split(Newline, -1).toList.dropRight(1)
         val instrumentedContent = sourceLines.zipWithIndex.flatMap { case (line, index) =>
             val synthLine = index + 1
             val indent    = line.takeWhile(_.isWhitespace)
-            val inserted = markersByLine.getOrElse(synthLine, Seq.empty).map { blockLine =>
+            val inserted  = markersByLine.getOrElse(synthLine, Seq.empty).map { blockLine =>
                 s"$indent val _ = java.nio.file.Files.writeString(java.nio.file.Path.of(java.lang.System.getProperty(\"$ProgressProperty\")), \"$blockLine\")$Newline"
             }
             inserted :+ (line + Newline)
@@ -165,7 +165,7 @@ private[kyo] object CompileUnit:
         )
 
         // Emit prelude lines (blockBodyLine == 0), starting at line 3.
-        val preludeLines = preludeBodies.toList.flatMap(_.split(Newline, -1).toList)
+        val preludeLines                                   = preludeBodies.toList.flatMap(_.split(Newline, -1).toList)
         val (preludeEmitted, preludeMap, lineAfterPrelude) =
             preludeLines.zipWithIndex.foldLeft((Chunk.empty[String], List.empty[(Int, Int)], 3)) {
                 case ((lines, mapAcc, ln), (pl, _)) =>
@@ -177,18 +177,17 @@ private[kyo] object CompileUnit:
         val lineAfterOpener  = nestedOpenerLine + 1
 
         // Block body inside the local block.
-        val bodyLines = block.body.split(Newline, -1).toList
+        val bodyLines                 = block.body.split(Newline, -1).toList
         val (bodyEmitted, bodyMap, _) =
             bodyLines.zipWithIndex.foldLeft((Chunk.empty[String], List.empty[(Int, Int)], lineAfterOpener)) {
                 case ((lines, mapAcc, ln), (fl, idx)) =>
                     (lines :+ ("        " + fl + Newline), mapAcc :+ (ln, idx + 1), ln + 1)
             }
 
-        val allLines =
-            (header ++ preludeEmitted) ++
-                Chunk("    {" + Newline) ++
-                bodyEmitted ++
-                Chunk("    }" + Newline, "}" + Newline)
+        val allLines = (header ++ preludeEmitted) ++
+            Chunk("    {" + Newline) ++
+            bodyEmitted ++
+            Chunk("    }" + Newline, "}" + Newline)
         val content = allLines.mkString
         val mapBuf  = preludeMap ++ bodyMap
         WrappedBlock(block, blockPath, content, Chunk.from(mapBuf), priorBlocks)
@@ -202,7 +201,7 @@ private[kyo] object CompileUnit:
         if blocks.isEmpty then Chunk.empty
         else
             val firstBlock = blocks(0)
-            val envName = firstBlock.visibility match
+            val envName    = firstBlock.visibility match
                 case Block.Visibility.Env(n) => n
                 case _                       => "__doc__"
             val sanitised = sanitiseEnvName(envName)
@@ -236,7 +235,7 @@ private[kyo] object CompileUnit:
             val (bodyLines, wrappedBlocks, _) =
                 blocks.toList.foldLeft((Chunk.empty[String], List.empty[WrappedBlock], lineAfterSetup)) {
                     case ((accLines, accWrapped, ln), block) =>
-                        val blockBodyLines = block.body.split(Newline, -1).toList
+                        val blockBodyLines               = block.body.split(Newline, -1).toList
                         val (newLines, blockMap, nextLn) =
                             blockBodyLines.zipWithIndex.foldLeft((Chunk.empty[String], preludeBuf, ln)) {
                                 case ((bLines, bMap, bLn), (fl, idx)) =>

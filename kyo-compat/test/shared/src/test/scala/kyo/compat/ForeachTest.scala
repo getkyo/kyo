@@ -56,7 +56,7 @@ class ForeachTest extends CompatTest:
 
     "collectAllDiscard returns Unit and runs all" in run {
         val ctr = new AtomicInteger(0)
-        val c = CIO.collectAllDiscard(Seq(
+        val c   = CIO.collectAllDiscard(Seq(
             CIO.defer { val _ = ctr.incrementAndGet() },
             CIO.defer { val _ = ctr.incrementAndGet() }
         ))
@@ -183,7 +183,7 @@ class ForeachTest extends CompatTest:
         // makes "never fewer" race-free: the first two cannot leave until both arrive, so peak reaches 2; later items pass through and the bound caps them.
         val active = new AtomicInteger(0)
         val peak   = new AtomicInteger(0)
-        val c = CLatch.init(2).flatMap { barrier =>
+        val c      = CLatch.init(2).flatMap { barrier =>
             CIO.foreach(1 to 6, 2) { _ =>
                 CIO.defer {
                     val cur = active.incrementAndGet()

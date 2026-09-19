@@ -18,7 +18,7 @@ class TransportConnectDeadlineTest extends Test:
         for
             listener <- transport.listen("127.0.0.1", 0, 128)(_ => ()).safe.get
             _        <- Scope.ensure(Sync.defer(listener.close()))
-            outcome <- Abort.run[NetException | Closed | Timeout](
+            outcome  <- Abort.run[NetException | Closed | Timeout](
                 Async.timeout(1.second)(transport.connectTls("127.0.0.1", listener.port, clientTls).safe.get)
             )
         yield

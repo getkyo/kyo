@@ -26,7 +26,7 @@ class BrowserWireDecodeFailureTest extends BrowserTest:
             CdpEvalDecoder.decodeStringListReply("textAll", malformed)
         }.map {
             case Result.Failure(ex: BrowserProtocolErrorException) => assert(ex.method == "textAll")
-            case other =>
+            case other                                             =>
                 fail(
                     s"Expected Abort.fail(BrowserProtocolErrorException) for malformed " +
                         s"textAll wire, but got: $other"
@@ -40,7 +40,7 @@ class BrowserWireDecodeFailureTest extends BrowserTest:
             CdpEvalDecoder.decodeStringListReply("attributeAll", malformed)
         }.map {
             case Result.Failure(ex: BrowserProtocolErrorException) => assert(ex.method == "attributeAll")
-            case other =>
+            case other                                             =>
                 fail(
                     s"Expected Abort.fail(BrowserProtocolErrorException) for malformed " +
                         s"attributeAll wire, but got: $other"
@@ -67,7 +67,7 @@ class BrowserWireDecodeFailureTest extends BrowserTest:
                         Browser.consoleLogs
                     }.map {
                         case Result.Failure(ex: BrowserProtocolErrorException) => assert(ex.method == "consoleLogs")
-                        case other =>
+                        case other                                             =>
                             fail(
                                 s"Expected Abort.fail(BrowserProtocolErrorException) for malformed " +
                                     s"consoleLogs wire, but got: $other"

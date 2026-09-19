@@ -294,7 +294,7 @@ class AbortTest extends kyo.test.Test[Any]:
                 }
 
                 "works with nested Aborts" in {
-                    val ex = new RuntimeException("Inner exception")
+                    val ex     = new RuntimeException("Inner exception")
                     val nested = Abort.run[IllegalArgumentException] {
                         Abort.run[RuntimeException](Abort.panic(ex))
                     }
@@ -419,7 +419,7 @@ class AbortTest extends kyo.test.Test[Any]:
                 }
 
                 "works with nested Aborts" in {
-                    val ex = new RuntimeException("Inner exception")
+                    val ex     = new RuntimeException("Inner exception")
                     val nested = Abort.runPartial[IllegalArgumentException] {
                         Abort.runPartial[RuntimeException](Abort.panic(ex))
                     }
@@ -538,7 +538,7 @@ class AbortTest extends kyo.test.Test[Any]:
             }
 
             "short-circuiting" in {
-                var sideEffect = 0
+                var sideEffect       = 0
                 def test(b: Boolean) = Abort.run[String] {
                     for
                         _ <- Abort.when(b)("FAIL!")
@@ -786,7 +786,7 @@ class AbortTest extends kyo.test.Test[Any]:
             "short-circuiting with map" - {
                 "should not execute subsequent operations on failure" in {
                     var executed = false
-                    val result = Abort.run[String](
+                    val result   = Abort.run[String](
                         Abort.fail("failure").map(_ => executed = true)
                     )
                     assert(result.eval == Result.fail("failure"))
@@ -795,7 +795,7 @@ class AbortTest extends kyo.test.Test[Any]:
 
                 "should execute subsequent operations on success" in {
                     var executed = false
-                    val result = Abort.run(Abort.run[String](
+                    val result   = Abort.run(Abort.run[String](
                         Abort.get[Int](Right(42)).map(_ => executed = true)
                     ))
                     assert(result.eval == Result.succeed(Result.succeed(())))
@@ -1023,9 +1023,9 @@ class AbortTest extends kyo.test.Test[Any]:
             val computation: Int < Abort[String | Int | CustomError | Boolean] =
                 Abort.fail("String error")
 
-            val result1 = Abort.run[String](computation)
-            val result2 = Abort.run[Int](result1)
-            val result3 = Abort.run[CustomError](result2)
+            val result1                                                                             = Abort.run[String](computation)
+            val result2                                                                             = Abort.run[Int](result1)
+            val result3                                                                             = Abort.run[CustomError](result2)
             val finalResult: Result[CustomError, Result[Int, Result[String, Int]]] < Abort[Boolean] =
                 result3
 
@@ -1053,7 +1053,7 @@ class AbortTest extends kyo.test.Test[Any]:
 
             "doesn't affect successful computations" in {
                 val computation: Int < Abort[CustomError] = 100
-                val recovered =
+                val recovered                             =
                     Abort.recover[CustomError](_ => 42)(computation)
                 assert(Abort.run(recovered).eval == Result.succeed(100))
             }
@@ -1131,7 +1131,7 @@ class AbortTest extends kyo.test.Test[Any]:
 
             "with Env effect" in {
                 val computation: Int < Abort[CustomError] = Abort.fail(CustomError("Failed"))
-                val recovered = Abort.recover[CustomError] { error =>
+                val recovered                             = Abort.recover[CustomError] { error =>
                     Env.get[String].map(_.length)
                 }(computation)
 
@@ -1141,7 +1141,7 @@ class AbortTest extends kyo.test.Test[Any]:
 
             "with Var effect" in {
                 val computation: Int < Abort[CustomError] = Abort.fail(CustomError("Failed"))
-                val recovered = Abort.recover[CustomError] { error =>
+                val recovered                             = Abort.recover[CustomError] { error =>
                     for
                         current <- Var.get[Int]
                         _       <- Var.set(current + error.message.length)
@@ -1155,7 +1155,7 @@ class AbortTest extends kyo.test.Test[Any]:
 
             "with both Env and Var effects" in {
                 val computation: Int < Abort[CustomError] = Abort.fail(CustomError("Error"))
-                val recovered = Abort.recover[CustomError] { error =>
+                val recovered                             = Abort.recover[CustomError] { error =>
                     for
                         env    <- Env.get[String]
                         _      <- Var.update[Int](_ + env.length + error.message.length)
@@ -1177,7 +1177,7 @@ class AbortTest extends kyo.test.Test[Any]:
             "with onPanic using effects" in {
                 val ex                                    = new RuntimeException("Panic!")
                 val computation: Int < Abort[CustomError] = Abort.panic(ex)
-                val recovered = Abort.recover[CustomError](
+                val recovered                             = Abort.recover[CustomError](
                     onFail = _ => Env.get[Int],
                     onPanic = _ => Var.update[Int](_ + 1).andThen(Var.get[Int])
                 )(computation)
@@ -1204,7 +1204,7 @@ class AbortTest extends kyo.test.Test[Any]:
 
             "can be chained with other operations" in {
                 val computation: Int < Abort[CustomError] = Abort.fail(CustomError("Failed"))
-                val result = computation
+                val result                                = computation
                     .handle(Abort.recover[CustomError](_ => 42))
                     .map(_ * 2)
 
@@ -1214,7 +1214,7 @@ class AbortTest extends kyo.test.Test[Any]:
             "works with onPanic" in {
                 val ex                                    = new RuntimeException("Panic!")
                 val computation: Int < Abort[CustomError] = Abort.panic(ex)
-                val result = computation.handle(Abort.recover[CustomError](
+                val result                                = computation.handle(Abort.recover[CustomError](
                     onFail = _ => 42,
                     onPanic = _ => -1
                 ))
@@ -1322,7 +1322,7 @@ class AbortTest extends kyo.test.Test[Any]:
         }
 
         "with other effects" in {
-            val local = Local.init("default")
+            val local    = Local.init("default")
             val combined = Kyo.lift {
                 local.let("custom") {
                     Choice.eval(1, 2).flatMap { n =>
@@ -1344,7 +1344,7 @@ class AbortTest extends kyo.test.Test[Any]:
 
         "handles failures" in {
             val computation = Abort.fail(CustomError("Expected error"))
-            val recovered =
+            val recovered   =
                 Abort.recoverError[CustomError] {
                     error => s"Recovered: ${error.show}"
                 }(computation)
@@ -1355,7 +1355,7 @@ class AbortTest extends kyo.test.Test[Any]:
         "handles panics" in {
             val ex          = new RuntimeException("Panic message")
             val computation = Abort.panic(ex)
-            val recovered = Abort.recoverError[CustomError] {
+            val recovered   = Abort.recoverError[CustomError] {
                 error => s"Recovered: ${error.show}"
             }(computation)
 
@@ -1365,7 +1365,7 @@ class AbortTest extends kyo.test.Test[Any]:
         "doesn't affect successful computations" in {
             val computation: String < Abort[CustomError] = "success"
             var called                                   = false
-            val recovered =
+            val recovered                                =
                 Abort.recoverError[CustomError] { _ =>
                     called = true
                     "Should not be called"
@@ -1444,7 +1444,7 @@ class AbortTest extends kyo.test.Test[Any]:
 
         "handles success case" in {
             val computation: Int < Abort[CustomError] = 42
-            val result = Abort.foldError[CustomError](
+            val result                                = Abort.foldError[CustomError](
                 onSuccess = i => s"Success: $i",
                 onError = error => s"Error: ${error.show}"
             )(computation)
@@ -1454,7 +1454,7 @@ class AbortTest extends kyo.test.Test[Any]:
 
         "handles failure case" in {
             val computation = Abort.fail(CustomError("Expected error"))
-            val result = Abort.foldError[CustomError](
+            val result      = Abort.foldError[CustomError](
                 onSuccess = i => s"Success: $i",
                 onError = error => s"Error: ${error.show}"
             )(computation)
@@ -1465,7 +1465,7 @@ class AbortTest extends kyo.test.Test[Any]:
         "handles panic case" in {
             val ex          = new RuntimeException("Panic message")
             val computation = Abort.panic(ex)
-            val result = Abort.foldError[CustomError](
+            val result      = Abort.foldError[CustomError](
                 onSuccess = i => s"Success: $i",
                 onError = error => s"Error: ${error.show}"
             )(computation)
@@ -1475,7 +1475,7 @@ class AbortTest extends kyo.test.Test[Any]:
 
         "removes Abort from the effect set" in {
             val computation = Abort.fail(CustomError("Expected error"))
-            val folded = Abort.foldError[CustomError](
+            val folded      = Abort.foldError[CustomError](
                 onSuccess = i => s"Success: $i",
                 onError = _ => "Error handled"
             )(computation)

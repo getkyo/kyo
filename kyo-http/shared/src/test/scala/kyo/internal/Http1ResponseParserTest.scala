@@ -23,7 +23,7 @@ class Http1ResponseParserTest extends kyo.BaseHttpTest:
 
         var result: ParsedResponse = null.asInstanceOf[ParsedResponse]
         var body: Span[Byte]       = Span.empty[Byte]
-        val parser = new Http1ResponseParser(
+        val parser                 = new Http1ResponseParser(
             channel,
             maxHeaderSize,
             onResponseParsed = (resp, b) =>
@@ -44,7 +44,7 @@ class Http1ResponseParserTest extends kyo.BaseHttpTest:
 
         var result: ParsedResponse = null.asInstanceOf[ParsedResponse]
         var body: Span[Byte]       = Span.empty[Byte]
-        val parser = new Http1ResponseParser(
+        val parser                 = new Http1ResponseParser(
             channel,
             maxHeaderSize,
             onResponseParsed = (resp, b) =>
@@ -188,7 +188,7 @@ class Http1ResponseParserTest extends kyo.BaseHttpTest:
 
             var closedCalled           = false
             var parsed: ParsedResponse = null.asInstanceOf[ParsedResponse]
-            val parser = new Http1ResponseParser(
+            val parser                 = new Http1ResponseParser(
                 channel,
                 onResponseParsed = (resp, _) => parsed = resp,
                 onClosed = () => closedCalled = true
@@ -209,7 +209,7 @@ class Http1ResponseParserTest extends kyo.BaseHttpTest:
 
             var closedCalled           = false
             var parsed: ParsedResponse = null.asInstanceOf[ParsedResponse]
-            val parser = new Http1ResponseParser(
+            val parser                 = new Http1ResponseParser(
                 channel,
                 onResponseParsed = (resp, _) => parsed = resp,
                 onClosed = () => closedCalled = true
@@ -314,7 +314,7 @@ class Http1ResponseParserTest extends kyo.BaseHttpTest:
             val fullResponse = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"
             val bytes        = fullResponse.getBytes(StandardCharsets.US_ASCII)
             val chunkSize    = 8
-            val chunks = (0 until bytes.length by chunkSize).map { start =>
+            val chunks       = (0 until bytes.length by chunkSize).map { start =>
                 val end = math.min(start + chunkSize, bytes.length)
                 bytes.slice(start, end)
             }.toSeq
@@ -329,7 +329,7 @@ class Http1ResponseParserTest extends kyo.BaseHttpTest:
         "handle EOF during header parse — channel closes gracefully" in {
             val channel      = Channel.Unsafe.init[Span[Byte]](16)
             var closedCalled = false
-            val parser = new Http1ResponseParser(
+            val parser       = new Http1ResponseParser(
                 channel,
                 onClosed = () => closedCalled = true
             )
@@ -349,7 +349,7 @@ class Http1ResponseParserTest extends kyo.BaseHttpTest:
 
             discard(channel.offer(Span.fromUnsafe((resp1Bytes + resp2Bytes).getBytes(StandardCharsets.US_ASCII))))
 
-            val responses = new scala.collection.mutable.ArrayBuffer[(ParsedResponse, Span[Byte])]()
+            val responses                        = new scala.collection.mutable.ArrayBuffer[(ParsedResponse, Span[Byte])]()
             lazy val parser: Http1ResponseParser = new Http1ResponseParser(
                 channel,
                 onResponseParsed = (resp, body) =>
@@ -476,15 +476,15 @@ class Http1ResponseParserTest extends kyo.BaseHttpTest:
 
         // Test 24
         "handle response exceeding maxHeaderSize — onClosed called" in {
-            val smallMax = 64
-            val channel  = Channel.Unsafe.init[Span[Byte]](16)
+            val smallMax     = 64
+            val channel      = Channel.Unsafe.init[Span[Byte]](16)
             val longResponse =
                 "HTTP/1.1 200 OK\r\nX-Big: " + "x" * 200 + "\r\n\r\n"
             discard(channel.offer(Span.fromUnsafe(longResponse.getBytes(StandardCharsets.US_ASCII))))
 
             var closedCalled           = false
             var parsed: ParsedResponse = null.asInstanceOf[ParsedResponse]
-            val parser = new Http1ResponseParser(
+            val parser                 = new Http1ResponseParser(
                 channel,
                 maxHeaderSize = smallMax,
                 onResponseParsed = (resp, _) => parsed = resp,

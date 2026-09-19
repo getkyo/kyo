@@ -77,9 +77,9 @@ final private[codegen] class FfiInspector(collector: TastyExtractor) extends Ins
             structAccum = scala.collection.mutable.LinkedHashMap.empty
             enumAccum = scala.collection.mutable.LinkedHashMap.empty
             structInFlight = scala.collection.mutable.Set.empty
-            val traitSym   = cd.symbol
-            val fqcn       = traitSym.fullName
-            val simpleName = traitSym.name
+            val traitSym    = cd.symbol
+            val fqcn        = traitSym.fullName
+            val simpleName  = traitSym.name
             val packageName =
                 val owner = traitSym.maybeOwner
                 if !sameSymbol(owner, Symbol.noSymbol) && owner.isPackageDef then owner.fullName
@@ -250,11 +250,11 @@ final private[codegen] class FfiInspector(collector: TastyExtractor) extends Ins
             path: String
         ): Either[ExtractorError, T] =
             parentArgs.get(fieldName) match
-                case None => Right(default)
+                case None       => Right(default)
                 case Some(tree) =>
                     extract(tree) match
                         case Some(value) => Right(value)
-                        case None =>
+                        case None        =>
                             Left(ExtractorError(
                                 path,
                                 0,
@@ -282,7 +282,7 @@ final private[codegen] class FfiInspector(collector: TastyExtractor) extends Ins
                     else
                         extract(tree) match
                             case Some(value) => Right(Some(value))
-                            case None =>
+                            case None        =>
                                 Left(ExtractorError(
                                     path,
                                     0,
@@ -304,7 +304,7 @@ final private[codegen] class FfiInspector(collector: TastyExtractor) extends Ins
             case Inlined(_, _, inner) => extractStringSeq(inner)
             case Typed(inner, _)      => extractStringSeq(inner)
             case Block(Nil, inner)    => extractStringSeq(inner)
-            case Repeated(elems, _) =>
+            case Repeated(elems, _)   =>
                 val lits = elems.flatMap(extractStringLit)
                 if lits.length == elems.length then Some(lits.toSeq) else None
             case Apply(_, args) =>
@@ -498,7 +498,7 @@ final private[codegen] class FfiInspector(collector: TastyExtractor) extends Ins
                         case _                       => None
                     elemTpeOpt match
                         case Some(t) if t =:= TypeRepr.of[Any] => None
-                        case Some(t) =>
+                        case Some(t)                           =>
                             Some(ExtractorError(
                                 path,
                                 lineOf(vd.pos, line),
@@ -560,9 +560,9 @@ final private[codegen] class FfiInspector(collector: TastyExtractor) extends Ins
                     else None
                 blockingErr match
                     case Some(err) => Left(err)
-                    case None =>
-                        val fiberInner = if isFiber then unwrapFiberUnsafeType(rawRetType) else rawRetType
-                        val isOutcome  = isOutcomeType(fiberInner)
+                    case None      =>
+                        val fiberInner   = if isFiber then unwrapFiberUnsafeType(rawRetType) else rawRetType
+                        val isOutcome    = isOutcomeType(fiberInner)
                         val innerRetType =
                             if isOutcome then unwrapOutcomeType(fiberInner)
                             else fiberInner
@@ -639,7 +639,7 @@ final private[codegen] class FfiInspector(collector: TastyExtractor) extends Ins
                 else
                     extractType(tpe, path, line).flatMap { tref =>
                         tref match
-                            case fm.TypeRef.UnitT => Right(ReturnShape.Void)
+                            case fm.TypeRef.UnitT   => Right(ReturnShape.Void)
                             case fm.TypeRef.StringT =>
                                 Left(ExtractorError(
                                     path,
@@ -908,7 +908,7 @@ final private[codegen] class FfiInspector(collector: TastyExtractor) extends Ins
             }
             intLongParams match
                 case List(single) => Right(single.name)
-                case Nil =>
+                case Nil          =>
                     Left(ExtractorError(
                         path,
                         line,
@@ -1029,7 +1029,7 @@ final private[codegen] class FfiInspector(collector: TastyExtractor) extends Ins
                 }
                 variantEithers.collectFirst { case Left(e) => e } match
                     case Some(e) => Left(e)
-                    case None =>
+                    case None    =>
                         val variants = variantEithers.collect { case Right(v) => v }
                         Right(fm.TypeRef.UnionT(variants))
                 end match
@@ -1080,7 +1080,7 @@ final private[codegen] class FfiInspector(collector: TastyExtractor) extends Ins
             val fqcn       = sym.fullName
             val simpleName = sym.name
             // Check for the `value` field of type Int.
-            val valueMember = sym.fieldMember("value")
+            val valueMember   = sym.fieldMember("value")
             val hasValueField =
                 if sameSymbol(valueMember, Symbol.noSymbol) then false
                 else tpe.memberType(valueMember) =:= TypeRepr.of[Int]
@@ -1093,7 +1093,7 @@ final private[codegen] class FfiInspector(collector: TastyExtractor) extends Ins
                 ))
             else
                 // Check for companion's `fromInt(Int): EnumType` method.
-                val companion = sym.companionModule
+                val companion  = sym.companionModule
                 val hasFromInt =
                     if sameSymbol(companion, Symbol.noSymbol) then false
                     else
@@ -1147,7 +1147,7 @@ final private[codegen] class FfiInspector(collector: TastyExtractor) extends Ins
                     val paramEithers        = paramTpes.map(extractType(_, path, line))
                     paramEithers.collectFirst { case Left(e) => e } match
                         case Some(e) => Left(e)
-                        case None =>
+                        case None    =>
                             extractType(retTpe, path, line).map { ret =>
                                 fm.TypeRef.FnPtrT(paramEithers.collect { case Right(p) => p }, ret)
                             }
@@ -1158,7 +1158,7 @@ final private[codegen] class FfiInspector(collector: TastyExtractor) extends Ins
             val fqcn = sym.fullName
             structAccum.get(fqcn) match
                 case Some(existing) => Right(existing)
-                case None =>
+                case None           =>
                     if structInFlight(fqcn) then
                         Left(ExtractorError(
                             path,
@@ -1167,8 +1167,8 @@ final private[codegen] class FfiInspector(collector: TastyExtractor) extends Ins
                         ))
                     else
                         structInFlight += fqcn
-                        val simpleName = sym.name
-                        val caseFields = sym.caseFields
+                        val simpleName   = sym.name
+                        val caseFields   = sym.caseFields
                         val fieldEithers = caseFields.map { fsym =>
                             val fline = fsym.pos.map(_.startLine + 1).getOrElse(line)
                             val ftype = tpe.memberType(fsym)
@@ -1177,10 +1177,10 @@ final private[codegen] class FfiInspector(collector: TastyExtractor) extends Ins
                         structInFlight -= fqcn
                         fieldEithers.collectFirst { case Left(e) => e } match
                             case Some(e) => Left(e)
-                            case None =>
+                            case None    =>
                                 val fields = fieldEithers.collect { case Right(f) => f }
                                 val packed = packedNames.contains(simpleName) || packedNames.contains(fqcn)
-                                val spec = StructSpec(
+                                val spec   = StructSpec(
                                     fqcn = fqcn,
                                     simpleName = simpleName,
                                     fields = fields,

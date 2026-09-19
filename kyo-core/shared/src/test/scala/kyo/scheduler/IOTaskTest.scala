@@ -12,7 +12,7 @@ class IOTaskTest extends kyo.test.Test[Any]:
         "fiberTrace renders the live user frames of a blocked effectful fiber" in {
             val blocker                      = new IOPromise[Nothing, Unit]()
             def userStep(x: Int): Int < Sync = Sync.defer(x + 1)
-            def work: Unit < Async =
+            def work: Unit < Async           =
                 Sync.defer(1).map(userStep).map(_ => Async.use(blocker)(_ => ())).map(_ => ())
             val iotask = IOTask(work, Trace.saved(), Context.empty)
             for
@@ -36,7 +36,7 @@ class IOTaskTest extends kyo.test.Test[Any]:
         "fiberTrace excludes internal frames" in {
             val blocker                      = new IOPromise[Nothing, Unit]()
             def userStep(x: Int): Int < Sync = Sync.defer(x + 1)
-            def work: Unit < Async =
+            def work: Unit < Async           =
                 Sync.defer(1).map(userStep).map(_ => Async.use(blocker)(_ => ())).map(_ => ())
             val iotask = IOTask(work, Trace.saved(), Context.empty)
             for
@@ -77,7 +77,7 @@ class IOTaskTest extends kyo.test.Test[Any]:
         "fiberTrace never throws under concurrent trace mutation" in {
             val blocker                      = new IOPromise[Nothing, Unit]()
             def userStep(x: Int): Int < Sync = Sync.defer(x + 1)
-            def work: Unit < Async =
+            def work: Unit < Async           =
                 Sync.defer(1).map(userStep).map(_ => Async.use(blocker)(_ => ())).map(_ => ())
             val iotask = IOTask(work, Trace.saved(), Context.empty)
             for
@@ -120,7 +120,7 @@ class IOTaskTest extends kyo.test.Test[Any]:
         "runs the ensure finalizer even though the fatal aborts the fiber".onlyJvm in {
             for
                 probe <- Promise.init[Unit, Any]
-                _ <- Fiber.initUnscoped {
+                _     <- Fiber.initUnscoped {
                     Sync.ensure { probe.completeDiscard(Result.succeed(())) } {
                         Sync.defer[Unit, Any](throw new LinkageError("fatal error"))
                     }

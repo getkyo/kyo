@@ -86,12 +86,12 @@ private[kyo] object McpSamplingContentSchema:
                 case "text"  => McpServer.SamplingContent.Text(text, annotations)
                 case "image" => McpServer.SamplingContent.Image(data, mimeType, annotations)
                 case "audio" => McpServer.SamplingContent.Audio(data, mimeType, annotations)
-                case other =>
+                case other   =>
                     mcp.McpEnumSchema.discriminatorMismatch(reader, "text|image|audio", other)
             end match
         end serializeRead
 
-        @publicInBinary private[kyo] def getter(value: McpServer.SamplingContent): Maybe[Any] = Maybe(value)
+        @publicInBinary private[kyo] def getter(value: McpServer.SamplingContent): Maybe[Any]                           = Maybe(value)
         @publicInBinary private[kyo] def setter(value: McpServer.SamplingContent, next: Any): McpServer.SamplingContent =
             next match
                 case c: McpServer.SamplingContent => c
@@ -106,7 +106,7 @@ private[kyo] object McpSamplingContentSchema:
             : Result[DecodeException, McpServer.SamplingContent] =
             sv match
                 case Structure.Value.Record(fields) =>
-                    val m = fields.iterator.toMap
+                    val m                                                                  = fields.iterator.toMap
                     val annotationsResult: Result[DecodeException, McpContent.Annotations] =
                         m.get("annotations") match
                             case Some(annSv) =>

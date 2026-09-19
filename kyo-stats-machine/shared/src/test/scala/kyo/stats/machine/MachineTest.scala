@@ -21,8 +21,8 @@ class MachineTest extends kyo.test.Test[Any]:
       * `java.lang.ref.Reference`. Registry value readers run on JVM and Native.
       */
     private def machineKeys(): Set[List[String]] =
-        val registry = kyo.stats.internal.StatsRegistry.internal
-        val keys     = collection.mutable.HashSet.empty[List[String]]
+        val registry                                           = kyo.stats.internal.StatsRegistry.internal
+        val keys                                               = collection.mutable.HashSet.empty[List[String]]
         def collect(map: java.util.Map[List[String], ?]): Unit =
             map.keySet().forEach { k =>
                 if k.headOption.contains("machine") then discard(keys.add(k))

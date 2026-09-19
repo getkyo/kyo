@@ -231,7 +231,7 @@ class SummaryTest extends kyo.test.Test[Any]:
         // per-leaf reason carry the whole thing, or the summary overflows that RPC and crashes the
         // entire suite's transport.
         val hugeLine = "x" * 500000
-        val summary = Summary.render(
+        val summary  = Summary.render(
             reportOf(leafResult(TestResult.Failed(hugeLine, Maybe.empty, oneMilli))),
             Chunk.empty,
             Chunk.empty
@@ -245,8 +245,8 @@ class SummaryTest extends kyo.test.Test[Any]:
         // failing because a shared fixture is broken), the TOTAL FAILURES block lists them all and the
         // summary overflows writeUTF. Per-line capping alone is not enough; the whole block must be bounded.
         // Note: Cancelled leaves are no longer failures (they are deliberate skips) so this test uses Failed.
-        val reason = "chrome-headless-shell unavailable on linux-arm64; install chromium and pass Browser.LaunchConfig.chromium. " * 3
-        val leaves = (1 to 3000).map(i => (Chunk("Suite", s"leaf$i"), TestResult.Failed(reason, Maybe.empty, oneMilli): TestResult))
+        val reason  = "chrome-headless-shell unavailable on linux-arm64; install chromium and pass Browser.LaunchConfig.chromium. " * 3
+        val leaves  = (1 to 3000).map(i => (Chunk("Suite", s"leaf$i"), TestResult.Failed(reason, Maybe.empty, oneMilli): TestResult))
         val summary = Summary.render(
             Iterable(TestReport(Chunk(SuiteReport("Suite", Chunk.from(leaves), zeroDuration)))),
             Chunk.empty,

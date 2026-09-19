@@ -509,7 +509,7 @@ object Result:
         inline def flatMap[E2, B](inline f: A => Result[E2, B]): Result[E | E2, B] =
             self match
                 case self: Error[E] @unchecked => self
-                case self =>
+                case self                      =>
                     try f(self.asInstanceOf[Result[Nothing, A]].getOrThrow)
                     catch
                         case ex =>

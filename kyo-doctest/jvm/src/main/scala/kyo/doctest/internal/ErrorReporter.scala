@@ -105,7 +105,7 @@ private[kyo] object ErrorReporter:
             else None
 
         offendingLineOpt match
-            case None => Nil
+            case None                => Nil
             case Some(offendingLine) =>
                 val indented    = "    " + offendingLine
                 val caretOffset = 4 + math.max(0, col - 1)

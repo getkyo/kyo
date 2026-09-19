@@ -45,7 +45,7 @@ class HttpServerResilienceTest extends BaseHttpTest:
       * every client and server in a process shares `NetPlatform.transport`). The pool persists across scenarios, so a
       * driver wedged by one scenario would stay wedged for the next.
       */
-    private val clientByBackend = new ConcurrentHashMap[String, HttpClient]()
+    private val clientByBackend                                               = new ConcurrentHashMap[String, HttpClient]()
     private def clientFor(entry: TestBackends.Entry)(using Frame): HttpClient =
         // `opaque type HttpClient = HttpClientBackend`; the alias is transparent only inside HttpClient's own scope, and
         // there is no public per-transport HttpClient factory (init/initUnscoped use the shared NetPlatform.transport).
@@ -212,7 +212,7 @@ class HttpServerResilienceTest extends BaseHttpTest:
     "pooled client on the nio backend survives request cancellation and server churn" in {
         val durationMs = sys.props.get("kyo.churnDurationMs").map(_.toLong).getOrElse(20000L)
         TestBackends.all.find(e => e.name == "nio" && e.isAvailable) match
-            case None => cancel("nio backend not available on this host")
+            case None        => cancel("nio backend not available on this host")
             case Some(entry) =>
                 val transport = entry.transport
                 val client    = clientFor(entry)

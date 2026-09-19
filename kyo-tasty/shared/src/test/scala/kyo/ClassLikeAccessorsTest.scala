@@ -191,7 +191,7 @@ class ClassLikeAccessorsTest extends kyo.test.Test[Any]:
         import Tasty.Name.asString
         val anyRefSym = makeClass(id = 0, name = "Object", ownerId = 0)
         val traitT    = makeTrait(id = 1, name = "T", ownerId = 0)
-        val classSym = makeClass(id = 2, name = "Foo", ownerId = 0).copy(
+        val classSym  = makeClass(id = 2, name = "Foo", ownerId = 0).copy(
             parentTypes = Chunk(Tasty.Type.Named(SymbolId(0)), Tasty.Type.Named(SymbolId(1)))
         )
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(anyRefSym, traitT, classSym)).map { classpath =>
@@ -430,7 +430,7 @@ class ClassLikeAccessorsTest extends kyo.test.Test[Any]:
     }
 
     "prior-flag-predicates-still-work-on-classlike: flag predicates on Class/Trait return expected values" in {
-        val classFlags = Tasty.Flags(Tasty.Flag.Final, Tasty.Flag.Case)
+        val classFlags             = Tasty.Flags(Tasty.Flag.Final, Tasty.Flag.Case)
         val classSym: Tasty.Symbol = Tasty.Symbol.Class(
             SymbolId(1),
             Tasty.Name("CaseFoo"),
@@ -446,7 +446,7 @@ class ClassLikeAccessorsTest extends kyo.test.Test[Any]:
             Chunk.empty,
             Chunk.empty
         )
-        val traitFlags = Tasty.Flags(Tasty.Flag.Abstract, Tasty.Flag.Sealed)
+        val traitFlags             = Tasty.Flags(Tasty.Flag.Abstract, Tasty.Flag.Sealed)
         val traitSym: Tasty.Symbol = Tasty.Symbol.Trait(
             SymbolId(2),
             Tasty.Name("SealedTrait"),

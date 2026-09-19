@@ -76,7 +76,7 @@ private[kyo] object RuntimeExecutor:
                     timeout = timeoutFor(progress, blockTimeouts, defaultTimeout)
                     deadline   <- Clock.deadline(timeout)
                     waitResult <- waitFor(process, progressPath, blockTimeouts, defaultTimeout, progress, timeout, deadline)
-                    outcome <- waitResult match
+                    outcome    <- waitResult match
                         case WaitResult.TimedOut(after, activeProgress) =>
                             process.destroyForcibly.andThen(Sync.defer(Outcome.TimedOut(after, activeProgress)))
                         case WaitResult.Exited(code) =>
@@ -151,7 +151,7 @@ private[kyo] object RuntimeExecutor:
                 end if
             else
                 val stderrFile = java.nio.file.Path.of(stderrPath.toString)
-                val stderr =
+                val stderr     =
                     if Files.exists(stderrFile) then Files.readString(stderrFile, StandardCharsets.UTF_8)
                     else ""
                 Outcome.ProcessExited(exitCode, stderr, readProgressUnsafe(progressPath))

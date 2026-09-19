@@ -36,7 +36,7 @@ class ItCallbackExceptionTest extends ItTestBase:
     end captureStderr
 
     "transient callback: throwing comparator does not crash the process, diagnostic logged, call completes" in {
-        val b = Ffi.load[ItCallbacksBindings]
+        val b      = Ffi.load[ItCallbacksBindings]
         val stderr = captureStderr {
             Buffer.use[Int, Unit](3) { buf =>
                 buf.set(0, 3)
@@ -56,7 +56,7 @@ class ItCallbackExceptionTest extends ItTestBase:
     }
 
     "retained callback: throwing listener does not crash the process, diagnostic logged, fire returns" in {
-        val b = Ffi.load[ItCallbacksBindings]
+        val b      = Ffi.load[ItCallbacksBindings]
         val stderr = captureStderr {
             Ffi.Guard.use[Unit] { g =>
                 b.kyoItRegisterListener((_: Int) => throw new IllegalStateException("boom from listener"), g)

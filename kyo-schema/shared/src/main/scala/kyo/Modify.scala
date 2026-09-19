@@ -81,11 +81,12 @@ object Modify:
         setter: (Root, V) => Root,
         value: V
     ): Modify[Root] =
-        new Modify[Root](modify.changes :+ ((r: Root) =>
-            getter(r) match
-                case Maybe.Present(_) => setter(r, value)
-                case _                => r
-        ))
+        new Modify[Root](modify.changes :+
+            ((r: Root) =>
+                getter(r) match
+                    case Maybe.Present(_) => setter(r, value)
+                    case _                => r
+            ))
 
     /** Internal helper: adds an update change to a Modify. Avoids constructing Modify in inline context. */
     private[kyo] def addUpdate[Root, V](
@@ -94,10 +95,11 @@ object Modify:
         setter: (Root, V) => Root,
         fn: V => V
     ): Modify[Root] =
-        new Modify[Root](modify.changes :+ ((r: Root) =>
-            getter(r) match
-                case Maybe.Present(v) => setter(r, fn(v))
-                case _                => r
-        ))
+        new Modify[Root](modify.changes :+
+            ((r: Root) =>
+                getter(r) match
+                    case Maybe.Present(v) => setter(r, fn(v))
+                    case _                => r
+            ))
 
 end Modify

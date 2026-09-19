@@ -308,7 +308,7 @@ class StructureTest extends kyo.test.Test[Any]:
         }
 
         "fold visits all nodes depth-first" in {
-            val ref = Structure.of[MTSmallTeam]
+            val ref   = Structure.of[MTSmallTeam]
             val names = Structure.Type.fold(ref)(List.empty[String]) { (acc, tpe) =>
                 acc :+ tpe.name
             }
@@ -2130,7 +2130,7 @@ class StructureTest extends kyo.test.Test[Any]:
 
         "a collection element violation is indexed" in {
             val v = Structure.Value.Record(Chunk[(String, Structure.Value)](
-                "note" -> Structure.Value.Str("n"),
+                "note"    -> Structure.Value.Str("n"),
                 "payload" -> payloadRecord(
                     Structure.Value.Bool(true),
                     Structure.Value.Sequence(Chunk(Structure.Value.Str("ok"), Structure.Value.Bool(false)))

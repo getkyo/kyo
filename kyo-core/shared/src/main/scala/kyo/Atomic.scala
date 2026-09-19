@@ -491,10 +491,10 @@ object AtomicBoolean:
         def init(v: Boolean)(using AllowUnsafe): Unsafe = new java.util.concurrent.atomic.AtomicBoolean(v)
 
         extension (self: Unsafe)
-            inline def get()(using inline allow: AllowUnsafe): Boolean                 = self.get()
-            inline def set(v: Boolean)(using inline allow: AllowUnsafe): Unit          = self.set(v)
-            inline def lazySet(v: Boolean)(using inline allow: AllowUnsafe): Unit      = self.lazySet(v)
-            inline def getAndSet(v: Boolean)(using inline allow: AllowUnsafe): Boolean = self.getAndSet(v)
+            inline def get()(using inline allow: AllowUnsafe): Boolean                                       = self.get()
+            inline def set(v: Boolean)(using inline allow: AllowUnsafe): Unit                                = self.set(v)
+            inline def lazySet(v: Boolean)(using inline allow: AllowUnsafe): Unit                            = self.lazySet(v)
+            inline def getAndSet(v: Boolean)(using inline allow: AllowUnsafe): Boolean                       = self.getAndSet(v)
             inline def compareAndSet(curr: Boolean, next: Boolean)(using inline allow: AllowUnsafe): Boolean =
                 self.compareAndSet(curr, next)
             inline def safe: AtomicBoolean = AtomicBoolean(self)

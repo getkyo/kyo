@@ -80,7 +80,7 @@ class SqlRowDecodeTest extends Test:
     // can absorb it.
     "an interrupt raised by a decoder propagates instead of being reported as a decode failure" in {
         val interrupt = new InterruptedException()
-        val thrown = intercept[InterruptedException] {
+        val thrown    = intercept[InterruptedException] {
             val _ = Abort.run[SqlDecodeException](SqlRow.Codec.catching[Long](throw interrupt)).eval
         }
         assert(thrown eq interrupt)

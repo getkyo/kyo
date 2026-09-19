@@ -217,7 +217,7 @@ class CodecTest extends kyo.test.Test[Any]:
 
     "unknown variant" in {
         val schema: Schema[MTShape] = summon[Schema[MTShape]]
-        val tokens = List(
+        val tokens                  = List(
             Token.ObjectStart("MTShape", 1),
             Token.FieldName("Triangle"),
             Token.ObjectStart("Triangle", 1),
@@ -297,7 +297,7 @@ class CodecTest extends kyo.test.Test[Any]:
         val bytes    = Span.from(Array[Byte](1, 2, 3))
         val instant  = java.time.Instant.parse("2024-06-15T12:00:00Z")
         val duration = java.time.Duration.ofHours(2).plusMinutes(30)
-        val tokens = List(
+        val tokens   = List(
             Token.ObjectStart("", 3),
             Token.FieldName("bytes"),
             Token.Bytes(bytes),
@@ -307,8 +307,8 @@ class CodecTest extends kyo.test.Test[Any]:
             Token.DurationVal(duration),
             Token.ObjectEnd
         )
-        val reader = new TestReader(tokens)
-        val value  = reader.readStructure()
+        val reader   = new TestReader(tokens)
+        val value    = reader.readStructure()
         val expected = Structure.Value.Record(Chunk(
             "bytes"    -> Structure.Value.Bytes(bytes),
             "instant"  -> Structure.Value.Instant(instant),
@@ -778,7 +778,7 @@ class CodecTest extends kyo.test.Test[Any]:
     end readVarintAt
 
     private def topLevelFieldNumbers(bytes: Span[Byte]): Chunk[Int] =
-        val data = bytes.toArray
+        val data                                                 = bytes.toArray
         @tailrec def loop(pos: Int, acc: Chunk[Int]): Chunk[Int] =
             if pos >= data.length then acc
             else

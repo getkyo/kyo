@@ -32,7 +32,7 @@ class TreeDecodeFidelityTest extends kyo.test.Test[Any]:
         TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
             val bodyErrors = classpath.errors.filter {
                 case _: TastyError.UnknownType => false // absent-body per-symbol errors are permitted
-                case e =>
+                case e                         =>
                     val s = e.toString
                     s.contains("unknown") || s.contains("unhandled")
             }
@@ -41,7 +41,7 @@ class TreeDecodeFidelityTest extends kyo.test.Test[Any]:
                 s"Body decode errors in: ${bodyErrors.take(2)}"
             )
             classpath.findClassLike("kyo.fixtures.SomeCaseClass") match
-                case Maybe.Absent => fail("kyo.fixtures.SomeCaseClass not found in classpath; fixture must be present")
+                case Maybe.Absent       => fail("kyo.fixtures.SomeCaseClass not found in classpath; fixture must be present")
                 case Maybe.Present(cls) =>
                     val methods = cls.declarationIds.flatMap(id => classpath.symbol(id).toChunk).filter(_.isInstanceOf[Tasty.Symbol.Method])
                     assert(methods.nonEmpty, "kyo.fixtures.SomeCaseClass should have methods (copy, hashCode, equals)")

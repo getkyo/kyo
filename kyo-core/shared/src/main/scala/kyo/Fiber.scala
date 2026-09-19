@@ -735,9 +735,9 @@ object Fiber:
                     Sync.Unsafe.defer {
                         class State extends IOPromise[Any, Chunk[B] < Abort[E]]
                             with (Result[E, Unit] => Unit):
-                            val results = (new Array[Any](size)).asInstanceOf[Array[B]]
-                            val pending = AtomicInt.Unsafe.init(size)
-                            val counter = AtomicInt.Unsafe.init(0)
+                            val results                            = (new Array[Any](size)).asInstanceOf[Array[B]]
+                            val pending                            = AtomicInt.Unsafe.init(size)
+                            val counter                            = AtomicInt.Unsafe.init(0)
                             def complete(idx: Int, value: B): Unit =
                                 results(idx) = value
                                 if pending.decrementAndGet() == 0 then
@@ -748,7 +748,7 @@ object Fiber:
                         end State
                         val state = new State
                         Isolate.internal.runDetached { (trace, context) =>
-                            val safepoint = Safepoint.get
+                            val safepoint                      = Safepoint.get
                             val parent: Maybe[IOPromise[?, ?]] =
                                 safepoint.getInterceptor() match
                                     case p: IOPromise[?, ?] => Present(p)
@@ -814,7 +814,7 @@ object Fiber:
 
             final class Success[E, A](size: Int, frame: Frame) extends Race[E, A](frame):
                 import AllowUnsafe.embrace.danger
-                val pending = AtomicInt.Unsafe.init(size)
+                val pending                           = AtomicInt.Unsafe.init(size)
                 def apply(result: Result[E, A]): Unit =
                     val last = pending.decrementAndGet() == 0
                     result.foldError(
@@ -985,14 +985,14 @@ object Fiber:
         private inline def foreach[A](l: Iterable[A])(inline f: (Int, A) => Unit): Unit =
             l match
                 case l: IndexedSeq[A] @unchecked =>
-                    val s = l.size
+                    val s                           = l.size
                     @tailrec def loop(i: Int): Unit =
                         if i < s then
                             f(i, l(i))
                             loop(i + 1)
                     loop(0)
                 case _ =>
-                    val it = l.iterator
+                    val it                          = l.iterator
                     @tailrec def loop(i: Int): Unit =
                         if it.hasNext then
                             f(i, it.next())

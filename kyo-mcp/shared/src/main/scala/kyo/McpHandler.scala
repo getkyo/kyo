@@ -129,7 +129,7 @@ object McpHandler:
       * required binding (no `getOrElse("")`).
       */
     final class ResourceMatch private[kyo] (val uri: McpResourceUri, val bindings: Map[String, String]):
-        def variable(name: String): Maybe[String] = Maybe.fromOption(bindings.get(name))
+        def variable(name: String): Maybe[String]                                                   = Maybe.fromOption(bindings.get(name))
         def requireVariable(name: String)(using Frame): String < Abort[McpInvalidArgumentException] =
             bindings.get(name) match
                 case Some(v) => v
@@ -261,7 +261,7 @@ object McpHandler:
               */
             def structuredContentAs[M](using Schema[M], Frame): Maybe[M] < Abort[McpDecodeException] =
                 self.structuredContent match
-                    case Absent => Maybe.empty
+                    case Absent      => Maybe.empty
                     case Present(sv) =>
                         Structure.decode[M](sv) match
                             case Result.Success(m) => Present(m)
@@ -271,7 +271,7 @@ object McpHandler:
             /** Decodes `meta` to `M`, or `Absent` when no `_meta` is present. */
             def metaAs[M](using Schema[M], Frame): Maybe[M] < Abort[McpDecodeException] =
                 self.meta match
-                    case Absent => Maybe.empty
+                    case Absent      => Maybe.empty
                     case Present(sv) =>
                         Structure.decode[M](sv) match
                             case Result.Success(m) => Present(m)
@@ -500,7 +500,7 @@ object McpHandler:
         // `OutInferred` is required BEFORE the output schema so a body that left `Out` uninferred is
         // reported as that, rather than as an ambiguity between two primitive schemas the author never
         // mentioned. See its docs.
-        val _ = outInferred
+        val _    = outInferred
         val meta = ToolMeta(
             name = name,
             description = if description.isEmpty then Absent else Present(description),

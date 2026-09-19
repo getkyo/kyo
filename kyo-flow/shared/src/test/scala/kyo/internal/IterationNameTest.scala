@@ -105,7 +105,7 @@ class IterationNameTest extends kyo.test.Test[Any]:
       * pinning is between the name the interpreter writes and the node the surface hands it to.
       */
     "an iteration's checkpoint is attributed to the loop that wrote it" in {
-        val flow = Flow.input[Int]("x").loopOn("acc", Schedule.fixed(1.hour), 0)((state: Int, ctx) => Loop.done(state))
+        val flow     = Flow.input[Int]("x").loopOn("acc", Schedule.fixed(1.hour), 0)((state: Int, ctx) => Loop.done(state))
         val progress = FlowEngine.Progress.build(
             flow,
             Set("x"),

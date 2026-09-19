@@ -26,7 +26,7 @@ class DragFileScenarioItTest extends UITest:
             for
                 requests <- Channel.init[HtmlOp](64)
                 sent     <- AtomicRef.init(Chunk.empty[HtmlOp])
-                service <- DragFiles.Service.init(
+                service  <- DragFiles.Service.init(
                     op => sent.getAndUpdate(_.append(op)).andThen(Abort.run(requests.put(op)).unit),
                     limits
                 )
@@ -128,12 +128,12 @@ class DragFileScenarioItTest extends UITest:
         withService() { (service, requests, sent) =>
             for
                 responder <- Fiber.initUnscoped(fileResponder(service, requests, "token-1", bytes))
-                taken <- Abort.run[Drag.FileError](Scope.run(
+                taken     <- Abort.run[Drag.FileError](Scope.run(
                     service.readFile(meta, 64.kib).take(1_000).run
                 ))
-                _       <- responder.interrupt
-                _       <- responder.getResult
-                pending <- service.pendingCount
+                _         <- responder.interrupt
+                _         <- responder.getResult
+                pending   <- service.pendingCount
                 cancelled <- sent.get.map(_.exists {
                     case _: HtmlOp.CancelDropRead => true
                     case _                        => false
@@ -182,8 +182,8 @@ class DragFileScenarioItTest extends UITest:
     }
 
     "two concurrent reads correlate by request id" in {
-        val first  = content(100_000)
-        val second = Chunk.from("second file".getBytes("UTF-8").toIndexedSeq)
+        val first   = content(100_000)
+        val second  = Chunk.from("second file".getBytes("UTF-8").toIndexedSeq)
         val metaTwo = meta.copy(
             token = "token-2",
             name = "other.txt",
@@ -279,7 +279,7 @@ class DragFileScenarioItTest extends UITest:
         withService() { (service, requests, sent) =>
             for
                 responder <- Fiber.initUnscoped(fileResponder(service, requests, "token-1", bytes))
-                _ <- Kyo.foreachDiscard(Chunk.from(0 until 100)) { iteration =>
+                _         <- Kyo.foreachDiscard(Chunk.from(0 until 100)) { iteration =>
                     for
                         cancelled <- Abort.run[Drag.FileError](Scope.run(
                             service.readFile(meta, 64.kib).take(100).run

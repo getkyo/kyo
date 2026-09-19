@@ -338,10 +338,10 @@ class CorpusTest extends kyo.test.Test[Any]:
         System.property[String]("kyo.doctest.readme").flatMap { overrideProp =>
             overrideProp match
                 case Present(p) => kyo.Path(p)
-                case Absent =>
+                case Absent     =>
                     kyo.System.property[String]("user.dir").flatMap { maybeCwd =>
-                        val cwdStr = maybeCwd.getOrElse(".")
-                        val cwd    = kyo.Path(cwdStr)
+                        val cwdStr                                                              = maybeCwd.getOrElse(".")
+                        val cwd                                                                 = kyo.Path(cwdStr)
                         def loop(dir: kyo.Path): kyo.Path < (Sync & Abort[FileSystemException]) =
                             // Check if this dir contains kyo-doctest/README.md as a sibling subdir.
                             val sibling = dir / "kyo-doctest" / "README.md"

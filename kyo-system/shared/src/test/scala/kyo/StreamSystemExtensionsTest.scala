@@ -145,7 +145,7 @@ class StreamSystemExtensionsTest extends kyo.test.Test[Any]:
             for
                 dir <- Path.tempDir("kyo-stream-append-test")
                 file = dir / "append-failure.txt"
-                _ <- file.write("keep me")
+                _      <- file.write("keep me")
                 result <- Abort.run[FileSystemException] {
                     Scope.run {
                         val failingStream: Stream[Byte, Abort[FileWriteException]] =

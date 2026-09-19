@@ -21,11 +21,10 @@ class PostgresEncoderArrayTest extends kyo.Test:
     end encode
 
     // Helper: read a 4-byte big-endian Int from a Span at the given offset.
-    private def readInt32BE(bytes: Span[Byte], offset: Int): Int =
-        ((bytes(offset) & 0xff) << 24) |
-            ((bytes(offset + 1) & 0xff) << 16) |
-            ((bytes(offset + 2) & 0xff) << 8) |
-            (bytes(offset + 3) & 0xff)
+    private def readInt32BE(bytes: Span[Byte], offset: Int): Int = ((bytes(offset) & 0xff) << 24) |
+        ((bytes(offset + 1) & 0xff) << 16) |
+        ((bytes(offset + 2) & 0xff) << 8) |
+        (bytes(offset + 3) & 0xff)
 
     // ── int4[] wire bytes ────────────────────────────────────────────────────
 

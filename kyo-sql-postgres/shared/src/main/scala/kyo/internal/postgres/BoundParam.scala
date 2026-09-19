@@ -27,7 +27,7 @@ final class BoundParam[A](val value: Maybe[A], val encoder: PostgresEncoder[A]):
       */
     def encoded: Maybe[Span[Byte]] =
         value match
-            case Maybe.Absent => Maybe.Absent
+            case Maybe.Absent     => Maybe.Absent
             case Maybe.Present(v) =>
                 val buf = new PostgresBufferWriter
                 encoder.write(v, buf)

@@ -118,7 +118,7 @@ class McpServerTest extends Test:
 
     // Dispatch-path test: completion/complete routes the request to the registered handler and returns non-empty values.
     "completion/complete dispatches to registered handler and returns handler values (not Chunk.empty)" in {
-        val ref = McpHandler.CompletionRef.Prompt("myPrompt")
+        val ref             = McpHandler.CompletionRef.Prompt("myPrompt")
         val completionRoute = McpHandler.completion(ref) { arg =>
             McpHandler.CompletionOutcome(Chunk(arg.value + "-completed"), Absent, Absent)
         }
@@ -183,7 +183,7 @@ class McpServerTest extends Test:
                     srv.closeNow.andThen(client.closeNow).andThen {
                         result match
                             case Result.Failure(_: McpCapabilityNotAdvertisedException) => succeed
-                            case Result.Failure(other) =>
+                            case Result.Failure(other)                                  =>
                                 fail(s"expected McpCapabilityNotAdvertisedException, got: $other")
                             case Result.Success(_) =>
                                 fail("expected failure, got success")
@@ -197,8 +197,8 @@ class McpServerTest extends Test:
 
     // a genuine rejection (sampling advertised but handler aborts) surfaces McpSamplingRejectedException.
     "requestSampling with rejection handler surfaces McpSamplingRejectedException not McpCapabilityNotAdvertisedException" in {
-        val clientInfo = McpInfo("inv11b-client", "0.0.0")
-        val clientCaps = McpCapabilities.Client(sampling = Present(McpCapabilities.SamplingCapability()))
+        val clientInfo       = McpInfo("inv11b-client", "0.0.0")
+        val clientCaps       = McpCapabilities.Client(sampling = Present(McpCapabilities.SamplingCapability()))
         val rejectingHandler = McpClientHandler.onSampling[McpSamplingRejectedException] { _ =>
             Abort.fail(McpSamplingRejectedException("deliberate rejection"))
         }
@@ -215,7 +215,7 @@ class McpServerTest extends Test:
                     srv.closeNow.andThen(client.closeNow).andThen {
                         result match
                             case Result.Failure(_: McpSamplingRejectedException) => succeed
-                            case Result.Failure(other) =>
+                            case Result.Failure(other)                           =>
                                 fail(s"expected McpSamplingRejectedException, got: $other")
                             case Result.Success(_) =>
                                 fail("expected failure, got success")
@@ -240,7 +240,7 @@ class McpServerTest extends Test:
                     srv.closeNow.andThen(client.closeNow).andThen {
                         result match
                             case Result.Failure(_: McpException) => succeed
-                            case Result.Success(roots) =>
+                            case Result.Success(roots)           =>
                                 fail(s"expected typed error, got success with roots: $roots")
                             case Result.Panic(t) =>
                                 fail(s"unexpected panic: $t")
@@ -363,7 +363,7 @@ class McpServerTest extends Test:
                     srv.closeNow.andThen(client.closeNow).andThen {
                         result match
                             case Result.Failure(_: McpToolStructuredDecodeException) => succeed
-                            case Result.Failure(other) =>
+                            case Result.Failure(other)                               =>
                                 fail(s"expected McpToolStructuredDecodeException, got: $other")
                             case Result.Success(outcome) =>
                                 fail(s"expected failure on non-conforming payload, got success: $outcome")

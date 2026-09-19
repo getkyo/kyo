@@ -146,7 +146,7 @@ class DynamicFlagUpdateTest extends AnyFreeSpec {
 
         "update with validate that throws is caught and wrapped" in {
             val flag = DynUpdateTestFlags.validateThrows
-            val ex = intercept[FlagValidationFailedException] {
+            val ex   = intercept[FlagValidationFailedException] {
                 flag.update("42")
             }
             assert(ex.cause.isInstanceOf[RuntimeException])
@@ -168,8 +168,8 @@ class DynamicFlagUpdateTest extends AnyFreeSpec {
 }
 
 object DynUpdateTestFlags {
-    object updateChanges extends DynamicFlag[Boolean](false)
-    object rollbackParse extends DynamicFlag[Int](0)
+    object updateChanges    extends DynamicFlag[Boolean](false)
+    object rollbackParse    extends DynamicFlag[Int](0)
     object rollbackValidate extends DynamicFlag[Int](
             1,
             (a: Int) =>
@@ -189,7 +189,7 @@ object DynUpdateTestFlags {
     object stateConsistency extends DynamicFlag[Int](0)
     object killSwitch       extends DynamicFlag[Boolean](false)
     object whitespaceUpdate extends DynamicFlag[Int](0)
-    object validateThrows extends DynamicFlag[Int](
+    object validateThrows   extends DynamicFlag[Int](
             0,
             (a: Int) =>
                 if (a == 0) Right(a)

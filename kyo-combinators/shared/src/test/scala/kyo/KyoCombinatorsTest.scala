@@ -111,7 +111,7 @@ class KyoCombinatorsTest extends kyo.test.Test[Any]:
         "when" - {
             "condition is false" in {
                 var state: Boolean = false
-                val toggleState = Sync.defer {
+                val toggleState    = Sync.defer {
                     state = !state
                 }
                 val getState   = Sync.defer(state)
@@ -122,7 +122,7 @@ class KyoCombinatorsTest extends kyo.test.Test[Any]:
             }
             "condition is true" in {
                 var state: Boolean = true
-                val toggleState = Sync.defer {
+                val toggleState    = Sync.defer {
                     state = !state
                 }
                 val getState   = Sync.defer(state)

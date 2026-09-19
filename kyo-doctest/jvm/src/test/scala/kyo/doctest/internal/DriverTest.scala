@@ -96,7 +96,7 @@ class DriverTest extends kyo.test.Test[Any]:
                     driver.compile(src).flatMap { result =>
                         driver.close.map { _ =>
                             result match
-                                case Driver.Outcome.Ok(_) => succeed("trivial source compiled without errors")
+                                case Driver.Outcome.Ok(_)             => succeed("trivial source compiled without errors")
                                 case Driver.Outcome.Failed(errors, _) =>
                                     fail(s"expected Ok but got Failed: ${errors.map(_.message).mkString(", ")}")
                         }
@@ -146,7 +146,7 @@ class DriverTest extends kyo.test.Test[Any]:
                     driver.compile(src).flatMap { result =>
                         driver.close.map { _ =>
                             result match
-                                case Driver.Outcome.Ok(_) => succeed("Schema macro resolved and compiled cleanly")
+                                case Driver.Outcome.Ok(_)             => succeed("Schema macro resolved and compiled cleanly")
                                 case Driver.Outcome.Failed(errors, _) =>
                                     fail(s"macro compilation failed: ${errors.map(_.message).mkString("; ")}")
                         }
@@ -174,7 +174,7 @@ class DriverTest extends kyo.test.Test[Any]:
                         driver.close.map { _ =>
                             result match
                                 case _: Driver.Outcome.Failed => succeed("-Werror promoted the warning to an error")
-                                case _: Driver.Outcome.Ok =>
+                                case _: Driver.Outcome.Ok     =>
                                     fail("expected -Werror to convert unused-import warning to compile error, but got Ok")
                         }
                     }
@@ -315,7 +315,7 @@ class DriverTest extends kyo.test.Test[Any]:
                     driver.compile(src).flatMap { result =>
                         driver.close.map { _ =>
                             result match
-                                case Driver.Outcome.Ok(_) => succeed("source compiled cleanly as expected")
+                                case Driver.Outcome.Ok(_)             => succeed("source compiled cleanly as expected")
                                 case Driver.Outcome.Failed(errors, _) =>
                                     fail(s"expected Ok but got errors: ${errors.map(_.message).mkString(", ")}")
                         }

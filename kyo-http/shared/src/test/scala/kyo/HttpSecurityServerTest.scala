@@ -17,7 +17,7 @@ class HttpSecurityServerTest extends BaseHttpTest:
     val markerHandler = markerRoute.handler(_ => HttpResponse.ok("SMUGGLED-MARKER"))
 
     // A streaming-response route, used to observe whether a HEAD response carries a body.
-    val streamRoute = HttpRoute.getRaw("stream").response(_.bodyStream)
+    val streamRoute   = HttpRoute.getRaw("stream").response(_.bodyStream)
     val streamHandler = streamRoute.handler(_ =>
         HttpResponse.ok.addField("body", Stream.init(Seq(Span.fromUnsafe("STREAM-BODY".getBytes("UTF-8")))))
     )
@@ -44,7 +44,7 @@ class HttpSecurityServerTest extends BaseHttpTest:
             kyo.net.NetPlatform.transport.connect(host, port).safe.get.map { conn =>
                 def writeAll(rem: Seq[String]): Unit < (Async & Abort[Any]) =
                     rem match
-                        case Seq() => Kyo.unit
+                        case Seq()     => Kyo.unit
                         case w +: tail =>
                             Abort.run[Closed](conn.outbound.safe.put(Span.fromUnsafe(w.getBytes("ISO-8859-1")))).andThen {
                                 Async.sleep(300.millis).andThen(writeAll(tail))
@@ -539,7 +539,7 @@ class HttpSecurityServerTest extends BaseHttpTest:
         val serverTls = internal.HttpTestPlatformBackend.serverTlsConfig
 
         "a finite handshakeTimeout reaps a stalled TLS accept handshake (CWE-400, slowloris)" in {
-            val tc = HttpTransportConfig.default.handshakeTimeout(150.millis)
+            val tc           = HttpTransportConfig.default.handshakeTimeout(150.millis)
             val serverConfig = HttpServerConfig.default.port(0).host("127.0.0.1")
                 .tls(serverTls)
                 .transportConfig(tc)
@@ -571,7 +571,7 @@ class HttpSecurityServerTest extends BaseHttpTest:
             // A generous finite deadline: the loopback handshake completes well under it, so the timer disarms and the
             // request round-trips. This proves the finite deadline does not reap completed handshakes and that the owned
             // per-config transport serves real TLS traffic.
-            val tc = HttpTransportConfig.default.handshakeTimeout(30.seconds)
+            val tc           = HttpTransportConfig.default.handshakeTimeout(30.seconds)
             val serverConfig = HttpServerConfig.default.port(0).host("127.0.0.1")
                 .tls(serverTls)
                 .transportConfig(tc)

@@ -114,7 +114,7 @@ class JsonRpcHttpTransportTest extends kyo.test.Test[Any]:
                 val wsUrl = HttpUrl.parse(s"ws://${url.host}:${url.port}/ws/absent").getOrThrow
                 Abort.run[Timeout](Async.timeout(30.seconds)(Abort.run[HttpException](JsonRpcHttpTransport.webSocket(wsUrl)))).map {
                     case Result.Success(Result.Failure(_: HttpException)) => succeed
-                    case Result.Success(Result.Success(_)) =>
+                    case Result.Success(Result.Success(_))                =>
                         fail("a refused upgrade returned a transport instead of aborting HttpException")
                     case Result.Failure(_: Timeout) => fail("webSocket neither returned nor aborted within 30s")
                     case other                      => fail(s"unexpected $other")

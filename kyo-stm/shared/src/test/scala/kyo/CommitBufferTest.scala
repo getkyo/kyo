@@ -95,7 +95,7 @@ class CommitBufferTest extends kyo.test.Test[Any]:
             for
                 r0 <- TRef.init(10)
                 r1 <- TRef.init(20)
-                _ <- STM.run {
+                _  <- STM.run {
                     for
                         // r0 reads, r1 writes — buffer carries one Read entry and one Write entry.
                         _ <- r0.get
@@ -226,8 +226,8 @@ class CommitBufferTest extends kyo.test.Test[Any]:
                     _ <- r1.update(_ + 1)
                     _ <- r0.update(_ + 1)
                 yield ())
-                _ <- Async.fill(100, 100)(txnAB)
-                _ <- Async.fill(100, 100)(txnBA)
+                _      <- Async.fill(100, 100)(txnAB)
+                _      <- Async.fill(100, 100)(txnBA)
                 values <- STM.run(for
                     a <- r0.get
                     b <- r1.get

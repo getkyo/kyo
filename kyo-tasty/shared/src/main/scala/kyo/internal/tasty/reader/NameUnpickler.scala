@@ -123,16 +123,16 @@ object NameUnpickler:
                     checkRef(selector, accumulator, "EXPANDPREFIX selector")
                     accumulator += Tasty.Name(accumulator(prefix).asString + "$" + accumulator(selector).asString)
                 case TastyFormat.NameTags.UNIQUE =>
-                    val end       = view.readEnd()
-                    val separator = view.readNat()
-                    val uniqid    = view.readNat()
+                    val end        = view.readEnd()
+                    val separator  = view.readNat()
+                    val uniqid     = view.readNat()
                     val underlying =
                         if view.position < end then Some(view.readNat()) else None
                     view.goto(end)
                     checkRef(separator, accumulator, "UNIQUE separator")
                     underlying.foreach(ref => checkRef(ref, accumulator, "UNIQUE underlying"))
                     val sep = accumulator(separator).asString
-                    val s = underlying match
+                    val s   = underlying match
                         case Some(ref) => accumulator(ref).asString + sep + uniqid.toString
                         case None      => sep + uniqid.toString
                     accumulator += Tasty.Name(s)

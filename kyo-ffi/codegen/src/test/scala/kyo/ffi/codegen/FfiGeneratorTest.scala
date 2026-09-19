@@ -53,7 +53,7 @@ class FfiGeneratorTest extends kyo.test.Test[Any]:
         "extracts FixtureBindings and emits FixtureBindingsImpl.scala" in {
             val tasty = findTastyFiles(testClassesDir, _ == "FixtureBindings.tasty")
             assert(tasty.nonEmpty)
-            val out = Files.createTempDirectory("kyo-ffi-gen-test")
+            val out    = Files.createTempDirectory("kyo-ffi-gen-test")
             val result = FfiGenerator.generate(
                 tastyFiles = tasty,
                 classpath = testClasspath,
@@ -90,7 +90,7 @@ class FfiGeneratorTest extends kyo.test.Test[Any]:
             assert(tasty.nonEmpty)
             val out    = Files.createTempDirectory("kyo-ffi-gen-mixed-syms")
             val result = FfiGenerator.generate(tasty, testClasspath, out, FfiGenerator.Platform.JVM)
-            val spec =
+            val spec   =
                 result.traits.find(_.simpleName == "MixedSymbolFormsBindings").getOrElse(
                     fail("MixedSymbolFormsBindings not extracted")
                 )
@@ -102,7 +102,7 @@ class FfiGeneratorTest extends kyo.test.Test[Any]:
             assert(tasty.nonEmpty)
             val out    = Files.createTempDirectory("kyo-ffi-gen-all-fields")
             val result = FfiGenerator.generate(tasty, testClasspath, out, FfiGenerator.Platform.JVM)
-            val spec =
+            val spec   =
                 result.traits.find(_.simpleName == "AllConfigFieldsBindings").getOrElse(fail("AllConfigFieldsBindings not extracted"))
             assert(spec.companion.flatMap(_.scratchSize) == Some(98304))
             assert(spec.companion.map(_.headers) == Some(Seq("stdint.h")))
@@ -159,7 +159,7 @@ class FfiGeneratorTest extends kyo.test.Test[Any]:
             assert(tasty.nonEmpty)
             val out    = Files.createTempDirectory("kyo-ffi-gen-borrowed")
             val result = FfiGenerator.generate(tasty, testClasspath, out, FfiGenerator.Platform.JVM)
-            val spec = result.traits.find(_.simpleName == "BorrowedReturnBindings").getOrElse(
+            val spec   = result.traits.find(_.simpleName == "BorrowedReturnBindings").getOrElse(
                 fail("BorrowedReturnBindings not extracted")
             )
             val getenvMethod = spec.methods.find(_.scalaName == "getenvLike").getOrElse(fail("getenvLike method not found"))
@@ -175,7 +175,7 @@ class FfiGeneratorTest extends kyo.test.Test[Any]:
             assert(tasty.nonEmpty)
             val out    = Files.createTempDirectory("kyo-ffi-gen-union")
             val result = FfiGenerator.generate(tasty, testClasspath, out, FfiGenerator.Platform.JVM)
-            val spec = result.traits.find(_.simpleName == "UnionBindings").getOrElse(
+            val spec   = result.traits.find(_.simpleName == "UnionBindings").getOrElse(
                 fail("UnionBindings not extracted")
             )
             val method = spec.methods.find(_.scalaName == "roundtrip").getOrElse(
@@ -187,8 +187,8 @@ class FfiGeneratorTest extends kyo.test.Test[Any]:
         "emits runtime type match for union parameter on JVM" in {
             val tasty = findTastyFiles(testClassesDir, _ == "UnionBindings.tasty")
             assert(tasty.nonEmpty)
-            val out    = Files.createTempDirectory("kyo-ffi-gen-union-jvm")
-            val result = FfiGenerator.generate(tasty, testClasspath, out, FfiGenerator.Platform.JVM)
+            val out       = Files.createTempDirectory("kyo-ffi-gen-union-jvm")
+            val result    = FfiGenerator.generate(tasty, testClasspath, out, FfiGenerator.Platform.JVM)
             val generated = result.files.find(_.getFileName.toString == "UnionBindingsImpl.scala").getOrElse(
                 fail("UnionBindingsImpl.scala not emitted")
             )
@@ -201,8 +201,8 @@ class FfiGeneratorTest extends kyo.test.Test[Any]:
         "emits runtime type match for union parameter on JS" in {
             val tasty = findTastyFiles(testClassesDir, _ == "UnionBindings.tasty")
             assert(tasty.nonEmpty)
-            val out    = Files.createTempDirectory("kyo-ffi-gen-union-js")
-            val result = FfiGenerator.generate(tasty, testClasspath, out, FfiGenerator.Platform.JS)
+            val out       = Files.createTempDirectory("kyo-ffi-gen-union-js")
+            val result    = FfiGenerator.generate(tasty, testClasspath, out, FfiGenerator.Platform.JS)
             val generated = result.files.find(_.getFileName.toString == "UnionBindingsImpl.scala").getOrElse(
                 fail("UnionBindingsImpl.scala not emitted")
             )
@@ -214,8 +214,8 @@ class FfiGeneratorTest extends kyo.test.Test[Any]:
         "emits runtime type match for union parameter on Native" in {
             val tasty = findTastyFiles(testClassesDir, _ == "UnionBindings.tasty")
             assert(tasty.nonEmpty)
-            val out    = Files.createTempDirectory("kyo-ffi-gen-union-native")
-            val result = FfiGenerator.generate(tasty, testClasspath, out, FfiGenerator.Platform.Native)
+            val out       = Files.createTempDirectory("kyo-ffi-gen-union-native")
+            val result    = FfiGenerator.generate(tasty, testClasspath, out, FfiGenerator.Platform.Native)
             val generated = result.files.find(_.getFileName.toString == "UnionBindingsImpl.scala").getOrElse(
                 fail("UnionBindingsImpl.scala not emitted")
             )
@@ -228,7 +228,7 @@ class FfiGeneratorTest extends kyo.test.Test[Any]:
             val tasty = findTastyFiles(testClassesDir, _ == "BadUnionStringBindings.tasty")
             assert(tasty.nonEmpty)
             val out = Files.createTempDirectory("kyo-ffi-gen-bad-union-string")
-            val ex = intercept[FfiExtractionError] {
+            val ex  = intercept[FfiExtractionError] {
                 FfiGenerator.generate(tasty, testClasspath, out, FfiGenerator.Platform.JVM)
             }
             val msg = ex.errors.map(_.message).mkString("\n")
@@ -239,7 +239,7 @@ class FfiGeneratorTest extends kyo.test.Test[Any]:
             val tasty = findTastyFiles(testClassesDir, _ == "BadUnionReturnBindings.tasty")
             assert(tasty.nonEmpty)
             val out = Files.createTempDirectory("kyo-ffi-gen-bad-union-return")
-            val ex = intercept[FfiExtractionError] {
+            val ex  = intercept[FfiExtractionError] {
                 FfiGenerator.generate(tasty, testClasspath, out, FfiGenerator.Platform.JVM)
             }
             val msg = ex.errors.map(_.message).mkString("\n")
@@ -253,7 +253,7 @@ class FfiGeneratorTest extends kyo.test.Test[Any]:
             assert(tasty.nonEmpty)
             val out    = Files.createTempDirectory("kyo-ffi-gen-varargs")
             val result = FfiGenerator.generate(tasty, testClasspath, out, FfiGenerator.Platform.JVM)
-            val spec = result.traits.find(_.simpleName == "VariadicBindings").getOrElse(
+            val spec   = result.traits.find(_.simpleName == "VariadicBindings").getOrElse(
                 fail("VariadicBindings not extracted")
             )
             val m = spec.methods.find(_.scalaName == "variadicSum").getOrElse(fail("variadicSum method not found"))
@@ -268,7 +268,7 @@ class FfiGeneratorTest extends kyo.test.Test[Any]:
             assert(tasty.nonEmpty)
             val out    = Files.createTempDirectory("kyo-ffi-gen-headers")
             val result = FfiGenerator.generate(tasty, testClasspath, out, FfiGenerator.Platform.JVM)
-            val spec = result.traits.find(_.simpleName == "HeaderGatedBindings").getOrElse(
+            val spec   = result.traits.find(_.simpleName == "HeaderGatedBindings").getOrElse(
                 fail("HeaderGatedBindings not extracted")
             )
             assert(spec.headers == Seq("sys/test_header.h"))
@@ -290,7 +290,7 @@ class FfiGeneratorTest extends kyo.test.Test[Any]:
             // with a generous timeout: a deadlock fails the test; a normal completion (true on a POSIX host) passes fast.
             val socketHeaders  = Seq("sys/socket.h", "netinet/in.h", "sys/un.h", "fcntl.h", "unistd.h")
             @volatile var done = false
-            val worker = new Thread(() =>
+            val worker         = new Thread(() =>
                 FfiGenerator.headersAvailable(socketHeaders): Unit
                 done = true
             )
@@ -372,7 +372,7 @@ class FfiGeneratorTest extends kyo.test.Test[Any]:
             assert(tasty.nonEmpty)
             val out    = Files.createTempDirectory("kyo-ffi-gen-handle-jvm")
             val result = FfiGenerator.generate(tasty, testClasspath, out, FfiGenerator.Platform.JVM)
-            val spec = result.traits.find(_.simpleName == "OpaqueBindings").getOrElse(
+            val spec   = result.traits.find(_.simpleName == "OpaqueBindings").getOrElse(
                 fail("OpaqueBindings not extracted")
             )
 
@@ -407,8 +407,8 @@ class FfiGeneratorTest extends kyo.test.Test[Any]:
                 n => n == "OpaqueBindings.tasty" || n == "FixtureHandle.tasty" || n == "FixtureOtherHandle.tasty"
             )
             assert(tasty.nonEmpty)
-            val out    = Files.createTempDirectory("kyo-ffi-gen-handle-native")
-            val result = FfiGenerator.generate(tasty, testClasspath, out, FfiGenerator.Platform.Native)
+            val out       = Files.createTempDirectory("kyo-ffi-gen-handle-native")
+            val result    = FfiGenerator.generate(tasty, testClasspath, out, FfiGenerator.Platform.Native)
             val generated = result.files.find(_.getFileName.toString == "OpaqueBindingsImpl.scala").getOrElse(
                 fail("OpaqueBindingsImpl.scala not generated")
             )
@@ -427,7 +427,7 @@ class FfiGeneratorTest extends kyo.test.Test[Any]:
             assert(tasty.nonEmpty)
             val out    = Files.createTempDirectory("kyo-ffi-gen-enum-jvm")
             val result = FfiGenerator.generate(tasty, testClasspath, out, FfiGenerator.Platform.JVM)
-            val spec = result.traits.find(_.simpleName == "EnumBindings").getOrElse(
+            val spec   = result.traits.find(_.simpleName == "EnumBindings").getOrElse(
                 fail("EnumBindings not extracted")
             )
 
@@ -458,8 +458,8 @@ class FfiGeneratorTest extends kyo.test.Test[Any]:
                 n => n == "EnumBindings.tasty" || n == "FixtureColor.tasty"
             )
             assert(tasty.nonEmpty)
-            val out    = Files.createTempDirectory("kyo-ffi-gen-enum-native")
-            val result = FfiGenerator.generate(tasty, testClasspath, out, FfiGenerator.Platform.Native)
+            val out       = Files.createTempDirectory("kyo-ffi-gen-enum-native")
+            val result    = FfiGenerator.generate(tasty, testClasspath, out, FfiGenerator.Platform.Native)
             val generated = result.files.find(_.getFileName.toString == "EnumBindingsImpl.scala").getOrElse(
                 fail("EnumBindingsImpl.scala not generated")
             )
@@ -475,8 +475,8 @@ class FfiGeneratorTest extends kyo.test.Test[Any]:
                 n => n == "EnumBindings.tasty" || n == "FixtureColor.tasty"
             )
             assert(tasty.nonEmpty)
-            val out    = Files.createTempDirectory("kyo-ffi-gen-enum-js")
-            val result = FfiGenerator.generate(tasty, testClasspath, out, FfiGenerator.Platform.JS)
+            val out       = Files.createTempDirectory("kyo-ffi-gen-enum-js")
+            val result    = FfiGenerator.generate(tasty, testClasspath, out, FfiGenerator.Platform.JS)
             val generated = result.files.find(_.getFileName.toString == "EnumBindingsImpl.scala").getOrElse(
                 fail("EnumBindingsImpl.scala not generated")
             )
@@ -492,8 +492,8 @@ class FfiGeneratorTest extends kyo.test.Test[Any]:
                 n => n == "OpaqueBindings.tasty" || n == "FixtureHandle.tasty" || n == "FixtureOtherHandle.tasty"
             )
             assert(tasty.nonEmpty)
-            val out    = Files.createTempDirectory("kyo-ffi-gen-handle-js")
-            val result = FfiGenerator.generate(tasty, testClasspath, out, FfiGenerator.Platform.JS)
+            val out       = Files.createTempDirectory("kyo-ffi-gen-handle-js")
+            val result    = FfiGenerator.generate(tasty, testClasspath, out, FfiGenerator.Platform.JS)
             val generated = result.files.find(_.getFileName.toString == "OpaqueBindingsImpl.scala").getOrElse(
                 fail("OpaqueBindingsImpl.scala not generated")
             )
@@ -514,8 +514,8 @@ class FfiGeneratorTest extends kyo.test.Test[Any]:
                         n == "FixtureHandle.tasty" || n == "FixtureOtherHandle.tasty"
             )
             assert(tasty.nonEmpty)
-            val out    = Files.createTempDirectory("kyo-ffi-gen-struct-ptr-jvm")
-            val result = FfiGenerator.generate(tasty, testClasspath, out, FfiGenerator.Platform.JVM)
+            val out       = Files.createTempDirectory("kyo-ffi-gen-struct-ptr-jvm")
+            val result    = FfiGenerator.generate(tasty, testClasspath, out, FfiGenerator.Platform.JVM)
             val generated = result.files.find(_.getFileName.toString == "StructPtrFieldBindingsImpl.scala").getOrElse(
                 fail("StructPtrFieldBindingsImpl.scala not generated")
             )
@@ -537,8 +537,8 @@ class FfiGeneratorTest extends kyo.test.Test[Any]:
                         n == "FixtureHandle.tasty" || n == "FixtureOtherHandle.tasty"
             )
             assert(tasty.nonEmpty)
-            val out    = Files.createTempDirectory("kyo-ffi-gen-struct-ptr-native")
-            val result = FfiGenerator.generate(tasty, testClasspath, out, FfiGenerator.Platform.Native)
+            val out       = Files.createTempDirectory("kyo-ffi-gen-struct-ptr-native")
+            val result    = FfiGenerator.generate(tasty, testClasspath, out, FfiGenerator.Platform.Native)
             val generated = result.files.find(_.getFileName.toString == "StructPtrFieldBindingsImpl.scala").getOrElse(
                 fail("StructPtrFieldBindingsImpl.scala not generated")
             )
@@ -559,8 +559,8 @@ class FfiGeneratorTest extends kyo.test.Test[Any]:
                         n == "FixtureHandle.tasty" || n == "FixtureOtherHandle.tasty"
             )
             assert(tasty.nonEmpty)
-            val out    = Files.createTempDirectory("kyo-ffi-gen-struct-ptr-js")
-            val result = FfiGenerator.generate(tasty, testClasspath, out, FfiGenerator.Platform.JS)
+            val out       = Files.createTempDirectory("kyo-ffi-gen-struct-ptr-js")
+            val result    = FfiGenerator.generate(tasty, testClasspath, out, FfiGenerator.Platform.JS)
             val generated = result.files.find(_.getFileName.toString == "StructPtrFieldBindingsImpl.scala").getOrElse(
                 fail("StructPtrFieldBindingsImpl.scala not generated")
             )
@@ -576,8 +576,8 @@ class FfiGeneratorTest extends kyo.test.Test[Any]:
         "Borrowed[String] emits Ffi.Borrowed.wrap in generated JVM code" in {
             val tasty = findTastyFiles(testClassesDir, _ == "BorrowedReturnBindings.tasty")
             assert(tasty.nonEmpty)
-            val out    = Files.createTempDirectory("kyo-ffi-gen-borrowed-wrap-jvm")
-            val result = FfiGenerator.generate(tasty, testClasspath, out, FfiGenerator.Platform.JVM)
+            val out       = Files.createTempDirectory("kyo-ffi-gen-borrowed-wrap-jvm")
+            val result    = FfiGenerator.generate(tasty, testClasspath, out, FfiGenerator.Platform.JVM)
             val generated = result.files.find(_.getFileName.toString == "BorrowedReturnBindingsImpl.scala").getOrElse(
                 fail("BorrowedReturnBindingsImpl.scala not generated")
             )
@@ -590,8 +590,8 @@ class FfiGeneratorTest extends kyo.test.Test[Any]:
         "Borrowed[String] emits Ffi.Borrowed.wrap in generated Native code" in {
             val tasty = findTastyFiles(testClassesDir, _ == "BorrowedReturnBindings.tasty")
             assert(tasty.nonEmpty)
-            val out    = Files.createTempDirectory("kyo-ffi-gen-borrowed-wrap-native")
-            val result = FfiGenerator.generate(tasty, testClasspath, out, FfiGenerator.Platform.Native)
+            val out       = Files.createTempDirectory("kyo-ffi-gen-borrowed-wrap-native")
+            val result    = FfiGenerator.generate(tasty, testClasspath, out, FfiGenerator.Platform.Native)
             val generated = result.files.find(_.getFileName.toString == "BorrowedReturnBindingsImpl.scala").getOrElse(
                 fail("BorrowedReturnBindingsImpl.scala not generated")
             )
@@ -602,8 +602,8 @@ class FfiGeneratorTest extends kyo.test.Test[Any]:
         "Borrowed[String] emits Ffi.Borrowed.wrap in generated JS code" in {
             val tasty = findTastyFiles(testClassesDir, _ == "BorrowedReturnBindings.tasty")
             assert(tasty.nonEmpty)
-            val out    = Files.createTempDirectory("kyo-ffi-gen-borrowed-wrap-js")
-            val result = FfiGenerator.generate(tasty, testClasspath, out, FfiGenerator.Platform.JS)
+            val out       = Files.createTempDirectory("kyo-ffi-gen-borrowed-wrap-js")
+            val result    = FfiGenerator.generate(tasty, testClasspath, out, FfiGenerator.Platform.JS)
             val generated = result.files.find(_.getFileName.toString == "BorrowedReturnBindingsImpl.scala").getOrElse(
                 fail("BorrowedReturnBindingsImpl.scala not generated")
             )
@@ -615,7 +615,7 @@ class FfiGeneratorTest extends kyo.test.Test[Any]:
             val tasty = findTastyFiles(testClassesDir, _ == "BadBorrowedPrimitiveBindings.tasty")
             assert(tasty.nonEmpty)
             val out = Files.createTempDirectory("kyo-ffi-gen-bad-borrowed-prim")
-            val ex = intercept[FfiExtractionError] {
+            val ex  = intercept[FfiExtractionError] {
                 FfiGenerator.generate(tasty, testClasspath, out, FfiGenerator.Platform.JVM)
             }
             val msg = ex.errors.map(_.message).mkString("\n")
@@ -627,7 +627,7 @@ class FfiGeneratorTest extends kyo.test.Test[Any]:
             val tasty = findTastyFiles(testClassesDir, _ == "BadBorrowedBufferNoSizeBindings.tasty")
             assert(tasty.nonEmpty)
             val out = Files.createTempDirectory("kyo-ffi-gen-bad-borrowed-nosize")
-            val ex = intercept[FfiExtractionError] {
+            val ex  = intercept[FfiExtractionError] {
                 FfiGenerator.generate(tasty, testClasspath, out, FfiGenerator.Platform.JVM)
             }
             val msg = ex.errors.map(_.message).mkString("\n")
@@ -639,7 +639,7 @@ class FfiGeneratorTest extends kyo.test.Test[Any]:
             val tasty = findTastyFiles(testClassesDir, _ == "BadBorrowedBufferAmbiguousSizeBindings.tasty")
             assert(tasty.nonEmpty)
             val out = Files.createTempDirectory("kyo-ffi-gen-bad-borrowed-ambig")
-            val ex = intercept[FfiExtractionError] {
+            val ex  = intercept[FfiExtractionError] {
                 FfiGenerator.generate(tasty, testClasspath, out, FfiGenerator.Platform.JVM)
             }
             val msg = ex.errors.map(_.message).mkString("\n")
@@ -658,7 +658,7 @@ class FfiGeneratorTest extends kyo.test.Test[Any]:
             )
             assert(tasty.nonEmpty)
             val out = Files.createTempDirectory("kyo-ffi-gen-bad-enum-novalue")
-            val ex = intercept[FfiExtractionError] {
+            val ex  = intercept[FfiExtractionError] {
                 FfiGenerator.generate(tasty, testClasspath, out, FfiGenerator.Platform.JVM)
             }
             val msg = ex.errors.map(_.message).mkString("\n")
@@ -672,7 +672,7 @@ class FfiGeneratorTest extends kyo.test.Test[Any]:
             )
             assert(tasty.nonEmpty)
             val out = Files.createTempDirectory("kyo-ffi-gen-bad-enum-nofromint")
-            val ex = intercept[FfiExtractionError] {
+            val ex  = intercept[FfiExtractionError] {
                 FfiGenerator.generate(tasty, testClasspath, out, FfiGenerator.Platform.JVM)
             }
             val msg = ex.errors.map(_.message).mkString("\n")
@@ -689,7 +689,7 @@ class FfiGeneratorTest extends kyo.test.Test[Any]:
             assert(tasty.nonEmpty)
             val out    = Files.createTempDirectory("kyo-ffi-gen-witherror")
             val result = FfiGenerator.generate(tasty, testClasspath, out, FfiGenerator.Platform.JVM)
-            val spec = result.traits.find(_.simpleName == "WithErrorBindings").getOrElse(
+            val spec   = result.traits.find(_.simpleName == "WithErrorBindings").getOrElse(
                 fail("WithErrorBindings not extracted")
             )
             val riskyMethod = spec.methods.find(_.scalaName == "riskyOp").getOrElse(fail("riskyOp method not found"))
@@ -705,8 +705,8 @@ class FfiGeneratorTest extends kyo.test.Test[Any]:
         "WithErrorBindings emits errno capture in generated JVM code" in {
             val tasty = findTastyFiles(testClassesDir, _ == "WithErrorBindings.tasty")
             assert(tasty.nonEmpty)
-            val out    = Files.createTempDirectory("kyo-ffi-gen-witherror-jvm")
-            val result = FfiGenerator.generate(tasty, testClasspath, out, FfiGenerator.Platform.JVM)
+            val out       = Files.createTempDirectory("kyo-ffi-gen-witherror-jvm")
+            val result    = FfiGenerator.generate(tasty, testClasspath, out, FfiGenerator.Platform.JVM)
             val generated = result.files.find(_.getFileName.toString == "WithErrorBindingsImpl.scala").getOrElse(
                 fail("WithErrorBindingsImpl.scala not generated")
             )
@@ -722,8 +722,8 @@ class FfiGeneratorTest extends kyo.test.Test[Any]:
         "WithErrorBindings emits errno capture in generated Native code" in {
             val tasty = findTastyFiles(testClassesDir, _ == "WithErrorBindings.tasty")
             assert(tasty.nonEmpty)
-            val out    = Files.createTempDirectory("kyo-ffi-gen-witherror-native")
-            val result = FfiGenerator.generate(tasty, testClasspath, out, FfiGenerator.Platform.Native)
+            val out       = Files.createTempDirectory("kyo-ffi-gen-witherror-native")
+            val result    = FfiGenerator.generate(tasty, testClasspath, out, FfiGenerator.Platform.Native)
             val generated = result.files.find(_.getFileName.toString == "WithErrorBindingsImpl.scala").getOrElse(
                 fail("WithErrorBindingsImpl.scala not generated")
             )
@@ -736,8 +736,8 @@ class FfiGeneratorTest extends kyo.test.Test[Any]:
         "WithErrorBindings emits errno capture in generated JS code" in {
             val tasty = findTastyFiles(testClassesDir, _ == "WithErrorBindings.tasty")
             assert(tasty.nonEmpty)
-            val out    = Files.createTempDirectory("kyo-ffi-gen-witherror-js")
-            val result = FfiGenerator.generate(tasty, testClasspath, out, FfiGenerator.Platform.JS)
+            val out       = Files.createTempDirectory("kyo-ffi-gen-witherror-js")
+            val result    = FfiGenerator.generate(tasty, testClasspath, out, FfiGenerator.Platform.JS)
             val generated = result.files.find(_.getFileName.toString == "WithErrorBindingsImpl.scala").getOrElse(
                 fail("WithErrorBindingsImpl.scala not generated")
             )
@@ -750,8 +750,8 @@ class FfiGeneratorTest extends kyo.test.Test[Any]:
         "plain return in WithErrorBindings does NOT include errno capture for safeOp" in {
             val tasty = findTastyFiles(testClassesDir, _ == "WithErrorBindings.tasty")
             assert(tasty.nonEmpty)
-            val out    = Files.createTempDirectory("kyo-ffi-gen-witherror-plain")
-            val result = FfiGenerator.generate(tasty, testClasspath, out, FfiGenerator.Platform.JVM)
+            val out       = Files.createTempDirectory("kyo-ffi-gen-witherror-plain")
+            val result    = FfiGenerator.generate(tasty, testClasspath, out, FfiGenerator.Platform.JVM)
             val generated = result.files.find(_.getFileName.toString == "WithErrorBindingsImpl.scala").getOrElse(
                 fail("WithErrorBindingsImpl.scala not generated")
             )
@@ -772,7 +772,7 @@ class FfiGeneratorTest extends kyo.test.Test[Any]:
             assert(tasty.nonEmpty)
             val out    = Files.createTempDirectory("kyo-ffi-gen-byvalue")
             val result = FfiGenerator.generate(tasty, testClasspath, out, FfiGenerator.Platform.JVM)
-            val spec = result.traits.find(_.simpleName == "ByValueBindings").getOrElse(
+            val spec   = result.traits.find(_.simpleName == "ByValueBindings").getOrElse(
                 fail("ByValueBindings not extracted")
             )
 

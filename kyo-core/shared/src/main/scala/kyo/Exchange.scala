@@ -267,7 +267,7 @@ object Exchange:
                 Sync.Unsafe.defer {
                     self.donePromise.poll() match
                         case Maybe.Present(Result.Failure(err)) => Abort.fail(err)
-                        case Maybe.Absent =>
+                        case Maybe.Absent                       =>
                             val promise = Promise.Unsafe.init[Resp, Abort[E | Closed]]()
                             self.addPending(id, promise)
                             // Double-check: close() may have drained the pending map

@@ -627,7 +627,7 @@ class SchemaAnnotationTest extends kyo.test.Test[Any]:
             assert(result.isFailure, s"hostile tag '$tag' must yield isFailure; got $result")
             result match
                 case Result.Failure(_: UnknownVariantException) => ()
-                case other =>
+                case other                                      =>
                     fail(s"expected UnknownVariantException for hostile tag '$tag'; got $other")
             end match
         }
@@ -799,7 +799,7 @@ class SchemaAnnotationTest extends kyo.test.Test[Any]:
     }
 
     "programmatic omit.when overrides annotation-derived omit.When policy (SA50)" in {
-        val base = Schema[SA50Prod]
+        val base       = Schema[SA50Prod]
         val overridden = base.omit(_.count).when(v =>
             v match
                 case Structure.Value.Integer(n) => n > 10
@@ -1069,7 +1069,7 @@ class SchemaAnnotationTest extends kyo.test.Test[Any]:
     }
 
     "programmatic transformField overrides annotation-derived @transform on ProbeMsg" in {
-        val base = Schema[ProbeMsg]
+        val base       = Schema[ProbeMsg]
         val overridden = base.transformField(_.code)((v, w) => w.string(v.toLowerCase))(reader =>
             discard(reader.string()); "PROGRAMMATIC"
         )

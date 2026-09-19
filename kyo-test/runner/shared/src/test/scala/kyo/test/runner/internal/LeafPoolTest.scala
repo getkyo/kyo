@@ -46,7 +46,7 @@ class LeafPoolTest extends AsyncFreeSpec with NonImplicitAssertions:
 
     "pool runs exactly k work bodies concurrently" in {
         // One dedicated instance with k workers; capacity 64 comfortably holds the k barrier items.
-        val pool = new LeafPool(k, 64)
+        val pool        = new LeafPool(k, 64)
         val computation =
             for
                 inFlight <- AtomicInt.init(0)
@@ -89,14 +89,14 @@ class LeafPoolTest extends AsyncFreeSpec with NonImplicitAssertions:
         // Same dedicated pool shape (k workers). Submit 3k items with no barrier: the channel queues the overflow
         // past the k workers and every item drains. inFlight is structurally bounded by the k workers, so the peak
         // never exceeds k.
-        val pool = new LeafPool(k, 64)
-        val n    = k * 3
+        val pool        = new LeafPool(k, 64)
+        val n           = k * 3
         val computation =
             for
                 inFlight <- AtomicInt.init(0)
                 peak     <- AtomicInt.init(0)
                 // Result sink: capacity n so no item ever blocks recording its index.
-                sink <- Channel.initUnscoped[Int](n)
+                sink     <- Channel.initUnscoped[Int](n)
                 promises <- Kyo.foreach(0 until n) { i =>
                     val work: Unit < Async =
                         Abort.run[Closed] {

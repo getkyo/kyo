@@ -109,7 +109,7 @@ class Rfc6750Test extends BaseHttpTest:
     "Section 2.1 - Token with special chars" in {
         // b64token = 1*( ALPHA / DIGIT / "-" / "." / "_" / "~" / "+" / "/" ) *( "=" )
         val specialToken = "abc-._~+/def123=="
-        val ep = bearerRoute
+        val ep           = bearerRoute
             .filter(HttpFilter.server.bearerAuth(token => token == specialToken))
             .handler(_ => HttpResponse.ok("protected data"))
         withServer(ep) { port =>
@@ -161,7 +161,7 @@ class Rfc6750Test extends BaseHttpTest:
     "Section 2.1 - Basic scheme rejected by bearer auth filter" in {
         withServer(bearerEndpoint) { port =>
             val encoded = java.util.Base64.getEncoder.encodeToString("user:pass".getBytes("UTF-8"))
-            val req = HttpRequest.getRaw(HttpUrl.fromUri("/api"))
+            val req     = HttpRequest.getRaw(HttpUrl.fromUri("/api"))
                 .setHeader("Authorization", s"Basic $encoded")
             Abort.run(send(port, rawRoute, req)).map { result =>
                 result match
@@ -175,7 +175,7 @@ class Rfc6750Test extends BaseHttpTest:
 
     "Section 2.1 - Long token accepted" in {
         val longToken = "x" * 1000
-        val ep = bearerRoute
+        val ep        = bearerRoute
             .filter(HttpFilter.server.bearerAuth(token => token == longToken))
             .handler(_ => HttpResponse.ok("protected data"))
         withServer(ep) { port =>

@@ -62,7 +62,7 @@ class ChartTimeAxisTest extends kyo.test.Test[Any]:
 
     "a Double x-encoding still selects a linear scale" in {
         case class Point(x: Double, y: Double)
-        val spec = Chart(Chunk(Point(0.0, 1.0), Point(1.0, 2.0)))(line(x = _.x, y = _.y))
+        val spec     = Chart(Chunk(Point(0.0, 1.0), Point(1.0, 2.0)))(line(x = _.x, y = _.y))
         val inferred = ChartScales.inferKind(
             kyo.internal.Extent.Continuous(0.0, 1.0),
             spec.marks,

@@ -69,7 +69,7 @@ class EmitTest extends kyo.test.Test[Any]:
 
     "runForeach" - {
         "with pure function" in {
-            var seen = List.empty[Int]
+            var seen                            = List.empty[Int]
             def emits(i: Int): Unit < Emit[Int] =
                 if i == 5 then ()
                 else Emit.valueWith(i)(emits(i + 1))
@@ -82,7 +82,7 @@ class EmitTest extends kyo.test.Test[Any]:
         }
 
         "with effects" in {
-            var seen = List.empty[Int]
+            var seen                            = List.empty[Int]
             def emits(i: Int): Unit < Emit[Int] =
                 if i == 5 then ()
                 else Emit.valueWith(i)(emits(i + 1))
@@ -102,7 +102,7 @@ class EmitTest extends kyo.test.Test[Any]:
         }
 
         "early termination" in {
-            var seen = List.empty[Int]
+            var seen                            = List.empty[Int]
             def emits(i: Int): Unit < Emit[Int] =
                 if i == 5 then ()
                 else Emit.valueWith(i)(emits(i + 1))
@@ -122,7 +122,7 @@ class EmitTest extends kyo.test.Test[Any]:
 
     "runWhile" - {
         "with pure function" in {
-            var seen = List.empty[Int]
+            var seen                            = List.empty[Int]
             def emits(i: Int): Unit < Emit[Int] =
                 if i == 5 then ()
                 else Emit.valueWith(i)(emits(i + 1))
@@ -137,7 +137,7 @@ class EmitTest extends kyo.test.Test[Any]:
         }
 
         "with effects" in {
-            var seen = List.empty[Int]
+            var seen                            = List.empty[Int]
             def emits(i: Int): Unit < Emit[Int] =
                 if i == 5 then ()
                 else Emit.valueWith(i)(emits(i + 1))
@@ -160,7 +160,7 @@ class EmitTest extends kyo.test.Test[Any]:
         }
 
         "early termination" in {
-            var seen = List.empty[Int]
+            var seen                            = List.empty[Int]
             def emits(i: Int): Unit < Emit[Int] =
                 if i == 5 then ()
                 else Emit.valueWith(i)(emits(i + 1))
@@ -226,7 +226,7 @@ class EmitTest extends kyo.test.Test[Any]:
 
         "with effects" in {
             var count = 0
-            val v =
+            val v     =
                 for
                     _ <- Emit.value(1)
                     _ <- Emit.value(2)
@@ -436,7 +436,7 @@ class EmitTest extends kyo.test.Test[Any]:
             "combines emitted values from isolated and outer scopes" in {
                 val result = Emit.run {
                     for
-                        _ <- Emit.value(1)
+                        _        <- Emit.value(1)
                         isolated <- Emit.isolate.merge[Int].run {
                             for
                                 _ <- Emit.value(2)
@@ -452,10 +452,10 @@ class EmitTest extends kyo.test.Test[Any]:
             "proper state restoration after nested isolations" in {
                 val result = Emit.run {
                     for
-                        _ <- Emit.value("start")
+                        _  <- Emit.value("start")
                         v1 <- Emit.isolate.merge[String].run {
                             for
-                                _ <- Emit.value("inner1")
+                                _  <- Emit.value("inner1")
                                 v2 <- Emit.isolate.merge[String].run {
                                     Emit.value("nested").map(_ => "nested-result")
                                 }
@@ -472,7 +472,7 @@ class EmitTest extends kyo.test.Test[Any]:
             "inner emissions don't affect outer scope" in {
                 val result = Emit.run {
                     for
-                        _ <- Emit.value(1)
+                        _        <- Emit.value(1)
                         isolated <- Emit.isolate.discard[Int].run {
                             for
                                 _ <- Emit.value(2)
@@ -488,10 +488,10 @@ class EmitTest extends kyo.test.Test[Any]:
             "nested discards maintain isolation" in {
                 val result = Emit.run {
                     for
-                        _ <- Emit.value("outer")
+                        _  <- Emit.value("outer")
                         v1 <- Emit.isolate.discard[String].run {
                             for
-                                _ <- Emit.value("discarded1")
+                                _  <- Emit.value("discarded1")
                                 v2 <- Emit.isolate.discard[String].run {
                                     Emit.value("discarded2").map(_ => "nested-result")
                                 }
@@ -528,7 +528,7 @@ class EmitTest extends kyo.test.Test[Any]:
 
             "can combine with Memo isolate" in {
                 var count = 0
-                val f = Memo[Int, Int, Any] { x =>
+                val f     = Memo[Int, Int, Any] { x =>
                     count += 1
                     x * 2
                 }

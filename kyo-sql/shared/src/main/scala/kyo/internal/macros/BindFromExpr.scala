@@ -139,9 +139,9 @@ object BindFromExpr:
         @tailrec
         private def unwrap(t: Term): Term =
             t match
-                case Inlined(_, _, inner) => unwrap(inner)
-                case Block(_, inner)      => unwrap(inner)
-                case Typed(inner, _)      => unwrap(inner)
+                case Inlined(_, _, inner)                                           => unwrap(inner)
+                case Block(_, inner)                                                => unwrap(inner)
+                case Typed(inner, _)                                                => unwrap(inner)
                 case TypeApply(Select(inner, "asInstanceOf" | "$asInstanceOf$"), _) =>
                     unwrap(inner)
                 case Apply(TypeApply(Select(_, "substituteCo" | "substituteContra"), _), List(i)) =>

@@ -305,8 +305,7 @@ class RecordingIoUringBindings(real: IoUringBindings, realRing: Buffer[Byte]) ex
       * conditional-park behavior: indefinite (`Long.MaxValue`) when `nodropAvailable` and the wake multishot is armed with no stalled ops;
       * bounded `ReapTimeoutNs` otherwise.
       */
-    val nodropAvailable: Boolean =
-        (real.kyo_uring_get_features(realRing) & IoUringDriver.FeatNodrop) != 0
+    val nodropAvailable: Boolean = (real.kyo_uring_get_features(realRing) & IoUringDriver.FeatNodrop) != 0
 
     /** A promise that completes when the reap loop next marks a CQE seen (i.e. has reaped one completion and run its post-completion work). */
     def awaitReap()(using AllowUnsafe): Promise.Unsafe[Unit, Any] =

@@ -39,7 +39,7 @@ class IoUringDriverConnectCloseRaceTest extends Test:
         Sync.ensure(Sync.defer(drv.close())) {
             val closingAddr = Buffer.alloc[Byte](16)
             val healthyAddr = Buffer.alloc[Byte](16)
-            val closing =
+            val closing     =
                 PosixHandle.socket(ClosingFd, PosixHandle.DefaultReadBufferSize, Present((closingAddr, 16)), Frame.internal)
             val healthy =
                 PosixHandle.socket(HealthyFd, PosixHandle.DefaultReadBufferSize, Present((healthyAddr, 16)), Frame.internal)

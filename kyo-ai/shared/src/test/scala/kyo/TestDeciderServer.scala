@@ -49,7 +49,7 @@ object TestDeciderServer:
         for
             scripts  <- AtomicRef.init(Chunk.empty[Scripted])
             received <- AtomicRef.init(Chunk.empty[String])
-            result <- HttpServer.initWith(HttpServerConfig.default)(route(scripts, received)) { server =>
+            result   <- HttpServer.initWith(HttpServerConfig.default)(route(scripts, received)) { server =>
                 f(new TestDeciderServer(scripts, received, s"http://127.0.0.1:${server.port}/v1"))
             }
         yield result
@@ -90,7 +90,7 @@ object TestDeciderServer:
         def peak(i: Int): String = if i == 0 then "1.0" else "0.0"
         req.questions.toChunk.map { (id, q) =>
             val answer = q.`type` match
-                case "noul" => """{"type":"noul","noul":0.9}"""
+                case "noul"   => """{"type":"noul","noul":0.9}"""
                 case "choice" =>
                     val keys = q.criteria match
                         case Present(Structure.Value.Record(fields)) => fields.map(_._1)

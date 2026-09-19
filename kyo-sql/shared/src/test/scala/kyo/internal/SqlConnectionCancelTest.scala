@@ -138,7 +138,7 @@ class SqlConnectionCancelTest extends kyo.Test:
         def drainToIdle(using Frame): Boolean < (Async & Abort[SqlException]) =
             Sync.Unsafe.defer(requestInFlight.get()).flatMap {
                 case false => true
-                case true =>
+                case true  =>
                     emit("drain").andThen {
                         if script.drainHangs then Async.never
                         else if script.drainUntilSocketClosed then drainUntilClosed
@@ -214,11 +214,11 @@ class SqlConnectionCancelTest extends kyo.Test:
         def pipelined(stmts: Chunk[(String, Chunk[BoundValue[?]])])(using
             Frame
         ): Chunk[Result[SqlException, SqlClient.PipelineBuilder.Outcome]] < (Async & Abort[SqlException]) = unused("pipelined")
-        def savepoint(name: String)(using Frame): Unit < (Async & Abort[SqlException])           = unused("savepoint")
-        def releaseSavepoint(name: String)(using Frame): Unit < (Async & Abort[SqlException])    = unused("releaseSavepoint")
-        def rollbackToSavepoint(name: String)(using Frame): Unit < (Async & Abort[SqlException]) = unused("rollbackToSavepoint")
-        def ping(using Frame): Unit < (Async & Abort[SqlException])                              = unused("ping")
-        def resetSession(using Frame): Unit < (Async & Abort[SqlException])                      = unused("resetSession")
+        def savepoint(name: String)(using Frame): Unit < (Async & Abort[SqlException])                    = unused("savepoint")
+        def releaseSavepoint(name: String)(using Frame): Unit < (Async & Abort[SqlException])             = unused("releaseSavepoint")
+        def rollbackToSavepoint(name: String)(using Frame): Unit < (Async & Abort[SqlException])          = unused("rollbackToSavepoint")
+        def ping(using Frame): Unit < (Async & Abort[SqlException])                                       = unused("ping")
+        def resetSession(using Frame): Unit < (Async & Abort[SqlException])                               = unused("resetSession")
         def acquireAdvisoryLock(key: Long, timeout: Maybe[Duration])(using Frame): Unit < (Async & Abort[SqlException]) =
             unused("acquireAdvisoryLock")
         def releaseAdvisoryLock(key: Long)(using Frame): Unit < (Async & Abort[SqlException]) = unused("releaseAdvisoryLock")
@@ -318,7 +318,7 @@ class SqlConnectionCancelTest extends kyo.Test:
                 seenRef.get.map { seen =>
                     outcome match
                         case Result.Success(_) => seen
-                        case _ =>
+                        case _                 =>
                             Abort.panic(new AssertionError(
                                 s"expected $n reclaim events within ${reportLimit.show}, saw ${seen.size}: $seen"
                             ))
@@ -931,7 +931,7 @@ class SqlConnectionCancelTest extends kyo.Test:
                                 Connection.custodyLocal.use { maybeCustody =>
                                     Sync.Unsafe.defer {
                                         val socketOpen = AtomicBoolean.Unsafe.init(true)
-                                        val probe = new Probe(
+                                        val probe      = new Probe(
                                             id,
                                             events,
                                             Script(drainReusable = false),

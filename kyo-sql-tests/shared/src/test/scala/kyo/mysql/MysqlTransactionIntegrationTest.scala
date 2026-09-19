@@ -86,8 +86,8 @@ class MysqlTransactionIntegrationTest extends SqlContainerTest:
                 initClient(ctx) { client =>
                     val tableName = "tx_rollback_test"
                     for
-                        _ <- client.executeRaw(s"CREATE TABLE IF NOT EXISTS $tableName (id INT, val VARCHAR(64))")
-                        _ <- client.executeRaw(s"TRUNCATE TABLE $tableName")
+                        _      <- client.executeRaw(s"CREATE TABLE IF NOT EXISTS $tableName (id INT, val VARCHAR(64))")
+                        _      <- client.executeRaw(s"TRUNCATE TABLE $tableName")
                         result <- Abort.run[SqlException] {
                             client.transaction {
                                 client.executeRaw(s"INSERT INTO $tableName VALUES (2, 'rollback')").andThen(
@@ -218,8 +218,8 @@ class MysqlTransactionIntegrationTest extends SqlContainerTest:
                 initClient(ctx) { client =>
                     val tableName = "tx_full_rollback"
                     for
-                        _ <- client.executeRaw(s"CREATE TABLE IF NOT EXISTS $tableName (id INT)")
-                        _ <- client.executeRaw(s"TRUNCATE TABLE $tableName")
+                        _      <- client.executeRaw(s"CREATE TABLE IF NOT EXISTS $tableName (id INT)")
+                        _      <- client.executeRaw(s"TRUNCATE TABLE $tableName")
                         result <- Abort.run[SqlException] {
                             client.transaction {
                                 for
@@ -343,9 +343,9 @@ class MysqlTransactionIntegrationTest extends SqlContainerTest:
                     val dataTable = "tx_ddl_data"
                     val ddlTable  = "tx_ddl_created"
                     for
-                        _ <- client.executeRaw(s"CREATE TABLE IF NOT EXISTS $dataTable (id INT)")
-                        _ <- client.executeRaw(s"DROP TABLE IF EXISTS $ddlTable")
-                        _ <- client.executeRaw(s"TRUNCATE TABLE $dataTable")
+                        _      <- client.executeRaw(s"CREATE TABLE IF NOT EXISTS $dataTable (id INT)")
+                        _      <- client.executeRaw(s"DROP TABLE IF EXISTS $ddlTable")
+                        _      <- client.executeRaw(s"TRUNCATE TABLE $dataTable")
                         result <- Abort.run[SqlException] {
                             client.transaction {
                                 for

@@ -30,12 +30,12 @@ class ConnectionOutboundFlushOnCloseTest extends Test:
         def awaitWritable(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit = ()
         def awaitConnect(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit  = ()
         def awaitAccept(handle: Unit, promise: Promise.Unsafe[Int, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit    = ()
-        def write(handle: Unit, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult =
+        def write(handle: Unit, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult                                       =
             if closeHandleSeen.get() then writeAfterClose.set(true)
             discard(writeCount.incrementAndGet())
             WriteResult.Done
         end write
-        def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit = ()
+        def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit      = ()
         def closeHandle(handle: Unit)(using AllowUnsafe, Frame): Unit =
             closeHandleSeen.set(true)
             discard(closeHandleDone.complete(Result.succeed(())))

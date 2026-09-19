@@ -19,7 +19,7 @@ class BracketEnsureTest extends CompatTest:
     // ----- acquireReleaseWith -----
 
     "acquireReleaseWith runs release on successful use" in run {
-        val released = new AtomicInteger(0)
+        val released    = new AtomicInteger(0)
         val c: CIO[Int] =
             CIO.acquireReleaseWith(CIO.unit)(_ =>
                 CIO.defer { val _ = released.incrementAndGet() }
@@ -31,7 +31,7 @@ class BracketEnsureTest extends CompatTest:
 
     "acquireReleaseWith passes the acquired value to release" in run {
         // The release receives the same value acquire returned. Use a sentinel.
-        val seen = new java.util.concurrent.atomic.AtomicReference[String]("unset")
+        val seen        = new java.util.concurrent.atomic.AtomicReference[String]("unset")
         val c: CIO[Int] =
             CIO.acquireReleaseWith(CIO.defer("sentinel-42"))(a => CIO.defer { seen.set(a) })(_ => CIO.defer { 1 })
         c.map { v =>
@@ -40,7 +40,7 @@ class BracketEnsureTest extends CompatTest:
     }
 
     "acquireReleaseWith runs release when use fails" in run {
-        val released = new AtomicInteger(0)
+        val released    = new AtomicInteger(0)
         val c: CIO[Int] =
             CIO.acquireReleaseWith(CIO.unit)(_ =>
                 CIO.defer { val _ = released.incrementAndGet() }
@@ -54,7 +54,7 @@ class BracketEnsureTest extends CompatTest:
     "acquireReleaseWith does not run acquire until the CIO is materialized" in run {
         // Constructing a acquireReleaseWith CIO must not run acquire — acquire fires
         // only when the CIO materializes.
-        val acquired = new AtomicInteger(0)
+        val acquired    = new AtomicInteger(0)
         val c: CIO[Int] =
             CIO.acquireReleaseWith(CIO.defer { acquired.incrementAndGet(); 0 })(_ => CIO.unit)(_ => CIO.defer { 9 })
         // Pre-materialization: acquire should not have run.
@@ -67,7 +67,7 @@ class BracketEnsureTest extends CompatTest:
     "acquireReleaseWith runs release when use throws synchronously" in run {
         // `use` throws inside its body via CIO.defer; release must still
         // run because acquireReleaseWith's release is unconditional on success/failure.
-        val released = new AtomicInteger(0)
+        val released    = new AtomicInteger(0)
         val c: CIO[Any] =
             CIO.acquireReleaseWith(CIO.unit)(_ =>
                 CIO.defer { val _ = released.incrementAndGet() }
@@ -86,7 +86,7 @@ class BracketEnsureTest extends CompatTest:
     // ----- ensure -----
 
     "ensure runs the cleanup on success" in run {
-        val ran = new AtomicInteger(0)
+        val ran         = new AtomicInteger(0)
         val c: CIO[Int] =
             CIO.ensure(CIO.defer { val _ = ran.incrementAndGet() })(CIO.defer { 11 })
         c.map { v =>
@@ -95,7 +95,7 @@ class BracketEnsureTest extends CompatTest:
     }
 
     "ensure runs the cleanup on failure" in run {
-        val ran = new AtomicInteger(0)
+        val ran         = new AtomicInteger(0)
         val c: CIO[Int] =
             CIO.ensure(CIO.defer { val _ = ran.incrementAndGet() })(CIO.fail(TestError("bad")))
         c.liftToTry.map {
@@ -122,7 +122,7 @@ class BracketEnsureTest extends CompatTest:
     }
 
     "ensure runs the cleanup exactly once" in run {
-        val ran = new AtomicInteger(0)
+        val ran         = new AtomicInteger(0)
         val c: CIO[Int] =
             CIO.ensure(CIO.defer { val _ = ran.incrementAndGet() })(CIO.defer { 5 })
         c.map { v =>
@@ -133,8 +133,8 @@ class BracketEnsureTest extends CompatTest:
     "nested acquireReleaseWiths thread values and run both releases" in run {
         // Compose two acquireReleaseWiths via `flatMap`. Both releases must run; both
         // values must thread.
-        val releasedOuter = new AtomicInteger(0)
-        val releasedInner = new AtomicInteger(0)
+        val releasedOuter   = new AtomicInteger(0)
+        val releasedInner   = new AtomicInteger(0)
         val outer: CIO[Int] =
             CIO.acquireReleaseWith(CIO.defer("outer"))(_ =>
                 CIO.defer { val _ = releasedOuter.incrementAndGet() }
@@ -152,7 +152,7 @@ class BracketEnsureTest extends CompatTest:
         }
     }
     "acquireReleaseWith acquire fails → release does not run" in run {
-        val counter = new AtomicInteger(0)
+        val counter     = new AtomicInteger(0)
         val c: CIO[Int] =
             CIO.acquireReleaseWith(CIO.fail(AcquireErr))(_ =>
                 CIO.defer { val _ = counter.incrementAndGet() }
@@ -189,7 +189,7 @@ class BracketEnsureTest extends CompatTest:
     }
 
     "acquireReleaseWith release runs exactly once on synchronous use-throw" in run {
-        val counter = new AtomicInteger(0)
+        val counter     = new AtomicInteger(0)
         val c: CIO[Any] =
             CIO.acquireReleaseWith(CIO.value("a"))(_ =>
                 CIO.defer { val _ = counter.incrementAndGet() }

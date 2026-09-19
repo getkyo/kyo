@@ -252,7 +252,7 @@ private[kyo] object SlackWire:
     private def decodeDisconnect(frame: String)(using Frame): Decoded < Sync =
         val reason = Json.decode[SlackPayloadEnvelope[DisconnectFrame]](frame) match
             case Result.Success(env) => env.payload.reason
-            case _ =>
+            case _                   =>
                 Json.decode[DisconnectFrame](frame) match
                     case Result.Success(f) => f.reason
                     case _                 => ""
@@ -266,7 +266,7 @@ private[kyo] object SlackWire:
 
     private def decodeEventsApi(frame: String, h: SlackWireHeader)(using Frame): Decoded < Sync =
         meta(h) match
-            case Absent => Decoded.Envelope(SlackEnvelope.Unknown("events_api", frame), ackable = false, responseUrl = Absent)
+            case Absent     => Decoded.Envelope(SlackEnvelope.Unknown("events_api", frame), ackable = false, responseUrl = Absent)
             case Present(m) =>
                 decodeEvent(frame).map { event =>
                     Decoded.Envelope(SlackEnvelope.EventsApi(m, event), ackable = true, responseUrl = Absent)
@@ -388,7 +388,7 @@ private[kyo] object SlackWire:
 
     private def decodeInteractive(frame: String, h: SlackWireHeader)(using Frame): Decoded < Sync =
         meta(h) match
-            case Absent => Decoded.Envelope(SlackEnvelope.Unknown("interactive", frame), ackable = false, responseUrl = Absent)
+            case Absent     => Decoded.Envelope(SlackEnvelope.Unknown("interactive", frame), ackable = false, responseUrl = Absent)
             case Present(m) =>
                 decodeInteraction(frame).map { case (interaction, responseUrl) =>
                     Decoded.Envelope(SlackEnvelope.Interactive(m, interaction), ackable = true, responseUrl = responseUrl)
@@ -536,11 +536,11 @@ private[kyo] object SlackWire:
 
     private def decodeSlash(frame: String, h: SlackWireHeader)(using Frame): Decoded < Sync =
         meta(h) match
-            case Absent => Decoded.Envelope(SlackEnvelope.Unknown("slash_commands", frame), ackable = false, responseUrl = Absent)
+            case Absent     => Decoded.Envelope(SlackEnvelope.Unknown("slash_commands", frame), ackable = false, responseUrl = Absent)
             case Present(m) =>
                 Json.decode[SlackPayloadEnvelope[WireSlashCommand]](frame) match
                     case Result.Success(env) =>
-                        val w = env.payload
+                        val w   = env.payload
                         val cmd = SlackCommand(
                             w.command,
                             w.text,
@@ -576,8 +576,8 @@ private[kyo] object SlackWire:
     def encodeAck(envelopeId: SlackId.EnvelopeId, ack: SlackAck)(using Frame): String < Abort[SlackException] =
         val envId = envelopeId.value
         ack match
-            case SlackAck.Ack                     => Json.encode(AckFrame(envId))
-            case SlackAck.BlockActionsResponse(_) => Json.encode(AckFrame(envId))
+            case SlackAck.Ack                      => Json.encode(AckFrame(envId))
+            case SlackAck.BlockActionsResponse(_)  => Json.encode(AckFrame(envId))
             case SlackAck.CommandResponse(message) =>
                 Slack.messageBlocks(message).map { blocks =>
                     Json.encode(AckMessage(envId, Slack.PostMessageBody(message.channel, message.text, blocks, message.threadTs)))

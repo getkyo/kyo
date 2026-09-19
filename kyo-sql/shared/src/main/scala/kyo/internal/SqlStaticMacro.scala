@@ -134,7 +134,7 @@ private[kyo] object SqlStaticMacro:
       */
     private def containsErrorTree(using Quotes)(root: quotes.reflect.Term): Boolean =
         import quotes.reflect.*
-        var found = false
+        var found  = false
         val walker = new TreeAccumulator[Unit]:
             def foldTree(u: Unit, tree: Tree)(owner: Symbol): Unit =
                 if !found then
@@ -203,7 +203,7 @@ private[kyo] object SqlStaticMacro:
             // `match` rather than `Maybe.map`: a quote that is the tail of a lambda passed to a cross-file `inline`
             // parameter crashes dotty in `pickleQuotes`.
             rendered match
-                case Absent => Absent
+                case Absent      => Absent
                 case Present(rs) =>
                     if !bindsAgree(rs, posExpr, opportunistic) then Absent
                     else

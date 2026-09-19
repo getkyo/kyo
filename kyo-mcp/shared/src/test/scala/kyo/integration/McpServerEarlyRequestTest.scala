@@ -32,7 +32,7 @@ class McpServerEarlyRequestTest extends Test:
         Structure.Value.Record(Chunk(
             "protocolVersion" -> Structure.Value.Str(protocolVersion),
             "capabilities"    -> Structure.Value.Record(Chunk.empty),
-            "clientInfo" -> Structure.Value.Record(Chunk(
+            "clientInfo"      -> Structure.Value.Record(Chunk(
                 "name"    -> Structure.Value.Str("early-client"),
                 "version" -> Structure.Value.Str("0.0.0")
             ))
@@ -40,7 +40,7 @@ class McpServerEarlyRequestTest extends Test:
 
     private def callParams: Structure.Value =
         Structure.Value.Record(Chunk(
-            "name" -> Structure.Value.Str("run_select"),
+            "name"      -> Structure.Value.Str("run_select"),
             "arguments" -> Structure.Value.Record(Chunk(
                 "sql" -> Structure.Value.Str("select 1")
             ))

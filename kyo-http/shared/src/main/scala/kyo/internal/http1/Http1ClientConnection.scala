@@ -150,7 +150,7 @@ final private[kyo] class Http1ClientConnection(
                 // Channel full — queue via putFiber for backpressure (will complete when space available)
                 discard(outbound.putFiber(data))
             case Result.Failure(_: Closed) => () // connection shutting down
-            case Result.Panic(t) =>
+            case Result.Panic(t)           =>
                 Log.live.unsafe.error(s"$context: panic", t)
 
     /** Close the connection. Fails any pending response promise so waiting fibers unblock. */

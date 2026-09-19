@@ -70,13 +70,14 @@ class TypeSafeDeciderTest extends kyo.test.Test[Any]:
         "an object state and structured instructions are sent as JSON, not strings" in {
             val state        = Structure.Value.Record(Chunk(("manifest", Structure.Value.Sequence(Chunk(str("a"), str("b"))))))
             val instructions = Structure.Value.Record(Chunk(("question", str("Corrupted?")), ("focus", str("the manifest"))))
-            val body = Json.encode(TypeSafeDecider.request(
+            val body         = Json.encode(TypeSafeDecider.request(
                 "jev-latest",
                 state,
                 Chunk(Question.Noul(instructions, Absent, Absent, Absent))
             ))
             assert(
-                body == """{"model":"jev-latest","state":{"manifest":["a","b"]},"questions":{"q1":{"type":"noul","instructions":{"question":"Corrupted?","focus":"the manifest"}}}}"""
+                body ==
+                    """{"model":"jev-latest","state":{"manifest":["a","b"]},"questions":{"q1":{"type":"noul","instructions":{"question":"Corrupted?","focus":"the manifest"}}}}"""
             )
         }
     }
@@ -272,7 +273,7 @@ class TypeSafeDeciderTest extends kyo.test.Test[Any]:
         }
         "401 and 400 and 422 are rejections that do not retry, carrying the body and request id" in {
             TestDeciderServer.run { server =>
-                val config = llmConfig.retrySchedule(Schedule.repeat(2))
+                val config             = llmConfig.retrySchedule(Schedule.repeat(2))
                 def attempt(code: Int) =
                     server.enqueueStatus(code, s"""{"detail":"status $code"}""", Seq("x-typesafe-request-id" -> s"req_$code")).andThen {
                         Abort.run[AIException](decide(config, deciderConfig(server), Context.empty, Chunk(noul)))
@@ -313,7 +314,7 @@ class TypeSafeDeciderTest extends kyo.test.Test[Any]:
         }
         "429, 529, 500 and 408 are transient and retry on the schedule" in {
             TestDeciderServer.run { server =>
-                val config = llmConfig.retrySchedule(Schedule.repeat(1))
+                val config             = llmConfig.retrySchedule(Schedule.repeat(1))
                 def attempt(code: Int) =
                     server.enqueueStatus(code, "busy").andThen(server.enqueueBody(liveBody)).andThen {
                         decide(config, deciderConfig(server), Context.empty, Chunk(noul, choice, score))
@@ -360,7 +361,7 @@ class TypeSafeDeciderTest extends kyo.test.Test[Any]:
                 val config = llmConfig.retrySchedule(Schedule.repeat(1))
                 Clock.withTimeControl { control =>
                     for
-                        _ <- server.enqueueStatus(429, "slow down", Seq("retry-after" -> "60"))
+                        _    <- server.enqueueStatus(429, "slow down", Seq("retry-after" -> "60"))
                         long <- Fiber.init(Abort.run[AIException](decide(
                             config.timeout(3.seconds),
                             deciderConfig(server),
@@ -373,7 +374,7 @@ class TypeSafeDeciderTest extends kyo.test.Test[Any]:
                         afterLong  <- server.captured
                         _          <- server.enqueueStatus(429, "slow down", Seq("retry-after" -> "2"))
                         _          <- server.enqueueBody(liveBody)
-                        short <- Fiber.init(Abort.run[AIException](decide(
+                        short      <- Fiber.init(Abort.run[AIException](decide(
                             config.timeout(1.minute),
                             deciderConfig(server),
                             Context.empty,

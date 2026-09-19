@@ -25,12 +25,12 @@ class NioTransportStdioTest extends Test:
         }
 
     /** Returns whether `pattern` occurs as a contiguous slice of `haystack`. */
-    private def containsSlice(haystack: Array[Byte], pattern: Array[Byte]): Boolean =
-        (0 to haystack.length - pattern.length).exists { start =>
+    private def containsSlice(haystack: Array[Byte], pattern: Array[Byte]): Boolean = (0 to haystack.length - pattern.length).exists {
+        start =>
             var i = 0
             while i < pattern.length && haystack(start + i) == pattern(i) do i += 1
             i == pattern.length
-        }
+    }
 
     /** OutputStream capturing every written byte; completes `seen` with a snapshot the first time the accumulated bytes contain `pattern`
       * (idempotent via the promise). All writes arrive through the single swapped `System.out` PrintStream, whose own per-write locking
@@ -38,7 +38,7 @@ class NioTransportStdioTest extends Test:
       * suite prints through the same swapped stream.
       */
     final private class PatternOutputStream(pattern: Array[Byte], seen: Promise.Unsafe[Array[Byte], Any]) extends java.io.OutputStream:
-        private val buffer = new java.io.ByteArrayOutputStream()
+        private val buffer               = new java.io.ByteArrayOutputStream()
         override def write(b: Int): Unit =
             buffer.write(b)
             check()
@@ -64,7 +64,6 @@ class NioTransportStdioTest extends Test:
         java.lang.System.setIn(stdinPipe)
         java.lang.System.setOut(new PrintStream(new PatternOutputStream(outboundMessage, stdoutSeen), true))
         mkTransport().map { transport =>
-
             def restore(): Unit =
                 // Unpark a read pump still blocked in stdinPipe.read (EOF closes the connection and exits the pump), then put the real
                 // streams back. Runs on every exit path, so a failed assertion never leaves the process streams swapped.

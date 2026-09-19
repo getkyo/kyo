@@ -83,7 +83,7 @@ class SLF4JLogTest extends kyo.test.Test[Any]:
 
     "log" in {
         val buffer = new StringBuilder()
-        val out = new java.io.OutputStream:
+        val out    = new java.io.OutputStream:
             def write(b: Int): Unit = buffer.append(b.toChar)
 
         LoggerFactory.getLogger("ROOT").asInstanceOf[Logger].detachAndStopAllAppenders()

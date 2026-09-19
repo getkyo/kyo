@@ -173,13 +173,13 @@ object SqlValueRender:
 
     /** ISO-8601, which is one spelling for a value an engine offers four of, chosen by a session setting. */
     def interval(months: Long, days: Long, micros: Long): String =
-        val years     = months / 12
-        val monthPart = months  % 12
-        val hours     = micros / MicrosPerHour
-        val minutes   = (micros % MicrosPerHour) / MicrosPerMinute
-        val subMinute = micros  % MicrosPerMinute
-        val seconds   = subMinute / MicrosPerSecond
-        val frac      = Math.abs(subMinute % MicrosPerSecond)
+        val years                                   = months / 12
+        val monthPart                               = months  % 12
+        val hours                                   = micros / MicrosPerHour
+        val minutes                                 = (micros % MicrosPerHour) / MicrosPerMinute
+        val subMinute                               = micros  % MicrosPerMinute
+        val seconds                                 = subMinute / MicrosPerSecond
+        val frac                                    = Math.abs(subMinute % MicrosPerSecond)
         def unit(value: Long, suffix: Char): String =
             if value == 0 then "" else s"$value$suffix"
         val secondsPart =
@@ -325,8 +325,7 @@ object SqlValueRender:
                 end if
                 i = end
         end while
-        def hex(from: Int, until: Int): String =
-            (from until until).map(g => Integer.toHexString(groups(g))).mkString(":")
+        def hex(from: Int, until: Int): String = (from until until).map(g => Integer.toHexString(groups(g))).mkString(":")
         if bestLen < 2 then hex(0, 8)
         else s"${hex(0, bestStart)}::${hex(bestStart + bestLen, 8)}"
     end compressIpv6

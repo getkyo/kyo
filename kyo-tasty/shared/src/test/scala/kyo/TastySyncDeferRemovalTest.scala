@@ -37,7 +37,7 @@ class TastySyncDeferRemovalTest extends kyo.test.Test[Any]:
         classpath.map { classpath =>
             Tasty.withClasspath(classpath) {
                 Abort.run[TastyError](Tasty.bodyTree(cls)).map {
-                    case Result.Success(Maybe.Absent) => succeed
+                    case Result.Success(Maybe.Absent)     => succeed
                     case Result.Success(Maybe.Present(_)) =>
                         fail("Expected Maybe.Absent but got Maybe.Present")
                     case Result.Failure(e) =>

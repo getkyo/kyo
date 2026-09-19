@@ -63,7 +63,7 @@ object Jsonl:
                 Poll.andMap[Chunk[Byte]] {
                     case Absent =>
                         framer.finishLine match
-                            case Absent => Loop.done
+                            case Absent          => Loop.done
                             case Present(record) =>
                                 Abort.get(Json.Lines.decodeRecord[A](record, maxDepth, maxCollectionSize)).map { value =>
                                     Emit.valueWith(Chunk(value))(Loop.done)
@@ -119,7 +119,7 @@ object Jsonl:
                 Poll.andMap[Chunk[Byte]] {
                     case Absent =>
                         framer.finishLine match
-                            case Absent => Loop.done
+                            case Absent          => Loop.done
                             case Present(record) =>
                                 Emit.valueWith(Chunk(Json.Lines.decodeRecord[A](record, maxDepth, maxCollectionSize)))(Loop.done)
                     case Present(chunk) =>
@@ -459,7 +459,7 @@ object Jsonl:
       */
     private def reraise(outcome: Result[Any, Unit])(using Frame): Unit < (PathWrite & Sync) =
         outcome match
-            case Result.Success(value) => value
+            case Result.Success(value)                      => value
             case Result.Failure(error: FileSystemException) =>
                 ArrowEffect.suspend(Tag[PathWrite], Path.Op.Raise(Result.Failure(error)))
             case other => raiseCaller(other)

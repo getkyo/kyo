@@ -99,7 +99,7 @@ private[kyo] object OpenApiGenerator:
 
     private def extractPathParams(path: HttpPath[?]): Seq[HttpOpenApi.Parameter] =
         path match
-            case HttpPath.Literal(_) => Seq.empty
+            case HttpPath.Literal(_)                          => Seq.empty
             case HttpPath.Capture(fieldName, wireName, codec) =>
                 val name = if wireName.nonEmpty then wireName else fieldName
                 val json = inferCodecJson(codec)

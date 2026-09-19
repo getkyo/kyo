@@ -60,9 +60,9 @@ object SqlJsonArray:
                     else if c == '"' then inString = false
                 else
                     c match
-                        case '"'       => inString = true
-                        case '[' | '{' => depth += 1
-                        case ']' | '}' => depth -= 1
+                        case '"'               => inString = true
+                        case '[' | '{'         => depth += 1
+                        case ']' | '}'         => depth -= 1
                         case ',' if depth == 0 =>
                             out += body.substring(start, i).trim
                             start = i + 1
@@ -97,10 +97,10 @@ object SqlJsonArray:
                     case 'n'  => sb.append('\n'); i += 2
                     case 'r'  => sb.append('\r'); i += 2
                     case 't'  => sb.append('\t'); i += 2
-                    case 'u' =>
+                    case 'u'  =>
                         if i + 6 > e then fail("truncated unicode escape in JSON string")
                         val hex = t.substring(i + 2, i + 6)
-                        val cp =
+                        val cp  =
                             try Integer.parseInt(hex, 16)
                             catch case _: NumberFormatException => fail(s"invalid unicode escape '\\u$hex'")
                         sb.append(cp.toChar); i += 6
@@ -127,7 +127,7 @@ object SqlJsonArray:
                 case '\n' => sb.append("\\n")
                 case '\r' => sb.append("\\r")
                 case '\t' => sb.append("\\t")
-                case c =>
+                case c    =>
                     if c < 0x20 then sb.append(f"\\u${c.toInt}%04x")
                     else sb.append(c)
             end match

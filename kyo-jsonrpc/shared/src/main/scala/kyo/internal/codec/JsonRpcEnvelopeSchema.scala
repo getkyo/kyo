@@ -60,7 +60,7 @@ private[kyo] object JsonRpcEnvelopeSchema:
                 // Binary path: the Schema.serializeRead contract carries no Frame, so synthesize one here.
                 decodeEnvelope(summon[Schema[Structure.Value]].serializeRead(reader))(using Frame.internal)
 
-            @publicInBinary private[kyo] def getter(value: JsonRpcEnvelope): Maybe[Any] = Maybe(value)
+            @publicInBinary private[kyo] def getter(value: JsonRpcEnvelope): Maybe[Any]                 = Maybe(value)
             @publicInBinary private[kyo] def setter(value: JsonRpcEnvelope, next: Any): JsonRpcEnvelope =
                 next match
                     case e: JsonRpcEnvelope => e

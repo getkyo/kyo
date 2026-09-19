@@ -33,7 +33,7 @@ class SuiteDiscoveryTest extends kyo.test.Test[Any]:
                     new java.net.URLStreamHandler:
                         def openConnection(u: URL): java.net.URLConnection =
                             new java.net.URLConnection(u):
-                                def connect(): Unit = ()
+                                def connect(): Unit                              = ()
                                 override def getInputStream: java.io.InputStream =
                                     new ByteArrayInputStream(bytes)
                 )
@@ -164,8 +164,8 @@ class SuiteDiscoveryTest extends kyo.test.Test[Any]:
         // InputStreamReader constructor itself completes, but throws IOException on
         // the first real buffered read triggered by lines().iterator().
         val failingAfterConstruct = new InputStream:
-            private val callCount    = new AtomicInteger(0)
-            override def read(): Int = -1
+            private val callCount                  = new AtomicInteger(0)
+            override def read(): Int               = -1
             override def read(b: Array[Byte]): Int =
                 if callCount.getAndIncrement() == 0 then
                     throw new IOException("simulated first-read failure after IS construction")

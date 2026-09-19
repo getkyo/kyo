@@ -491,10 +491,10 @@ class TagTest extends kyo.test.Test[Any]:
     object ScopedUnion:
         opaque type Id = String | Long
         object Id:
-            def bare: Tag[Id]               = Tag.derive[Id]
-            def nested: Tag[List[Id]]       = Tag.derive[List[Id]]
-            def wildcard: Tag[Set[? <: Id]] = Tag.derive[Set[? <: Id]]
-            def member: Tag[String]         = Tag.derive[String]
+            def bare: Tag[Id]                                  = Tag.derive[Id]
+            def nested: Tag[List[Id]]                          = Tag.derive[List[Id]]
+            def wildcard: Tag[Set[? <: Id]]                    = Tag.derive[Set[? <: Id]]
+            def member: Tag[String]                            = Tag.derive[String]
             def union(using kyo.test.AssertScope, Frame): Unit =
                 typeCheckFailure("Tag.derive[Long | String]")("[Tag.opaque.collapsed]")
             def wider(using kyo.test.AssertScope, Frame): Unit =
@@ -506,9 +506,9 @@ class TagTest extends kyo.test.Test[Any]:
     object ScopedBoxed:
         opaque type Boxed[A] = List[A]
         object Boxed:
-            def bare: Tag[Boxed[Int]]                = Tag.derive[Boxed[Int]]
-            def nested: Tag[Map[String, Boxed[Int]]] = Tag.derive[Map[String, Boxed[Int]]]
-            def other: Tag[Vector[Int]]              = Tag.derive[Vector[Int]]
+            def bare: Tag[Boxed[Int]]                               = Tag.derive[Boxed[Int]]
+            def nested: Tag[Map[String, Boxed[Int]]]                = Tag.derive[Map[String, Boxed[Int]]]
+            def other: Tag[Vector[Int]]                             = Tag.derive[Vector[Int]]
             def underlying(using kyo.test.AssertScope, Frame): Unit =
                 typeCheckFailure("Tag.derive[List[Int]]")("[Tag.opaque.collapsed]")
             def argument(using kyo.test.AssertScope, Frame): Unit =
@@ -549,8 +549,8 @@ class TagTest extends kyo.test.Test[Any]:
             import Level1.Inner
             opaque type Outer = Inner
             object Outer:
-                def bare: Tag[Outer] = Tag.derive[Outer]
-                def plain: Tag[Int]  = Tag.derive[Int]
+                def bare: Tag[Outer]                               = Tag.derive[Outer]
+                def plain: Tag[Int]                                = Tag.derive[Int]
                 def inner(using kyo.test.AssertScope, Frame): Unit =
                     typeCheckFailure("Tag.derive[Inner]")("[Tag.opaque.collapsed]")
             end Outer

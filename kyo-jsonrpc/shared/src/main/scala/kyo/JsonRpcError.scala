@@ -102,7 +102,7 @@ object JsonRpcError:
             reader.objectEnd()
             fromWire(code, message, Absent)(using Frame.internal)
         end serializeRead
-        @publicInBinary private[kyo] def getter(value: JsonRpcError): Maybe[Any] = Maybe(value)
+        @publicInBinary private[kyo] def getter(value: JsonRpcError): Maybe[Any]              = Maybe(value)
         @publicInBinary private[kyo] def setter(value: JsonRpcError, next: Any): JsonRpcError =
             next match
                 case e: JsonRpcError => e
@@ -110,7 +110,7 @@ object JsonRpcError:
         // Open: see JsonRpcId for rationale.
         private lazy val _structure: Structure.Type =
             Structure.Type.Open(Tag[JsonRpcError].asInstanceOf[Tag[Any]])
-        override def structure: Structure.Type = _structure
+        override def structure: Structure.Type                                                                                = _structure
         override private[kyo] def fromStructureValue(sv: Structure.Value)(using Frame): Result[DecodeException, JsonRpcError] =
             sv match
                 case Structure.Value.Record(fields) =>

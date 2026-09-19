@@ -207,11 +207,10 @@ private[kyo] object XXHash {
         h
     }
 
-    private def readIntLE(bytes: Array[Byte], offset: Int): Int =
-        (bytes(offset) & 0xff) |
-            ((bytes(offset + 1) & 0xff) << 8) |
-            ((bytes(offset + 2) & 0xff) << 16) |
-            (bytes(offset + 3) << 24)
+    private def readIntLE(bytes: Array[Byte], offset: Int): Int = (bytes(offset) & 0xff) |
+        ((bytes(offset + 1) & 0xff) << 8) |
+        ((bytes(offset + 2) & 0xff) << 16) |
+        (bytes(offset + 3) << 24)
 
     private def readLongLE(bytes: Array[Byte], offset: Int): Long =
         (bytes(offset) & 0xffL) |
@@ -223,11 +222,9 @@ private[kyo] object XXHash {
             ((bytes(offset + 6) & 0xffL) << 48) |
             (bytes(offset + 7).toLong << 56)
 
-    private def rotateLeft(value: Int, distance: Int): Int =
-        (value << distance) | (value >>> (32 - distance))
+    private def rotateLeft(value: Int, distance: Int): Int = (value << distance) | (value >>> (32 - distance))
 
-    private def rotateLeft(value: Long, distance: Int): Long =
-        (value << distance) | (value >>> (64 - distance))
+    private def rotateLeft(value: Long, distance: Int): Long = (value << distance) | (value >>> (64 - distance))
 
     private def checkRange(size: Int, offset: Int, length: Int): Unit = {
         if (offset < 0 || length < 0 || offset > size - length)

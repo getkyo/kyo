@@ -45,7 +45,7 @@ private[sqlite] object SqliteText:
         else
             val sign   = if text.charAt(idx) == '-' then -1 else 1
             val fields = text.substring(idx + 1).split(':')
-            val total =
+            val total  =
                 fields.length match
                     case 2 => fields(0).toInt * 3600 + fields(1).toInt * 60
                     case 3 => fields(0).toInt * 3600 + fields(1).toInt * 60 + fields(2).toInt
@@ -107,13 +107,13 @@ private[sqlite] object SqliteText:
     /** ISO-8601 `P[nY][nM][nD][T[nH][nM][n[.f]S]]`, the one spelling the renderer writes. */
     def intervalFields(text: String): (Long, Long, Long) =
         if !text.startsWith("P") then throw new NumberFormatException(s"not an interval: '$text'")
-        val body = text.substring(1)
+        val body                 = text.substring(1)
         val (datePart, timePart) = body.indexOf('T') match
             case -1  => (body, "")
             case idx => (body.substring(0, idx), body.substring(idx + 1))
-        var months = 0L
-        var days   = 0L
-        var micros = 0L
+        var months                                                    = 0L
+        var days                                                      = 0L
+        var micros                                                    = 0L
         def each(part: String)(consume: (String, Char) => Unit): Unit =
             val number = new StringBuilder
             part.foreach { c =>

@@ -126,7 +126,7 @@ private[kyo] object SlackReconnect:
                         case SlackConfig.Reconnect.Immediate => Reaction.Reconnect(overlap = false)
                         case SlackConfig.Reconnect.Overlap   => Reaction.Reconnect(overlap = true)
             ).map {
-                case Reaction.Stop => Kyo.unit
+                case Reaction.Stop               => Kyo.unit
                 case Reaction.Reconnect(overlap) =>
                     rotate(active, dedup, open, engine, overlap, handler).andThen(loop(active, dedup, open, config, handler))
             }

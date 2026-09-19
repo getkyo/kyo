@@ -345,7 +345,7 @@ class LLMDeciderTest extends kyo.test.Test[Any]:
                 val sys = System(new TestUnsafeSystem())
                 System.let(sys) {
                     for
-                        scoped <- LLM.run(config(server))(Decider.choose("Which tool?", Tool.values.toSeq))
+                        scoped   <- LLM.run(config(server))(Decider.choose("Which tool?", Tool.values.toSeq))
                         instance <- Abort.run[AIException](LLM.run(config(server)) {
                             AI.init(config(server).decider(DeciderConfig.TypeSafe.default)).map(_.choose("Which tool?", Tool.values.toSeq))
                         })

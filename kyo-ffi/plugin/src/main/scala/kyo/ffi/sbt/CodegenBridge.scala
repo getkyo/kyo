@@ -52,9 +52,9 @@ private[sbt] object CodegenBridge {
         codegenClasspathOverride: Seq[String] = Nil
     ): Generated = {
         val empty = Generated(Nil, Nil)
-        val cl = getCodegenClassLoader(classpath, log, codegenClasspathOverride) match {
+        val cl    = getCodegenClassLoader(classpath, log, codegenClasspathOverride) match {
             case Some(c) => c
-            case None =>
+            case None    =>
                 log.warn(
                     "[kyo-ffi-plugin] Could not construct codegen classloader " +
                         "(bundled kyo-ffi-codegen.jar not found). ffiGenerate is a no-op."
@@ -82,21 +82,21 @@ private[sbt] object CodegenBridge {
         val configObj     = configObjCls.getField("MODULE$").get(null)
         val defaultConfig = configObjCls.getMethod("default").invoke(configObj)
 
-        val configCls = cl.loadClass("kyo.ffi.codegen.FfiGenerator$Config")
+        val configCls  = cl.loadClass("kyo.ffi.codegen.FfiGenerator$Config")
         val copyMethod = configCls.getMethods.find(_.getName == "copy").getOrElse(
             sys.error("[kyo-ffi-plugin] Could not locate FfiGenerator.Config#copy via reflection.")
         )
         val defaultExtra = configCls.getMethod("extraLibraries").invoke(defaultConfig)
 
-        val someCls = cl.loadClass("scala.Some")
-        val noneObj = cl.loadClass("scala.None$").getField("MODULE$").get(null)
+        val someCls        = cl.loadClass("scala.Some")
+        val noneObj        = cl.loadClass("scala.None$").getField("MODULE$").get(null)
         val libOpt: AnyRef = libraryId match {
             case Some(id) => someCls.getConstructor(classOf[Object]).newInstance(id).asInstanceOf[AnyRef]
             case None     => noneObj
         }
 
         val includeDirsSeq = toScalaSeq(cl, includeDirs)
-        val config = copyMethod.invoke(
+        val config         = copyMethod.invoke(
             defaultConfig,
             libOpt,
             defaultExtra.asInstanceOf[AnyRef],
@@ -121,10 +121,10 @@ private[sbt] object CodegenBridge {
             config
         )
 
-        val resultCls = cl.loadClass("kyo.ffi.codegen.FfiGenerator$Result")
-        val files     = resultCls.getMethod("files").invoke(result)
-        val warnings  = resultCls.getMethod("warnings").invoke(result)
-        val traits    = resultCls.getMethod("traits").invoke(result)
+        val resultCls            = cl.loadClass("kyo.ffi.codegen.FfiGenerator$Result")
+        val files                = resultCls.getMethod("files").invoke(result)
+        val warnings             = resultCls.getMethod("warnings").invoke(result)
+        val traits               = resultCls.getMethod("traits").invoke(result)
         val reachabilityMetadata =
             resultCls.getMethod("reachabilityMetadata").invoke(result).asInstanceOf[String]
 
@@ -289,7 +289,7 @@ private[sbt] object CodegenBridge {
         if (sources.isEmpty) return Nil
         val cl = getCodegenClassLoader(classpath, log, codegenClasspathOverride) match {
             case Some(c) => c
-            case None =>
+            case None    =>
                 log.warn("[kyo-ffi-plugin] compileSourcesToTasty: codegen classloader unavailable; skipping.")
                 return Nil
         }
@@ -314,7 +314,7 @@ private[sbt] object CodegenBridge {
         val args: Array[String] = (fixedArgs ++ sources.map(_.getAbsolutePath)).toArray
 
         try {
-            val mainCls = cl.loadClass("dotty.tools.dotc.Main")
+            val mainCls  = cl.loadClass("dotty.tools.dotc.Main")
             val processM = mainCls.getMethods
                 .find(m => m.getName == "process" && m.getParameterCount == 1)
                 .getOrElse(sys.error("[kyo-ffi-plugin] dotty.tools.dotc.Main.process(String[]) not found"))

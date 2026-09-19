@@ -78,7 +78,7 @@ object Intercept:
             Maybe.empty
         catch
             case t: Throwable if ct.runtimeClass.isInstance(t) => Maybe(t)
-            case e: InterruptedException =>
+            case e: InterruptedException                       =>
                 Thread.currentThread().interrupt()
                 throw e
             case NonFatal(t) => Maybe(t)

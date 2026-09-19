@@ -197,7 +197,7 @@ class TMapTest extends kyo.test.Test[Any]:
     "Error handling" - {
         "rollback on direct failure" in {
             for
-                map <- STM.run(TMap.init[String, Int]("initial" -> 42))
+                map    <- STM.run(TMap.init[String, Int]("initial" -> 42))
                 result <- Abort.run {
                     STM.run {
                         for
@@ -216,7 +216,7 @@ class TMapTest extends kyo.test.Test[Any]:
 
         "rollback on nested transaction failure" in {
             for
-                map <- STM.run(TMap.init[String, Int]())
+                map    <- STM.run(TMap.init[String, Int]())
                 result <- Abort.run {
                     STM.run {
                         for
@@ -239,7 +239,7 @@ class TMapTest extends kyo.test.Test[Any]:
 
         "partial updates remain atomic" in {
             for
-                map <- STM.run(TMap.init[String, Int]())
+                map    <- STM.run(TMap.init[String, Int]())
                 result <- Abort.run {
                     STM.run {
                         for
@@ -259,7 +259,7 @@ class TMapTest extends kyo.test.Test[Any]:
 
         "exception in update function rolls back" in {
             for
-                map <- STM.run(TMap.init[String, Int]("test" -> 42))
+                map    <- STM.run(TMap.init[String, Int]("test" -> 42))
                 result <- Abort.run {
                     STM.run {
                         map.updateWith("test") { _ =>
@@ -277,7 +277,7 @@ class TMapTest extends kyo.test.Test[Any]:
 
         "filter operation rollback" in {
             for
-                map <- STM.run(TMap.init[String, Int]("a" -> 1, "b" -> 2, "c" -> 3))
+                map    <- STM.run(TMap.init[String, Int]("a" -> 1, "b" -> 2, "c" -> 3))
                 result <- Abort.run {
                     STM.run {
                         for
@@ -297,7 +297,7 @@ class TMapTest extends kyo.test.Test[Any]:
 
         "fold operation rollback" in {
             for
-                map <- STM.run(TMap.init[String, Int]("a" -> 1, "b" -> 2, "c" -> 3))
+                map    <- STM.run(TMap.init[String, Int]("a" -> 1, "b" -> 2, "c" -> 3))
                 result <- Abort.run {
                     STM.run {
                         map.fold(0) { (acc, k, v) =>
@@ -315,7 +315,7 @@ class TMapTest extends kyo.test.Test[Any]:
 
         "findFirst operation rollback" in {
             for
-                map <- STM.run(TMap.init[String, Int]("a" -> 1, "b" -> 2, "c" -> 3))
+                map    <- STM.run(TMap.init[String, Int]("a" -> 1, "b" -> 2, "c" -> 3))
                 result <- Abort.run {
                     STM.run {
                         map.findFirst { (k, v) =>
@@ -333,7 +333,7 @@ class TMapTest extends kyo.test.Test[Any]:
 
         "multiple operations rollback on failure" in {
             for
-                map <- STM.run(TMap.init[String, Int]())
+                map    <- STM.run(TMap.init[String, Int]())
                 result <- Abort.run {
                     STM.run {
                         for
@@ -355,7 +355,7 @@ class TMapTest extends kyo.test.Test[Any]:
         "nested effects with rollback" in {
             Var.run(0) {
                 for
-                    map <- STM.run(TMap.init[String, Int]("start" -> 0))
+                    map    <- STM.run(TMap.init[String, Int]("start" -> 0))
                     result <- Abort.run {
                         Var.isolate.update[Int].use {
                             STM.run {
@@ -436,7 +436,7 @@ class TMapTest extends kyo.test.Test[Any]:
             (for
                 size <- Choice.eval(1, 10, 50)
                 map  <- STM.run(TMap.init[Int, Int]())
-                _ <- STM.run {
+                _    <- STM.run {
                     Kyo.foreachDiscard((1 to size))(i => map.put(i, 1))
                 }
                 _ <- Async.fill(10, 10)(
@@ -459,7 +459,7 @@ class TMapTest extends kyo.test.Test[Any]:
             (for
                 size <- Choice.eval(1, 10, 100)
                 map  <- STM.run(TMap.init[Int, Int]())
-                _ <- STM.run {
+                _    <- STM.run {
                     Kyo.foreachDiscard((1 to size))(i => map.put(i, i))
                 }
                 _ <- Async.foreach(1 to size, size)(i =>
@@ -476,7 +476,7 @@ class TMapTest extends kyo.test.Test[Any]:
             (for
                 size <- Choice.eval(1, 10, 100)
                 map  <- STM.run(TMap.init[Int, Int]())
-                _ <- STM.run {
+                _    <- STM.run {
                     Kyo.foreachDiscard((1 to size))(i => map.put(i, i))
                 }
 
@@ -570,7 +570,7 @@ class TMapTest extends kyo.test.Test[Any]:
             STM.run {
                 for
                     outer <- TRef.init(0)
-                    size <- TMap.initWith[String, Int]("a" -> 1, "b" -> 2) { m =>
+                    size  <- TMap.initWith[String, Int]("a" -> 1, "b" -> 2) { m =>
                         invocations.incrementAndGet()
                         for
                             _ <- outer.set(1)
@@ -638,9 +638,9 @@ class TMapTest extends kyo.test.Test[Any]:
         }
 
         "initWith evaluates each entry expression exactly once per call" in {
-            val keyCalls = new java.util.concurrent.atomic.AtomicInteger(0)
-            val valCalls = new java.util.concurrent.atomic.AtomicInteger(0)
-            val fCalls   = new java.util.concurrent.atomic.AtomicInteger(0)
+            val keyCalls    = new java.util.concurrent.atomic.AtomicInteger(0)
+            val valCalls    = new java.util.concurrent.atomic.AtomicInteger(0)
+            val fCalls      = new java.util.concurrent.atomic.AtomicInteger(0)
             def k(): String =
                 keyCalls.incrementAndGet()
                 "k"
@@ -720,7 +720,7 @@ class TMapTest extends kyo.test.Test[Any]:
         "use composes with an effectful lambda and rolls back on failure" in {
             for
                 map <- STM.run(TMap.init("ok" -> 1))
-                r <- Abort.run {
+                r   <- Abort.run {
                     STM.run {
                         map.use("ok") {
                             case Present(v) if v > 0 => v
@@ -738,7 +738,7 @@ class TMapTest extends kyo.test.Test[Any]:
             STM.run {
                 for
                     map <- TMap.init("a" -> 0)
-                    r <- map.use("a") {
+                    r   <- map.use("a") {
                         case Absent     => "absent"
                         case Present(_) => "present"
                     }
@@ -754,7 +754,7 @@ class TMapTest extends kyo.test.Test[Any]:
             STM.run {
                 for
                     map <- TMap.init("present" -> 1)
-                    r <- map.use("absent") { m =>
+                    r   <- map.use("absent") { m =>
                         invocations.incrementAndGet()
                         seen.set(m)
                         m.getOrElse(-1)
@@ -770,7 +770,7 @@ class TMapTest extends kyo.test.Test[Any]:
         "use surfaces a panicking lambda and leaves the TMap unchanged" in {
             for
                 map <- STM.run(TMap.init("a" -> 1))
-                r <- Abort.run {
+                r   <- Abort.run {
                     STM.run {
                         map.use("a") { _ => throw new RuntimeException("boom") }
                     }
@@ -887,7 +887,7 @@ class TMapTest extends kyo.test.Test[Any]:
         }
 
         "getOrElse does not evaluate the default when the key is present" in {
-            val evals = new java.util.concurrent.atomic.AtomicInteger(0)
+            val evals          = new java.util.concurrent.atomic.AtomicInteger(0)
             def expensive: Int =
                 evals.incrementAndGet(); 99
             STM.run {
@@ -904,7 +904,7 @@ class TMapTest extends kyo.test.Test[Any]:
         "getOrElse propagates Abort.fail from orElse when the key is absent" in {
             for
                 map <- STM.run(TMap.init("a" -> 1))
-                r <- Abort.run {
+                r   <- Abort.run {
                     STM.run {
                         map.getOrElse("missing", Abort.fail(new Exception("absent")))
                     }
@@ -1000,7 +1000,7 @@ class TMapTest extends kyo.test.Test[Any]:
             STM.run {
                 for
                     map <- TMap.init[String, Int]
-                    _ <- map.updateWith("k") {
+                    _   <- map.updateWith("k") {
                         case Absent => Maybe(7)
                         case other  => other
                     }
@@ -1030,7 +1030,7 @@ class TMapTest extends kyo.test.Test[Any]:
         "updateWith propagates Abort.fail and rolls back the transaction" in {
             for
                 map <- STM.run(TMap.init("k" -> 1))
-                r <- Abort.run {
+                r   <- Abort.run {
                     STM.run {
                         map.updateWith("k") { _ => Abort.fail(new Exception("nope")) }
                     }
@@ -1044,7 +1044,7 @@ class TMapTest extends kyo.test.Test[Any]:
         "updateWith with a panicking lambda surfaces panic and rolls back" in {
             for
                 map <- STM.run(TMap.init("a" -> 1))
-                r <- Abort.run {
+                r   <- Abort.run {
                     STM.run {
                         for
                             _ <- map.put("b", 2)
@@ -1301,7 +1301,7 @@ class TMapTest extends kyo.test.Test[Any]:
             STM.run {
                 for
                     map <- TMap.init[String, Int]
-                    _ <- map.filter { (_, _) =>
+                    _   <- map.filter { (_, _) =>
                         pCalls.incrementAndGet(); true
                     }
                     snap <- map.snapshot
@@ -1341,7 +1341,7 @@ class TMapTest extends kyo.test.Test[Any]:
         "filter propagates Abort.fail from the predicate and rolls back" in {
             for
                 map <- STM.run(TMap.init("a" -> 1, "b" -> 2, "c" -> 3))
-                r <- Abort.run {
+                r   <- Abort.run {
                     STM.run {
                         map.filter { (k, _) =>
                             if k == "b" then Abort.fail(new Exception("boom"))
@@ -1362,7 +1362,7 @@ class TMapTest extends kyo.test.Test[Any]:
             STM.run {
                 for
                     map <- TMap.init(entries*)
-                    _ <- map.filter { (_, _) =>
+                    _   <- map.filter { (_, _) =>
                         calls.incrementAndGet(); true
                     }
                 yield ()
@@ -1375,7 +1375,7 @@ class TMapTest extends kyo.test.Test[Any]:
             val entries = (1 to 10).map(i => i.toString -> i)
             for
                 map <- STM.run(TMap.init(entries*))
-                r <- Abort.run {
+                r   <- Abort.run {
                     STM.run {
                         map.filter { (k, _) =>
                             if k == "5" then throw new RuntimeException("boom")
@@ -1397,7 +1397,7 @@ class TMapTest extends kyo.test.Test[Any]:
             STM.run {
                 for
                     map <- TMap.init[String, Int]
-                    r <- map.fold(7) { (_, _, _) =>
+                    r   <- map.fold(7) { (_, _, _) =>
                         calls.incrementAndGet(); 99
                     }
                 yield r
@@ -1436,7 +1436,7 @@ class TMapTest extends kyo.test.Test[Any]:
         "fold propagates Abort.fail from the combiner" in {
             for
                 map <- STM.run(TMap.init("a" -> 1, "b" -> 2, "c" -> 3))
-                r <- Abort.run {
+                r   <- Abort.run {
                     STM.run {
                         map.fold(0) { (acc, k, _) =>
                             if k == "b" then Abort.fail(new Exception("boom")) else acc + 1
@@ -1479,7 +1479,7 @@ class TMapTest extends kyo.test.Test[Any]:
                 for
                     bias <- TRef.init(10)
                     map  <- TMap.init("a" -> 1, "b" -> 2, "c" -> 3)
-                    sum <- map.fold(0) { (acc, _, v) =>
+                    sum  <- map.fold(0) { (acc, _, v) =>
                         bias.get.map(b => acc + v + b)
                     }
                 yield sum
@@ -1495,7 +1495,7 @@ class TMapTest extends kyo.test.Test[Any]:
             STM.run {
                 for
                     map <- TMap.init(entries*)
-                    s <- map.fold(0) { (acc, _, _) =>
+                    s   <- map.fold(0) { (acc, _, _) =>
                         calls.incrementAndGet(); acc + 1
                     }
                 yield s
@@ -1508,7 +1508,7 @@ class TMapTest extends kyo.test.Test[Any]:
         "fold with a panicking combiner mid-iteration surfaces panic, no state leaks" in {
             for
                 map <- STM.run(TMap.init("a" -> 1, "b" -> 2, "c" -> 3))
-                r <- Abort.run {
+                r   <- Abort.run {
                     STM.run {
                         for
                             _ <- map.put("d", 99)
@@ -1532,7 +1532,7 @@ class TMapTest extends kyo.test.Test[Any]:
             STM.run {
                 for
                     map <- TMap.init[String, Int]
-                    r <- map.findFirst { (_, _) =>
+                    r   <- map.findFirst { (_, _) =>
                         calls.incrementAndGet(); Maybe("hit")
                     }
                 yield r
@@ -1567,7 +1567,7 @@ class TMapTest extends kyo.test.Test[Any]:
         "findFirst propagates Abort.fail from the predicate" in {
             for
                 map <- STM.run(TMap.init("a" -> 1, "b" -> 2))
-                r <- Abort.run {
+                r   <- Abort.run {
                     STM.run {
                         map.findFirst { (k, _) =>
                             if k == "a" || k == "b" then Abort.fail(new Exception("nope"))
@@ -1583,7 +1583,7 @@ class TMapTest extends kyo.test.Test[Any]:
             STM.run {
                 for
                     map <- TMap.init("a" -> 2, "b" -> 4, "c" -> 6)
-                    r <- map.findFirst { (k, v) =>
+                    r   <- map.findFirst { (k, v) =>
                         visited.incrementAndGet()
                         if v % 2 == 0 then Maybe(k) else Maybe.empty
                     }
@@ -1599,7 +1599,7 @@ class TMapTest extends kyo.test.Test[Any]:
             STM.run {
                 for
                     map <- TMap.init[String, Int]
-                    r <- map.findFirst { (_, _) =>
+                    r   <- map.findFirst { (_, _) =>
                         calls.incrementAndGet(); Maybe("hit")
                     }
                 yield r
@@ -1612,7 +1612,7 @@ class TMapTest extends kyo.test.Test[Any]:
         "findFirst with a panicking predicate mid-iteration surfaces panic, no state leaks" in {
             for
                 map <- STM.run(TMap.init("a" -> 1, "b" -> 2, "c" -> 3))
-                r <- Abort.run {
+                r   <- Abort.run {
                     STM.run {
                         for
                             _ <- map.put("z", 99)
@@ -1722,7 +1722,7 @@ class TMapTest extends kyo.test.Test[Any]:
         "per-value TRefs created in a rolled-back transaction do not leak into a fresh transaction" in {
             for
                 map <- STM.run(TMap.init[String, Int])
-                _ <- Abort.run {
+                _   <- Abort.run {
                     STM.run {
                         for
                             _ <- map.put("ghost", 999)

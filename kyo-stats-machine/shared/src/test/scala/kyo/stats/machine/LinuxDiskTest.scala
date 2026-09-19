@@ -105,7 +105,7 @@ class LinuxDiskTest extends kyo.test.Test[Any]:
             assert(names == Seq("mnt_my disk"))
 
             var statvfsTarget = ""
-            val stub = new LinuxBindings:
+            val stub          = new LinuxBindings:
                 def statvfs(path: String, out: Buffer[Long])(using AllowUnsafe): Int =
                     statvfsTarget = path
                     out.set(1, 1L); out.set(2, 1L); out.set(4, 1L)

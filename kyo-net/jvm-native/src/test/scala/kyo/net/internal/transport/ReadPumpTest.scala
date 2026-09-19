@@ -135,7 +135,7 @@ class ReadPumpTest extends Test:
                 val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 val channel = Channel.Unsafe.init[Span[Byte]](16)
                 val closed  = scala.collection.mutable.ListBuffer[String]()
-                val pump = new ReadPump(
+                val pump    = new ReadPump(
                     handle,
                     spy,
                     channel,
@@ -269,7 +269,7 @@ class ReadPumpTest extends Test:
                 val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 val channel = Channel.Unsafe.init[Span[Byte]](16)
                 val closed  = scala.collection.mutable.ListBuffer[String]()
-                val pump = new ReadPump(
+                val pump    = new ReadPump(
                     handle,
                     spy,
                     channel,
@@ -306,7 +306,7 @@ class ReadPumpTest extends Test:
                 val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 val channel = Channel.Unsafe.init[Span[Byte]](16)
                 val closed  = scala.collection.mutable.ListBuffer[String]()
-                val pump = new ReadPump(
+                val pump    = new ReadPump(
                     handle,
                     spy,
                     channel,
@@ -349,7 +349,7 @@ class ReadPumpTest extends Test:
                 val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 val channel = Channel.Unsafe.init[Span[Byte]](16)
                 val closed  = scala.collection.mutable.ListBuffer[String]()
-                val pump = new ReadPump(
+                val pump    = new ReadPump(
                     handle,
                     spy,
                     channel,
@@ -418,7 +418,7 @@ class ReadPumpTest extends Test:
                 val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 val channel = Channel.Unsafe.init[Span[Byte]](16)
                 val closed  = scala.collection.mutable.ListBuffer[String]()
-                val pump = new ReadPump(
+                val pump    = new ReadPump(
                     handle,
                     spy,
                     channel,
@@ -455,7 +455,7 @@ class ReadPumpTest extends Test:
                 val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 val channel = Channel.Unsafe.init[Span[Byte]](16)
                 val closed  = scala.collection.mutable.ListBuffer[String]()
-                val pump = new ReadPump(
+                val pump    = new ReadPump(
                     handle,
                     spy,
                     channel,

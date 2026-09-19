@@ -14,7 +14,7 @@ private[otlp] object OTLPInitPlatform:
         if exporter.started.compareAndSet(false, true) then
             // ExporterFactory (kyo-stats-registry) can't have Frame
             given Frame = Frame.internal
-            val _ = Sync.Unsafe.evalOrThrow {
+            val _       = Sync.Unsafe.evalOrThrow {
                 Fiber.initUnscoped {
                     Scope.run {
                         OTLPMetricsExporter.run(config).andThen {

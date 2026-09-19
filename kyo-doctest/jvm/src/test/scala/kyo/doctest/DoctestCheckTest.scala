@@ -24,7 +24,7 @@ class DoctestCheckTest extends kyo.test.Test[Any]:
         for
             id <- Random.uuid
             dir = Path.basePaths.tmp / s"doctest-check-test-$id"
-            _ <- Abort.run[FileSystemException](Path.run(dir.mkDir)).unit
+            _   <- Abort.run[FileSystemException](Path.run(dir.mkDir)).unit
             res <- Scope.acquireRelease(Sync.defer(dir))(_ => Abort.run[FileSystemException](Path.run(dir.removeAll)).unit).flatMap { dir =>
                 val file = dir / name
                 Abort.run[FileSystemException](Path.run(file.write(content))).flatMap { _ => f(file) }
@@ -54,7 +54,7 @@ class DoctestCheckTest extends kyo.test.Test[Any]:
                         |""".stripMargin
             withTempFile("README.md", md) { kyoFile =>
                 // Count temp dirs named doctest-out* BEFORE the run using kyo.Path.list.
-                val tempDirBase = Path.basePaths.tmp
+                val tempDirBase                                                            = Path.basePaths.tmp
                 def countOutDirs()(using Frame): Int < (Sync & Abort[FileSystemException]) =
                     Path.runReadOnly(tempDirBase.list).map { entries =>
                         entries.count(p => p.name.getOrElse("").startsWith("doctest-out"))

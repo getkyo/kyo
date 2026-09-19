@@ -89,9 +89,9 @@ object TestCompletionServer:
     def proxyToOpenAI(path: String, body: String, fallback: String)(using Frame): String < (Async & Abort[HttpException]) =
         liveEnabled.map {
             case false => fallback
-            case true =>
+            case true  =>
                 System.env[String]("OPENAI_API_KEY").map {
-                    case Absent => fallback
+                    case Absent       => fallback
                     case Present(key) =>
                         val url = s"https://api.openai.com/v1/${path.stripPrefix("v1/")}"
                         HttpClient.postText(

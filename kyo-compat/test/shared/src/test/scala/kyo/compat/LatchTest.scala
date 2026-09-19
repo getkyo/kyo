@@ -21,7 +21,7 @@ class LatchTest extends CompatTest:
         // await must return without throwing IllegalArgumentException and the
         // flag set after await must be true.
         val reached = new AtomicBoolean(false)
-        val c =
+        val c       =
             CLatch.init(-5).flatMap { l =>
                 l.await.flatMap { _ =>
                     CIO.defer { reached.set(true) }
@@ -58,7 +58,7 @@ class LatchTest extends CompatTest:
         // Latch(1): a concurrent release + await must complete and the
         // observable value reflects both ran.
         val ctr = new AtomicInteger(0)
-        val c =
+        val c   =
             CLatch.init(1).flatMap { l =>
                 val releaser =
                     CIO.sleep(20.millis).flatMap { _ =>

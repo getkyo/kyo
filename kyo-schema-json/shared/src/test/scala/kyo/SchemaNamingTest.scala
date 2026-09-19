@@ -163,7 +163,7 @@ class SchemaNamingTest extends kyo.test.Test[Any]:
     }
 
     "variant builders preserve Focused" in {
-        val base = Schema[SVNShape].discriminator("type")
+        val base                                                    = Schema[SVNShape].discriminator("type")
         val named: Schema[SVNShape] { type Focused = base.Focused } =
             base.variantNames("SVNCircle" -> "circle")
         val renamed: Schema[SVNShape] { type Focused = base.Focused } =
@@ -362,7 +362,7 @@ class SchemaNamingTest extends kyo.test.Test[Any]:
     }
 
     "field builders preserve Focused" in {
-        val base = Schema[SVNAccount]
+        val base                                                  = Schema[SVNAccount]
         val r: Schema[SVNAccount] { type Focused = base.Focused } =
             base.renameAllFields(Schema.NameCase.SnakeCase).alias("first_name", "fname")
         succeed("type ascription above is the compile-time check; Focused is preserved through all field builders")
