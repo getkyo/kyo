@@ -71,6 +71,24 @@ import sbt._
   *
   *   Scala Native is unaffected: it compiles every declared C source into the
   *   binary on every OS, which is what keeps the stub symbols resolvable there.
+  * @param osArchTargets
+  *   the os-arch tags this library is built and bundled for, narrowing
+  *   `osTargets` where availability splits WITHIN an OS; empty (the default)
+  *   means every arch of every OS `osTargets` allows. Both are needed because
+  *   they answer different questions: `osTargets` is about C that only means
+  *   something on one OS, while this is about a third-party library that exists
+  *   for some architectures of an OS and not others.
+  *
+  *   `kyo_doltlite` is the case it was added for. DoltLite publishes a win-x64
+  *   library and no win-arm64 one, and its build is autoconf driven through
+  *   MSYS2/MinGW, which the Windows-on-ARM image has no native toolchain for
+  *   (its MinGW gcc emits x86_64, and MSVC cannot drive the autoconf build).
+  *   Declaring `Seq("windows")` in `osTargets` would have dropped the working
+  *   x64 native along with the impossible ARM one.
+  *
+  *   Entries are EXACT `CCompiler.supportedOsArchTags` names, validated the same
+  *   way `osTargets` is and for the same reason: a typo would make the library
+  *   vanish from every platform rather than fail.
   * @param dependsOn
   *   ids of other libraries this library depends on. Used to topologically
   *   order C compilation so a library that `#include`s another's header (or
@@ -90,7 +108,8 @@ final case class FfiLibrary(
     staticLink: Boolean = false,
     dependsOn: Seq[String] = Nil,
     compilerByOs: Map[String, String] = Map.empty,
-    osTargets: Seq[String] = Nil
+    osTargets: Seq[String] = Nil,
+    osArchTargets: Seq[String] = Nil
 ) {
 
     /** Whether this library's shared library is built and bundled on `os` (the resolved TARGET os).
@@ -103,6 +122,16 @@ final case class FfiLibrary(
     def buildsOn(os: String): Boolean =
         osTargets.isEmpty || osTargets.contains(os)
 
+    /** Whether this library is built and bundled for the full os-arch tag `osArch`.
+      *
+      * The predicate to ask wherever the arch is known, which is everywhere a target is resolved:
+      * `buildsOn` alone answers for the OS and cannot see a library that exists for one arch of an OS
+      * and not another. Both narrow, so a tag has to clear `osTargets` and `osArchTargets` alike.
+      */
+    def buildsOnTarget(osArch: String): Boolean =
+        buildsOn(CCompiler.parseOsArch(osArch)._1) &&
+            (osArchTargets.isEmpty || osArchTargets.contains(osArch))
+
     /** The `osTargets` entries that are not `CCompiler.supportedOs` names. A typo makes `buildsOn`
       * false on every OS, which is silent: the library is skipped everywhere, recorded `absent` in
       * every manifest, and required of nothing by the release guard. Callers validate at resolution
@@ -110,6 +139,12 @@ final case class FfiLibrary(
       */
     def unknownOsTargets: Seq[String] =
         osTargets.filterNot(CCompiler.supportedOs.contains)
+
+    /** The `osArchTargets` entries that are not `CCompiler.supportedOsArchTags` names, validated by the
+      * same callers and for the same reason as [[unknownOsTargets]].
+      */
+    def unknownOsArchTargets: Seq[String] =
+        osArchTargets.filterNot(CCompiler.supportedOsArchTags.contains)
 
     /** Effective link libraries for the OS being built: the always-on `linkLibs`
       * plus the entry in `linkLibsByOs` for `os` (the resolved TARGET os,

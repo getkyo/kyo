@@ -9,12 +9,14 @@ import java.nio.file.Paths as JPaths
   * from a platform source set. Without a fixture that can create one, the suite's link assertions are
   * one-sided and a backend that stopped resolving links entirely would still pass.
   */
-class HostFileSystemSymlinkJvmTest extends FileSystemReadTest:
+class HostFileSystemSymlinkJvmTest extends FileSystemReadTest[Sync]:
 
     override protected def realPathRequiresExistence: Boolean = true
     override protected def supportsSymbolicLinks: Boolean     = true
 
-    override protected def createSymbolicLink(link: Path, target: Path)(using Frame): Unit < (Sync & Abort[FileSystemException]) =
+    override protected def createSymbolicLink(fileSystem: FileSystem.Read[Sync], link: Path, target: Path)(using
+        Frame
+    ): Unit < (Sync & Abort[FileSystemException]) =
         // Unsafe: creates a real symbolic link, which no Path operation exposes
         Sync.Unsafe.defer {
             discard(JFiles.createSymbolicLink(
@@ -23,10 +25,10 @@ class HostFileSystemSymlinkJvmTest extends FileSystemReadTest:
             ))
         }
 
-    protected def createFileSystem(using
-        Frame
-    ): (FileSystem.Read[Sync], Path, String) < (Sync & Scope & Abort[FileSystemException]) =
-        FileSystemConformanceFixtures.hostRead
+    protected def withFileSystem[A](
+        use: (FileSystem.Read[Sync], Path, String) => A < (Sync & Async & Scope & Abort[FileSystemException])
+    )(using Frame): A < (Async & Scope & Abort[FileSystemException]) =
+        FileSystemConformanceFixtures.hostRead.map(use.tupled)
 
 end HostFileSystemSymlinkJvmTest
 

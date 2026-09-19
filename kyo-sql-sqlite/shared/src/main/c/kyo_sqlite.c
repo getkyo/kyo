@@ -8,8 +8,8 @@
 #include <string.h>
 
 /*
-** The header is a macro so a second engine exposing the same sqlite3_* API can compile this same
-** file against its own header. Every wrapper below must therefore stay within that shared API.
+** kyo-sql-doltlite compiles this same file with -DKYO_SQLITE_HEADER="doltlite.h" against a SQLite
+** fork exposing the same sqlite3_* API, so every wrapper below must stay within that shared API.
 */
 #ifndef KYO_SQLITE_HEADER
 #define KYO_SQLITE_HEADER "sqlite3.h"

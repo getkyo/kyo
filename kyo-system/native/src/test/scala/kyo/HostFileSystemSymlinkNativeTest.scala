@@ -9,12 +9,14 @@ import java.nio.file.Paths as JPaths
   * Native test created a symbolic link, so the symlink-escape fix was asserted on one platform
   * and assumed on this one.
   */
-class HostFileSystemSymlinkNativeTest extends FileSystemReadTest:
+class HostFileSystemSymlinkNativeTest extends FileSystemReadTest[Sync]:
 
     override protected def realPathRequiresExistence: Boolean = true
     override protected def supportsSymbolicLinks: Boolean     = true
 
-    override protected def createSymbolicLink(link: Path, target: Path)(using Frame): Unit < (Sync & Abort[FileSystemException]) =
+    override protected def createSymbolicLink(fileSystem: FileSystem.Read[Sync], link: Path, target: Path)(using
+        Frame
+    ): Unit < (Sync & Abort[FileSystemException]) =
         // Unsafe: creates a real symbolic link, which no Path operation exposes
         Sync.Unsafe.defer {
             discard(JFiles.createSymbolicLink(
@@ -23,9 +25,9 @@ class HostFileSystemSymlinkNativeTest extends FileSystemReadTest:
             ))
         }
 
-    protected def createFileSystem(using
-        Frame
-    ): (FileSystem.Read[Sync], Path, String) < (Sync & Scope & Abort[FileSystemException]) =
-        FileSystemConformanceFixtures.hostRead
+    protected def withFileSystem[A](
+        use: (FileSystem.Read[Sync], Path, String) => A < (Sync & Async & Scope & Abort[FileSystemException])
+    )(using Frame): A < (Async & Scope & Abort[FileSystemException]) =
+        FileSystemConformanceFixtures.hostRead.map(use.tupled)
 
 end HostFileSystemSymlinkNativeTest

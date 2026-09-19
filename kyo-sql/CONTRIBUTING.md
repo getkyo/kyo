@@ -1,6 +1,6 @@
 # Contributing to kyo-sql
 
-Module-specific guide for kyo-sql and its backend modules (`kyo-sql-postgres`, `kyo-sql-mysql`, `kyo-sql-sqlite`, and any engine added later). Read the repository-root [CONTRIBUTING.md](../CONTRIBUTING.md) first: it carries the conventions, naming rules, type vocabulary, test patterns, and the unsafe-boundary tiers that apply across all of Kyo. This document records what is specific to kyo-sql: what the module promises across engines, how each promise is held, and the discipline that keeps an engine's quirks from leaking into a caller.
+Module-specific guide for kyo-sql and its backend modules (`kyo-sql-postgres`, `kyo-sql-mysql`, `kyo-sql-sqlite`, `kyo-sql-dolt`, and any engine added later). Read the repository-root [CONTRIBUTING.md](../CONTRIBUTING.md) first: it carries the conventions, naming rules, type vocabulary, test patterns, and the unsafe-boundary tiers that apply across all of Kyo. This document records what is specific to kyo-sql: what the module promises across engines, how each promise is held, and the discipline that keeps an engine's quirks from leaking into a caller.
 
 ## The headline invariant
 
@@ -37,7 +37,7 @@ Conformance governs observables reached through neutral types. It says nothing a
 - **The dialect.** `SqlIdiom` generates genuinely different SQL per engine, and that is its job.
 - **Connection lifecycle.** What a reset means, what a clean session is, how prepared statements are cached and released.
 - **Engine-only types.** `inet`, `cidr`, `macaddr`, `tsvector`, ranges, arrays on one side; `GEOMETRY`, `SET`, `ENUM`, `BIT` on the other, with their wire layouts and decoders.
-- **Engine-only public API.** `PostgresClient.copyIn`, `copyOut`, `notifications`, `parameters`; `MysqlClient.loadLocalInfile`. `SqliteClient` adds none: what distinguishes that engine is an absence of things, reported as a typed refusal rather than as a method.
+- **Engine-only public API.** `PostgresClient.copyIn`, `copyOut`, `notifications`, `parameters`; `MysqlClient.loadLocalInfile`; `Dolt`'s whole version-control surface. `SqliteClient` adds none: what distinguishes that engine is an absence of things, reported as a typed refusal rather than as a method.
 
 That last one is worth stating plainly, because a rule about conformance can read as though engine-specific API were a smell. It is not. A caller who holds a `PostgresClient` rather than a `SqlClient` has **chosen** engine-specific behavior, and the type says so at every use site. Extending that surface is ordinary work, and its tests belong in the backend module.
 

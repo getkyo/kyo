@@ -563,6 +563,109 @@ object ContainerPredef:
     end MySQL
 
     // =============================================================================================
+    // Dolt
+    // =============================================================================================
+
+    /** Dolt SQL server fixture for tests, a version-controlled database speaking the MySQL wire protocol.
+      *
+      * Defaults to `dolthub/dolt-sql-server:2.3.4`. Readiness is NOT a `SELECT 1`, unlike the other database fixtures here, and the
+      * difference is load-bearing. This image's entrypoint starts the server in the background, then runs its OWN initialisation queries
+      * through the `dolt sql` CLI against the same data directory, and only afterwards waits on the server process. The port accepts and
+      * answers throughout that window, so a query probe calls the container ready while initialisation is still in flight. A client that
+      * starts working in that window races the entrypoint's queries, and one that fails takes `mysql_error` and with it `exit 1`, which
+      * kills the container out from under the run. The probe therefore waits for [[initCompletedMarker]], the file the entrypoint itself
+      * touches when its initialisation is done.
+      *
+      * @see
+      *   [Docker dolt-sql-server image](https://hub.docker.com/r/dolthub/dolt-sql-server)
+      */
+    final class Dolt private[kyo] (
+        /** The underlying container handle for direct lifecycle and exec operations. */
+        val container: Container,
+        /** The configuration this fixture was started with. */
+        val config: Dolt.Config
+    ):
+
+        /** Configured root password. */
+        def rootPassword: String = config.rootPassword
+
+        /** The host pattern the root grant is created for. */
+        def rootHost: String = config.rootHost
+
+    end Dolt
+
+    object Dolt:
+
+        /** Default image: `dolthub/dolt-sql-server:2.3.4`. */
+        val defaultImage: ContainerImage = ContainerImage("dolthub/dolt-sql-server:2.3.4")
+
+        /** Default container port, `3306`, this server speaking the MySQL wire protocol. */
+        val defaultPort: Int = 3306
+
+        /** The file the image's entrypoint touches once its initialisation queries are done, immediately before it starts waiting on the
+          * server process. Readiness gates on this rather than on the server answering, for the reason given on [[Dolt]].
+          */
+        val initCompletedMarker: String = "/var/lib/dolt/.init_completed"
+
+        /** Configuration for a [[Dolt]] container. Builder methods produce updated copies; the original instance is unchanged.
+          *
+          * @param image
+          *   the Dolt container image (default `dolthub/dolt-sql-server:2.3.4`)
+          * @param rootPassword
+          *   value for the `DOLT_ROOT_PASSWORD` env var (default `"test"`)
+          * @param rootHost
+          *   value for the `DOLT_ROOT_HOST` env var (default `"%"`). The image's own default is `localhost`, which creates a grant no
+          *   connection from outside the container can match, so every such connection is refused with 1045.
+          * @param port
+          *   the in-container port the server listens on (default `3306`); the host port is allocated dynamically
+          */
+        final case class Config(
+            image: ContainerImage = defaultImage,
+            rootPassword: String = "test",
+            rootHost: String = "%",
+            port: Int = defaultPort,
+            readinessBudget: Duration = 120.seconds
+        ) derives CanEqual:
+            def image(i: ContainerImage): Config     = copy(image = i)
+            def rootPassword(p: String): Config      = copy(rootPassword = p)
+            def rootHost(h: String): Config          = copy(rootHost = h)
+            def port(v: Int): Config                 = copy(port = v)
+            def readinessBudget(d: Duration): Config = copy(readinessBudget = d)
+        end Config
+
+        object Config:
+            /** Default configuration, equivalent to `Config()`. */
+            val default: Config = Config()
+        end Config
+
+        /** Start a Dolt container scoped to the surrounding `Scope`; it is stopped and removed when the scope closes. */
+        def init(config: Config = Config.default)(using Frame): Dolt < (Async & Abort[ContainerException] & Scope) =
+            Container.init(buildContainerConfig(config)).map(c => new Dolt(c, config))
+
+        /** Start a Dolt container without scope-managed cleanup. The caller is responsible for stopping it. */
+        def initUnscoped(config: Config = Config.default)(using Frame): Dolt < (Async & Abort[ContainerException]) =
+            Container.initUnscoped(buildContainerConfig(config)).map(c => new Dolt(c, config))
+
+        /** Start a Dolt container and pass it to `f`, releasing the container when the surrounding scope closes. */
+        def initWith[A, S](config: Config = Config.default)(f: Dolt => A < S)(using
+            Frame
+        ): A < (S & Async & Abort[ContainerException] & Scope) =
+            init(config).map(f)
+
+        /** Build the [[Container.Config]] for a Dolt fixture from this config. */
+        private[kyo] def buildContainerConfig(c: Config): Container.Config =
+            Container.Config(c.image)
+                .env("DOLT_ROOT_HOST", c.rootHost)
+                .env("DOLT_ROOT_PASSWORD", c.rootPassword)
+                .port(c.port, 0)
+                // The entrypoint runs `dolt sql` as a child while the server runs as another; without an init reaping them the
+                // container can wedge on teardown, the same reason the MySQL fixture sets it.
+                .initProcess(true)
+                .requireService(true)
+                .healthCheck(readinessLoop(Chunk("test", "-f", initCompletedMarker), c.readinessBudget))
+    end Dolt
+
+    // =============================================================================================
     // MongoDB
     // =============================================================================================
 

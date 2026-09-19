@@ -1,0 +1,9 @@
+node_modules/
+chrome-profile*/
+access.log
+server.log
+opfs*.log
+*-dom.txt
+*-stderr.txt
+package-lock.json
+package.json
