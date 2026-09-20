@@ -187,7 +187,7 @@ object UIWindow:
             if el == null then Maybe.empty[dom.IntersectionObserver]
             else
                 val thresholds = js.Array[Double](minVisible)
-                val observer = new dom.IntersectionObserver(
+                val observer   = new dom.IntersectionObserver(
                     (entries, obs) =>
                         var hit = false
                         entries.foreach(e => if e.isIntersecting then hit = true)

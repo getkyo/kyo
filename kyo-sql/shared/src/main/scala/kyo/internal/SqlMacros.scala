@@ -12,6 +12,8 @@ import scala.quoted.*
   * symbols, an in-scope [[SqlNaming]] casing given, and the verbatim Scala name. The table name is the literal table-name parameter, its
   * default the lowercased type name. All three read at macro time, so column names fold statically wherever the casing given is statically
   * resolvable.
+  *
+  * A row is a case class or a named tuple, and [[rowFields]] is the one place that says which fields either one has.
   */
 object SqlMacros:
 
@@ -29,14 +31,23 @@ object SqlMacros:
       * typing of that definition nothing, where the alias derivation itself must stay a match type ([[kyo.SqlNaming.Decapitalize]])
       * to reduce there. The checks are the type name against PostgreSQL's 63-byte identifier limit, where the server would truncate
       * the alias silently (decapitalization is byte-length-preserving, so the raw name's length is the alias's), and the case-class
-      * shape the column staging needs.
+      * shape the column staging needs. A named tuple is refused by name rather than falling into the no-fields message, because it
+      * does have fields and no alias spelling makes it stageable.
       */
     inline def validateDerivedAlias[T]: Unit = ${ validateDerivedAliasImpl[T] }
 
     def validateDerivedAliasImpl[T: Type](using Quotes): Expr[Unit] =
         import quotes.reflect.*
         val tRepr = TypeRepr.of[T]
-        if tRepr.typeSymbol.caseFields.isEmpty then
+        if namedTupleFields(tRepr).nonEmpty then
+            report.errorAndAbort(
+                "Sql.from[T] does not accept a named tuple: the query DSL stages a row's columns from a case class's fields, and a named " +
+                    "tuple has none to stage. Declare the row as a case class. A named tuple remains usable as a result-row type, where " +
+                    "SqlSchema derives it by name.",
+                Position.ofMacroExpansion
+            )
+        end if
+        if rowFields(tRepr).isEmpty then
             report.errorAndAbort(
                 "Sql.from[T] derives its alias and columns from a case class with at least one field. " +
                     "For other row shapes, supply an explicit alias: Sql.from[T](\"t\").",
@@ -73,7 +84,7 @@ object SqlMacros:
         end match
     end tableNameImpl
 
-    /** Produces the INSERT column names for case-class type `T` as a `Chunk[String]`, in declaration order.
+    /** Produces the INSERT column names for row type `T` as a `Chunk[String]`, in declaration order.
       *
       * Each column resolves through [[resolveColumnName]]: an explicit `@column` rename wins, then the in-scope [[SqlNaming]] casing, then the
       * verbatim field name. When the casing given is statically resolvable the whole list folds to string literals; when it is present but
@@ -93,7 +104,7 @@ object SqlMacros:
 
     def columnNamesImpl[T: Type](using Quotes): Expr[Chunk[String]] =
         import quotes.reflect.*
-        val fieldNames                    = TypeRepr.of[T].typeSymbol.caseFields.map(_.name)
+        val fieldNames                    = rowFields(TypeRepr.of[T]).map(_._1)
         val (namingRuntime, namingStatic) = sqlNaming
         val renames                       = fieldRenames[T]
         namingStatic match
@@ -117,7 +128,7 @@ object SqlMacros:
         end match
     end columnNamesImpl
 
-    /** Produces the auto-increment primary-key column name for case-class type `T` as a `Maybe[String]`, resolved at macro expansion. The
+    /** Produces the auto-increment primary-key column name for row type `T` as a `Maybe[String]`, resolved at macro expansion. The
       * "first-column-if-Long" rule: when `T`'s first declared field is `Long`-typed, that field is the auto-key; otherwise `Maybe.empty`.
       *
       * The name resolves through the same `@column` + [[SqlNaming]] path as [[columnNames]], because the renderer emits it as an identifier
@@ -127,12 +138,12 @@ object SqlMacros:
 
     def autoKeyImpl[T: Type](using Quotes): Expr[Maybe[String]] =
         import quotes.reflect.*
-        val fields = TypeRepr.of[T].typeSymbol.caseFields
+        val fields = rowFields(TypeRepr.of[T])
         val isAuto =
-            fields.nonEmpty && (TypeRepr.of[T].memberType(fields.head) =:= TypeRepr.of[Long])
+            fields.nonEmpty && (fields.head._2 =:= TypeRepr.of[Long])
         if !isAuto then '{ Maybe.empty[String] }
         else
-            val scalaName                     = fields.head.name
+            val scalaName                     = fields.head._1
             val (namingRuntime, namingStatic) = sqlNaming
             val rename                        = renameOf(fieldRenames[T], scalaName)
             namingStatic match
@@ -158,14 +169,14 @@ object SqlMacros:
     def typeNameImpl[A: Type](using Quotes): Expr[String] =
         Expr(Type.show[A])
 
-    /** Decomposes INSERT / VALUES rows of case-class type `T` into pure primitive data: one `Chunk[BoundValue[?]]` per row, each cell a
-      * `BoundValue` pairing a field value with its `Schema` and the field type's name, in case-class declaration order.
+    /** Decomposes INSERT / VALUES rows of row type `T` into pure primitive data: one `Chunk[BoundValue[?]]` per row, each cell a
+      * `BoundValue` pairing a field value with its `Schema` and the field type's name, in declaration order.
       *
       * Storing the rows in this decomposed form (rather than as raw `T` instances) keeps the `Insert.Values` / `ValuesFrom` AST nodes pure
       * data, `Chunk`, `BoundValue`, `Schema` all lift via `FromExpr`, so `FromExpr.derived` reconstructs them with zero reflection.
       *
-      * Each field's `Schema` is summoned at macro expansion via `Expr.summon`; field access is the case-field selection `<row>.<fieldName>`.
-      * Field/column order matches `columnNames[T]` (both walk `caseFields` in declaration order).
+      * Each field's `Schema` is summoned at macro expansion via `Expr.summon`. Field/column order matches `columnNames[T]`: both read
+      * [[rowFields]].
       */
     inline def rowValues[T](inline rows: Seq[T]): Chunk[Chunk[BoundValue[?]]] = ${ rowValuesImpl[T]('rows) }
 
@@ -175,25 +186,32 @@ object SqlMacros:
             case Varargs(es) => es
             case _           =>
                 report.errorAndAbort("rowValues requires a literal sequence of rows (varargs).")
-        val caseFields                                 = TypeRepr.of[T].typeSymbol.caseFields
+        val fields = rowFields(TypeRepr.of[T])
+        // A case class selects each cell by field name. A named tuple has no such member at the term
+        // level, so its cells come from the tuple it erases to, positionally.
+        val selectsByName                              = TypeRepr.of[T].dealias.typeSymbol.caseFields.nonEmpty
         val rowChunks: Seq[Expr[Chunk[BoundValue[?]]]] = rowExprs.map: rowExpr =>
             val rowTerm                          = rowExpr.asTerm
-            val cells: List[Expr[BoundValue[?]]] = caseFields.map: field =>
-                val fieldType = TypeRepr.of[T].memberType(field)
+            val cells: List[Expr[BoundValue[?]]] = fields.zipWithIndex.map { case ((name, fieldType), idx) =>
                 fieldType.asType match
                     case '[ft] =>
-                        val fieldValue = Select.unique(rowTerm, field.name).asExprOf[ft]
+                        val fieldValue =
+                            if selectsByName then Select.unique(rowTerm, name).asExprOf[ft]
+                            else
+                                val row = rowExpr.asExprOf[Any]
+                                '{ $row.asInstanceOf[Product].productElement(${ Expr(idx) }).asInstanceOf[ft] }
                         Expr.summon[kyo.SqlSchema.Column[ft]] match
                             case Some(ev) =>
                                 '{ BoundValue[ft]($fieldValue, $ev, ${ Expr(Type.show[ft]) }): BoundValue[?] }
                             case None =>
                                 report.errorAndAbort(
-                                    s"Field '${field.name}' of type ${Type.show[ft]} is not a single-column SQL type for an INSERT/VALUES " +
+                                    s"Field '$name' of type ${Type.show[ft]} is not a single-column SQL type for an INSERT/VALUES " +
                                         s"cell. Its type needs a SqlSchema.Column (a supported scalar, Maybe/Option of one, or an installed " +
                                         s"Sql.jsonColumn / Sql.enumText / SqlSchema.of)."
                                 )
                         end match
                 end match
+            }
             // Emit `Chunk(cell*)` (varargs), not `Chunk.from(List(...))`. `FromExpr.derived`'s Chunk matcher
             // recognises the `Chunk.apply` / `Chunk.from` varargs `Repeated` shape; a `List.apply` argument is
             // not lifted, so the decomposed `Insert.Values` would otherwise fail to lift.
@@ -216,7 +234,8 @@ object SqlMacros:
                     case Maybe.Absent     => scalaName
 
     /** The `@column` names declared on `T`'s case-class fields, as a `scalaFieldName -> columnName` map, read at macro time from
-      * the primary-constructor parameter symbols. Empty when no field carries the annotation.
+      * the primary-constructor parameter symbols. Empty when no field carries the annotation, and empty for a named tuple, which has no
+      * parameter symbol to annotate.
       */
     private def fieldRenames[T: Type](using Quotes): Map[String, String] =
         renameMapOf(quotes.reflect.TypeRepr.of[T])
@@ -250,11 +269,72 @@ object SqlMacros:
     private def sqlFieldNamesImpl[T: Type](using Quotes): Expr[Seq[String]] =
         import quotes.reflect.*
         val renames = fieldRenames[T]
-        val names   = TypeRepr.of[T].typeSymbol.caseFields.map { f =>
-            renames.getOrElse(f.name, f.name)
+        val names   = rowFields(TypeRepr.of[T]).map { (name, _) =>
+            renames.getOrElse(name, name)
         }
         Expr(names)
     end sqlFieldNamesImpl
+
+    /** `tpe`'s row fields in declaration order as `(Scala field name, field type)` pairs: a case
+      * class's case fields, or a named tuple's labels paired with its element types. Empty for any
+      * other shape.
+      *
+      * The single field source for this object. A named tuple carries its names in its type and
+      * nowhere else: its type symbol is `NamedTuple`, whose `caseFields` is empty, so a reflection
+      * read of the row's fields reports a two-field named tuple as having none. The row then
+      * decodes positionally while reading as a by-name row, and the INSERT column list comes out
+      * empty, both without a diagnostic. Reading every field list from here is what keeps the
+      * column count ([[kyo.internal.LowPrioritySqlSchema.derived]], from the mirror) and the column
+      * names (from here) describing the same row.
+      */
+    private[kyo] def rowFields(using q: Quotes)(tpe: q.reflect.TypeRepr): List[(String, q.reflect.TypeRepr)] =
+        import q.reflect.*
+        val row        = tpe.dealias
+        val caseFields = row.typeSymbol.caseFields
+        if caseFields.nonEmpty then caseFields.map(field => field.name -> row.memberType(field))
+        else namedTupleFields(row)
+    end rowFields
+
+    /** `tpe`'s fields when `tpe` is a named tuple, empty otherwise.
+      *
+      * A named tuple is `NamedTuple[labels, values]`, its two arguments the tuple of label literals
+      * and the tuple of element types. Both are read structurally: every label must be a string
+      * literal type and the two tuples must be the same length, so a two-argument applied type that
+      * is not a named tuple cannot be mistaken for one.
+      */
+    private def namedTupleFields(using q: Quotes)(tpe: q.reflect.TypeRepr): List[(String, q.reflect.TypeRepr)] =
+        import q.reflect.*
+        tpe.dealias match
+            case AppliedType(tycon, List(labels, values)) if tycon.typeSymbol.name == "NamedTuple" =>
+                val names = tupleElements(labels).collect {
+                    case ConstantType(StringConstant(name)) => name
+                }
+                val types = tupleElements(values)
+                if names.size == types.size then names.zip(types) else Nil
+            case _ => Nil
+        end match
+    end namedTupleFields
+
+    /** The element types of tuple type `tpe`, in order. Empty for `EmptyTuple` and for a tuple type
+      * that is not statically known element by element.
+      *
+      * Both spellings of a tuple type occur: `TupleN[...]` carries its elements as its own type
+      * arguments, and the `*:` cons chain (what an arity above 22 and a generically built tuple
+      * produce) carries one element per cell.
+      */
+    private def tupleElements(using q: Quotes)(tpe: q.reflect.TypeRepr): List[q.reflect.TypeRepr] =
+        import q.reflect.*
+        @scala.annotation.tailrec
+        def loop(rest: q.reflect.TypeRepr, acc: List[q.reflect.TypeRepr]): List[q.reflect.TypeRepr] =
+            rest.dealias match
+                case AppliedType(tycon, List(head, tail)) if tycon.typeSymbol.name == "*:" =>
+                    loop(tail, head :: acc)
+                case AppliedType(tycon, args) if tycon.typeSymbol.name.startsWith("Tuple") =>
+                    acc.reverse ++ args
+                case _ =>
+                    acc.reverse
+        loop(tpe, Nil)
+    end tupleElements
 
     /** The `@column` wire name for `scalaName` in `renames`, as a `Maybe`. */
     private def renameOf(renames: Map[String, String], scalaName: String): Maybe[String] =

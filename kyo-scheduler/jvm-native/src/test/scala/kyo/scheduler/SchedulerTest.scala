@@ -2,11 +2,24 @@ package kyo.scheduler
 
 import java.util.concurrent.CountDownLatch
 import org.scalatest.NonImplicitAssertions
-import org.scalatest.concurrent.Eventually.*
+import org.scalatest.concurrent.Eventually
 import org.scalatest.freespec.AnyFreeSpec
+import org.scalatest.time.Millis
+import org.scalatest.time.Seconds
+import org.scalatest.time.Span
 import scala.util.control.NoStackTrace
 
-class SchedulerTest extends AnyFreeSpec with NonImplicitAssertions {
+class SchedulerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually {
+
+    /** Every assertion here is about a state the scheduler reaches, never about how fast it reaches it, so the budget is a hang guard and
+      * only a wedged scheduler ever spends it.
+      *
+      * ScalaTest's default is 150ms, and its failure mode is worse than a short wait: `eventually` checks the elapsed time only after an
+      * attempt returns, so one attempt that overruns the budget ends the loop having sampled once. On a saturated runner that turns any
+      * scheduling stall into a failure reporting whatever the single sample happened to hold.
+      */
+    implicit override val patienceConfig: PatienceConfig =
+        PatienceConfig(timeout = Span(15, Seconds), interval = Span(50, Millis))
 
     "schedule" - {
         "enqueues tasks to workers" in withScheduler { scheduler =>

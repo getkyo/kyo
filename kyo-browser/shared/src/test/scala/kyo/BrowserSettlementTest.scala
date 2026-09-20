@@ -17,6 +17,46 @@ class BrowserSettlementTest extends BrowserTest:
         }
     }
 
+    "goto fails when the navigation fails below HTTP rather than reporting success" in {
+        // A host reserved by RFC 2606 to never resolve, so Chrome commits its error document with no HTTP
+        // response behind it. That is the shape every transport failure takes, including the socket exhaustion
+        // that makes Windows CI legs fail: without the transport check the navigation reads as a success and the
+        // caller only finds out via a missing element several calls later.
+        //
+        // Assumes no HTTP proxy is configured. Behind one, Chrome reaches the proxy and gets an HTTP error from
+        // it instead of failing below HTTP, which is a different path. CI runners have no proxy.
+        withBrowser {
+            Browser.withConfig(_.loadSchedule(Schedule.fixed(50.millis).maxDuration(10.seconds))) {
+                Abort.run[BrowserNavigationException] {
+                    Browser.goto("http://kyo-transport-failure.invalid/")
+                }.map {
+                    case Result.Failure(ex: BrowserNavigationFailedException) =>
+                        assert(ex.url.startsWith("chrome-error://"), s"Expected a chrome-error URL but got '${ex.url}'")
+                    case other =>
+                        fail(s"Expected Result.Failure(BrowserNavigationFailedException) but got $other")
+                }
+            }
+        }
+    }
+
+    "goto with failOnHttpError = false still fails a navigation that fails below HTTP" in {
+        // failOnHttpError exists so a caller can read the body of an error response. A transport failure has no
+        // response, only Chrome's error document, so the reason to suppress it never applies and the flag does
+        // not reach it.
+        withBrowser {
+            Browser.withConfig(_.loadSchedule(Schedule.fixed(50.millis).maxDuration(10.seconds))) {
+                Abort.run[BrowserNavigationException] {
+                    Browser.goto("http://kyo-transport-failure.invalid/", failOnHttpError = false)
+                }.map {
+                    case Result.Failure(ex: BrowserNavigationFailedException) =>
+                        assert(ex.url.startsWith("chrome-error://"), s"Expected a chrome-error URL but got '${ex.url}'")
+                    case other =>
+                        fail(s"Expected Result.Failure(BrowserNavigationFailedException) but got $other")
+                }
+            }
+        }
+    }
+
     // ---- expectNavigation ----
 
     "expectNavigation completes when the trigger causes a navigation" in {

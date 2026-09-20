@@ -17,7 +17,7 @@ object CompatScheduler:
 
     private val executor: ScheduledExecutorService =
         val tf = new ThreadFactory:
-            private val count = new AtomicInteger(0)
+            private val count                  = new AtomicInteger(0)
             def newThread(r: Runnable): Thread =
                 val t = new Thread(r, s"compat-scheduler-${count.incrementAndGet()}")
                 t.setDaemon(true)

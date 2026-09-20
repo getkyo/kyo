@@ -46,7 +46,7 @@ final private[kyo] class DomReactiveRegions private (
                 case DomReactiveRegions.LiveHost.Siblings(_) =>
                     range.createContextualFragment(html)
             val incoming = DomReactiveRegions.scan(document, fragment)
-            val removed = ranges.iterator.collect {
+            val removed  = ranges.iterator.collect {
                 case (id, nested) if id != regionId && intersects(range, nested.start) => id
             }.toSet
 

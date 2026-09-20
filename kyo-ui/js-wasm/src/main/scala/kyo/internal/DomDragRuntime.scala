@@ -36,7 +36,7 @@ private[kyo] object DomDragRuntime:
         def every(millis: Int)(run: () => Unit): CancelTimer
 
     private object BrowserTiming extends Timing:
-        def nowMillis(): Double = js.Date.now()
+        def nowMillis(): Double                              = js.Date.now()
         def every(millis: Int)(run: () => Unit): CancelTimer =
             val id = dom.window.setInterval(() => run(), millis)
             new CancelTimer:
@@ -206,7 +206,7 @@ private[kyo] object DomDragRuntime:
         private[kyo] def stateName: String              = state.productPrefix
         private[kyo] def activeSessionId: Maybe[String] = state.maybeContext.map(_.id)
         private[kyo] def contextIdentity: Int           = state.maybeContext.fold(0)(java.lang.System.identityHashCode)
-        private[kyo] def domainItemsIdentity: Int =
+        private[kyo] def domainItemsIdentity: Int       =
             state.maybeContext.flatMap(_.domainItems).fold(0)(java.lang.System.identityHashCode)
         private[kyo] def transitionCount: Int         = transitions
         private[kyo] def sourceItemConversions: Int   = sourceConversions
@@ -295,17 +295,17 @@ private[kyo] object DomDragRuntime:
 
         private def transition(native: NativeEvent, event: dom.Event): Unit =
             (state, native) match
-                case (State.Idle, NativeEvent.Start) => start(event)
-                case (State.Idle, NativeEvent.Enter) => probeTarget(event, UIEvent.DragEnter.apply)
-                case (State.Idle, NativeEvent.Over)  => probeTarget(event, UIEvent.DragOver.apply)
-                case (State.Idle, NativeEvent.Drop)  => probeDrop(event)
+                case (State.Idle, NativeEvent.Start)                            => start(event)
+                case (State.Idle, NativeEvent.Enter)                            => probeTarget(event, UIEvent.DragEnter.apply)
+                case (State.Idle, NativeEvent.Over)                             => probeTarget(event, UIEvent.DragOver.apply)
+                case (State.Idle, NativeEvent.Drop)                             => probeDrop(event)
                 case (State.ExternalProbing(context, probe), NativeEvent.Enter) =>
                     targetEvent(event, context, Present(probe), UIEvent.DragEnter.apply)
                 case (State.ExternalProbing(context, probe), NativeEvent.Over) =>
                     targetEvent(event, context, Present(probe), UIEvent.DragOver.apply)
                 case (State.ExternalProbing(context, _), NativeEvent.Leave) => leave(event, context, emit = false)
                 case (State.ExternalProbing(context, _), NativeEvent.Drop)  => externalDrop(event, context)
-                case (State.Dragging(context), NativeEvent.Enter) =>
+                case (State.Dragging(context), NativeEvent.Enter)           =>
                     targetEvent(event, context, Absent, UIEvent.DragEnter.apply)
                 case (State.Dragging(context), NativeEvent.Over) =>
                     targetEvent(event, context, Absent, UIEvent.DragOver.apply)
@@ -335,7 +335,7 @@ private[kyo] object DomDragRuntime:
                         move(State.Idle)
                     case (State.Idle, "touchstart") =>
                         sensorSource(event).foreach { source =>
-                            val at = point(event)
+                            val at   = point(event)
                             val lift = () =>
                                 state match
                                     case State.PendingTouch(pending, x, y, timer) if pending eq source =>
@@ -391,7 +391,7 @@ private[kyo] object DomDragRuntime:
             keyboard: Boolean,
             pointer: Maybe[Double]
         ): Unit =
-            val config = source.config.wire
+            val config  = source.config.wire
             val context = SessionContext(
                 token("drag"),
                 Present(source),
@@ -524,7 +524,7 @@ private[kyo] object DomDragRuntime:
             at: Drag.Point
         ): Unit =
             val excluded = context.selectionKeys.toSet
-            val anchor = stack.iterator
+            val anchor   = stack.iterator
                 .filter(element => target.element.contains(element) && !(element eq target.element))
                 .map(element => decodeSource(element))
                 .collectFirst { case Present(item) if !excluded.contains(item.config.wire.key) => item }
@@ -532,7 +532,7 @@ private[kyo] object DomDragRuntime:
             context.anchorItem = Absent
             anchor.foreach { item =>
                 val bounds = hit.rect(item.element)
-                val after = target.config.wire.orientation match
+                val after  = target.config.wire.orientation match
                     case Drag.Orientation.Horizontal => at.x >= bounds.midX
                     case _                           => at.y >= bounds.midY
                 context.anchorItem = Present(item)
@@ -586,7 +586,7 @@ private[kyo] object DomDragRuntime:
         end containerTargets
 
         private def keyboardKey(context: SessionContext, event: dom.Event): Unit =
-            val orientation = context.target.fold(Drag.Orientation.Vertical)(_.config.wire.orientation)
+            val orientation              = context.target.fold(Drag.Orientation.Vertical)(_.config.wire.orientation)
             val forwardKeys: Set[String] = orientation match
                 case Drag.Orientation.Horizontal => Set("ArrowRight")
                 case Drag.Orientation.Vertical   => Set("ArrowDown")
@@ -657,7 +657,7 @@ private[kyo] object DomDragRuntime:
             val targets = containerTargets()
             if targets.nonEmpty then
                 val currentIndex = context.target.fold(-1)(current => targets.indexWhere(_.element eq current.element))
-                val nextIndex =
+                val nextIndex    =
                     if currentIndex < 0 then 0
                     else if backward then (currentIndex - 1 + targets.size) % targets.size
                     else (currentIndex + 1)                                 % targets.size
@@ -750,7 +750,7 @@ private[kyo] object DomDragRuntime:
 
         private def start(event: dom.Event): Unit =
             asElement(event.target).flatMap(closestSource).foreach { source =>
-                val config = source.config.wire
+                val config           = source.config.wire
                 val nativeActivation =
                     config.activation == Drag.Activation.Native || config.activation == Drag.Activation.Both
                 if nativeActivation &&
@@ -924,7 +924,7 @@ private[kyo] object DomDragRuntime:
         private def newProbe(event: dom.Event): Maybe[State.ExternalProbing] =
             dataTransfer(event).flatMap(probe).map { result =>
                 val operation = preferred(result.allowed, Absent, modifiers(event)).getOrElse(Drag.Operation.Move)
-                val context = SessionContext(
+                val context   = SessionContext(
                     token("drag"),
                     Absent,
                     result.allowed,
@@ -943,7 +943,7 @@ private[kyo] object DomDragRuntime:
             emitStart(context, path, point(event), modifiers(event))
 
         private def emitStart(context: SessionContext, path: Seq[String], at: Drag.Point, mods: UI.Modifiers): Unit =
-            val sourceKey = context.source.map(_.config.wire.key)
+            val sourceKey                = context.source.map(_.config.wire.key)
             val start: UIEvent.DragStart = UIEvent.DragStart(
                 path,
                 DragProtocol.StartData(
@@ -1006,7 +1006,7 @@ private[kyo] object DomDragRuntime:
                 (!probe.uri || accept.accepts(Drag.Item.Uri("probe"))) &&
                 probe.files.forall { file =>
                     file.directory match
-                        case Present(true) => accept.directories
+                        case Present(true)  => accept.directories
                         case Present(false) =>
                             file.mediaType.fold(true)(media => acceptsProbeFile(accept, media))
                         case Absent =>
@@ -1058,7 +1058,7 @@ private[kyo] object DomDragRuntime:
             else
                 sourceCache match
                     case Present(cached) if (cached.element eq element) && cached.raw == raw => cached.value
-                    case _ =>
+                    case _                                                                   =>
                         val value =
                             if raw.length > limits.maxAttributeLength then Absent
                             else
@@ -1085,7 +1085,7 @@ private[kyo] object DomDragRuntime:
             else
                 targetCache match
                     case Present(cached) if (cached.element eq element) && cached.raw == raw => cached.value
-                    case _ =>
+                    case _                                                                   =>
                         val value =
                             if raw.length > limits.maxAttributeLength then Absent
                             else
@@ -1131,7 +1131,7 @@ private[kyo] object DomDragRuntime:
                     val raw = types(index)
                     if !raw.equalsIgnoreCase("Files") then
                         Drag.MediaType.parse(raw) match
-                            case Present(mediaType) if seenTypes.contains(mediaType) => valid = false
+                            case Present(mediaType) if seenTypes.contains(mediaType)       => valid = false
                             case Present(mediaType) if mediaType.render == "text/uri-list" =>
                                 seenTypes += mediaType
                                 uri = true
@@ -1149,15 +1149,15 @@ private[kyo] object DomDragRuntime:
                 val seenTypes = mutable.Set.empty[Drag.MediaType]
                 var index     = 0
                 while index < items.length do
-                    val item = items(index)
-                    val kind = if js.isUndefined(item.kind) then "" else item.kind.asInstanceOf[String]
+                    val item         = items(index)
+                    val kind         = if js.isUndefined(item.kind) then "" else item.kind.asInstanceOf[String]
                     val rawMediaType =
                         if js.isUndefined(item.`type`) || item.`type` == null then ""
                         else item.`type`.asInstanceOf[String]
                     val mediaType = if rawMediaType.isEmpty then Absent else Drag.MediaType.parse(rawMediaType)
                     if kind == "string" then
                         mediaType match
-                            case Present(media) if seenTypes.contains(media) => valid = false
+                            case Present(media) if seenTypes.contains(media)       => valid = false
                             case Present(media) if media.render == "text/uri-list" =>
                                 seenTypes += media
                                 uri = true
@@ -1173,7 +1173,7 @@ private[kyo] object DomDragRuntime:
                 end while
             end if
             val manifest = Probe(textTypes.toSet, uri, files.result())
-            val allowed = allowedFromBrowser(
+            val allowed  = allowedFromBrowser(
                 if js.isUndefined(transfer.effectAllowed) then "all" else transfer.effectAllowed.asInstanceOf[String]
             )
             if valid && manifest.itemCount > 0 && manifest.itemCount <= limits.maxItemCount && allowed.values.nonEmpty then
@@ -1239,7 +1239,7 @@ private[kyo] object DomDragRuntime:
                                     if js.typeOf(item.getAsFile) == "function" then defined(item.getAsFile())
                                     else Absent
                                 file match
-                                    case Absent => valid = false
+                                    case Absent        => valid = false
                                     case Present(file) =>
                                         fileMeta(file) match
                                             case Present(metadata) =>
@@ -1266,7 +1266,7 @@ private[kyo] object DomDragRuntime:
                 }
             end if
 
-            val result = collected.result()
+            val result  = collected.result()
             val allowed = allowedFromBrowser(
                 if js.isUndefined(transfer.effectAllowed) then "all" else transfer.effectAllowed.asInstanceOf[String]
             )
@@ -1301,7 +1301,7 @@ private[kyo] object DomDragRuntime:
                 !lastModified.isFinite || math.abs(lastModified) > 9_007_199_254_740_991d || lastModified != math.floor(lastModified)
             then Absent
             else
-                val name = safeName(file.name, "file")
+                val name     = safeName(file.name, "file")
                 val rawMedia =
                     val value = if js.isUndefined(file.`type`) then "" else file.`type`.asInstanceOf[String]
                     if value.nonEmpty then value else "application/octet-stream"
@@ -1331,7 +1331,7 @@ private[kyo] object DomDragRuntime:
             target: Maybe[Drag.AllowedOperations],
             mods: UI.Modifiers
         ): Maybe[Drag.Operation] =
-            val common = target.fold(source.values)(value => source.values.intersect(value.values))
+            val common    = target.fold(source.values)(value => source.values.intersect(value.values))
             val requested =
                 if mods.alt then Drag.Operation.Link
                 else if mods.ctrl || mods.meta then Drag.Operation.Copy
@@ -1370,7 +1370,7 @@ private[kyo] object DomDragRuntime:
         private def createPreview(element: dom.Element, preview: Drag.Preview, transfer: js.Dynamic): Maybe[dom.Element] =
             preview match
                 case Drag.Preview.Native => Absent
-                case Drag.Preview.Clone =>
+                case Drag.Preview.Clone  =>
                     val clone = element.cloneNode(deep = true).asInstanceOf[dom.Element]
                     previewNode(clone, transfer, hidden = false)
                 case Drag.Preview.Hidden =>

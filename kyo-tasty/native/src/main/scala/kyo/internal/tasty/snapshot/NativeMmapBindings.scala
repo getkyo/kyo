@@ -23,6 +23,6 @@ private[snapshot] object NativeMmapBindings:
         flags: CInt,
         fd: CInt,
         offset: CLong
-    ): Ptr[Byte] = extern
+    ): Ptr[Byte]                                     = extern
     def munmap(addr: Ptr[Byte], length: CSize): CInt = extern
 end NativeMmapBindings

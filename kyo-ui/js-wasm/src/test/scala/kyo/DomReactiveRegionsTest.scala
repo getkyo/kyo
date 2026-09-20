@@ -89,7 +89,7 @@ class DomReactiveRegionsTest extends kyo.test.Test[Any]:
         Scope.run {
             for
                 regions <- DomReactiveRegions.init(root)
-                _ <- regions.replace(
+                _       <- regions.replace(
                     One,
                     "<tbody id='authored' class='section'><tr id='section-row'><td>section</td></tr></tbody>"
                 )
@@ -144,12 +144,12 @@ class DomReactiveRegionsTest extends kyo.test.Test[Any]:
         Scope.run {
             for
                 regions <- DomReactiveRegions.init(root)
-                _ <- regions.replace(
+                _       <- regions.replace(
                     One,
                     "<tbody id='first'><tr><td>one</td></tr></tbody><tbody id='second'><tr><td>two</td></tr></tbody>"
                 )
                 authoredCount <- Sync.defer(root.querySelectorAll("table > tbody").length)
-                _ <- regions.replace(
+                _             <- regions.replace(
                     One,
                     s"<tbody data-kyo-range-host='$One'><tr id='returned'><td>row</td></tr></tbody>"
                 )
@@ -186,7 +186,7 @@ class DomReactiveRegionsTest extends kyo.test.Test[Any]:
         Scope.run {
             for
                 regions <- DomReactiveRegions.init(root)
-                _ <- regions.replace(
+                _       <- regions.replace(
                     Outer,
                     s"<section><!--kyo-rs:$New-->new<!--kyo-re:$New--></section>"
                 )
@@ -262,7 +262,7 @@ class DomReactiveRegionsTest extends kyo.test.Test[Any]:
         val root = host(s"<!--kyo-rs:$One-->x<!--kyo-re:$One-->")
         for
             saved <- AtomicRef.init(Absent: Maybe[DomReactiveRegions])
-            _ <- Scope.run {
+            _     <- Scope.run {
                 DomReactiveRegions.init(root).map(regions => saved.set(Present(regions)))
             }
             regions <- saved.get.map(_.get)

@@ -122,9 +122,9 @@ final private[kyo] class HttpContainerBackend(
                                         // what decides here.
                                         if HttpContainerBackend.bodyNamesServerError(e.body) && !HttpContainerBackend.claimsAbsence(e.body)
                                         then
-                                            Abort.fail(ContainerOperationException(
-                                                s"Registry unavailable for ${ctx.describe}${e.body.map(b => s": $b").getOrElse("")}",
-                                                e
+                                            Abort.fail(ContainerRegistryUnavailableException(
+                                                ctx.describe,
+                                                e.body.getOrElse(s"HTTP ${e.status.code}")
                                             ))
                                         else Abort.fail(missingExceptionFor(ctx, e))
                                     case 409 =>
@@ -1486,6 +1486,11 @@ final private[kyo] class HttpContainerBackend(
       * same category and is excluded for the same reason: the conflation this branch exists to paper over is between "absent" and "needs
       * credentials", and a server error asserts neither. Calling it missing is worse than unhelpful, because a missing image is the one
       * classification callers treat as permanent, so a transient upstream fault lands in the bucket that is never retried.
+      *
+      * A registry fault gets [[ContainerRegistryUnavailableException]] rather than an unclassified operation failure, because that is what
+      * [[Container.init]] retries on. Two signals outrank it, matching what the 404 branch of `mapHttpError` already does: an absence claim
+      * in the body, which is the daemon answering about the image rather than quoting a transport failure next to it, and, with credentials
+      * supplied, a denial, which answers about the credentials rather than the registry's own health.
       */
     private[internal] def normalizePullError(
         httpEx: HttpException,
@@ -1493,7 +1498,11 @@ final private[kyo] class HttpContainerBackend(
         auth: Maybe[ContainerImage.RegistryAuth]
     )(using Frame): Unit < (Sync & Abort[ContainerException]) =
         httpEx match
-            case e: HttpStatusException if auth.isEmpty && !isRegistryUnavailable(e) =>
+            case e: HttpStatusException
+                if isRegistryUnavailable(e) && !HttpContainerBackend.claimsAbsence(e.body) &&
+                    !(auth.isDefined && isAuthDenialBody(e)) =>
+                Abort.fail(ContainerRegistryUnavailableException(image.reference, e.body.getOrElse(s"HTTP ${e.status.code}")))
+            case e: HttpStatusException if auth.isEmpty =>
                 Abort.fail(ContainerImageMissingException(image))
             case e: HttpStatusException if auth.isDefined && isAuthDenialBody(e) =>
                 // With auth supplied, a daemon response carrying registry-denial wording is
@@ -2923,10 +2932,7 @@ private[kyo] object HttpContainerBackend:
     private[kyo] def bodyNamesServerError(body: Maybe[String]): Boolean =
         body.exists { b =>
             val lower = b.toLowerCase
-            lower.contains("500 internal server error") ||
-            lower.contains("502 bad gateway") ||
-            lower.contains("503 service unavailable") ||
-            lower.contains("504 gateway timeout")
+            DaemonErrorPhrases.ServerError.exists(lower.contains)
         }
 
     /** True when the body itself claims the resource is absent, in the vocabulary both daemons use.

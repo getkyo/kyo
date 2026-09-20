@@ -86,7 +86,7 @@ class HtmlRendererReactiveRangesJsTest extends kyo.test.Test[Any]:
         install("<!--kyo-rs:r--><span id='kept'>kept</span><!--kyo-re:r-->")
         val before    = dom.document.body.innerHTML
         val malformed = evalString("try{kyoRangeReplace('r1','changed');'no error'}catch(e){e.message}")
-        val unknown = evalString(
+        val unknown   = evalString(
             "try{kyoRangeReplace('r000000010078','changed');'no error'}catch(e){e.message}"
         )
         assert(malformed == "kyo-ui reactive range: malformed replacement id: r1")
@@ -99,7 +99,7 @@ class HtmlRendererReactiveRangesJsTest extends kyo.test.Test[Any]:
         val nested = "r000000010032"
         install(s"<!--kyo-rs:$id--><span id='kept-fragment'>kept</span><!--kyo-re:$id-->")
         val before = dom.document.body.innerHTML
-        val error = evalString(
+        val error  = evalString(
             s"try{kyoRangeReplace('$id',\"<!--kyo-rs:$nested--><b>broken</b>\");'no error'}catch(e){e.message}"
         )
         assert(error.contains(s"start marker has no end: $nested"))

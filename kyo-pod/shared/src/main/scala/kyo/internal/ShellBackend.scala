@@ -2189,7 +2189,7 @@ final private[kyo] class ShellBackend(
       * the primary classification signal. Looks up [[errorTable]] first for simple match-and-build cases; falls through to inline branches
       * for the three patterns that need richer logic (network-not-found AND, PortConflict regex, initializing-source surgery).
       */
-    private def mapError(output: String, ctx: ResourceContext, args: Seq[String])(using Frame): ContainerException =
+    private[internal] def mapError(output: String, ctx: ResourceContext, args: Seq[String])(using Frame): ContainerException =
         val lower = output.toLowerCase
 
         def matchesAny(patterns: Seq[String]): Boolean = patterns.exists(lower.contains)
@@ -2224,6 +2224,14 @@ final private[kyo] class ShellBackend(
                             lower.contains("bearer token") || lower.contains("denied"))
                     then
                         ContainerAuthException(ctx.describe, output)
+                    // The pull reached the registry and the registry failed. Podman prints the status it received
+                    // verbatim ("received unexpected HTTP status: 502 Bad Gateway"), which is the only part of the
+                    // sentence that distinguishes an outage from an absent image; the rest reads the same either way.
+                    // It must be caught before the surgery below, which files anything else under "initializing source"
+                    // as permanently missing, and missing is the classification callers never retry. An output that
+                    // names the image absent has already matched ErrorPatterns.ImageNotFound in the table above.
+                    else if lower.contains("initializing source") && matchesAny(DaemonErrorPhrases.ServerError) then
+                        ContainerRegistryUnavailableException(ctx.describe, output)
                     // initializing source: multi-step string surgery to extract the image ref
                     else if lower.contains("initializing source") then
                         val dockerIdx = output.indexOf("docker://")

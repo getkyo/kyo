@@ -329,8 +329,8 @@ class DocsClientTest extends kyo.test.Test[Any]:
         // unescapeJson's `\u` arm must decode `<` -> `<` and `>` -> `>`.
         // This fixture uses the escScript output form (the bytes el.textContent actually yields),
         // so the test exercises the real decode path rather than the no-backslash fast path.
-        val lt = "\\u003c"
-        val gt = "\\u003e"
+        val lt                = "\\u003c"
+        val gt                = "\\u003e"
         val escapedIslandJson =
             s"""{"version": {"tag": "v1.0.0", "label": "1.0.0", "latest": true}, """ +
                 s""""intro": "", "groups": [], "versions": [], """ +

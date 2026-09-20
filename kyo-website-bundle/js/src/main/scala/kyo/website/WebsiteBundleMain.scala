@@ -156,7 +156,7 @@ object WebsiteBundleMain:
             // click lands on a `.sidebar-section` link, while a module tap leaves the drawer open so its
             // sections expand in place.
             navOpenRef <- Signal.initRef(false)
-            _ <- UIWindow.onClick { e =>
+            _          <- UIWindow.onClick { e =>
                 e.targetClosest(".sidebar-section") match
                     case Present(_) => navOpenRef.updateAndGet(_ => false).unit
                     case Absent     => Kyo.unit
@@ -194,7 +194,7 @@ object WebsiteBundleMain:
             // searchIndex on success; a fetch failure leaves the title-only seed in place.
             searchIndex <- Signal.initRef(titleIndex(island.content, prefix))
             _           <- Fiber.initUnscoped(refreshSearchIndex(searchIndex, prefix))
-            _ <- navFiber(
+            _           <- navFiber(
                 route,
                 knownPrefixes,
                 knownSlugs,
@@ -261,8 +261,8 @@ object WebsiteBundleMain:
         for
             dark <- UIWindow.prefersColorScheme.current
             next <- Sync.defer {
-                val root = dom.document.documentElement
-                val attr = root.getAttribute("data-theme")
+                val root          = dom.document.documentElement
+                val attr          = root.getAttribute("data-theme")
                 val effectiveDark =
                     if attr == "dark" then true
                     else if attr == "light" then false
@@ -538,7 +538,7 @@ object WebsiteBundleMain:
                 for
                     article <- Sync.defer(Maybe.fromOption(articleCache.get(nextRoute))).flatMap {
                         case Present(a) => Sync.defer(a)
-                        case Absent =>
+                        case Absent     =>
                             DocsClient.fetchArticle(nextRoute).map { a =>
                                 seedArticleCache(nextRoute, a)
                                 a
@@ -576,7 +576,7 @@ object WebsiteBundleMain:
     private def updateHead(route: String, island: DocsClient.DocsIsland)(using Frame): Unit < Sync =
         val segments = route.split('/').filter(_.nonEmpty)
         val label    = island.content.version.label
-        val title =
+        val title    =
             if segments.isEmpty then "Kyo | Build with AI. Ship something that holds."
             else if segments.length >= 2 then s"${segments(segments.length - 1)} | Kyo docs $label"
             else s"Overview | Kyo docs $label"

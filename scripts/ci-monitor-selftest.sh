@@ -97,4 +97,98 @@ absent_out=$(
 )
 expect_eq "missing ps" "$absent_out" ""
 
+# Sockets: `netstat -ano -p tcp` rows are indented and carry a state column only for TCP; the count that
+# matters is TIME_WAIT against the dynamic range `netsh` reports. Same parse-bug exposure as proc_top,
+# and it decides whether a WSAENOBUFS leg ran out of ports or out of something else.
+# The v6 rows are the reason both families are counted: a JVM opens dual-stack sockets and localhost
+# resolves to ::1, so an IPv4-only count misses exactly the churn the headline exists to show.
+cat > "$test_dir/bin/netstat" <<'STUB'
+#!/usr/bin/env bash
+if [ "${3:-}" = tcpv6 ]; then
+cat <<'ROWS'
+
+Active Connections
+
+  Proto  Local Address          Foreign Address        State           PID
+  TCP    [::1]:49200            [::1]:9222             TIME_WAIT       0
+  TCP    [::]:135               [::]:0                 LISTENING       900
+ROWS
+else
+cat <<'ROWS'
+
+Active Connections
+
+  Proto  Local Address          Foreign Address        State           PID
+  TCP    127.0.0.1:49152        127.0.0.1:9222         ESTABLISHED     1234
+  TCP    127.0.0.1:49153        127.0.0.1:9222         TIME_WAIT       0
+  TCP    127.0.0.1:49154        127.0.0.1:9222         TIME_WAIT       0
+  TCP    0.0.0.0:135            0.0.0.0:0              LISTENING       900
+ROWS
+fi
+STUB
+chmod +x "$test_dir/bin/netstat"
+
+cat > "$test_dir/bin/netsh" <<'STUB'
+#!/usr/bin/env bash
+cat <<'ROWS'
+
+Protocol tcp Dynamic Port Range
+---------------------------------
+Start Port      : 49152
+Number of Ports : 16384
+ROWS
+STUB
+chmod +x "$test_dir/bin/netsh"
+
+sockets_out=$(
+    PATH="$test_dir/bin:$PATH" OS=MINGW64_NT-10.0 bash -c "
+        $(sed -n '/^sockets_headline()/,/^}/p' "$script_dir/ci-monitor.sh")
+        sockets_headline
+    "
+)
+
+# Four IPv4 rows plus two IPv6 ones; three of the six are TIME_WAIT. The banner lines carry no leading TCP
+# token and must not inflate the total. Both families report the same range, so it prints once.
+expect_eq "windows sockets" "$sockets_out" 'tcp=6 timeWait=3 ephemeral=16384'
+
+# The posix branch has no port range small enough to exhaust, so the headline is absent entirely rather
+# than reporting a partial line.
+posix_sockets_out=$(
+    PATH="$test_dir/bin:$PATH" OS=Linux bash -c "
+        $(sed -n '/^sockets_headline()/,/^}/p' "$script_dir/ci-monitor.sh")
+        sockets_headline
+    "
+)
+expect_eq "posix sockets" "$posix_sockets_out" ""
+
+# A netstat that runs but yields no TCP rows (it errored, or printed only a banner) must read as
+# unsampled. Counting it as zero would report healthy sockets on exactly the leg that cannot be sampled.
+cat > "$test_dir/bin/netstat" <<'STUB'
+#!/usr/bin/env bash
+echo "netstat: something went wrong" >&2
+exit 1
+STUB
+chmod +x "$test_dir/bin/netstat"
+
+unsampled_out=$(
+    PATH="$test_dir/bin:$PATH" OS=MINGW64_NT-10.0 bash -c "
+        $(sed -n '/^sockets_headline()/,/^}/p' "$script_dir/ci-monitor.sh")
+        sockets_headline
+    " || fail "a failing netstat made sockets_headline exit non-zero"
+)
+expect_eq "unsampled sockets" "$unsampled_out" 'tcp=? timeWait=? ephemeral=16384'
+
+case "$unsampled_out" in
+    *'tcp=0'*) fail "a failing netstat reported zero sockets instead of an unsampled field" ;;
+esac
+
+# Absent netstat must print nothing and exit zero, for the same reason proc_top must.
+absent_sockets_out=$(
+    PATH="$test_dir/empty" OS=MINGW64_NT-10.0 "$bash_bin" -c "
+        $(sed -n '/^sockets_headline()/,/^}/p' "$script_dir/ci-monitor.sh")
+        sockets_headline
+    " || fail "a missing netstat made sockets_headline exit non-zero"
+)
+expect_eq "missing netstat" "$absent_sockets_out" ""
+
 printf 'ci-monitor-selftest: ok\n'

@@ -13,12 +13,17 @@ import java.util.concurrent.locks.LockSupport
 import java.util.concurrent.locks.ReentrantLock
 import kyo.scheduler.util.ThreadUserTime
 import org.scalatest.NonImplicitAssertions
-import org.scalatest.concurrent.Eventually.*
+import org.scalatest.concurrent.Eventually
 import org.scalatest.freespec.AnyFreeSpec
+import org.scalatest.time.Millis
 import org.scalatest.time.Seconds
 import org.scalatest.time.Span
 
-class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
+class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions with Eventually {
+
+    /** The budget for the leaves that state no timeout of their own; see SchedulerTest for why the default one is unusable here. */
+    implicit override val patienceConfig: PatienceConfig =
+        PatienceConfig(timeout = Span(15, Seconds), interval = Span(50, Millis))
 
     // ── shared scheduler (single instance for all scheduler-level tests) ─
 

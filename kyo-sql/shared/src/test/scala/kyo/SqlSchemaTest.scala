@@ -4,6 +4,9 @@ import kyo.SqlDecodeException
 
 case class SqlSchemaTestPair(a: Int, b: String) derives SqlSchema, CanEqual
 
+/** A named tuple row: the same two fields as a case class, with the names carried by the type. */
+type SqlSchemaTestNamed = (name: String, age: Int)
+
 /** Sealed trait with two case objects, stored as its variant label through [[Sql.enumText]]. */
 sealed trait TestColor derives CanEqual
 
@@ -315,6 +318,41 @@ class SqlSchemaTest extends Test:
             Long
         )]]
         assert(s.width == 22)
+        succeed
+    }
+
+    // --- 12b. Named tuples are rows that carry their names ---
+    //
+    // A named tuple's names live in its type and nowhere else: its type symbol is `NamedTuple`, which has no
+    // case fields, so a row derived from the symbol alone would report the right width with no names and
+    // decode positionally while reading as a by-name row.
+
+    "fieldNames is the labels for a named tuple" in {
+        assert(summon[SqlSchema[SqlSchemaTestNamed]].width == 2)
+        assert(summon[SqlSchema[SqlSchemaTestNamed]].fieldNames == Chunk("name", "age"))
+        succeed
+    }
+
+    "fieldNames is positional for a plain tuple" in {
+        assert(summon[SqlSchema[(String, Int)]].fieldNames == Chunk("_1", "_2"))
+        succeed
+    }
+
+    "a named-tuple row decodes by name when the columns arrive in another order" in {
+        val reader = new SqlSchemaReaderMock(
+            Chunk(SqlSchemaWriterMock.Call.Int(42), SqlSchemaWriterMock.Call.Str("alice")),
+            SqlSchemaWriterMock.postgres,
+            columnNames = Chunk("age", "name")
+        )
+        val row = summon[SqlSchema[SqlSchemaTestNamed]].read(reader)
+        assert(row.name == "alice")
+        assert(row.age == 42)
+        succeed
+    }
+
+    "a named-tuple row writes its columns in declaration order" in {
+        val row: SqlSchemaTestNamed = (name = "alice", age = 42)
+        assert(written(row) == Chunk(SqlSchemaWriterMock.Call.Str("alice"), SqlSchemaWriterMock.Call.Int(42)))
         succeed
     }
 

@@ -158,6 +158,8 @@ final case class ContainerVolumeInUseException(id: Container.Volume.Id, containe
   * @see
   *   [[kyo.ContainerAuthException]] Registry authentication failed
   * @see
+  *   [[kyo.ContainerRegistryUnavailableException]] Registry could not answer
+  * @see
   *   [[kyo.ContainerBuildFailedException]] Image build failed
   * @see
   *   [[kyo.ContainerHealthCheckException]] Health check failed
@@ -209,6 +211,23 @@ end ContainerExecFailedException
   */
 final case class ContainerAuthException(registry: String, detail: String)(using Frame)
     extends ContainerOperationException(s"Authentication failed for $registry", detail) derives CanEqual
+
+/** The registry could not serve the request, so it said nothing about whether the image exists.
+  *
+  * A registry answering 5xx, or a daemon quoting one it received, is a transient fault: the same pull can succeed moments later. It is kept
+  * apart from [[kyo.ContainerImageMissingException]] because that is the one classification callers treat as permanent, so a registry
+  * outage filed under it would be reported to the user as a typo in the image name and would never be retried.
+  *
+  * [[kyo.Container.init]] retries this on its `retrySchedule`. A caller reaching a registry through [[kyo.ContainerImage.pull]] or
+  * [[kyo.ContainerImage.ensure]] owns that decision itself, and this type is what it matches on.
+  *
+  * @param target
+  *   what the registry was asked for, an image reference where the daemon named one
+  * @param detail
+  *   the daemon-reported reason, carrying the registry's own status where the daemon quoted it
+  */
+final case class ContainerRegistryUnavailableException(target: String, detail: String)(using Frame)
+    extends ContainerOperationException(s"Registry could not serve $target", detail) derives CanEqual
 
 /** Image build failed.
   *

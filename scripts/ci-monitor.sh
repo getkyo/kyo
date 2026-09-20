@@ -15,7 +15,10 @@ set -uo pipefail
 #      process count, and conmon count. Diagnoses in-container `sh: Cannot fork` (EAGAIN) and the
 #      reap/cleanup backlog a container-heavy suite exhausts a rootless runner with. Task count is
 #      Linux-only (macOS reads `na`).
-#   4) proc_top - top 3 commands by aggregate RSS, for "whose memory is it" when the box overcommits.
+#   4) Socket-pressure headline - live TCP entries, the TIME_WAIT subset, and the dynamic port range
+#      (tcp/timeWait/ephemeral). Diagnoses a WSAENOBUFS (error 10055) connect failure, which no memory
+#      or CPU field predicts. Windows-only: the other poles have ranges too large to exhaust.
+#   5) proc_top - top 3 commands by aggregate RSS, for "whose memory is it" when the box overcommits.
 #
 # Disk watch: the per-interval line always carries diskFreeMB. When free disk first drops below
 # CI_MON_DISK_WARN_MB (and again below CI_MON_DISK_CRIT_MB) the monitor prints a one-shot
@@ -210,17 +213,59 @@ tasks_headline() {
     esac
 }
 
+# Socket-pressure headline: the numbers that explain a WSAENOBUFS (Windows error 10055) or an EADDRNOTAVAIL.
+# `tcp=N` is the live TCP entry count and `timeWait=T` the subset sitting in TIME_WAIT, against `ephemeral=R`,
+# the size of the dynamic port range. A browser suite that opens a connection per test leaf walks T up toward R
+# (Windows holds TIME_WAIT for 120s since Windows 8; the NT-era default was 240s), and past it a connect fails
+# with no memory or CPU pressure to show for it, which is invisible in every other field here. Windows only: it
+# is the pole where the range is small enough to exhaust and the only one that has produced the failure.
+# Best-effort; a field that cannot be sampled prints `?`.
+#
+# Both address families are counted. A JVM on Windows opens dual-stack sockets and localhost resolves to ::1, so
+# those rows appear only under `-p tcpv6`: counting IPv4 alone would under-report the churn this exists to show,
+# and the ranges are configured separately.
+sockets_headline() {
+    case "$OS" in
+        MINGW* | MSYS* | CYGWIN*) ;;
+        *) return 0 ;;
+    esac
+    command -v netstat >/dev/null 2>&1 || return 0
+    local counts tcp timewait v4range v6range range
+    # Emit nothing when no TCP row was seen, so a netstat that errored or printed nothing reads as `?`
+    # below rather than as `tcp=0 timeWait=0`. A zero is worse than a blank here: it says the sockets are
+    # fine. A live Windows box always has at least one LISTENING row, so no-rows means no sample.
+    counts=$(
+        {
+            MSYS2_ARG_CONV_EXCL='*' netstat -ano -p tcp 2>/dev/null
+            MSYS2_ARG_CONV_EXCL='*' netstat -ano -p tcpv6 2>/dev/null
+        } | tr -d '\r' |
+            awk '/^ +TCP/ { total++; if ($4 == "TIME_WAIT") tw++ } END { if (total) printf "%d %d", total, tw }'
+    )
+    tcp=${counts%% *}
+    timewait=${counts##* }
+    v4range=$(MSYS2_ARG_CONV_EXCL='*' netsh int ipv4 show dynamicport tcp 2>/dev/null | tr -d '\r' |
+        awk '/Number of Ports/ { print $NF }')
+    v6range=$(MSYS2_ARG_CONV_EXCL='*' netsh int ipv6 show dynamicport tcp 2>/dev/null | tr -d '\r' |
+        awk '/Number of Ports/ { print $NF }')
+    # One figure when the two families share a range, which is the default, and both when they diverge.
+    if [ -n "$v4range" ] && [ "$v4range" = "$v6range" ]; then range="$v4range"
+    elif [ -n "$v4range" ] || [ -n "$v6range" ]; then range="${v4range:-?}/${v6range:-?}"
+    fi
+    printf 'tcp=%s timeWait=%s ephemeral=%s' "${tcp:-?}" "${timewait:-?}" "${range:-?}"
+}
+
 ncpu=$( (command -v nproc >/dev/null 2>&1 && nproc) || sysctl -n hw.ncpu 2>/dev/null || echo '?')
 log "started interval=${INTERVAL}s src=$MON_SRC cores=$ncpu sched=${SCHED_FILE:-none} diskWarnMB=$DISK_WARN_MB diskCritMB=$DISK_CRIT_MB diskAbortMB=${DISK_ABORT_MB:-off}"
 while true; do
     os="$(os_headline)"
     tasks="$(tasks_headline)"
+    sock="$(sockets_headline)"
     top="$(proc_top)"
     sc="$(sched_snapshot)"
     free_mb=$(df -Pm . 2>/dev/null | awk 'NR==2{print $4}')
     disk_check "$free_mb"
     crit=""
     [ "$disk_critted" = "1" ] && crit=" DISK-CRIT"
-    echo "[ci-mon $(date -u +%H:%M:%S)]${os:+ $os}${tasks:+ $tasks}${top:+ $top}${sc:+ $sc}${crit}"
+    echo "[ci-mon $(date -u +%H:%M:%S)]${os:+ $os}${tasks:+ $tasks}${sock:+ $sock}${top:+ $top}${sc:+ $sc}${crit}"
     sleep "$INTERVAL"
 done
