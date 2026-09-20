@@ -37,11 +37,11 @@ class ServiceProvidersTest extends AnyFunSuite with Matchers {
 
     test("a jar's service files become interface to implementations") {
         withJar(Seq(
-            "META-INF/services/kyo.db.Backend"                   -> "kyo.internal.mysql.MysqlBackendFactory\n",
+            "META-INF/services/kyo.db.Backend"                    -> "kyo.internal.mysql.MysqlBackendFactory\n",
             "META-INF/services/kyo.stats.internal.ExporterFactory" -> "kyo.stats.machine.MachineStatFactory\n"
         )) { jar =>
-            ServiceProviders.readJars(Seq(jar)) shouldBe Map(
-                "kyo.db.Backend"                    -> Seq("kyo.internal.mysql.MysqlBackendFactory"),
+            ServiceProviders.read(Seq(jar)) shouldBe Map(
+                "kyo.db.Backend"                     -> Seq("kyo.internal.mysql.MysqlBackendFactory"),
                 "kyo.stats.internal.ExporterFactory" -> Seq("kyo.stats.machine.MachineStatFactory")
             )
         }
@@ -50,7 +50,7 @@ class ServiceProvidersTest extends AnyFunSuite with Matchers {
     test("two jars declaring one interface contribute both implementations, sorted") {
         withJar(Seq("META-INF/services/kyo.db.Backend" -> "kyo.internal.sqlite.SqliteBackendFactory\n")) { first =>
             withJar(Seq("META-INF/services/kyo.db.Backend" -> "kyo.internal.mysql.MysqlBackendFactory\n")) { second =>
-                ServiceProviders.readJars(Seq(first, second)) shouldBe Map(
+                ServiceProviders.read(Seq(first, second)) shouldBe Map(
                     "kyo.db.Backend" -> Seq("kyo.internal.mysql.MysqlBackendFactory", "kyo.internal.sqlite.SqliteBackendFactory")
                 )
             }
@@ -59,13 +59,34 @@ class ServiceProvidersTest extends AnyFunSuite with Matchers {
 
     test("a nested path under the services directory is some other tool's resource, not a provider") {
         withJar(Seq("META-INF/services/vendor/thing.json" -> "{}")) { jar =>
-            ServiceProviders.readJars(Seq(jar)) shouldBe Map.empty[String, Seq[String]]
+            ServiceProviders.read(Seq(jar)) shouldBe Map.empty[String, Seq[String]]
         }
     }
 
-    test("a classpath entry that is a directory rather than a jar is skipped") {
+    test("a classpath directory declares a provider exactly as a jar does") {
+        // A sibling project in the same build reaches the classpath as its classes directory. Skipping it would drop
+        // its provider from the link with nothing to say so.
         IO.withTemporaryDirectory { dir =>
-            ServiceProviders.readJars(Seq(dir)) shouldBe Map.empty[String, Seq[String]]
+            IO.write(dir / "META-INF" / "services" / "kyo.db.Backend", "kyo.internal.sqlite.SqliteBackendFactory\n")
+            ServiceProviders.read(Seq(dir)) shouldBe Map("kyo.db.Backend" -> Seq("kyo.internal.sqlite.SqliteBackendFactory"))
+        }
+    }
+
+    test("a directory and a jar declaring one interface contribute both") {
+        withJar(Seq("META-INF/services/kyo.db.Backend" -> "kyo.internal.mysql.MysqlBackendFactory\n")) { jar =>
+            IO.withTemporaryDirectory { dir =>
+                IO.write(dir / "META-INF" / "services" / "kyo.db.Backend", "kyo.internal.sqlite.SqliteBackendFactory\n")
+                ServiceProviders.read(Seq(dir, jar)) shouldBe Map(
+                    "kyo.db.Backend" -> Seq("kyo.internal.mysql.MysqlBackendFactory", "kyo.internal.sqlite.SqliteBackendFactory")
+                )
+            }
+        }
+    }
+
+    test("a classpath directory with no services directory declares nothing") {
+        IO.withTemporaryDirectory { dir =>
+            IO.write(dir / "kyo" / "Something.class", "irrelevant")
+            ServiceProviders.read(Seq(dir)) shouldBe Map.empty[String, Seq[String]]
         }
     }
 

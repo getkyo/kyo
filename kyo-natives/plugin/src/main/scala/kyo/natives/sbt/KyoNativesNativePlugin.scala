@@ -194,7 +194,7 @@ object KyoNativesNativePlugin extends AutoPlugin {
         val log = streams.value.log
         if (!kyoNativesEnlistServices.value) Map.empty[String, Seq[String]]
         else {
-            val declared = ServiceProviders.readJars((Compile / dependencyClasspath).value.map(_.data))
+            val declared = ServiceProviders.read((Compile / dependencyClasspath).value.map(_.data))
             declared.toSeq.sortBy(_._1).foreach { case (iface, impls) =>
                 log.info(s"[kyo-natives] service provider $iface: ${impls.mkString(", ")}")
             }

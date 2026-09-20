@@ -1,35 +1,56 @@
 package kyo.ffi.sbt
 
-import java.io.StringReader
 import java.nio.charset.StandardCharsets
 import java.util.zip.ZipFile
 import sbt._
 import scala.collection.JavaConverters._
 
-/** Reads `META-INF/services` declarations out of jars, in the form Scala Native's link-time provider allowlist wants.
+/** Reads `META-INF/services` declarations off a classpath, in the form Scala Native's link-time provider allowlist
+  * wants.
   *
   * On the JVM and on JS a provider is found at run time, so declaring it in the jar is the whole story. Scala Native
   * resolves `ServiceLoader` at LINK time and drops any class nothing references, so a provider also has to be named in
   * `nativeConfig.withServiceProviders` or it is silently absent: the module links clean and never registers, with no
   * error and no warning.
   *
-  * That allowlist is a linker constraint rather than a semantic choice, and the jars already carry the answer. Reading
-  * it back is what lets a Native build match what `ServiceLoader` would have found on a classpath, instead of asking
-  * every application to retype class names that already exist in the artifacts it depends on.
+  * That allowlist is a linker constraint rather than a semantic choice, and the classpath already carries the answer.
+  * Reading it back is what lets a Native build match what `ServiceLoader` would have found, instead of asking every
+  * application to retype class names that already exist in what it depends on.
   */
 object ServiceProviders {
 
     /** Classpath-relative directory of the declarations, as the `ServiceLoader` spec fixes it. */
     val dir: Seq[String] = Seq("META-INF", "services")
 
-    /** Every provider the jars on `cp` declare, as interface to implementations.
+    /** Every provider the entries on `cp` declare, as interface to implementations.
       *
-      * Only jars. A classpath directory belongs to a module built in this same build, which reaches the linker through
-      * its own settings rather than through a published declaration.
+      * Jars and classpath directories both, unlike the declaration readers beside this one. Those read a statement a
+      * PUBLISHED artifact makes about itself, so a directory, being a module built in this same build, speaks through
+      * its own settings instead. A services file is not that: it is the same file `ServiceLoader` would read at run
+      * time wherever it sits, so a sibling project in the same build declares a provider exactly as a jar does, and
+      * skipping it would drop that provider from the link with nothing to say so.
       */
-    def readJars(cp: Seq[File]): Map[String, Seq[String]] = {
+    def read(cp: Seq[File]): Map[String, Seq[String]] =
+        merge(readDirs(cp.filter(_.isDirectory)), readJars(cp.filter(entry => entry.isFile && entry.getName.endsWith(".jar"))))
+            .map { case (iface, impls) => iface -> impls.toSeq.distinct.sorted }
+
+    /** The providers declared under each classpath directory's `META-INF/services`. */
+    private def readDirs(dirs: Seq[File]): Map[String, Seq[String]] = {
+        val found = dirs.flatMap { root =>
+            val servicesDir = dir.foldLeft(root)(_ / _)
+            if (!servicesDir.isDirectory) Nil
+            else
+                IO.listFiles(servicesDir).toSeq.filter(_.isFile).flatMap { f =>
+                    parse(IO.read(f)).map(f.getName -> _)
+                }
+        }
+        found.groupBy(_._1).map { case (iface, pairs) => iface -> pairs.map(_._2).distinct.sorted }
+    }
+
+    /** The providers declared inside each jar's `META-INF/services`. */
+    private def readJars(jars: Seq[File]): Map[String, Seq[String]] = {
         val prefix = dir.mkString("", "/", "/")
-        val found = cp.filter(entry => entry.isFile && entry.getName.endsWith(".jar")).flatMap { jar =>
+        val found = jars.flatMap { jar =>
             val zip = new ZipFile(jar)
             // toList, not toSeq: an Iterator's toSeq is a lazy Stream here, and every entry below is read through
             // the ZipFile that `finally` closes. A lazy chain escapes the try and reads from a closed file.
