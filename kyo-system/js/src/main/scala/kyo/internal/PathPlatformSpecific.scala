@@ -114,7 +114,7 @@ private[kyo] object NodeError:
         code == "ENOENT" || code == "ENOTDIR"
 
     def translateRead(path: Path, e: NodeFailure)(using Frame): FileReadException = e match
-        case u: NodeModuleUnavailable => unsupported(FileSystemOperation.Read, u)
+        case u: NodeModuleUnavailable  => unsupported(FileSystemOperation.Read, u)
         case e: js.JavaScriptException => codeOf(e) match
                 case "ENOENT"           => FileNotFoundException(path)
                 case "EACCES" | "EPERM" => FileAccessDeniedException(path)
@@ -126,7 +126,7 @@ private[kyo] object NodeError:
         Frame
     )
         : FileInvalidPathException | FileAccessDeniedException | FileIOException | FileSystemUnsupportedOnHostException = e match
-        case u: NodeModuleUnavailable => unsupported(FileSystemOperation.Exists, u)
+        case u: NodeModuleUnavailable  => unsupported(FileSystemOperation.Exists, u)
         case e: js.JavaScriptException => codeOf(e) match
                 case "EACCES" | "EPERM" => FileAccessDeniedException(path)
                 case "EINVAL"           => FileInvalidPathException(path.toString, FileSystemOperation.Exists)
@@ -136,13 +136,13 @@ private[kyo] object NodeError:
         Frame
     ): FileStructureException =
         e match
-            case u: NodeModuleUnavailable => unsupported(FileSystemOperation.Move, u)
+            case u: NodeModuleUnavailable  => unsupported(FileSystemOperation.Move, u)
             case e: js.JavaScriptException =>
                 if atomicity == Path.Atomicity.Required && codeOf(e) == "EXDEV" then FileAtomicMoveUnsupportedException(source, target)
                 else translateFs(source, FileSystemOperation.Move, e)
 
     def translateWrite(path: Path, e: NodeFailure)(using Frame): FileWriteException = e match
-        case u: NodeModuleUnavailable => unsupported(FileSystemOperation.Write, u)
+        case u: NodeModuleUnavailable  => unsupported(FileSystemOperation.Write, u)
         case e: js.JavaScriptException => codeOf(e) match
                 case "ENOENT"           => FileNotFoundException(path)
                 case "EACCES" | "EPERM" => FileAccessDeniedException(path)
@@ -151,7 +151,7 @@ private[kyo] object NodeError:
                 case _                  => FileIOException(path, FileSystemOperation.Write, e)
 
     def translateSync(path: Path, e: NodeFailure)(using Frame): FileWriteException = e match
-        case u: NodeModuleUnavailable => unsupported(FileSystemOperation.Sync, u)
+        case u: NodeModuleUnavailable  => unsupported(FileSystemOperation.Sync, u)
         case e: js.JavaScriptException => codeOf(e) match
                 case "ENOENT"           => FileNotFoundException(path)
                 case "EACCES" | "EPERM" => FileAccessDeniedException(path)
@@ -160,7 +160,7 @@ private[kyo] object NodeError:
                 case _                  => FileIOException(path, FileSystemOperation.Sync, e)
 
     def translateFs(path: Path, operation: FileSystemOperation, e: NodeFailure)(using Frame): FileStructureException = e match
-        case u: NodeModuleUnavailable => unsupported(operation, u)
+        case u: NodeModuleUnavailable  => unsupported(operation, u)
         case e: js.JavaScriptException => codeOf(e) match
                 case "ENOENT"           => FileNotFoundException(path)
                 case "EACCES" | "EPERM" => FileAccessDeniedException(path)
@@ -174,7 +174,7 @@ private[kyo] object NodeError:
       * error `Path.Unsafe.lock` can raise.
       */
     def translateLock(path: Path, e: NodeFailure)(using Frame): FileLockException = e match
-        case u: NodeModuleUnavailable => unsupported(FileSystemOperation.Lock, u)
+        case u: NodeModuleUnavailable  => unsupported(FileSystemOperation.Lock, u)
         case e: js.JavaScriptException => codeOf(e) match
                 case "EEXIST" => FileLockUnavailableException(path)
                 case "EINVAL" => FileInvalidPathException(path.toString, FileSystemOperation.Lock)
@@ -374,7 +374,7 @@ private[kyo] object NodePathLock:
         try
             val parent = NodeModules.path.dirname(gate)
             val name   = NodeModules.path.basename(gate)
-            def gates = NodeModules.fs.readdirSync(parent).toSeq
+            def gates  = NodeModules.fs.readdirSync(parent).toSeq
                 .filter(value => value == name || value.startsWith(name + ".reclaim."))
                 .map(NodeModules.path.join(parent, _))
             gates.foreach(reclaimIfProvenDead(_))
@@ -443,11 +443,11 @@ private[kyo] object NodePathLock:
         beforeGateRelease: (String, String) => Unit,
         beforePublishCleanup: String => Unit
     )(using AllowUnsafe, Frame): Result[FileLockException, Path.RawLock] =
-        val base                                 = pathStr + sentinelSuffix
-        val gate                                 = base + ".gate"
-        val gateOwner                            = currentOwner()
-        var gateAcquired                         = false
-        var createdClaim: Maybe[(String, Owner)] = Absent
+        val base                                              = pathStr + sentinelSuffix
+        val gate                                              = base + ".gate"
+        val gateOwner                                         = currentOwner()
+        var gateAcquired                                      = false
+        var createdClaim: Maybe[(String, Owner)]              = Absent
         val acquired: Result[FileLockException, Path.RawLock] =
             try
                 acquireGate(target, gate, gateOwner, beforePublishCleanup) match

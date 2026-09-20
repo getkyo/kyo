@@ -27,7 +27,7 @@ class WebsiteSpaSmokeTest extends kyo.test.Test[Any]:
     private def siteShell(content: Signal[UI], navigate: String => Unit < Async)(using Frame): UI < Sync =
         for
             queryRef <- Signal.initRef("")
-            view <- SiteApp.view(
+            view     <- SiteApp.view(
                 Chunk.empty,
                 docsHome,
                 Signal.initConst(DocsSearch.Index(Chunk.empty)),

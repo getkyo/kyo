@@ -158,7 +158,7 @@ class JsFrameworkTest extends AsyncFunSuite with NonImplicitAssertions:
     // through the `send` channel the adapter routes to the controller's receiveMessage.
     test("the controller's summary counts the suites a worker runner ran, failures included") {
         val controller = makeRunner()
-        val worker = framework
+        val worker     = framework
             .slaveRunner(Array.empty, Array.empty, null, message => controller.receiveMessage(message): Unit)
             .asInstanceOf[JsRunner]
         val finished = Promise[Unit]()

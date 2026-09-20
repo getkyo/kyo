@@ -128,7 +128,7 @@ class BrowserDetectionTest extends Test:
             deleteGlobal("require")
             Ffi.unload[BrowserDetectionTest.ImplementedBinding]
             val before = BrowserDetectionTest.constructed
-            val ex = intercept[FfiLoadError.Unsupported] {
+            val ex     = intercept[FfiLoadError.Unsupported] {
                 discard(Ffi.load[BrowserDetectionTest.ImplementedBinding])
             }
             assert(ex.getMessage.contains("browser"))
@@ -177,7 +177,7 @@ class BrowserDetectionTest extends Test:
         "Ffi.load fails with the load's browser message and never constructs the impl" in {
             Ffi.unload[BrowserDetectionTest.ImplementedBinding]
             val before = BrowserDetectionTest.constructed
-            val ex = intercept[FfiLoadError.Unsupported] {
+            val ex     = intercept[FfiLoadError.Unsupported] {
                 discard(Ffi.load[BrowserDetectionTest.ImplementedBinding])
             }
             assert(ex.getMessage == FfiPlatformErrors.BrowserUnsupportedLoad)

@@ -36,8 +36,7 @@ object HostConfig {
     }
 
     /** The names of the environment variables the host and the seed set. */
-    def envNames: Iterable[String] =
-        (processEnv.toList.flatMap(keys) ++ seed("env").toList.flatMap(keys)).distinct
+    def envNames: Iterable[String] = (processEnv.toList.flatMap(keys) ++ seed("env").toList.flatMap(keys)).distinct
 
     /** The system property `name`, or `null` when neither the host nor the seed sets it. */
     def property(name: String): String = {

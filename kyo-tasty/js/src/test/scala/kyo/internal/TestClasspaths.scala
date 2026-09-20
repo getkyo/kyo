@@ -157,8 +157,7 @@ private[kyo] object TestClasspaths:
                     val tastyDir     = dir / "root"
                     val javaClassDir = dir / "kyo" / "fixtures"
 
-                    def write(name: String, bytes: Array[Byte]): Unit < PathWrite =
-                        (tastyDir / name).writeBytes(Span.from(bytes))
+                    def write(name: String, bytes: Array[Byte]): Unit < PathWrite = (tastyDir / name).writeBytes(Span.from(bytes))
 
                     Path.run {
                         tastyDir.mkDir.map { _ =>

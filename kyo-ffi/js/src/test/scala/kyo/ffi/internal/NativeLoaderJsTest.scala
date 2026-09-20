@@ -91,7 +91,7 @@ class NativeLoaderJsTest extends Test:
         val path      = PlatformJs.nodeBuiltin("node:path").get
         val process   = sjs.Dynamic.global.process
         val programAt = path.dirname(PlatformJs.nodeBuiltin("node:url").get.fileURLToPath(programUrl)).asInstanceOf[String]
-        val relative = intercept[FfiLoadError.LibraryNotFound](NativeLoader.jsResolve(libId)).candidates
+        val relative  = intercept[FfiLoadError.LibraryNotFound](NativeLoader.jsResolve(libId)).candidates
             .filter(_.startsWith("beside the linked program "))
             .map(_.stripPrefix("beside the linked program "))
         assert(relative.size == 1)

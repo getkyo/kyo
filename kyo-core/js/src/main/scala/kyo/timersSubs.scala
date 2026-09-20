@@ -23,7 +23,7 @@ class ScheduledFuture[A](r: => A):
         prevented
     end cancel
     def isCancelled(): Boolean = _cancelled
-    def run(): Unit =
+    def run(): Unit            =
         _done = true
         try
             val _ = r

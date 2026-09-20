@@ -24,10 +24,10 @@ abstract class PlatformSpecific extends PlatformStatic {
 
     val host: Platform.Host = Platform.Host.Native
 
-    @resolvedAtLinktime def isWindows: Boolean = LinktimeInfo.isWindows
-    @resolvedAtLinktime def isMac: Boolean     = LinktimeInfo.isMac
-    @resolvedAtLinktime def isLinux: Boolean   = LinktimeInfo.isLinux
-    @resolvedAtLinktime def isBsd: Boolean     = LinktimeInfo.isFreeBSD || LinktimeInfo.isOpenBSD || LinktimeInfo.isNetBSD
+    @resolvedAtLinktime def isWindows: Boolean  = LinktimeInfo.isWindows
+    @resolvedAtLinktime def isMac: Boolean      = LinktimeInfo.isMac
+    @resolvedAtLinktime def isLinux: Boolean    = LinktimeInfo.isLinux
+    @resolvedAtLinktime def isBsd: Boolean      = LinktimeInfo.isFreeBSD || LinktimeInfo.isOpenBSD || LinktimeInfo.isNetBSD
     @resolvedAtLinktime def isMacOrBsd: Boolean =
         LinktimeInfo.isMac || LinktimeInfo.isFreeBSD || LinktimeInfo.isOpenBSD || LinktimeInfo.isNetBSD
     @resolvedAtLinktime def isX86_64: Boolean  = LinktimeInfo.target.arch == "x86_64"

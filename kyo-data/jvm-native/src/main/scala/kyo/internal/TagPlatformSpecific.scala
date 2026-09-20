@@ -12,7 +12,7 @@ package kyo.internal
   * `memcmp`, but only when both hashes are already computed, and on the concrete-tag path nothing else computes them, since `=:=` never
   * reaches the subtype cache there.
   *
-  * The `js-wasm` sibling inverts this, and carries why.
+  * The `js` sibling inverts this, and carries why.
   */
 private[kyo] trait TagPlatformSpecific:
 

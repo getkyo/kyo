@@ -15,10 +15,9 @@ class PathSyntaxJsTest extends kyo.test.Test[Any]:
 
     private val tokens = Seq("a", "bc", ".", "..", "...", ".d", "/")
 
-    private def inputs(maxTokens: Int): Iterator[String] =
-        (1 to maxTokens).iterator.flatMap(n =>
-            Iterator.fill(n)(tokens).foldLeft(Iterator(""))((acc, next) => acc.flatMap(p => next.map(p + _)))
-        )
+    private def inputs(maxTokens: Int): Iterator[String] = (1 to maxTokens).iterator.flatMap(n =>
+        Iterator.fill(n)(tokens).foldLeft(Iterator(""))((acc, next) => acc.flatMap(p => next.map(p + _)))
+    )
 
     private def nodePosix: sjs.Dynamic = PlatformJs.nodeBuiltin("node:path").get.posix
 
@@ -36,7 +35,7 @@ class PathSyntaxJsTest extends kyo.test.Test[Any]:
     end withoutGetBuiltinModule
 
     "posixNormalize matches Node's path.posix.normalize on every input".notBrowser in {
-        val posix = nodePosix
+        val posix      = nodePosix
         val mismatches =
             inputs(6).filter(input => PathSyntaxJs.posixNormalize(input) != posix.normalize(input).asInstanceOf[String]).take(5).toList
         assert(mismatches == List.empty[String], s"inputs where the port and Node disagree: $mismatches")
@@ -47,9 +46,10 @@ class PathSyntaxJsTest extends kyo.test.Test[Any]:
     }
 
     "posixIsAbsolute matches Node's path.posix.isAbsolute on every input".notBrowser in {
-        val posix = nodePosix
-        val mismatches =
-            ("" +: inputs(4).toList).filter(input => PathSyntaxJs.posixIsAbsolute(input) != posix.isAbsolute(input).asInstanceOf[Boolean])
+        val posix      = nodePosix
+        val mismatches = ("" +: inputs(4).toList).filter(input =>
+            PathSyntaxJs.posixIsAbsolute(input) != posix.isAbsolute(input).asInstanceOf[Boolean]
+        )
         assert(mismatches == List.empty[String], s"inputs where the port and Node disagree: $mismatches")
     }
 

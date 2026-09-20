@@ -139,7 +139,7 @@ class NativeFrameworkTest extends AnyFunSuite with NonImplicitAssertions:
     // controller through the `send` channel the adapter routes to the controller's receiveMessage.
     test("the controller's summary counts the suites a worker runner ran, failures included") {
         val controller = makeRunner()
-        val worker = framework
+        val worker     = framework
             .slaveRunner(Array.empty, Array.empty, getClass.getClassLoader, message => controller.receiveMessage(message): Unit)
         worker.tasks(Array(taskDefFor(classOf[NativeNextMixedSuite])))(0).execute(new NativeCapturingEventHandler, loggers)
         val _       = worker.done()

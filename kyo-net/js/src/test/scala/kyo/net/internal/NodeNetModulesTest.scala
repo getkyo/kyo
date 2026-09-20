@@ -41,7 +41,7 @@ class NodeNetModulesTest extends Test:
 
     "an operation interrupted before the load completes never runs" in {
         NodeNetModules.forgetForTesting()
-        var ran = false
+        var ran   = false
         val fiber = NodeNetModules.afterLoad { _ =>
             ran = true
             Fiber.Unsafe.fromResult(Result.succeed(()))

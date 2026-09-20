@@ -26,7 +26,7 @@ class JsBufferMmapTest extends Test:
         PlatformJs.nodeBuiltin(id).getOrElse(throw new IllegalStateException(s"this suite needs $id, which the host does not provide"))
 
     private def withTempFile[A](content: Array[Byte])(f: String => A): A =
-        val tmpDir = builtin("node:os").tmpdir()
+        val tmpDir   = builtin("node:os").tmpdir()
         val filePath =
             builtin("node:path").join(tmpDir, s"kyo-mmap-js-test-${java.lang.System.currentTimeMillis()}.bin").asInstanceOf[String]
         try

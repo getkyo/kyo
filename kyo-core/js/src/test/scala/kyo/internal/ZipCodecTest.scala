@@ -32,8 +32,8 @@ class ZipCodecTest extends kyo.test.Test[Any]:
     private def compress(data: Array[Byte], level: Int = -1, noWrap: Boolean = false, strategy: Int = 0, flush: Int = 0): Array[Byte] =
         val deflater = new ZipCodec.Deflater(level, noWrap)
         deflater.setStrategy(strategy)
-        val out    = Array.newBuilder[Byte]
-        val buffer = new Array[Byte](8192)
+        val out           = Array.newBuilder[Byte]
+        val buffer        = new Array[Byte](8192)
         def drain(): Unit =
             var n = deflater.deflate(buffer, 0, buffer.length, flush)
             while n > 0 do

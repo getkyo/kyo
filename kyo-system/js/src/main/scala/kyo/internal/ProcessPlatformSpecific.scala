@@ -497,7 +497,7 @@ final private[kyo] class NodeCommandUnsafe(
       * feed that never ends stay out of the way of everything else this thread has to do.
       */
     private def feedInputStream(is: InputStream, childStdin: NodeWritableStream)(using AllowUnsafe): Unit =
-        val buf = new Array[Byte](8192)
+        val buf          = new Array[Byte](8192)
         def pump(): Unit =
             var pumping = true
             while pumping do

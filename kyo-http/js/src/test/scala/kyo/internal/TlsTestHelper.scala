@@ -26,7 +26,7 @@ object TlsTestHelper:
         val tmpDir   = builtin("node:os").tmpdir()
         val certFile = path.join(tmpDir, "kyo-tls-cert.pem").asInstanceOf[String]
         val keyFile  = path.join(tmpDir, "kyo-tls-key.pem").asInstanceOf[String]
-        val cmd =
+        val cmd      =
             s"""openssl req -x509 -newkey rsa:2048 -keyout "$keyFile" -out "$certFile" -days 365 -nodes -subj "/CN=localhost" 2>&1"""
         discard(builtin("node:child_process").execSync(cmd))
         (certFile, keyFile)

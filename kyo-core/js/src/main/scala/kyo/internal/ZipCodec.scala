@@ -190,7 +190,7 @@ private[kyo] object NodeZlib:
       */
     private[kyo] def select(candidate: js.UndefOr[js.Dynamic]): Maybe[js.Dynamic] =
         candidate.toOption match
-            case None => Absent
+            case None       => Absent
             case Some(zlib) =>
                 try
                     val input   = "kyo kyo kyo kyo kyo kyo kyo kyo".getBytes("UTF-8")

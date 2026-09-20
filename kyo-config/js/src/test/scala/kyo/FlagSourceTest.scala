@@ -28,8 +28,8 @@ class FlagSourceTest extends AnyFreeSpec {
     }
 
     private def withEnvThatThrows[A](f: => A): A = {
-        val process = js.Dynamic.global.process
-        val saved   = process.env
+        val process             = js.Dynamic.global.process
+        val saved               = process.env
         val refuse: js.Function = () => {
             val error = js.Dynamic.newInstance(js.Dynamic.global.Error)("Requires env access, run again with the --allow-env flag")
             error.updateDynamic("name")("NotCapable")

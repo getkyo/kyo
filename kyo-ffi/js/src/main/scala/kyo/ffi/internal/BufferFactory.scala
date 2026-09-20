@@ -78,7 +78,7 @@ private[ffi] object BufferFactory extends BufferFactoryBase:
     private def mmapImpl(operation: String, path: String, offset: Long, size: Long): Buffer[Byte] =
         // Unsafe: read the file region into a JS ArrayBuffer (not a true mmap on JS) and wrap it.
         import AllowUnsafe.embrace.danger
-        val fs = NodeFs.module.getOrElse(throw NodeFs.unsupported(operation))
+        val fs         = NodeFs.module.getOrElse(throw NodeFs.unsupported(operation))
         val nodeBuffer =
             try fs.readFileSync(path)
             catch

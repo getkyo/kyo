@@ -195,7 +195,7 @@ object NativeLoader:
         Platform.arch match
             case Platform.Arch.X86_64  => "x86_64"
             case Platform.Arch.Aarch64 => "aarch64"
-            case _ =>
+            case _                     =>
                 val raw = detectArchString()
                 if raw.isEmpty then "unknown" else raw
 

@@ -38,7 +38,7 @@ final private[kyo] class FetchClientBackend extends PolicyClientBackend:
             // A closed client sends nothing more, as it does over a socket, where closing shuts the pool and closes every
             // connection a later request would open.
             case Absent if closedFlag => Abort.fail(HttpConnectionClosedException())
-            case Absent =>
+            case Absent               =>
                 RouteUtil.multipartBoundaryForRequest(route, request).map { boundary =>
                     RouteUtil.encodeRequestWithBoundary(route, request, boundary)(
                         onEmpty = (path, headers) => send(route, request, path, headers, Absent, config.maxResponseLength)(f),
@@ -78,7 +78,7 @@ final private[kyo] class FetchClientBackend extends PolicyClientBackend:
     )(using Frame): A < (Async & Abort[HttpException]) =
         request.url.unixSocket match
             case Present(_) => Abort.fail(HttpUnsupportedOnHostException("A unix socket"))
-            case Absent =>
+            case Absent     =>
                 reservedHeader(headers) match
                     case Present(name) =>
                         Abort.fail(HttpUnsupportedOnHostException(s"The $name header, which the browser sets itself,"))
@@ -168,7 +168,7 @@ final private[kyo] class FetchClientBackend extends PolicyClientBackend:
             val open: Maybe[js.Dynamic] < Sync =
                 Sync.defer(if js.isUndefined(response.body) || response.body == null then Absent else Present(response.body.getReader()))
             open.map {
-                case Absent => Kyo.unit
+                case Absent          => Kyo.unit
                 case Present(reader) =>
                     Loop.foreach {
                         readChunk(reader, target).map {
@@ -237,7 +237,7 @@ final private[kyo] class FetchClientBackend extends PolicyClientBackend:
                     ).map(_.fields.body)
                 }.map {
                     case Result.Success(value) => value
-                    case Result.Failure(halt) =>
+                    case Result.Failure(halt)  =>
                         Abort.fail(HttpStatusException(
                             halt.response.status,
                             HttpMethod.GET.name,
@@ -467,7 +467,7 @@ private[kyo] object FetchClientBackend:
       */
     private[client] def socketUrl(url: HttpUrl): Maybe[String] =
         def page: Maybe[js.Dynamic] = Maybe.fromOption(PlatformJs.jsGlobal("location").toOption)
-        val scheme =
+        val scheme                  =
             url.scheme match
                 case Present(s) if s == "ws" || s == "wss" => Present(s)
                 case Present(s) if s == "https"            => Present("wss")
