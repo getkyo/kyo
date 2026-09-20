@@ -35,8 +35,8 @@ object NativeDelivery {
     /** The placeholder a classifier pattern uses for the target os-arch tag. */
     val targetToken: String = "<os-arch>"
 
-    /** The platform names a delivery can be scoped to, which are the platforms kyo publishes for. */
-    val allPlatforms: Set[String] = Set("jvm", "js", "native")
+    /** Every platform a delivery can be scoped to. */
+    val allPlatforms: Set[DeliveryPlatform] = DeliveryPlatform.all
 
     /** The platforms a library is delivered to unless the module says otherwise.
       *
@@ -45,37 +45,37 @@ object NativeDelivery {
       * the binary, and a delivered library would sit beside it defining the same entry points, shadowed and still
       * carried. A module whose shim has that state opts in; nothing can detect it from the outside.
       */
-    val defaultPlatforms: Set[String] = Set("jvm", "js")
+    val defaultPlatforms: Set[DeliveryPlatform] = Set(DeliveryPlatform.Jvm, DeliveryPlatform.Js)
 
-    /** What a module delivers for one library: the classifier pattern of the artifact carrying its shared library, and
-      * the platforms that should take it.
+    /** What a module delivers for one library: which artifact carries its shared library, and which platforms take it.
       *
-      * The platform scope exists because a library is not always something a consumer needs delivered. Scala Native
-      * compiles a module's C into the binary from the sources the artifact ships, so where that C is the whole
-      * implementation rather than a shim over a vendored library, the binary already has it. Delivering it there would
-      * link a second copy the compiled-in one shadows, and saddle the binary with a file it has to carry and does not
-      * use. `ffiCompile` checks that half on the producer side: a library scoped to `native` whose C still defines
-      * entry points under [[FfiLibrary.externalDefineFor]] fails the build that writes the declaration.
-      *
-      * The scope carries a second kind of judgement the check cannot make, which is whether the implementation the
-      * library selects is ready. Delivering is not neutral: it moves the application onto that implementation. Read a
-      * platform's absence as either "the C is wrong for it" or "the implementation is not ready there", and the
-      * module's own comment as the place that says which.
+      * `ffiCompile` checks one half of the platform scope on the producer side: a library scoped to
+      * [[DeliveryPlatform.Native]] whose C still defines entry points under [[FfiLibrary.externalDefineFor]] fails the
+      * build that writes the declaration, because a consumer compiles that C into its binary where it would shadow the
+      * delivered library. The other half is whether the implementation the library selects is ready on a platform,
+      * which nothing can check; the module's own comment says why a platform is absent.
       */
-    final case class Entry(classifierPattern: String, platforms: Set[String] = defaultPlatforms)
+    final case class Entry(classifierPattern: Option[String], platforms: Set[DeliveryPlatform] = defaultPlatforms) {
 
-    /** One library id and the [[Entry]] a declaration carries for it. */
-    final case class Declared(id: String, classifierPattern: String, platforms: Set[String] = defaultPlatforms) {
+        /** The classifier of the artifact carrying this library for `osArch`, or None when it ships in the module's
+          * main artifact.
+          */
+        def classifier(osArch: String): Option[String] = classifierPattern.map(_.replace(targetToken, osArch))
 
-        /** The classifier for `osArch`, or None when the library ships in the module's main artifact. */
-        def classifier(osArch: String): Option[String] = {
-            val resolved = classifierPattern.replace(targetToken, osArch)
-            if (resolved.isEmpty) None else Some(resolved)
-        }
-
-        /** Whether `platform` (`jvm`, `js` or `native`) should take this library. */
-        def deliversTo(platform: String): Boolean = platforms.contains(platform)
+        /** Whether `platform` should take this library. */
+        def deliversTo(platform: DeliveryPlatform): Boolean = platforms.contains(platform)
     }
+
+    /** A library shipping in the module's main artifact, which is where a module that does not slice its natives
+      * keeps them.
+      */
+    def mainArtifact(platforms: Set[DeliveryPlatform] = defaultPlatforms): Entry = Entry(None, platforms)
+
+    /** A library shipping under a classifier, with [[targetToken]] standing for the target tag so one pattern covers
+      * every pole.
+      */
+    def underClassifier(pattern: String, platforms: Set[DeliveryPlatform] = defaultPlatforms): Entry =
+        Entry(Some(pattern), platforms)
 
     /** The declaration lines for `delivery`, keyed by library id. Written in a fixed order so an unchanged declaration
       * is byte-identical and does not change the jar.
@@ -87,17 +87,15 @@ object NativeDelivery {
             ids.find(id => id.exists(c => c == ',' || c == '=' || c == '\n' || c == '\r')).foreach { bad =>
                 sys.error(s"[kyo-ffi-plugin] library id '$bad' cannot be written to a native-delivery declaration.")
             }
-            delivery.values.flatMap(_.platforms).find(!allPlatforms.contains(_)).foreach { bad =>
-                sys.error(s"[kyo-ffi-plugin] '$bad' is not a platform; use ${allPlatforms.toSeq.sorted.mkString(", ")}.")
-            }
-            ids.flatMap(id => classifierProblem(delivery(id).classifierPattern).map(id -> _)).headOption.foreach {
+            ids.flatMap(id => delivery(id).classifierPattern.flatMap(classifierProblem).map(id -> _)).headOption.foreach {
                 case (id, why) =>
                     sys.error(s"[kyo-ffi-plugin] $id's classifier pattern $why, so it cannot be written to a native-delivery declaration.")
             }
-            (s"libraries = ${ids.mkString(", ")}" +: ids.map(id => s"$id.classifier = ${delivery(id).classifierPattern}")) ++
+            (s"libraries = ${ids.mkString(", ")}" +:
+                ids.map(id => s"$id.classifier = ${delivery(id).classifierPattern.getOrElse("")}")) ++
                 // Only written where it differs from the default, so the common declaration stays short.
                 ids.filter(id => delivery(id).platforms != defaultPlatforms)
-                    .map(id => s"$id.platforms = ${delivery(id).platforms.toSeq.sorted.mkString(", ")}")
+                    .map(id => s"$id.platforms = ${delivery(id).platforms.map(_.name).toSeq.sorted.mkString(", ")}")
         }
 
     /** Why `pattern` would not survive the round trip through a properties file, or None when it would.
@@ -114,24 +112,27 @@ object NativeDelivery {
         else if (pattern.contains('\\')) Some("contains a backslash, which a properties reader unescapes")
         else None
 
-    /** Parses a declaration written by [[render]]. */
-    def parse(text: String): Seq[Declared] = {
+    /** Parses a declaration written by [[render]], so that `parse(render(d).mkString("\n")) == d`.
+      *
+      * A platform name this plugin does not know is dropped rather than refused, which is what lets a build read a
+      * declaration written by a newer kyo. A library left with no platform at all is dropped with it, since an entry
+      * nothing takes is the same as no entry.
+      */
+    def parse(text: String): Map[String, Entry] = {
         val props = new Properties()
         props.load(new StringReader(text))
         def list(key: String): Seq[String] =
             Option(props.getProperty(key)).toSeq.flatMap(_.split(',')).map(_.trim).filter(_.nonEmpty)
-        list("libraries").map { id =>
-            val platforms = list(s"$id.platforms").toSet
-            Declared(
-                id,
-                Option(props.getProperty(s"$id.classifier")).map(_.trim).getOrElse(""),
-                if (platforms.isEmpty) defaultPlatforms else platforms
-            )
-        }
+        list("libraries").flatMap { id =>
+            val named     = list(s"$id.platforms")
+            val platforms = if (named.isEmpty) defaultPlatforms else named.flatMap(DeliveryPlatform.of).toSet
+            val pattern   = Option(props.getProperty(s"$id.classifier")).map(_.trim).filter(_.nonEmpty)
+            if (platforms.isEmpty) None else Some(id -> Entry(pattern, platforms))
+        }.toMap
     }
 
     /** The declarations `jar` carries, empty when it carries none. */
-    def readJar(jar: File): Seq[Declared] = {
+    def readJar(jar: File): Seq[(String, Entry)] = {
         val prefix = dir.mkString("", "/", "/")
         val zip    = new ZipFile(jar)
         try

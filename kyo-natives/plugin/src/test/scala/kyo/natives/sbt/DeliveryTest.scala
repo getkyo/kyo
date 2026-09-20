@@ -1,5 +1,6 @@
 package kyo.natives.sbt
 
+import kyo.ffi.sbt.DeliveryPlatform
 import kyo.ffi.sbt.NativeDelivery
 import org.scalatest.funsuite.AnyFunSuite
 import org.scalatest.matchers.should.Matchers
@@ -28,9 +29,9 @@ class DeliveryTest extends AnyFunSuite with Matchers {
         NativeDelivery.dir.mkString("/") + "/demo.properties" -> NativeDelivery.render(delivery).mkString("\n")
 
     test("a Native jar's declaration yields the JVM artifact of the same module and version") {
-        withJar(Seq(deliveryEntry(Map("kyo_aeron" -> NativeDelivery.Entry("", NativeDelivery.allPlatforms))))) { jar =>
+        withJar(Seq(deliveryEntry(Map("kyo_aeron" -> NativeDelivery.mainArtifact(NativeDelivery.allPlatforms))))) { jar =>
             val module   = "io.getkyo" % "kyo-aeron_native0.5_3" % "1.2.3"
-            val requests = Delivery.requests(Seq(module -> jar), "darwin-aarch64", "native")
+            val requests = Delivery.requests(Seq(module -> jar), "darwin-aarch64", DeliveryPlatform.Native)
             requests.map(_.libId) shouldBe Seq("kyo_aeron")
             val carrier = requests.head.module
             carrier.organization shouldBe "io.getkyo"
@@ -42,10 +43,10 @@ class DeliveryTest extends AnyFunSuite with Matchers {
     }
 
     test("a sliced module's declaration names the classifier for the target asked for") {
-        val boringssl = Map("kyonet_boringssl" -> NativeDelivery.Entry("<os-arch>-boringssl", NativeDelivery.allPlatforms))
+        val boringssl = Map("kyonet_boringssl" -> NativeDelivery.underClassifier("<os-arch>-boringssl", NativeDelivery.allPlatforms))
         withJar(Seq(deliveryEntry(boringssl))) { jar =>
             val module  = "io.getkyo" % "kyo-net_native0.5_3" % "1.2.3"
-            val carrier = Delivery.requests(Seq(module -> jar), "linux-x86_64", "native").head.module
+            val carrier = Delivery.requests(Seq(module -> jar), "linux-x86_64", DeliveryPlatform.Native).head.module
             carrier.name shouldBe "kyo-net_3"
             carrier.explicitArtifacts.flatMap(_.classifier) shouldBe Vector("linux-x86_64-boringssl")
         }
@@ -54,19 +55,20 @@ class DeliveryTest extends AnyFunSuite with Matchers {
     test("a library the declaration does not deliver to this platform is not requested") {
         // kyo-net's shape: the transport's C compiles into a Native binary already, the TLS shim's library does not.
         val delivery = Map(
-            "kyonet_posix_uring" -> NativeDelivery.Entry("<os-arch>"),
-            "kyonet_boringssl"   -> NativeDelivery.Entry("<os-arch>-boringssl", NativeDelivery.allPlatforms)
+            "kyonet_posix_uring" -> NativeDelivery.underClassifier("<os-arch>"),
+            "kyonet_boringssl"   -> NativeDelivery.underClassifier("<os-arch>-boringssl", NativeDelivery.allPlatforms)
         )
         withJar(Seq(deliveryEntry(delivery))) { jar =>
             val module = "io.getkyo" % "kyo-net_native0.5_3" % "1.2.3"
-            Delivery.requests(Seq(module -> jar), "linux-x86_64", "native").map(_.libId) shouldBe Seq("kyonet_boringssl")
-            Delivery.requests(Seq(module -> jar), "linux-x86_64", "jvm").map(_.libId).sorted shouldBe
+            Delivery.requests(Seq(module -> jar), "linux-x86_64", DeliveryPlatform.Native).map(_.libId) shouldBe
+                Seq("kyonet_boringssl")
+            Delivery.requests(Seq(module -> jar), "linux-x86_64", DeliveryPlatform.Jvm).map(_.libId).sorted shouldBe
                 Seq("kyonet_boringssl", "kyonet_posix_uring")
         }
     }
 
     test("two modules declaring one library id fail, rather than race for the file name") {
-        val delivery = Map("kyo_sqlite" -> NativeDelivery.Entry("", NativeDelivery.allPlatforms))
+        val delivery = Map("kyo_sqlite" -> NativeDelivery.mainArtifact(NativeDelivery.allPlatforms))
         withJar(Seq(deliveryEntry(delivery))) { first =>
             withJar(Seq(deliveryEntry(delivery))) { second =>
                 val classpath = Seq(
@@ -74,7 +76,7 @@ class DeliveryTest extends AnyFunSuite with Matchers {
                     ("io.getkyo" % "kyo-sql-doltlite_native0.5_3" % "1.2.3") -> second
                 )
                 val message = intercept[RuntimeException] {
-                    Delivery.requests(classpath, "darwin-aarch64", "native")
+                    Delivery.requests(classpath, "darwin-aarch64", DeliveryPlatform.Native)
                 }.getMessage
                 message should include("kyo_sqlite")
                 message should include("kyo-sql-sqlite_3")
@@ -85,13 +87,13 @@ class DeliveryTest extends AnyFunSuite with Matchers {
 
     test("a jar carrying no declaration asks for nothing") {
         withJar(Seq("kyo/Something.class" -> "irrelevant")) { jar =>
-            Delivery.requests(Seq(("org" % "thing_3" % "1") -> jar), "darwin-aarch64", "jvm") shouldBe Nil
+            Delivery.requests(Seq(("org" % "thing_3" % "1") -> jar), "darwin-aarch64", DeliveryPlatform.Jvm) shouldBe Nil
         }
     }
 
     test("a classpath entry that is a directory rather than a jar is skipped") {
         IO.withTemporaryDirectory { dir =>
-            Delivery.requests(Seq(("org" % "thing_3" % "1") -> dir), "darwin-aarch64", "jvm") shouldBe Nil
+            Delivery.requests(Seq(("org" % "thing_3" % "1") -> dir), "darwin-aarch64", DeliveryPlatform.Jvm) shouldBe Nil
         }
     }
 

@@ -409,7 +409,8 @@ private[sbt] object CCompiler {
       * `int` so that two copies of itself collide at link time; reporting that would make this unusable.
       *
       * None rather than empty when `nm` is missing or MSVC is the compiler, so a caller can tell "nothing defined"
-      * from "could not look", and none of the callers turns a missing toolchain into a build failure.
+      * from "could not look", and none of the callers turns a missing toolchain into a build failure. An `nm` that
+      * ran and failed is neither, and fails the build: a reading that did not happen must not pass for an empty one.
       */
     def definedFunctions(
         cc: String,
@@ -435,14 +436,20 @@ private[sbt] object CCompiler {
             // `nm -g` over an OBJECT file, whose format is the same on darwin and ELF: an address, a one-letter
             // type, and the name, with an undefined symbol carrying `U` and no address. Reading objects rather than
             // the built library is what keeps this off `nm -D`, which darwin does not have.
+            // A missing nm is a host this check cannot run on; an nm that ran and failed is a reading this check must
+            // not silently pass. Only the first is tolerated, and it is said out loud because a skipped invariant check
+            // otherwise looks exactly like a passing one.
             val rc =
                 try Process(Seq("nm", "-g") ++ objects.map(_.getAbsolutePath))
                         .!(ProcessLogger(line => { lines.append(line).append('\n'); () }, _ => ()))
-                catch { case _: Exception => -1 }
-            if (rc != 0) {
-                log.info("[kyo-ffi-plugin] nm is unavailable, so the external-state check did not run.")
-                None
-            } else
+                catch {
+                    case _: java.io.IOException =>
+                        log.warn("[kyo-ffi-plugin] nm is not on the PATH, so the external-state check did not run.")
+                        return None
+                }
+            if (rc != 0)
+                sys.error(s"[kyo-ffi-plugin] nm failed (exit $rc) reading ${sources.map(_.getName).mkString(", ")}.")
+            else
                 Some(lines.toString.split("\n").iterator.flatMap { line =>
                     val parts = line.trim.split("\\s+")
                     if (parts.length >= 3 && parts(parts.length - 2) == "T") Some(parts.last) else None

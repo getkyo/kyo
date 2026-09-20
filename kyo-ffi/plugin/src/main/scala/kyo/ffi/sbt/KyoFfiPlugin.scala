@@ -104,10 +104,10 @@ object KyoFfiPlugin extends AutoPlugin {
         )
 
         val ffiNativeDelivery = settingKey[Map[String, NativeDelivery.Entry]](
-            "Per library id, which artifact carries its shared library and which platforms should take it. The " +
-                "classifier pattern uses `<os-arch>` for the target tag, empty meaning the module's main artifact. " +
-                "Published so a Native or Node consumer, whose own artifact carries no library, resolves the one " +
-                "that does. Defaults to the main artifact on every platform for each library with C sources."
+            "Per library id, which artifact carries its shared library and which platforms should take it. Build an " +
+                "entry with NativeDelivery.mainArtifact or NativeDelivery.underClassifier, whose pattern uses " +
+                "`<os-arch>` for the target tag. Published so a Native or Node consumer, whose own artifact carries " +
+                "no library, resolves the one that does. Defaults to the main artifact for each library with C sources."
         )
 
         // Multi-library setting (DESIGN §3.4)
@@ -119,8 +119,12 @@ object KyoFfiPlugin extends AutoPlugin {
         type FfiSystemLibrary = kyo.ffi.sbt.FfiSystemLibrary
         val FfiSystemLibrary = kyo.ffi.sbt.FfiSystemLibrary
 
-        // Exposed so a build writing `ffiNativeDelivery` by hand names the target placeholder rather than spelling it.
+        // Exposed so a build writing `ffiNativeDelivery` by hand names the target placeholder and the platforms
+        // rather than spelling either.
         val NativeDelivery = kyo.ffi.sbt.NativeDelivery
+
+        type DeliveryPlatform = kyo.ffi.sbt.DeliveryPlatform
+        val DeliveryPlatform = kyo.ffi.sbt.DeliveryPlatform
 
         // Tasks
         val ffiGenerate       = taskKey[Seq[File]]("Generate platform-specific impl sources from bindings.")
@@ -440,7 +444,7 @@ object KyoFfiPlugin extends AutoPlugin {
         // Every library with C sources ships in the module's main JVM artifact, which is where a module that does
         // not slice its natives keeps them. A module that does slice states the pattern, and the JVM leg's
         // ffiNativeDeliveryCheck rejects a declaration that does not match what it packaged.
-        ffiNativeDelivery := ffiLibrariesResolved.value.filter(_.cSources.nonEmpty).map(_.id -> NativeDelivery.Entry("")).toMap,
+        ffiNativeDelivery := ffiLibrariesResolved.value.filter(_.cSources.nonEmpty).map(_.id -> NativeDelivery.mainArtifact()).toMap,
         // Load-bearing beyond its value: ffiCompileAll, ffiPackagingCheckAll and
         // ffiPackagingFormatCheckAll decide which projects enable this plugin by asking whether this
         // key resolves for the project, delegation included. That is exactly why a globalSettings
@@ -814,7 +818,7 @@ object KyoFfiPlugin extends AutoPlugin {
                             IO.write(configSentinel, configHash)
 
                             val deliversToNative =
-                                ffiNativeDelivery.value.get(lib.id).exists(_.platforms.contains("native"))
+                                ffiNativeDelivery.value.get(lib.id).exists(_.deliversTo(DeliveryPlatform.Native))
                             val cached = FileFunction.cached(perLibCacheDir, FilesInfo.hash, FilesInfo.exists) { _ =>
                                 log.info(s"[kyo-ffi-plugin] ffiCompile: cc invocation for ${lib.id}.")
                                 val built = CCompiler.compile(
@@ -1551,15 +1555,14 @@ object KyoFfiPlugin extends AutoPlugin {
             // this is asking whether the pattern names an artifact at all.
             val declared = artifacts.value.flatMap(_.classifier).toSet
             delivery.foreach { case (id, entry) =>
-                val pattern = entry.classifierPattern
-                val names =
-                    pattern.isEmpty ||
-                        NativeTargets.supported.exists(tag => declared.contains(pattern.replace(NativeDelivery.targetToken, tag)))
-                if (!names)
-                    sys.error(
-                        s"[kyo-ffi-plugin] ${name.value} declares $id in the classifier '$pattern', which names no artifact " +
-                            s"it publishes. Declared classifiers: ${declared.toSeq.sorted.mkString(", ")}."
-                    )
+                entry.classifierPattern.foreach { pattern =>
+                    val names = NativeTargets.supported.exists(tag => declared.contains(pattern.replace(NativeDelivery.targetToken, tag)))
+                    if (!names)
+                        sys.error(
+                            s"[kyo-ffi-plugin] ${name.value} declares $id in the classifier '$pattern', which names no artifact " +
+                                s"it publishes. Declared classifiers: ${declared.toSeq.sorted.mkString(", ")}."
+                        )
+                }
             }
         }
         writeFfiManifest((Compile / resourceManaged).value, NativeDelivery.dir, name.value + ".properties", NativeDelivery.render(delivery))

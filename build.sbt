@@ -1333,7 +1333,7 @@ lazy val `kyo-sql-doltlite` =
             // Delivered to Scala Native as well as the JVM and Node: the shim answers KYO_FFI_EXTERNAL_KYO_DOLTLITE
             // with an empty translation unit, so a Native binary links the library carrying the engine instead of
             // compiling the driver's C and reporting the engine unavailable.
-            ffiNativeDelivery := Map("kyo_doltlite" -> NativeDelivery.Entry("", NativeDelivery.allPlatforms))
+            ffiNativeDelivery := Map("kyo_doltlite" -> NativeDelivery.mainArtifact(NativeDelivery.allPlatforms))
         )
         .jvmSettings(
             // The linked engine for every platform rides in the main jar, for the reason given on kyo-sql-sqlite: there is no
@@ -2591,8 +2591,9 @@ lazy val `kyo-net` =
             ffiNativeDelivery := ffiLibraries.value.flatMap { lib =>
                 kyoNetNativeClassifier(NativeDelivery.targetToken, lib.id).map { pattern =>
                     val platforms =
-                        if (lib.id == "kyonet_boringssl") NativeDelivery.allPlatforms else Set("jvm", "js")
-                    lib.id -> NativeDelivery.Entry(pattern, platforms)
+                        if (lib.id == "kyonet_boringssl") NativeDelivery.allPlatforms
+                        else Set[DeliveryPlatform](DeliveryPlatform.Jvm, DeliveryPlatform.Js)
+                    lib.id -> NativeDelivery.underClassifier(pattern, platforms)
                 }
             }.toMap
         )
@@ -2807,7 +2808,7 @@ lazy val `kyo-aeron` =
             // Delivered to Scala Native as well as the JVM and Node: kyo_aeron.c answers KYO_FFI_EXTERNAL_KYO_AERON
             // with an empty translation unit, so a Native binary can link the prebuilt library instead of compiling
             // the shim and having no Aeron to link it against.
-            ffiNativeDelivery := Map("kyo_aeron" -> NativeDelivery.Entry("", NativeDelivery.allPlatforms))
+            ffiNativeDelivery := Map("kyo_aeron" -> NativeDelivery.mainArtifact(NativeDelivery.allPlatforms))
         )
         .jvmSettings(
             mimaCheck(false),

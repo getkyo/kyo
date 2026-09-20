@@ -50,9 +50,9 @@ class PollerIoDriverIdleTest extends kyo.net.Test:
             // whatever is there rather than leaving it.
             val parked = new Task:
                 def run(startMillis: Long, clock: InternalClock, deadline: Long): Task.Result = Task.Done
-            driver.idleTask = parked
+            driver.idleTask = Present(parked)
             driver.submitEngineOp(() => ())
-            assert(driver.idleTask eq null)
+            assert(driver.idleTask.isEmpty)
         finally driver.close()
         end try
     }

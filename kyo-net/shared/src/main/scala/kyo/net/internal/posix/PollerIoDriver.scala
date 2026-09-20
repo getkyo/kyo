@@ -164,7 +164,7 @@ final private[net] class PollerIoDriver private[posix] (
     // fd -> current handle id. Used to discard stale poller events after fd reuse.
     private val activeFds = new IntLongMap()
 
-    // JS only: the cycle task of a driver that parked itself instead of polling, or null when the chain is running.
+    // JS only: the cycle task of a driver that parked itself instead of polling, Absent while the chain is running.
     //
     // On Node the poll is a `koffi.callAsync` onto a libuv worker, and an outstanding work request is one of the things Node counts when it
     // decides whether the process may exit. Re-arming a driver with nothing registered keeps one such request alive for as long as the driver
@@ -176,7 +176,7 @@ final private[net] class PollerIoDriver private[posix] (
     // thread (`BlockingBridge` dispatches the call itself to a worker and delivers its result back on the main thread), and the JS scheduler
     // always defers to the macrotask queue, so a resumed cycle never runs on the submitting call's own stack. The store below and the read in
     // `triggerWake` cannot interleave. `private[posix]` so `PollerIoDriverIdleTest` can set it and observe the resume.
-    private[posix] var idleTask: Task = null
+    private[posix] var idleTask: Maybe[Task] = Absent
 
     // readFd -> handle, parallel to activeFds and maintained at the same register/deregister/clear sites. It exists so a FIN/error edge that lands
     // on a PARKED fd (no pending-read entry to carry the handle) can still reach the handle to set its `peerClosed` latch. Poll-fiber-confined.
@@ -377,7 +377,7 @@ final private[net] class PollerIoDriver private[posix] (
                 pendingWritables.foreach((fd, _) => discard(writes.append(fd).append(' ')))
                 val accepts = new StringBuilder
                 pendingAccepts.foreach((fd, h) => discard(accepts.append(fd).append("(id=").append(h.id).append(") ")))
-                s"closed=${closedFlag.get()} pollCycles=$diagPollCycles idle=${idleTask ne null} activeFds=${activeFds.size} " +
+                s"closed=${closedFlag.get()} pollCycles=$diagPollCycles idle=${idleTask.isDefined} activeFds=${activeFds.size} " +
                     s"changeQueuePending=${changeQueue.peekNonEmpty()} engineQueuePending=${!engineQueue.isEmpty()} " +
                     s"pendingClosesSize=${pendingCloses.size()} wakePending=${wakePending.get()} " +
                     s"pendingReads=[$reads] pendingWritables=[$writes] pendingAccepts=[$accepts]"
@@ -554,7 +554,7 @@ final private[net] class PollerIoDriver private[posix] (
                 // Nothing registered and nothing queued means this cycle would poll for an event no fd can produce, and on Node that poll is
                 // what keeps the process alive (see idleTask). Park the chain instead: every path that gives this driver work goes through
                 // `triggerWake`, which resumes the parked task, so this cannot strand one.
-                if kyo.internal.Platform.isJS && idleNow then idleTask = task
+                if kyo.internal.Platform.isJS && idleNow then idleTask = Present(task)
                 else
                     // Pass the kqueue changelist (changelistBuf + nChanges) so kevent submits the interest changes this drain staged atomically
                     // with the wait. On epoll the changelist / nChanges arguments are ignored by
@@ -2388,9 +2388,9 @@ final private[net] class PollerIoDriver private[posix] (
         // never left with neither a running cycle nor a scheduled one. See idleTask for why this needs no atomic.
         if kyo.internal.Platform.isJS then
             val parked = idleTask
-            if parked ne null then
-                idleTask = null
-                reArm(parked)
+            if parked.isDefined then
+                idleTask = Absent
+                reArm(parked.get)
         end if
         if acquireWake() then
             try backend.wake(pollerFd, pollScratch)

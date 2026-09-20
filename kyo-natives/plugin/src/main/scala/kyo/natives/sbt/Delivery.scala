@@ -1,6 +1,7 @@
 package kyo.natives.sbt
 
 import java.util.zip.ZipFile
+import kyo.ffi.sbt.DeliveryPlatform
 import kyo.ffi.sbt.NativeDelivery
 import kyo.ffi.sbt.NativeTargets
 import sbt._
@@ -40,15 +41,15 @@ private[sbt] object Delivery {
       * Native `-L` directory and the Node package hold, so the second would overwrite the first and the build would
       * link or open whichever was unpacked last, with nothing said.
       */
-    def requests(classpath: Seq[(ModuleID, File)], osArch: String, platform: String): Seq[Request] = {
+    def requests(classpath: Seq[(ModuleID, File)], osArch: String, platform: DeliveryPlatform): Seq[Request] = {
         val found = classpath.flatMap { case (module, file) =>
             if (!file.isFile || !file.getName.endsWith(".jar")) Nil
             else
-                NativeDelivery.readJar(file).filter(_.deliversTo(platform)).map { declared =>
+                NativeDelivery.readJar(file).filter(_._2.deliversTo(platform)).map { case (id, entry) =>
                     val carrier = module.organization % NativeDelivery.jvmArtifactName(module.name) % module.revision
                     val withClassifier =
-                        declared.classifier(osArch).fold(carrier)(c => carrier.classifier(c))
-                    Request(withClassifier.withCrossVersion(CrossVersion.disabled).intransitive(), declared.id)
+                        entry.classifier(osArch).fold(carrier)(c => carrier.classifier(c))
+                    Request(withClassifier.withCrossVersion(CrossVersion.disabled).intransitive(), id)
                 }
         }.distinct
         found.groupBy(_.libId).find(_._2.size > 1).foreach { case (libId, clashing) =>

@@ -117,7 +117,7 @@ object KyoNativesPlugin extends AutoPlugin {
     private def requestsTask: Def.Initialize[Task[Seq[(String, Delivery.Request)]]] = Def.task {
         val source   = kyoNativesSource.value
         val targets  = kyoNativesResolvedTargets.value
-        val platform = Platform.of(thisProject.value.autoPlugins.map(_.label).toSet).declarationName
+        val platform = Platform.of(thisProject.value.autoPlugins.map(_.label).toSet).delivery
         val modules = update.value.configuration(Configurations.Compile).toSeq.flatMap(_.modules).flatMap { report =>
             report.artifacts.map { case (_, file) => report.module -> file }
         }
