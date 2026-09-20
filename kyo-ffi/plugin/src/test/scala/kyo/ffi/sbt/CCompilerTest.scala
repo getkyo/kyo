@@ -765,20 +765,19 @@ class CCompilerTest extends AnyFunSuite with Matchers {
     //
     // This is what decides whether a shim honours its EXTERNAL state, so it is exercised against a real compiler
     // rather than a stub: a test that agreed with the code about nm's output without ever running nm would prove
-    // nothing. Skipped where there is no cc on PATH.
+    // nothing. A host with no cc cancels rather than passing, so a run that covered none of this says so.
 
     private def withShim(body: String)(check: Option[Set[String]] => Unit): Unit = {
         val available =
             try scala.sys.process.Process(Seq("cc", "--version")).!(scala.sys.process.ProcessLogger(_ => (), _ => ())) == 0
             catch { case _: Exception => false }
-        if (available) {
-            val dir = java.nio.file.Files.createTempDirectory("kyo-ffi-shim").toFile
-            try {
-                val src = new File(dir, "shim.c")
-                java.nio.file.Files.write(src.toPath, body.getBytes("UTF-8"))
-                check(CCompiler.definedFunctions("cc", Nil, Nil, Seq(src), new File(dir, "out"), sbt.util.Logger.Null))
-            } finally sbt.io.IO.delete(dir)
-        }
+        if (!available) cancel("no cc on PATH, so there is nothing to run nm over")
+        val dir = java.nio.file.Files.createTempDirectory("kyo-ffi-shim").toFile
+        try {
+            val src = new File(dir, "shim.c")
+            java.nio.file.Files.write(src.toPath, body.getBytes("UTF-8"))
+            check(CCompiler.definedFunctions("cc", Nil, Nil, Seq(src), new File(dir, "out"), sbt.util.Logger.Null))
+        } finally sbt.io.IO.delete(dir)
     }
 
     test("definedFunctions names the entry points a translation unit defines") {
