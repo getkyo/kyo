@@ -832,10 +832,11 @@ object Async extends AsyncPlatformSpecific:
 
     @scala.annotation.nowarn("msg=anonymous")
     private[kyo] inline def useResult[E, A, B, S](v: IOPromise[E, A])(f: Result[E, A] => B < S)(using Frame): B < (S & Async) =
+        // Hands the awaited promise over WITHOUT linking it. The link carries the resume callback the joiner
+        // registers on `v`, so it can only be made once that callback exists, which is inside IOTask's join
+        // handling. Linking before the promise's state is read stays the invariant; it just happens there.
         val input = new JoinInput[A]:
-            def apply(task: IOTask[?, ?, ?]): IOPromise[?, A] =
-                task.interrupts(v)
-                v
+            def apply(task: IOTask[?, ?, ?]): IOPromise[?, A] = v
         ArrowEffect.suspendWith[A](Tag[Join], input)(f)
     end useResult
 
