@@ -149,7 +149,10 @@ sealed abstract private[kernel] class Handler[E <: Effect, A, -S]:
                         val ans = c._1
                         ans match
                             case _: Pending[?, ?] =>
-                                Loop.continue(ans.map(a => k(a))(using Frame.internal))
+                                // Through the representation, not `ans.map(a => k(a))`: a map interposes a poll, so a
+                                // stop as `ans` settles parks it in front of `k`'s first link (a bracket's `Ensure`),
+                                // never reached. The deferral reaches that link with no poll.
+                                Loop.continue(Effect.defer(ans, k))
                             case _ =>
                                 Loop.continue(k(Nested.unnest[O[X]](ans)))
                         end match
@@ -217,7 +220,8 @@ sealed abstract private[kernel] class Handler[E <: Effect, A, -S]:
                         val ans = c._2
                         ans match
                             case _: Pending[?, ?] =>
-                                Loop.continue(st, ans.map(a => k(a))(using Frame.internal))
+                                // As above: a `map` would park a settled answer in front of `k`'s `Ensure` under a stop.
+                                Loop.continue(st, Effect.defer(ans, k))
                             case _ =>
                                 Loop.continue(st, k(Nested.unnest[O[X]](ans)))
                         end match
@@ -318,7 +322,8 @@ sealed abstract private[kernel] class Handler[E <: Effect, A, -S]:
                         val ans = c._1
                         ans match
                             case _: Pending[?, ?] =>
-                                result = Loop.continue(ans.map(a => k(a))(using _frame).asInstanceOf[A < (E & S)])
+                                // As above. The result cast is erasure-forced: the fused walk erases `k`'s output.
+                                result = Loop.continue(Effect.defer(ans, k).asInstanceOf[A < (E & S)])
                                 running = false
                             case _ =>
                                 val next = k(Nested.unnest[Any](ans))
@@ -399,7 +404,8 @@ sealed abstract private[kernel] class Handler[E <: Effect, A, -S]:
                         val ans = c._2
                         ans match
                             case _: Pending[?, ?] =>
-                                result = Loop.continue(st, ans.map(a => k(a))(using _frame).asInstanceOf[A < (E & S)])
+                                // As above; the result cast is erasure-forced (walk erases `k`'s output).
+                                result = Loop.continue(st, Effect.defer(ans, k).asInstanceOf[A < (E & S)])
                                 running = false
                             case _ =>
                                 val next = k(Nested.unnest[Any](ans))

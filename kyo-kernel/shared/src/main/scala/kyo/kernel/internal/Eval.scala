@@ -65,12 +65,17 @@ import scala.annotation.tailrec
         val saved = Safepoint.save(slot)
         if armed then Safepoint.arm(slot)
 
+        // A stop is honored only on a still-pending answer, never on a settled value: the value reaches its
+        // continuation and stays paired with the `Ensure` that owes its release, which a park in front of it would
+        // strand. The settled arm parks the refusal-deferral holding it instead.
+        def shouldPark[A, S](v: A < S): Boolean = armed && Safepoint.stopped(slot) && v.isInstanceOf[Pending[?, ?]]
+
         @tailrec def loop[T, B, C, S2](v: T < S2, contA: Arrow[T, B, S2], contB: Arrow[B, C, S2]): A < S =
             Debugger.onLoop(v, contA, contB)
             v match
-                // a deferral: its two continuations go in front of ours
+                // a deferral: its continuations go in front of ours.
                 case kyo: Pending.Defer[?, ?, T, S2] @unchecked =>
-                    if armed && Safepoint.stopped(slot) then
+                    if shouldPark(kyo.value) then
                         park(v, contA, contB)
                     else
                         loop(kyo.value, kyo.contA, kyo.contB.chain(contA.chain(contB)))
@@ -94,7 +99,7 @@ import scala.annotation.tailrec
                                         // arrow operation does, re-raised rather than answered from a value
                                         val entries = if idx == stack.depth - 1 then Stack.Snapshot.empty else dumped(stack, idx, kyo)
                                         val result  = maskedRead(kyo, entries, contA.chain(contB))
-                                        if armed && Safepoint.stopped(slot) then park(result, Arrow.id, Arrow.id)
+                                        if shouldPark(result) then park(result, Arrow.id, Arrow.id)
                                         else loop(result, Arrow.id, Arrow.id)
                             end if
 
@@ -118,7 +123,7 @@ import scala.annotation.tailrec
                                         Debugger.onResult(result)
                                         // Stop honored on the clause's answer: one that re-raises the operation would
                                         // otherwise dispatch straight back here with no deferral to park at.
-                                        if armed && Safepoint.stopped(slot) then park(result, Arrow.id, Arrow.id)
+                                        if shouldPark(result) then park(result, Arrow.id, Arrow.id)
                                         else loop(result, Arrow.id, Arrow.id)
                                     // a masking clause: the same, handed the operation re-raised instead of its input
                                     case handler: Handler.MaskingHandler[EX, C, Y, S2] @unchecked =>
@@ -128,7 +133,7 @@ import scala.annotation.tailrec
                                             else kyo.crossing(entries, contA.chain(contB))
                                         val result = handler.answering(kyo.reraise, continuation, kyo, stack)
                                         Debugger.onResult(result)
-                                        if armed && Safepoint.stopped(slot) then park(result, Arrow.id, Arrow.id)
+                                        if shouldPark(result) then park(result, Arrow.id, Arrow.id)
                                         else loop(result, Arrow.id, Arrow.id)
                                     // a first clause: answers the operation and carries its continuation out as the region's result, so the
                                     // region exits with the peeled value. Single-shot (the default): each dumped region closes at its own end
@@ -150,7 +155,7 @@ import scala.annotation.tailrec
                                         stack.oweBelow(stack.depth, stack.takePopped())
                                         stack.oweRemaindersBelow(stack.depth, owedThrough)
                                         if !repeated && !entries.isEmpty then stack.oweRemainderBelow(stack.depth, entries)
-                                        if armed && Safepoint.stopped(slot) then park(result, next, Arrow.id)
+                                        if shouldPark(result) then park(result, next, Arrow.id)
                                         else loop(result, next, Arrow.id)
                                     // a loop clause at the top: answered in place, the region staying installed
                                     case handler: Handler.LoopHandler[IX, OX, EX, C, Y, S2] @unchecked if atTop =>
@@ -397,7 +402,14 @@ import scala.annotation.tailrec
                             case contA: Arrow.Chain[T, Any, B, S2] @unchecked =>
                                 loop(res, contA.a, contA.b.chain(contB))
                             case _ =>
-                                loop(contA(res, contB), Arrow.id, Arrow.id)
+                                contA(res, contB) match
+                                    // a step refused the value under a stop: the deferral it hands back holds the value
+                                    // settled, in front of the step that did not run, and this is where the stop parks
+                                    case next: Pending.Defer[?, ?, C, S2] @unchecked
+                                        if armed && !next.value.isInstanceOf[Pending[?, ?]] && Safepoint.stopped(slot) =>
+                                        park(next, Arrow.id, Arrow.id)
+                                    case next =>
+                                        loop(next, Arrow.id, Arrow.id)
             end match
         end loop
 
@@ -575,7 +587,10 @@ import scala.annotation.tailrec
                             case Present(r) =>
                                 Debugger.onRecover(handler, ex)
                                 Debugger.onRegionExit(handler, r)
-                                stack.continuation(top).asInstanceOf[Arrow[Y, A, S]](r)
+                                // Deferred, not applied: run inside the guard's catch with the region still on the stack,
+                                // so the continuation's first link runs after the pop, where a throw from it unwinds
+                                // through the regions below instead of escaping the eval.
+                                Effect.defer(r, stack.continuation(top).asInstanceOf[Arrow[Y, A, S]])
                             case Absent =>
                                 Debugger.onRegionExit(handler, ex)
                                 stack.pop()

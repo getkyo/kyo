@@ -588,14 +588,18 @@ object ArrowEffect:
             tag: Tag[E2],
             maskTag: Tag[Mask[E]]
         ): A < (Mask[E] & S) =
+            // Through the representation, not `.map(cont(_))`: a map interposes a poll, so a stop as the tunneled
+            // operation settles parks its value in front of `cont`, stranding a bracket's install. `Effect.defer`
+            // reaches `cont`'s first link with no poll.
             handleMasking(tag, v) {
-                [X] => (operation, cont) => suspend[X](maskTag, operation).map(cont(_))
+                [X] => (operation, cont) => Effect.defer(suspend[X](maskTag, operation), cont)
             }
 
         /** The boundary where masked operations re-raise for the handlers outside, removing `Mask[S]` from the row. */
         def run[S](using Frame)[A, S2](v: A < (Mask[S] & S2))(using tag: Tag[Mask[S]]): A < (S & S2) =
             handleCont(tag, v) {
-                [C] => (input, cont) => input.map(cont(_))
+                // As in `apply`: a `map` would park a settled answer in front of `cont`'s install under a stop.
+                [C] => (input, cont) => Effect.defer(input, cont)
             }
     end Mask
 

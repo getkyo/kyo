@@ -1743,6 +1743,24 @@ class ArrowEffectTest extends Test:
             assert(r.eval == -7)
         }
 
+        // The recovering region's continuation runs where the guard is re-entered, after the region is popped, not from
+        // inside the guard's catch: a throw from the continuation's first link is the enclosing region's to answer, and
+        // raised from the catch it would leave the eval unrecovered. `Retry` re-raising a `Result.Failure` in the map after
+        // its `Abort.run` is this shape.
+        "a throw from the continuation of a recovered region reaches the enclosing region" in {
+            object Again extends RuntimeException("again", null, false, false)
+            val body: Int < Ask  = ask.map(_ => (throw Boom): Int)
+            val inner: Int < Say =
+                ArrowEffect.handleCont(Tag[Ask], body)([C] => (_, cont) => cont(1), a => a, _ => Maybe(-1))
+                    .map(_ => (throw Again): Int)
+            val r: Int < Any = ArrowEffect.handleCont(Tag[Say], inner)(
+                [C] => (_, cont) => cont(()),
+                a => a,
+                e => if e eq Again then Maybe(-7) else Maybe.empty
+            )
+            assert(r.eval == -7)
+        }
+
         "a settled input's done throw reaches the recovery clause" in {
             val r: Int < Any = ArrowEffect.handleCont(Tag[Ask], 42: Int < Ask)(
                 [C] => (_, cont) => cont(1),

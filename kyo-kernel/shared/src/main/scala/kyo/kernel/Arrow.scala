@@ -227,8 +227,11 @@ object Arrow:
 
     /** The composition node, and the only arrow that is not its own head.
       *
-      * It does no work itself, so applying one can only build a node and hand it back to the evaluator. The hot paths pull it apart through
-      * [[Arrow.head]] and [[Arrow.tail]] instead, which is what keeps composition free at the point of application.
+      * It does no work itself. Applied to a settled value it reaches its first link with the rest behind it, the expression the evaluator's
+      * settled arm computes, so a link that must run as the value arrives (an [[Ensure]]) does; reified as a deferral instead, the value
+      * would sit in front of a poll with that link unapplied. Applied to a pending value it can only build a node and hand it back to the
+      * evaluator. The hot paths pull it apart through [[Arrow.head]] and [[Arrow.tail]] instead, which is what keeps composition free at
+      * the point of application.
       */
     final private[kyo] class Chain[A, B, C, S] private[kernel] (
         val a: Arrow[A, B, S],
@@ -237,7 +240,9 @@ object Arrow:
         Debugger.onAlloc(this)
         def frame                                          = Frame.internal
         def apply[D, S2](v: A < S2, cont: Arrow[C, D, S2]) =
-            Effect.defer(v, this, cont)
+            v match
+                case v: Pending[A, S2] @unchecked => Effect.defer(v, this, cont)
+                case _                            => Chain.first(v, this, cont)
 
         type X = B
         def head                      = a
@@ -264,6 +269,17 @@ object Arrow:
             render(this :: Nil, 32)
             out.result()
         end toString
+    end Chain
+
+    private object Chain:
+        /** Applies a composition to a settled value: the leftmost link takes it with the rest behind, the expression the evaluator's settled
+          * arm computes. Walked, not recursed: a fold over a collection of arrows nests the left spine as deep as the collection.
+          */
+        @tailrec def first[A, B, C, D, S, S2](v: A < S2, chain: Chain[A, B, C, S], cont: Arrow[C, D, S2]): D < (S & S2) =
+            chain.a match
+                // Erasure-forced: the type joining a nested composition's links is existential from out here.
+                case a: Chain[A, Any, B, S] @unchecked => first(v, a, chain.b.chain(cont))
+                case a                                 => a(v, chain.b.chain(cont))
     end Chain
 
 end Arrow

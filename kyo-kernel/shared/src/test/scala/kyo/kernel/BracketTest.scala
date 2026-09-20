@@ -150,6 +150,153 @@ class BracketTest extends AnyFreeSpec:
             assert(count == 1)
         }
 
+        // The acquire's value reaches the bracket through a continuation composed with what follows the bracket, the
+        // shape of every bracket that is not the last thing a computation does. A composition applied to a settled
+        // value has to reach its first link as the value arrives: reified as a deferral instead, the loop polls before
+        // dispatching it, and a stop pending there parks with the value settled and the region never installed, so the
+        // abandonment walk has nothing to release. Here the value arrives through a handler's answer, the delivery a
+        // spawn's capture and every context read share.
+        "a stop landing as a handler answers the acquire still installs the region behind a composed continuation" in {
+            var count              = 0
+            val acquire: Int < Ask = ArrowEffect.suspendWith[Any](Tag[Ask], ()) { _ =>
+                requestStop()
+                7
+            }
+            val v: Int < Ask =
+                Bracket(acquire)(a => Effect.defer(a + 1))((_, _) => count += 1).map(_ + 1)
+            val handled: Int < Any =
+                ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue(1), b => b)
+            val parked = Eval.partial(handled)
+            assert(parked.isInstanceOf[Pending.Park[?, ?]])
+            Eval.release(parked, Boom)
+            assert(count == 1)
+        }
+
+        // The same pairing at a region exit: a peel settles the acquire as its region ends, and the region's
+        // continuation, the bracket's install, is owed that value with nothing schedulable in between.
+        "a stop landing as a peel settles the acquire still installs the region" in {
+            var count         = 0
+            def settle(): Int =
+                requestStop()
+                7
+            val acquire: Int < Any =
+                ArrowEffect.handleFirst(Tag[Ask], ask)([C] => (_, _) => settle(), a => a)
+            val v      = Bracket(acquire)(a => Effect.defer(a + 1))((_, _) => count += 1).map(_ + 1)
+            val parked = Eval.partial(v)
+            Eval.release(parked, Boom)
+            assert(count == 1)
+        }
+
+        // The same pairing across a foreign crossing: the acquire is answered below a region dumped over its handler,
+        // and the answer crosses back into that region as a deferral the reinstalled region then unfolds. The bracket's
+        // install is the first link of that deferral, and a stop landing as the answer crosses is owed to it first.
+        "a stop landing as an answer crosses back into a dumped region still installs the region" in {
+            var count                   = 0
+            val body: Int < (Ask & Str) =
+                Bracket(str(1).map(_ => ask))(a => Effect.defer(a + 1))((_, _) => count += 1).map(_ + 1)
+            val inner: Int < Ask =
+                ArrowEffect.handleLoop(Tag[Str], body)([C] => n => Loop.continue(s"s$n"), b => b)
+            val answer: Int < Any =
+                Effect.defer {
+                    requestStop()
+                    7
+                }
+            val handled: Int < Any =
+                ArrowEffect.handleLoop(Tag[Ask], inner)([C] => _ => Loop.continue(answer), b => b)
+            val parked = Eval.partial(handled)
+            Eval.release(parked, Boom)
+            assert(count == 1)
+        }
+
+        // The value the answer delivers ends the extent of a region of the acquire's own, and the bracket's install is
+        // that region's continuation: the region exits under the stop, its release told a clean end, and the value reaches
+        // the install before any park.
+        "a stop landing as an answer ends the acquire's own region still installs the region behind it" in {
+            var ended              = Maybe.empty[Maybe[Throwable]]
+            var count              = 0
+            val acquire: Int < Ask =
+                Bracket.ensuring(outcome => ended = Maybe(outcome)) {
+                    ArrowEffect.suspendWith[Any](Tag[Ask], ()) { _ =>
+                        requestStop()
+                        7
+                    }
+                }
+            val v: Int < Ask       = Bracket(acquire)(a => Effect.defer(a + 1))((_, _) => count += 1)
+            val handled: Int < Any = ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue(1), b => b)
+            val parked             = Eval.partial(handled)
+            assert(ended.exists(_.isEmpty), s"the acquire's own region did not end cleanly before the park, it saw $ended")
+            Eval.release(parked, Boom)
+            assert(count == 1)
+        }
+
+        // A loop clause can answer the acquire with a pending computation, not just a settled one. That answer is
+        // delivered to the continuation that installs the bracket, and the delivery must reach the install directly: a
+        // stop landing as the pending answer settles is owed to the install, not parked in front of the step carrying
+        // it. The clause here requests the stop as its answer settles.
+        "a stop landing as a loop clause answers the acquire with a pending value still installs the region" in {
+            var count        = 0
+            val v: Int < Ask =
+                Bracket(ask)(a => Effect.defer(a + 1))((_, _) => count += 1)
+            val handled: Int < Any =
+                ArrowEffect.handleLoop(Tag[Ask], v)(
+                    [C] => _ => Loop.continue(Effect.defer { requestStop(); 7 }),
+                    b => b
+                )
+            val parked = Eval.partial(handled)
+            assert(parked.isInstanceOf[Pending.Park[?, ?]])
+            Eval.release(parked, Boom)
+            assert(count == 1)
+        }
+
+        // The same pending answer resumed rather than abandoned: the bracket completes and releases cleanly.
+        "a loop clause answering the acquire with a pending value completes and releases on resume" in {
+            var seen         = Maybe.empty[Maybe[Throwable]]
+            val v: Int < Ask =
+                Bracket(ask)(a => Effect.defer(a + 1))((_, outcome) => seen = Maybe(outcome))
+            val handled: Int < Any =
+                ArrowEffect.handleLoop(Tag[Ask], v)(
+                    [C] => _ => Loop.continue(Effect.defer { requestStop(); 7 }),
+                    b => b
+                )
+            val parked = Eval.partial(handled)
+            assert(parked.eval == 8)
+            assert(seen.exists(_.isEmpty))
+        }
+
+        // The stateful loop clause takes the same delivery path, carrying its state alongside the pending answer.
+        "a stop landing as a stateful loop clause answers the acquire with a pending value still installs the region" in {
+            var count        = 0
+            val v: Int < Ask =
+                Bracket(ask)(a => Effect.defer(a + 1))((_, _) => count += 1)
+            val handled: Int < Any =
+                ArrowEffect.handleLoopState(Tag[Ask], 0, v)(
+                    [C] => (s, _) => Loop.continue(s, Effect.defer { requestStop(); 7 }),
+                    (_, b) => b
+                )
+            val parked = Eval.partial(handled)
+            assert(parked.isInstanceOf[Pending.Park[?, ?]])
+            Eval.release(parked, Boom)
+            assert(count == 1)
+        }
+
+        // The same pairing across a mask boundary: the acquire is a masked operation, and `Mask.run` resumes the
+        // tunneled operation and hands its answer to the continuation that installs the bracket. A stop landing as that
+        // answer settles is owed to the install first, with nothing schedulable in between.
+        "a stop landing as a masked acquire is answered still installs the region" in {
+            var count                             = 0
+            val body: Int < ArrowEffect.Mask[Ask] =
+                Bracket(ArrowEffect.Mask[Ask](ask))(a => Effect.defer(a + 1))((_, _) => count += 1)
+            val unmasked: Int < Ask = ArrowEffect.Mask.run[Ask](body)
+            val handled: Int < Any  =
+                ArrowEffect.handleLoop(Tag[Ask], unmasked)(
+                    [C] => _ => Loop.continue(Effect.defer { requestStop(); 7 }),
+                    b => b
+                )
+            val parked = Eval.partial(handled)
+            Eval.release(parked, Boom)
+            assert(count == 1)
+        }
+
         "a foreign loop handler answering in place keeps the bracket live until the use completes" in {
             var seen                    = Maybe.empty[Maybe[Throwable]]
             val log                     = ListBuffer[String]()
