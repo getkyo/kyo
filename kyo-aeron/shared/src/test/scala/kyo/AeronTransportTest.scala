@@ -1562,14 +1562,11 @@ class AeronTransportTest extends Test:
     end HandoffTransport
 
     // The add-deadline guard hands the publication on at its clean end and closes nothing, and Topic's `ensureMap`
-    // takes it over in the step the add's value arrives. Between the two sits the poll of the map that raises the
-    // guard's recorded abort (`Sync.ensure`'s shape): a stop landing there leaves a publication open that nobody
-    // closes. The rounds spin to sub-millisecond offsets from the step before the publish, so the stops land across
-    // the add, the hand-off, and the backpressured offer loop after it; every round must end with every publication
-    // it opened closed.
-    "a publication the add hands on under a stop is closed by someone".pendingUntilFixed(
-        "the add-deadline guard hands the publication on at its clean end and Topic's ensureMap takes it over in the next step, so a stop landing on the poll between them leaves a publication that nobody closes"
-    ).notJs.notWasm in {
+    // takes it over in the step the add's value arrives: `Sync.ensure` raises the guard's recorded abort as that
+    // value arrives, so no poll separates the hand-off from the owner. The rounds spin to sub-millisecond offsets
+    // from the step before the publish, so the stops land across the add, the hand-off, and the backpressured offer
+    // loop after it; every round must end with every publication it opened closed.
+    "a publication the add hands on under a stop is closed by someone".notJs.notWasm in {
         val rounds    = 80
         val transport = new HandoffTransport
         Loop.indexed { i =>

@@ -105,29 +105,35 @@ private[kyo] object AeronPlatformTransport:
       * installs the C recording error handler.
       */
     def external(aeronDir: String)(using Frame): AeronRuntime < (Async & Abort[TopicTransportFailedException]) =
-        Sync.Unsafe.defer(Ffi.load[AeronBindings]).map { bindings =>
-            // A driver-absent connect returns NULL after the ~10s driver timeout, which the
-            // generated binding raises as FfiNullPointer inside the fiber: a Panic, hence recover
-            // rather than catch. A `@Ffi.blocking` binding returns `Fiber.Unsafe[A, Any]`, whose
-            // second parameter is the effect row, not an error type: `Any` is the empty row, so
-            // `.safe.get` is `A < Async` and carries no typed failure. Only the panic branch can
-            // fire, which is why onFail is uninhabited here.
-            val connect: Ffi.Handle[AeronClientHandle] < Async =
-                Sync.Unsafe.defer(bindings.clientConnect(aeronDir)).flatMap(_.safe.get)
-            Abort.recover[Nothing](
-                onFail = (never: Nothing) => never,
-                onPanic = mapConnectPanic
-            )(connect).map { client =>
-                Sync.Unsafe.defer {
-                    val ffiTransport = new FfiAeronTransport(bindings, client)
-                    new AeronRuntime:
-                        val transport: AeronTransport        = ffiTransport
-                        def close()(using AllowUnsafe): Unit = ffiTransport.closeClient()
-                    end new
-                }
+        Sync.Unsafe.defer(Ffi.load[AeronBindings]).map(bindings => externalWith(aeronDir, bindings))
+
+    /** [[external]] with the FFI bindings injected, so a test can drive the connect/close lifecycle with a fake.
+      * Production calls [[external]], which loads the real bindings via `Ffi.load`; behavior is identical.
+      */
+    private[kyo] def externalWith(aeronDir: String, bindings: AeronBindings)(using
+        Frame
+    ): AeronRuntime < (Async & Abort[TopicTransportFailedException]) =
+        // A driver-absent connect returns NULL after the ~10s driver timeout, which the
+        // generated binding raises as FfiNullPointer inside the fiber: a Panic, hence recover
+        // rather than catch. A `@Ffi.blocking` binding returns `Fiber.Unsafe[A, Any]`, whose
+        // second parameter is the effect row, not an error type: `Any` is the empty row, so
+        // `.safe.get` is `A < Async` and carries no typed failure. Only the panic branch can
+        // fire, which is why onFail is uninhabited here.
+        val connect: Ffi.Handle[AeronClientHandle] < Async =
+            Sync.Unsafe.defer(bindings.clientConnect(aeronDir)).flatMap(_.safe.get)
+        Abort.recover[Nothing](
+            onFail = (never: Nothing) => never,
+            onPanic = mapConnectPanic
+        )(connect).map { client =>
+            Sync.Unsafe.defer {
+                val ffiTransport = new FfiAeronTransport(bindings, client)
+                new AeronRuntime:
+                    val transport: AeronTransport        = ffiTransport
+                    def close()(using AllowUnsafe): Unit = ffiTransport.closeClient()
+                end new
             }
         }
-    end external
+    end externalWith
 
     /** Maps a connect panic, treating the absent-driver NULL as the only expected one and
       * re-raising everything else so a genuine defect stays a defect.
