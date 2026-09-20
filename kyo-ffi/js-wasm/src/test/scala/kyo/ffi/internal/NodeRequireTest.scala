@@ -37,4 +37,15 @@ class NodeRequireTest extends Test:
         assert(NodeRequire.find().isDefined)
     }
 
+    /** Resolution walks up from the anchor, so anchoring at the working directory makes a package next to the
+      * bundle reachable or not depending on where the process was started. Asserted on the anchor rather than on a
+      * load, because a load succeeds under either one whenever both trees happen to reach the package.
+      */
+    "anchors at the entry script rather than the working directory" in {
+        val proc  = sjs.Dynamic.global.selectDynamic("process")
+        val entry = proc.selectDynamic("argv").asInstanceOf[sjs.Array[String]](1)
+        assert(entry.nonEmpty)
+        assert(NodeRequire.anchor(proc) == entry)
+    }
+
 end NodeRequireTest
