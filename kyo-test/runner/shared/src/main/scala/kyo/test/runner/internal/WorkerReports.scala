@@ -66,7 +66,7 @@ private[internal] object WorkerReports:
 
     private def encodeLeaf(leaf: (Chunk[String], TestResult)): String =
         val (path, result) = leaf
-        val (tag, nanos) = result match
+        val (tag, nanos)   = result match
             case _: TestResult.Passed       => ("passed", 0L)
             case _: TestResult.Failed       => ("failed", 0L)
             case TestResult.TimedOut(limit) => ("timedOut", limit.toNanos)
@@ -95,8 +95,8 @@ private[internal] object WorkerReports:
         val fields = line.split("\t", -1)
         if fields.length < 3 then Maybe.empty
         else
-            val reason = unescape(fields(2))
-            val path   = Chunk.from(fields.iterator.drop(3).map(unescape))
+            val reason                    = unescape(fields(2))
+            val path                      = Chunk.from(fields.iterator.drop(3).map(unescape))
             val result: Maybe[TestResult] = fields(0) match
                 case "passed"    => Maybe(TestResult.Passed(Duration.Zero))
                 case "failed"    => Maybe(TestResult.Failed(reason, Maybe.empty, Duration.Zero))

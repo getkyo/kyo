@@ -101,7 +101,7 @@ class PureDataAdtsTest extends kyo.test.Test[Any]:
         // EnumCase should match EnumCase arm. Use upcast to Symbol so the match is over the sealed base type
         // where both arms are potentially reachable.
         val symEc: Tasty.Symbol = ec
-        val label = symEc match
+        val label               = symEc match
             case _: Tasty.Symbol.EnumCase => "enumCase"
             case _: Tasty.Symbol.Class    => "class"
             case _                        => "other"

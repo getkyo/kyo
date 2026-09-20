@@ -143,8 +143,8 @@ private[kyo] object ReactiveRegion:
     private[kyo] def isValidHtmlId(id: String): Boolean =
         if id.isEmpty || id.charAt(0) != 'r' then false
         else
-            val nestingAt = id.indexOf('n', 1)
-            val pathEnd   = if nestingAt < 0 then id.length else nestingAt
+            val nestingAt    = id.indexOf('n', 1)
+            val pathEnd      = if nestingAt < 0 then id.length else nestingAt
             val validNesting =
                 if nestingAt < 0 then true
                 else if nestingAt + 9 != id.length then false

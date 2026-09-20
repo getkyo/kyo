@@ -163,7 +163,7 @@ class IonBinaryTest extends kyo.test.Test[Any]:
 
         "decode surfaces a non-serializable schema as Result.Panic, not an uncaught throw" in {
             val encoded = IonBinary.encode(1)
-            val result =
+            val result  =
                 given Schema[Int] = Schema[Int]
                 IonBinary.decode[Int](encoded)
             result match

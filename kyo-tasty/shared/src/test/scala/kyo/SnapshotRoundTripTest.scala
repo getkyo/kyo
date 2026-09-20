@@ -522,7 +522,7 @@ class SnapshotRoundTripTest extends kyo.test.Test[Any]:
         import kyo.Tasty.SymbolId
         val rootSym = Tasty.Symbol.Package(SymbolId(0), Tasty.Name(""), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
         val pkgSym  = Tasty.Symbol.Package(SymbolId(1), Tasty.Name("test"), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
-        val barSym = Tasty.Symbol.Class(
+        val barSym  = Tasty.Symbol.Class(
             SymbolId(2),
             Tasty.Name("Bar"),
             Tasty.Flags.empty,
@@ -564,7 +564,7 @@ class SnapshotRoundTripTest extends kyo.test.Test[Any]:
             val pkgIdMap      = Dict.from(pkgMap.map { case (k, v) => k -> v.id }.toMap)
             val topIds        = topLevel.map(_.id)
             val pkgIds        = pkgs.map(_.id)
-            val coldCp = Tasty.Classpath.make(
+            val coldCp        = Tasty.Classpath.make(
                 symbols = allSyms,
                 rootSymbolId = SymbolId(0),
                 topLevelClassIds = topIds,
@@ -657,8 +657,8 @@ class SnapshotRoundTripTest extends kyo.test.Test[Any]:
 
         import AllowUnsafe.embrace.danger
         import kyo.Tasty.SymbolId
-        val rootSym2 = Tasty.Symbol.Package(SymbolId(0), Tasty.Name(""), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
-        val pkgSym2  = Tasty.Symbol.Package(SymbolId(1), Tasty.Name("legacy"), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
+        val rootSym2  = Tasty.Symbol.Package(SymbolId(0), Tasty.Name(""), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
+        val pkgSym2   = Tasty.Symbol.Package(SymbolId(1), Tasty.Name("legacy"), Tasty.Flags.empty, SymbolId(0), Chunk.empty)
         val classSym2 = Tasty.Symbol.Class(
             SymbolId(2),
             Tasty.Name("OldClass"),

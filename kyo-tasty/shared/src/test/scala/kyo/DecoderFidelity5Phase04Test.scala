@@ -248,9 +248,9 @@ class DecoderFidelity5Phase04Test extends kyo.test.Test[Any]:
     "8 sequential SnapshotReader.readFromBytes calls produce identical results" in {
         Abort.run[TastyError] {
             snapshotRoundTrip(0x42).map { classpath =>
-                val digest   = Array.fill[Byte](8)(0x42.toByte)
-                val bytes    = SnapshotWriter.serializeToBytes(classpath, digest)
-                val expected = classpath.symbols.length
+                val digest                                                         = Array.fill[Byte](8)(0x42.toByte)
+                val bytes                                                          = SnapshotWriter.serializeToBytes(classpath, digest)
+                val expected                                                       = classpath.symbols.length
                 def readOne(i: Int)(using Frame): Int < (Sync & Abort[TastyError]) =
                     SnapshotReader.readFromBytes(bytes, "snap.krfl").map { cp2 =>
                         assert(

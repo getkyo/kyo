@@ -72,12 +72,12 @@ private[kyo] object FlowFold:
     def apply[R](flow: Flow[?, ?, ?])(visitor: FlowVisitor[R]): R =
         def loop(f: Flow[?, ?, ?]): R =
             f match
-                case n: Init => visitor.onInit(n.name, n.frame, n.meta)
+                case n: Init                             => visitor.onInit(n.name, n.frame, n.meta)
                 case n: Output[?, ?, ?, ?, ?] @unchecked =>
                     visitor.onOutput(n.name, n.frame, n.meta)(using n.tag, n.schema)
-                case n: Step[?, ?] @unchecked  => visitor.onStep(n.name, n.frame, n.meta)
-                case n: Input[?, ?] @unchecked => visitor.onInput(n.name, n.frame, n.meta)(using n.tag, n.schema)
-                case n: Sleep                  => visitor.onSleep(n.name, n.duration, n.frame, n.meta)
+                case n: Step[?, ?] @unchecked              => visitor.onStep(n.name, n.frame, n.meta)
+                case n: Input[?, ?] @unchecked             => visitor.onInput(n.name, n.frame, n.meta)(using n.tag, n.schema)
+                case n: Sleep                              => visitor.onSleep(n.name, n.duration, n.frame, n.meta)
                 case n: Dispatch[?, ?, ?, ?, ?] @unchecked =>
                     val infos = n.branches.toSeq.map(b => BranchInfo(b.name, b.frame, b.meta)) :+
                         BranchInfo(n.defaultName, n.defaultFrame, Meta())

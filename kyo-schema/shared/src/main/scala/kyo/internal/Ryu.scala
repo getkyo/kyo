@@ -11,7 +11,7 @@ private[internal] object Ryu:
 
     // Lookup table for 2-digit pairs: "00", "01", ..., "99"
     private[internal] val DigitPairs: Array[Byte] =
-        val table = new Array[Byte](200)
+        val table                       = new Array[Byte](200)
         @tailrec def loop(i: Int): Unit =
             if i < 100 then
                 table(i * 2) = ('0' + i / 10).toByte
@@ -227,8 +227,8 @@ private[internal] object Ryu:
                         (removed2, out)
                     else
                         // Specialized for the common case (~99.3%).
-                        val vpDiv100 = initVp / 100
-                        val vmDiv100 = initVm / 100
+                        val vpDiv100                            = initVp / 100
+                        val vmDiv100                            = initVm / 100
                         val (vr3, vp3, vm3, roundUp3, removed3) =
                             if vpDiv100 > vmDiv100 then
                                 val vrDiv100 = initVr / 100
@@ -276,7 +276,7 @@ private[internal] object Ryu:
             else if exp >= olength - 1 && exp <= 6 then
                 // Integer with trailing zeros: e.g., 100.0, 1000.0
                 writeDigits(output, olength, buf, startPos)
-                val trailingZeros = exp - olength + 1
+                val trailingZeros                                     = exp - olength + 1
                 @tailrec def fillZeros(pos: Int, remaining: Int): Int =
                     if remaining > 0 then
                         buf(pos) = '0'
@@ -291,7 +291,7 @@ private[internal] object Ryu:
                 // Small number: 0.001 to 0.999...
                 buf(startPos) = '0'
                 buf(startPos + 1) = '.'
-                val leadingZeros = -(exp + 1)
+                val leadingZeros                                      = -(exp + 1)
                 @tailrec def fillZeros(pos: Int, remaining: Int): Int =
                     if remaining > 0 then
                         buf(pos) = '0'
@@ -326,7 +326,7 @@ private[internal] object Ryu:
 
         // Write digits of a long to buffer (most-significant first)
         private def writeDigits(output: Long, olength: Int, buf: Array[Byte], pos: Int): Unit =
-            val dp = Ryu.DigitPairs
+            val dp                                   = Ryu.DigitPairs
             @tailrec def loop(i: Int, v: Long): Unit =
                 if i >= 1 then
                     val q     = (v % 100).toInt
@@ -565,8 +565,8 @@ private[internal] object Ryu:
                         val out = vr2 + (if (vr2 == vm2Final && (!acceptBounds || !vmTZ2)) || lastDigit >= 5 then 1 else 0)
                         (removed2, out)
                     else
-                        val vpDiv100 = initVp / 100
-                        val vmDiv100 = initVm / 100
+                        val vpDiv100                            = initVp / 100
+                        val vmDiv100                            = initVm / 100
                         val (vr3, vp3, vm3, roundUp3, removed3) =
                             if vpDiv100 > vmDiv100 then
                                 val vrDiv100 = initVr / 100
@@ -607,7 +607,7 @@ private[internal] object Ryu:
                 startPos + olength + 1
             else if exp >= olength - 1 && exp <= 6 then
                 writeDigitsInt(output, olength, buf, startPos)
-                val trailingZeros = exp - olength + 1
+                val trailingZeros                                     = exp - olength + 1
                 @tailrec def fillZeros(pos: Int, remaining: Int): Int =
                     if remaining > 0 then
                         buf(pos) = '0'
@@ -621,7 +621,7 @@ private[internal] object Ryu:
             else if exp >= -3 && exp < 0 then
                 buf(startPos) = '0'
                 buf(startPos + 1) = '.'
-                val leadingZeros = -(exp + 1)
+                val leadingZeros                                      = -(exp + 1)
                 @tailrec def fillZeros(pos: Int, remaining: Int): Int =
                     if remaining > 0 then
                         buf(pos) = '0'
@@ -653,7 +653,7 @@ private[internal] object Ryu:
         end formatFloat
 
         private def writeDigitsInt(output: Int, olength: Int, buf: Array[Byte], pos: Int): Unit =
-            val dp = Ryu.DigitPairs
+            val dp                                  = Ryu.DigitPairs
             @tailrec def loop(i: Int, v: Int): Unit =
                 if i >= 1 then
                     val q     = v % 100

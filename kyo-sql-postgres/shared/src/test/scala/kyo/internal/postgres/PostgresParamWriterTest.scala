@@ -107,7 +107,7 @@ class PostgresParamWriterTest extends Test:
         assert(param.encoder.oid == PostgresEncoder.OID_BOOL)
         assert(param.encoder.format == Format.Binary)
         param.encoded match
-            case Maybe.Absent => fail("expected encoded bytes for true")
+            case Maybe.Absent         => fail("expected encoded bytes for true")
             case Maybe.Present(bytes) =>
                 assert(bytes.size == 1, s"expected 1 byte, got ${bytes.size}")
                 assert(bytes(0) == 1.toByte, "true should encode to byte 1")
@@ -119,7 +119,7 @@ class PostgresParamWriterTest extends Test:
         assert(param.encoder.oid == PostgresEncoder.OID_BOOL)
         assert(param.encoder.format == Format.Binary)
         param.encoded match
-            case Maybe.Absent => fail("expected encoded bytes for false")
+            case Maybe.Absent         => fail("expected encoded bytes for false")
             case Maybe.Present(bytes) =>
                 assert(bytes.size == 1, s"expected 1 byte, got ${bytes.size}")
                 assert(bytes(0) == 0.toByte, "false should encode to byte 0")
@@ -203,7 +203,7 @@ class PostgresParamWriterTest extends Test:
             assert(param.encoder.format == Format.Binary, s"format mismatch for $v")
             // Verify 8-byte wire output
             param.encoded match
-                case Maybe.Absent => fail(s"encoded is absent for $v")
+                case Maybe.Absent         => fail(s"encoded is absent for $v")
                 case Maybe.Present(bytes) =>
                     assert(bytes.size == 8, s"expected 8 bytes for $v, got ${bytes.size}")
             end match
@@ -226,7 +226,7 @@ class PostgresParamWriterTest extends Test:
             assert(param.encoder.oid == PostgresEncoder.OID_DATE, s"OID mismatch for $v")
             assert(param.encoder.format == Format.Binary, s"format mismatch for $v")
             param.encoded match
-                case Maybe.Absent => fail(s"encoded is absent for $v")
+                case Maybe.Absent         => fail(s"encoded is absent for $v")
                 case Maybe.Present(bytes) =>
                     assert(bytes.size == 4, s"expected 4 bytes for $v, got ${bytes.size}")
             end match
@@ -246,7 +246,7 @@ class PostgresParamWriterTest extends Test:
             assert(param.encoder.oid == PostgresEncoder.OID_TIMESTAMP, s"OID mismatch for $v")
             assert(param.encoder.format == Format.Binary, s"format mismatch for $v")
             param.encoded match
-                case Maybe.Absent => fail(s"encoded is absent for $v")
+                case Maybe.Absent         => fail(s"encoded is absent for $v")
                 case Maybe.Present(bytes) =>
                     assert(bytes.size == 8, s"expected 8 bytes for $v, got ${bytes.size}")
             end match
@@ -325,7 +325,7 @@ class PostgresParamWriterTest extends Test:
         assert(param.encoder.oid == PostgresEncoder.OID_INTERVAL, s"expected OID=1186 got ${param.encoder.oid}")
         assert(param.encoder.format == Format.Binary, s"expected Binary format got ${param.encoder.format}")
         param.encoded match
-            case Maybe.Absent => fail("expected encoded bytes for Duration.ofHours(1)")
+            case Maybe.Absent         => fail("expected encoded bytes for Duration.ofHours(1)")
             case Maybe.Present(bytes) =>
                 assert(bytes.size == 16, s"expected 16 bytes, got ${bytes.size}")
                 assert(bytes.toArray.sameElements(expected), s"byte mismatch: got ${bytes.toArray.toSeq}, expected ${expected.toSeq}")
@@ -338,7 +338,7 @@ class PostgresParamWriterTest extends Test:
         assert(param.encoder.oid == PostgresEncoder.OID_INTERVAL)
         assert(param.encoder.format == Format.Binary)
         param.encoded match
-            case Maybe.Absent => fail("expected encoded bytes for Duration.ZERO")
+            case Maybe.Absent         => fail("expected encoded bytes for Duration.ZERO")
             case Maybe.Present(bytes) =>
                 assert(bytes.size == 16, s"expected 16 bytes, got ${bytes.size}")
                 assert(bytes.toArray.sameElements(expected), s"byte mismatch: ${bytes.toArray.toSeq}")
@@ -370,7 +370,7 @@ class PostgresParamWriterTest extends Test:
         assert(param.encoder.oid == PostgresEncoder.OID_INTERVAL)
         assert(param.encoder.format == Format.Binary)
         param.encoded match
-            case Maybe.Absent => fail("expected encoded bytes for Duration.ofSeconds(-30)")
+            case Maybe.Absent         => fail("expected encoded bytes for Duration.ofSeconds(-30)")
             case Maybe.Present(bytes) =>
                 assert(bytes.size == 16, s"expected 16 bytes, got ${bytes.size}")
                 assert(bytes.toArray.sameElements(expected), s"byte mismatch: ${bytes.toArray.toSeq}")
@@ -381,7 +381,7 @@ class PostgresParamWriterTest extends Test:
         val w = new PostgresParamWriter(TypeRegistry.empty)
         // 9_223_372_036_855L seconds × 1_000_000 overflows Int64
         val overflowDuration = java.time.Duration.ofSeconds(9_223_372_036_855L)
-        val ex = intercept[SqlRequestDurationOverflowException] {
+        val ex               = intercept[SqlRequestDurationOverflowException] {
             w.duration(overflowDuration)
         }
         val expectedDays = overflowDuration.getSeconds / 86_400L
@@ -394,7 +394,7 @@ class PostgresParamWriterTest extends Test:
     }
 
     "extension with an unknown type name throws SqlUnsupportedException" in {
-        val w = new PostgresParamWriter(TypeRegistry.empty) // registry is empty
+        val w  = new PostgresParamWriter(TypeRegistry.empty) // registry is empty
         val ex = intercept[SqlUnsupportedException] {
             w.extension(SqlCodec.Writer.Payload(PostgresEncoder.dialectId, "geometry", Format.Binary, Span.empty))
         }
@@ -416,7 +416,7 @@ class PostgresParamWriterTest extends Test:
     "extension with a populated TypeRegistry throws SqlUnsupportedException for unregistered type names" in {
         val reg = TypeRegistry(Map("geometry" -> 12345))
         val w   = new PostgresParamWriter(reg)
-        val ex = intercept[SqlUnsupportedException] {
+        val ex  = intercept[SqlUnsupportedException] {
             w.extension(SqlCodec.Writer.Payload(PostgresEncoder.dialectId, "hstore", Format.Binary, Span.empty))
         }
         assert(ex.message.contains("hstore"), s"error message should mention type name: ${ex.message}")
@@ -428,7 +428,7 @@ class PostgresParamWriterTest extends Test:
         // would make this suite depend on the other backend's module.
         val foreign = Idiom.Id("acme")
         val w       = new PostgresParamWriter(TypeRegistry(Map("geometry" -> 12345)))
-        val ex = intercept[SqlUnsupportedTypeOnBackendException] {
+        val ex      = intercept[SqlUnsupportedTypeOnBackendException] {
             w.extension(SqlCodec.Writer.Payload(foreign, "geometry", Format.Binary, Span.empty))
         }
         assert(ex.dialect == foreign)
@@ -526,8 +526,8 @@ class PostgresParamWriterTest extends Test:
         // The standalone `numeric` bind stays text (byte-for-byte identical to the static renderer, which keeps a
         // parameterised query on the same plan as the literal one), but an element inside a binary composite never
         // reaches the planner as a parameter, so the demand selects `numericBinary` instead of refusing.
-        val w     = new PostgresParamWriter(TypeRegistry.empty)
-        val bytes = w.encodeElement(SqlSchema.bigDecimal, BigDecimal(1), "BigDecimal", Format.Binary)
+        val w        = new PostgresParamWriter(TypeRegistry.empty)
+        val bytes    = w.encodeElement(SqlSchema.bigDecimal, BigDecimal(1), "BigDecimal", Format.Binary)
         val expected =
             val buf = new PostgresBufferWriter()
             PostgresEncoder.numericBinary.write(BigDecimal(1), buf)
@@ -565,7 +565,7 @@ class PostgresParamWriterTest extends Test:
             ,
             r => r.int()
         )
-        val w = new PostgresParamWriter(TypeRegistry.empty)
+        val w  = new PostgresParamWriter(TypeRegistry.empty)
         val ex = intercept[kyo.SqlUnsupportedMultiColumnElementException] {
             val _ = w.encodeElement(twoColumns, 1, "TwoColumnInt", Format.Binary)
         }
@@ -575,7 +575,7 @@ class PostgresParamWriterTest extends Test:
     }
 
     "encodeElement rejects an absent element, which a composite payload cannot express" in {
-        val w = new PostgresParamWriter(TypeRegistry.empty)
+        val w  = new PostgresParamWriter(TypeRegistry.empty)
         val ex = intercept[kyo.SqlUnsupportedAbsentElementException] {
             val _ = w.encodeElement(summon[SqlSchema.Column[Maybe[Int]]], Maybe.Absent, "Maybe[Int]", Format.Binary)
         }

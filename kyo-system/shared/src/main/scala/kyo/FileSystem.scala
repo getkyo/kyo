@@ -32,7 +32,7 @@ object FileSystem:
         def until(deadline: Clock.Deadline, timeout: Duration)
             : Path.Lock < (S & Async & Scope & Abort[FileReadException | FileLockException]) =
             deadline.isOverdue.map {
-                case true => Abort.fail(FileLockTimeoutException(path, timeout))
+                case true  => Abort.fail(FileLockTimeoutException(path, timeout))
                 case false =>
                     attempt.map {
                         case Present(lock) => lock
@@ -62,10 +62,12 @@ object FileSystem:
         def isSymbolicLink(path: Path)(using Frame): Boolean < (S & Abort[FileReadException])
         def realPath(path: Path)(using
             Frame
-        ): Path < (S & Abort[
-            FileInvalidPathException | FileNotFoundException | FileAccessDeniedException | FileIOException |
-                FileSystemUnsupportedOnHostException
-        ])
+        ): Path <
+            (S &
+                Abort[
+                    FileInvalidPathException | FileNotFoundException | FileAccessDeniedException | FileIOException |
+                        FileSystemUnsupportedOnHostException
+                ])
 
         /** Resolves the longest existing prefix of `path` and re-appends the segments below it.
           *
@@ -82,12 +84,14 @@ object FileSystem:
           */
         def realPathPrefix(path: Path)(using
             Frame
-        ): Path < (S & Abort[
-            FileInvalidPathException | FileAccessDeniedException | FileIOException | FileSystemUnsupportedOnHostException
-        ]) =
+        ): Path <
+            (S &
+                Abort[
+                    FileInvalidPathException | FileAccessDeniedException | FileIOException | FileSystemUnsupportedOnHostException
+                ]) =
             Abort.run[FileNotFoundException](realPath(path)).map {
                 case Result.Success(resolved) => resolved
-                case _ =>
+                case _                        =>
                     (path.parent, path.name) match
                         case (Present(parent), Present(name)) => realPathPrefix(parent).map(resolved => resolved / name)
                         case _                                => path

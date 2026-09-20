@@ -142,7 +142,7 @@ class TypeAdtFidelity2Test extends Fidelity2TestBase:
 
     "isMacroTransparent is a subset of isTransparentInline" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
-            val allTransparentInline = classpath.allMethods.count(_.isTransparentInline)
+            val allTransparentInline  = classpath.allMethods.count(_.isTransparentInline)
             val macroTransparentCount =
                 classpath.allMethods.count(m => m.flags.contains(Tasty.Flag.Macro) && m.flags.contains(Tasty.Flag.Transparent))
             assert(
@@ -260,13 +260,13 @@ class TypeAdtFidelity2Test extends Fidelity2TestBase:
         case Tasty.Type.Applied(b, args) =>
             collectMatchTypes(b) ++ args.flatMap(collectMatchTypes)
         case Tasty.Type.TypeLambda(_, body) => collectMatchTypes(body)
-        case Tasty.Type.Function(ps, r) =>
+        case Tasty.Type.Function(ps, r)     =>
             ps.flatMap(collectMatchTypes) ++ collectMatchTypes(r)
         case Tasty.Type.ContextFunction(p, r) =>
             p.flatMap(collectMatchTypes) ++ collectMatchTypes(r)
-        case Tasty.Type.ByName(u)     => collectMatchTypes(u)
-        case Tasty.Type.AndType(l, r) => collectMatchTypes(l) ++ collectMatchTypes(r)
-        case Tasty.Type.OrType(l, r)  => collectMatchTypes(l) ++ collectMatchTypes(r)
+        case Tasty.Type.ByName(u)       => collectMatchTypes(u)
+        case Tasty.Type.AndType(l, r)   => collectMatchTypes(l) ++ collectMatchTypes(r)
+        case Tasty.Type.OrType(l, r)    => collectMatchTypes(l) ++ collectMatchTypes(r)
         case Tasty.Type.MatchCase(p, r) =>
             collectMatchTypes(p) ++ collectMatchTypes(r)
         case Tasty.Type.Bounds(lo, hi)   => collectMatchTypes(lo) ++ collectMatchTypes(hi)
@@ -278,7 +278,7 @@ class TypeAdtFidelity2Test extends Fidelity2TestBase:
         case mt: Tasty.Type.MatchType       => mt.cases.map(countMatchCases).foldLeft(0)(_ + _)
         case Tasty.Type.Applied(b, args)    => countMatchCases(b) + args.map(countMatchCases).foldLeft(0)(_ + _)
         case Tasty.Type.TypeLambda(_, body) => countMatchCases(body)
-        case Tasty.Type.Function(ps, r) =>
+        case Tasty.Type.Function(ps, r)     =>
             ps.map(countMatchCases).foldLeft(0)(_ + _) + countMatchCases(r)
         case Tasty.Type.ContextFunction(p, r) =>
             p.map(countMatchCases).foldLeft(0)(_ + _) + countMatchCases(r)

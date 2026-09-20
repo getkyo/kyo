@@ -104,7 +104,6 @@ private[kyo] object Civil:
             case _                           => 0
 
     /** Whether a proleptic Gregorian year carries a leap day: every fourth, except centuries, except every fourth century. */
-    def isLeapYear(year: Int): Boolean =
-        (year % 4 == 0) && (year % 100 != 0 || year % 400 == 0)
+    def isLeapYear(year: Int): Boolean = (year % 4 == 0) && (year % 100 != 0 || year % 400 == 0)
 
 end Civil

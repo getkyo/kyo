@@ -84,7 +84,7 @@ class RecorderTest extends AsyncFreeSpec with NonImplicitAssertions:
             // Record a value at Int.MaxValue column. Without math.max(0, maxCol+1) the
             // Array.fill call would receive a negative size and throw NegativeArraySizeException.
             r.record(42, Int.MaxValue)
-            val frame = summon[Frame]
+            val frame  = summon[Frame]
             val result =
                 try
                     val d = r.diagram("x", frame)

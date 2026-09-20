@@ -268,8 +268,8 @@ class VarintTest extends kyo.test.Test[Any]:
     // Negative values are masked to non-negative via >>> 1 (arithmetic unsigned shift).
     "writeLongNat then readLongNat round-trips 100 seeded random non-negative Longs" in {
         import AllowUnsafe.embrace.danger
-        val rng    = new scala.util.Random(0L)
-        val trials = 100
+        val rng      = new scala.util.Random(0L)
+        val trials   = 100
         val failures = (0 until trials).flatMap { _ =>
             val v      = rng.nextLong() >>> 1 // non-negative
             val buffer = scala.collection.mutable.ArrayBuffer.empty[Byte]

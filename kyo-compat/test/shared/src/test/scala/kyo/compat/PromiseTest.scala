@@ -34,7 +34,7 @@ class PromiseTest extends CompatTest:
     }
     "fail then get surfaces the error" in run {
         val err = new RuntimeException("p-err")
-        val c =
+        val c   =
             CPromise.init[Int].flatMap { p =>
                 p.fail(err).flatMap { _ =>
                     p.get.liftToTry
@@ -89,7 +89,7 @@ class PromiseTest extends CompatTest:
         // Two get calls awaiting the same promise must both observe the
         // value once the promise is completed.
         val ctr = new AtomicInteger(0)
-        val c =
+        val c   =
             CPromise.init[Int].flatMap { p =>
                 // Complete the promise first; then issue two sequential gets.
                 p.succeed(99).flatMap { _ =>
@@ -130,7 +130,7 @@ class PromiseTest extends CompatTest:
     // Multiple concurrent gets, then fail → all observe failure
     "multiple concurrent gets all observe failure when promise is failed" in run {
         val err = TestError("err")
-        val c =
+        val c   =
             CPromise.init[String].flatMap { p =>
                 CIO.foreach(1 to 5)(_ => CFiber.init(p.get.liftToTry)).flatMap { fibers =>
                     CIO.sleep(50.millis).flatMap { _ =>

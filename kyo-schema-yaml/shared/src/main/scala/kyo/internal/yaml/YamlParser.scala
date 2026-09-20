@@ -101,7 +101,7 @@ final private[kyo] class YamlParser private (private val input: String)(using fr
                     if peekChar(' ') then advance(1)
                     val valueMark = mark()
                     val rest      = stripComment(readRestOfLine()).trim
-                    val parsed =
+                    val parsed    =
                         if rest.isEmpty then parseNode(context, indent + 2, visitor)
                         else
                             val (anchor, tag, valueText) = readProperties(rest)
@@ -279,7 +279,7 @@ final private[kyo] class YamlParser private (private val input: String)(using fr
             var complete = false
 
             def scan(part: String): Unit =
-                val _ = out.append(part)
+                val _                           = out.append(part)
                 @tailrec def loop(i: Int): Unit =
                     if i < part.length && !complete then
                         val ch = part.charAt(i)
@@ -416,7 +416,7 @@ final private[kyo] class YamlParser private (private val input: String)(using fr
     end shouldCollectPlainContinuation
 
     private def collectPlainContinuation(valueText: String, indent: Int): List[BlockScalarLine] =
-        val lines = scala.collection.mutable.ListBuffer(BlockScalarLine(valueText, false))
+        val lines                 = scala.collection.mutable.ListBuffer(BlockScalarLine(valueText, false))
         @tailrec def loop(): Unit =
             if shouldCollectPlainContinuation(indent) then
                 if currentLineText().trim.isEmpty then
@@ -755,11 +755,11 @@ final private[kyo] class YamlParser private (private val input: String)(using fr
     end startsWithSequenceEntryAtIndent
 
     private def readUntilMappingColon(): String =
-        val line     = currentLineText()
-        val colon    = findTopLevel(line, ':')
-        val keyEnd   = if colon < 0 then line.length else colon
-        val start    = pos
-        val keyStart = pos
+        val line                  = currentLineText()
+        val colon                 = findTopLevel(line, ':')
+        val keyEnd                = if colon < 0 then line.length else colon
+        val start                 = pos
+        val keyStart              = pos
         @tailrec def loop(): Unit =
             if pos < keyStart + keyEnd then
                 advance(1)
@@ -772,7 +772,7 @@ final private[kyo] class YamlParser private (private val input: String)(using fr
     end readUntilMappingColon
 
     private def readRestOfLine(): String =
-        val start = pos
+        val start                 = pos
         @tailrec def loop(): Unit =
             if pos < input.length && input.charAt(pos) != '\n' then
                 advance(1)

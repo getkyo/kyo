@@ -104,7 +104,10 @@ private[kyo] object InputMasking:
     def maskOk(cls: Char, ch: Char): Boolean =
         if cls == '9' then ch >= '0' && ch <= '9'
         else if cls == 'a' then (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z')
-        else (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z')
+        else
+            (ch >= '0' && ch <= '9') ||
+            (ch >= 'a' && ch <= 'z') ||
+            (ch >= 'A' && ch <= 'Z')
 
     /** Formats `raw` into the mask, inserting literals ahead of the characters that follow them.
       *

@@ -55,9 +55,9 @@ private[kyo] object ModifierParser:
         if kyoIdx < 0 then
             Parsed.empty
         else
-            val kyoToken         = tokens(kyoIdx)
-            val firstContent     = kyoToken.drop(DoctestPrefix.length)
-            val subsequentTokens = tokens.drop(kyoIdx + 1)
+            val kyoToken          = tokens(kyoIdx)
+            val firstContent      = kyoToken.drop(DoctestPrefix.length)
+            val subsequentTokens  = tokens.drop(kyoIdx + 1)
             val allModifierTokens =
                 if firstContent.isEmpty then subsequentTokens
                 else firstContent :: subsequentTokens
@@ -73,7 +73,7 @@ private[kyo] object ModifierParser:
         acc: Parsed
     )(using Frame): Parsed < Abort[Doctest.Error.ParseError] =
         tokens match
-            case Nil => acc
+            case Nil           => acc
             case token :: rest =>
                 parseSingleToken(token, file, line, acc).flatMap { updated =>
                     parseModifierTokens(rest, file, line, updated)
@@ -91,7 +91,7 @@ private[kyo] object ModifierParser:
         Parse.runResult(token)(singleTokenParser(file, line, acc)).flatMap { result =>
             result.out match
                 case Present(parsed) => parsed
-                case Absent =>
+                case Absent          =>
                     Abort.fail[Doctest.Error.ParseError](
                         Doctest.Error.ParseError(file, line, s"unknown doctest modifier key: '$token'")
                     )
@@ -140,7 +140,7 @@ private[kyo] object ModifierParser:
             case "expect"   => parseExpect(value, file, line).map(e => acc.copy(expect = Maybe.Present(e)))
             case "platform" => parsePlatform(value, file, line).map(p => acc.copy(platform = Maybe.Present(p)))
             case "timeout"  => parseTimeout(value, file, line).map(t => acc.copy(timeout = Present(t)))
-            case unknown =>
+            case unknown    =>
                 Abort.fail[Doctest.Error.ParseError](
                     Doctest.Error.ParseError(file, line, s"unknown doctest modifier key: '$unknown'")
                 )
@@ -168,7 +168,7 @@ private[kyo] object ModifierParser:
             result =>
                 result.out match
                     case Present(v) => v
-                    case Absent =>
+                    case Absent     =>
                         Abort.fail[Doctest.Error.ParseError](
                             Doctest.Error.ParseError(file, line, s"invalid scope value: '$value'")
                         )
@@ -210,7 +210,7 @@ private[kyo] object ModifierParser:
             result =>
                 result.out match
                     case Present(e) => e
-                    case Absent =>
+                    case Absent     =>
                         Abort.fail[Doctest.Error.ParseError](
                             Doctest.Error.ParseError(file, line, s"invalid expect value: '$value'")
                         )
@@ -237,7 +237,7 @@ private[kyo] object ModifierParser:
             result =>
                 result.out match
                     case Present(p) => p
-                    case Absent =>
+                    case Absent     =>
                         Abort.fail[Doctest.Error.ParseError](
                             Doctest.Error.ParseError(file, line, "platform value must not be empty")
                         )
@@ -277,13 +277,13 @@ private[kyo] object ModifierParser:
         acc: Set[Block.Target]
     )(using Frame): Set[Block.Target] < Abort[Doctest.Error.ParseError] =
         parts match
-            case Seq() => acc
+            case Seq()        => acc
             case part +: rest =>
                 part match
                     case "jvm"    => expandPlatformParts(rest, file, line, acc + Block.Target.JVM)
                     case "js"     => expandPlatformParts(rest, file, line, acc + Block.Target.JS)
                     case "native" => expandPlatformParts(rest, file, line, acc + Block.Target.Native)
-                    case "all" =>
+                    case "all"    =>
                         expandPlatformParts(rest, file, line, acc ++ Set(Block.Target.JVM, Block.Target.JS, Block.Target.Native))
                     case bad =>
                         Abort.fail[Doctest.Error.ParseError](

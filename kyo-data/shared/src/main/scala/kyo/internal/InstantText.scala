@@ -371,8 +371,7 @@ private[kyo] object InstantText:
             month >= 1 && month <= 12 && day >= 1 && day <= monthLength(localYear, month) &&
                 hour <= 23 && minute <= 59 && second <= 59 && Math.abs(offset) <= MaxOffsetSeconds
 
-        private def isLeap(year: Long): Boolean =
-            (year & 3) == 0 && (year % 100 != 0 || year % 400 == 0)
+        private def isLeap(year: Long): Boolean = (year & 3) == 0 && (year % 100 != 0 || year % 400 == 0)
 
         private def monthLength(year: Long, month: Int): Int =
             month match

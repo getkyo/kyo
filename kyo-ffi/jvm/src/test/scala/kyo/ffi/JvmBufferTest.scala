@@ -135,7 +135,7 @@ class JvmBufferTest extends Test:
                         buf.set(0, 1)
                         // simulate cross-thread read inside a separate OS thread
                         @volatile var caught: Throwable = null
-                        val t = new Thread(new Runnable:
+                        val t                           = new Thread(new Runnable:
                             def run(): Unit =
                                 try
                                     discard(buf.get(0))

@@ -132,9 +132,9 @@ object ExtendedQueryExchange:
         val describeM = channel.marshallers.describe
         val syncM     = channel.marshallers.sync
         for
-            _ <- channel.send(Parse(stmtName, sql, paramOids))(using parseM)
-            _ <- channel.send(Describe('S'.toByte, stmtName))(using describeM)
-            _ <- channel.send(kyo.internal.postgres.SyncMessage)(using syncM)
+            _    <- channel.send(Parse(stmtName, sql, paramOids))(using parseM)
+            _    <- channel.send(Describe('S'.toByte, stmtName))(using describeM)
+            _    <- channel.send(kyo.internal.postgres.SyncMessage)(using syncM)
             stmt <- readParseDescribeResponses(
                 channel,
                 stmtName,
@@ -188,7 +188,7 @@ object ExtendedQueryExchange:
                     // Request binary format for all result columns, the registered decoders all support
                     // binary encoding, which is more compact and avoids text-parsing overhead.
                     val resultFmts = rdMaybe match
-                        case Absent => Chunk.empty[Short]
+                        case Absent      => Chunk.empty[Short]
                         case Present(rd) =>
                             rd.fields.map(_ => Format.Binary.code)
                     PreparedStmt(stmtName, sql, oids, rdMaybe, resultFmts)
@@ -221,7 +221,7 @@ object ExtendedQueryExchange:
     )(using Frame): (Chunk[SqlRow], Long) < (Async & Abort[SqlException]) =
         val paramFormats: Chunk[Short]            = params.map(_.encoder.format.code)
         val paramValues: Chunk[Maybe[Span[Byte]]] = params.map(_.encoded)
-        val bindMsg = Bind(
+        val bindMsg                               = Bind(
             portalName = "",
             stmtName = stmt.name,
             paramFormats = paramFormats,

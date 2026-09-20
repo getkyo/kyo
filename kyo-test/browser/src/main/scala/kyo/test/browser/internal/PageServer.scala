@@ -50,8 +50,8 @@ private[browser] object PageServer:
       * message in arrival order.
       */
     def page(module: String, kind: ModuleKind): String =
-        val src     = escapeAttribute(module)
-        val onError = escapeAttribute(s"$failBinding(${jsString(s"could not load the main module $module")})")
+        val src       = escapeAttribute(module)
+        val onError   = escapeAttribute(s"$failBinding(${jsString(s"could not load the main module $module")})")
         val moduleTag = kind match
             case ModuleKind.ESModule => s"""<script type="module" src="$src" onerror="$onError"></script>"""
             case ModuleKind.Script   => s"""<script src="$src" onerror="$onError"></script>"""
@@ -108,9 +108,8 @@ private[browser] object PageServer:
       * `u` and four hex digits is that UTF-16 code unit.
       */
     def unescapeUnits(payload: String): Result[String, String] =
-        val message = new StringBuilder(payload.length)
-        def isHex(from: Int): Boolean =
-            (from until from + 4).forall(i => Character.digit(payload.charAt(i), 16) >= 0)
+        val message                                       = new StringBuilder(payload.length)
+        def isHex(from: Int): Boolean                     = (from until from + 4).forall(i => Character.digit(payload.charAt(i), 16) >= 0)
         @tailrec def loop(i: Int): Result[String, String] =
             if i >= payload.length then Result.succeed(message.toString)
             else if payload.charAt(i) != '\\' then
@@ -218,7 +217,7 @@ private[browser] object PageServer:
                 val path = request.fields.path.takeWhile(_ != '?')
                 files.get(path) match
                     case Some(bytes) => HttpResponse.ok(bytes).setHeader("Content-Type", contentType(path)).noCache
-                    case None =>
+                    case None        =>
                         HttpResponse.notFound(Span.fromUnsafe(s"not found: $path".getBytes("UTF-8")))
                             .setHeader("Content-Type", "text/plain; charset=utf-8")
                 end match

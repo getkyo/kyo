@@ -21,10 +21,10 @@ class SlackSocketEngineTest extends kyo.test.Test[Any]:
         """{"type":"hello","num_connections":1,"connection_info":{"app_id":"A1"}}"""
     private def eventFrame(id: String) =
         s"""{"type":"events_api","envelope_id":"$id","payload":{"type":"event_callback","event":{"type":"message","channel":"C1","user":"U1","text":"hi","ts":"1.2"}}}"""
-    private val disconnectWarning  = """{"type":"disconnect","reason":"warning"}"""
-    private val disconnectDisabled = """{"type":"disconnect","reason":"link_disabled"}"""
-    private val unknownNoIdFrame   = """{"type":"workflow_step_execute","payload":{}}"""
-    private val noTypeFrame        = """{"envelope_id":"E1"}"""
+    private val disconnectWarning                                  = """{"type":"disconnect","reason":"warning"}"""
+    private val disconnectDisabled                                 = """{"type":"disconnect","reason":"link_disabled"}"""
+    private val unknownNoIdFrame                                   = """{"type":"workflow_step_execute","payload":{}}"""
+    private val noTypeFrame                                        = """{"envelope_id":"E1"}"""
     private def blockActionsFrame(id: String, responseUrl: String) =
         s"""{"type":"interactive","envelope_id":"$id","payload":{"type":"block_actions","response_url":"$responseUrl","user":{"id":"U1","username":"bob"},"trigger_id":"T1","channel":{"id":"C1","name":"general"},"actions":[{"action_id":"a1","block_id":"b1","value":"v1","type":"button"}]}}"""
 
@@ -46,7 +46,7 @@ class SlackSocketEngineTest extends kyo.test.Test[Any]:
                 val conn = new SlackTransport.Conn:
                     private[kyo] def put(text: String)(using Frame): Unit < (Async & Abort[Closed]) = recorded.put(text)
                     private[kyo] def stream(using Frame): Stream[String, Async]                     = feed.streamUntilClosed()
-                    private[kyo] def close(using Frame): Unit < Async =
+                    private[kyo] def close(using Frame): Unit < Async                               =
                         peerClosed.completeUnit.andThen(feed.close.andThen(recorded.close.unit))
                     private[kyo] def onPeerClose(using Frame): Unit < Async = peerClosed.get
                 f(conn)

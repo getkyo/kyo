@@ -44,10 +44,9 @@ extension [A, B, S](effect: B < (Emit[A] & S))
         tag: Tag[Emit[A]],
         f: Frame
     ): B < (S & S1) =
-        ArrowEffect.handle(tag, effect):
-            [C] =>
-                (a, cont) =>
-                    fn(a).andThen(cont(()))
+        ArrowEffect.handle(tag, effect): [C] =>
+            (a, cont) =>
+                fn(a).andThen(cont(()))
 
     /** Handle Emit[A] by passing emitted values to `channel`. Fails with Abort[Closed] on channel closure
       *

@@ -48,7 +48,7 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
                         classpath.errors.nonEmpty,
                         "Expected at least one error for bit-flipped .tasty file; classpath.errors was empty"
                     )
-                    val firstError = classpath.errors(0)
+                    val firstError     = classpath.errors(0)
                     val matchedVariant = firstError match
                         case _: TastyError.CorruptedFile        => true
                         case _: TastyError.FileNotFound         => true

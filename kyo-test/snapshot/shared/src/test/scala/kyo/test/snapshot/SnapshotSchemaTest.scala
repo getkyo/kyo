@@ -72,7 +72,7 @@ class SnapshotSchemaTest extends AnyFunSuite with NonImplicitAssertions:
       */
     private def throwingCodec(): Codec =
         new Codec:
-            def newWriter(): Codec.Writer = Protobuf().newWriter()
+            def newWriter(): Codec.Writer                                   = Protobuf().newWriter()
             def newReader(input: Span[Byte])(using kyo.Frame): Codec.Reader =
                 throw RawCodecDefect("raw codec defect")
 
@@ -82,7 +82,7 @@ class SnapshotSchemaTest extends AnyFunSuite with NonImplicitAssertions:
       */
     private def throwingTextCodec(): Codec =
         new Codec:
-            def newWriter(): Codec.Writer = Yaml().newWriter()
+            def newWriter(): Codec.Writer                                   = Yaml().newWriter()
             def newReader(input: Span[Byte])(using kyo.Frame): Codec.Reader =
                 throw RawCodecDefect("raw text codec defect")
 
@@ -154,7 +154,7 @@ class SnapshotSchemaTest extends AnyFunSuite with NonImplicitAssertions:
 
         installContexts()
         val reader = new SchemaFixture(dir, update = false)
-        val ex = intercept[AssertionFailed] {
+        val ex     = intercept[AssertionFailed] {
             reader.assertSchema(Point(1, 3), "point")
         }
         assert(ex.diagram.contains("changed fields: y"), s"Expected the changed field 'y', got: ${ex.diagram}")
@@ -169,7 +169,7 @@ class SnapshotSchemaTest extends AnyFunSuite with NonImplicitAssertions:
 
         installContexts()
         val reader = new SchemaFixture(dir, update = false, SnapshotCodec.Protobuf)
-        val ex = intercept[AssertionFailed] {
+        val ex     = intercept[AssertionFailed] {
             reader.assertSchema(Point(1, 3), "point")
         }
         assert(ex.diagram.contains("changed fields: y"), s"Expected the changed field 'y', got: ${ex.diagram}")
@@ -184,7 +184,7 @@ class SnapshotSchemaTest extends AnyFunSuite with NonImplicitAssertions:
 
         installContexts()
         val reader = new SchemaFixture(dir, update = false)
-        val ex = intercept[AssertionFailed] {
+        val ex     = intercept[AssertionFailed] {
             reader.assertSchema(Line(Point(1, 2), Point(3, 9)), "line")
         }
         assert(ex.diagram.contains("changed fields: b.y"), s"Expected the dotted nested path 'b.y', got: ${ex.diagram}")
@@ -196,7 +196,7 @@ class SnapshotSchemaTest extends AnyFunSuite with NonImplicitAssertions:
         val writer = new SchemaFixture(dir, update = true)
         writer.assertSchema(Point(1, 2), "point")
 
-        val path = s"$dir/SchemaFixture/point.snap.yaml"
+        val path     = s"$dir/SchemaFixture/point.snap.yaml"
         val original = SnapshotStore.read(path) match
             case Maybe.Present(content) => content
             case Maybe.Absent           => fail(s"expected the update-mode write to produce $path")
@@ -217,7 +217,7 @@ class SnapshotSchemaTest extends AnyFunSuite with NonImplicitAssertions:
 
         installContexts()
         val fixture = new SchemaFixture(dir, update = false)
-        val ex = intercept[AssertionFailed] {
+        val ex      = intercept[AssertionFailed] {
             fixture.assertSchema(Point(1, 2), "point")
         }
         assert(ex.diagram.contains("SnapshotSchemaEvolution:"), s"Expected the SnapshotSchemaEvolution prefix, got: ${ex.diagram}")
@@ -257,7 +257,7 @@ class SnapshotSchemaTest extends AnyFunSuite with NonImplicitAssertions:
         val dir = tmpDir()
         installContexts()
         val fixture = new SchemaFixture(dir, update = false)
-        val ex = intercept[AssertionFailed] {
+        val ex      = intercept[AssertionFailed] {
             fixture.assertSchema(Point(7, 8), "first-run")
         }
         assert(!ex.diagram.contains("SnapshotSchemaEvolution:"), s"Expected no SnapshotSchemaEvolution prefix, got: ${ex.diagram}")
@@ -301,7 +301,7 @@ class SnapshotSchemaTest extends AnyFunSuite with NonImplicitAssertions:
         val dir = tmpDir()
         installContexts()
         val fixture = new SchemaFixture(dir, update = false)
-        val ex = intercept[AssertionFailed] {
+        val ex      = intercept[AssertionFailed] {
             fixture.assertRendered(42, "render-only")
         }
         assert(ex.diagram.contains("SnapshotNotFound"), s"Expected a SnapshotNotFound diagram, got: ${ex.diagram}")
@@ -328,7 +328,7 @@ class SnapshotSchemaTest extends AnyFunSuite with NonImplicitAssertions:
 
         installContexts()
         val fixture = new SchemaFixture(dir, update = false, SnapshotCodec.Protobuf)
-        val ex = intercept[AssertionFailed] {
+        val ex      = intercept[AssertionFailed] {
             fixture.assertSchema(Point(1, 2), "point")
         }
         assert(ex.diagram.contains("SnapshotSchemaEvolution:"), s"Expected the SnapshotSchemaEvolution prefix, got: ${ex.diagram}")
@@ -345,7 +345,7 @@ class SnapshotSchemaTest extends AnyFunSuite with NonImplicitAssertions:
 
         installContexts()
         val reader = new SchemaFixture(dir, update = false)
-        val ex = intercept[AssertionFailed] {
+        val ex     = intercept[AssertionFailed] {
             reader.assertSchema(Ver(1, 9), "ver")
         }
         assert(ex.diagram.contains("changed fields: b"), s"Expected the changed field 'b', got: ${ex.diagram}")
@@ -362,7 +362,7 @@ class SnapshotSchemaTest extends AnyFunSuite with NonImplicitAssertions:
 
         installContexts()
         val reader = new SchemaFixture(dir, update = false, panicCodec)
-        val ex = intercept[RawCodecDefect] {
+        val ex     = intercept[RawCodecDefect] {
             reader.assertSchema(Point(1, 2), "panic-point")
         }
         assert(ex.getMessage == "raw codec defect", s"Expected message 'raw codec defect', got: ${ex.getMessage}")
@@ -379,7 +379,7 @@ class SnapshotSchemaTest extends AnyFunSuite with NonImplicitAssertions:
 
         installContexts()
         val reader = new SchemaFixture(dir, update = false, panicCodec)
-        val ex = intercept[RawCodecDefect] {
+        val ex     = intercept[RawCodecDefect] {
             reader.assertSchema(Point(1, 2), "panic-point")
         }
         assert(ex.getMessage == "raw text codec defect", s"Expected message 'raw text codec defect', got: ${ex.getMessage}")

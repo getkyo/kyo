@@ -176,7 +176,7 @@ final case class Config private (
         if !reasoningEnabled then
             modelReasoning match
                 case Config.ReasoningEncoding.Unavailable => Absent
-                case _ =>
+                case _                                    =>
                     reasoningOff match
                         // Every other encoding has bytes for "off"; this one does not, so a wire that
                         // reasons by default keeps reasoning.
@@ -260,7 +260,7 @@ final case class Config private (
         // not a target: a reply that finishes early costs what it costs, so a cap below the model's
         // maximum buys nothing and manufactures stops. Every entry declares the maximum its model
         // accepts, so the unset case has a real answer rather than a fixed constant.
-        val base = maxTokens.getOrElse(modelMaxOutputTokens)
+        val base      = maxTokens.getOrElse(modelMaxOutputTokens)
         val requested =
             resolvedAmount match
                 case Present(Config.Amount.Budget(tokens)) =>
@@ -766,7 +766,7 @@ object Config:
             acceptsTemperature = false,
             acceptsImages = true
         )
-        def default: Config = opus_4_8
+        def default: Config                     = opus_4_8
         private[kyo] val entries: Chunk[Config] =
             Chunk(opus_4_8, sonnet_4_6, haiku_4_5, fable_5, sonnet_5)
     end Anthropic
@@ -820,7 +820,7 @@ object Config:
                 acceptsTemperature = true,
                 acceptsImages = true
             )
-        def default: Config = gpt_5_4
+        def default: Config                     = gpt_5_4
         private[kyo] val entries: Chunk[Config] =
             Chunk(gpt_5_5, gpt_5_4, gpt_5_4_mini)
     end OpenAI
@@ -876,7 +876,7 @@ object Config:
             acceptsTemperature = true,
             acceptsImages = false
         )
-        def default: Config = deepseek_v4_flash
+        def default: Config                     = deepseek_v4_flash
         private[kyo] val entries: Chunk[Config] =
             Chunk(deepseek_v4_flash, deepseek_v4_pro)
     end DeepSeek
@@ -928,7 +928,7 @@ object Config:
             acceptsTemperature = true,
             acceptsImages = true
         )
-        def default: Config = gemini_3_5_flash
+        def default: Config                     = gemini_3_5_flash
         private[kyo] val entries: Chunk[Config] =
             Chunk(gemini_3_5_flash, gemini_3_1_flash_lite, gemini_2_5_pro)
     end Gemini
@@ -983,7 +983,7 @@ object Config:
             acceptsTemperature = true,
             acceptsImages = false
         )
-        def default: Config = gpt_oss_120b
+        def default: Config                     = gpt_oss_120b
         private[kyo] val entries: Chunk[Config] =
             Chunk(gpt_oss_120b, gpt_oss_20b)
     end Groq
@@ -1032,7 +1032,7 @@ object Config:
             // Measured against this endpoint: a request stating none cuts the reasoning body from 94 characters to 5; this endpoint counts no reasoning tokens for the model at all. An image part is refused outright.
             reasoningOff = Present(ReasoningOff.Level("none"))
         )
-        def default: Config = deepseek_v4_pro
+        def default: Config                     = deepseek_v4_pro
         private[kyo] val entries: Chunk[Config] =
             Chunk(deepseek_v4_pro, gpt_oss_120b)
     end Baseten
@@ -1149,7 +1149,7 @@ object Config:
             // Measured against this endpoint: none is refused as mandatory here, and the lowest level is accepted.
             reasoningOff = Present(ReasoningOff.CannotDisable("minimal"))
         )
-        def default: Config = deepseek_v4_pro
+        def default: Config                     = deepseek_v4_pro
         private[kyo] val entries: Chunk[Config] =
             Chunk(
                 deepseek_v4_pro,
@@ -1211,7 +1211,7 @@ object Config:
             // does, which is why the encoding lives here rather than on the provider.
             reasoningOff = Present(ReasoningOff.Level("none"))
         )
-        def default: Config = grok_4_5
+        def default: Config                     = grok_4_5
         private[kyo] val entries: Chunk[Config] =
             Chunk(grok_4_5, grok_4_3)
     end XAI
@@ -1269,7 +1269,7 @@ object Config:
             // entry rather than for the provider.
             forcedToolChoice = Present(ForcedToolChoice.RefusedWhileReasoning)
         )
-        def default: Config = kimi_k3
+        def default: Config                     = kimi_k3
         private[kyo] val entries: Chunk[Config] =
             Chunk(kimi_k3, kimi_k2_6)
     end Moonshot
@@ -1316,7 +1316,7 @@ object Config:
                 acceptsTemperature = true,
                 acceptsImages = true
             )
-        def default: Config = sonnet
+        def default: Config                     = sonnet
         private[kyo] val entries: Chunk[Config] =
             Chunk(opus, sonnet, haiku)
     end ClaudeCode
@@ -1369,7 +1369,7 @@ object Config:
                 acceptsTemperature = true,
                 acceptsImages = true
             )
-        def default: Config = auto
+        def default: Config                     = auto
         private[kyo] val entries: Chunk[Config] =
             Chunk(auto, gpt_5_5, gpt_5_4)
     end Codex

@@ -150,7 +150,7 @@ private[kyo] object HtmlRenderer:
 
     private[kyo] def wrapReactiveRegion(region: ReactiveRegion, innerHtml: String): String =
         region match
-            case ReactiveRegion.HtmlRange(id) => s"<!--kyo-rs:$id-->$innerHtml<!--kyo-re:$id-->"
+            case ReactiveRegion.HtmlRange(id)    => s"<!--kyo-rs:$id-->$innerHtml<!--kyo-re:$id-->"
             case ReactiveRegion.SvgElement(path) =>
                 s"""<g data-kyo-path="${pathAttr(path)}" data-kyo-reactive>$innerHtml</g>"""
 
@@ -181,7 +181,7 @@ private[kyo] object HtmlRenderer:
     private[kyo] def page(head: UI.PageHead, body: String): String =
         val metaTags = head.meta.map((n, c) => s"""<meta name="${esc(n)}" content="${esc(c)}">""").mkString
         val linkTags = head.links.map((r, h) => s"""<link rel="${esc(r)}" href="${esc(h)}">""").mkString
-        val script = head.moduleScript match
+        val script   = head.moduleScript match
             case Present(src) => s"""<script type="module" src="${esc(src)}"></script>"""
             case Absent       => ""
         val ldBlock = head.jsonLd match
@@ -338,32 +338,31 @@ private[kyo] object HtmlRenderer:
             case fe: Foreach[?, ?] @unchecked =>
                 val region = ReactiveRegion.from(context, namespace)
                 fe.applyTyped {
-                    [T] =>
-                        (signal, keyFn, renderFn) =>
-                            for items <- signal.current(using fe.frame)
-                            yield
-                                val rendered = items.toSeq.zipWithIndex.map { (item, i) =>
-                                    val key = keyFn match
-                                        case Present(f) => f(item)
-                                        case Absent     => i.toString
-                                    (key, renderFn(i, item))
-                                }
-                                val content = ReactiveRegion.tableContent(rendered.iterator.map(_._2))
-                                val host    = ReactiveRegion.renderHost(region, parentContext, content)
-                                openInitialHost(sb, host)
-                                Kyo.foreachDiscard(rendered) { (key, child) =>
-                                    renderTo(
-                                        sb,
-                                        child,
-                                        path :+ key,
-                                        context.child(key),
-                                        ReactiveRegion.namespace(host),
-                                        cssRules,
-                                        ReactiveRegion.contentParent(host),
-                                        ReactiveRegion.BoundaryMode.Emit
-                                    )
-                                }.andThen(closeInitialHost(sb, host))
-                            end for
+                    [T] => (signal, keyFn, renderFn) =>
+                        for items <- signal.current(using fe.frame)
+                        yield
+                            val rendered = items.toSeq.zipWithIndex.map { (item, i) =>
+                                val key = keyFn match
+                                    case Present(f) => f(item)
+                                    case Absent     => i.toString
+                                (key, renderFn(i, item))
+                            }
+                            val content = ReactiveRegion.tableContent(rendered.iterator.map(_._2))
+                            val host    = ReactiveRegion.renderHost(region, parentContext, content)
+                            openInitialHost(sb, host)
+                            Kyo.foreachDiscard(rendered) { (key, child) =>
+                                renderTo(
+                                    sb,
+                                    child,
+                                    path :+ key,
+                                    context.child(key),
+                                    ReactiveRegion.namespace(host),
+                                    cssRules,
+                                    ReactiveRegion.contentParent(host),
+                                    ReactiveRegion.BoundaryMode.Emit
+                                )
+                            }.andThen(closeInitialHost(sb, host))
+                        end for
                 }
     end renderTo
 
@@ -392,7 +391,7 @@ private[kyo] object HtmlRenderer:
     private def openInitialHost(sb: StringBuilder, host: ReactiveRegion.RenderHost): Unit =
         host match
             case ReactiveRegion.RenderHost.HtmlComments(id, _) => w(sb, s"<!--kyo-rs:$id-->")
-            case ReactiveRegion.RenderHost.HtmlTableBody(id) =>
+            case ReactiveRegion.RenderHost.HtmlTableBody(id)   =>
                 w(sb, s"<tbody data-kyo-range-host=\"$id\"><!--kyo-rs:$id-->")
             case ReactiveRegion.RenderHost.SvgGroup(path) => w(sb, openSvgRegion(path))
 
@@ -573,7 +572,7 @@ private[kyo] object HtmlRenderer:
         val attrs = elem.attrs
         attrs.identifier.foreach(id => w(sb, s""" id="${esc(id)}""""))
         val pseudoClass = registerPseudoClass(cssRules, attrs.uiStyle)
-        val classes = pseudoClass match
+        val classes     = pseudoClass match
             case Present(cls) => attrs.cssClasses :+ cls
             case Absent       => attrs.cssClasses
         if classes.nonEmpty then w(sb, s""" class="${esc(classes.mkString(" "))}"""")
@@ -1801,12 +1800,12 @@ private[kyo] object HtmlRenderer:
                 s.preserveAspectRatio.foreach(p => svgAttr(sb, "preserveAspectRatio", par(p)))
                 s.width.foreach(c => svgAttr(sb, "width", coord(c)))
                 s.height.foreach(c => svgAttr(sb, "height", coord(c)))
-            case _: Svg.G    =>
-            case _: Svg.Defs =>
+            case _: Svg.G      =>
+            case _: Svg.Defs   =>
             case _: Svg.Symbol =>
                 s.viewBox.foreach(v => svgAttr(sb, "viewBox", viewBox(v)))
-            case _: Svg.Switch   =>
-            case _: Svg.Metadata =>
+            case _: Svg.Switch    =>
+            case _: Svg.Metadata  =>
             case _: Svg.SvgAnchor =>
                 s.href.foreach(h => svgAttr(sb, "href", h))
             case _: Svg.Use =>
@@ -2061,7 +2060,7 @@ private[kyo] object HtmlRenderer:
         case Svg.Paint.Ref(server)  => s"url(#${server.id})"
 
     private def transform(t: Svg.Transform): String = t match
-        case Svg.Transform.Translate(x, y) => s"translate(${fmtD(x)} ${fmtD(y)})"
+        case Svg.Transform.Translate(x, y)     => s"translate(${fmtD(x)} ${fmtD(y)})"
         case Svg.Transform.Rotate(deg, cx, cy) =>
             cx match
                 case Present(cx0) =>
@@ -2106,14 +2105,14 @@ private[kyo] object HtmlRenderer:
         Svg.PathData.commands(d).map(pathCmd).mkString(" ")
 
     private def pathCmd(c: Svg.PathCommand): String = c match
-        case Svg.PathCommand.MoveTo(x, y)   => s"M${fmtD(x)} ${fmtD(y)}"
-        case Svg.PathCommand.MoveBy(dx, dy) => s"m${fmtD(dx)} ${fmtD(dy)}"
-        case Svg.PathCommand.LineTo(x, y)   => s"L${fmtD(x)} ${fmtD(y)}"
-        case Svg.PathCommand.LineBy(dx, dy) => s"l${fmtD(dx)} ${fmtD(dy)}"
-        case Svg.PathCommand.HLineTo(x)     => s"H${fmtD(x)}"
-        case Svg.PathCommand.HLineBy(dx)    => s"h${fmtD(dx)}"
-        case Svg.PathCommand.VLineTo(y)     => s"V${fmtD(y)}"
-        case Svg.PathCommand.VLineBy(dy)    => s"v${fmtD(dy)}"
+        case Svg.PathCommand.MoveTo(x, y)                      => s"M${fmtD(x)} ${fmtD(y)}"
+        case Svg.PathCommand.MoveBy(dx, dy)                    => s"m${fmtD(dx)} ${fmtD(dy)}"
+        case Svg.PathCommand.LineTo(x, y)                      => s"L${fmtD(x)} ${fmtD(y)}"
+        case Svg.PathCommand.LineBy(dx, dy)                    => s"l${fmtD(dx)} ${fmtD(dy)}"
+        case Svg.PathCommand.HLineTo(x)                        => s"H${fmtD(x)}"
+        case Svg.PathCommand.HLineBy(dx)                       => s"h${fmtD(dx)}"
+        case Svg.PathCommand.VLineTo(y)                        => s"V${fmtD(y)}"
+        case Svg.PathCommand.VLineBy(dy)                       => s"v${fmtD(dy)}"
         case Svg.PathCommand.CubicTo(c1x, c1y, c2x, c2y, x, y) =>
             s"C${fmtD(c1x)} ${fmtD(c1y)} ${fmtD(c2x)} ${fmtD(c2y)} ${fmtD(x)} ${fmtD(y)}"
         case Svg.PathCommand.CubicBy(c1x, c1y, c2x, c2y, dx, dy) =>
@@ -2122,10 +2121,10 @@ private[kyo] object HtmlRenderer:
             s"S${fmtD(c2x)} ${fmtD(c2y)} ${fmtD(x)} ${fmtD(y)}"
         case Svg.PathCommand.SmoothCubicBy(c2x, c2y, dx, dy) =>
             s"s${fmtD(c2x)} ${fmtD(c2y)} ${fmtD(dx)} ${fmtD(dy)}"
-        case Svg.PathCommand.QuadTo(cx, cy, x, y)   => s"Q${fmtD(cx)} ${fmtD(cy)} ${fmtD(x)} ${fmtD(y)}"
-        case Svg.PathCommand.QuadBy(cx, cy, dx, dy) => s"q${fmtD(cx)} ${fmtD(cy)} ${fmtD(dx)} ${fmtD(dy)}"
-        case Svg.PathCommand.SmoothQuadTo(x, y)     => s"T${fmtD(x)} ${fmtD(y)}"
-        case Svg.PathCommand.SmoothQuadBy(dx, dy)   => s"t${fmtD(dx)} ${fmtD(dy)}"
+        case Svg.PathCommand.QuadTo(cx, cy, x, y)                       => s"Q${fmtD(cx)} ${fmtD(cy)} ${fmtD(x)} ${fmtD(y)}"
+        case Svg.PathCommand.QuadBy(cx, cy, dx, dy)                     => s"q${fmtD(cx)} ${fmtD(cy)} ${fmtD(dx)} ${fmtD(dy)}"
+        case Svg.PathCommand.SmoothQuadTo(x, y)                         => s"T${fmtD(x)} ${fmtD(y)}"
+        case Svg.PathCommand.SmoothQuadBy(dx, dy)                       => s"t${fmtD(dx)} ${fmtD(dy)}"
         case Svg.PathCommand.ArcTo(rx, ry, xRot, largeArc, sweep, x, y) =>
             val la = if largeArc then 1 else 0
             val sw = if sweep then 1 else 0

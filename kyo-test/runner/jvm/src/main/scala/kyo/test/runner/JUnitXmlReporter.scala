@@ -57,8 +57,8 @@ final class JUnitXmlReporter(outputDir: Path) extends TestReporter:
         className: String,
         leaves: Chunk[(Chunk[String], TestResult)]
     ): String =
-        val sb    = new StringBuilder()
-        val tests = leaves.size
+        val sb       = new StringBuilder()
+        val tests    = leaves.size
         val failures = leaves.count(_._2 match
             case _: TestResult.Failed | _: TestResult.TimedOut => true
             case _                                             => false)

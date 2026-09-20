@@ -263,7 +263,7 @@ final case class Style private[kyo] (props: Chunk[Style.Prop]) derives CanEqual:
     def fontStyle(f: FontStyle.type => FontStyle): Style = fontStyle(f(FontStyle))
     def italic: Style                                    = fontStyle(FontStyle.italic)
 
-    def fontVariantLigatures(v: FontVariantLigatures): Style = appendProp(Prop.FontVariantLigaturesProp(v))
+    def fontVariantLigatures(v: FontVariantLigatures): Style                              = appendProp(Prop.FontVariantLigaturesProp(v))
     def fontVariantLigatures(f: FontVariantLigatures.type => FontVariantLigatures): Style =
         fontVariantLigatures(f(FontVariantLigatures))
 
@@ -311,8 +311,8 @@ final case class Style private[kyo] (props: Chunk[Style.Prop]) derives CanEqual:
     def border(width: Length.Px, c: Color): Style                                   = border(width, BorderStyle.solid, c)
     def border(width: Length.Px, f: Color.type => Color): Style                     = border(width, BorderStyle.solid, f(Color))
 
-    def borderColor(c: Color): Style               = appendProp(Prop.BorderColorProp(c, c, c, c))
-    def borderColor(f: Color.type => Color): Style = borderColor(f(Color))
+    def borderColor(c: Color): Style                                             = appendProp(Prop.BorderColorProp(c, c, c, c))
+    def borderColor(f: Color.type => Color): Style                               = borderColor(f(Color))
     def borderColor(top: Color, right: Color, bottom: Color, left: Color): Style =
         appendProp(Prop.BorderColorProp(top, right, bottom, left))
 
@@ -326,7 +326,7 @@ final case class Style private[kyo] (props: Chunk[Style.Prop]) derives CanEqual:
     def borderStyle(f: BorderStyle.type => BorderStyle): Style = borderStyle(f(BorderStyle))
 
     def borderTop(width: Length.Px, c: Color): Style =
-        val w = clampSize(width)
+        val w         = clampSize(width)
         val newWidths = find[Prop.BorderWidthProp]
             .map(p => Prop.BorderWidthProp(w, p.right, p.bottom, p.left))
             .getOrElse(Prop.BorderWidthProp(w, Length.zero, Length.zero, Length.zero))
@@ -341,7 +341,7 @@ final case class Style private[kyo] (props: Chunk[Style.Prop]) derives CanEqual:
     def borderTop(width: Length.Px, f: Color.type => Color): Style = borderTop(width, f(Color))
 
     def borderRight(width: Length.Px, c: Color): Style =
-        val w = clampSize(width)
+        val w         = clampSize(width)
         val newWidths = find[Prop.BorderWidthProp]
             .map(p => Prop.BorderWidthProp(p.top, w, p.bottom, p.left))
             .getOrElse(Prop.BorderWidthProp(Length.zero, w, Length.zero, Length.zero))
@@ -356,7 +356,7 @@ final case class Style private[kyo] (props: Chunk[Style.Prop]) derives CanEqual:
     def borderRight(width: Length.Px, f: Color.type => Color): Style = borderRight(width, f(Color))
 
     def borderBottom(width: Length.Px, c: Color): Style =
-        val w = clampSize(width)
+        val w         = clampSize(width)
         val newWidths = find[Prop.BorderWidthProp]
             .map(p => Prop.BorderWidthProp(p.top, p.right, w, p.left))
             .getOrElse(Prop.BorderWidthProp(Length.zero, Length.zero, w, Length.zero))
@@ -371,7 +371,7 @@ final case class Style private[kyo] (props: Chunk[Style.Prop]) derives CanEqual:
     def borderBottom(width: Length.Px, f: Color.type => Color): Style = borderBottom(width, f(Color))
 
     def borderLeft(width: Length.Px, c: Color): Style =
-        val w = clampSize(width)
+        val w         = clampSize(width)
         val newWidths = find[Prop.BorderWidthProp]
             .map(p => Prop.BorderWidthProp(p.top, p.right, p.bottom, w))
             .getOrElse(Prop.BorderWidthProp(Length.zero, Length.zero, Length.zero, w))
@@ -561,9 +561,9 @@ final case class Style private[kyo] (props: Chunk[Style.Prop]) derives CanEqual:
         stop2: (Color, Length.Pct),
         stops: (Color, Length.Pct)*
     ): Style =
-        val allStops  = stop1 +: stop2 +: stops
-        val colors    = new Array[Color](allStops.length)
-        val positions = new Array[Double](allStops.length)
+        val allStops                    = stop1 +: stop2 +: stops
+        val colors                      = new Array[Color](allStops.length)
+        val positions                   = new Array[Double](allStops.length)
         @tailrec def loop(i: Int): Unit =
             if i < allStops.length then
                 colors(i) = allStops(i)._1
@@ -651,46 +651,46 @@ object Style:
         right: Length.Px | Length.Pct | Length.Em,
         bottom: Length.Px | Length.Pct | Length.Em,
         left: Length.Px | Length.Pct | Length.Em
-    ): Style = empty.padding(top, right, bottom, left)
-    def margin(all: Length): Style                                              = empty.margin(all)
-    def margin(vertical: Length, horizontal: Length): Style                     = empty.margin(vertical, horizontal)
-    def margin(top: Length, right: Length, bottom: Length, left: Length): Style = empty.margin(top, right, bottom, left)
-    def gap(v: Length.Px | Length.Em): Style                                    = empty.gap(v)
-    def row: Style                                                              = empty.row
-    def column: Style                                                           = empty.column
-    def rowReverse: Style                                                       = empty.rowReverse
-    def columnReverse: Style                                                    = empty.columnReverse
-    def flexWrap(v: FlexWrap): Style                                            = empty.flexWrap(v)
-    def flexWrap(f: FlexWrap.type => FlexWrap): Style                           = empty.flexWrap(f)
-    def align(v: Alignment): Style                                              = empty.align(v)
-    def align(f: Alignment.type => Alignment): Style                            = empty.align(f)
-    def justify(v: Justification): Style                                        = empty.justify(v)
-    def justify(f: Justification.type => Justification): Style                  = empty.justify(f)
-    def overflow(v: Overflow): Style                                            = empty.overflow(v)
-    def overflow(f: Overflow.type => Overflow): Style                           = empty.overflow(f)
-    def overflowX(v: Overflow): Style                                           = empty.overflowX(v)
-    def overflowX(f: Overflow.type => Overflow): Style                          = empty.overflowX(f)
-    def overflowY(v: Overflow): Style                                           = empty.overflowY(v)
-    def overflowY(f: Overflow.type => Overflow): Style                          = empty.overflowY(f)
-    def scrollbarWidth(v: ScrollbarWidth): Style                                = empty.scrollbarWidth(v)
-    def scrollbarWidth(f: ScrollbarWidth.type => ScrollbarWidth): Style         = empty.scrollbarWidth(f)
-    def scrollbarColor(thumb: Color, track: Color): Style                       = empty.scrollbarColor(thumb, track)
-    def scrollbarGutter(v: ScrollbarGutter): Style                              = empty.scrollbarGutter(v)
-    def scrollbarGutter(f: ScrollbarGutter.type => ScrollbarGutter): Style      = empty.scrollbarGutter(f)
-    def width(v: Length): Style                                                 = empty.width(v)
-    def height(v: Length): Style                                                = empty.height(v)
-    def minWidth(v: Length): Style                                              = empty.minWidth(v)
-    def maxWidth(v: Length): Style                                              = empty.maxWidth(v)
-    def minHeight(v: Length): Style                                             = empty.minHeight(v)
-    def maxHeight(v: Length): Style                                             = empty.maxHeight(v)
-    def fontSize(v: Length.Px | Length.Em): Style                               = empty.fontSize(v)
-    def fontWeight(v: FontWeight): Style                                        = empty.fontWeight(v)
-    def fontWeight(f: FontWeight.type => FontWeight): Style                     = empty.fontWeight(f)
-    def bold: Style                                                             = empty.bold
-    def italic: Style                                                           = empty.italic
-    def fontStyle(v: FontStyle): Style                                          = empty.fontStyle(v)
-    def fontStyle(f: FontStyle.type => FontStyle): Style                        = empty.fontStyle(f)
-    def fontVariantLigatures(v: FontVariantLigatures): Style                    = empty.fontVariantLigatures(v)
+    ): Style                                                                              = empty.padding(top, right, bottom, left)
+    def margin(all: Length): Style                                                        = empty.margin(all)
+    def margin(vertical: Length, horizontal: Length): Style                               = empty.margin(vertical, horizontal)
+    def margin(top: Length, right: Length, bottom: Length, left: Length): Style           = empty.margin(top, right, bottom, left)
+    def gap(v: Length.Px | Length.Em): Style                                              = empty.gap(v)
+    def row: Style                                                                        = empty.row
+    def column: Style                                                                     = empty.column
+    def rowReverse: Style                                                                 = empty.rowReverse
+    def columnReverse: Style                                                              = empty.columnReverse
+    def flexWrap(v: FlexWrap): Style                                                      = empty.flexWrap(v)
+    def flexWrap(f: FlexWrap.type => FlexWrap): Style                                     = empty.flexWrap(f)
+    def align(v: Alignment): Style                                                        = empty.align(v)
+    def align(f: Alignment.type => Alignment): Style                                      = empty.align(f)
+    def justify(v: Justification): Style                                                  = empty.justify(v)
+    def justify(f: Justification.type => Justification): Style                            = empty.justify(f)
+    def overflow(v: Overflow): Style                                                      = empty.overflow(v)
+    def overflow(f: Overflow.type => Overflow): Style                                     = empty.overflow(f)
+    def overflowX(v: Overflow): Style                                                     = empty.overflowX(v)
+    def overflowX(f: Overflow.type => Overflow): Style                                    = empty.overflowX(f)
+    def overflowY(v: Overflow): Style                                                     = empty.overflowY(v)
+    def overflowY(f: Overflow.type => Overflow): Style                                    = empty.overflowY(f)
+    def scrollbarWidth(v: ScrollbarWidth): Style                                          = empty.scrollbarWidth(v)
+    def scrollbarWidth(f: ScrollbarWidth.type => ScrollbarWidth): Style                   = empty.scrollbarWidth(f)
+    def scrollbarColor(thumb: Color, track: Color): Style                                 = empty.scrollbarColor(thumb, track)
+    def scrollbarGutter(v: ScrollbarGutter): Style                                        = empty.scrollbarGutter(v)
+    def scrollbarGutter(f: ScrollbarGutter.type => ScrollbarGutter): Style                = empty.scrollbarGutter(f)
+    def width(v: Length): Style                                                           = empty.width(v)
+    def height(v: Length): Style                                                          = empty.height(v)
+    def minWidth(v: Length): Style                                                        = empty.minWidth(v)
+    def maxWidth(v: Length): Style                                                        = empty.maxWidth(v)
+    def minHeight(v: Length): Style                                                       = empty.minHeight(v)
+    def maxHeight(v: Length): Style                                                       = empty.maxHeight(v)
+    def fontSize(v: Length.Px | Length.Em): Style                                         = empty.fontSize(v)
+    def fontWeight(v: FontWeight): Style                                                  = empty.fontWeight(v)
+    def fontWeight(f: FontWeight.type => FontWeight): Style                               = empty.fontWeight(f)
+    def bold: Style                                                                       = empty.bold
+    def italic: Style                                                                     = empty.italic
+    def fontStyle(v: FontStyle): Style                                                    = empty.fontStyle(v)
+    def fontStyle(f: FontStyle.type => FontStyle): Style                                  = empty.fontStyle(f)
+    def fontVariantLigatures(v: FontVariantLigatures): Style                              = empty.fontVariantLigatures(v)
     def fontVariantLigatures(f: FontVariantLigatures.type => FontVariantLigatures): Style =
         empty.fontVariantLigatures(f)
     def fontFamily(v: FontFamily): Style                                            = empty.fontFamily(v)
@@ -817,8 +817,8 @@ object Style:
         empty.transition(property, durationMs, easing)
     def transition(property: TransitionProperty.type => TransitionProperty, durationMs: Int, easing: Easing.type => Easing): Style =
         empty.transition(property, durationMs, easing)
-    def transition(durationMs: Int, easing: Easing): Style              = empty.transition(durationMs, easing)
-    def animation(name: String, durationMs: Int, easing: Easing): Style = empty.animation(name, durationMs, easing)
+    def transition(durationMs: Int, easing: Easing): Style                             = empty.transition(durationMs, easing)
+    def animation(name: String, durationMs: Int, easing: Easing): Style                = empty.animation(name, durationMs, easing)
     def animation(name: String, durationMs: Int, easing: Easing.type => Easing): Style =
         empty.animation(name, durationMs, easing)
     def animationDelay(ms: Int): Style          = empty.animationDelay(ms)
@@ -867,9 +867,13 @@ object Style:
                     if i >= v.length then true
                     else
                         val c = v.charAt(i)
-                        if (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F') then
+                        if (c >= '0' && c <= '9') ||
+                            (c >= 'a' && c <= 'f') ||
+                            (c >= 'A' && c <= 'F')
+                        then
                             isValidHex(i + 1)
                         else false
+                        end if
                 val valid = isValidHex(1)
                 val len   = v.length
                 if valid && (len == 4 || len == 5 || len == 7 || len == 9) then Present(Hex(v))

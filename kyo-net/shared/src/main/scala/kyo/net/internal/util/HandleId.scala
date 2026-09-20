@@ -39,8 +39,7 @@ object HandleId:
     /** Build a [[HandleId]] from an explicit `(fd, generation)` pair (the packing the kqueue udata
       * tag and the io_uring SQE user-data carry across the kernel boundary).
       */
-    def of(fd: Int, generation: Int): HandleId =
-        (fd.toLong << 32) | (generation.toLong & 0xffffffffL)
+    def of(fd: Int, generation: Int): HandleId = (fd.toLong << 32) | (generation.toLong & 0xffffffffL)
 
     extension (id: HandleId)
         /** The file descriptor this id names. */

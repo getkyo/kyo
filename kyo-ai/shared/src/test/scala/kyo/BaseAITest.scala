@@ -249,12 +249,12 @@ abstract class BaseAITest extends kyo.test.Test[Any]:
     private[kyo] def requireBackend(backend: Backend)(using Frame, kyo.test.AssertScope): Config < Async =
         for
             config <- Config.credentialed(backend.entry)
-            _ <- backend.cli match
+            _      <- backend.cli match
                 case Present(command) =>
                     for
                         available <- commandAvailable(command)
                         _         <- Kyo.lift(assume(available, s"$command CLI is not available"))
-                        _ <-
+                        _         <-
                             if command != "claude" then Kyo.unit
                             else
                                 claudeAuthenticationAvailable.map(authenticated =>
@@ -288,7 +288,7 @@ abstract class BaseAITest extends kyo.test.Test[Any]:
                                 Json.encode(Structure.Value.Record(Chunk(
                                     "model"      -> Structure.Value.Str(config.modelName),
                                     "max_tokens" -> Structure.Value.Integer(1),
-                                    "messages" -> Structure.Value.Sequence(Chunk(Structure.Value.Record(Chunk(
+                                    "messages"   -> Structure.Value.Sequence(Chunk(Structure.Value.Record(Chunk(
                                         "role"    -> Structure.Value.Str("user"),
                                         "content" -> Structure.Value.Str("ping")
                                     ))))
@@ -329,7 +329,7 @@ abstract class BaseAITest extends kyo.test.Test[Any]:
 
     private[kyo] def unwrap[A](backend: Backend, result: Result[AIException, A])(using Frame, kyo.test.AssertScope): A < Sync =
         result match
-            case Result.Success(value) => Kyo.lift(value)
+            case Result.Success(value)                         => Kyo.lift(value)
             case Result.Failure(ex) if providerUnavailable(ex) =>
                 Kyo.lift(cancel(providerUnavailableMessage(backend, ex)))
             case Result.Failure(ex) =>

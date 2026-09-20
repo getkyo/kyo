@@ -6,7 +6,7 @@ class HttpClientBench extends ArenaBench.ForkOnly("pong"):
 
     override lazy val zioRuntimeLayer = super.zioRuntimeLayer.merge(zio.http.Client.default)
 
-    val url = TestHttpServer.start(1)
+    val url       = TestHttpServer.start(1)
     val parsedUrl =
         import kyo.*
         HttpUrl.parse(url).getOrThrow

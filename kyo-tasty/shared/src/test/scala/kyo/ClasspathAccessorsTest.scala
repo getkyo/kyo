@@ -104,7 +104,7 @@ class ClasspathAccessorsTest extends kyo.test.Test[Any]:
     }
 
     "ownerReturnsMaybe: classpath.owner returns Absent for a package with ownerId = SymbolId(-1)" in {
-        val rootPkg = makePkg(0, "root")
+        val rootPkg   = makePkg(0, "root")
         val classpath = Tasty.Classpath.make(
             symbols = Chunk(rootPkg),
             rootSymbolId = SymbolId(0),

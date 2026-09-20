@@ -66,7 +66,7 @@ class PollerIoDriverEngineThrowTest extends Test:
                 aThrew.safe.get.map { _ =>
                     driver.submitEngineOp(opB)
                     Abort.run[Timeout](Async.timeout(5.seconds)(bRan.safe.get)).map {
-                        case Result.Success(_) => succeed
+                        case Result.Success(_)          => succeed
                         case Result.Failure(_: Timeout) =>
                             fail(
                                 "engine op B never ran: a throwing op A escaped the FIFO drain loop and abandoned the rest of the queue (Netty #7337)"

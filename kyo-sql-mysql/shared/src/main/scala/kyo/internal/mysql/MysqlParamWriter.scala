@@ -31,7 +31,7 @@ final class MysqlParamWriter()(using frame: Frame) extends SqlCodec.Writer(frame
 
     // Byte → TYPE_TINY (1 byte). No MysqlEncoder.byteEncoder singleton exists.
     private val byteEncoder: MysqlEncoder[Byte] = new MysqlEncoder[Byte]:
-        def mysqlType: Int = MysqlEncoder.TYPE_TINY
+        def mysqlType: Int                                   = MysqlEncoder.TYPE_TINY
         def write(value: Byte, buf: MysqlBufferWriter): Unit =
             buf.writeUInt8(value.toInt)
 

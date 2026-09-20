@@ -114,7 +114,7 @@ private[kyo] object MysqlNumericDecoder:
         else integralValueByFormat(bytes, format, token, scalaType)
 
     private def integralValueByFormat(bytes: Span[Byte], format: Format, token: Int, scalaType: String)(using Frame): Long = format match
-        case Format.Text => wholeOf(parseDecimalText(bytes), scalaType, "text column")
+        case Format.Text   => wholeOf(parseDecimalText(bytes), scalaType, "text column")
         case Format.Binary =>
             wireOf(token, Wire.Integer) match
                 case Wire.Integer   => readIntegerBinary(bytes, token, scalaType)
@@ -133,7 +133,7 @@ private[kyo] object MysqlNumericDecoder:
     private def approximateValueByFormat(bytes: Span[Byte], format: Format, token: Int, whenUnknown: Wire, scalaType: String)(using
         Frame
     ): Double = format match
-        case Format.Text => parseDoubleText(bytes)
+        case Format.Text   => parseDoubleText(bytes)
         case Format.Binary =>
             wireOf(token, whenUnknown) match
                 case Wire.Integer   => unsignedDecimalOf(bytes, token, scalaType).toDouble
@@ -158,7 +158,7 @@ private[kyo] object MysqlNumericDecoder:
         Frame
     ): BigDecimal =
         format match
-            case Format.Text => parseDecimalText(bytes)
+            case Format.Text   => parseDecimalText(bytes)
             case Format.Binary =>
                 wireOf(token, whenUnknown) match
                     case Wire.Integer   => unsignedDecimalOf(bytes, token, scalaType)
@@ -291,7 +291,14 @@ private[kyo] object MysqlNumericDecoder:
         val b5 = bytes(5).toLong & 0xffL
         val b6 = bytes(6).toLong & 0xffL
         val b7 = bytes(7).toLong & 0xffL
-        b0 | (b1 << 8) | (b2 << 16) | (b3 << 24) | (b4 << 32) | (b5 << 40) | (b6 << 48) | (b7 << 56)
+        b0 |
+            (b1 << 8) |
+            (b2 << 16) |
+            (b3 << 24) |
+            (b4 << 32) |
+            (b5 << 40) |
+            (b6 << 48) |
+            (b7 << 56)
     end readInt8LE
 
     private def readFloat4LE(bytes: Span[Byte])(using Frame): Float =

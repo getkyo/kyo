@@ -146,7 +146,7 @@ class ProtobufTest extends kyo.test.Test[Any]:
             // Use hash-based field IDs for the mapping
             val nameId = CodecMacro.fieldId("name")
             val ageId  = CodecMacro.fieldId("age")
-            val r = new ProtobufReader(w.resultBytes)
+            val r      = new ProtobufReader(w.resultBytes)
                 .withFieldNames(Map(nameId -> "name", ageId -> "age"))
             val decoded = schema.readFrom(r)
             assert(decoded == person)
@@ -161,8 +161,8 @@ class ProtobufTest extends kyo.test.Test[Any]:
         }
 
         "strict protobuf decode rejects an unknown numeric field" in {
-            val nameId = CodecMacro.fieldId("name")
-            val ageId  = CodecMacro.fieldId("age")
+            val nameId    = CodecMacro.fieldId("name")
+            val ageId     = CodecMacro.fieldId("age")
             val unknownId = LazyList
                 .from(1)
                 .find(id => id != nameId && id != ageId)
@@ -782,9 +782,9 @@ class ProtobufTest extends kyo.test.Test[Any]:
             // variant hash of Protobuf1517Sealed. A single varint tag with
             // wire-type=Varint and fieldNumber set to a value that is not any
             // of Alpha/Beta/Gamma's CodecMacro.fieldId is enough.
-            val alphaId = kyo.internal.CodecMacro.fieldId("Alpha")
-            val betaId  = kyo.internal.CodecMacro.fieldId("Beta")
-            val gammaId = kyo.internal.CodecMacro.fieldId("Gamma")
+            val alphaId   = kyo.internal.CodecMacro.fieldId("Alpha")
+            val betaId    = kyo.internal.CodecMacro.fieldId("Beta")
+            val gammaId   = kyo.internal.CodecMacro.fieldId("Gamma")
             val unknownId = LazyList
                 .from(1)
                 .find(id => id != alphaId && id != betaId && id != gammaId)
@@ -843,7 +843,7 @@ class ProtobufTest extends kyo.test.Test[Any]:
             given Schema[CFPersonWide] = Schema[CFPersonWide]
             Protobuf.encode(CFPersonWide("Alice", 30, "surplus"))
         val strictSchema = Schema[CFPerson].denyUnknownFields
-        val result =
+        val result       =
             given Schema[CFPerson] = strictSchema
             Protobuf.decode[CFPerson](widerBytes)
         assert(result.isFailure, s"strict protobuf decode must reject unknown field: $result")
@@ -886,7 +886,7 @@ class ProtobufTest extends kyo.test.Test[Any]:
         // A binary reader reports a field by its numeric field-id, so the default-injection
         // suppression must recognize the present field under that id and leave it untouched.
         val schema = Schema[CFDefaulted].default(_.score)(999)
-        val bytes =
+        val bytes  =
             given Schema[CFDefaulted] = schema
             Protobuf.encode(CFDefaulted("a", 7))
         val decoded =
@@ -1494,7 +1494,7 @@ class ProtobufTest extends kyo.test.Test[Any]:
             // protoSchema emits the actual wire field number (the name hash), not the declaration
             // position: the first field's number equals CodecMacro.fieldId("name"), which is not 1.
             val output = Protobuf.protoSchema[PBAuditPerson]
-            val line = output.linesIterator.find(_.contains(" name = ")).getOrElse(
+            val line   = output.linesIterator.find(_.contains(" name = ")).getOrElse(
                 fail(s"field 'name' not found in protoSchema output:\n$output")
             )
             val num      = line.split("=").last.trim.takeWhile(_.isDigit).toInt
@@ -1573,7 +1573,7 @@ class ProtobufTest extends kyo.test.Test[Any]:
             // A pinned out-of-band field carries no comment; a non-pinned sibling still carries the nudge.
             given pinnedSchema: Schema[PBAuditPerson] = Schema[PBAuditPerson].fieldId(_.name)(7)
             val output                                = Protobuf.protoSchema[PBAuditPerson]
-            val nameLine = output.linesIterator.find(_.contains(" name = ")).getOrElse(
+            val nameLine                              = output.linesIterator.find(_.contains(" name = ")).getOrElse(
                 fail(s"'name' field not found in protoSchema output:\n$output")
             )
             assert(nameLine.contains("= 7;"), s"pinned field 'name' must emit = 7;: '$nameLine'")
@@ -1621,7 +1621,7 @@ class ProtobufTest extends kyo.test.Test[Any]:
         "reserved-range WARNING always emitted even when suppressed" in {
             given Protobuf = Protobuf(Protobuf.Config(protoSchemaProvenance = false))
             val output     = Protobuf.protoSchema[PBReserved]
-            val r1635Line = output.linesIterator.find(_.contains(" r1635 = ")).getOrElse(
+            val r1635Line  = output.linesIterator.find(_.contains(" r1635 = ")).getOrElse(
                 fail(s"'r1635' field not found in protoSchema output:\n$output")
             )
             assert(

@@ -55,7 +55,7 @@ private[browser] object ComFrame:
         ((bytes(offset) & 0xff) << 24) | ((bytes(offset + 1) & 0xff) << 16) | ((bytes(offset + 2) & 0xff) << 8) | (bytes(offset + 3) & 0xff)
 
     private def readUnits(bytes: Span[Byte], offset: Int, length: Int): String =
-        val units = new Array[Char](length)
+        val units                       = new Array[Char](length)
         @tailrec def loop(i: Int): Unit =
             if i < length then
                 units(i) = (((bytes(offset + i * 2) & 0xff) << 8) | (bytes(offset + i * 2 + 1) & 0xff)).toChar

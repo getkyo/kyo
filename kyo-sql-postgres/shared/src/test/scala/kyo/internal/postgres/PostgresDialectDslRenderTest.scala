@@ -75,14 +75,16 @@ class PostgresDialectDslRenderTest extends Test:
     "where with LIKE patterns" in {
         val q = people.where(c => c.p.name.like("A%") || c.p.name.like("B%"))
         assert(
-            sqlOf(q) == """SELECT "p"."id", "p"."name", "p"."age", "p"."deptId" FROM "person" "p" WHERE (("p"."name" LIKE $1) OR ("p"."name" LIKE $2))"""
+            sqlOf(q) ==
+                """SELECT "p"."id", "p"."name", "p"."age", "p"."deptId" FROM "person" "p" WHERE (("p"."name" LIKE $1) OR ("p"."name" LIKE $2))"""
         )
     }
 
     "where IN with subquery" in {
         val q = people.where(c => c.p.id.in(orders.select(o => o.o.userId)))
         assert(
-            sqlOf(q) == """SELECT "p"."id", "p"."name", "p"."age", "p"."deptId" FROM "person" "p" WHERE ("p"."id" IN (SELECT "o"."userId" FROM "order" "o"))"""
+            sqlOf(q) ==
+                """SELECT "p"."id", "p"."name", "p"."age", "p"."deptId" FROM "person" "p" WHERE ("p"."id" IN (SELECT "o"."userId" FROM "order" "o"))"""
         )
     }
 
@@ -99,14 +101,16 @@ class PostgresDialectDslRenderTest extends Test:
     "where exists with correlated subquery" in {
         val q = people.where(c => orders.where(o => o.o.userId == c.p.id).exists)
         assert(
-            sqlOf(q) == """SELECT "p"."id", "p"."name", "p"."age", "p"."deptId" FROM "person" "p" WHERE EXISTS (SELECT "o"."id", "o"."userId", "o"."total", "o"."createdAt" FROM "order" "o" WHERE ("o"."userId" = "p"."id"))"""
+            sqlOf(q) ==
+                """SELECT "p"."id", "p"."name", "p"."age", "p"."deptId" FROM "person" "p" WHERE EXISTS (SELECT "o"."id", "o"."userId", "o"."total", "o"."createdAt" FROM "order" "o" WHERE ("o"."userId" = "p"."id"))"""
         )
     }
 
     "where notExists" in {
         val q = people.where(c => orders.where(o => o.o.userId == c.p.id).notExists)
         assert(
-            sqlOf(q) == """SELECT "p"."id", "p"."name", "p"."age", "p"."deptId" FROM "person" "p" WHERE NOT EXISTS (SELECT "o"."id", "o"."userId", "o"."total", "o"."createdAt" FROM "order" "o" WHERE ("o"."userId" = "p"."id"))"""
+            sqlOf(q) ==
+                """SELECT "p"."id", "p"."name", "p"."age", "p"."deptId" FROM "person" "p" WHERE NOT EXISTS (SELECT "o"."id", "o"."userId", "o"."total", "o"."createdAt" FROM "order" "o" WHERE ("o"."userId" = "p"."id"))"""
         )
     }
 
@@ -127,7 +131,8 @@ class PostgresDialectDslRenderTest extends Test:
             .where(j => j.o.total > Maybe(BigDecimal(100)))
             .select(j => (j.p.name, j.o.total))
         assert(
-            sqlOf(q) == """SELECT "p"."name", "o"."total" FROM "person" "p" LEFT JOIN "order" "o" ON ("p"."id" = "o"."userId") WHERE ("o"."total" > $1)"""
+            sqlOf(q) ==
+                """SELECT "p"."name", "o"."total" FROM "person" "p" LEFT JOIN "order" "o" ON ("p"."id" = "o"."userId") WHERE ("o"."total" > $1)"""
         )
     }
 
@@ -374,7 +379,8 @@ class PostgresDialectDslRenderTest extends Test:
         val cte = Sql.commonTable("active_people", people.where(c => c.p.age >= 18))
         val q   = Sql.commonTables(cte)(people)
         assert(
-            sqlOf(q) == """WITH "active_people" AS (SELECT "p"."id", "p"."name", "p"."age", "p"."deptId" FROM "person" "p" WHERE ("p"."age" >= $1)) SELECT "p"."id", "p"."name", "p"."age", "p"."deptId" FROM "person" "p""""
+            sqlOf(q) ==
+                """WITH "active_people" AS (SELECT "p"."id", "p"."name", "p"."age", "p"."deptId" FROM "person" "p" WHERE ("p"."age" >= $1)) SELECT "p"."id", "p"."name", "p"."age", "p"."deptId" FROM "person" "p""""
         )
     }
 
@@ -382,7 +388,8 @@ class PostgresDialectDslRenderTest extends Test:
         val cte = Sql.commonTable("active_people", people)
         val q   = Sql.commonTablesRecursive(cte)(people)
         assert(
-            sqlOf(q) == """WITH RECURSIVE "active_people" AS (SELECT "p"."id", "p"."name", "p"."age", "p"."deptId" FROM "person" "p") SELECT "p"."id", "p"."name", "p"."age", "p"."deptId" FROM "person" "p""""
+            sqlOf(q) ==
+                """WITH RECURSIVE "active_people" AS (SELECT "p"."id", "p"."name", "p"."age", "p"."deptId" FROM "person" "p") SELECT "p"."id", "p"."name", "p"."age", "p"."deptId" FROM "person" "p""""
         )
     }
 
@@ -459,7 +466,8 @@ class PostgresDialectDslRenderTest extends Test:
             )
         )
         assert(
-            sqlOf(q) == """SELECT SUM("p"."age") OVER (PARTITION BY "p"."deptId" ORDER BY "p"."id" ASC ROWS BETWEEN $1 PRECEDING AND CURRENT ROW) FROM "person" "p""""
+            sqlOf(q) ==
+                """SELECT SUM("p"."age") OVER (PARTITION BY "p"."deptId" ORDER BY "p"."id" ASC ROWS BETWEEN $1 PRECEDING AND CURRENT ROW) FROM "person" "p""""
         )
     }
 
@@ -675,7 +683,8 @@ class PostgresDialectDslRenderTest extends Test:
         val sub = orders.select(o => o.o.userId)
         val q   = people.where(c => sql"${c.p.id} IN ${sub}".as[Boolean])
         assert(
-            sqlOf(q) == """SELECT "p"."id", "p"."name", "p"."age", "p"."deptId" FROM "person" "p" WHERE "p"."id" IN (SELECT "o"."userId" FROM "order" "o")"""
+            sqlOf(q) ==
+                """SELECT "p"."id", "p"."name", "p"."age", "p"."deptId" FROM "person" "p" WHERE "p"."id" IN (SELECT "o"."userId" FROM "order" "o")"""
         )
     }
 
@@ -708,7 +717,8 @@ class PostgresDialectDslRenderTest extends Test:
         assert(
             sqlOf(
                 s
-            ) == """INSERT INTO "person" ("id", "name", "age", "deptId") VALUES ($1, $2, $3, $4) ON CONFLICT ("name") DO NOTHING RETURNING "id""""
+            ) ==
+                """INSERT INTO "person" ("id", "name", "age", "deptId") VALUES ($1, $2, $3, $4) ON CONFLICT ("name") DO NOTHING RETURNING "id""""
         )
     }
 
@@ -716,7 +726,8 @@ class PostgresDialectDslRenderTest extends Test:
         val s = Sql.insert[Person].values(Person(0L, "Alice", 30, 1L))
             .onConflictDoUpdate(_.name).where(_.id != 1L)(_.age := 30)
         assert(
-            sqlOf(s) == """INSERT INTO "person" ("id", "name", "age", "deptId") VALUES ($1, $2, $3, $4) ON CONFLICT ("name") DO UPDATE SET "age" = $5 WHERE ("id" <> $6) RETURNING "id""""
+            sqlOf(s) ==
+                """INSERT INTO "person" ("id", "name", "age", "deptId") VALUES ($1, $2, $3, $4) ON CONFLICT ("name") DO UPDATE SET "age" = $5 WHERE ("id" <> $6) RETURNING "id""""
         )
     }
 

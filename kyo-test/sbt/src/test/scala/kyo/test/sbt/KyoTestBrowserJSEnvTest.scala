@@ -21,7 +21,7 @@ package kyo.test.browser {
             values("module") match {
                 case "exit-without-connecting.js" => System.exit(3)
                 case "echo.js"                    => withChannel(values)((in, out) => echo(in, out))
-                case "arguments.js" =>
+                case "arguments.js"               =>
                     withChannel(values) { (_, out) =>
                         (args.toList :+ s"probe=${System.getProperty("kyo.test.probe")}").foreach(write(out, _))
                     }
@@ -64,9 +64,9 @@ package kyo.test.sbt {
     import java.util.concurrent.ConcurrentLinkedQueue
     import org.scalajs.jsenv._
     import org.scalatest.freespec.AsyncFreeSpec
+    import scala.collection.JavaConverters._
     import scala.concurrent.Future
     import scala.concurrent.Promise
-    import scala.collection.JavaConverters._
 
     // ScalaTest bootstrap: sbt plugins build on Scala 2.12, where kyo-test is not available.
     class KyoTestBrowserJSEnvTest extends AsyncFreeSpec {
@@ -79,10 +79,15 @@ package kyo.test.sbt {
             new KyoTestBrowserJSEnv(java.getAbsolutePath, classpath, jvmOptions, chromeVersion)
 
         /** Starts a run of `scenario` and completes with the first `count` messages the runner sends. */
-        private def start(environment: KyoTestBrowserJSEnv, input: String => Input, scenario: String, count: Int): (JSComRun, Future[List[String]]) = {
+        private def start(
+            environment: KyoTestBrowserJSEnv,
+            input: String => Input,
+            scenario: String,
+            count: Int
+        ): (JSComRun, Future[List[String]]) = {
             val received = new ConcurrentLinkedQueue[String]
             val done     = Promise[List[String]]()
-            val run = environment.startWithCom(
+            val run      = environment.startWithCom(
                 Seq(input(directory.resolve(scenario).toString)),
                 RunConfig(),
                 { message =>
@@ -97,7 +102,7 @@ package kyo.test.sbt {
         private def esModule(path: String): Input = Input.ESModule(Paths.get(path))
 
         "messages sent before the runner connects arrive in order, and its replies reach onMessage in order" in {
-            val unpaired = "x" + 0xd800.toChar
+            val unpaired       = "x" + 0xd800.toChar
             val (run, replies) = start(env(), esModule, "echo.js", 3)
             run.send("a")
             run.send("b")
@@ -129,7 +134,7 @@ package kyo.test.sbt {
         }
 
         "the runner receives the module, its kind, the com port, the Chrome version, and the JVM options" in {
-            val (run, messages) = start(env(Seq("-Dkyo.test.probe=yes"), Some("151.0.7922.76")), esModule, "arguments.js", 6)
+            val (run, messages)             = start(env(Seq("-Dkyo.test.probe=yes"), Some("151.0.7922.76")), esModule, "arguments.js", 6)
             val (scriptRun, scriptMessages) = start(env(), path => Input.Script(Paths.get(path)), "arguments.js", 5)
             for {
                 arguments       <- messages

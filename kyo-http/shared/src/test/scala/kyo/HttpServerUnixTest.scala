@@ -116,7 +116,7 @@ class HttpServerUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
     "chunked streaming" - {
 
         "chunked response over Unix socket" in {
-            val route = HttpRoute.getRaw("stream").response(_.bodyStream)
+            val route   = HttpRoute.getRaw("stream").response(_.bodyStream)
             val handler = route.handler { _ =>
                 val chunks = Stream.init(Seq(
                     Span.fromUnsafe("hello ".getBytes("UTF-8")),
@@ -166,7 +166,7 @@ class HttpServerUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
                 val client = internal.HttpTestPlatformBackend.client
                 HttpClient.init().map { httpClient =>
                     HttpClient.let(httpClient) {
-                        val parsedUrl = HttpUrl.parse(url).getOrThrow
+                        val parsedUrl                             = HttpUrl.parse(url).getOrThrow
                         val bodyStream: Stream[Span[Byte], Async] = Stream.init(Seq(
                             Span.fromUnsafe("chunk1".getBytes("UTF-8")),
                             Span.fromUnsafe("chunk2".getBytes("UTF-8"))
@@ -211,7 +211,7 @@ class HttpServerUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
                                 val oneKb                                 = Array.fill[Byte](1024)(65)
                                 val chunks                                = (1 to 100).map(_ => Span.fromUnsafe(oneKb.clone()))
                                 val bodyStream: Stream[Span[Byte], Async] = Stream.init(chunks)
-                                val request = HttpRequest.postRaw(parsedUrl)
+                                val request                               = HttpRequest.postRaw(parsedUrl)
                                     .addField("body", bodyStream)
                                 client.connectWith(parsedUrl, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
                                     Scope.run {
@@ -236,7 +236,7 @@ class HttpServerUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
     "SSE" - {
 
         "SSE text events over Unix socket" in {
-            val route = HttpRoute.getRaw("events").response(_.bodySseText)
+            val route   = HttpRoute.getRaw("events").response(_.bodySseText)
             val handler = route.handler { _ =>
                 HttpResponse.ok.addField(
                     "body",
@@ -260,7 +260,7 @@ class HttpServerUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
         }
 
         "SSE with event type and id" in {
-            val route = HttpRoute.getRaw("typed-events").response(_.bodySseText)
+            val route   = HttpRoute.getRaw("typed-events").response(_.bodySseText)
             val handler = route.handler { _ =>
                 HttpResponse.ok.addField(
                     "body",
@@ -286,7 +286,7 @@ class HttpServerUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
         }
 
         "SSE JSON events over Unix socket" in {
-            val route = HttpRoute.getRaw("json-events").response(_.bodySseJson[Item])
+            val route   = HttpRoute.getRaw("json-events").response(_.bodySseJson[Item])
             val handler = route.handler { _ =>
                 HttpResponse.ok.addField(
                     "body",
@@ -313,7 +313,7 @@ class HttpServerUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
     "NDJSON" - {
 
         "NDJSON streaming over Unix socket" in {
-            val route = HttpRoute.getRaw("data").response(_.bodyNdjson[Item])
+            val route   = HttpRoute.getRaw("data").response(_.bodyNdjson[Item])
             val handler = route.handler { _ =>
                 HttpResponse.ok.addField(
                     "body",
@@ -342,7 +342,7 @@ class HttpServerUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
     "edge cases" - {
 
         "empty stream over Unix socket" in {
-            val route = HttpRoute.getRaw("empty").response(_.bodyStream)
+            val route   = HttpRoute.getRaw("empty").response(_.bodyStream)
             val handler = route.handler { _ =>
                 val chunks: Stream[Span[Byte], Async] = Stream.init(Seq.empty[Span[Byte]])
                 HttpResponse.ok.addField("body", chunks)

@@ -117,7 +117,7 @@ final class MessageReader:
     private def decodeMessage(msgType: Byte, body: Chunk[Byte], unmarshallers: Unmarshallers)(using
         Frame
     ): BackendMessage < (Async & Abort[SqlException]) =
-        val buf = new PostgresBufferReader(Span.from(body.toArray))
+        val buf                                                = new PostgresBufferReader(Span.from(body.toArray))
         val result: BackendMessage < Abort[SqlDecodeException] = msgType match
             case 'R' => unmarshallers.authentication.read(buf)
             case 'S' => unmarshallers.parameterStatus.read(buf)
@@ -137,16 +137,16 @@ final class MessageReader:
             case 's' => unmarshallers.portalSuspended.read(buf)
             case 'I' => EmptyQueryResponse
             // COPY protocol messages
-            case 'G' => unmarshallers.copyInResponse.read(buf)
-            case 'H' => unmarshallers.copyOutResponse.read(buf)
-            case 'd' => unmarshallers.copyData.read(buf)
-            case 'c' => unmarshallers.copyDone.read(buf)
+            case 'G'     => unmarshallers.copyInResponse.read(buf)
+            case 'H'     => unmarshallers.copyOutResponse.read(buf)
+            case 'd'     => unmarshallers.copyData.read(buf)
+            case 'c'     => unmarshallers.copyDone.read(buf)
             case unknown =>
                 Abort.fail(SqlDecodeUnknownBackendMessageException(unknown))
         Abort.run[SqlDecodeException](result).flatMap {
             case Result.Success(msg) => msg
             case Result.Failure(e)   => Abort.fail(SqlConnectionProtocolDecodeException("message", e))
-            case Result.Panic(t) =>
+            case Result.Panic(t)     =>
                 Log.error(s"[kyo-sql] MessageReader: decode panic: ${t.getMessage}").andThen(
                     Abort.fail(SqlConnectionProtocolDecodeException("message", t))
                 )

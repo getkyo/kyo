@@ -319,7 +319,7 @@ private[kyo] object HttpRouter:
 
     /** Extracts capture wire names from a path in order. Not tailrec — same bounded depth as pathToSegments. */
     private def extractCaptureNames(path: HttpPath[?]): Span[String] =
-        val builder = scala.collection.mutable.ArrayBuffer.empty[String]
+        val builder                    = scala.collection.mutable.ArrayBuffer.empty[String]
         def walk(p: HttpPath[?]): Unit =
             p match
                 case HttpPath.Literal(_)          =>
@@ -345,7 +345,7 @@ private[kyo] object HttpRouter:
                     case Segment.Literal(value) =>
                         val childNode = node.literalChildren.get(value) match
                             case Some(n) => n
-                            case None =>
+                            case None    =>
                                 val newNode = new MutableNode()
                                 node.literalChildren = node.literalChildren + (value -> newNode)
                                 newNode
@@ -353,7 +353,7 @@ private[kyo] object HttpRouter:
                     case Segment.Capture =>
                         val childNode = node.captureChild match
                             case Present(existing) => existing
-                            case Absent =>
+                            case Absent            =>
                                 val newNode = new MutableNode()
                                 node.captureChild = Present(newNode)
                                 newNode
@@ -361,7 +361,7 @@ private[kyo] object HttpRouter:
                     case Segment.Rest =>
                         val childNode = node.restChild match
                             case Present(existing) => existing
-                            case Absent =>
+                            case Absent            =>
                                 val newNode = new MutableNode()
                                 node.restChild = Present(newNode)
                                 newNode
@@ -374,7 +374,7 @@ private[kyo] object HttpRouter:
     private def countNodes(root: MutableNode): (Int, Int) =
         def visit(node: MutableNode): (Int, Int) =
             // Endpoint slots, not method slots: a method can hold several candidates.
-            val base = (1, node.endpoints.valuesIterator.map(_.size).sum)
+            val base          = (1, node.endpoints.valuesIterator.map(_.size).sum)
             val afterLiterals = node.literalChildren.values.foldLeft(base) { (acc, child) =>
                 val (cn, ce) = visit(child)
                 (acc._1 + cn, acc._2 + ce)
@@ -401,8 +401,8 @@ private[kyo] object HttpRouter:
         val streamResp: Array[Boolean],
         val nextCandidate: Array[Int]
     ):
-        var nextNodeIdx: Int = 0
-        var nextEpIdx: Int   = 0
+        var nextNodeIdx: Int    = 0
+        var nextEpIdx: Int      = 0
         def allocNodeIdx(): Int =
             val idx = nextNodeIdx; nextNodeIdx += 1; idx
         def allocEpIdx(): Int =
@@ -434,7 +434,7 @@ private[kyo] object HttpRouter:
             case Absent            => -1
 
         val endpointIndices = Array.fill(MethodCount)(-1)
-        val allowedMethods = node.endpoints.foldLeft(Set.empty[HttpMethod]) { case (methods, (method, candidates)) =>
+        val allowedMethods  = node.endpoints.foldLeft(Set.empty[HttpMethod]) { case (methods, (method, candidates)) =>
             // Candidates are laid out in registration order and linked, so the
             // dispatch can walk them when a capture refuses to decode. The head
             // goes in the per-method slot; the rest hang off `nextCandidate`.

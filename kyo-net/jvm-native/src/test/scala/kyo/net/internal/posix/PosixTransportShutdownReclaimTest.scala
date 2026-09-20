@@ -133,7 +133,7 @@ class PosixTransportShutdownReclaimTest extends Test:
             val driver   = TestDrivers.forBackend(backend, pollerFd, spy)
             // A want-read engine parks the connect handshake on its first read; the peer sends nothing, so the abandoned caller's promise
             // settlement is the only route that can release the fd and engine. Built before the transport and injected through buildEngine.
-            val engine = new ParkedWantReadEngine
+            val engine    = new ParkedWantReadEngine
             val transport =
                 TestTransports.forTesting(
                     driver,
@@ -197,12 +197,12 @@ class PosixTransportShutdownReclaimTest extends Test:
         "a stalled accept handshake with no deadline is released when its listener closes" in {
             PosixTestSockets.assumePoller()
             assumeTlsReady()
-            val spy      = RecordingSocketBindings(Ffi.load[SocketBindings])
-            val real     = PollerBackend.default()
-            val pollerFd = real.create()
-            val backend  = RecordingPollerBackend(real)
-            val driver   = TestDrivers.forBackend(backend, pollerFd, spy)
-            val captured = new AtomicReference[RecordingTlsEngine]()
+            val spy       = RecordingSocketBindings(Ffi.load[SocketBindings])
+            val real      = PollerBackend.default()
+            val pollerFd  = real.create()
+            val backend   = RecordingPollerBackend(real)
+            val driver    = TestDrivers.forBackend(backend, pollerFd, spy)
+            val captured  = new AtomicReference[RecordingTlsEngine]()
             val transport = TestTransports.forTesting(
                 driver,
                 spy,

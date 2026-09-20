@@ -113,7 +113,7 @@ class CompletionTest extends kyo.test.Test[Any]:
             Completion.sseFragments(Config.OpenAI.default, request, _ => Result.Success(Completion.Delta.Skip), Absent).map { stream =>
                 Abort.run[AIStreamException](stream.run).map {
                     case Result.Failure(_: AIProviderAuthException) => succeed
-                    case other =>
+                    case other                                      =>
                         fail(s"expected AIProviderAuthException (the same leaf AI.gen types via classifyHttp), got: $other")
                 }
             }
@@ -186,7 +186,7 @@ class CompletionTest extends kyo.test.Test[Any]:
                 UserMessage("more", Absent),
                 SystemMessage("three")
             )
-            val fitted = Completion.fitSystemMessages(single, messages, convert)
+            val fitted  = Completion.fitSystemMessages(single, messages, convert)
             val systems = fitted.count {
                 case SystemMessage(_) => true
                 case _                => false

@@ -13,7 +13,7 @@ private[kyo] object BrowserLauncherPlatform:
         // effect runtime; Sync.Unsafe.defer is the entry point for that ABI boundary.
         Sync.Unsafe.defer {
             val unsafeProc = proc.unsafe
-            val hook = new Thread(
+            val hook       = new Thread(
                 () =>
                     try if unsafeProc.isAlive() then unsafeProc.destroyForcibly()
                     catch case _: Throwable => () // best effort during shutdown

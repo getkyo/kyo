@@ -86,7 +86,7 @@ private[kyo] object JarCentralDirectory:
                     raf = new RandomAccessFile(jarPath, "r")
                     listEntries(jarPath, raf, suffixes)
                 catch
-                    case err: TastyErrorWrapper => Abort.fail(err.error)
+                    case err: TastyErrorWrapper  => Abort.fail(err.error)
                     case ex: java.io.IOException =>
                         Abort.fail(TastyError.MalformedSection("jar", s"$jarPath: ${ex.getMessage}", 0L))
                 finally
@@ -112,7 +112,7 @@ private[kyo] object JarCentralDirectory:
                     raf = new RandomAccessFile(jarPath, "r")
                     listEntriesFull(jarPath, raf, suffixes)
                 catch
-                    case err: TastyErrorWrapper => Abort.fail(err.error)
+                    case err: TastyErrorWrapper  => Abort.fail(err.error)
                     case ex: java.io.IOException =>
                         Abort.fail(TastyError.MalformedSection("jar", s"$jarPath: ${ex.getMessage}", 0L))
                 finally
@@ -777,22 +777,19 @@ private[kyo] object JarCentralDirectory:
     // --- Byte-order reading helpers (little-endian, unsigned) ---
 
     /** Read a 4-byte little-endian int (signed, for signature comparison). */
-    private def readInt32LE(buffer: Array[Byte], off: Int): Int =
-        (buffer(off) & 0xff) |
-            ((buffer(off + 1) & 0xff) << 8) |
-            ((buffer(off + 2) & 0xff) << 16) |
-            ((buffer(off + 3) & 0xff) << 24)
+    private def readInt32LE(buffer: Array[Byte], off: Int): Int = (buffer(off) & 0xff) |
+        ((buffer(off + 1) & 0xff) << 8) |
+        ((buffer(off + 2) & 0xff) << 16) |
+        ((buffer(off + 3) & 0xff) << 24)
 
     /** Read a 2-byte little-endian unsigned value as Int. */
-    private def readUInt16LE(buffer: Array[Byte], off: Int): Int =
-        (buffer(off) & 0xff) | ((buffer(off + 1) & 0xff) << 8)
+    private def readUInt16LE(buffer: Array[Byte], off: Int): Int = (buffer(off) & 0xff) | ((buffer(off + 1) & 0xff) << 8)
 
     /** Read a 4-byte little-endian unsigned value as Long. */
-    private def readUInt32LE(buffer: Array[Byte], off: Int): Long =
-        ((buffer(off) & 0xffL)) |
-            ((buffer(off + 1) & 0xffL) << 8) |
-            ((buffer(off + 2) & 0xffL) << 16) |
-            ((buffer(off + 3) & 0xffL) << 24)
+    private def readUInt32LE(buffer: Array[Byte], off: Int): Long = ((buffer(off) & 0xffL)) |
+        ((buffer(off + 1) & 0xffL) << 8) |
+        ((buffer(off + 2) & 0xffL) << 16) |
+        ((buffer(off + 3) & 0xffL) << 24)
 
     /** Read an 8-byte little-endian unsigned value as Long (top bit treated as sign by JVM). */
     private def readUInt64LE(buffer: Array[Byte], off: Int): Long =

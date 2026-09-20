@@ -76,24 +76,24 @@ object PostgresEncoder:
     // --- Boolean ---
 
     val boolBinary: PostgresEncoder[Boolean] = new PostgresEncoder[Boolean]:
-        def oid: Int       = OID_BOOL
-        def format: Format = Format.Binary
+        def oid: Int                                               = OID_BOOL
+        def format: Format                                         = Format.Binary
         def write(value: Boolean, buf: PostgresBufferWriter): Unit =
             buf.writeByte(if value then 1.toByte else 0.toByte)
 
     // --- Short (Int2) ---
 
     val int2Binary: PostgresEncoder[Short] = new PostgresEncoder[Short]:
-        def oid: Int       = OID_INT2
-        def format: Format = Format.Binary
+        def oid: Int                                             = OID_INT2
+        def format: Format                                       = Format.Binary
         def write(value: Short, buf: PostgresBufferWriter): Unit =
             buf.writeInt16(value)
 
     // --- Int (Int4) ---
 
     val int4Binary: PostgresEncoder[Int] = new PostgresEncoder[Int]:
-        def oid: Int       = OID_INT4
-        def format: Format = Format.Binary
+        def oid: Int                                           = OID_INT4
+        def format: Format                                     = Format.Binary
         def write(value: Int, buf: PostgresBufferWriter): Unit =
             buf.writeInt32(value)
 
@@ -107,8 +107,8 @@ object PostgresEncoder:
       * protocol's own "no type named here", which is what lets the column drive inference.
       */
     val nullUnspecified: PostgresEncoder[Nothing] = new PostgresEncoder[Nothing]:
-        def oid: Int       = OID_UNSPECIFIED
-        def format: Format = Format.Binary
+        def oid: Int                                               = OID_UNSPECIFIED
+        def format: Format                                         = Format.Binary
         def write(value: Nothing, buf: PostgresBufferWriter): Unit =
             // Unreachable: a NULL parameter contributes no bytes, and `Nothing` has no inhabitant to pass here.
             ()
@@ -116,8 +116,8 @@ object PostgresEncoder:
     // --- Long (Int8) ---
 
     val int8Binary: PostgresEncoder[Long] = new PostgresEncoder[Long]:
-        def oid: Int       = OID_INT8
-        def format: Format = Format.Binary
+        def oid: Int                                            = OID_INT8
+        def format: Format                                      = Format.Binary
         def write(value: Long, buf: PostgresBufferWriter): Unit =
             buf.writeInt32(((value >> 32) & 0xffffffffL).toInt)
             buf.writeInt32((value & 0xffffffffL).toInt)
@@ -125,16 +125,16 @@ object PostgresEncoder:
     // --- Float4 ---
 
     val float4Binary: PostgresEncoder[Float] = new PostgresEncoder[Float]:
-        def oid: Int       = OID_FLOAT4
-        def format: Format = Format.Binary
+        def oid: Int                                             = OID_FLOAT4
+        def format: Format                                       = Format.Binary
         def write(value: Float, buf: PostgresBufferWriter): Unit =
             buf.writeInt32(java.lang.Float.floatToIntBits(value))
 
     // --- Float8 ---
 
     val float8Binary: PostgresEncoder[Double] = new PostgresEncoder[Double]:
-        def oid: Int       = OID_FLOAT8
-        def format: Format = Format.Binary
+        def oid: Int                                              = OID_FLOAT8
+        def format: Format                                        = Format.Binary
         def write(value: Double, buf: PostgresBufferWriter): Unit =
             val bits = java.lang.Double.doubleToLongBits(value)
             buf.writeInt32(((bits >> 32) & 0xffffffffL).toInt)
@@ -149,8 +149,8 @@ object PostgresEncoder:
       * `value.toString` (scala.math.BigDecimal) is correct on every platform.
       */
     val numericText: PostgresEncoder[BigDecimal] = new PostgresEncoder[BigDecimal]:
-        def oid: Int       = OID_NUMERIC
-        def format: Format = Format.Text
+        def oid: Int                                                  = OID_NUMERIC
+        def format: Format                                            = Format.Text
         def write(value: BigDecimal, buf: PostgresBufferWriter): Unit =
             buf.writeBytes(value.toString.getBytes(StandardCharsets.UTF_8))
 
@@ -240,8 +240,8 @@ object PostgresEncoder:
     // --- Text ---
 
     val textText: PostgresEncoder[String] = new PostgresEncoder[String]:
-        def oid: Int       = OID_TEXT
-        def format: Format = Format.Text
+        def oid: Int                                              = OID_TEXT
+        def format: Format                                        = Format.Text
         def write(value: String, buf: PostgresBufferWriter): Unit =
             buf.writeBytes(value.getBytes(StandardCharsets.UTF_8))
 
@@ -249,8 +249,8 @@ object PostgresEncoder:
     // PostgreSQL jsonb binary wire format: 1-byte version prefix (0x01) followed by raw UTF-8 JSON text.
 
     val jsonbBinary: PostgresEncoder[String] = new PostgresEncoder[String]:
-        def oid: Int       = OID_JSONB
-        def format: Format = Format.Binary
+        def oid: Int                                              = OID_JSONB
+        def format: Format                                        = Format.Binary
         def write(value: String, buf: PostgresBufferWriter): Unit =
             buf.writeByte(0x01.toByte) // JSONB version byte
             buf.writeBytes(value.getBytes(StandardCharsets.UTF_8))
@@ -258,8 +258,8 @@ object PostgresEncoder:
     // --- Bytea ---
 
     val byteaBinary: PostgresEncoder[Span[Byte]] = new PostgresEncoder[Span[Byte]]:
-        def oid: Int       = OID_BYTEA
-        def format: Format = Format.Binary
+        def oid: Int                                                  = OID_BYTEA
+        def format: Format                                            = Format.Binary
         def write(value: Span[Byte], buf: PostgresBufferWriter): Unit =
             buf.writeBytes(value)
 
@@ -268,8 +268,8 @@ object PostgresEncoder:
     // Wire: 8-byte int64 microseconds since PostgreSQL epoch (2000-01-01 00:00:00 UTC).
 
     val timestamptzBinary: PostgresEncoder[kyo.Instant] = new PostgresEncoder[kyo.Instant]:
-        def oid: Int       = OID_TIMESTAMPTZ
-        def format: Format = Format.Binary
+        def oid: Int                                                   = OID_TIMESTAMPTZ
+        def format: Format                                             = Format.Binary
         def write(value: kyo.Instant, buf: PostgresBufferWriter): Unit =
             val jInstant    = value.toJava
             val epochMicros = jInstant.getEpochSecond * 1_000_000L + jInstant.getNano / 1_000L
@@ -283,8 +283,8 @@ object PostgresEncoder:
     // Wire: 4-byte int32 days since PostgreSQL epoch (2000-01-01).
 
     val dateBinary: PostgresEncoder[java.time.LocalDate] = new PostgresEncoder[java.time.LocalDate]:
-        def oid: Int       = OID_DATE
-        def format: Format = Format.Binary
+        def oid: Int                                                           = OID_DATE
+        def format: Format                                                     = Format.Binary
         def write(value: java.time.LocalDate, buf: PostgresBufferWriter): Unit =
             val pgEpoch = java.time.LocalDate.of(2000, 1, 1)
             val days    = value.toEpochDay - pgEpoch.toEpochDay
@@ -296,8 +296,8 @@ object PostgresEncoder:
     // Wire: 8-byte int64 microseconds since PostgreSQL epoch (2000-01-01 00:00:00).
 
     val timestampBinary: PostgresEncoder[java.time.LocalDateTime] = new PostgresEncoder[java.time.LocalDateTime]:
-        def oid: Int       = OID_TIMESTAMP
-        def format: Format = Format.Binary
+        def oid: Int                                                               = OID_TIMESTAMP
+        def format: Format                                                         = Format.Binary
         def write(value: java.time.LocalDateTime, buf: PostgresBufferWriter): Unit =
             val pgEpoch  = java.time.LocalDateTime.of(2000, 1, 1, 0, 0, 0)
             val duration = java.time.Duration.between(pgEpoch, value)
@@ -311,8 +311,8 @@ object PostgresEncoder:
     // Wire: 8-byte int64 microseconds since midnight.
 
     val timeBinary: PostgresEncoder[java.time.LocalTime] = new PostgresEncoder[java.time.LocalTime]:
-        def oid: Int       = OID_TIME
-        def format: Format = Format.Binary
+        def oid: Int                                                           = OID_TIME
+        def format: Format                                                     = Format.Binary
         def write(value: java.time.LocalTime, buf: PostgresBufferWriter): Unit =
             val micros = value.toNanoOfDay / 1_000L
             buf.writeInt32(((micros >> 32) & 0xffffffffL).toInt)
@@ -326,8 +326,8 @@ object PostgresEncoder:
     // returns positive for east-of-UTC, so we negate it to match the PG convention.
 
     val timetzBinary: PostgresEncoder[java.time.OffsetTime] = new PostgresEncoder[java.time.OffsetTime]:
-        def oid: Int       = OID_TIMETZ
-        def format: Format = Format.Binary
+        def oid: Int                                                            = OID_TIMETZ
+        def format: Format                                                      = Format.Binary
         def write(value: java.time.OffsetTime, buf: PostgresBufferWriter): Unit =
             val micros        = value.toLocalTime.toNanoOfDay / 1_000L
             val offsetSeconds = -value.getOffset.getTotalSeconds
@@ -343,8 +343,8 @@ object PostgresEncoder:
     // Math.multiplyExact is wrapped as SqlDecodeException.
 
     val intervalBinary: PostgresEncoder[java.time.Duration] = new PostgresEncoder[java.time.Duration]:
-        def oid: Int       = OID_INTERVAL
-        def format: Format = Format.Binary
+        def oid: Int                                                          = OID_INTERVAL
+        def format: Format                                                    = Format.Binary
         def write(value: java.time.Duration, buf: PostgresBufferWriter): Unit =
             // ArithmeticException propagates to the caller (PostgresParamWriter.duration) which
             // has a Frame in scope and wraps it as SqlDecodeException.
@@ -361,8 +361,8 @@ object PostgresEncoder:
     // months = period.toTotalMonths (years * 12 + months field); days = period.getDays.
 
     val intervalPeriodBinary: PostgresEncoder[java.time.Period] = new PostgresEncoder[java.time.Period]:
-        def oid: Int       = OID_INTERVAL
-        def format: Format = Format.Binary
+        def oid: Int                                                        = OID_INTERVAL
+        def format: Format                                                  = Format.Binary
         def write(value: java.time.Period, buf: PostgresBufferWriter): Unit =
             val months = value.toTotalMonths
             val days   = value.getDays
@@ -377,8 +377,8 @@ object PostgresEncoder:
     // Wire: 16 bytes big-endian, mostSignificantBits (Int64) followed by leastSignificantBits (Int64).
 
     val uuidBinary: PostgresEncoder[java.util.UUID] = new PostgresEncoder[java.util.UUID]:
-        def oid: Int       = OID_UUID
-        def format: Format = Format.Binary
+        def oid: Int                                                      = OID_UUID
+        def format: Format                                                = Format.Binary
         def write(value: java.util.UUID, buf: PostgresBufferWriter): Unit =
             val msb = value.getMostSignificantBits
             val lsb = value.getLeastSignificantBits
@@ -413,8 +413,8 @@ object PostgresEncoder:
       */
     def arrayEncoder[A](elemEncoder: PostgresEncoder[A], elemOid: Int, arrayOid: Int): PostgresEncoder[Seq[A]] =
         new PostgresEncoder[Seq[A]]:
-            def oid: Int       = arrayOid
-            def format: Format = Format.Binary
+            def oid: Int                                              = arrayOid
+            def format: Format                                        = Format.Binary
             def write(value: Seq[A], buf: PostgresBufferWriter): Unit =
                 buf.writeInt32(1) // ndim = 1
                 buf.writeInt32(0) // hasnulls = 0 (null elements not supported; use Maybe wrappers)

@@ -20,7 +20,7 @@ object BrowserRunnerMain:
                 // Unsafe: a process entry point, below any effect handler; the run blocks the main thread until it ends.
                 Sync.Unsafe.evalOrThrow {
                     Abort.run[Any](KyoApp.runAndBlock(Duration.Infinity)(BrowserRunner.run(config, output))).map {
-                        case Result.Success(code) => code
+                        case Result.Success(code)  => code
                         case Result.Failure(error) =>
                             java.lang.System.err.println(s"browser test run failed: $error")
                             1

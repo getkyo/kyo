@@ -113,7 +113,7 @@ object System:
                     Maybe(HostConfig.property(name))
                 def lineSeparator()(using AllowUnsafe): String = kyo.internal.Platform.lineSeparator
                 def userName()(using AllowUnsafe): String      = SystemPlatformSpecific.userName()
-                def operatingSystem()(using AllowUnsafe): OS =
+                def operatingSystem()(using AllowUnsafe): OS   =
                     import kyo.internal.Platform.Os
                     kyo.internal.Platform.os match
                         case Os.Linux   => OS.Linux

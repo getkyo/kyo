@@ -727,13 +727,13 @@ object Flow:
                 val wfId = Flow.Id.Workflow("_local")
                 engine.registerImpl(wfId, flow, runner).map { _ =>
                     engine.workflows.start(wfId, inputs.asInstanceOf[Record[Any]]).map { handle =>
-                        val eid = handle.executionId
+                        val eid                                                                           = handle.executionId
                         def await: Record[In & Out] < (Async & Abort[FlowException | FlowStoreException]) =
                             Async.sleep(10.millis).map { _ =>
                                 store.getExecution(eid).map {
                                     case Present(state) if state.status == Flow.Status.Completed =>
                                         store.getAllFields(eid).map { fields =>
-                                            val schema = WorkflowSchema.of(flow)
+                                            val schema  = WorkflowSchema.of(flow)
                                             val decoded = fields.foldLeft(Dict.empty[String, Any]) { (acc, name, fd) =>
                                                 schema.fromStoreName(name) match
                                                     case Present(entry) =>
@@ -859,7 +859,7 @@ object Flow:
 
         opaque type Execution = String
         object Execution:
-            def apply(s: String): Execution = s
+            def apply(s: String): Execution           = s
             def random(using Frame): Execution < Sync =
                 Random.uuid
             given Schema[Execution]                     = summon[Schema[String]]
@@ -869,7 +869,7 @@ object Flow:
 
         opaque type Executor = String
         object Executor:
-            def apply(s: String): Executor = s
+            def apply(s: String): Executor           = s
             def random(using Frame): Executor < Sync =
                 Random.uuid
             given Schema[Executor]                     = summon[Schema[String]]
@@ -1327,7 +1327,6 @@ object Flow:
             new Record[Any](ctx.toDict ++ Dict(name -> value))
 
         AtomicRef.init[Chunk[Compensation]](Chunk.empty).map { compsRef =>
-
             def pushComp(
                 name: String,
                 ctx: Record[Any],
@@ -1381,7 +1380,7 @@ object Flow:
               * mapped record, so such a child starts from the store alone, its recorded inputs included.
               */
             def childRecord(childPath: String, mapped: Record[Any]): Record[Any] =
-                val prefix = s"$childPath${NodePath.Separator}"
+                val prefix    = s"$childPath${NodePath.Separator}"
                 val inherited = durable.foldLeft(Dict.empty[String, Any]) { (acc, name, value) =>
                     if name.startsWith(prefix) then acc.update(name.substring(prefix.length), value) else acc
                 }
@@ -1568,7 +1567,7 @@ object Flow:
                                 interpreter.checkCancelled.map {
                                     // Cancelled: stop where the loop stands. Nothing is written under the node's name, so no
                                     // compensation is registered for a value that does not exist.
-                                    case true => ctx
+                                    case true  => ctx
                                     case false =>
                                         val iterName = IterationName.step(durableName, iterNum)
                                         if eventCompleted(iterName) then
@@ -1662,7 +1661,7 @@ object Flow:
                         // the node's own policy and record it. The handler is registered either way, because an item recorded by an
                         // earlier attempt did its work just as much as one that ran here.
                         def itemResult(index: Int, item: Any, replaying: Boolean): Any < S =
-                            val key = itemKey(durableName, index)
+                            val key              = itemKey(durableName, index)
                             def compute: Any < S =
                                 interpreter.onOutput(key, Sync.defer(r.body(item)), n.frame, n.meta)(using r.itemTag, r.itemSchema)
                             // The count is written before any item is, so a fan-out with no count recorded has no item recorded
@@ -1705,7 +1704,7 @@ object Flow:
                                     recorded match
                                         case Present(count) if count != items.size => mismatch(count, items.size)
                                         case Present(_)                            => runItems(items, replaying = true)
-                                        case _ =>
+                                        case _                                     =>
                                             interpreter.onOutput(countKey(durableName), items.size, n.frame, writeMeta)
                                                 .andThen(runItems(items, replaying = false))
                                 }
@@ -1769,7 +1768,7 @@ object Flow:
                                             input.tag,
                                             input.schema
                                         ).map {
-                                            case true => acc
+                                            case true  => acc
                                             case false =>
                                                 interpreter.getField[Any](qualified)(using input.tag, input.schema).map {
                                                     case Present(recorded) => acc.update(input.name, recorded)

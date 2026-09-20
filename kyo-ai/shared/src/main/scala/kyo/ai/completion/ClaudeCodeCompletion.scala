@@ -122,7 +122,7 @@ private[completion] object ClaudeCodeCompletion extends HarnessCompletion("Claud
             withMcpBridge(config, tools, resultSchema) { bridge =>
                 for
                     input <- turnInput(context)
-                    _ <- Log.debug(
+                    _     <- Log.debug(
                         s"kyo-ai Claude Code mode=result messages=${context.messages.size} tools=${tools.map(_.name).mkString(",")}"
                     )
                     raw <- runClaudeCommand(
@@ -214,7 +214,7 @@ private[completion] object ClaudeCodeCompletion extends HarnessCompletion("Claud
                     _        <- Fiber.init(bridge.resultSignal.get.andThen(proc.destroyForcibly))
                     code     <- proc.waitFor(timeout)
                     captured <- bridge.resultCapture.get
-                    result <- captured match
+                    result   <- captured match
                         case Present(_) =>
                             // Result captured: the exit code is the kill's, not a failure. The kill here is
                             // idempotent cover for the signal fiber racing this read. Collect the stdout that
@@ -310,7 +310,7 @@ private[completion] object ClaudeCodeCompletion extends HarnessCompletion("Claud
             }
         }.map {
             case Result.Success(path) => path
-            case Result.Failure(ex) =>
+            case Result.Failure(ex)   =>
                 Abort.fail(AIProviderUnavailableException("Claude Code", s"failed to write the MCP bridge config: ${ex.getMessage}"))
             case Result.Panic(ex) => Abort.panic(ex)
         }
@@ -358,7 +358,7 @@ private[completion] object ClaudeCodeCompletion extends HarnessCompletion("Claud
                     }
                 )
             }.map {
-                case Result.Success(bound) => bound
+                case Result.Success(bound)  => bound
                 case Result.Failure(bindEx) =>
                     Abort.fail(AIProviderUnavailableException(
                         "Claude Code",
@@ -421,7 +421,7 @@ private[completion] object ClaudeCodeCompletion extends HarnessCompletion("Claud
                     }
                 )
             }.map {
-                case Result.Success(bound) => bound
+                case Result.Success(bound)  => bound
                 case Result.Failure(bindEx) =>
                     Abort.fail(AIProviderUnavailableException(
                         "Claude Code",

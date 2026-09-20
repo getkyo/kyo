@@ -104,7 +104,7 @@ object Codec:
           * to recursive occurrences of the type. Wrapper readers override both accessors to share
           * the wrapped reader's stack.
           */
-        private[kyo] def schemaTransformOverrides: List[Schema[?]] = _schemaTransformOverrides
+        private[kyo] def schemaTransformOverrides: List[Schema[?]]               = _schemaTransformOverrides
         private[kyo] def schemaTransformOverrides_=(next: List[Schema[?]]): Unit =
             _schemaTransformOverrides = next
 
@@ -312,7 +312,7 @@ object Codec:
           * to recursive occurrences of the type. Wrapper writers override both accessors to share
           * the wrapped writer's stack.
           */
-        private[kyo] def schemaTransformOverrides: List[Schema[?]] = _schemaTransformOverrides
+        private[kyo] def schemaTransformOverrides: List[Schema[?]]               = _schemaTransformOverrides
         private[kyo] def schemaTransformOverrides_=(next: List[Schema[?]]): Unit =
             _schemaTransformOverrides = next
 

@@ -143,7 +143,7 @@ final class PostgresChannel(
         Abort.run[Closed](conn.outbound.safe.put(bytes)).flatMap {
             case Result.Success(_) => ()
             case Result.Failure(_) => Abort.fail(SqlConnectionClosedException(s"writing$label"))
-            case Result.Panic(t) =>
+            case Result.Panic(t)   =>
                 Log.error(s"[kyo-sql] PostgresChannel: write panic$label: ${t.getMessage}").andThen(
                     Abort.fail(SqlConnectionWritePanicException(t))
                 )

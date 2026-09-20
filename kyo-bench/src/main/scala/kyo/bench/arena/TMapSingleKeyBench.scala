@@ -12,7 +12,7 @@ class TMapSingleKeyBench(parallelism: Int) extends ArenaBench.ForkOnly(paralleli
         STM.runtime[IO].flatMap { stm =>
             for
                 ref <- stm.commit(stm.TVar.of(Map.empty[Int, Int]))
-                _ <- Seq.fill(parallelism)(
+                _   <- Seq.fill(parallelism)(
                     stm.commit {
                         for
                             map <- ref.get
@@ -31,7 +31,7 @@ class TMapSingleKeyBench(parallelism: Int) extends ArenaBench.ForkOnly(paralleli
 
         for
             map <- TMap.init[Int, Int]
-            _ <-
+            _   <-
                 Async.fill(parallelism, parallelism) {
                     STM.run {
                         for
@@ -51,7 +51,7 @@ class TMapSingleKeyBench(parallelism: Int) extends ArenaBench.ForkOnly(paralleli
 
         for
             map <- TMap.empty[Int, Int].commit
-            _ <- ZIO.collectAllParDiscard(
+            _   <- ZIO.collectAllParDiscard(
                 Seq.fill(parallelism)(
                     STM.atomically {
                         for

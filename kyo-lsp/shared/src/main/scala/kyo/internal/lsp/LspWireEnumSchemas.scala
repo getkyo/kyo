@@ -450,7 +450,7 @@ private[kyo] object LspWireEnumSchemas:
                 catch case _: Exception => LspHandler.BooleanOr.Options(summon[Schema[T]].serializeRead(captured))
             end serializeRead
 
-            @publicInBinary private[kyo] def getter(value: LspHandler.BooleanOr[T]): Maybe[Any] = Maybe(value)
+            @publicInBinary private[kyo] def getter(value: LspHandler.BooleanOr[T]): Maybe[Any]                         = Maybe(value)
             @publicInBinary private[kyo] def setter(value: LspHandler.BooleanOr[T], next: Any): LspHandler.BooleanOr[T] =
                 next match
                     case b: LspHandler.BooleanOr[?] => b.asInstanceOf[LspHandler.BooleanOr[T]]
@@ -465,7 +465,7 @@ private[kyo] object LspWireEnumSchemas:
             ): Result[DecodeException, LspHandler.BooleanOr[T]] =
                 sv match
                     case Structure.Value.Bool(b) => Result.Success(LspHandler.BooleanOr.Bool(b))
-                    case other =>
+                    case other                   =>
                         summon[Schema[T]].fromStructureValue(other).map(t => LspHandler.BooleanOr.Options(t))
 
     /** Schema[StringOr[T]]: string JSON node -> Str(v); object JSON node -> Options(schema.read(T)).
@@ -487,7 +487,7 @@ private[kyo] object LspWireEnumSchemas:
                 catch case _: Exception => LspHandler.StringOr.Options(summon[Schema[T]].serializeRead(captured))
             end serializeRead
 
-            @publicInBinary private[kyo] def getter(value: LspHandler.StringOr[T]): Maybe[Any] = Maybe(value)
+            @publicInBinary private[kyo] def getter(value: LspHandler.StringOr[T]): Maybe[Any]                        = Maybe(value)
             @publicInBinary private[kyo] def setter(value: LspHandler.StringOr[T], next: Any): LspHandler.StringOr[T] =
                 next match
                     case s: LspHandler.StringOr[?] => s.asInstanceOf[LspHandler.StringOr[T]]
@@ -500,7 +500,7 @@ private[kyo] object LspWireEnumSchemas:
             ): Result[DecodeException, LspHandler.StringOr[T]] =
                 sv match
                     case Structure.Value.Str(s) => Result.Success(LspHandler.StringOr.Str(s))
-                    case other =>
+                    case other                  =>
                         summon[Schema[T]].fromStructureValue(other).map(t => LspHandler.StringOr.Options(t))
 
     // MARK: -- LspCapabilities.Name string schema

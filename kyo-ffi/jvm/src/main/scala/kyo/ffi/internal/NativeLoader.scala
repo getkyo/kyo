@@ -52,7 +52,7 @@ object NativeLoader:
 
     /** Detect whether the JVM runs on a 64-bit host via `sun.arch.data.model` and Panama `ValueLayout.ADDRESS.byteSize`. */
     def detectIs64Bit(): Boolean =
-        val dataModel = sys.props.get("sun.arch.data.model")
+        val dataModel   = sys.props.get("sun.arch.data.model")
         val panamaBytes =
             try ValueLayout.ADDRESS.nn.byteSize()
             catch case _: Throwable => 0L
@@ -209,8 +209,8 @@ object NativeLoader:
                     val declared =
                         if bundledPlatforms.isEmpty then "no platform"
                         else bundledPlatforms.toSeq.sorted.mkString(", ")
-                    val path   = resourcePath(libraryId, os, arch)
-                    val mapped = System.mapLibraryName(libraryId).nn
+                    val path              = resourcePath(libraryId, os, arch)
+                    val mapped            = System.mapLibraryName(libraryId).nn
                     val overrideCandidate = sys.props.get(s"kyo.ffi.$libraryId.path") match
                         case Some(p) => s"override -Dkyo.ffi.$libraryId.path=$p (file missing)"
                         case None    => s"override -Dkyo.ffi.$libraryId.path (unset)"
@@ -233,7 +233,7 @@ object NativeLoader:
                 val accounted =
                     overridePath match
                         case Some(p) => Files.exists(Paths.get(p))
-                        case None =>
+                        case None    =>
                             val stream = getClass.getResourceAsStream(path)
                             if stream != null then
                                 stream.close()
@@ -246,7 +246,7 @@ object NativeLoader:
                         case Some(p) => s"override -Dkyo.ffi.$libraryId.path=$p (file missing)"
                         case None    => s"override -Dkyo.ffi.$libraryId.path (unset)"
                     val candidates = Chunk(s"resource path: $path", overrideCandidate)
-                    val msg =
+                    val msg        =
                         s"Native library '$libraryId' is declared bundled for $osArch by the kyo-ffi native manifest, but its " +
                             s"resource '$path' is not on the classpath and no readable -Dkyo.ffi.$libraryId.path override was given. " +
                             s"Add the native artifact (or the platform classifier dependency) for $osArch, or set " +
@@ -266,7 +266,7 @@ object NativeLoader:
     private def resolvableOutsideBundle(id: String, os: Os, arch: Arch): Boolean =
         sys.props.get(s"kyo.ffi.$id.path") match
             case Some(p) => Files.exists(Paths.get(p))
-            case None =>
+            case None    =>
                 val stream = getClass.getResourceAsStream(resourcePath(id, os, arch))
                 if stream != null then
                     stream.close()
@@ -323,7 +323,7 @@ object NativeLoader:
     def resolveExtractDir(): Path =
         sys.props.get("kyo.ffi.extractDir") match
             case Some(explicit) => Paths.get(explicit).nn
-            case None =>
+            case None           =>
                 Paths.get(sys.props.getOrElse("kyo.ffi.tmpdir", sys.props("java.io.tmpdir")))
                     .resolve("kyo-ffi").nn
     end resolveExtractDir

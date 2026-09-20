@@ -827,7 +827,7 @@ object Chart:
         /** Resolve a named palette to its `Chunk[Style.Color]`. */
         def colors(p: Palette): Chunk[Style.Color] = p match
             case Palette.Default => kyo.internal.ChartAxes.DefaultPalette
-            case Palette.Okabe =>
+            case Palette.Okabe   =>
                 Chunk(
                     Style.Color.rgb(0, 0, 0),
                     Style.Color.rgb(230, 159, 0),
@@ -936,7 +936,7 @@ object Chart:
     object RuleValue:
         // Unsafe: Unset carries no C-typed value (its element type is Nothing), so widening the shared
         // singleton from RuleValue[Nothing] to RuleValue[C] can never expose a value of the wrong type.
-        private[kyo] def unset[C]: RuleValue[C] = RuleValue.Unset.asInstanceOf[RuleValue[C]]
+        private[kyo] def unset[C]: RuleValue[C]                        = RuleValue.Unset.asInstanceOf[RuleValue[C]]
         implicit def constConversion[C: Plottable](c: C): RuleValue[C] =
             RuleValue.Const(c, summon[Plottable[C]])
         implicit def signalConversion[C: Plottable](s: Signal[C])(using CanEqual[C, C]): RuleValue[C] =
@@ -1230,7 +1230,7 @@ object Chart:
           */
         given maybe[A](using inner: Plottable[A]): Plottable[Maybe[A]] =
             new Plottable[Maybe[A]]:
-                private[kyo] def kind: Scale.Kind = inner.kind
+                private[kyo] def kind: Scale.Kind                     = inner.kind
                 private[kyo] def toDomain(a: Maybe[A]): Maybe[Domain] = a match
                     case Present(v) => inner.toDomain(v)
                     case Absent     => Absent
@@ -1258,7 +1258,7 @@ object Chart:
 
         private def deriveEnum[A](labels: Chunk[String]): Plottable[A] =
             new Plottable[A]:
-                private[kyo] def kind: Scale.Kind = Scale.Kind.Band
+                private[kyo] def kind: Scale.Kind              = Scale.Kind.Band
                 private[kyo] def toDomain(a: A): Maybe[Domain] =
                     // Unsafe: sound because derivation is gated on Mirror.SumOf[A], guaranteeing A is a
                     // scala.reflect.Enum whose ordinal is in range of the mirrored element labels.

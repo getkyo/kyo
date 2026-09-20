@@ -19,7 +19,7 @@ private[kyo] trait UnixSocketTestHelper:
     /** Whether this platform can bind AF_UNIX sockets in these tests. Node has no AF_UNIX support on Windows (a filesystem listen path
       * fails with EACCES), so the JS helper reports false there; the JVM and Native helpers bind real sockets everywhere.
       */
-    def unixSocketsSupported: Boolean = true
+    def unixSocketsSupported: Boolean          = true
     def encodeSocketPath(path: String): String =
         java.net.URLEncoder.encode(path, "UTF-8")
     def mkUrl(socketPath: String, httpPath: String): String =

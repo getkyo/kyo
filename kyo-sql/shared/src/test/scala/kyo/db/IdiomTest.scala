@@ -320,7 +320,7 @@ class IdiomTest extends Test:
 
     "unsupported raises the typed failure naming the feature, dialect, and floor" in {
         val ctx = mkCtx(stub)
-        val ex = intercept[SqlUnsupportedDialectFeatureException] {
+        val ex  = intercept[SqlUnsupportedDialectFeatureException] {
             ctx.unsupported("row locks", Present(v(9, 9, 9)))
         }
         assert(ex.feature == "row locks")
@@ -398,8 +398,8 @@ class IdiomTest extends Test:
     // the quoted table followed by its quoted alias are each pinned; the single-space and comma-space separators
     // are the conventional statement spelling.
     "a bare table renders its projection explicitly, alias qualified, in declaration order" in {
-        val t = Sql.from[Person]("p")
-        val r = rendered(stub, t)
+        val t        = Sql.from[Person]("p")
+        val r        = rendered(stub, t)
         val expected =
             "SELECT " + t.columnNames.map(c => qc("p", c)).mkString(", ") + " FROM " + q(t.tableName) + " " + q("p")
         assert(r.onlySql == Present(expected))

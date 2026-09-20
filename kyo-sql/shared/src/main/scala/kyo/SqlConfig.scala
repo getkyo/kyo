@@ -435,12 +435,12 @@ object SqlConfig:
                 Frame
             ): Result[SqlConnectionException, Maybe[Duration]] =
                 Maybe.fromOption(pairs.get(key)) match
-                    case Absent => Result.Success(Absent)
+                    case Absent       => Result.Success(Absent)
                     case Present(raw) =>
                         raw.toIntOption match
                             case Some(0)          => Result.Success(Present(Duration.Infinity))
                             case Some(n) if n > 0 => Result.Success(Present(n.seconds))
-                            case Some(_) =>
+                            case Some(_)          =>
                                 Result.fail(SqlConnectionUrlOptionException(
                                     key,
                                     raw,
@@ -449,7 +449,7 @@ object SqlConfig:
                             case None =>
                                 Duration.parse(raw) match
                                     case Result.Success(d) => Result.Success(Present(d))
-                                    case _ =>
+                                    case _                 =>
                                         Result.fail(SqlConnectionUrlOptionException(
                                             key,
                                             raw,
@@ -468,7 +468,7 @@ object SqlConfig:
                             case "require"     => Result.Success(Present(TlsMode.Require))
                             case "verify-ca"   => Result.Success(Present(TlsMode.VerifyCa))
                             case "verify-full" => Result.Success(Present(TlsMode.VerifyFull))
-                            case _ =>
+                            case _             =>
                                 Result.fail(SqlConnectionUrlOptionException(
                                     "sslmode",
                                     raw,
@@ -515,7 +515,7 @@ object SqlConfig:
                     // `user:@host` said "empty password" and is Present("").
                     val (user, password) =
                         userInfo match
-                            case Absent => (Maybe.empty[String], Maybe.empty[String])
+                            case Absent        => (Maybe.empty[String], Maybe.empty[String])
                             case Present(info) =>
                                 info.indexOf(':') match
                                     case -1  => (Present(info), Maybe.empty[String])

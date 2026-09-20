@@ -151,7 +151,7 @@ class ReactiveUITeardownTest extends kyo.test.Test[Any]:
         for
             ref    <- Signal.initRef("value")
             closed <- AtomicBoolean.init(false)
-            _ <- Async.race(
+            _      <- Async.race(
                 Scope.run {
                     for
                         root <- ReactiveUI.normalize(ref.map(UI.span(_)), Seq.empty)
@@ -222,7 +222,7 @@ class ReactiveUITeardownTest extends kyo.test.Test[Any]:
                     )(using Frame): Unit < Async =
                         HtmlRenderer.render(ui, path).map(html => rendered.updateAndGet(_.append(html)).unit)
             tree = UI.input.id("i").value(ref)
-            live <- AtomicInt.init(0)
+            live  <- AtomicInt.init(0)
             fiber <- Fiber.initUnscoped(Scope.run {
                 for
                     _    <- Scope.acquireRelease(live.incrementAndGet)(_ => live.decrementAndGet.unit)
@@ -304,7 +304,7 @@ class ReactiveUITeardownTest extends kyo.test.Test[Any]:
             outerRef <- Signal.initRef(true)
             childRef <- Signal.initRef("init")
             tree = UI.when(outerRef)(UI.div(childRef.map(s => UI.span(s))))
-            live <- AtomicInt.init(0)
+            live  <- AtomicInt.init(0)
             fiber <- Fiber.initUnscoped(Scope.run {
                 for
                     _    <- Scope.acquireRelease(live.incrementAndGet)(_ => live.decrementAndGet.unit)
@@ -344,7 +344,7 @@ class ReactiveUITeardownTest extends kyo.test.Test[Any]:
             inner    <- Signal.initRef(true)
             grandRef <- Signal.initRef("v")
             tree = UI.when(outer)(UI.when(inner)(UI.div(grandRef.map(s => UI.span(s)))))
-            live <- AtomicInt.init(0)
+            live  <- AtomicInt.init(0)
             fiber <- Fiber.initUnscoped(Scope.run {
                 for
                     _    <- Scope.acquireRelease(live.incrementAndGet)(_ => live.decrementAndGet.unit)

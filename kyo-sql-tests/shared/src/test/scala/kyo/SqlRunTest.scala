@@ -304,7 +304,7 @@ def shape(client: kyo.SqlClient)(using kyo.Frame): kyo.Chunk[NoSchema2] < (kyo.A
             val first  = "first"
             val second = "second"
             for
-                _ <- DB.executeRaw(s"CREATE TABLE note (body ${backend.textColumnType} NOT NULL)")
+                _        <- DB.executeRaw(s"CREATE TABLE note (body ${backend.textColumnType} NOT NULL)")
                 affected <- DB.transaction {
                     sql"INSERT INTO note (body) VALUES ($first)".execute.flatMap { one =>
                         sql"INSERT INTO note (body) VALUES ($second)".execute.map(_ + one)
@@ -323,7 +323,7 @@ def shape(client: kyo.SqlClient)(using kyo.Frame): kyo.Chunk[NoSchema2] < (kyo.A
     "DB.transaction rolls back its body's writes when the body aborts" - forEachBackend() { (backend, _, _) =>
         val doomed = "doomed"
         for
-            _ <- DB.executeRaw(s"CREATE TABLE note (body ${backend.textColumnType} NOT NULL)")
+            _       <- DB.executeRaw(s"CREATE TABLE note (body ${backend.textColumnType} NOT NULL)")
             outcome <- Abort.run[SqlException] {
                 DB.transaction {
                     // The second statement names a column the table does not have, so the server rejects it and the

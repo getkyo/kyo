@@ -145,7 +145,7 @@ abstract class PropertyTestBase[S] extends TestBase[S]:
         seed: Long
     )(using Frame, kyo.test.AssertScope): Unit < (S & Async & Abort[Throwable] & Scope) =
         summon[kyo.test.AssertScope].recordEvaluated()
-        val n = numSamples
+        val n                                                                            = numSamples
         def loop(i: Int, seedState: Seed): Unit < (S & Async & Abort[Throwable] & Scope) =
             if i >= n then ()
             else

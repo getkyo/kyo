@@ -38,7 +38,7 @@ object WebsiteModule:
         def labels: Chunk[String] =
             def target(name: String, environments: Environments): Chunk[String] =
                 environments.browser match
-                    case Absent => if environments.node then Chunk(name) else Chunk.empty
+                    case Absent           => if environments.node then Chunk(name) else Chunk.empty
                     case Present(browser) =>
                         (if environments.node then Chunk(s"$name on Node") else Chunk.empty) ++
                             (if browser then Chunk(s"$name in a browser") else Chunk.empty)

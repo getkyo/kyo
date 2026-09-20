@@ -47,7 +47,7 @@ class PathCapabilityTest extends kyo.test.Test[Any]:
 
     "the removed FileLock and Boolean lock APIs do not type-check" in {
         val fileLockErrors = typeCheckErrors("val lock: kyo.Path.FileLock = ???")
-        val booleanErrors = typeCheckErrors("""
+        val booleanErrors  = typeCheckErrors("""
             given kyo.Frame = kyo.Frame.internal
             kyo.Path("x").lock(true)
             """)
@@ -217,9 +217,9 @@ class PathCapabilityTest extends kyo.test.Test[Any]:
     val g8: Stream[Path, PathRead & Scope & Sync]   = somePath.walk
     val g9: Stream[Path, PathRead & Scope & Sync]   = somePath.walk(Int.MaxValue, followLinks = false)
     val gList: Chunk[Path] < PathRead               = somePath.list(glob"*.txt")
-    val gListCase: Chunk[Path] < PathRead =
+    val gListCase: Chunk[Path] < PathRead           =
         somePath.list(glob"*.txt", Glob.CaseSensitivity.Insensitive)
-    val gWalkGlob: Stream[Path, PathRead & Scope & Sync] = somePath.walk(glob"**/*.txt")
+    val gWalkGlob: Stream[Path, PathRead & Scope & Sync]     = somePath.walk(glob"**/*.txt")
     val gWalkGlobCase: Stream[Path, PathRead & Scope & Sync] =
         somePath.walk(glob"**/*.txt", Glob.CaseSensitivity.Sensitive)
     val gWriteOptions: Unit < PathWrite =
@@ -294,9 +294,9 @@ class PathCapabilityTest extends kyo.test.Test[Any]:
         Scope.run {
             Path.run {
                 Path.tempDir().map { dir =>
-                    val ok                             = dir / "ok.bin"
-                    val bad                            = dir / "bad.bin"
-                    val cleanStream: Stream[Byte, Any] = Stream.init(Chunk[Byte](1, 2, 3))
+                    val ok                                         = dir / "ok.bin"
+                    val bad                                        = dir / "bad.bin"
+                    val cleanStream: Stream[Byte, Any]             = Stream.init(Chunk[Byte](1, 2, 3))
                     val failStream: Stream[Byte, Abort[Throwable]] =
                         Stream.init(Chunk[Byte](1)).concat(Stream.init(Abort.fail(new RuntimeException("boom")).map(_ =>
                             Chunk.empty[Byte]

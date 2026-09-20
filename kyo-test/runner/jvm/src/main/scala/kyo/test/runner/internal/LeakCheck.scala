@@ -322,7 +322,7 @@ private[runner] object LeakCheck:
     def describeSocket(target: String): String =
         if !target.startsWith("socket:[") then ""
         else
-            val inode = target.stripPrefix("socket:[").stripSuffix("]")
+            val inode                                = target.stripPrefix("socket:[").stripSuffix("]")
             def scanTcp(path: String): Maybe[String] =
                 try
                     val lines              = java.nio.file.Files.readAllLines(Paths.get(path)).asScala
@@ -427,14 +427,14 @@ private[runner] object LeakCheck:
         // descriptor diffs run, which trims false positives for every category. Record a fiber finding only when that category is enabled.
         awaitSchedulerIdle(idleBudgetNanos, settleNanos, pollNanos, effectiveAllowlist) match
             case IdleResult.Idle | IdleResult.Accounted(_) => ()
-            case IdleResult.Busy(la, frame) =>
+            case IdleResult.Busy(la, frame)                =>
                 if checkFibers then
-                    val busy = Scheduler.get.busyFiberTraces()
+                    val busy      = Scheduler.get.busyFiberTraces()
                     val perWorker =
                         busy.map { w =>
                             val header     = s"  worker thread ${w.mount}:"
                             val kyoSection = if w.fiberTrace.nonEmpty then s"\n    kyo trace:\n${w.fiberTrace}" else ""
-                            val stack = stackOfThread(w.mount).map { st =>
+                            val stack      = stackOfThread(w.mount).map { st =>
                                 st.linesIterator.take(30).map(f => s"        at $f").mkString("\n")
                             }.getOrElse("        <stack unavailable>")
                             s"$header$kyoSection\n    thread stack:\n$stack"
@@ -442,9 +442,10 @@ private[runner] object LeakCheck:
                     val matchText   = busy.map(w => w.fiberTrace + "\n" + stackOfThread(w.mount).getOrElse("")).mkString("\n")
                     val allowlisted = effectiveAllowlist.exists(matchText.contains)
                     if !allowlisted then
-                        findings += s"fiber leak: scheduler still busy (loadAvg=$la) after settle; running at ${frame.getOrElse("<unknown frame>")}" +
-                            s"\n  per-busy-worker fiber dump:\n$perWorker" +
-                            s"\n  all running threads (worker and non-worker) at probe time:${runningThreadsDump()}"
+                        findings +=
+                            s"fiber leak: scheduler still busy (loadAvg=$la) after settle; running at ${frame.getOrElse("<unknown frame>")}" +
+                                s"\n  per-busy-worker fiber dump:\n$perWorker" +
+                                s"\n  all running threads (worker and non-worker) at probe time:${runningThreadsDump()}"
                     end if
         end match
 

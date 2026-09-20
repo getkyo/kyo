@@ -20,7 +20,7 @@ object HttpQueryParams:
 
     extension (self: HttpQueryParams)
         def add(name: String, value: String): HttpQueryParams = self :+ (name, value)
-        def get(name: String): Maybe[String] =
+        def get(name: String): Maybe[String]                  =
             @scala.annotation.tailrec
             def loop(remaining: Seq[(String, String)]): Maybe[String] =
                 remaining match
@@ -52,7 +52,9 @@ object HttpQueryParams:
             if i >= bytes.length then sb.toString
             else
                 val b = bytes(i) & 0xff
-                if (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z') || (b >= '0' && b <= '9') ||
+                if (b >= 'A' && b <= 'Z') ||
+                    (b >= 'a' && b <= 'z') ||
+                    (b >= '0' && b <= '9') ||
                     b == '-' || b == '_' || b == '.' || b == '~'
                 then
                     sb.append(b.toChar)

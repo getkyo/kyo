@@ -15,7 +15,7 @@ class WebsiteGeneratorTest extends WebsiteTest:
     private val v0 = WebsiteVersion("v0.9.3", "0.9.3", false)
     private val v2 = WebsiteVersion("v0.9.2", "0.9.2", false)
 
-    private val oneVersion = Chunk(WebsiteContent("intro", Chunk.empty, v1))
+    private val oneVersion   = Chunk(WebsiteContent("intro", Chunk.empty, v1))
     private val threeVersion = Chunk(
         WebsiteContent("intro1", Chunk.empty, v1),
         WebsiteContent("intro2", Chunk.empty, v0),
@@ -232,7 +232,7 @@ class WebsiteGeneratorTest extends WebsiteTest:
     "write failure aborts with WebsiteEmitException" in {
         for
             bundleDir <- stubBundleDir
-            tmp <- Scope.acquireRelease(
+            tmp       <- Scope.acquireRelease(
                 Sync.defer {
                     val d = java.nio.file.Files.createTempDirectory("kyo-gen-fail-test")
                     // Create a directory at index.html so writing a file there will fail
@@ -264,7 +264,7 @@ class WebsiteGeneratorTest extends WebsiteTest:
     "idempotent re-emit produces byte-identical files" in {
         for
             bundleDir <- stubBundleDir
-            out1 <- Scope.acquireRelease(
+            out1      <- Scope.acquireRelease(
                 Sync.defer(java.nio.file.Files.createTempDirectory("kyo-gen-idem-a"))
             )(d => Sync.defer(deleteDir(d))).map(d => Path(d.toString))
             out2 <- Scope.acquireRelease(
@@ -412,9 +412,9 @@ class WebsiteGeneratorTest extends WebsiteTest:
     "module index.html ships the full transpiled article prose in raw HTML" in {
         // The fixture README carries a distinctive prose sentence; the SSG must ship its transpiled
         // text in the page HTML (not a JS-hydrated stub) so non-JS crawlers index it.
-        val prose  = "Channels carry values between fibers without blocking a thread."
-        val readme = s"# kyo-distinct\n## Overview\n$prose\n"
-        val mod    = WebsiteModule("kyo-distinct", "Foundation", "kyo-distinct", readme, WebsiteModule.Platforms.everywhere)
+        val prose   = "Channels carry values between fibers without blocking a thread."
+        val readme  = s"# kyo-distinct\n## Overview\n$prose\n"
+        val mod     = WebsiteModule("kyo-distinct", "Foundation", "kyo-distinct", readme, WebsiteModule.Platforms.everywhere)
         val content =
             WebsiteContent("intro", Chunk(WebsiteContent.Group("Foundation", Chunk(mod))), WebsiteVersion("v1.0.0", "1.0.0", true))
         for
@@ -434,8 +434,8 @@ class WebsiteGeneratorTest extends WebsiteTest:
         // A module README's demo link is README-relative; the docs site hosts no source tree, so the
         // emitted page must point at the file on GitHub. The ref is the version's tag and the path is
         // prefixed with the module slug, in both the versioned tree and the /latest/ mirror.
-        val readme = "# kyo-http\n## Demos\nRun the [ChatRoom](shared/src/test/scala/demo/ChatRoom.scala) demo.\n"
-        val mod    = WebsiteModule("kyo-http", "Applications", "kyo-http", readme, WebsiteModule.Platforms.everywhere)
+        val readme  = "# kyo-http\n## Demos\nRun the [ChatRoom](shared/src/test/scala/demo/ChatRoom.scala) demo.\n"
+        val mod     = WebsiteModule("kyo-http", "Applications", "kyo-http", readme, WebsiteModule.Platforms.everywhere)
         val content =
             WebsiteContent(
                 "intro",
@@ -509,7 +509,7 @@ class WebsiteGeneratorTest extends WebsiteTest:
         // raw intro as content.md.
         val prose = "Kyo is a Scala 3 toolkit for building applications across platforms."
         val intro = s"## Introduction\n$prose\n## Coming from ZIO\nNotes.\n"
-        val mod =
+        val mod   =
             WebsiteModule("kyo-core", "Foundation", "kyo-core", "# kyo-core\nCore.\n", WebsiteModule.Platforms.everywhere)
         val content =
             WebsiteContent(intro, Chunk(WebsiteContent.Group("Foundation", Chunk(mod))), WebsiteVersion("v1.0.0", "1.0.0", true))
@@ -672,8 +672,8 @@ class WebsiteGeneratorTest extends WebsiteTest:
     // ---- docs page embeds transpiled article AND content.md equals source ----
 
     "docs page embeds transpiled article AND content.md equals the source" in {
-        val readme = "# MyModule\n## Scope\nDoes things.\n```scala\nval x = 1\n```\n"
-        val mod    = WebsiteModule("my-module", "Foundation", "my-module", readme, WebsiteModule.Platforms.everywhere)
+        val readme  = "# MyModule\n## Scope\nDoes things.\n```scala\nval x = 1\n```\n"
+        val mod     = WebsiteModule("my-module", "Foundation", "my-module", readme, WebsiteModule.Platforms.everywhere)
         val content =
             WebsiteContent("intro", Chunk(WebsiteContent.Group("Foundation", Chunk(mod))), WebsiteVersion("v1.0.0", "1.0.0", true))
         for
@@ -693,8 +693,8 @@ class WebsiteGeneratorTest extends WebsiteTest:
     // ---- rail section links resolve to article anchors ----
 
     "rail section links resolve to article anchors" in {
-        val readme = "# Alpha\n## Beta\nText.\n### Gamma\nMore.\n"
-        val mod    = WebsiteModule("anchors", "Foundation", "anchors", readme, WebsiteModule.Platforms.everywhere)
+        val readme  = "# Alpha\n## Beta\nText.\n### Gamma\nMore.\n"
+        val mod     = WebsiteModule("anchors", "Foundation", "anchors", readme, WebsiteModule.Platforms.everywhere)
         val content =
             WebsiteContent("intro", Chunk(WebsiteContent.Group("Foundation", Chunk(mod))), WebsiteVersion("v1.0.0", "1.0.0", true))
         for
@@ -874,7 +874,7 @@ class WebsiteGeneratorTest extends WebsiteTest:
                 Abort.run[FileSystemException](Path.runReadOnly {
                     latestDir.exists.map {
                         case false => 0
-                        case true =>
+                        case true  =>
                             latestDir.list.map { entries =>
                                 Kyo.foreach(entries)(_.isDirectory).map(_.count(identity))
                             }
@@ -1143,8 +1143,8 @@ class WebsiteGeneratorTest extends WebsiteTest:
     }
 
     "article ids equal shipped heading slugs in content.html" in {
-        val readme = "# Title\n## Section One\n### Sub\n"
-        val mod    = WebsiteModule("inv004", "Foundation", "inv004", readme, WebsiteModule.Platforms.everywhere)
+        val readme  = "# Title\n## Section One\n### Sub\n"
+        val mod     = WebsiteModule("inv004", "Foundation", "inv004", readme, WebsiteModule.Platforms.everywhere)
         val content =
             WebsiteContent("intro", Chunk(WebsiteContent.Group("Foundation", Chunk(mod))), WebsiteVersion("v1.0.0", "1.0.0", true))
         for
@@ -1247,8 +1247,8 @@ class WebsiteGeneratorTest extends WebsiteTest:
     "island article HTML round-trips an escaped < tag on emit" in {
         // Build a README whose rendered article will contain < characters (via a heading with a code
         // snippet; the backtick renders to <code>, so the rendered HTML contains <code>...</code>).
-        val readme = "# Test\n## Usage\n`myFunc` does things.\n"
-        val mod    = WebsiteModule("escape-test", "Foundation", "escape-test", readme, WebsiteModule.Platforms.everywhere)
+        val readme  = "# Test\n## Usage\n`myFunc` does things.\n"
+        val mod     = WebsiteModule("escape-test", "Foundation", "escape-test", readme, WebsiteModule.Platforms.everywhere)
         val content =
             WebsiteContent("intro", Chunk(WebsiteContent.Group("Foundation", Chunk(mod))), WebsiteVersion("v1.0.0", "1.0.0", true))
         for
@@ -1300,8 +1300,8 @@ class WebsiteGeneratorTest extends WebsiteTest:
     }
 
     "docs-island JSON escapes </script> to the JS-unicode form (no literal closing tag)" in {
-        val readme = "# Test\n## Usage\n`myFunc` does things.\n"
-        val mod    = WebsiteModule("escape-chk", "Foundation", "escape-chk", readme, WebsiteModule.Platforms.everywhere)
+        val readme  = "# Test\n## Usage\n`myFunc` does things.\n"
+        val mod     = WebsiteModule("escape-chk", "Foundation", "escape-chk", readme, WebsiteModule.Platforms.everywhere)
         val content =
             WebsiteContent("intro", Chunk(WebsiteContent.Group("Foundation", Chunk(mod))), WebsiteVersion("v1.0.0", "1.0.0", true))
         for
@@ -1326,8 +1326,8 @@ class WebsiteGeneratorTest extends WebsiteTest:
     // content.md, sitemap, manifest, and article ids in a single multi-version emit.
     "level-carrying headings in island, content.html, and manifest" in {
         // Use a README with explicit level-2 headings so the level==2 assertion is concrete.
-        val readme = "# Alpha\n## Beta\nText.\n## Gamma\nMore.\n"
-        val mod    = WebsiteModule("inv010", "Foundation", "inv010", readme, WebsiteModule.Platforms.everywhere)
+        val readme  = "# Alpha\n## Beta\nText.\n## Gamma\nMore.\n"
+        val mod     = WebsiteModule("inv010", "Foundation", "inv010", readme, WebsiteModule.Platforms.everywhere)
         val content =
             WebsiteContent("intro", Chunk(WebsiteContent.Group("Foundation", Chunk(mod))), WebsiteVersion("v1.0.0", "1.0.0", true))
         for
@@ -1395,8 +1395,8 @@ class WebsiteGeneratorTest extends WebsiteTest:
     // ---- each section carries level + text + slug + symbols + body ----
 
     "each section in search-index.json carries level, text, slug, symbols, and body" in {
-        val readme = "## Fibers and forks\nFibers are lightweight threads.\n### Interruption\nInterrupt a fiber.\n"
-        val mod    = WebsiteModule("kyo-async", "Foundation", "kyo-async", readme, WebsiteModule.Platforms.everywhere)
+        val readme  = "## Fibers and forks\nFibers are lightweight threads.\n### Interruption\nInterrupt a fiber.\n"
+        val mod     = WebsiteModule("kyo-async", "Foundation", "kyo-async", readme, WebsiteModule.Platforms.everywhere)
         val content =
             WebsiteContent("intro", Chunk(WebsiteContent.Group("Foundation", Chunk(mod))), WebsiteVersion("v1.0.0", "1.0.0", true))
         for
@@ -1427,7 +1427,7 @@ class WebsiteGeneratorTest extends WebsiteTest:
         val longProse = ("The quick brown fox jumps over the lazy dog " * 20).trim
         val readme    = s"## Section\n$longProse\n"
         val mod       = WebsiteModule("kyo-long", "Foundation", "kyo-long", readme, WebsiteModule.Platforms.everywhere)
-        val content =
+        val content   =
             WebsiteContent("intro", Chunk(WebsiteContent.Group("Foundation", Chunk(mod))), WebsiteVersion("v1.0.0", "1.0.0", true))
         for
             out       <- tmpDir
@@ -1467,8 +1467,8 @@ class WebsiteGeneratorTest extends WebsiteTest:
     // ---- heading-less module emits sections [] ----
 
     "a heading-less module emits sections [] in search-index.json" in {
-        val readme = "Prose only, no headings.\n"
-        val mod    = WebsiteModule("kyo-noh", "Foundation", "kyo-noh", readme, WebsiteModule.Platforms.everywhere)
+        val readme  = "Prose only, no headings.\n"
+        val mod     = WebsiteModule("kyo-noh", "Foundation", "kyo-noh", readme, WebsiteModule.Platforms.everywhere)
         val content =
             WebsiteContent("intro", Chunk(WebsiteContent.Group("Foundation", Chunk(mod))), WebsiteVersion("v1.0.0", "1.0.0", true))
         for
@@ -1521,7 +1521,7 @@ class WebsiteGeneratorTest extends WebsiteTest:
         val snippetText = "See the reference for more."
         val readme      = s"## $headingText\n$snippetText\n"
         val mod         = WebsiteModule("kyo-esc", "Foundation", "kyo-esc", readme, WebsiteModule.Platforms.everywhere)
-        val content =
+        val content     =
             WebsiteContent("intro", Chunk(WebsiteContent.Group("Foundation", Chunk(mod))), WebsiteVersion("v1.0.0", "1.0.0", true))
         for
             out       <- tmpDir
@@ -1546,11 +1546,11 @@ class WebsiteGeneratorTest extends WebsiteTest:
         // other special-char cases: backslash, double-quote, \n, \r, \t.
         // These all pass through escJson when the module title is serialized into the
         // search-index.json "title" field.
-        val ctrl1  = 0x01.toChar.toString // should become 
-        val ctrl1f = 0x1f.toChar.toString // should become
-        val title  = s"x${ctrl1}y${ctrl1f}z"
-        val readme = s"# $title\n"
-        val mod    = WebsiteModule("kyo-ctrl", "Foundation", "kyo-ctrl", readme, WebsiteModule.Platforms.everywhere)
+        val ctrl1   = 0x01.toChar.toString // should become 
+        val ctrl1f  = 0x1f.toChar.toString // should become
+        val title   = s"x${ctrl1}y${ctrl1f}z"
+        val readme  = s"# $title\n"
+        val mod     = WebsiteModule("kyo-ctrl", "Foundation", "kyo-ctrl", readme, WebsiteModule.Platforms.everywhere)
         val content =
             WebsiteContent("intro", Chunk(WebsiteContent.Group("Foundation", Chunk(mod))), WebsiteVersion("v1.0.0", "1.0.0", true))
         for
@@ -1569,9 +1569,9 @@ class WebsiteGeneratorTest extends WebsiteTest:
     "escJson leaves plain ASCII and unicode above 0x20 unchanged" in {
         // A title with plain ASCII text and non-control unicode chars must pass through
         // escJson unmodified (the default arm of the match just appends the char).
-        val title  = "Aborté日本語" // "Aborté日本語"
-        val readme = s"# $title\n"
-        val mod    = WebsiteModule("kyo-uni", "Foundation", "kyo-uni", readme, WebsiteModule.Platforms.everywhere)
+        val title   = "Aborté日本語" // "Aborté日本語"
+        val readme  = s"# $title\n"
+        val mod     = WebsiteModule("kyo-uni", "Foundation", "kyo-uni", readme, WebsiteModule.Platforms.everywhere)
         val content =
             WebsiteContent("intro", Chunk(WebsiteContent.Group("Foundation", Chunk(mod))), WebsiteVersion("v1.0.0", "1.0.0", true))
         for
@@ -1617,8 +1617,8 @@ class WebsiteGeneratorTest extends WebsiteTest:
 
     "a missing MANIFESTO.md aborts the emit (the manifesto is required, not optional)" in {
         for
-            out       <- tmpDir
-            bundleDir <- stubBundleDir
+            out         <- tmpDir
+            bundleDir   <- stubBundleDir
             noManifesto <- Scope.acquireRelease(
                 Sync.defer(java.nio.file.Files.createTempDirectory("kyo-no-manifesto"))
             )(d => Sync.defer(deleteDir(d))).map(d => Path(d.toString))

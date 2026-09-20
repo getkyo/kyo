@@ -59,7 +59,7 @@ class StandardClasspathFidelityTest extends kyo.test.Test[Any]:
     }
 
     "standard classpath cold-init is stable across repeated loads (>= 80,000 symbols each)" in {
-        val roots = TestClasspaths2.standardRoots
+        val roots                                   = TestClasspaths2.standardRoots
         def load: Int < (Async & Abort[TastyError]) =
             TestClasspaths.withClasspath(roots)(Tasty.classpath).map { classpath =>
                 // >= 80,000: the standard classpath measures ~80,321 after finalizeMerge's package dedup collapses

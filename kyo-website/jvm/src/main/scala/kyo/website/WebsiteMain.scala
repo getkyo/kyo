@@ -46,14 +46,14 @@ object WebsiteMain extends KyoApp:
         for
             repoRoot  <- parseRepoRoot(theArgs)
             bundleDir <- parseBundleDir(theArgs, repoRoot)
-            _ <- Console.printLine(
+            _         <- Console.printLine(
                 s"WebsiteMain: out=$outDir bundleDir=$bundleDir repoRoot=$repoRoot"
             )
             version <- currentVersion(repoRoot)
-            result <- Abort.run[WebsiteException](
+            result  <- Abort.run[WebsiteException](
                 for
                     content <- parseContent(theArgs, repoRoot, version)
-                    _ <- WebsiteGenerator.emit(
+                    _       <- WebsiteGenerator.emit(
                         content,
                         Path(outDir),
                         WebsiteGenerator.Config(Path(repoRoot), Path(bundleDir))
@@ -136,7 +136,7 @@ object WebsiteMain extends KyoApp:
         Frame
     ): Chunk[WebsiteContent] < (Sync & Abort[WebsiteException]) =
         flagValue(theArgs, "--content") match
-            case Absent => Chunk.empty
+            case Absent       => Chunk.empty
             case Present(dir) =>
                 for
                     tagDirs <- listSnapshotDirs(Path(dir), currentTag)
@@ -240,7 +240,7 @@ object WebsiteMain extends KyoApp:
     private[website] def parseBundleDir(theArgs: Chunk[String], repoRoot: String)(using Frame): String < (Sync & Abort[WebsiteException]) =
         flagValue(theArgs, "--bundle-dir") match
             case Present(dir) => dir
-            case Absent =>
+            case Absent       =>
                 Abort.run[FileSystemException](discoverBundleDir(repoRoot)).map {
                     case Result.Success(dir) => dir
                     case Result.Failure(e)   => Abort.fail(WebsiteEmitException("bundle-dir discovery", e))
@@ -269,7 +269,7 @@ object WebsiteMain extends KyoApp:
         Path.runReadOnly {
             targetDir.isDirectory.map {
                 case false => fallback.toString
-                case true =>
+                case true  =>
                     for
                         scalaDirs   <- childDirsMatching(targetDir, _.startsWith("scala-"))
                         optDirs     <- Kyo.foreach(scalaDirs)(childDirsMatching(_, _.endsWith("-opt"))).map(_.flattenChunk)
@@ -291,7 +291,7 @@ object WebsiteMain extends KyoApp:
     private[website] def parseRepoRoot(theArgs: Chunk[String])(using Frame): String < (Sync & Abort[WebsiteException]) =
         flagValue(theArgs, "--repo-root") match
             case Present(dir) => dir
-            case Absent =>
+            case Absent       =>
                 Abort.run[FileSystemException](discoverRepoRoot()).map {
                     case Result.Success(dir) => dir
                     case Result.Failure(e)   => Abort.fail(WebsiteEmitException("repo-root discovery", e))
@@ -302,11 +302,11 @@ object WebsiteMain extends KyoApp:
 
     private def discoverRepoRoot()(using Frame): String < (Sync & Abort[FileSystemException]) =
         System.property[String]("user.dir", ".").map { userDir =>
-            val start                                 = Path(userDir)
-            def isRoot(dir: Path): Boolean < PathRead = (dir / "build.sbt").isRegularFile
+            val start                                     = Path(userDir)
+            def isRoot(dir: Path): Boolean < PathRead     = (dir / "build.sbt").isRegularFile
             def walkUp(dir: Path): Maybe[Path] < PathRead =
                 isRoot(dir).map {
-                    case true => Present(dir)
+                    case true  => Present(dir)
                     case false =>
                         dir.parent match
                             case Present(p) => walkUp(p)

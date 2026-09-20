@@ -104,11 +104,11 @@ class MysqlCancelExchangeSidecarTest extends kyo.Test:
 
         def loop(id: Long, carry: Chunk[Byte]): Unit < Async =
             readPacket(conn, carry).flatMap {
-                case Absent => report(s"closed:$id")
+                case Absent                        => report(s"closed:$id")
                 case Present((seq, payload, rest)) =>
                     val command = payload.headMaybe.map(_ & 0xff).getOrElse(-1)
                     if command == 0x03 then
-                        val sql = new String(payload.drop(1).toArray, StandardCharsets.UTF_8)
+                        val sql    = new String(payload.drop(1).toArray, StandardCharsets.UTF_8)
                         val answer = killError match
                             case Present((code, sqlState)) => errPacket(seq + 1, code, sqlState, "refused by the fake server")
                             case Absent                    => okPacket(seq + 1)
@@ -125,7 +125,7 @@ class MysqlCancelExchangeSidecarTest extends kyo.Test:
             report(s"accepted:$id").andThen {
                 Abort.run[Closed](conn.outbound.safe.put(Span.from(handshakeV10(id)))).andThen {
                     readPacket(conn, Chunk.empty).flatMap {
-                        case Absent => report(s"closed:$id")
+                        case Absent                => report(s"closed:$id")
                         case Present((_, _, rest)) =>
                             report(s"authenticated:$id").andThen {
                                 Abort.run[Closed](conn.outbound.safe.put(Span.from(okPacket(2)))).andThen(loop(id, rest))

@@ -65,7 +65,7 @@ class BrowserRunnerTest extends kyo.test.Test[Any]:
             inbox.get.map { queued =>
                 queued.headMaybe match
                     case Present(message) => inbox.set(queued.drop(1)).andThen(message)
-                    case Absent =>
+                    case Absent           =>
                         connection.inbound.safe.take.map { bytes =>
                             decoder.get.map { current =>
                                 current.feed(bytes) match
@@ -101,7 +101,7 @@ class BrowserRunnerTest extends kyo.test.Test[Any]:
     )(test: Session => Unit < (Async & Abort[Closed]))(using Frame): Outcome < (Async & Abort[Any] & Scope) =
         unsupportedPlatform match
             case Present(reason) => Sync.defer(cancel(reason))
-            case Absent =>
+            case Absent          =>
                 for
                     dir      <- Path.run(Path.tempDir("kyo-test-browser-run-"))
                     _        <- Kyo.foreachDiscard(files.toSeq)((name, content) => Path.run((dir / name).write(content)))

@@ -90,7 +90,7 @@ object AttributeUnpickler:
                 case TastyFormat.WITHPUREFUNSattr          => () // not surfaced, skip
                 case TastyFormat.JAVAattr                  => isJava = true
                 case TastyFormat.OUTLINEattr               => isOutline = true
-                case TastyFormat.SOURCEFILEattr =>
+                case TastyFormat.SOURCEFILEattr            =>
                     val nameRef = view.readNat() // 0-based NameRef
                     sourceFile = Present(names(nameRef).asString)
                 case unknown =>

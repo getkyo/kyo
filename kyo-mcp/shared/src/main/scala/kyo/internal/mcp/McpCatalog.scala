@@ -63,7 +63,7 @@ final private[kyo] class McpCatalog(val handlers: Seq[McpHandler[?, ?, ?]]):
     def autoDeriveServerCapabilities(config: McpConfig): McpCapabilities.Server =
         config.declaredCapabilities match
             case Present(c) => c
-            case Absent =>
+            case Absent     =>
                 McpCapabilities.Server(
                     tools =
                         if toolHandlers.nonEmpty then

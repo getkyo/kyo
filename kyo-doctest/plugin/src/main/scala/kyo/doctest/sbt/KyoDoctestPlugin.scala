@@ -191,7 +191,7 @@ object KyoDoctestPlugin extends AutoPlugin {
       */
     private[sbt] def reconcileClasspath(base: Seq[File], extra: Seq[File]): Seq[File] = {
         val extraScala3Lib = extra.find(f => scala3LibPattern.findFirstIn(f.getName).isDefined).map(_.getName)
-        val keptBase = extraScala3Lib match {
+        val keptBase       = extraScala3Lib match {
             case Some(keepName) =>
                 base.filterNot(f => scala3LibPattern.findFirstIn(f.getName).isDefined && f.getName != keepName)
             case None => base
@@ -201,7 +201,7 @@ object KyoDoctestPlugin extends AutoPlugin {
 
     override lazy val projectSettings: Seq[Setting[?]] = Seq(
         doctestExtraClasspath := Seq.empty,
-        doctestSources := {
+        doctestSources        := {
             val base   = baseDirectory.value
             val direct = base / "README.md"
             val parent = base / ".." / "README.md"
@@ -227,7 +227,7 @@ object KyoDoctestPlugin extends AutoPlugin {
         // compilation) size themselves to that number. Keeps a fork's CPU
         // contribution bounded to ~2 cores regardless of the host's core count.
         doctestForkJavaOptions := Seq("-Xmx8G", "-Xss10M", "-XX:ActiveProcessorCount=2"),
-        doctest := Def.task {
+        doctest                := Def.task {
             val log         = streams.value.log
             val sources     = doctestSources.value
             val baseCp      = (Test / fullClasspath).value.files

@@ -269,7 +269,7 @@ final private[kyo] class YamlWriter private (private var config: Yaml.WriterConf
 
     private def appendFloat(value: Float): Unit =
         val written = Ryu.RyuFloat.write(value, numericBuffer, 0, numericBuffer.length)
-        val end =
+        val end     =
             if written < 0 then
                 numericBuffer = java.util.Arrays.copyOf(numericBuffer, -written)
                 Ryu.RyuFloat.write(value, numericBuffer, 0, numericBuffer.length)
@@ -279,7 +279,7 @@ final private[kyo] class YamlWriter private (private var config: Yaml.WriterConf
 
     private def appendDouble(value: Double): Unit =
         val written = Ryu.RyuDouble.write(value, numericBuffer, 0, numericBuffer.length)
-        val end =
+        val end     =
             if written < 0 then
                 numericBuffer = java.util.Arrays.copyOf(numericBuffer, -written)
                 Ryu.RyuDouble.write(value, numericBuffer, 0, numericBuffer.length)
@@ -342,11 +342,11 @@ final private[kyo] class YamlWriter private (private var config: Yaml.WriterConf
         @tailrec def loop(i: Int): Unit =
             if i < value.length then
                 value.charAt(i) match
-                    case '"'  => out.append("\\\"")
-                    case '\\' => out.append("\\\\")
-                    case '\n' => out.append("\\n")
-                    case '\r' => out.append("\\r")
-                    case '\t' => out.append("\\t")
+                    case '"'          => out.append("\\\"")
+                    case '\\'         => out.append("\\\\")
+                    case '\n'         => out.append("\\n")
+                    case '\r'         => out.append("\\r")
+                    case '\t'         => out.append("\\t")
                     case c if c < ' ' =>
                         out.append("\\u")
                         out.append(YamlWriter.Hex.charAt((c >> 12) & 0xf))
@@ -417,9 +417,9 @@ final private[kyo] class YamlWriter private (private var config: Yaml.WriterConf
 
     private def chompingIndicator(value: String): String =
         config.chomping match
-            case Chomping.Strip => "-"
-            case Chomping.Keep  => "+"
-            case Chomping.Clip  => ""
+            case Chomping.Strip    => "-"
+            case Chomping.Keep     => "+"
+            case Chomping.Clip     => ""
             case Chomping.Preserve =>
                 if !value.endsWith("\n") then "-"
                 else if trailingNewlineCount(value) > 1 then "+"

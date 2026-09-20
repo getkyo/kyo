@@ -68,7 +68,7 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
         "buffered request transmits one scoped boundary in both header and body" in {
             val uuid      = UUID.parse("00112233-4455-4677-a899-aabbccddeeff").getOrThrow
             val generator = new FixedUUIDGenerator(uuid)
-            val route = HttpRoute.postRaw("buffered-multipart")
+            val route     = HttpRoute.postRaw("buffered-multipart")
                 .request(_.bodyMultipart)
                 .response(_.bodyText)
             val endpoint = route.handler { request =>
@@ -97,7 +97,7 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
         "streaming request transmits one scoped boundary in both header and body" in {
             val uuid      = UUID.parse("ffeeddcc-bbaa-4988-b766-554433221100").getOrThrow
             val generator = new FixedUUIDGenerator(uuid)
-            val route = HttpRoute.postRaw("streaming-multipart")
+            val route     = HttpRoute.postRaw("streaming-multipart")
                 .request(_.bodyMultipartStream)
                 .response(_.bodyText)
             val endpoint = route.handler { request =>
@@ -127,13 +127,13 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
         }
 
         "303 follow-up GET does not generate a second multipart boundary" in {
-            val uuid      = UUID.parse("00112233-4455-4677-a899-aabbccddeeff").getOrThrow
-            val generator = new FixedUUIDGenerator(uuid)
+            val uuid       = UUID.parse("00112233-4455-4677-a899-aabbccddeeff").getOrThrow
+            val generator  = new FixedUUIDGenerator(uuid)
             val startRoute = HttpRoute.postRaw("multipart-start")
                 .request(_.bodyMultipart)
                 .response(_.bodyText)
             val seenRoute = HttpRoute.getRaw("multipart-seen").response(_.bodyText)
-            val redirect = startRoute.handler { _ =>
+            val redirect  = startRoute.handler { _ =>
                 HttpResponse.halt(HttpResponse(HttpStatus.SeeOther).setHeader("Location", "/multipart-seen"))
             }
             val seen = seenRoute.handler { request =>
@@ -250,7 +250,7 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
     // ---------------------------------------------------------------------------
     "send buffered response with chunked encoding" in {
         val route = HttpRoute.getRaw("chunked").response(_.bodyText)
-        val ep = route.handler { _ =>
+        val ep    = route.handler { _ =>
             // Server sends chunked Transfer-Encoding automatically for streaming handlers
             HttpResponse.ok("chunked-body")
         }
@@ -353,7 +353,7 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
     // ---------------------------------------------------------------------------
     "send streaming response — body stream constructed" in {
         val route = HttpRoute.getRaw("stream").response(_.bodyStream)
-        val ep = route.handler { _ =>
+        val ep    = route.handler { _ =>
             val chunks = Stream.init(Seq(
                 Span.fromUnsafe("hello ".getBytes("UTF-8")),
                 Span.fromUnsafe("world".getBytes("UTF-8"))
@@ -389,7 +389,7 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
     "send streaming response with initial bytes in header chunk" in {
         val body  = "x" * 1000 // large enough to likely span multiple reads
         val route = HttpRoute.getRaw("bigstream").response(_.bodyStream)
-        val ep = route.handler { _ =>
+        val ep    = route.handler { _ =>
             val chunks = Stream.init(Seq(Span.fromUnsafe(body.getBytes("UTF-8"))))
             HttpResponse.ok.addField("body", chunks)
         }
@@ -445,7 +445,7 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
     "default Host header omits port for http on port 80" in {
         // HttpConnection.hostHeaderValue should be just "localhost" not "localhost:80"
         val route = HttpRoute.getRaw("host-check").response(_.bodyText)
-        val ep = route.handler { req =>
+        val ep    = route.handler { req =>
             val hostHeader = req.headers.get("Host").getOrElse("")
             HttpResponse.ok(hostHeader)
         }
@@ -468,7 +468,7 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
     // ---------------------------------------------------------------------------
     "non-default Host header includes port" in {
         val route = HttpRoute.getRaw("host").response(_.bodyText)
-        val ep = route.handler { req =>
+        val ep    = route.handler { req =>
             val hostHeader = req.headers.get("Host").getOrElse("")
             HttpResponse.ok(hostHeader)
         }
@@ -511,7 +511,7 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
         // Integration test: server sends partial body then closes connection
         // A handler that sends 5 bytes but claims Content-Length: 100
         val route = HttpRoute.getRaw("partial").response(_.bodyText)
-        val ep = route.handler { _ =>
+        val ep    = route.handler { _ =>
             // Return a short body — the client expects more bytes based on Content-Length
             HttpResponse.ok("short")
         }
@@ -529,7 +529,7 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
                 discard(inbound.offer(Span.fromUnsafe(responseHdr.getBytes(StandardCharsets.US_ASCII))))
 
                 val parsedFiber = http1.send(HttpMethod.GET, "/", HttpHeaders.empty, Span.empty)
-                val parsed = parsedFiber.poll() match
+                val parsed      = parsedFiber.poll() match
                     case Present(Result.Success(pr)) => pr
                     case other                       => fail(s"Expected synchronous parse, got: $other")
 

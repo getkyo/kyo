@@ -14,7 +14,7 @@ private[kyo] object TreeShow:
         tree match
             case Tasty.Tree.Ident(name, _)        => name.asString
             case Tasty.Tree.Select(qual, name, _) => s"${show(qual, classpath)}.${name.asString}"
-            case Tasty.Tree.Apply(fun, args) =>
+            case Tasty.Tree.Apply(fun, args)      =>
                 s"${show(fun, classpath)}(${args.map(show(_, classpath)).mkString(", ")})"
             case Tasty.Tree.TypeApply(fun, args) =>
                 s"${show(fun, classpath)}[${args.map(showType(_, classpath)).mkString(", ")}]"
@@ -33,22 +33,22 @@ private[kyo] object TreeShow:
             case Tasty.Tree.Literal(c)       => c.show
             case Tasty.Tree.New(tpe)         => s"new ${showType(tpe, classpath)}"
             case Tasty.Tree.Assign(lhs, rhs) => s"${show(lhs, classpath)} = ${show(rhs, classpath)}"
-            case Tasty.Tree.Return(expr, _) =>
+            case Tasty.Tree.Return(expr, _)  =>
                 expr match
                     case kyo.Maybe.Present(e) => s"return ${show(e, classpath)}"
                     case kyo.Maybe.Absent     => "return"
-            case Tasty.Tree.Throw(expr)         => s"throw ${show(expr, classpath)}"
-            case Tasty.Tree.Lambda(method, _)   => s"<lambda:${show(method, classpath)}>"
-            case Tasty.Tree.Typed(expr, tpe)    => s"(${show(expr, classpath)}: ${showType(tpe, classpath)})"
-            case Tasty.Tree.Inlined(_, _, body) => s"<inlined:${show(body, classpath)}>"
+            case Tasty.Tree.Throw(expr)           => s"throw ${show(expr, classpath)}"
+            case Tasty.Tree.Lambda(method, _)     => s"<lambda:${show(method, classpath)}>"
+            case Tasty.Tree.Typed(expr, tpe)      => s"(${show(expr, classpath)}: ${showType(tpe, classpath)})"
+            case Tasty.Tree.Inlined(_, _, body)   => s"<inlined:${show(body, classpath)}>"
             case Tasty.Tree.Try(expr, cases, fin) =>
                 val finStr = fin match
                     case kyo.Maybe.Present(f) => s" finally ${show(f, classpath)}"
                     case kyo.Maybe.Absent     => ""
                 s"try ${show(expr, classpath)} catch { ... }$finStr"
-            case Tasty.Tree.While(cond, body) => s"while ${show(cond, classpath)} do ${show(body, classpath)}"
-            case Tasty.Tree.Bind(name, pat)   => s"${name.asString} @ ${show(pat, classpath)}"
-            case Tasty.Tree.Alternative(pats) => pats.map(show(_, classpath)).mkString(" | ")
+            case Tasty.Tree.While(cond, body)     => s"while ${show(cond, classpath)} do ${show(body, classpath)}"
+            case Tasty.Tree.Bind(name, pat)       => s"${name.asString} @ ${show(pat, classpath)}"
+            case Tasty.Tree.Alternative(pats)     => pats.map(show(_, classpath)).mkString(" | ")
             case Tasty.Tree.Unapply(fun, _, pats) =>
                 s"${show(fun, classpath)}(${pats.map(show(_, classpath)).mkString(", ")})"
             case Tasty.Tree.ValDef(symbol, tpt, _) =>
@@ -68,7 +68,7 @@ private[kyo] object TreeShow:
             case Tasty.Tree.RecType(parent)             => s"<rec:${show(parent, classpath)}>"
             case Tasty.Tree.SuperType(a, b)             => s"${show(a, classpath)} super ${show(b, classpath)}"
             case Tasty.Tree.RefinedType(parent, n, _)   => s"${show(parent, classpath)} { ${n.asString} }"
-            case Tasty.Tree.AppliedType(tycon, args) =>
+            case Tasty.Tree.AppliedType(tycon, args)    =>
                 s"${show(tycon, classpath)}[${args.map(show(_, classpath)).mkString(", ")}]"
             case Tasty.Tree.TypeBounds(lo, hi)            => s"${show(lo, classpath)} .. ${show(hi, classpath)}"
             case Tasty.Tree.AnnotatedType(parent, _)      => show(parent, classpath)

@@ -97,9 +97,8 @@ object Choice:
       */
     def run[A, S](v: A < (Choice & S))(using Frame): Chunk[A] < S =
         ArrowEffect.handle(Tag[Choice], v.map(Chunk[A](_))) {
-            [C] =>
-                (input, cont) =>
-                    Kyo.foreach(Chunk.from(input))(v => Choice.run(cont(v))).map(_.flattenChunk.flattenChunk)
+            [C] => (input, cont) =>
+                Kyo.foreach(Chunk.from(input))(v => Choice.run(cont(v))).map(_.flattenChunk.flattenChunk)
         }
 
     /** Handles the Choice effect by streaming all possible outcomes incrementally.

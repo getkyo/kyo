@@ -49,7 +49,7 @@ class NioTransportTlsConfigTest extends Test:
     "a verifying client with an unreadable configured caCertPath fails with NetTlsConfigException" in {
         Sync.defer {
             val path = unreadablePath()
-            val ex = intercept[NetTlsConfigException](discard(NioTransport.createSslContext(
+            val ex   = intercept[NetTlsConfigException](discard(NioTransport.createSslContext(
                 NetTlsConfig(caCertPath = Present(path)),
                 isServer = false
             )))
@@ -65,7 +65,7 @@ class NioTransportTlsConfigTest extends Test:
     "a verifying client with a readable caCertPath holding no certificate fails with NetTlsConfigException" in {
         Sync.defer {
             val path = certificateFreePath()
-            val ex = intercept[NetTlsConfigException](discard(NioTransport.createSslContext(
+            val ex   = intercept[NetTlsConfigException](discard(NioTransport.createSslContext(
                 NetTlsConfig(caCertPath = Present(path)),
                 isServer = false
             )))
@@ -156,7 +156,7 @@ class NioTransportTlsConfigTest extends Test:
                     listener.close()
                     result match
                         case Result.Failure(_: NetTlsConfigException) => succeed
-                        case Result.Success(conn) =>
+                        case Result.Success(conn)                     =>
                             conn.close()
                             fail("a connect with an unreadable configured caCertPath must not succeed")
                         case other =>

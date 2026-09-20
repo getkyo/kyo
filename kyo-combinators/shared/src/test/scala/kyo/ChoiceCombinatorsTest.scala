@@ -39,7 +39,7 @@ class ChoiceCombinatorTest extends kyo.test.Test[Any]:
             }
 
             "should iterate using collect" in {
-                var state = 0
+                var state  = 0
                 val effect = Kyo.collect(1 to 10) { i =>
                     Sync.defer(Maybe.when(i % 2 == 0) { { state += i; i * 2 } })
                 }

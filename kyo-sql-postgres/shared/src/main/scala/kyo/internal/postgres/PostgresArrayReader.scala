@@ -258,11 +258,10 @@ final class PostgresArrayReader(bytes: Span[Byte], format: Format, readerFrame: 
     // --- Internal helpers ---
 
     private def readInt32BE(): Int =
-        val v =
-            ((bytes(pos) & 0xff) << 24) |
-                ((bytes(pos + 1) & 0xff) << 16) |
-                ((bytes(pos + 2) & 0xff) << 8) |
-                (bytes(pos + 3) & 0xff)
+        val v = ((bytes(pos) & 0xff) << 24) |
+            ((bytes(pos + 1) & 0xff) << 16) |
+            ((bytes(pos + 2) & 0xff) << 8) |
+            (bytes(pos + 3) & 0xff)
         pos += 4
         v
     end readInt32BE

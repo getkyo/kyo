@@ -405,13 +405,13 @@ object JsonRpcEndpointImpl:
                                                                             Clock.use { clock =>
                                                                                 Sync.Unsafe.defer {
                                                                                     Maybe(progressStreams.get(token)) match
-                                                                                        case Absent => ()
+                                                                                        case Absent      => ()
                                                                                         case Present(ch) =>
                                                                                             ch.unsafe.offer(paramsVal)(using
                                                                                                 AllowUnsafe.embrace.danger,
                                                                                                 frame
                                                                                             ) match
-                                                                                                case Result.Success(true) => ()
+                                                                                                case Result.Success(true)  => ()
                                                                                                 case Result.Success(false) =>
                                                                                                     bug(
                                                                                                         s"progress channel offer returned false for token=$token; buffer full or queue race ; the value was silently dropped"
@@ -451,7 +451,7 @@ object JsonRpcEndpointImpl:
                                                                             // Build the per-notification cancel signal inside the deferred boundary (ambient AllowUnsafe).
                                                                             Sync.Unsafe.defer {
                                                                                 val cancelledUnsafe = Promise.Unsafe.init[Unit, Sync]()
-                                                                                val ctx =
+                                                                                val ctx             =
                                                                                     new JsonRpcRoute.Context(
                                                                                         cancelledUnsafe.safe,
                                                                                         Absent,
@@ -589,7 +589,7 @@ object JsonRpcEndpointImpl:
                                                                 // Starts once every notification that arrived before this request has been
                                                                 // handled (see notificationTail).
                                                                 val precedingNotifications = notificationTail.get().unsafe.mask().safe
-                                                                val handlerEffect =
+                                                                val handlerEffect          =
                                                                     precedingNotifications.getResult.andThen(
                                                                         m.handle(params.getOrElse(Structure.Value.Null), ctx)(using frame)
                                                                     )

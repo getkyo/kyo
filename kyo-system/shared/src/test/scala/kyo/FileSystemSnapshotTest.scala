@@ -99,8 +99,8 @@ end FileSystemSnapshotTest
 private[kyo] object FileSystemSnapshotValues:
     val globMatrix: String =
         "*.txt|alpha.txt=true|nested/alpha.txt=false\n**/*.txt|alpha.txt=true|nested/alpha.txt=true\n*.TXT|alpha.txt=false|ALPHA.TXT=true"
-    val normalizedTree: String = "root/\nroot/a.txt=a\nroot/nested/\nroot/nested/b.txt=b"
-    val watchTrace: String     = "Created(root/a.txt)\nModified(root/a.txt)\nRemoved(root/a.txt)"
+    val normalizedTree: String   = "root/\nroot/a.txt=a\nroot/nested/\nroot/nested/b.txt=b"
+    val watchTrace: String       = "Created(root/a.txt)\nModified(root/a.txt)\nRemoved(root/a.txt)"
     val normalizedErrors: String =
         "Read|root/missing.txt|FileNotFoundException\nWrite|root/missing/value.txt|FileNotFoundException\nCreate|root/a.txt|FileAlreadyExistsException"
 end FileSystemSnapshotValues

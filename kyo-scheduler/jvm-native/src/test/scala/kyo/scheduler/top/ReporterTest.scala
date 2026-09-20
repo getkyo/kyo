@@ -40,7 +40,7 @@ class ReporterTest extends AnyFreeSpec with NonImplicitAssertions {
 
     "topStatusFile sink" - {
         "writes the compact status line on its dedicated thread" in {
-            val path = File.createTempFile("kyo-sched-reporter", ".status").getAbsolutePath
+            val path     = File.createTempFile("kyo-sched-reporter", ".status").getAbsolutePath
             val reporter =
                 new Reporter(() => status, enableTopJMX = false, enableTopConsoleMs = 0, topStatusFile = path, topStatusFileMs = 10)
             try {

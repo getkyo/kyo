@@ -165,7 +165,7 @@ final class ProtobufReader(data: Array[Byte])(using _frame: Frame) extends Reade
     end fieldParse
 
     override def matchField(nameBytes: Array[Byte]): Boolean =
-        val name = new String(nameBytes, java.nio.charset.StandardCharsets.UTF_8)
+        val name     = new String(nameBytes, java.nio.charset.StandardCharsets.UTF_8)
         val resolved =
             if fieldIdOverrides.isEmpty then CodecMacro.fieldId(name)
             else fieldIdOverrides.getOrElse(name, CodecMacro.fieldId(name))
@@ -183,7 +183,7 @@ final class ProtobufReader(data: Array[Byte])(using _frame: Frame) extends Reade
 
     def hasNextElement(): Boolean =
         repeatedFrames match
-            case Nil => hasNextField()
+            case Nil        => hasNextField()
             case frame :: _ =>
                 if frame.packed && pos >= frame.packedLimit then
                     frame.packed = false // packed run exhausted; a mixed producer may continue
@@ -429,7 +429,7 @@ final class ProtobufReader(data: Array[Byte])(using _frame: Frame) extends Reade
 
     def hasNextEntry(): Boolean =
         mapFrames match
-            case Nil => hasNextField()
+            case Nil    => hasNextField()
             case f :: _ =>
                 if f.entryLimitPushed then
                     // Finished the previous entry: drop its limit and return to the map level.
@@ -562,7 +562,6 @@ final class ProtobufReader(data: Array[Byte])(using _frame: Frame) extends Reade
         val v = n.toInt
         ((v >>> 1) ^ -(v & 1))
 
-    private def decodeZigZag64(n: Long): Long =
-        ((n >>> 1) ^ -(n & 1))
+    private def decodeZigZag64(n: Long): Long = ((n >>> 1) ^ -(n & 1))
 
 end ProtobufReader

@@ -25,8 +25,8 @@ class MachineTest extends kyo.test.Test[Any]:
       * dereference entirely and stays genuinely cross-platform.
       */
     private def machineKeys(): Set[List[String]] =
-        val registry = kyo.stats.internal.StatsRegistry.internal
-        val keys     = collection.mutable.HashSet.empty[List[String]]
+        val registry                                           = kyo.stats.internal.StatsRegistry.internal
+        val keys                                               = collection.mutable.HashSet.empty[List[String]]
         def collect(map: java.util.Map[List[String], ?]): Unit =
             map.keySet().forEach { k =>
                 if k.headOption.contains("machine") then discard(keys.add(k))

@@ -1496,10 +1496,10 @@ object UI:
             selected: Maybe[Boolean] = Absent
         )(using val frame: Frame) extends Block:
             type Self = Opt
-            def withAttrs(a: Attrs): Opt      = copy(attrs = a)
-            def apply(cs: HtmlChildVal*): Opt = copy(children = children ++ Chunk.from(cs.map(_.value)))
-            def value(v: String): Opt         = copy(value = Present(v))
-            def selected(v: Boolean): Opt     = copy(selected = Present(v))
+            def withAttrs(a: Attrs): Opt                     = copy(attrs = a)
+            def apply(cs: HtmlChildVal*): Opt                = copy(children = children ++ Chunk.from(cs.map(_.value)))
+            def value(v: String): Opt                        = copy(value = Present(v))
+            def selected(v: Boolean): Opt                    = copy(selected = Present(v))
             def selected(v: Signal[Boolean]): Reactive[Self] =
                 given Frame = frame
                 Reactive[Self](v.map(b => this.selected(b): UI))
@@ -1865,9 +1865,9 @@ object UI:
             target: Maybe[Target] = Absent
         )(using val frame: Frame) extends Inline with Interactive with Focusable with Activatable with Clickable:
             type Self = Anchor
-            def withAttrs(a: Attrs): Anchor      = copy(attrs = a)
-            def apply(cs: HtmlChildVal*): Anchor = copy(children = children ++ Chunk.from(cs.map(_.value)))
-            def href(v: Href): Anchor            = copy(href = Present(v))
+            def withAttrs(a: Attrs): Anchor           = copy(attrs = a)
+            def apply(cs: HtmlChildVal*): Anchor      = copy(children = children ++ Chunk.from(cs.map(_.value)))
+            def href(v: Href): Anchor                 = copy(href = Present(v))
             def href(v: Signal[Href]): Reactive[Self] =
                 given Frame = frame
                 Reactive[Self](v.map(h => this.href(h): UI))
@@ -1881,8 +1881,8 @@ object UI:
             alt: Maybe[String] = Absent
         )(using val frame: Frame) extends Inline with Void:
             type Self = Img
-            def withAttrs(a: Attrs): Img = copy(attrs = a)
-            def src(v: ImgSrc): Img      = copy(src = Present(v))
+            def withAttrs(a: Attrs): Img               = copy(attrs = a)
+            def src(v: ImgSrc): Img                    = copy(src = Present(v))
             def src(v: Signal[ImgSrc]): Reactive[Self] =
                 given Frame = frame
                 Reactive[Self](v.map(s => this.src(s): UI))
@@ -1896,8 +1896,8 @@ object UI:
             frameTitle: Maybe[String] = Absent
         )(using val frame: Frame) extends Block with Void:
             type Self = Iframe
-            def withAttrs(a: Attrs): Iframe = copy(attrs = a)
-            def src(v: String): Iframe      = copy(src = Present(v))
+            def withAttrs(a: Attrs): Iframe            = copy(attrs = a)
+            def src(v: String): Iframe                 = copy(src = Present(v))
             def src(v: Signal[String]): Reactive[Self] =
                 given Frame = frame
                 Reactive[Self](v.map(s => this.src(s): UI))

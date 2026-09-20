@@ -186,7 +186,7 @@ final class Admission(
       * help determine when the system is under pressure and needs to adjust its admission rate.
       */
     final private class ProbeTask extends Task {
-        val start = nowMillis.getAsLong()
+        val start                                                        = nowMillis.getAsLong()
         def run(startMillis: Long, clock: InternalClock, deadline: Long) = {
             // Record the scheduling delay
             measure(nowMillis.getAsLong() - start)

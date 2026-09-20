@@ -32,8 +32,8 @@ class PortableZipTest extends kyo.test.Test[Any]:
     ): Array[Byte] =
         val deflater = new PortableZip.Deflater(level, noWrap)
         deflater.setStrategy(strategy)
-        val out    = Array.newBuilder[Byte]
-        val buffer = new Array[Byte](chunk)
+        val out           = Array.newBuilder[Byte]
+        val buffer        = new Array[Byte](chunk)
         def drain(): Unit =
             var n = deflater.deflate(buffer, 0, buffer.length, flush)
             while n > 0 do
@@ -300,19 +300,18 @@ class PortableZipTest extends kyo.test.Test[Any]:
             // on: the data back, other data with a checksum that catches it, or a DataFormatException. Anything
             // else is the decoder reading somewhere it should not, which is what an incomplete or over-subscribed
             // code table used to let a damaged stream do.
-            val clean = jdkDeflate(prose)
-            val leaked =
-                (0 until clean.length).flatMap { at =>
-                    val damaged = clean.clone()
-                    damaged(at) = (damaged(at) ^ 0x5a).toByte
-                    try
-                        val _ = portableInflate(damaged)
-                        None
-                    catch
-                        case _: PortableZip.DataFormatException => None
-                        case other: Throwable                   => Some(s"byte $at: ${other.getClass.getName}")
-                    end try
-                }
+            val clean  = jdkDeflate(prose)
+            val leaked = (0 until clean.length).flatMap { at =>
+                val damaged = clean.clone()
+                damaged(at) = (damaged(at) ^ 0x5a).toByte
+                try
+                    val _ = portableInflate(damaged)
+                    None
+                catch
+                    case _: PortableZip.DataFormatException => None
+                    case other: Throwable                   => Some(s"byte $at: ${other.getClass.getName}")
+                end try
+            }
             assert(leaked.isEmpty, leaked.take(5).mkString(", "))
         }
 

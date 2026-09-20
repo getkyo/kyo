@@ -33,7 +33,7 @@ class InstantJdkTest extends kyo.test.Test[Any]:
         val cycles     = (-100000L to -99995L) ++ (-3L to 3L) ++ (99995L to 100000L)
         val cycleEdges = cycles.map(_ * SecondsPer10000Years - Seconds0000To1970)
         val around     = Seq(-1L, 0L, 1L, 86399L, 86400L)
-        val points = Seq(0L, -1L, 1L, MinSecond, MaxSecond, -Seconds0000To1970, -Seconds0000To1970 - 1, -Seconds0000To1970 + 1) ++
+        val points     = Seq(0L, -1L, 1L, MinSecond, MaxSecond, -Seconds0000To1970, -Seconds0000To1970 - 1, -Seconds0000To1970 + 1) ++
             cycleEdges.filter(s => s > MinSecond + 86400 && s < MaxSecond - 86400)
         points.flatMap(p => around.map(p + _)).filter(s => s >= MinSecond && s <= MaxSecond).distinct
     end secondCorners
@@ -198,7 +198,7 @@ class InstantJdkTest extends kyo.test.Test[Any]:
 
         "for every single-character mutation of valid texts" in {
             val alphabet = "0123456789-+:.TZtz ,x"
-            val seeds = Seq(
+            val seeds    = Seq(
                 "2024-02-29T23:59:60.123456789Z",
                 "+10000-12-31T24:00:00-18:00",
                 "-0001-01-01T00:00:00.5+01:00:30",
@@ -237,13 +237,13 @@ class InstantJdkTest extends kyo.test.Test[Any]:
     private def generatedInstantText(r: SplittableRandom): String =
         val yearDigits = 1 + r.nextInt(11)
         val year       = (1 to yearDigits).map(_ => ('0' + r.nextInt(10)).toChar).mkString
-        val sign = r.nextInt(3) match
+        val sign       = r.nextInt(3) match
             case 0 => "";
             case 1 => "+";
             case _ => "-"
         def two(max: Int) = f"${r.nextInt(max)}%02d"
         val fraction      = if r.nextBoolean() then "" else "." + (1 to r.nextInt(11)).map(_ => ('0' + r.nextInt(10)).toChar).mkString
-        val offset =
+        val offset        =
             r.nextInt(4) match
                 case 0 => "Z"
                 case 1 => s"+${two(26)}:${two(61)}"
@@ -254,14 +254,14 @@ class InstantJdkTest extends kyo.test.Test[Any]:
 
     "arithmetic matches java.time.Instant, clamped at the range ends" - {
         "adding and subtracting durations" in {
-            val r = random
+            val r         = random
             val durations = Seq(0L, 1L, 999999999L, 1000000000L, 86400000000000L, Long.MaxValue - 1) ++
                 Seq.fill(2000)(r.nextLong(0L, Long.MaxValue))
             val instants = cornerInstants.take(2000) ++ generatedInstants(2000)
             instants.zip(durations.iterator ++ Iterator.continually(r.nextLong(0L, Long.MaxValue))).foreach { case (j, nanos) =>
                 val kyoInstant = Instant.fromJava(j)
                 val d          = Duration.fromNanos(nanos)
-                val plus =
+                val plus       =
                     try j.plusNanos(d.toNanos)
                     catch case _: DateTimeException | _: ArithmeticException => JInstant.MAX
                 val minus =
@@ -327,8 +327,8 @@ class InstantJdkTest extends kyo.test.Test[Any]:
             assert(Instant.Min.toJava == JInstant.MIN && Instant.Max.toJava == JInstant.MAX && Instant.Epoch.toJava == JInstant.EPOCH)
             val r = random
             (1 to 5000).foreach { _ =>
-                val seconds = r.nextLong(0L, 9000000000L)
-                val nanos   = r.nextLong(0L, Long.MaxValue)
+                val seconds  = r.nextLong(0L, 9000000000L)
+                val nanos    = r.nextLong(0L, Long.MaxValue)
                 val expected =
                     JInstant.ofEpochSecond(Duration.fromNanos(seconds * 1000000000L).toSeconds, Duration.fromNanos(nanos).toNanos)
                 assert(Instant.of(Duration.fromNanos(seconds * 1000000000L), Duration.fromNanos(nanos)).toJava == expected)
@@ -347,7 +347,7 @@ class InstantJdkTest extends kyo.test.Test[Any]:
 
     "the Instant flag reader accepts what java.time.Instant.parse or OffsetDateTime.parse accepts" in {
         val reader = summon[Flag.Reader.Scalar[Instant]]
-        val cases = Seq(
+        val cases  = Seq(
             "2024-01-01T10:15:30Z",
             " 2024-01-01T10:15:30Z ",
             "2024-01-01T10:15Z",
@@ -366,7 +366,7 @@ class InstantJdkTest extends kyo.test.Test[Any]:
         )
         val r = random
         (cases ++ Seq.fill(20000)(generatedInstantText(r).replaceFirst(":[0-9]{2}(?=[.Zz+-])", ""))).foreach { text =>
-            val trimmed = text.trim
+            val trimmed  = text.trim
             val expected =
                 try Some(JInstant.parse(trimmed))
                 catch
@@ -375,7 +375,7 @@ class InstantJdkTest extends kyo.test.Test[Any]:
                         catch case _: Throwable => None
             reader(text) match
                 case Right(instant) => assert(expected.contains(instant.toJava), s"'$text' read as ${instant.toJava}, expected $expected")
-                case Left(error) =>
+                case Left(error)    =>
                     assert(expected.isEmpty, s"'$text' was rejected, expected $expected")
                     assert(error.getMessage == s"Invalid Instant format: $text")
             end match

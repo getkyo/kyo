@@ -40,7 +40,7 @@ class ChromeParityTest extends WebsiteTest:
     private def siteShell(versions: Chunk[WebsiteVersion], docsHome: String, body: UI)(using Frame): UI < Sync =
         for
             queryRef <- Signal.initRef("")
-            view <- SiteApp.view(
+            view     <- SiteApp.view(
                 versions,
                 docsHome,
                 Signal.initConst(DocsSearch.Index(Chunk.empty)),
@@ -158,7 +158,7 @@ class ChromeParityTest extends WebsiteTest:
             val closeTag    = "</select>"
             val ssgSelEnd   = ssgNorm.indexOf(closeTag, ssgSelStart)
             val mountSelEnd = mountNorm.indexOf(closeTag, mountSelStart)
-            val ssgSel = if ssgSelEnd > ssgSelStart then ssgNorm.substring(ssgSelStart, ssgSelEnd + closeTag.length)
+            val ssgSel      = if ssgSelEnd > ssgSelStart then ssgNorm.substring(ssgSelStart, ssgSelEnd + closeTag.length)
             else ssgNorm.substring(ssgSelStart)
             val mountSel = if mountSelEnd > mountSelStart then mountNorm.substring(mountSelStart, mountSelEnd + closeTag.length)
             else mountNorm.substring(mountSelStart)

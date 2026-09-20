@@ -456,7 +456,7 @@ class CdpBackendLifecycleTest extends kyo.BrowserTest:
                         for
                             before    <- tab.frameContexts.get
                             rootMaybe <- tab.rootFrameId.get
-                            _ <- rootMaybe match
+                            _         <- rootMaybe match
                                 case Present(rid) =>
                                     tab.backend.withSession(tab.sessionId).sendUnit(
                                         "Page.createIsolatedWorld",
@@ -756,7 +756,7 @@ class CdpBackendLifecycleTest extends kyo.BrowserTest:
                                 case Present(value) => value
                                 case Absent         => fail(s"no iframe entry: rootMaybe=$rootMaybe map=$ctxMap")
                             handle = IFrameHandle(iframeEntry._1, iframeEntry._2)
-                            _ <- tab.backend.lastEvaluateParams.set(Absent)
+                            _          <- tab.backend.lastEvaluateParams.set(Absent)
                             inFrameUrl <- Browser.activeIFrameLocal.let(Present(handle): Maybe[IFrameHandle]) {
                                 BrowserEval.evalJs("window.location.href")
                             }
@@ -838,7 +838,7 @@ class CdpBackendLifecycleTest extends kyo.BrowserTest:
                                 case Absent         => fail("no iframe entry")
                             handle = IFrameHandle(iframeEntry._1, iframeEntry._2)
                             outsideRef <- Resolver.resolveOne(Browser.Selector.id("iframe-only-in-iframe"))
-                            insideRef <- Browser.activeIFrameLocal.let(Present(handle): Maybe[IFrameHandle]) {
+                            insideRef  <- Browser.activeIFrameLocal.let(Present(handle): Maybe[IFrameHandle]) {
                                 Resolver.resolveOne(Browser.Selector.id("iframe-only-in-iframe"))
                             }
                         yield

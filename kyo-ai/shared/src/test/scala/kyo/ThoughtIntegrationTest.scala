@@ -22,7 +22,7 @@ class ThoughtIntegrationTest extends BaseAITest:
                     closing = Thought.closing[ClosingCheck](check => closingRef.set(Present(check)))
                     ai <- AI.init
                     _  <- ai.enable(opening, closing)
-                    _ <- ai.systemMessage(
+                    _  <- ai.systemMessage(
                         "You are validating Kyo thought extraction. Return only the requested values."
                     )
                     _ <- ai.userMessage(

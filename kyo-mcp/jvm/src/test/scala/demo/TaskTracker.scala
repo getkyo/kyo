@@ -31,7 +31,7 @@ object TaskTracker extends KyoApp:
             state     <- AtomicRef.init(Chunk.empty[Task])
             nextId    <- AtomicInt.init(1)
             transport <- JsonRpcTransport.stdio()
-            served <-
+            served    <-
                 val touch: Unit < (Async & Abort[McpConnectionClosedException]) =
                     Mcp.server.map(_.notifyResourceUpdated(boardUri))
 

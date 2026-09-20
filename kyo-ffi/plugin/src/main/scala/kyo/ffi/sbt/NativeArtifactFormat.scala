@@ -30,7 +30,7 @@ private[sbt] object NativeArtifactFormat {
     private val HeaderBytes = 4096
 
     private def header(file: File): Array[Byte] = {
-        val buf = new Array[Byte](HeaderBytes)
+        val buf  = new Array[Byte](HeaderBytes)
         val read =
             try {
                 val in = new FileInputStream(file)
@@ -96,7 +96,7 @@ private[sbt] object NativeArtifactFormat {
         def u(i: Int): Int = if (i < head.length) head(i) & 0xff else -1
         def le16(i: Int)   = if (u(i) < 0 || u(i + 1) < 0) -1 else u(i) | (u(i + 1) << 8)
         def le32(i: Int)   = if (le16(i) < 0 || le16(i + 2) < 0) -1L else (le16(i).toLong | (le16(i + 2).toLong << 16))
-        def be32(i: Int) =
+        def be32(i: Int)   =
             if (u(i) < 0 || u(i + 3) < 0) -1L
             else (u(i).toLong << 24) | (u(i + 1).toLong << 16) | (u(i + 2).toLong << 8) | u(i + 3).toLong
 
@@ -133,7 +133,7 @@ private[sbt] object NativeArtifactFormat {
                     else None
                 fatStride match {
                     case Some(stride) =>
-                        val count = be32(4)
+                        val count  = be32(4)
                         val slices =
                             if (count < 0 || count > 64) Nil
                             else (0 until count.toInt).map(i => machoArch(be32(8 + i * stride))).toList
@@ -216,7 +216,7 @@ private[sbt] object NativeArtifactFormat {
       * those two into "no architecture" is what would let such a file through.
       */
     def mismatch(platformKey: String, file: File): Option[String] = {
-        val name = file.getName
+        val name        = file.getName
         val extMismatch = expectedExtension(platformKey).flatMap { want =>
             val dot = name.lastIndexOf('.')
             val got = if (dot < 0) "" else name.substring(dot + 1)

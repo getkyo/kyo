@@ -39,7 +39,7 @@ class BrowserLauncherJvmTest extends BaseBrowserTest:
                 BrowserLauncher.createTempDir(kyoParent)
             }.map {
                 case Result.Failure(ex: BrowserSetupFailedException) => assert(ex.getMessage.contains("temp dir"))
-                case Result.Success(p) =>
+                case Result.Success(p)                               =>
                     fail(s"Expected BrowserSetupFailedException but createTempDir returned $p")
                 case Result.Panic(ex) =>
                     fail(s"Expected Failure, got Panic: ${ex.getMessage}")

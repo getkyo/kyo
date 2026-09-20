@@ -107,7 +107,7 @@ final private[runner] class SbtRunner(
             case Args.Result.Error(msg)                     => msg
             case Args.Result.Help                           => ""
             case Args.Result.Ok(_) if !tasksRequested.get() => ""
-            case Args.Result.Ok(_) =>
+            case Args.Result.Ok(_)                          =>
                 import scala.jdk.CollectionConverters.*
                 val summary = Summary.render(results.asScala, discoveryErrors.get(), positionalArgs)
                 // sbt's ForkMain calls done() again from a shutdown hook when the fork ends before it could, so print once.

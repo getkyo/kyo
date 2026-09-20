@@ -169,7 +169,7 @@ final class PostgresConnection(
                 if rows.isEmpty then SqlClient.InsertOutcome(0L, SqlClient.InsertOutcome.GeneratedKey.NoAutoKey)
                 else
                     val last = rows.last
-                    val key = last.column(0) match
+                    val key  = last.column(0) match
                         case Maybe.Present(_) => SqlClient.InsertOutcome.GeneratedKey.Value(decodeFirstColumnAsLong(last))
                         case Maybe.Absent     => SqlClient.InsertOutcome.GeneratedKey.Unavailable
                     SqlClient.InsertOutcome(rows.size.toLong, key)
@@ -358,7 +358,7 @@ final class PostgresConnection(
                 case ParameterStatus(n, v)   => updateParam(n, v).andThen(drainCloseResponses(remaining))
                 case n: NotificationResponse => sendNotification(n).andThen(drainCloseResponses(remaining))
                 case NoticeResponse(_)       => drainCloseResponses(remaining)
-                case ErrorResponse(fields) =>
+                case ErrorResponse(fields)   =>
                     Abort.fail(ServerErrors.mkServerError(fields, Absent, 0, Present(processId.toLong)))
                 case other =>
                     Abort.fail(SqlConnectionUnexpectedMessageException("Close drain", "CloseComplete / ReadyForQuery", other.toString))

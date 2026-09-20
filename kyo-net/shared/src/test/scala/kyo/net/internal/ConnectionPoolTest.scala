@@ -35,7 +35,7 @@ class ConnectionPoolTest extends Test:
     "release" - {
         "discards when full" in {
             val discardCount = new AtomicInteger(0)
-            val pool = Sync.Unsafe.evalOrThrow(ConnectionPool.init[NetAddress, String](
+            val pool         = Sync.Unsafe.evalOrThrow(ConnectionPool.init[NetAddress, String](
                 2,
                 kyo.Duration.Infinity,
                 _ => true,
@@ -101,7 +101,7 @@ class ConnectionPoolTest extends Test:
 
     "isAlive check during poll" in {
         val discardCount = new AtomicInteger(0)
-        val pool = Sync.Unsafe.evalOrThrow(ConnectionPool.init[NetAddress, String](
+        val pool         = Sync.Unsafe.evalOrThrow(ConnectionPool.init[NetAddress, String](
             2,
             kyo.Duration.Infinity,
             conn => conn != "dead",
@@ -202,7 +202,7 @@ class ConnectionPoolTest extends Test:
         // still armed). The raceProbe seam fires close() in exactly that window, so the interleaving is deterministic on
         // every platform. The connection must still be disposed exactly once.
         val discardCount = AtomicInt.Unsafe.init(0)
-        val pool =
+        val pool         =
             Sync.Unsafe.evalOrThrow(
                 ConnectionPool.init[NetAddress, String](2, kyo.Duration.Infinity, _ => true, _ => discard(discardCount.incrementAndGet()))
             )
@@ -226,7 +226,7 @@ class ConnectionPoolTest extends Test:
             if s >= scenarios then Loop.done(assert(true))
             else
                 val discarded = AtomicRef.Unsafe.init(Chunk.empty[String])
-                val pool =
+                val pool      =
                     Sync.Unsafe.evalOrThrow(ConnectionPool.init[NetAddress, String](
                         n,
                         kyo.Duration.Infinity,

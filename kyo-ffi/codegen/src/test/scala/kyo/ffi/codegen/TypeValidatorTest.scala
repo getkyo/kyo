@@ -71,7 +71,7 @@ class TypeValidatorTest extends kyo.test.Test[Any]:
 
     "MultiValue return with <2 fields is rejected" in {
         val struct = StructSpec("test.R", "R", List(StructField("only", TypeRef.IntT)), packed = false)
-        val t = mkTrait(
+        val t      = mkTrait(
             List(mkMethod("bad", Nil, ReturnShape.MultiValue(struct))),
             List(struct)
         )
@@ -177,7 +177,7 @@ class TypeValidatorTest extends kyo.test.Test[Any]:
         val leaf = StructSpec("test.Leaf", "Leaf", List(StructField("x", TypeRef.IntT)), packed = false)
         val l    = StructSpec("test.L", "L", List(StructField("leaf", TypeRef.StructT("test.Leaf"))), packed = false)
         val m    = StructSpec("test.M", "M", List(StructField("leaf", TypeRef.StructT("test.Leaf"))), packed = false)
-        val r = StructSpec(
+        val r    = StructSpec(
             "test.R",
             "R",
             List(StructField("l", TypeRef.StructT("test.L")), StructField("m", TypeRef.StructT("test.M"))),
@@ -404,7 +404,7 @@ class TypeValidatorTest extends kyo.test.Test[Any]:
 
     "accept EnumT in param position when FQCN is known" in {
         val enumSpec = EnumSpec("test.Color", "Color")
-        val t = mkTrait(
+        val t        = mkTrait(
             List(mkMethod("setColor", List(ParamSpec("c", TypeRef.EnumT("test.Color"))), ReturnShape.Primitive(TypeRef.IntT)))
         ).copy(enums = List(enumSpec))
         assert(TypeValidator.validate(t).isEmpty)
@@ -412,7 +412,7 @@ class TypeValidatorTest extends kyo.test.Test[Any]:
 
     "accept EnumReturn when FQCN is known" in {
         val enumSpec = EnumSpec("test.Color", "Color")
-        val t = mkTrait(
+        val t        = mkTrait(
             List(mkMethod("getColor", List(ParamSpec("index", TypeRef.IntT)), ReturnShape.EnumReturn("test.Color")))
         ).copy(enums = List(enumSpec))
         assert(TypeValidator.validate(t).isEmpty)

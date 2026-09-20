@@ -54,8 +54,8 @@ final class KyoTestBrowserJSEnv(java: String, classpath: Seq[File], jvmOptions: 
         try {
             KyoTestBrowserJSEnv.validator.validate(config)
             val (module, kind) = input match {
-                case Seq(Input.ESModule(path)) => (path, "esmodule")
-                case Seq(Input.Script(path))   => (path, "script")
+                case Seq(Input.ESModule(path))    => (path, "esmodule")
+                case Seq(Input.Script(path))      => (path, "script")
                 case Seq(Input.CommonJSModule(_)) =>
                     throw new UnsupportedInputException(
                         "a page cannot load a CommonJS module; link the tests with ModuleKind.NoModule or ModuleKind.ESModule"
@@ -63,7 +63,9 @@ final class KyoTestBrowserJSEnv(java: String, classpath: Seq[File], jvmOptions: 
                 case _ => throw new UnsupportedInputException(input)
             }
             if (module.getFileSystem != FileSystems.getDefault)
-                throw new UnsupportedInputException(s"KyoTestBrowserJSEnv serves linked files from disk; $module is not on the default file system")
+                throw new UnsupportedInputException(
+                    s"KyoTestBrowserJSEnv serves linked files from disk; $module is not on the default file system"
+                )
             val server = new ServerSocket(0, 0, InetAddress.getByName("127.0.0.1"))
             try {
                 val command =
@@ -93,10 +95,10 @@ object KyoTestBrowserJSEnv {
     private val validator = ExternalJSRun.supports(RunConfig.Validator())
 
     // The com channel's states: messages queue until the runner connects, then go straight to the socket until the run closes.
-    private sealed trait State
-    private final case class AwaitingConnection(queued: List[String]) extends State
-    private final case class Connected(socket: Socket, out: DataOutputStream, in: DataInputStream) extends State
-    private case object Closing extends State
+    sealed private trait State
+    final private case class AwaitingConnection(queued: List[String])                              extends State
+    final private case class Connected(socket: Socket, out: DataOutputStream, in: DataInputStream) extends State
+    private case object Closing                                                                    extends State
 
     /** The sbt side of a run's com channel.
       *
@@ -105,7 +107,7 @@ object KyoTestBrowserJSEnv {
       * its own; the run completes once the process has ended, so closing never fails a run that was going to succeed. The runner ending
       * first (the page failed, or Chrome died) closes the channel from its side and completes the run with the process's outcome.
       */
-    private final class ComRun(run: JSRun, onMessage: String => Unit, server: ServerSocket) extends JSComRun {
+    final private class ComRun(run: JSRun, onMessage: String => Unit, server: ServerSocket) extends JSComRun {
 
         private[this] val completion = Promise[Unit]()
 
@@ -144,8 +146,8 @@ object KyoTestBrowserJSEnv {
                                             close()
                                             reading = false
                                     }
-                                case Closing                 => reading = false
-                                case s: AwaitingConnection   => throw new IllegalStateException(s"unexpected state $s")
+                                case Closing               => reading = false
+                                case s: AwaitingConnection => throw new IllegalStateException(s"unexpected state $s")
                             }
                     } catch {
                         case _: IOException if state == Closing => ()
@@ -170,7 +172,7 @@ object KyoTestBrowserJSEnv {
         def send(message: String): Unit = synchronized {
             state match {
                 case AwaitingConnection(queued) => state = AwaitingConnection(message :: queued)
-                case Connected(_, out, _) =>
+                case Connected(_, out, _)       =>
                     try {
                         write(out, message)
                         out.flush()

@@ -122,7 +122,7 @@ object FromExprDerived:
       * `Record`, its `toString` is an opaque identity hash.
       */
     private[kyo] def applyRecordFieldNamesImpl[A: Type](value: Expr[A])(using q: Quotes): Expr[String] =
-        val directFE: scala.quoted.FromExpr[A] = buildDirect[A](new DirectCtx)
+        val directFE: scala.quoted.FromExpr[A]         = buildDirect[A](new DirectCtx)
         def firstRecord(v: Any): Option[kyo.Record[?]] =
             v match
                 case r: kyo.Record[?] => Some(r)
@@ -137,7 +137,7 @@ object FromExprDerived:
                 case _                              => List(here)
         end levels
         directFE.unapply(value) match
-            case None => Expr("<none>")
+            case None        => Expr("<none>")
             case Some(value) =>
                 firstRecord(value) match
                     case Some(rec) => Expr(levels(rec).mkString(";"))
@@ -257,7 +257,7 @@ object FromExprDerived:
         // back to `A` happens once, at the boundary.
         def resolve(t: Term): Option[Any] =
             val (term, argTerms) = unwrap(t, Nil)
-            val symName =
+            val symName          =
                 // The empty answer here is the NORMAL one: a literal, a lambda or any unstable expression
                 // legitimately has no member symbol, and `None` is the right reply. So this catch stays
                 // silent, unlike the invoke site below. It is narrowed off `Throwable` only so a fatal
@@ -288,7 +288,7 @@ object FromExprDerived:
         def invokeGiven(ownerName: String, memberName: String, argValues: List[Any]): Option[Any] =
             try
                 val ownerCandidates = binaryNameCandidates(ownerName).map(_ + "$") ::: List(ownerName + "$")
-                val ownerCls = ownerCandidates.iterator.flatMap { name =>
+                val ownerCls        = ownerCandidates.iterator.flatMap { name =>
                     // NOT `Throwable`. This is the candidate-probing loop, not error handling: only
                     // "no class by that name" means keep looking. A broad catch makes an
                     // `ExceptionInInitializerError` raised by the CORRECT owner indistinguishable from a
@@ -736,7 +736,7 @@ object FromExprDerived:
             def unapply(x: Expr[Any])(using q: Quotes): Option[Any] =
                 import q.reflect.*
                 given CanEqual[String, String] = CanEqual.derived
-                def unwrap(t: Term): Term =
+                def unwrap(t: Term): Term      =
                     t match
                         case Inlined(_, _, inner) => unwrap(inner)
                         case Block(_, inner)      => unwrap(inner)
@@ -762,7 +762,7 @@ object FromExprDerived:
                             case TypeApply(fun, _) => loop(fun, firstArgs)
                             case other             => (other, firstArgs)
                     val (head, args) = loop(t, Nil)
-                    val name =
+                    val name         =
                         try head.symbol.fullName.replace("$package", "").replace("$", "")
                         catch case _: Throwable => ""
                     (name, args)
@@ -803,7 +803,7 @@ object FromExprDerived:
                             unwrap(args(0)) match
                                 case arrApp @ Apply(_, _) =>
                                     val (_, arrArgs) = calleeOf(arrApp)
-                                    val elems =
+                                    val elems        =
                                         arrArgs match
                                             case List(Typed(Repeated(es, _), _)) => es
                                             case List(Repeated(es, _))           => es
@@ -961,20 +961,20 @@ object FromExprDerived:
                             def unapply(x: Expr[Maybe[t]])(using qctx: Quotes): Option[Maybe[t]] =
                                 import qctx.reflect.*
                                 given CanEqual[String, String] = CanEqual.derived
-                                def unwrap(t: Term): Term =
+                                def unwrap(t: Term): Term      =
                                     t match
                                         case Inlined(_, _, inner) => unwrap(inner)
                                         case Block(Nil, inner)    => unwrap(inner)
                                         case Typed(inner, _)      => unwrap(inner)
                                         case other                => other
-                                val term = unwrap(x.asTerm)
+                                val term                = unwrap(x.asTerm)
                                 def head(t: Term): Term =
                                     t match
                                         case Apply(fun, _)     => head(fun)
                                         case TypeApply(fun, _) => head(fun)
                                         case _                 => t
                                 val callee = head(term)
-                                val sname =
+                                val sname  =
                                     try callee.symbol.fullName
                                     catch
                                         case _: Throwable => ""
@@ -1028,14 +1028,14 @@ object FromExprDerived:
                                         case Block(_, inner)      => unwrap(inner)
                                         case Typed(inner, _)      => unwrap(inner)
                                         case other                => other
-                                val term = unwrap(kyo.internal.FromExprDerived.resolveBindings(x.asTerm))
+                                val term                = unwrap(kyo.internal.FromExprDerived.resolveBindings(x.asTerm))
                                 def head(t: Term): Term =
                                     t match
                                         case Apply(fun, _)     => head(fun)
                                         case TypeApply(fun, _) => head(fun)
                                         case _                 => t
                                 val callee = head(term)
-                                val sname =
+                                val sname  =
                                     try callee.symbol.fullName
                                     catch
                                         case _: Throwable => ""
@@ -1057,8 +1057,8 @@ object FromExprDerived:
                                     // beta-reduces the `.map` closure against each `Repeated` element.
                                     def extractElems(t: Term): Option[List[Term]] =
                                         unwrap(t) match
-                                            case Typed(Repeated(elems, _), _) => Some(elems)
-                                            case Repeated(elems, _)           => Some(elems)
+                                            case Typed(Repeated(elems, _), _)                            => Some(elems)
+                                            case Repeated(elems, _)                                      => Some(elems)
                                             case Apply(TypeApply(Select(recv, "map"), _), List(closure)) =>
                                                 extractElems(recv).map(_.map { elem =>
                                                     kyo.internal.FromExprDerived.betaReduceFully(
@@ -1089,10 +1089,11 @@ object FromExprDerived:
                                     val elemsOpt: Option[List[Term]] =
                                         term match
                                             case Apply(fun, List(reps))
-                                                if isChunkRef(fun) && (endsWith(
-                                                    norm,
-                                                    "Chunk.apply"
-                                                ) || endsWith(norm, "IterableFactory.apply")) =>
+                                                if isChunkRef(fun) &&
+                                                    (endsWith(
+                                                        norm,
+                                                        "Chunk.apply"
+                                                    ) || endsWith(norm, "IterableFactory.apply")) =>
                                                 extractElems(reps)
                                             case Apply(Select(_, "toChunk"), List(arg)) =>
                                                 Some(tupleOrSingle(arg))
@@ -1145,7 +1146,7 @@ object FromExprDerived:
                                 // The name type `n` is either a singleton literal type or `"x" & String`.
                                 // We extract the string constant by inspecting the type's first ConstantType.
                                 def extractNameFromType: Option[String] =
-                                    val nameTpeRepr = TypeRepr.of[n]
+                                    val nameTpeRepr                       = TypeRepr.of[n]
                                     def loop(t: TypeRepr): Option[String] =
                                         t match
                                             case ConstantType(c) =>
@@ -1222,7 +1223,7 @@ object FromExprDerived:
                 // Inline-expanded DSL constructors (`groupBy(...)`, …) produce a `Block` whose
                 // `val` bindings the constructor args reference by `Ident`. Resolve those bindings deeply
                 // so field matchers receive binding-free arg trees.
-                val term = kyo.internal.FromExprDerived.resolveBindings(x.asTerm)
+                val term                  = kyo.internal.FromExprDerived.resolveBindings(x.asTerm)
                 def unwrap(t: Term): Term =
                     t match
                         case Inlined(_, _, inner) => unwrap(inner)
@@ -1245,7 +1246,7 @@ object FromExprDerived:
                 def headMatches(head: Term): Boolean =
                     head match
                         case Select(New(tpt), "<init>") => tpt.tpe.typeSymbol.name == caseClassName
-                        case Select(qual, "apply") =>
+                        case Select(qual, "apply")      =>
                             val n = qual.symbol.name
                             n == caseClassName || n == caseClassName + "$"
                         // See the sibling site: only the compiler's own `copy`, whose parameters ARE the case fields.
@@ -1329,20 +1330,20 @@ object FromExprDerived:
             def unapply(x: Expr[A])(using qctx: Quotes): Option[A] =
                 import qctx.reflect.*
                 given CanEqual[String, String] = CanEqual.derived
-                def unwrap(t: Term): Term =
+                def unwrap(t: Term): Term      =
                     t match
                         case Inlined(_, _, inner) => unwrap(inner)
                         case Block(Nil, inner)    => unwrap(inner)
                         case Typed(inner, _)      => unwrap(inner)
                         case other                => other
-                val term = unwrap(x.asTerm)
+                val term    = unwrap(x.asTerm)
                 val symName =
                     try term.symbol.fullName
                     catch case _: Throwable => ""
                 def normalize(s: String): String = s.replace("$package", "").replace("$", "")
                 if normalize(symName) == normalize(expectedName) then
                     try
-                        val candidates = binaryNameCandidates(ownerName).map(_ + "$")
+                        val candidates  = binaryNameCandidates(ownerName).map(_ + "$")
                         val moduleClass = candidates.iterator.flatMap { name =>
                             try Some(Class.forName(name))
                             catch case _: Throwable => None
@@ -1384,7 +1385,7 @@ object FromExprDerived:
         new scala.quoted.FromExpr[A]:
             def unapply(x: Expr[A])(using qctx: Quotes): Option[A] =
                 import qctx.reflect.*
-                given CanEqual[String, String] = CanEqual.derived
+                given CanEqual[String, String]    = CanEqual.derived
                 def matchesName(t: Term): Boolean =
                     val symName =
                         try t.symbol.fullName
@@ -1777,7 +1778,7 @@ object FromExprDerived:
                     case '[t] =>
                         // Erase the inner FromExpr to `FromExpr[Any]` (see deriveChunk).
                         val innerFromExpr = deriveFor[t, Q](ctx).asExprOf[Any]
-                        val result = '{
+                        val result        = '{
                             new scala.quoted.FromExpr[Maybe[t]]:
                                 // `lazy`: defers forcing the inner FromExpr to `unapply` time.
                                 private lazy val innerFE: scala.quoted.FromExpr[Any] =
@@ -1785,13 +1786,13 @@ object FromExprDerived:
                                 def unapply(x: Expr[Maybe[t]])(using qctx: Quotes): Option[Maybe[t]] =
                                     import qctx.reflect.*
                                     given CanEqual[String, String] = CanEqual.derived
-                                    def unwrap(t: Term): Term =
+                                    def unwrap(t: Term): Term      =
                                         t match
                                             case Inlined(_, _, inner) => unwrap(inner)
                                             case Block(Nil, inner)    => unwrap(inner)
                                             case Typed(inner, _)      => unwrap(inner)
                                             case other                => other
-                                    val term = unwrap(x.asTerm)
+                                    val term                = unwrap(x.asTerm)
                                     def head(t: Term): Term =
                                         t match
                                             case Apply(fun, _)           => head(fun)
@@ -1799,7 +1800,7 @@ object FromExprDerived:
                                             case Select(_, _) | Ident(_) => t
                                             case _                       => t
                                     val callee = head(term)
-                                    val sname =
+                                    val sname  =
                                         try callee.symbol.fullName
                                         catch case _: Throwable => ""
 
@@ -1888,14 +1889,14 @@ object FromExprDerived:
                                             case other              => other
                                     // Resolve inline-expansion `Block` `val` bindings so element matchers
                                     // receive binding-free trees (see `deriveProduct` / `resolveBindings`).
-                                    val term = unwrap(kyo.internal.FromExprDerived.resolveBindings(x.asTerm))
+                                    val term                = unwrap(kyo.internal.FromExprDerived.resolveBindings(x.asTerm))
                                     def head(t: Term): Term =
                                         t match
                                             case Apply(fun, _)     => head(fun)
                                             case TypeApply(fun, _) => head(fun)
                                             case _                 => t
                                     val callee = head(term)
-                                    val sname =
+                                    val sname  =
                                         try callee.symbol.fullName
                                         catch
                                             case _: Throwable => ""
@@ -1930,8 +1931,8 @@ object FromExprDerived:
                                         // underlying projection / `SetSpec` tree.
                                         def extractElems(t: Term): Option[List[Term]] =
                                             unwrap(t) match
-                                                case Typed(Repeated(elems, _), _) => Some(elems)
-                                                case Repeated(elems, _)           => Some(elems)
+                                                case Typed(Repeated(elems, _), _)                            => Some(elems)
+                                                case Repeated(elems, _)                                      => Some(elems)
                                                 case Apply(TypeApply(Select(recv, "map"), _), List(closure)) =>
                                                     extractElems(recv).map(_.map { elem =>
                                                         kyo.internal.FromExprDerived.betaReduceFully(
@@ -2082,7 +2083,7 @@ object FromExprDerived:
                 valueTpe.asType match
                     case '[v] =>
                         // Erase the inner FromExpr to `FromExpr[Any]` (see deriveChunk).
-                        val inner = deriveFor[v, Q](ctx).asExprOf[Any]
+                        val inner  = deriveFor[v, Q](ctx).asExprOf[Any]
                         val result = '{
                             new scala.quoted.FromExpr[v]:
                                 // `lazy`: defers forcing the inner FromExpr to `unapply` time.
@@ -2151,7 +2152,7 @@ object FromExprDerived:
                 def unapply(x: Expr[A])(using qctx: Quotes): Option[A] =
                     import qctx.reflect.*
                     given CanEqual[String, String] = CanEqual.derived
-                    def unwrap(t: Term): Term =
+                    def unwrap(t: Term): Term      =
                         t match
                             case Inlined(_, _, inner) => unwrap(inner)
                             // `resolveBindings` substituted block-local `val`s, descend past any `Block`.
@@ -2175,7 +2176,7 @@ object FromExprDerived:
                     def headMatches(head: Term): Boolean =
                         head match
                             case Select(New(tpt), "<init>") => tpt.tpe.typeSymbol.name == expectedCaseClassName
-                            case Select(qual, "apply") =>
+                            case Select(qual, "apply")      =>
                                 val n = qual.symbol.name
                                 n == expectedCaseClassName || n == expectedCaseClassName + "$"
                             // `receiver.copy(args)` rebuilds the same case class, and the compiler's own `copy` takes the
@@ -2258,7 +2259,7 @@ object FromExprDerived:
         // `Ref(...)` needs a TERM symbol. For a singleton type `Empty.type`, `tpe.typeSymbol` returns the
         // module CLASS (`Empty$`) even though `Flags.Module` is set on both val and class. Prefer the
         // term-side symbol: use `sym` directly when it is already a term, else its companion module val.
-        val moduleSym = if sym.isTerm then sym else sym.companionModule
+        val moduleSym             = if sym.isTerm then sym else sym.companionModule
         val singletonRef: Expr[A] =
             if moduleSym != Symbol.noSymbol then
                 Ref(moduleSym).asExprOf[A]
@@ -2274,11 +2275,11 @@ object FromExprDerived:
 
         '{
             new scala.quoted.FromExpr[A]:
-                private val singleton: A         = $singletonRef
-                private val expectedName: String = ${ Expr(symFullName) }
+                private val singleton: A                               = $singletonRef
+                private val expectedName: String                       = ${ Expr(symFullName) }
                 def unapply(x: Expr[A])(using qctx: Quotes): Option[A] =
                     import qctx.reflect.*
-                    given CanEqual[String, String] = CanEqual.derived
+                    given CanEqual[String, String]    = CanEqual.derived
                     def matchesName(t: Term): Boolean =
                         val symName =
                             try t.symbol.fullName

@@ -217,7 +217,7 @@ class SqlPostgresOnlyTest extends SqlContainerTest:
                         )
                         nonNullable match
                             case Result.Failure(_: SqlDecodeColumnAbsentException) => succeed
-                            case other =>
+                            case other                                             =>
                                 fail(s"Expected a non-nullable decode of the NULL-extended side to abort, got: $other")
                         end match
                 }
@@ -426,7 +426,7 @@ class SqlPostgresOnlyTest extends SqlContainerTest:
         val prefixBits = bytes(1).toInt & 0xff
         val addrLen    = bytes(3).toInt & 0xff
         val hostWidth  = addrLen * 8
-        val address = family match
+        val address    = family match
             case 2 =>
                 val a = bytes(4) & 0xff
                 val b = bytes(5) & 0xff

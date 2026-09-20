@@ -114,7 +114,7 @@ object TestVariant {
                         }
 
                         val line: Line = state.mode match {
-                            case Mode.Continue => Line.Raw(str)
+                            case Mode.Continue             => Line.Raw(str)
                             case Mode.Replace(testVariant) =>
                                 if (str.contains(testVariant.base))
                                     Line.Variants(testVariant.replacements.map(r => str.replace(testVariant.base, r)))
@@ -140,7 +140,7 @@ object TestVariant {
                 // variants on Windows, and generated sources must be byte-identical on
                 // every platform.
                 processed.lines.foreach({
-                    case Line.Raw(str) => writers.foreach(_.print(str + "\n"))
+                    case Line.Raw(str)        => writers.foreach(_.print(str + "\n"))
                     case Line.Variants(lines) => lines.zip(writers).foreach({
                             case (str, writer) => writer.print(str + "\n")
                         })

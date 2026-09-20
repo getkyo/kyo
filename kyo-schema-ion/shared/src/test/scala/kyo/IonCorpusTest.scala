@@ -16,7 +16,7 @@ class IonCorpusTest extends kyo.test.Test[Any]:
             for
                 license <- resource("/iontestdata/LICENSE")
                 notice  <- resource("/iontestdata/NOTICE")
-                _ <- Kyo.foreach(IonCorpusTest.RequiredResources) { name =>
+                _       <- Kyo.foreach(IonCorpusTest.RequiredResources) { name =>
                     resource(s"/iontestdata/good/$name").map(content => assert(content.nonEmpty))
                 }
             yield
@@ -177,7 +177,7 @@ class IonCorpusTest extends kyo.test.Test[Any]:
 
             for
                 multi <- resource("/iontestdata/good/multipleAnnotations.ion")
-                _ <- Kyo.foreach(annotationCases) { case (file, ion) =>
+                _     <- Kyo.foreach(annotationCases) { case (file, ion) =>
                     resource(s"/iontestdata/good/$file").map { content =>
                         assert(content.trim == ion)
                         assert(Ion.decode[Int](ion).getOrThrow == 23)
@@ -233,7 +233,7 @@ class IonCorpusTest extends kyo.test.Test[Any]:
 
     private def searchRepoRoot(cwd: Path, candidates: List[Path])(using Frame): Path < PathRead =
         candidates match
-            case Nil => Kyo.lift(cwd)
+            case Nil          => Kyo.lift(cwd)
             case head :: tail =>
                 (head / "build.sbt").isRegularFile.flatMap { found =>
                     if found then Kyo.lift(head) else searchRepoRoot(cwd, tail)

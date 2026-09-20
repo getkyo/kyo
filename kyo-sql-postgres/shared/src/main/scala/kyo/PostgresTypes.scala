@@ -315,7 +315,7 @@ object PostgresTypes:
             throw SqlDecodeEmptyRangeException(s"Range[$typeName]")
         else
             var offset = 1
-            val lower =
+            val lower  =
                 if (flags & RangeLowerUnbounded) != 0 then Range.Bound.Unbounded
                 else
                     val length = readInt32(bytes, offset, "range lower length")

@@ -59,7 +59,7 @@ class FileSystemExceptionTest extends kyo.test.Test[Any]:
     // non-exhaustive match warning (with -Xfatal-warnings this would be a compile error).
     "exhaustive match on FileReadException covers all concrete subtypes" in {
         val ex: FileReadException = FileNotFoundException(p)
-        val result = ex match
+        val result                = ex match
             case _: FileNotFoundException                => "FileNotFoundException"
             case _: FileAccessDeniedException            => "FileAccessDeniedException"
             case _: FileIsADirectoryException            => "FileIsADirectoryException"
@@ -107,7 +107,7 @@ class FileSystemExceptionTest extends kyo.test.Test[Any]:
     // FileIsADirectoryException does not implement FileStructureException.
     "exhaustive match on FileStructureException" in {
         val ex: FileStructureException = FileNotFoundException(p)
-        val result = ex match
+        val result                     = ex match
             case _: FileNotFoundException                => "FileNotFoundException"
             case _: FileAccessDeniedException            => "FileAccessDeniedException"
             case _: FileNotADirectoryException           => "FileNotADirectoryException"
@@ -125,7 +125,7 @@ class FileSystemExceptionTest extends kyo.test.Test[Any]:
     // and FileIOException all implement FileWriteException.
     "exhaustive match on FileWriteException" in {
         val ex: FileWriteException = FileNotFoundException(p)
-        val result = ex match
+        val result                 = ex match
             case _: FileNotFoundException                => "FileNotFoundException"
             case _: FileAccessDeniedException            => "FileAccessDeniedException"
             case _: FileIsADirectoryException            => "FileIsADirectoryException"

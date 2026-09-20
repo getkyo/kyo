@@ -35,7 +35,7 @@ final class CookieDanceDemo extends BrowserDemo[CookieDanceDemo.CookieReport]("c
             afterReload <- Browser.cookies.map(cs => Maybe.fromOption(cs.find(_.name == cookieName)))
             _           <- log(s"after-reload: $afterReload")
 
-            _ <- step(4, "Open a fresh tab (withNewTab); same context, so the cookie must be visible")
+            _         <- step(4, "Open a fresh tab (withNewTab); same context, so the cookie must be visible")
             freshSees <- Browser.withNewTab {
                 for
                     _ <- Browser.goto(site)

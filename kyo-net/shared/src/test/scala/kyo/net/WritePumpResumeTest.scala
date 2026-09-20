@@ -74,7 +74,7 @@ class WritePumpResumeTest extends Test:
             val channel   = Channel.Unsafe.init[Span[Byte]](4)
             val state     = AtomicRef.Unsafe.init[WriteState](WriteState.Idle)
             val doneLatch = Promise.Unsafe.init[Unit, Any]()
-            val pump = new WritePump(
+            val pump      = new WritePump(
                 (),
                 driver,
                 channel,

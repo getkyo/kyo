@@ -244,8 +244,8 @@ final class BsonReader private (
     def bigInt(): BigInt =
         val result =
             value match
-                case Int32Value(value) => BigInt(value)
-                case Int64Value(value) => BigInt(value)
+                case Int32Value(value)  => BigInt(value)
+                case Int64Value(value)  => BigInt(value)
                 case StringValue(value) =>
                     try BigInt(value)
                     catch
@@ -264,8 +264,8 @@ final class BsonReader private (
                     catch
                         case _: NumberFormatException =>
                             throw ParseException(kyo.Bson(config), value, "BigDecimal")(using frame)
-                case Int32Value(value) => BigDecimal(value)
-                case Int64Value(value) => BigDecimal(value)
+                case Int32Value(value)  => BigDecimal(value)
+                case Int64Value(value)  => BigDecimal(value)
                 case DoubleValue(value) =>
                     if !java.lang.Double.isFinite(value) then
                         throw ParseException(kyo.Bson(config), value.toString, "finite BigDecimal")(using frame)
@@ -539,11 +539,10 @@ object BsonReader:
 
         private def readInt32(limit: Int = input.size): Int =
             requireRemaining(4, "int32", limit)
-            val result =
-                (input(pos) & 0xff) |
-                    ((input(pos + 1) & 0xff) << 8) |
-                    ((input(pos + 2) & 0xff) << 16) |
-                    ((input(pos + 3) & 0xff) << 24)
+            val result = (input(pos) & 0xff) |
+                ((input(pos + 1) & 0xff) << 8) |
+                ((input(pos + 2) & 0xff) << 16) |
+                ((input(pos + 3) & 0xff) << 24)
             pos += 4
             result
         end readInt32

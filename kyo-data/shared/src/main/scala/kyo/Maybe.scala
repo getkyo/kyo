@@ -20,7 +20,7 @@ object Maybe:
     implicit def toIterableOnce[A](v: Maybe[A]): IterableOnce[A]                       = v.iterator
 
     given [A, MaybeA <: Maybe[A]](using ra: Render[A]): Render[MaybeA] with
-        given CanEqual[Absent, MaybeA] = CanEqual.derived
+        given CanEqual[Absent, MaybeA]      = CanEqual.derived
         def asString(value: MaybeA): String = (value: Maybe[A]) match
             case Present(a) => s"Present(${ra.asString(a)})"
             case Absent     => "Absent"
@@ -437,8 +437,8 @@ object Maybe:
         end PresentAbsent
 
         object PresentAbsent:
-            val cache = (0 until 100).map(new PresentAbsent(_)).toArray
-            val one   = PresentAbsent(1)
+            val cache                            = (0 until 100).map(new PresentAbsent(_)).toArray
+            val one                              = PresentAbsent(1)
             def apply(depth: Int): PresentAbsent =
                 if depth < cache.length then
                     cache(depth)

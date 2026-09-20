@@ -92,7 +92,7 @@ class SecureRandomTest extends kyo.test.Test[Any]:
                 end while
                 // Chi-square test: 1024 * 32 = 32768 bytes total, 256 buckets, expected 128 per bucket.
                 // For 255 DOF, 3-sigma threshold ~= 355 (p > 0.001).
-                val expected = 32768.0 / 256
+                val expected  = 32768.0 / 256
                 val chiSquare = buckets.foldLeft(0.0) { (acc, obs) =>
                     val delta = obs - expected
                     acc + (delta * delta) / expected

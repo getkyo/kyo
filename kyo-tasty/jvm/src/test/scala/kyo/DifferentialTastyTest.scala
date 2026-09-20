@@ -32,8 +32,8 @@ class DifferentialTastyTest extends kyo.test.Test[Any]:
 
     /** Collect all top-level ClassSymbol fully-qualified names from a tasty-query Context by walking the package tree. */
     private def tqTopLevelFullNames(ctx: Context): Set[String] =
-        given Context   = ctx
-        val accumulator = new scala.collection.mutable.ArrayBuffer[String]()
+        given Context                       = ctx
+        val accumulator                     = new scala.collection.mutable.ArrayBuffer[String]()
         def visit(pkg: PackageSymbol): Unit =
             val decls: List[tastyquery.Symbols.Symbol] =
                 try pkg.declarations
@@ -69,7 +69,7 @@ class DifferentialTastyTest extends kyo.test.Test[Any]:
         classpath.topLevelClasses.flatMap { symbol =>
             // For Object kind, prefer the $-ending binary fully-qualified name (equivalent to tasty-query's ObjectClassTypeName).
             // For other kinds, any fullNameIndex entry is fine (non-Object fully-qualified names don't end with $).
-            val isObject = symbol.isInstanceOf[Tasty.Symbol.Object]
+            val isObject  = symbol.isInstanceOf[Tasty.Symbol.Object]
             val preferred = classpath.indices.byFullName.find {
                 (fullName, id) => id == symbol.id && (if isObject then fullName.endsWith("$") else true)
             }.map(_._1).toOption

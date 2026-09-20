@@ -1,12 +1,12 @@
+import kyo.test.sbt.KyoTestJsPlugin
+import kyo.test.sbt.KyoTestJsPlugin.autoImport.*
+import org.scalajs.jsenv.JSEnv
 import org.scalajs.jsenv.nodejs.NodeJSEnv
 import org.scalajs.linker.interface.ESVersion
 import org.scalajs.linker.interface.ModuleKind
 import org.scalajs.linker.interface.StandardConfig
-import org.scalajs.jsenv.JSEnv
 import org.scalajs.sbtplugin.ScalaJSPlugin
 import org.scalajs.sbtplugin.ScalaJSPlugin.autoImport.*
-import kyo.test.sbt.KyoTestJsPlugin
-import kyo.test.sbt.KyoTestJsPlugin.autoImport.*
 import sbt.*
 import sbt.Keys.*
 
@@ -86,7 +86,9 @@ object KyoJsRows extends AutoPlugin {
           * stand in for a tool the session can build. The 3.3 LTS line kyo-config returns to after the switch back is not such a version.
           */
         val kyoBrowserToolPin: SettingKey[Option[Seq[File]]] =
-            settingKey[Option[Seq[File]]]("kyo-test-browser's classpath from before a ++ switch, run while the switch keeps it from building")
+            settingKey[Option[Seq[File]]](
+                "kyo-test-browser's classpath from before a ++ switch, run while the switch keeps it from building"
+            )
     }
     import autoImport.*
 
@@ -135,7 +137,7 @@ object KyoJsRows extends AutoPlugin {
         val tool    = ProjectRef(thisProjectRef.value.build, browserToolProject)
         val data    = settingsData.value
         val version = (tool / scalaVersion).get(data).getOrElse("unset")
-        val moved = buildDependencies.value.classpathTransitiveRefs(tool).filterNot { dep =>
+        val moved   = buildDependencies.value.classpathTransitiveRefs(tool).filterNot { dep =>
             (dep / scalaVersion).get(data).exists(compilesAgainst(version, _))
         }
         val pin = kyoBrowserToolPin.value

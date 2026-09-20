@@ -174,7 +174,8 @@ object LinkCheck {
     val dataMarkers: Seq[String] = Seq("Africa/Abidjan", "zonedb.java.tzdb", "locales.cldr.data")
 
     /** Artifacts whose only content is that data. */
-    val dataArtifacts: Set[String] = Set("scala-java-time-tzdb", "locales-full-currencies-db", "locales-full-db", "locales-minimal-en_us-db")
+    val dataArtifacts: Set[String] =
+        Set("scala-java-time-tzdb", "locales-full-currencies-db", "locales-full-db", "locales-minimal-en_us-db")
 
     private val platforms = Seq("JS", "Wasm", "Native")
 
@@ -184,11 +185,11 @@ object LinkCheck {
 
     def command: Command = Command.args("linkCheck", "<JS|Wasm|Native> [program...]") { (state, args) =>
         args match {
-            case Seq(platform, only @ _*) if platforms.contains(platform) && only.forall(name => programs.exists(_.name == name)) =>
+            case Seq(platform, only*) if platforms.contains(platform) && only.forall(name => programs.exists(_.name == name)) =>
                 // Naming programs links only those, for iterating on one; CI names none.
                 val selected = if (only.isEmpty) programs else programs.filter(p => only.contains(p.name))
                 // Checked against the release build without making it the session's: the state after the command is the one before it.
-                val release = releaseSettings(state)
+                val release  = releaseSettings(state)
                 val failures =
                     dependencyFailures(state, release, platform) ++
                         (if (platform == "Native") Nil else linkFailures(state, release, platform, selected))
@@ -200,7 +201,9 @@ object LinkCheck {
                     state.fail
                 }
             case _ =>
-                state.log.error(s"usage: linkCheck <JS|Wasm|Native> [program...], where a program is one of ${programs.map(_.name).mkString(", ")}")
+                state.log.error(
+                    s"usage: linkCheck <JS|Wasm|Native> [program...], where a program is one of ${programs.map(_.name).mkString(", ")}"
+                )
                 state.fail
         }
     }
@@ -212,9 +215,9 @@ object LinkCheck {
       * They go into every state this command appends settings to, because `appendWithoutSession` starts again from the build's own settings
       * and would drop them from a state that already carried them.
       */
-    private def releaseSettings(state: State): Seq[Setting[_]] = {
+    private def releaseSettings(state: State): Seq[Setting[?]] = {
         val extracted = Project.extract(state)
-        val moved = extracted.structure.allProjectRefs.flatMap { ref =>
+        val moved     = extracted.structure.allProjectRefs.flatMap { ref =>
             val version = extracted.get(ref / scalaVersion)
             val cross   = extracted.get(ref / crossScalaVersions)
             if (cross.isEmpty || cross.contains(version)) Nil
@@ -243,12 +246,12 @@ object LinkCheck {
       * only through a third-party library declaring it, as zio-test declares the tzdb, is that library's choice, already made for any
       * application using the library, so it is reported and not failed.
       */
-    private def dependencyFailures(original: State, release: Seq[Setting[_]], platform: String): Seq[String] = {
+    private def dependencyFailures(original: State, release: Seq[Setting[?]], platform: String): Seq[String] = {
         val state     = Project.extract(original).appendWithoutSession(release, original)
         val extracted = Project.extract(state)
         // The Wasm row links the JS projects, so it has their dependencies.
         val suffix = if (platform == "Wasm") "JS" else platform
-        val refs = extracted.structure.allProjectRefs.filter { ref =>
+        val refs   = extracted.structure.allProjectRefs.filter { ref =>
             ref.project.endsWith(suffix) && ref.project.startsWith("kyo-") && !ref.project.startsWith("kyo-link-check")
         }
         val declared = refs.flatMap { ref =>
@@ -268,12 +271,12 @@ object LinkCheck {
         declared.distinct.map { case (project, id) => s"$project declares $id outside tests" }
     }
 
-    private def linkFailures(state: State, release: Seq[Setting[_]], platform: String, programs: Seq[Program]): Seq[String] = {
+    private def linkFailures(state: State, release: Seq[Setting[?]], platform: String, programs: Seq[Program]): Seq[String] = {
         val extracted = Project.extract(state)
         val ceilings  = readCeilings(extracted.get(LocalRootProject / baseDirectory) / "kyo-link-check" / "ceilings.txt")
         // Installed and resolved once per run, and only when a program bundles.
         lazy val tools = bundlerTools(state)
-        val rows = programs.map { program =>
+        val rows       = programs.map { program =>
             // Wasm links the JS project with the WasmGC linker configuration, as an application linking the one _sjs1 artifact does.
             val ref    = LocalProject(s"${program.project}JS")
             val outDir = extracted.get(ref / target) / "link-check" / platform.toLowerCase / program.name
@@ -283,22 +286,25 @@ object LinkCheck {
                 else Nil
             val linkState = extracted.appendWithoutSession(
                 release ++ Seq(
-                    ref / Compile / mainClass                                   := Some(program.mainClass),
+                    ref / Compile / mainClass                                 := Some(program.mainClass),
                     ref / Compile / fullLinkJS / scalaJSLinkerOutputDirectory := outDir
                 ) ++ wasmLink,
                 state
             )
             Project.extract(linkState).runTask(ref / Compile / fullLinkJS, linkState)
             // Source maps are a debugging aid the application does not ship.
-            val files   = outputFiles(outDir)
-            val size    = files.map(_.length).sum
-            val initial = initialLoad(files, platform)
-            val found   = dataMarkers.filter(marker => files.exists(f => contains(f, marker)))
-            val linked  = program.absent.filter(marker => files.exists(f => contains(f, marker)))
+            val files       = outputFiles(outDir)
+            val size        = files.map(_.length).sum
+            val initial     = initialLoad(files, platform)
+            val found       = dataMarkers.filter(marker => files.exists(f => contains(f, marker)))
+            val linked      = program.absent.filter(marker => files.exists(f => contains(f, marker)))
             val nodeImports = files.flatMap { f =>
                 staticNodeImport.findAllIn(read(f)).toSeq
             }.distinct
-            val kinds = if (platform == "JS") otherModuleKinds.map { case (label, kind) => moduleKindLink(linkState, ref, program, label, kind) } else Nil
+            val kinds = if (platform == "JS") otherModuleKinds.map { case (label, kind) =>
+                moduleKindLink(linkState, ref, program, label, kind)
+            }
+            else Nil
             val runs = Seq(
                 ("under plain node", program.lastLine, runNode(outDir, platform, withoutProcess = false)),
                 ("with no process global", program.withoutProcess, runNode(outDir, platform, withoutProcess = true))
@@ -311,12 +317,12 @@ object LinkCheck {
             val bareGlobals =
                 if (platform != "JS") Nil
                 else checkedBareGlobals(linkState, ref) ++ kinds.flatMap(kind => kind.bareGlobals.map(read => s"$read, as ${kind.label}"))
-            val bundlers    = if (program.hostChunks && platform == "JS") bundlerRuns(program, outDir, tools) else Right(Nil)
+            val bundlers = if (program.hostChunks && platform == "JS") bundlerRuns(program, outDir, tools) else Right(Nil)
             Row(program, size, initial.map(_.length).sum, gzipSize(initial), found, linked, nodeImports, eager, bareGlobals, bundlers, runs)
         }
         log(s"$platform sizes (bytes; total is every output file, initial is what a host fetches before any code runs):")
         rows.foreach { row =>
-            val ceiling = ceilings.get((platform, row.program.name)).fold("no ceiling")(c => f"ceiling $c%,d")
+            val ceiling        = ceilings.get((platform, row.program.name)).fold("no ceiling")(c => f"ceiling $c%,d")
             val initialCeiling =
                 if (platform == "JS") ceilings.get((initialKey(platform), row.program.name)).fold("no ceiling")(c => f"ceiling $c%,d")
                 else "the whole output"
@@ -338,12 +344,12 @@ object LinkCheck {
             val bareGlobals = row.bareGlobals.map { read =>
                 s"$platform ${program.name}: reads the host global $read bare, which throws a ReferenceError on a host that does not declare it; read it through PlatformJs.jsGlobal"
             }
-            val ceiling = ceilingFailure(ceilings, platform, platform, program.name, row.size)
+            val ceiling        = ceilingFailure(ceilings, platform, platform, program.name, row.size)
             val initialCeiling =
                 if (platform == "JS") ceilingFailure(ceilings, platform, initialKey(platform), program.name, row.initialSize)
                 else Nil
             val output = row.runs.flatMap {
-                case (how, _, Left(err)) => Seq(s"$platform ${program.name} $how: $err")
+                case (how, _, Left(err))           => Seq(s"$platform ${program.name} $how: $err")
                 case (how, expected, Right(lines)) =>
                     val last = lines.reverse.find(_.trim.nonEmpty).getOrElse("")
                     if (expected.pattern.matcher(last.trim).matches()) Nil
@@ -351,7 +357,8 @@ object LinkCheck {
             }
             val bundled = row.bundlers match {
                 case Left(err)    => Seq(s"$platform ${program.name}: the bundler check did not run: $err")
-                case Right(lines) => lines.filter(_.startsWith("FAIL")).map(line => s"$platform ${program.name} bundled: ${line.stripPrefix("FAIL ")}")
+                case Right(lines) =>
+                    lines.filter(_.startsWith("FAIL")).map(line => s"$platform ${program.name} bundled: ${line.stripPrefix("FAIL ")}")
             }
             data ++ reached ++ imports ++ eager ++ bareGlobals ++ bundled ++ ceiling ++ initialCeiling ++ output
         }
@@ -360,7 +367,7 @@ object LinkCheck {
     /** What linking a program as one of [[otherModuleKinds]] showed: its run under plain node, which is a failure when it did not link, and
       * its bare host-global reads.
       */
-    private final case class KindLink(label: String, run: (String, Regex, Either[String, Seq[String]]), bareGlobals: Seq[String])
+    final private case class KindLink(label: String, run: (String, Regex, Either[String, Seq[String]]), bareGlobals: Seq[String])
 
     /** Links `program` as `kind` into its own directory and runs `main.js` from there under plain node, the way an application that
       * configures that module kind launches it. `state` is the program's ES module link state, with the release build and its main class.
@@ -379,9 +386,13 @@ object LinkCheck {
             .withOutputPatterns(org.scalajs.linker.interface.OutputPatterns.Defaults)
         val how = s"as $label under plain node"
         linkIR(state, ref, config, org.scalajs.linker.PathOutputDirectory(outDir.toPath)) match {
-            case Left(err) => KindLink(label, (how, program.lastLine, Left(s"did not link: $err")), Nil)
+            case Left(err)        => KindLink(label, (how, program.lastLine, Left(s"did not link: $err")), Nil)
             case Right(moduleSet) =>
-                KindLink(label, (how, program.lastLine, runNode(outDir, "JS", withoutProcess = false, entry = "main.js")), bareHostGlobalReads(moduleSet))
+                KindLink(
+                    label,
+                    (how, program.lastLine, runNode(outDir, "JS", withoutProcess = false, entry = "main.js")),
+                    bareHostGlobalReads(moduleSet)
+                )
         }
     }
 
@@ -400,7 +411,7 @@ object LinkCheck {
         }
     }
 
-    private final case class Row(
+    final private case class Row(
         program: Program,
         size: Long,
         initialSize: Long,
@@ -440,9 +451,9 @@ object LinkCheck {
         import scala.concurrent.duration.Duration
 
         implicit val ec: ExecutionContext = ExecutionContext.global
-        val extracted         = Project.extract(state)
-        val (_, initializers) = extracted.runTask(ref / Compile / scalaJSModuleInitializers, state)
-        val (_, classpath)    = extracted.runTask(ref / Compile / fullClasspath, state)
+        val extracted                     = Project.extract(state)
+        val (_, initializers)             = extracted.runTask(ref / Compile / scalaJSModuleInitializers, state)
+        val (_, classpath)                = extracted.runTask(ref / Compile / fullClasspath, state)
         // The frontend reports what it could not link through its logger, and the exception says only that it failed.
         val errors = scala.collection.mutable.ListBuffer.empty[String]
         val logger = new org.scalajs.logging.Logger {
@@ -453,10 +464,10 @@ object LinkCheck {
         // The standard linker, whose backend records the modules it is handed before emitting them: linking through the frontend alone
         // would leave out the linker's own runtime library, which the standard linker adds.
         @volatile var linked: Option[ModuleSet] = None
-        val standardBackend                      = StandardLinkerBackend(config)
-        val recordingBackend = new LinkerBackend {
-            val coreSpec: CoreSpec                     = standardBackend.coreSpec
-            val symbolRequirements: SymbolRequirement  = standardBackend.symbolRequirements
+        val standardBackend                     = StandardLinkerBackend(config)
+        val recordingBackend                    = new LinkerBackend {
+            val coreSpec: CoreSpec                            = standardBackend.coreSpec
+            val symbolRequirements: SymbolRequirement         = standardBackend.symbolRequirements
             def injectedIRFiles: scala.collection.Seq[IRFile] = standardBackend.injectedIRFiles
             def emit(moduleSet: ModuleSet, output: OutputDirectory, logger: org.scalajs.logging.Logger)(implicit
                 ec: ExecutionContext
@@ -465,7 +476,7 @@ object LinkCheck {
                 standardBackend.emit(moduleSet, output, logger)
             }
         }
-        val linker = StandardLinkerImpl(StandardLinkerFrontend(config), recordingBackend)
+        val linker  = StandardLinkerImpl(StandardLinkerFrontend(config), recordingBackend)
         val linking = for {
             (containers, _) <- PathIRContainer.fromClasspath(classpath.map(_.data.toPath))
             irFiles         <- StandardImpl.irFileCache().newCache.cached(containers)
@@ -491,8 +502,8 @@ object LinkCheck {
         import org.scalajs.ir.Traversers.Traverser
         import org.scalajs.ir.Trees
 
-        val classes   = moduleSet.modules.flatMap(_.classDefs) ++ moduleSet.abstractClasses
-        val byName    = classes.map(c => c.className -> c).toMap
+        val classes = moduleSet.modules.flatMap(_.classDefs) ++ moduleSet.abstractClasses
+        val byName  = classes.map(c => c.className -> c).toMap
 
         def hostGlobal(spec: Option[Trees.JSNativeLoadSpec]): Option[String] = spec.collect {
             case Trees.JSNativeLoadSpec.Global(global, _) if hostGlobals.contains(global) => global
@@ -505,8 +516,8 @@ object LinkCheck {
             // The optimizer casts `typeof name` to the string it is compared with, as the emitter's transient `Cast(expr, type)`:
             // `(typeof name).as![String] === "function"`. That class is internal to the emitter, so it is taken apart as the case class it is.
             def typeOfGlobal(tree: Trees.Tree): Option[String] = tree match {
-                case Trees.JSTypeOfGlobalRef(Trees.JSGlobalRef(name)) => Some(name)
-                case Trees.AsInstanceOf(expr, _)                      => typeOfGlobal(expr)
+                case Trees.JSTypeOfGlobalRef(Trees.JSGlobalRef(name))                                        => Some(name)
+                case Trees.AsInstanceOf(expr, _)                                                             => typeOfGlobal(expr)
                 case Trees.Transient(cast: Product) if cast.productPrefix == "Cast" && cast.productArity > 0 =>
                     cast.productElement(0) match {
                         case expr: Trees.Tree => typeOfGlobal(expr)
@@ -522,7 +533,7 @@ object LinkCheck {
                         else if (op == ne) { if (declaredWhenEqual) (Set.empty, Set(name)) else (Set(name), Set.empty) }
                         else (Set.empty, Set.empty)
                     case (None, _) if lhs.isInstanceOf[Trees.StringLiteral] && typeOfGlobal(rhs).isDefined => compare(op, rhs, lhs, eq, ne)
-                    case _                                                                                  => (Set.empty, Set.empty)
+                    case _                                                                                 => (Set.empty, Set.empty)
                 }
             cond match {
                 case Trees.BinaryOp(op, lhs, rhs)   => compare(op, lhs, rhs, Trees.BinaryOp.===, Trees.BinaryOp.!==)
@@ -533,10 +544,10 @@ object LinkCheck {
 
         val reads = scala.collection.mutable.LinkedHashSet.empty[String]
         moduleSet.modules.flatMap(_.classDefs).foreach { cls =>
-            var member   = ""
-            var declared = Set.empty[String]
+            var member                       = ""
+            var declared                     = Set.empty[String]
             def record(global: String): Unit = if (!declared.contains(global)) reads += s"'$global' in ${cls.fullName}.$member"
-            val traverser = new Traverser {
+            val traverser                    = new Traverser {
                 private def within(names: Set[String], tree: Trees.Tree): Unit = {
                     val outer = declared
                     declared = outer ++ names
@@ -552,7 +563,7 @@ object LinkCheck {
                         within(inThen, thenp)
                         within(inElse, elsep)
                     case Trees.JSGlobalRef(name) if hostGlobals.contains(name) => record(name)
-                    case Trees.LoadJSModule(className) =>
+                    case Trees.LoadJSModule(className)                         =>
                         hostGlobal(byName.get(className).flatMap(_.jsNativeLoadSpec)).foreach(record)
                     case Trees.LoadJSConstructor(className) =>
                         hostGlobal(byName.get(className).flatMap(_.jsNativeLoadSpec)).foreach(record)
@@ -601,13 +612,13 @@ object LinkCheck {
     private def initialLoad(files: Seq[File], platform: String): Seq[File] =
         if (platform != "JS") files
         else {
-            val byName = files.map(f => f.getName -> f).toMap
+            val byName                      = files.map(f => f.getName -> f).toMap
             def imports(f: File): Seq[File] =
                 if (!f.getName.endsWith(".mjs")) Nil
                 else staticRelativeImport.findAllMatchIn(read(f)).map(_.group(1)).toSeq.distinct.flatMap(byName.get)
             @scala.annotation.tailrec
             def walk(pending: List[File], seen: Set[File]): Set[File] = pending match {
-                case Nil => seen
+                case Nil          => seen
                 case file :: rest =>
                     val next = imports(file).filterNot(seen.contains)
                     walk(next.toList ++ rest, seen ++ next)
@@ -652,7 +663,7 @@ object LinkCheck {
     /** The bytes `files` take through `gzip -9`, concatenated, which is what a wire carries for them. */
     private def gzipSize(files: Seq[File]): Long = {
         val bytes = new java.io.ByteArrayOutputStream()
-        val gzip = new java.util.zip.GZIPOutputStream(bytes) {
+        val gzip  = new java.util.zip.GZIPOutputStream(bytes) {
             `def`.setLevel(java.util.zip.Deflater.BEST_COMPRESSION)
         }
         files.foreach(f => gzip.write(Files.readAllBytes(f.toPath)))
@@ -690,11 +701,16 @@ object LinkCheck {
       * [[withoutProcessLauncher]], and returns the lines it printed. The launcher is written beside the output, never into it, so it is not
       * counted in the size.
       */
-    private def runNode(outDir: File, platform: String, withoutProcess: Boolean, entry: String = "main.mjs"): Either[String, Seq[String]] = {
+    private def runNode(
+        outDir: File,
+        platform: String,
+        withoutProcess: Boolean,
+        entry: String = "main.mjs"
+    ): Either[String, Seq[String]] = {
         val main = outDir / entry
         if (!main.exists) Left(s"no $entry in $outDir")
         else {
-            val suffix = if (withoutProcess) "-no-process" else ""
+            val suffix   = if (withoutProcess) "-no-process" else ""
             val launched =
                 if (!withoutProcess) main.getAbsolutePath
                 else {
@@ -739,7 +755,7 @@ object LinkCheck {
     }
 
     /** What the bundler check needs: its directory, with the pinned bundlers installed, and the Chrome the browser test rows run. */
-    private final case class BundlerTools(dir: File, chrome: String, logs: File)
+    final private case class BundlerTools(dir: File, chrome: String, logs: File)
 
     private def bundlerTools(state: State): Either[String, BundlerTools] = {
         val extracted = Project.extract(state)
@@ -749,11 +765,12 @@ object LinkCheck {
         val logs      = extracted.get(browser / target) / "link-check"
         val install = runProcess(Seq("npm", "install", "--no-audit", "--no-fund", "--no-package-lock"), dir, 600, logs / "npm-install.out")
         install match {
-            case Left(err)                   => Left(s"installing the bundlers: $err")
-            case Right((code, lines)) if code != 0 => Left(s"installing the bundlers exited with $code: ${lines.takeRight(5).mkString(" | ")}")
+            case Left(err)                         => Left(s"installing the bundlers: $err")
+            case Right((code, lines)) if code != 0 =>
+                Left(s"installing the bundlers exited with $code: ${lines.takeRight(5).mkString(" | ")}")
             case Right(_) =>
                 val (_, classpath) = extracted.runTask(browser / Compile / fullClasspath, state)
-                val command = Seq(
+                val command        = Seq(
                     "java",
                     "-cp",
                     classpath.map(_.data.getAbsolutePath).mkString(File.pathSeparator),
@@ -761,7 +778,7 @@ object LinkCheck {
                     KyoJsRows.chromeVersion(base)
                 )
                 runProcess(command, base, 900, logs / "chrome-executable.out") match {
-                    case Left(err) => Left(s"resolving Chrome: $err")
+                    case Left(err)            => Left(s"resolving Chrome: $err")
                     case Right((code, lines)) =>
                         lines.reverse.find(_.trim.nonEmpty).map(_.trim).filter(p => code == 0 && new File(p).isFile) match {
                             case Some(chrome) => Right(BundlerTools(dir, chrome, logs))
@@ -777,8 +794,9 @@ object LinkCheck {
       */
     private def bundlerRuns(program: Program, outDir: File, tools: Either[String, BundlerTools]): Either[String, Seq[String]] =
         tools.flatMap { t =>
-            val command = Seq("node", (t.dir / "check.mjs").getAbsolutePath, outDir.getAbsolutePath, t.chrome, program.withoutProcess.regex) ++
-                nodeBackend
+            val command =
+                Seq("node", (t.dir / "check.mjs").getAbsolutePath, outDir.getAbsolutePath, t.chrome, program.withoutProcess.regex) ++
+                    nodeBackend
             runProcess(command, t.dir, 1800, t.logs / s"${program.name}-bundlers.out").flatMap { case (code, lines) =>
                 val results = lines.filter(_.matches("^(ok|note|FAIL) .*"))
                 if (code != 0 && !results.exists(_.startsWith("FAIL")))

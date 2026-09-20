@@ -55,7 +55,7 @@ class SnapshotUpdateModeTest extends AnyFunSuite with NonImplicitAssertions:
 
     /** Subclass that reads a JVM system property so tests can simulate the env-var path portably. */
     private class PropMode(dir: String) extends SnapshotTest[Any]:
-        override protected def snapshotDir: String = dir
+        override protected def snapshotDir: String         = dir
         override protected def snapshotUpdateMode: Boolean =
             java.lang.System.getProperty("KYO_TEST_SNAPSHOT_PROP") == "update"
 

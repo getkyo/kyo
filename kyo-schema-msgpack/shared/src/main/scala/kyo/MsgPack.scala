@@ -25,7 +25,7 @@ package kyo
   *   `Protobuf` in the kyo-schema-protobuf module for compact schema-required binary serialization
   */
 final class MsgPack(val config: MsgPack.Config = MsgPack.Config.Default) extends Codec:
-    def newWriter(): Codec.Writer = kyo.internal.msgpack.MsgPackWriter(config)
+    def newWriter(): Codec.Writer                               = kyo.internal.msgpack.MsgPackWriter(config)
     def newReader(input: Span[Byte])(using Frame): Codec.Reader =
         kyo.internal.msgpack.MsgPackReader(input.toArray, config)
 end MsgPack

@@ -55,7 +55,7 @@ class ConnectionStateTest extends Test:
         val spy  = new SpyDriver
         val conn = makeEstablished(spy)
         for
-            latch <- Latch.init(1)
+            latch  <- Latch.init(1)
             fiber1 <- Fiber.init {
                 latch.await.map(_ => Sync.defer(conn.close()))
             }

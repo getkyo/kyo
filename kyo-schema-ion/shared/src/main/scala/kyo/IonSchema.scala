@@ -190,7 +190,7 @@ object IonSchema:
                     else
                         val nextSeen = seen + product.name
                         val renamed  = schema.renamedFields.toMap
-                        val fields =
+                        val fields   =
                             product.fields.flatMap { field =>
                                 if schema.droppedFields.contains(field.name) then Chunk.empty
                                 else
@@ -211,7 +211,7 @@ object IonSchema:
                     else
                         val nextSeen = seen + sum.name
                         val wires    = Schema.effectiveVariantWires(sum, schema.variantNaming)
-                        val options = sum.variants.zip(wires).map { (variant, wireName) =>
+                        val options  = sum.variants.zip(wires).map { (variant, wireName) =>
                             val payload = applyAnnotations(
                                 fromStructure(variant.variantType, constraints, path :+ variant.name, schema, config, nextSeen),
                                 variant.annotations,

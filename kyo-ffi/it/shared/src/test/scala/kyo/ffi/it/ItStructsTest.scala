@@ -127,7 +127,7 @@ class ItStructsTest extends Test:
         }
 
         "table-driven: varied (a, b) inputs, sum + product" in {
-            val b = Ffi.load[ItStructsBindings]
+            val b                                = Ffi.load[ItStructsBindings]
             val cases: Seq[(Int, Int, Int, Int)] = Seq(
                 // (a, b, expectedSum, expectedProduct)
                 (1, 1, 2, 1),
@@ -158,7 +158,7 @@ class ItStructsTest extends Test:
         }
 
         "table-driven: varied (cx, cy, r) inputs round-trip exactly" in {
-            val b = Ffi.load[ItStructsBindings]
+            val b                                    = Ffi.load[ItStructsBindings]
             val cases: Seq[(Double, Double, Double)] = Seq(
                 (0.0, 0.0, 0.0),
                 (1.0, 2.0, 3.0),

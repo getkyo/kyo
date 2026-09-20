@@ -173,7 +173,7 @@ final class ConsoleReporter(
         val skippedCount  = report.leafResults.count(_._2.isInstanceOf[TestResult.Skipped])
 
         // A timeout is a failure: fold it into the failed total so this line agrees with the FAILURES block.
-        val redCount = failedCount + timedOutCount
+        val redCount      = failedCount + timedOutCount
         val failedSegment =
             if timedOutCount > 0 then color(s"$redCount failed ($timedOutCount timed out)", _.red)
             else color(s"$redCount failed", _.red)
@@ -250,7 +250,7 @@ final class ConsoleReporter(
         val skippedCount  = report.skipped
 
         // A timeout is a failure: fold it into the failed total so this line agrees with the FAILURES block.
-        val redCount = failedCount + timedOutCount
+        val redCount      = failedCount + timedOutCount
         val failedSegment =
             if timedOutCount > 0 then color(s"$redCount failed ($timedOutCount timed out)", _.red)
             else color(s"$redCount failed", _.red)

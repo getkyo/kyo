@@ -99,7 +99,7 @@ class Classpath4WayUnionAnnotationTest extends kyo.test.Test[Any]:
             val javaTagAnn = Tasty.Java.Annotation(javaTagCls, Chunk.empty, Tasty.Name("shop.JavaTag"))
             val tpT        = makeTypeParam(tpTId, "T", boxId)
             val tpU        = makeTypeParam(tpUId, "U", applyId)
-            val boxClass = Tasty.Symbol.Class(
+            val boxClass   = Tasty.Symbol.Class(
                 boxId,
                 Tasty.Name("Box"),
                 Tasty.Flags.empty,
@@ -372,7 +372,7 @@ class Classpath4WayUnionAnnotationTest extends kyo.test.Test[Any]:
         buildFixture.map { classpath =>
             val box = classpath.symbols.collect { case c: Tasty.Symbol.Class if c.name == Tasty.Name("Box") => c }.head
             classpath.findAnnotation(box, "shop.Tag") match
-                case Maybe.Present(_: Tasty.Annotation) => succeed
+                case Maybe.Present(_: Tasty.Annotation)      => succeed
                 case Maybe.Present(_: Tasty.Java.Annotation) =>
                     fail("Expected Scala Annotation for @shop.Tag but got Java.Annotation")
                 case Maybe.Absent =>
@@ -387,7 +387,7 @@ class Classpath4WayUnionAnnotationTest extends kyo.test.Test[Any]:
             val field = classpath.symbols.collect { case f: Tasty.Symbol.Field => f }.head
             classpath.findAnnotation(field, "shop.JavaTag") match
                 case Maybe.Present(_: Tasty.Java.Annotation) => succeed
-                case Maybe.Present(_: Tasty.Annotation) =>
+                case Maybe.Present(_: Tasty.Annotation)      =>
                     fail("Expected Java.Annotation for @shop.JavaTag on Field but got Scala Annotation")
                 case Maybe.Absent =>
                     fail("Expected Maybe.Present for @shop.JavaTag on f1 but got Maybe.Absent")
@@ -486,7 +486,7 @@ class Classpath4WayUnionAnnotationTest extends kyo.test.Test[Any]:
             Tasty.Variance.Invariant
         )
         val annotation = Tasty.Annotation(Tasty.Type.Named(SymbolId(2)), Chunk.empty, Tasty.Name("test.Ann"))
-        val cls = Tasty.Symbol.Class(
+        val cls        = Tasty.Symbol.Class(
             SymbolId(1),
             Tasty.Name("X"),
             Tasty.Flags.empty,

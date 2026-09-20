@@ -106,7 +106,7 @@ class LspCapabilitiesTest extends Test:
 
     "Schema[Server.Server] BooleanOr.Options round-trips for hoverProvider" in {
         val opts = LspHandler.HoverOptions(workDoneProgress = Present(true))
-        val s = LspCapabilities.Server.empty.copy(
+        val s    = LspCapabilities.Server.empty.copy(
             hoverProvider = Present(LspHandler.BooleanOr.Options(opts))
         )
         assert(roundtrip(s) == s)

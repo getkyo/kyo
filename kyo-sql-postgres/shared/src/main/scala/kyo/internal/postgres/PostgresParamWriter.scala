@@ -195,8 +195,8 @@ final class PostgresParamWriter(registry: TypeRegistry, binaryElements: Boolean 
         oidOpt match
             case Present(typeOid) =>
                 val enc = new PostgresEncoder[Span[Byte]]:
-                    def oid: Int       = typeOid
-                    def format: Format = wireFormat
+                    def oid: Int                                                  = typeOid
+                    def format: Format                                            = wireFormat
                     def write(value: Span[Byte], buf: PostgresBufferWriter): Unit =
                         buf.writeBytes(value)
                 _params += BoundParam(bytes, enc)
@@ -277,7 +277,7 @@ final class PostgresParamWriter(registry: TypeRegistry, binaryElements: Boolean 
       * announced.
       */
     override def encodeElement[A](column: SqlSchema.Column[A], value: A, typeName: String, format: SqlCodec.Format): Span[Byte] =
-        given Frame = frame
+        given Frame       = frame
         val elementParams =
             PostgresParamWriter.write(column, value, registry, binaryElements = format == SqlCodec.Format.Binary)
         encodeSingleElement(typeName, elementParams, format, PostgresEncoder.dialectId)(

@@ -37,7 +37,7 @@ class JsonRpcHandlerUnknownMethodPolicyTest extends JsonRpcTest:
 
     "dollar-slash ignore policy: unknown notification starting with dollar-slash is silently dropped" in {
         // Unsafe: AtomicInt.Unsafe.init for handler invocation counter
-        val handlerInvoked = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
+        val handlerInvoked    = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
         val dollarSlashConfig = JsonRpcHandler.Config(
             unknownMethod = JsonRpcUnknownMethodPolicy.minimal.copy(ignoreUnknownNotification = _.startsWith("$/"))
         )
@@ -66,7 +66,7 @@ class JsonRpcHandlerUnknownMethodPolicyTest extends JsonRpcTest:
 
     "dollar-slash ignore policy: unknown notification not starting with dollar-slash is silently dropped" in {
         // Unsafe: AtomicInt.Unsafe.init for handler invocation counter
-        val handlerInvoked = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
+        val handlerInvoked    = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
         val dollarSlashConfig = JsonRpcHandler.Config(
             unknownMethod = JsonRpcUnknownMethodPolicy.minimal.copy(ignoreUnknownNotification = _.startsWith("$/"))
         )
@@ -169,7 +169,7 @@ class JsonRpcHandlerUnknownMethodPolicyTest extends JsonRpcTest:
 
     "ignoreUnknownNotification predicate: always-true predicate drops all unknown notifications silently" in {
         // Unsafe: AtomicInt.Unsafe.init for invocation counter
-        val handlerInvoked = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
+        val handlerInvoked     = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
         val alwaysIgnorePolicy = JsonRpcUnknownMethodPolicy.strict.copy(
             ignoreUnknownNotification = _ => true
         )
@@ -209,7 +209,7 @@ class JsonRpcHandlerUnknownMethodPolicyTest extends JsonRpcTest:
     }
 
     "gate Reject for Request: caller sees error reply with gate error code" in {
-        val gateError = JsonRpcImplementationError(-32099, "gate blocked")
+        val gateError                      = JsonRpcImplementationError(-32099, "gate blocked")
         val rejectGate: JsonRpcMessageGate = new JsonRpcMessageGate:
             def beforeDispatch(env: JsonRpcEnvelope)(using Frame): JsonRpcMessageGate.Decision < Sync =
                 env match
@@ -220,7 +220,7 @@ class JsonRpcHandlerUnknownMethodPolicyTest extends JsonRpcTest:
 
         // Unsafe: AtomicInt.Unsafe.init for handler invocation counter
         val handlerInvoked = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
-        val pingMethod = JsonRpcRoute.request[Ping, Pong]("ping") {
+        val pingMethod     = JsonRpcRoute.request[Ping, Pong]("ping") {
             (req, _) =>
                 Sync.defer(discard(handlerInvoked.incrementAndGet()(using AllowUnsafe.embrace.danger))).andThen(Pong("pong"))
         }
@@ -249,7 +249,7 @@ class JsonRpcHandlerUnknownMethodPolicyTest extends JsonRpcTest:
 
         // Unsafe: AtomicInt.Unsafe.init for handler invocation counter
         val handlerInvoked = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
-        val eventMethod = JsonRpcRoute.request[Empty, Unit]("event") {
+        val eventMethod    = JsonRpcRoute.request[Empty, Unit]("event") {
             (_, _) => Sync.defer(discard(handlerInvoked.incrementAndGet()(using AllowUnsafe.embrace.danger)))
         }
         val gatedConfig = JsonRpcHandler.Config(gate = Present(rejectGate))
@@ -304,7 +304,7 @@ class JsonRpcHandlerUnknownMethodPolicyTest extends JsonRpcTest:
     }
 
     "gate initialize pattern: allows initialize, rejects others with ServerNotInitialized" in {
-        val serverNotInitialized = JsonRpcImplementationError(-32002, "ServerNotInitialized")
+        val serverNotInitialized         = JsonRpcImplementationError(-32002, "ServerNotInitialized")
         val initGate: JsonRpcMessageGate = new JsonRpcMessageGate:
             def beforeDispatch(env: JsonRpcEnvelope)(using Frame): JsonRpcMessageGate.Decision < Sync =
                 env match

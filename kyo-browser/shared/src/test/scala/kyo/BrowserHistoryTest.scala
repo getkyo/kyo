@@ -7,9 +7,9 @@ class BrowserHistoryTest extends BrowserTest:
     // Navigate to 3 pages via a real HTTP server; assert entries contains all three URLs
     // in the order they were visited and currentIndex points to the last one.
     "Browser.history returns the active entry plus prior entries in chronological order" in {
-        val pageA = Span.fromUnsafe("<html><head><title>PageA</title></head><body>A</body></html>".getBytes("UTF-8"))
-        val pageB = Span.fromUnsafe("<html><head><title>PageB</title></head><body>B</body></html>".getBytes("UTF-8"))
-        val pageC = Span.fromUnsafe("<html><head><title>PageC</title></head><body>C</body></html>".getBytes("UTF-8"))
+        val pageA    = Span.fromUnsafe("<html><head><title>PageA</title></head><body>A</body></html>".getBytes("UTF-8"))
+        val pageB    = Span.fromUnsafe("<html><head><title>PageB</title></head><body>B</body></html>".getBytes("UTF-8"))
+        val pageC    = Span.fromUnsafe("<html><head><title>PageC</title></head><body>C</body></html>".getBytes("UTF-8"))
         val handlerA = HttpRoute.getRaw("/a").response(_.bodyBinary).handler { _ =>
             HttpResponse.ok(pageA).addHeader("Content-Type", "text/html; charset=utf-8")
         }
@@ -52,9 +52,9 @@ class BrowserHistoryTest extends BrowserTest:
 
     // Navigate A → B → C, call back, assert currentIndex decremented; call forward, assert restored.
     "Browser.history.currentIndex moves with back / forward" in {
-        val pageA = Span.fromUnsafe("<html><body>A</body></html>".getBytes("UTF-8"))
-        val pageB = Span.fromUnsafe("<html><body>B</body></html>".getBytes("UTF-8"))
-        val pageC = Span.fromUnsafe("<html><body>C</body></html>".getBytes("UTF-8"))
+        val pageA    = Span.fromUnsafe("<html><body>A</body></html>".getBytes("UTF-8"))
+        val pageB    = Span.fromUnsafe("<html><body>B</body></html>".getBytes("UTF-8"))
+        val pageC    = Span.fromUnsafe("<html><body>C</body></html>".getBytes("UTF-8"))
         val handlerA = HttpRoute.getRaw("/a").response(_.bodyBinary).handler { _ =>
             HttpResponse.ok(pageA).addHeader("Content-Type", "text/html; charset=utf-8")
         }
@@ -176,8 +176,8 @@ class BrowserHistoryTest extends BrowserTest:
 
     // Regression: navigate A, B; call back; assert history.currentIndex decremented.
     "back from a non-boundary index succeeds and decrements currentIndex" in {
-        val pageA = Span.fromUnsafe("<html><body>A</body></html>".getBytes("UTF-8"))
-        val pageB = Span.fromUnsafe("<html><body>B</body></html>".getBytes("UTF-8"))
+        val pageA    = Span.fromUnsafe("<html><body>A</body></html>".getBytes("UTF-8"))
+        val pageB    = Span.fromUnsafe("<html><body>B</body></html>".getBytes("UTF-8"))
         val handlerA = HttpRoute.getRaw("/a").response(_.bodyBinary).handler { _ =>
             HttpResponse.ok(pageA).addHeader("Content-Type", "text/html; charset=utf-8")
         }
@@ -207,8 +207,8 @@ class BrowserHistoryTest extends BrowserTest:
 
     // Regression: navigate A, B; call back; call forward; assert pointer restored.
     "forward from a non-boundary index succeeds and increments currentIndex" in {
-        val pageA = Span.fromUnsafe("<html><body>A</body></html>".getBytes("UTF-8"))
-        val pageB = Span.fromUnsafe("<html><body>B</body></html>".getBytes("UTF-8"))
+        val pageA    = Span.fromUnsafe("<html><body>A</body></html>".getBytes("UTF-8"))
+        val pageB    = Span.fromUnsafe("<html><body>B</body></html>".getBytes("UTF-8"))
         val handlerA = HttpRoute.getRaw("/a").response(_.bodyBinary).handler { _ =>
             HttpResponse.ok(pageA).addHeader("Content-Type", "text/html; charset=utf-8")
         }
@@ -240,9 +240,9 @@ class BrowserHistoryTest extends BrowserTest:
 
     // Regression: navigate A, B, C; back; back; forward; forward; assert URL is C.
     "back-then-forward round trip preserves the trailing entry" in {
-        val pageA = Span.fromUnsafe("<html><body>A</body></html>".getBytes("UTF-8"))
-        val pageB = Span.fromUnsafe("<html><body>B</body></html>".getBytes("UTF-8"))
-        val pageC = Span.fromUnsafe("<html><body>C</body></html>".getBytes("UTF-8"))
+        val pageA    = Span.fromUnsafe("<html><body>A</body></html>".getBytes("UTF-8"))
+        val pageB    = Span.fromUnsafe("<html><body>B</body></html>".getBytes("UTF-8"))
+        val pageC    = Span.fromUnsafe("<html><body>C</body></html>".getBytes("UTF-8"))
         val handlerA = HttpRoute.getRaw("/a").response(_.bodyBinary).handler { _ =>
             HttpResponse.ok(pageA).addHeader("Content-Type", "text/html; charset=utf-8")
         }
@@ -410,7 +410,7 @@ class BrowserHistoryTest extends BrowserTest:
                    |    setTimeout(() => { fetch('http://$slowHost:$slowPort/slow').catch(() => {}); }, 0);
                    |  });
                    |</script></body></html>""".stripMargin
-            val htmlBytes = Span.fromUnsafe(html.getBytes("UTF-8"))
+            val htmlBytes   = Span.fromUnsafe(html.getBytes("UTF-8"))
             val htmlHandler = HttpRoute.getRaw("/").response(_.bodyBinary).handler { _ =>
                 HttpResponse.ok(htmlBytes).addHeader("Content-Type", "text/html; charset=utf-8")
             }
@@ -432,7 +432,7 @@ class BrowserHistoryTest extends BrowserTest:
         val counter  = new java.util.concurrent.atomic.AtomicInteger(0)
         val okBytes  = Span.fromUnsafe("<html><body><h1>first</h1></body></html>".getBytes("UTF-8"))
         val errBytes = Span.fromUnsafe("<html><body><h1>boom</h1></body></html>".getBytes("UTF-8"))
-        val handler = HttpRoute.getRaw("/page").response(_.bodyBinary).handler { _ =>
+        val handler  = HttpRoute.getRaw("/page").response(_.bodyBinary).handler { _ =>
             val n = counter.incrementAndGet()
             if n == 1 then
                 HttpResponse.ok(okBytes).addHeader("Content-Type", "text/html; charset=utf-8")
@@ -462,7 +462,7 @@ class BrowserHistoryTest extends BrowserTest:
         val counter  = new java.util.concurrent.atomic.AtomicInteger(0)
         val okBytes  = Span.fromUnsafe("<html><body><h1>first</h1></body></html>".getBytes("UTF-8"))
         val errBytes = Span.fromUnsafe("<html><body><h1>boom</h1></body></html>".getBytes("UTF-8"))
-        val handler = HttpRoute.getRaw("/page").response(_.bodyBinary).handler { _ =>
+        val handler  = HttpRoute.getRaw("/page").response(_.bodyBinary).handler { _ =>
             val n = counter.incrementAndGet()
             if n == 1 then
                 HttpResponse.ok(okBytes).addHeader("Content-Type", "text/html; charset=utf-8")
@@ -511,9 +511,9 @@ class BrowserHistoryTest extends BrowserTest:
     // After another back: canGoBack may still be true because the initial about:blank entry sits at index 0,
     // but canGoForward is true and current.url ends with /a.
     "NavigationHistory.canGoBack, canGoForward, current track current position across back navigation" in {
-        val pageA = Span.fromUnsafe("<html><body>A</body></html>".getBytes("UTF-8"))
-        val pageB = Span.fromUnsafe("<html><body>B</body></html>".getBytes("UTF-8"))
-        val pageC = Span.fromUnsafe("<html><body>C</body></html>".getBytes("UTF-8"))
+        val pageA    = Span.fromUnsafe("<html><body>A</body></html>".getBytes("UTF-8"))
+        val pageB    = Span.fromUnsafe("<html><body>B</body></html>".getBytes("UTF-8"))
+        val pageC    = Span.fromUnsafe("<html><body>C</body></html>".getBytes("UTF-8"))
         val handlerA = HttpRoute.getRaw("/a").response(_.bodyBinary).handler { _ =>
             HttpResponse.ok(pageA).addHeader("Content-Type", "text/html; charset=utf-8")
         }

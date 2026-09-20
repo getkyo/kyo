@@ -86,7 +86,7 @@ class SlackSocketEngineLiveTest extends kyo.test.Test[Any]:
                             }
                         }
             HttpServer.init(0, "127.0.0.1")(HttpHandler.webSocket("ws/slack")(wsHandler)).map { wsServer =>
-                val wssUrl = s"ws://127.0.0.1:${wsServer.port}/ws/slack"
+                val wssUrl    = s"ws://127.0.0.1:${wsServer.port}/ws/slack"
                 val openRoute = HttpRoute.postRaw("apps.connections.open").response(_.bodyText).handler { _ =>
                     HttpResponse(HttpStatus.OK).addField("body", s"""{"ok":true,"url":"$wssUrl"}""")
                 }
@@ -127,7 +127,7 @@ class SlackSocketEngineLiveTest extends kyo.test.Test[Any]:
                             .andThen(ws.stream.foreach(_ => Kyo.unit))
                             .andThen(serverSawClose.release)
                 HttpServer.init(0, "127.0.0.1")(HttpHandler.webSocket("ws/slack")(wsHandler)).map { wsServer =>
-                    val wssUrl = s"ws://127.0.0.1:${wsServer.port}/ws/slack"
+                    val wssUrl    = s"ws://127.0.0.1:${wsServer.port}/ws/slack"
                     val openRoute = HttpRoute.postRaw("apps.connections.open").response(_.bodyText).handler { _ =>
                         HttpResponse(HttpStatus.OK).addField("body", s"""{"ok":true,"url":"$wssUrl"}""")
                     }
@@ -163,7 +163,7 @@ class SlackSocketEngineLiveTest extends kyo.test.Test[Any]:
         HttpServer.init(0, "127.0.0.1")(
             HttpHandler.webSocket("ws/slack")(wsHandler)
         ).map { wsServer =>
-            val wssUrl = s"ws://127.0.0.1:${wsServer.port}/ws/slack"
+            val wssUrl    = s"ws://127.0.0.1:${wsServer.port}/ws/slack"
             val openRoute = HttpRoute.postRaw("apps.connections.open").response(_.bodyText).handler { _ =>
                 HttpResponse(HttpStatus.OK).addField("body", s"""{"ok":true,"url":"$wssUrl"}""")
             }

@@ -192,7 +192,7 @@ private[kyo] object CdpBackend:
             lastEvaluateParams         <- AtomicRef.init[Maybe[String]](Absent)
             dialogIdCounter            <- AtomicInt.init(Int.MinValue)
             url                        <- parseWsUrl(wsUrl)
-            transport <- (Abort.recover[HttpException] { e =>
+            transport                  <- (Abort.recover[HttpException] { e =>
                 Abort.fail(BrowserConnectionLostException(s"WS transport setup: ${e.getMessage}", Absent))
             } {
                 JsonRpcHttpTransport.webSocket(url, HttpHeaders.empty, JsonRpcEnvelope.lenientSchema)
@@ -744,7 +744,7 @@ private[kyo] object CdpBackend:
             (accept, promptText) = decision
             _         <- Abort.run[Closed](dialogQueue.put((accept, promptText, sid))).unit
             recorders <- dialogRecorders.get
-            _ <- recorders.get(key) match
+            _         <- recorders.get(key) match
                 case Present(ref) =>
                     val kind: Browser.DialogType = params.`type` match
                         case "alert"        => Browser.DialogType.Alert
@@ -776,7 +776,7 @@ private[kyo] object CdpBackend:
         val key = sid.map(_.value).getOrElse("")
         for
             table <- frameEventDispatchers.get
-            _ <- table.get(key) match
+            _     <- table.get(key) match
                 case Present(h) => h(CdpEvent.Generic(method, params, sid))
                 case Absent     => Kyo.unit
         yield ()
@@ -803,7 +803,7 @@ private[kyo] object CdpBackend:
         val ev  = CdpEvent.Generic(method, params, sid)
         for
             table <- downloadEventDispatchers.get
-            _ <- table.get(key) match
+            _     <- table.get(key) match
                 case Present(h) => h(ev)
                 case Absent     =>
                     // No session-specific handler found. Broadcast to all registered handlers to

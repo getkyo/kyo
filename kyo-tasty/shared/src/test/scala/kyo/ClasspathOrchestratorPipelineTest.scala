@@ -119,7 +119,7 @@ class ClasspathOrchestratorPipelineTest extends kyo.test.Test[Any]:
     }
 
     "pipeline completes successfully with 100+ entries at concurrency=2" in {
-        val bytes = kyo.fixtures.Embedded.plainClassTasty
+        val bytes   = kyo.fixtures.Embedded.plainClassTasty
         val pickles = Chunk.from((1 to 110).map(i =>
             Tasty.Pickle(s"file-$i", Tasty.Version(28, 3, 0), Span.from(bytes))
         ))
@@ -169,7 +169,7 @@ class ClasspathOrchestratorPipelineTest extends kyo.test.Test[Any]:
     }
 
     "pipeline with 100+ entries completes successfully" in {
-        val bytes = kyo.fixtures.Embedded.plainClassTasty
+        val bytes   = kyo.fixtures.Embedded.plainClassTasty
         val pickles = Chunk.from((1 to 100).map(i =>
             Tasty.Pickle(s"entry-$i", Tasty.Version(28, 3, 0), Span.from(bytes))
         ))

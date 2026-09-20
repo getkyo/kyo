@@ -12,7 +12,7 @@ object FieldsMacros:
         val sym = tpe.typeSymbol
         if sym.isClassDef && sym.flags.is(Flags.Case) then
             val tildeType = TypeRepr.of[Record.~]
-            val fields = sym.caseFields.map: field =>
+            val fields    = sym.caseFields.map: field =>
                 val fieldName = field.name
                 val fieldType = tpe.memberType(field)
                 val nameType  = ConstantType(StringConstant(fieldName))
@@ -49,7 +49,7 @@ object FieldsMacros:
             tpe.dealias match
                 case AndType(l, r) => decompose(l) ++ decompose(r)
                 case OrType(l, r)  => decompose(l) ++ decompose(r)
-                case _ =>
+                case _             =>
                     if tpe =:= TypeRepr.of[Any] then Vector()
                     else
                         caseClassFields(tpe).getOrElse:
@@ -78,7 +78,7 @@ object FieldsMacros:
             tpe match
                 case AppliedType(_, List(ConstantType(StringConstant(name)), valueType)) =>
                     val nameExpr = Expr(name)
-                    val tagExpr = valueType.asType match
+                    val tagExpr  = valueType.asType match
                         case '[v] =>
                             Expr.summon[Tag[v]].getOrElse(
                                 report.errorAndAbort(s"Cannot summon Tag for field '$name': ${valueType.show}")
@@ -95,7 +95,7 @@ object FieldsMacros:
                     Some(ComponentInfo(name, nameExpr, tagExpr, nestedExpr, defaultExpr))
                 case _ => None
 
-        val infos = components.flatMap(extractComponent)
+        val infos      = components.flatMap(extractComponent)
         val fieldsList = Expr.ofList(infos.map(ci =>
             '{
                 Field[String, Any](
@@ -156,8 +156,8 @@ object FieldsMacros:
 
         def decompose(tpe: TypeRepr): Vector[(String, TypeRepr)] =
             tpe.dealias match
-                case AndType(l, r) => decompose(l) ++ decompose(r)
-                case OrType(l, r)  => decompose(l) ++ decompose(r)
+                case AndType(l, r)                                                       => decompose(l) ++ decompose(r)
+                case OrType(l, r)                                                        => decompose(l) ++ decompose(r)
                 case AppliedType(_, List(ConstantType(StringConstant(name)), valueType)) =>
                     Vector((name, valueType))
                 case _ =>
@@ -189,8 +189,8 @@ object FieldsMacros:
 
         def fieldNames(tpe: TypeRepr): Set[String] =
             tpe.dealias match
-                case AndType(l, r) => fieldNames(l) ++ fieldNames(r)
-                case OrType(l, r)  => fieldNames(l) ++ fieldNames(r)
+                case AndType(l, r)                                               => fieldNames(l) ++ fieldNames(r)
+                case OrType(l, r)                                                => fieldNames(l) ++ fieldNames(r)
                 case AppliedType(_, List(ConstantType(StringConstant(name)), _)) =>
                     Set(name)
                 case _ =>

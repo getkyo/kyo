@@ -269,7 +269,7 @@ private[kyo] class MemoryFlowStore(
             else
                 val claimed = due.zipWithIndex.map { (ex, i) =>
                     val token = data.nextToken + i
-                    val row = ex.copy(
+                    val row   = ex.copy(
                         executor = Maybe(executorId),
                         claimExpiry = Maybe(now + lease),
                         claimToken = Maybe(token),
@@ -323,7 +323,7 @@ private[kyo] class MemoryFlowStore(
             }.map(_.getOrElse(Woke.TimedOut))
 
         Clock.nowWith { start =>
-            val deadline = start + timeout
+            val deadline                             = start + timeout
             def poll: Seq[FlowStore.Claimed] < Async =
                 tryOnce.map { claimed =>
                     if claimed.nonEmpty then claimed
@@ -399,7 +399,7 @@ private[kyo] class MemoryFlowStore(
                 case Absent                                   => (data, FlowStore.SignalOutcome.AlreadyTerminal(Flow.Status.Cancelled))
                 case Present(ex) if ex.status.isTerminal      => (data, FlowStore.SignalOutcome.AlreadyTerminal(ex.status))
                 case Present(ex) if data.fields.contains(key) => (data, FlowStore.SignalOutcome.AlreadyDelivered)
-                case Present(ex) =>
+                case Present(ex)                              =>
                     (
                         data.copy(
                             fields =
@@ -418,7 +418,7 @@ private[kyo] class MemoryFlowStore(
                 case Absent                              => (data, FlowStore.CancelOutcome.AlreadyTerminal(Flow.Status.Cancelled))
                 case Present(ex) if ex.status.isTerminal => (data, FlowStore.CancelOutcome.AlreadyTerminal(ex.status))
                 case Present(ex) if ex.cancelRequested   => (data, FlowStore.CancelOutcome.AlreadyRequested)
-                case Present(ex) =>
+                case Present(ex)                         =>
                     (
                         data.copy(executions =
                             data.executions.update(executionId, ex.copy(cancelRequested = true, updated = now))
@@ -436,9 +436,9 @@ private[kyo] class MemoryFlowStore(
     /** Whether one execution answers one filter, judged from the row and the fields the store already holds. */
     private def matches(filter: FlowStore.ExecutionFilter, ex: FlowStore.ExecutionState): Boolean =
         filter match
-            case FlowStore.ExecutionFilter.Running   => ex.status == Flow.Status.Running
-            case FlowStore.ExecutionFilter.Completed => ex.status == Flow.Status.Completed
-            case FlowStore.ExecutionFilter.Cancelled => ex.status == Flow.Status.Cancelled
+            case FlowStore.ExecutionFilter.Running      => ex.status == Flow.Status.Running
+            case FlowStore.ExecutionFilter.Completed    => ex.status == Flow.Status.Completed
+            case FlowStore.ExecutionFilter.Cancelled    => ex.status == Flow.Status.Cancelled
             case FlowStore.ExecutionFilter.Compensating =>
                 ex.status match
                     case _: Flow.Status.Compensating => true

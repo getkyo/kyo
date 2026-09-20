@@ -519,7 +519,7 @@ object ClasspathOrchestrator:
                 // JAR root: open a ZipHandle and list matching entries. Scope.run discharges the Scope.
                 Scope.run {
                     ZipHandle.open(root).map {
-                        case Maybe.Absent => Sync.defer(Chunk.empty[String])
+                        case Maybe.Absent          => Sync.defer(Chunk.empty[String])
                         case Maybe.Present(handle) =>
                             handle.listEntries(suffixes).map(entryNames => entryNames.map(e => s"$root!/$e"))
                     }
@@ -721,12 +721,12 @@ object ClasspathOrchestrator:
                 val frSyms = fr.fullNameSymbols
                 var fnIdx  = 0
                 while fnIdx < frKeys.size do
-                    val fullName = frKeys(fnIdx)
-                    val symbol   = frSyms(fnIdx)
-                    val indexKey = if symbol.kind == SymbolKind.Object && !fullName.endsWith("$") then fullName + "$" else fullName
-                    val existing = state.fullNameIndex.get(indexKey)
+                    val fullName    = frKeys(fnIdx)
+                    val symbol      = frSyms(fnIdx)
+                    val indexKey    = if symbol.kind == SymbolKind.Object && !fullName.endsWith("$") then fullName + "$" else fullName
+                    val existing    = state.fullNameIndex.get(indexKey)
                     val shouldStore = existing match
-                        case None => true
+                        case None       => true
                         case Some(prev) =>
                             val prevIsStructural = prev.kind == SymbolKind.Class ||
                                 prev.kind == SymbolKind.Trait || prev.kind == SymbolKind.Object ||
@@ -769,7 +769,7 @@ object ClasspathOrchestrator:
                         val sourceFullName = kyo.internal.tasty.symbol.FullNameNormalizer.canonicalSourceFullName(indexKey)
                         if sourceFullName != indexKey && sourceFullName.nonEmpty then
                             val existingSource = state.fullNameIndex.get(sourceFullName)
-                            val storeSource = existingSource match
+                            val storeSource    = existingSource match
                                 case None       => true
                                 case Some(prev) =>
                                     // Structural symbols (Class, Trait, Object, EnumCase, OpaqueType) win
@@ -874,7 +874,7 @@ object ClasspathOrchestrator:
     ): UnresolvedNegIdRemap =
         val fileCount = perFileUnresolved.size
         // Resolve each distinct fully-qualified name once.
-        val finalIdxByName = mutable.HashMap.empty[String, Int]
+        val finalIdxByName                  = mutable.HashMap.empty[String, Int]
         def resolved(fullName: String): Int =
             finalIdxByName.getOrElseUpdate(fullName, resolveFinalIdx(fullName))
         // Collect the unresolved names in sorted order so global negId assignment is deterministic.
@@ -1590,7 +1590,7 @@ object ClasspathOrchestrator:
                             val parentsBuf = new scala.collection.mutable.ArrayBuffer[Tasty.Type]()
                             for bn <- cfResult.parentBinaryNames do
                                 val dottedFullName = bn.replace('/', '.')
-                                val resolved: Int =
+                                val resolved: Int  =
                                     state.fullNameIndex.get(dottedFullName) match
                                         case Some(parentSym) =>
                                             symbolIdMap.getOrElse(parentSym.id.toLong, -1)
@@ -1841,7 +1841,7 @@ object ClasspathOrchestrator:
                                 val finalIdx = globalAddrToFinal.getOrDefault(address, -1)
                                 if finalIdx >= 0 then Tasty.Type.Named(SymbolId(finalIdx))
                                 else t
-                            case Tasty.Type.Named(_) => t
+                            case Tasty.Type.Named(_)            => t
                             case Tasty.Type.Applied(base, args) =>
                                 Tasty.Type.Applied(rewriteCrossFile(base), args.map(rewriteCrossFile))
                             // Remap TypeLambda.paramIds for cross-file TypeParam refs.
@@ -2024,7 +2024,7 @@ object ClasspathOrchestrator:
                     // panicking. materializeEarlyError carries the caught error; the rest of the block
                     // builds a minimal placeholder classpath to satisfy the return type.
                     var materializeEarlyError: Maybe[TastyError] = Maybe.Absent
-                    val finalSymbols: Array[Tasty.Symbol] =
+                    val finalSymbols: Array[Tasty.Symbol]        =
                         try materializeSymbols(descs, count, mode, accErrors)
                         catch
                             case sme: kyo.internal.tasty.symbol.SymbolMaterializationError =>
@@ -2039,7 +2039,7 @@ object ClasspathOrchestrator:
                     def resolveFullNameToIdx(fullName: String): Int =
                         state.fullNameIndex.get(fullName) match
                             case Some(p) => symbolIdMap.getOrElse(p.id.toLong, -1)
-                            case None =>
+                            case None    =>
                                 val srcFullName = kyo.internal.tasty.symbol.FullNameNormalizer.canonicalSourceFullName(fullName)
                                 if srcFullName != fullName then
                                     state.fullNameIndex.get(srcFullName) match
@@ -2060,7 +2060,7 @@ object ClasspathOrchestrator:
                             if hasNestHost || hasNestMembers || hasEnclosingMethod then
                                 finalSymbols(classIdx) match
                                     case cls: Tasty.Symbol.Class =>
-                                        val currentMeta = cls.javaMetadata
+                                        val currentMeta  = cls.javaMetadata
                                         val resolvedMeta = currentMeta.map { meta =>
                                             val withNestHost =
                                                 if hasNestHost then
@@ -2128,7 +2128,7 @@ object ClasspathOrchestrator:
                             // Binary-alias fully-qualified name keys may store a partial symbol not in symbolIdMap;
                             // canonicalize and retry.
                             val canonicalFullName = kyo.internal.tasty.symbol.FullNameNormalizer.canonicalSourceFullName(fullName)
-                            val fallbackIdx =
+                            val fallbackIdx       =
                                 if canonicalFullName != fullName then
                                     state.fullNameIndex.get(canonicalFullName) match
                                         case Some(canonPartial) => symbolIdMap.getOrElse(canonPartial.id.toLong, -1)
@@ -2562,7 +2562,7 @@ object ClasspathOrchestrator:
             _        <- timed(TastyPerfStats.tastyHeaderNs)(TastyHeader.read(view))
             names    <- timed(TastyPerfStats.nameUnpicklerNs)(NameUnpickler.readUnsafeResult(view))
             sections <- timed(TastyPerfStats.sectionIndexNs)(SectionIndex.readUnsafe(view, names))
-            attrs <- timed(TastyPerfStats.attributeUnpicklerNs)(sections.get(TastyFormat.AttributesSection) match
+            attrs    <- timed(TastyPerfStats.attributeUnpicklerNs)(sections.get(TastyFormat.AttributesSection) match
                 case Present((offset, length)) =>
                     val attrView = view.subView(offset, offset + length)
                     AttributeUnpickler.readUnsafe(attrView, names)
@@ -3140,7 +3140,7 @@ object ClasspathOrchestrator:
                 case Result.Success(fr) =>
                     mergeCompanionFromBytesMap(entryPath, fr, bytesMap, nextGlobalId).map(FileResultCase(_))
                 case Result.Failure(err: TastyError) => FileResultCase(emptyFileResultWithError(entryPath, err))
-                case Result.Panic(t) =>
+                case Result.Panic(t)                 =>
                     FileResultCase(emptyFileResultWithError(entryPath, TastyError.CorruptedFile(entryPath, 0L, t.getMessage)))
             }
         end if
@@ -3220,7 +3220,7 @@ object ClasspathOrchestrator:
                 else JavaClassfileCase(fullName, cfResult)
                 end if
             case Result.Failure(err: TastyError) => FileResultCase(emptyFileResultWithError(entryPath, err))
-            case Result.Panic(t) =>
+            case Result.Panic(t)                 =>
                 FileResultCase(emptyFileResultWithError(entryPath, TastyError.CorruptedFile(entryPath, 0L, t.getMessage)))
         }
     end decodeStandaloneClassfileFromBytesMap

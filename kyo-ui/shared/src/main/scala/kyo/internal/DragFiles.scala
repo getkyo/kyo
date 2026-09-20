@@ -93,7 +93,7 @@ private[kyo] object DragFiles:
                     def page(state: Maybe[String]): Maybe[Seq[DragProtocol.EntryData]] < (Async & Scope & Abort[Drag.FileError]) =
                         for
                             remaining <- seen.get.map(count => directoryLimits.maxEntries - count)
-                            _ <- Abort.when(remaining <= 0)(
+                            _         <- Abort.when(remaining <= 0)(
                                 Drag.FileError.LimitExceeded("Directory entry limit reached.")
                             )
                             requestId <- newRequestId("directory")
@@ -125,7 +125,7 @@ private[kyo] object DragFiles:
                         case PendingFile(channel) =>
                             decodeBase64(bytesBase64) match
                                 case Present(bytes) => Abort.run(channel.put(Result.succeed(Present(bytes)))).unit
-                                case Absent =>
+                                case Absent         =>
                                     Abort.run(channel.put(Result.fail(Drag.FileError.Io("Malformed base64 chunk.")))).unit
                         case _ => ()
                     }

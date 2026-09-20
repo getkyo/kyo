@@ -121,7 +121,7 @@ private[kyo] object TestClasspaths2:
       */
     def loadEmbeddedWithSink(using Frame): (Tasty.Classpath, WarningSink) < (Sync & Async & Abort[TastyError]) =
         import AllowUnsafe.embrace.danger
-        val bufRef = AtomicRef.Unsafe.init(Chunk.empty[String])
+        val bufRef                 = AtomicRef.Unsafe.init(Chunk.empty[String])
         val sinkLogger: Log.Unsafe = new Log.Unsafe:
             def level: Log.Level                                                       = Log.Level.warn
             def name: String                                                           = "kyo.tasty.test"
@@ -132,7 +132,7 @@ private[kyo] object TestClasspaths2:
             def debug(msg: => String, t: => Throwable)(using Frame, AllowUnsafe): Unit = ()
             def info(msg: => String)(using Frame, AllowUnsafe): Unit                   = ()
             def info(msg: => String, t: => Throwable)(using Frame, AllowUnsafe): Unit  = ()
-            def warn(msg: => String)(using Frame, AllowUnsafe): Unit =
+            def warn(msg: => String)(using Frame, AllowUnsafe): Unit                   =
                 val m = msg; discard(bufRef.updateAndGet(_ :+ m))
             def warn(msg: => String, t: => Throwable)(using Frame, AllowUnsafe): Unit =
                 val m = msg; discard(bufRef.updateAndGet(_ :+ m))

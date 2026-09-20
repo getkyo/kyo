@@ -300,13 +300,13 @@ abstract class TestBase[S] extends KyoTestReflect with TypeCheck:
         def ignore: PlatformTestBuilder[P]                 = PlatformTestBuilder(pb.builder.copy(ignore = Maybe("")))
         def ignore(reason: String): PlatformTestBuilder[P] = PlatformTestBuilder(pb.builder.copy(ignore = Maybe(reason)))
 
-        def pendingUntilFixed: PlatformTestBuilder[P] = PlatformTestBuilder(pb.builder.copy(pendingUntilFixed = Maybe("")))
+        def pendingUntilFixed: PlatformTestBuilder[P]                 = PlatformTestBuilder(pb.builder.copy(pendingUntilFixed = Maybe("")))
         def pendingUntilFixed(reason: String): PlatformTestBuilder[P] =
             PlatformTestBuilder(pb.builder.copy(pendingUntilFixed = Maybe(reason)))
 
         def tagged(tags: String*): PlatformTestBuilder[P] = PlatformTestBuilder(pb.builder.copy(tags = pb.builder.tags ++ tags.toSet))
         def timeout(d: Duration): PlatformTestBuilder[P]  = PlatformTestBuilder(pb.builder.copy(timeout = Maybe(d)))
-        def retry(n: Int): PlatformTestBuilder[P] =
+        def retry(n: Int): PlatformTestBuilder[P]         =
             PlatformTestBuilder(pb.builder.copy(retrySchedule = Maybe(kyo.Schedule.fixed(Duration.Zero).take(n))))
         def retry(s: kyo.Schedule): PlatformTestBuilder[P] = PlatformTestBuilder(pb.builder.copy(retrySchedule = Maybe(s)))
 

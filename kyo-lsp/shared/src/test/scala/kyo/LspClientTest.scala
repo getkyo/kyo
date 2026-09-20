@@ -414,7 +414,7 @@ class LspClientTest extends Test:
     }
 
     "definition request round-trips a result union (Location) through the custom schema" in {
-        val target = LspHandler.Location(mainUri, LspHandler.Range.of(2, 0, 2, 4))
+        val target     = LspHandler.Location(mainUri, LspHandler.Range.of(2, 0, 2, 4))
         val definition = LspHandler.TextDocument.definition { _ =>
             LspHandler.DefinitionResult.One(target)
         }

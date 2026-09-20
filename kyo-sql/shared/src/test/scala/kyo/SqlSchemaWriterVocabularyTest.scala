@@ -109,7 +109,7 @@ class SqlSchemaWriterVocabularyTest extends Test:
         val w = writer
         w.date(java.time.LocalDate.of(2026, 5, 5))
         val reader = SqlSchemaReaderMock.postgresMock(w.calls)
-        val ex = intercept[kyo.SqlDecodeException] {
+        val ex     = intercept[kyo.SqlDecodeException] {
             val _ = reader.nextDateTime()
         }
         assert(ex.getMessage.contains("date and time"), s"the failure should name the type asked for: ${ex.getMessage}")

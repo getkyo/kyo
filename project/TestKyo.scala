@@ -248,10 +248,11 @@ object TestKyo {
         val rows = jsRows(extracted)
 
         def platformMatch(name: String): Boolean =
-            !aggregateProjects.contains(name) && (a.platform match {
-                case Some(p) => matchesPlatform(name, p, rows)
-                case None    => true
-            })
+            !aggregateProjects.contains(name) &&
+                (a.platform match {
+                    case Some(p) => matchesPlatform(name, p, rows)
+                    case None    => true
+                })
 
         def selected(name: String): Boolean =
             !a.exclude.contains(baseName(name)) && (a.only.isEmpty || a.only.contains(baseName(name)))
@@ -326,7 +327,7 @@ object TestKyo {
 
         val directlyChanged = (changedFiles.flatMap(fileToProjects(_, allNames)) ++ buildSbtProjects).toSet
         val rows            = jsRows(extracted)
-        val filtered = a.platform match {
+        val filtered        = a.platform match {
             case Some(p) => directlyChanged.filter(matchesPlatform(_, p, rows))
             case None    => directlyChanged
         }
@@ -448,8 +449,8 @@ object TestKyo {
                 // joining identifiers (e.g. js-native, jvm-native), shared (all platforms),
                 // and any other layout (all, then filtered by which projects exist). A JS
                 // project is also the Wasm row's, so a js change selects it for both.
-                val platformDirs = Map("jvm" -> "JVM", "js" -> "JS", "native" -> "Native")
-                val allPlatforms = platformDirs.values.toSeq
+                val platformDirs      = Map("jvm" -> "JVM", "js" -> "JS", "native" -> "Native")
+                val allPlatforms      = platformDirs.values.toSeq
                 val affectedPlatforms = sub match {
                     case "shared"                                        => allPlatforms
                     case s if s.split("-").forall(platformDirs.contains) => s.split("-").toList.map(platformDirs)
@@ -566,7 +567,7 @@ object TestKyo {
                         val uncovered = changedLines -- covered
                         val allNames  = structure.allProjectRefs.map(_.project).toSet
                         attributeUncoveredBuildSbtLines(uncovered, buildSbtFile, baseRef, allNames) match {
-                            case None => None // logged inside
+                            case None        => None // logged inside
                             case Some(extra) =>
                                 val all = (names ++ extra).toSet
                                 log(s"build.sbt change attributed to: ${all.toSeq.sorted.mkString(", ")}")
@@ -606,15 +607,15 @@ object TestKyo {
         if (uncovered.isEmpty) return Some(Set.empty)
         val buildLines = IO.readLines(buildSbtFile).toIndexedSeq
 
-        def isCol0(l: String): Boolean = l.nonEmpty && !l.charAt(0).isWhitespace
-        val headerRe                   = """^lazy val (?:`([^`]+)`|([A-Za-z0-9_]+))""".r
+        def isCol0(l: String): Boolean            = l.nonEmpty && !l.charAt(0).isWhitespace
+        val headerRe                              = """^lazy val (?:`([^`]+)`|([A-Za-z0-9_]+))""".r
         def headerName(l: String): Option[String] =
             if (l.startsWith("lazy val ")) headerRe.findFirstMatchIn(l).map(m => Option(m.group(1)).getOrElse(m.group(2)))
             else None
 
         // Project names (a `lazy val` whose block builds a crossProject or a project) in a build.sbt.
-        val crossRe = """crossProject\(""".r
-        val projRe  = """=\s*\(?\s*project\b""".r
+        val crossRe                                             = """crossProject\(""".r
+        val projRe                                              = """=\s*\(?\s*project\b""".r
         def projectNames(text: IndexedSeq[String]): Set[String] = {
             val ns = scala.collection.mutable.Set.empty[String]
             var i  = 0

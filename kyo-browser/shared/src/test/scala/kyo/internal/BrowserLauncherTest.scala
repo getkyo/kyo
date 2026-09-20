@@ -198,7 +198,7 @@ class BrowserLauncherTest extends BaseChromeTest:
                 BrowserLauncher.createTempDir.map { dir =>
                     Scope.ensure(Abort.run[FileSystemException](Path.run(dir.removeAll)).unit).andThen {
                         val flags = BrowserLauncher.chromiumFlags(dir, headless = true).filterNot(_ == "--remote-debugging-port=0")
-                        val page =
+                        val page  =
                             """data:text/html,<script>console.log(["console","probe"].join("-")); document.title = ["title","probe"].join("-")</script>"""
                         Command(((cfg.executable +: flags) ++ Chunk("--dump-dom", page))*).redirectErrorStream(true).text.map { output =>
                             assert(output.contains("<title>title-probe</title>"), s"the page should have run; Chrome printed: $output")
@@ -216,7 +216,7 @@ class BrowserLauncherTest extends BaseChromeTest:
         val timeout = 200.millis
         Scope.run {
             for
-                tmp <- Path.run(Path.tempDir("kyo-browser-pollDevTools-test-"))
+                tmp     <- Path.run(Path.tempDir("kyo-browser-pollDevTools-test-"))
                 outcome <- Abort.run[BrowserSetupException] {
                     BrowserLauncher.pollDevToolsActivePort(tmp, timeout, 50.millis)
                 }

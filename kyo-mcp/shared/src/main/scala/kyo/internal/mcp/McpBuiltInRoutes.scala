@@ -197,7 +197,7 @@ private[kyo] object McpBuiltInRoutes:
                                     )
                                 case None =>
                                     val registeredUris = Chunk.from(catalog.resourceHandlers.map(h => catalog.resourceMetaOf(h).uri))
-                                    val templates = Chunk.from(
+                                    val templates      = Chunk.from(
                                         catalog.resourceTemplateHandlers.map(h => catalog.resourceTemplateMetaOf(h).uriTemplate)
                                     )
                                     Abort.fail(McpUnknownResourceException(uri, registeredUris, templates))

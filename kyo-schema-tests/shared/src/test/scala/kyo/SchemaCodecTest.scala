@@ -799,7 +799,7 @@ class SchemaCodecTest extends kyo.test.Test[Any]:
 
         "schema from Structure.Value" in {
             val schema = summon[Schema[MTPerson]]
-            val dv = Structure.Value.Record(Chunk(
+            val dv     = Structure.Value.Record(Chunk(
                 ("name", Structure.Value.primitive("Frank")),
                 ("age", Structure.Value.primitive(40))
             ))
@@ -865,7 +865,7 @@ class SchemaCodecTest extends kyo.test.Test[Any]:
             // Use hash-based field IDs for the mapping
             val nameId = CodecMacro.fieldId("name")
             val ageId  = CodecMacro.fieldId("age")
-            val r = new ProtobufReader(w.resultBytes)
+            val r      = new ProtobufReader(w.resultBytes)
                 .withFieldNames(Map(nameId -> "name", ageId -> "age"))
             val result = schema.readFrom(r)
             assert(result == person)
@@ -880,7 +880,7 @@ class SchemaCodecTest extends kyo.test.Test[Any]:
             // Use hash-based field IDs for the mapping
             val nameId = CodecMacro.fieldId("name")
             val ageId  = CodecMacro.fieldId("age")
-            val r = new ProtobufReader(w.resultBytes)
+            val r      = new ProtobufReader(w.resultBytes)
                 .withFieldNames(Map(nameId -> "name", ageId -> "age"))
             val result = schema.readFrom(r)
             assert(result == person)
@@ -2404,8 +2404,8 @@ class SchemaCodecTest extends kyo.test.Test[Any]:
                 schema.writeTo(tag.asInstanceOf[Tag[List[Int]]], w)
                 val encodedShow = w.resultTokens.collect { case Token.Str(s) => s }.headOption.getOrElse("")
                 assert(encodedShow == tag.show, "tagSchema must serialise dynamic tag as its show-string")
-                val r    = TestReader(w.resultTokens)
-                val back = schema.readFrom(r)
+                val r      = TestReader(w.resultTokens)
+                val back   = schema.readFrom(r)
                 val thrown = intercept[Exception] {
                     back.show
                 }
@@ -2425,7 +2425,7 @@ class SchemaCodecTest extends kyo.test.Test[Any]:
             "Dict[String, Dict[String, Int]] nested round-trip (all 4 leaf values present)" in {
                 given inner: Schema[Dict[String, Int]]               = Schema.stringDictSchema[Int]
                 given outer: Schema[Dict[String, Dict[String, Int]]] = Schema.stringDictSchema[Dict[String, Int]]
-                val v = Dict(
+                val v                                                = Dict(
                     "a" -> Dict("x" -> 1, "y" -> 2),
                     "b" -> Dict("p" -> 3, "q" -> 4)
                 )
@@ -2859,7 +2859,7 @@ class SchemaCodecTest extends kyo.test.Test[Any]:
             }
 
             "Result.Success nested Result round-trip" in {
-                given innerSchema: Schema[Result[String, Int]] = Schema.resultSchema[String, Int]
+                given innerSchema: Schema[Result[String, Int]]                 = Schema.resultSchema[String, Int]
                 given outerSchema: Schema[Result[String, Result[String, Int]]] =
                     Schema.resultSchema[String, Result[String, Int]]
                 val inner   = Result.succeed[String, Int](7)
@@ -2929,7 +2929,7 @@ class SchemaCodecTest extends kyo.test.Test[Any]:
             }
 
             "Result.Failure nested Result round-trip" in {
-                given innerSchema: Schema[Result[String, Int]] = Schema.resultSchema[String, Int]
+                given innerSchema: Schema[Result[String, Int]]               = Schema.resultSchema[String, Int]
                 given outerSchema: Schema[Result[Result[String, Int], Long]] =
                     Schema.resultSchema[Result[String, Int], Long]
                 val inner   = Result.fail[String, Int]("nested")

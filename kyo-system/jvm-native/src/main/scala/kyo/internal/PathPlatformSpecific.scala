@@ -39,7 +39,7 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
             // and the drive designator (e.g. "C:") for a Windows drive root ("C:\"). Carrying
             // the drive here is what lets parts -> make round-trip without dropping the volume,
             // which otherwise re-anchors the path to the process working directory's drive.
-            val root = jpath.getRoot
+            val root        = jpath.getRoot
             val rootSegment =
                 if root == null then ""
                 else root.toString.replace('\\', '/').stripSuffix("/")
@@ -333,7 +333,7 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
     private def openRawChannel(mode: Path.RawChannelAccess): Path.RawChannel =
         def writeOptions(open: FileSystem.WriteOpen): Array[StandardOpenOption] = open match
             case FileSystem.WriteOpen.Existing => Array(StandardOpenOption.WRITE)
-            case FileSystem.WriteOpen.Create =>
+            case FileSystem.WriteOpen.Create   =>
                 ensureParent(jpath)
                 Array(StandardOpenOption.WRITE, StandardOpenOption.CREATE)
             case FileSystem.WriteOpen.CreateNew =>
@@ -413,15 +413,15 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
         val isExclusive = mode == Path.LockMode.Exclusive
         // The suffix is part of the lock's identity: claims under different suffixes contend on
         // different sentinel files, so the registry keys on the sentinel, not on the data path.
-        val key = sentinel(registryKey, sentinelSuffix)
+        val key                                                                        = sentinel(registryKey, sentinelSuffix)
         def settled(result: Result[FileLockException, Path.RawLock]): Path.LockAttempt =
             result match
                 case Result.Success(raw)   => Path.LockAttempt.Acquired(raw)
                 case Result.Failure(error) => Path.LockAttempt.Failed(Result.Failure(error))
                 case panic: Result.Panic   => Path.LockAttempt.Failed(panic)
         NioPathLockRegistry.reserve(key, isExclusive) match
-            case NioPathLockRegistry.Reservation.Denied  => Path.LockAttempt.Failed(Result.fail(FileLockUnavailableException(safe)))
-            case NioPathLockRegistry.Reservation.Pending => Path.LockAttempt.Pending
+            case NioPathLockRegistry.Reservation.Denied         => Path.LockAttempt.Failed(Result.fail(FileLockUnavailableException(safe)))
+            case NioPathLockRegistry.Reservation.Pending        => Path.LockAttempt.Pending
             case NioPathLockRegistry.Reservation.SharedExisting =>
                 Path.LockAttempt.Acquired(new NioRawLock(key, isExclusive))
             case NioPathLockRegistry.Reservation.First =>
@@ -1015,7 +1015,7 @@ abstract private[kyo] class PathPlatformSpecific extends PathDirectories:
                     )
                 catch
                     case e: java.io.IOException if NioExceptionBoundary.isInterrupted(e) => Result.panic(e)
-                    case e: java.io.IOException =>
+                    case e: java.io.IOException                                          =>
                         Result.fail(FileIOException(make(Chunk(prefix + suffix)), FileSystemOperation.Create, e))
             )
         )
@@ -1042,7 +1042,7 @@ abstract private[kyo] class PathPlatformSpecific extends PathDirectories:
                     )
                 catch
                     case e: java.io.IOException if NioExceptionBoundary.isInterrupted(e) => Result.panic(e)
-                    case e: java.io.IOException =>
+                    case e: java.io.IOException                                          =>
                         Result.fail(FileIOException(make(Chunk(prefix)), FileSystemOperation.Create, e))
             )
         )

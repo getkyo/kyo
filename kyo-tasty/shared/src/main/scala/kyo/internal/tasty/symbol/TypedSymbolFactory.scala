@@ -149,7 +149,7 @@ private[kyo] object TypedSymbolFactory:
                     sourcePosition = d.sourcePosition,
                     body = d.declaredType match
                         case Maybe.Present(t) => Maybe.Present(t)
-                        case Maybe.Absent =>
+                        case Maybe.Absent     =>
                             accErrors match
                                 case Maybe.Present(buffer) =>
                                     if mode == Tasty.ErrorMode.FailFast then
@@ -179,7 +179,7 @@ private[kyo] object TypedSymbolFactory:
                     sourcePosition = d.sourcePosition,
                     body = d.declaredType match
                         case Maybe.Present(t) => Maybe.Present(t)
-                        case Maybe.Absent =>
+                        case Maybe.Absent     =>
                             accErrors match
                                 case Maybe.Present(buffer) =>
                                     if mode == Tasty.ErrorMode.FailFast then
@@ -234,7 +234,7 @@ private[kyo] object TypedSymbolFactory:
                     sourcePosition = d.sourcePosition,
                     declaredType = d.declaredType match
                         case Maybe.Present(t) => Maybe.Present(t)
-                        case Maybe.Absent =>
+                        case Maybe.Absent     =>
                             accErrors match
                                 case Maybe.Present(buffer) =>
                                     if mode == Tasty.ErrorMode.FailFast then

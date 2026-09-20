@@ -21,7 +21,7 @@ private[internal] object ErrorClassification:
     def missingFor(ctx: ResourceContext, cause: String | Throwable)(using Frame): ContainerException =
         ctx match
             case ResourceContext.Container(id) => ContainerMissingException(id)
-            case ResourceContext.Image(ref) =>
+            case ResourceContext.Image(ref)    =>
                 ContainerImageMissingException(ContainerImage.parse(ref).getOrElse(ContainerImage(ref)))
             case ResourceContext.Network(id) => ContainerNetworkMissingException(id)
             case ResourceContext.Volume(id)  => ContainerVolumeMissingException(id)

@@ -67,8 +67,8 @@ class WorkerConcurrentRunTest extends AnyFreeSpec with NonImplicitAssertions {
 
         // Independent witness: bracket each Runnable the Worker submits (one per run()) to count
         // overlapping run()s directly. The clock ticker uses the plain executor, so only runs count here.
-        val activeRuns    = new AtomicInteger(0)
-        val maxActiveRuns = new AtomicInteger(0)
+        val activeRuns                     = new AtomicInteger(0)
+        val maxActiveRuns                  = new AtomicInteger(0)
         private val countingExec: Executor = (r: Runnable) =>
             executor.execute { () =>
                 val a = activeRuns.incrementAndGet()
@@ -80,7 +80,7 @@ class WorkerConcurrentRunTest extends AnyFreeSpec with NonImplicitAssertions {
 
         val worker: Worker = {
             val clock = InternalClock(executor) // clock ticker runs on the plain executor so it is not counted
-            val w = new Worker(0, countingExec, rehome, _ => null, clock, 10) {
+            val w     = new Worker(0, countingExec, rehome, _ => null, clock, 10) {
                 def currentInterruptEpoch(): Long = 0L
                 def shouldStop()                  = stop.get()
             }
@@ -201,24 +201,23 @@ class WorkerConcurrentRunTest extends AnyFreeSpec with NonImplicitAssertions {
         // few times to guard anything. That is asserted below, ahead of the invariants it validates.
         val end = deadlineMs(600000)
 
-        val threads =
-            (0 until injectors).map { _ =>
-                val t = new Thread(() => {
-                    started.countDown()
-                    go.await()
-                    var k = 0
-                    while (k < perInj && System.currentTimeMillis() < end) {
-                        // Hug the boundary: only add when the worker looks drained, so the wakeup races its exit.
-                        val drainEnd = deadlineMs(5000)
-                        while (h.worker.load() > 0 && System.currentTimeMillis() < drainEnd) {}
-                        h.worker.enqueue(TestTask(_run = () => h.witnessed { ran.incrementAndGet(); Task.Done }))
-                        enq.incrementAndGet()
-                        k += 1
-                    }
-                })
-                t.setDaemon(true)
-                t
-            }
+        val threads = (0 until injectors).map { _ =>
+            val t = new Thread(() => {
+                started.countDown()
+                go.await()
+                var k = 0
+                while (k < perInj && System.currentTimeMillis() < end) {
+                    // Hug the boundary: only add when the worker looks drained, so the wakeup races its exit.
+                    val drainEnd = deadlineMs(5000)
+                    while (h.worker.load() > 0 && System.currentTimeMillis() < drainEnd) {}
+                    h.worker.enqueue(TestTask(_run = () => h.witnessed { ran.incrementAndGet(); Task.Done }))
+                    enq.incrementAndGet()
+                    k += 1
+                }
+            })
+            t.setDaemon(true)
+            t
+        }
         threads.foreach(_.start())
         started.await()
         go.countDown()

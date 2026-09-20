@@ -51,7 +51,7 @@ object Retry:
       */
     def apply[E: ConcreteTag](using Frame)[A, S](schedule: Schedule)(v: => A < (Abort[E] & S)): A < (Async & Abort[E] & S) =
         Abort.run[E](v).map {
-            case Result.Success(value) => value
+            case Result.Success(value)                => value
             case result: Result.Failure[E] @unchecked =>
                 Clock.now.map { now =>
                     schedule.next(now).map { (delay, nextSchedule) =>

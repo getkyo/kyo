@@ -63,8 +63,7 @@ final class MsgPackReader(data: Array[Byte], config: MsgPack.Config)(using _fram
     private def readU16(): Int = (readByte() << 8) | readByte()
     private def readS16(): Int = readU16().toShort.toInt
 
-    private def readBE32(): Int =
-        (readByte() << 24) | (readByte() << 16) | (readByte() << 8) | readByte()
+    private def readBE32(): Int = (readByte() << 24) | (readByte() << 16) | (readByte() << 8) | readByte()
 
     private def readU32Long(): Long = readBE32().toLong & 0xffffffffL
 
@@ -183,7 +182,7 @@ final class MsgPackReader(data: Array[Byte], config: MsgPack.Config)(using _fram
     private def parseKey(): Unit =
         val b = peekByte()
         if isStr(b) then
-            val hb = readByte()
+            val hb  = readByte()
             val len =
                 if isFixStr(hb) then hb & 0x1f
                 else if hb == Str8 then readByte()
@@ -297,7 +296,7 @@ final class MsgPackReader(data: Array[Byte], config: MsgPack.Config)(using _fram
     end boolean
 
     private def readStringValue(): String =
-        val b = readByte()
+        val b   = readByte()
         val len =
             if isFixStr(b) then b & 0x1f
             else if b == Str8 then readByte()
@@ -317,7 +316,7 @@ final class MsgPackReader(data: Array[Byte], config: MsgPack.Config)(using _fram
     end isNil
 
     def bytes(): Span[Byte] =
-        val b = readByte()
+        val b   = readByte()
         val len =
             if b == Bin8 then readByte()
             else if b == Bin16 then readU16()
@@ -344,7 +343,7 @@ final class MsgPackReader(data: Array[Byte], config: MsgPack.Config)(using _fram
     // --- extension header ---
 
     private def readExtHeader(): (Int, Int) =
-        val b = readByte()
+        val b   = readByte()
         val len =
             if b == FixExt1 then 1
             else if b == FixExt2 then 2

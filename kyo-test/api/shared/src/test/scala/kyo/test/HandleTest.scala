@@ -49,9 +49,8 @@ class HandleTest extends AsyncFreeSpec with NonImplicitAssertions:
     "single .handle discharges one extra effect, registers a baseline leaf" in {
         val leaf = discover(Chunk(0)) {
             new kyo.test.Test[Any]:
-                "uses-env".handle[Env[Db]](
-                    [A] => (b: A < (Env[Db] & Async & Abort[Any] & Scope)) => Env.run(db)(b)
-                ) in Env.get[Db].map(_ => succeed)
+                "uses-env".handle[Env[Db]]([A] => (b: A < (Env[Db] & Async & Abort[Any] & Scope)) => Env.run(db)(b)) in
+                    Env.get[Db].map(_ => succeed)
         }
         assert(leaf.isDefined)
         leaf match
@@ -67,9 +66,7 @@ class HandleTest extends AsyncFreeSpec with NonImplicitAssertions:
                     // First .handle peels directly to baseline (Env discharged, nothing left).
                     .handle[Env[Db]]([A] => (b: A < (Env[Db] & Async & Abort[Any] & Scope)) => Env.run(db)(b))
                     // Second .handle peels Var[Int] down to the residual Env[Db] row tracked by the first.
-                    .handle[Var[Int] & Env[Db]](
-                        [A] => (b: A < (Var[Int] & Env[Db] & Async & Abort[Any] & Scope)) => Var.run(0)(b)
-                    ) in {
+                    .handle[Var[Int] & Env[Db]]([A] => (b: A < (Var[Int] & Env[Db] & Async & Abort[Any] & Scope)) => Var.run(0)(b)) in {
                     Env.get[Db].map(_ => Var.update[Int](_ + 1)).unit
                 }
         }
@@ -116,9 +113,7 @@ class HandleTest extends AsyncFreeSpec with NonImplicitAssertions:
     "group-level .handle applies per descended leaf ; leaf-a" in {
         val leaf = discover(Chunk(0, 0)) {
             new kyo.test.Test[Env[Db]]:
-                "group".handle[Env[Db]](
-                    [A] => (b: A < (Env[Db] & Async & Abort[Any] & Scope)) => Env.run(db)(b)
-                ) - {
+                "group".handle[Env[Db]]([A] => (b: A < (Env[Db] & Async & Abort[Any] & Scope)) => Env.run(db)(b)) - {
                     "leaf-a" in Env.get[Db].map(_ => succeed)
                     "leaf-b" in Env.get[Db].map(_ => succeed)
                 }
@@ -133,9 +128,7 @@ class HandleTest extends AsyncFreeSpec with NonImplicitAssertions:
     "group-level .handle applies per descended leaf ; leaf-b" in {
         val leaf = discover(Chunk(0, 1)) {
             new kyo.test.Test[Env[Db]]:
-                "group".handle[Env[Db]](
-                    [A] => (b: A < (Env[Db] & Async & Abort[Any] & Scope)) => Env.run(db)(b)
-                ) - {
+                "group".handle[Env[Db]]([A] => (b: A < (Env[Db] & Async & Abort[Any] & Scope)) => Env.run(db)(b)) - {
                     "leaf-a" in Env.get[Db].map(_ => succeed)
                     "leaf-b" in Env.get[Db].map(_ => succeed)
                 }
@@ -171,9 +164,8 @@ class HandleTest extends AsyncFreeSpec with NonImplicitAssertions:
     "result-changing handler wrapped with .map(_._2) fits and registers a baseline leaf" in {
         val leaf = discover(Chunk(0)) {
             new kyo.test.Test[Any]:
-                "tuple-wrapped".handle[Var[Int]](
-                    [A] => (b: A < (Var[Int] & Async & Abort[Any] & Scope)) => Var.runTuple(0)(b).map(_._2)
-                ) in Var.update[Int](_ + 1).unit
+                "tuple-wrapped".handle[Var[Int]]([A] => (b: A < (Var[Int] & Async & Abort[Any] & Scope)) => Var.runTuple(0)(b).map(_._2)) in
+                    Var.update[Int](_ + 1).unit
         }
         assert(leaf.isDefined)
         leaf match

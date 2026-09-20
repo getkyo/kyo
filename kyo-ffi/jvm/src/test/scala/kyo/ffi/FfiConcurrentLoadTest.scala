@@ -30,7 +30,7 @@ class FfiConcurrentLoadTest extends Test:
 
             var t = 0
             while t < concurrency do
-                val idx = t
+                val idx         = t
                 val r: Runnable = () =>
                     try
                         barrier.await(5, TimeUnit.SECONDS)
@@ -68,7 +68,7 @@ class FfiConcurrentLoadTest extends Test:
             val start      = new CountDownLatch(1)
 
             // Unloader thread: repeatedly evicts and re-caches the binding.
-            val unloaderDone = new CountDownLatch(1)
+            val unloaderDone       = new CountDownLatch(1)
             val unloader: Runnable = () =>
                 try
                     start.await(5, TimeUnit.SECONDS)
@@ -88,7 +88,7 @@ class FfiConcurrentLoadTest extends Test:
             // Reader threads: continuously call load and assert the result is non-null.
             var r = 0
             while r < readers do
-                val idx = r
+                val idx              = r
                 val reader: Runnable = () =>
                     try
                         start.await(5, TimeUnit.SECONDS)
@@ -134,7 +134,7 @@ class FfiConcurrentLoadTest extends Test:
 
             var t = 0
             while t < concurrency do
-                val idx = t
+                val idx         = t
                 val r: Runnable = () =>
                     try
                         barrier.await(5, TimeUnit.SECONDS)
@@ -191,7 +191,7 @@ class FfiConcurrentLoadTest extends Test:
 
             var t = 0
             while t < concurrency do
-                val idx = t
+                val idx         = t
                 val r: Runnable = () =>
                     try
                         barrier.await(5, TimeUnit.SECONDS)

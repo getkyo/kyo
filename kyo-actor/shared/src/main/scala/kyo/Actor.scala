@@ -210,7 +210,7 @@ object Actor:
         def awaitReply[C, E](reply: Promise[C, Abort[Closed]], send: => Unit < (Async & Abort[Closed]))(
             onTerminated: => C < (Async & Abort[Closed | E])
         )(using frame: Frame): C < (Async & Abort[Closed | E]) =
-            val entry = reply.asInstanceOf[Promise[Any, Abort[Closed]]]
+            val entry                 = reply.asInstanceOf[Promise[Any, Abort[Closed]]]
             val register: Unit < Sync =
                 Sync.Unsafe.defer {
                     discard(waiters.add(entry))
@@ -387,7 +387,7 @@ object Actor:
         for
             self     <- Actor.self[A]
             listener <- hub.listen(bufferSize, filter)
-            _ <- Fiber.init {
+            _        <- Fiber.init {
                 Loop.foreach {
                     Abort.run[Closed](listener.take).map {
                         case Result.Success(event) =>

@@ -146,7 +146,7 @@ class ConsoleTest extends kyo.test.Test[Any]:
     // past and no caller could turn it into a clean shutdown. The Node read no longer throws, and this pins the contract that carried the
     // failure: whatever readLine throws, `Abort.run` answers with it.
     "a throwing readLine arrives as a Panic rather than escaping the handler" in {
-        val boom = new RuntimeException("stdin exploded")
+        val boom     = new RuntimeException("stdin exploded")
         val throwing = new Console.Unsafe:
             def readLine()(using AllowUnsafe)              = throw boom
             def print(s: String)(using AllowUnsafe)        = ()
@@ -165,7 +165,7 @@ class ConsoleTest extends kyo.test.Test[Any]:
 
     // The other half of the same contract: a read that FAILS rather than throws stays inside the declared Abort[IOException].
     "a failing readLine arrives as a typed Failure" in {
-        val eof = new java.io.EOFException("no more input")
+        val eof     = new java.io.EOFException("no more input")
         val failing = new Console.Unsafe:
             def readLine()(using AllowUnsafe)              = Result.fail(eof)
             def print(s: String)(using AllowUnsafe)        = ()

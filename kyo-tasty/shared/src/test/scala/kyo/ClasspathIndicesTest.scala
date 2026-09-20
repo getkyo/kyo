@@ -31,8 +31,8 @@ class ClasspathIndicesTest extends kyo.test.Test[Any]:
 
     "dictRoundTripOverSchema" in {
         import AllowUnsafe.embrace.danger
-        val cls0 = makeCls(0, "Foo")
-        val cls1 = makeCls(1, "pkg")
+        val cls0      = makeCls(0, "Foo")
+        val cls1      = makeCls(1, "pkg")
         val classpath = Classpath.make(
             symbols = Chunk(cls0, cls1),
             rootSymbolId = SymbolId(0),
@@ -63,9 +63,9 @@ class ClasspathIndicesTest extends kyo.test.Test[Any]:
 
     "dictAggregationsBuilderPreservesIds" in {
         import AllowUnsafe.embrace.danger
-        val cls0 = makeCls(0, "Bar")
-        val cls1 = makeCls(1, "Bar")
-        val cls2 = makeCls(2, "Bar")
+        val cls0      = makeCls(0, "Bar")
+        val cls1      = makeCls(1, "Bar")
+        val cls2      = makeCls(2, "Bar")
         val classpath = Classpath.make(
             symbols = Chunk(cls0, cls1, cls2),
             rootSymbolId = SymbolId(0),

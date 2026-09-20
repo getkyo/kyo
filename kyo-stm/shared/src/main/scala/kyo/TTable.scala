@@ -145,7 +145,7 @@ object TTable:
 
         def update(id: Id, record: Record[F])(using Frame) =
             store.get(id).map {
-                case Absent => Absent
+                case Absent        => Absent
                 case Present(prev) =>
                     store.put(id, record).andThen(Maybe(prev))
             }
@@ -186,7 +186,7 @@ object TTable:
         def update(id: Id, record: Record[F])(using Frame) =
             for
                 prev <- store.update(id, record)
-                _ <-
+                _    <-
                     if prev.isDefined then
                         removeFromIndexes(id, prev.get)
                             .andThen(updateIndexes(id, record))
@@ -308,7 +308,7 @@ object TTable:
           */
         def init[F: Fields as fields, Indexes >: F: Fields as indexFields](using Frame): Indexed[F, Indexes] < Sync =
             for
-                table <- TTable.init[F]
+                table   <- TTable.init[F]
                 indexes <-
                     Kyo.foreach(indexFields.fields) { field =>
                         TMap.init[Any, Set[Int]].map(field.name -> _)

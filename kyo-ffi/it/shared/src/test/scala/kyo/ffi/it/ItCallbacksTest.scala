@@ -59,7 +59,7 @@ class ItCallbacksTest extends Test:
         "table-driven: ascending sort over varied input arrays" in {
             // Each row: load arr into a fresh buffer, sort ascending via callback,
             // confirm buffer contents match arr.sorted.
-            val b = Ffi.load[ItCallbacksBindings]
+            val b                      = Ffi.load[ItCallbacksBindings]
             val cases: Seq[Array[Int]] = Seq(
                 Array(1),
                 Array(2, 1),
@@ -87,7 +87,7 @@ class ItCallbacksTest extends Test:
         }
 
         "table-driven: descending sort over varied input arrays" in {
-            val b = Ffi.load[ItCallbacksBindings]
+            val b                      = Ffi.load[ItCallbacksBindings]
             val cases: Seq[Array[Int]] = Seq(
                 Array(1, 2, 3, 4, 5),
                 Array(10, 20, 30),

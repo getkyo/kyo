@@ -197,7 +197,7 @@ class Inv009BehavioralTest extends kyo.test.Test[Any]:
                                 Tasty.evictOlderThan(dir.toString, maxAge)
                             ).map { result =>
                                 result match
-                                    case Result.Panic(t) => throw t
+                                    case Result.Panic(t)   => throw t
                                     case Result.Failure(e) =>
                                         fail(s"evictOlderThan must not abort; got $e")
                                     case Result.Success(_) =>

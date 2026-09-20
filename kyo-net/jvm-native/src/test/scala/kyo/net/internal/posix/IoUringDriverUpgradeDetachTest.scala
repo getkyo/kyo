@@ -49,7 +49,7 @@ class IoUringDriverUpgradeDetachTest extends Test:
                     arrange(driver, handle, p)
                     awaitOutcome(p, 10.seconds).map {
                         case Present(Result.Failure(_)) => succeed
-                        case Absent =>
+                        case Absent                     =>
                             assert(
                                 false,
                                 s"$name: the stray read promise was stranded, nothing completed it " +

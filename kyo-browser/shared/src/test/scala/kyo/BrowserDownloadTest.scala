@@ -146,7 +146,7 @@ class BrowserDownloadTest extends BrowserTest:
                 htmlA     = page(s"""<a id='dl' href='$dataUrl' download='$fileNameA'>dl</a>""")
                 eventsA <- AtomicRef.init(Chunk.empty[Browser.DownloadEvent])
                 doneA   <- Promise.init[Unit, Any]
-                _ <- Browser.onDownload(collectEvents(eventsA, doneA)) {
+                _       <- Browser.onDownload(collectEvents(eventsA, doneA)) {
                     Browser.goto(htmlA).andThen(Browser.click(Browser.Selector.id("dl"))).andThen(doneA.get)
                 }
                 landedA <- Path.runReadOnly((tempPath / fileNameA).exists)
@@ -167,7 +167,7 @@ class BrowserDownloadTest extends BrowserTest:
                 htmlC     = page(s"""<a id='dl' href='$dataUrl' download='$fileNameC'>dl</a>""")
                 eventsC <- AtomicRef.init(Chunk.empty[Browser.DownloadEvent])
                 doneC   <- Promise.init[Unit, Any]
-                _ <- Browser.onDownload(collectEvents(eventsC, doneC)) {
+                _       <- Browser.onDownload(collectEvents(eventsC, doneC)) {
                     Browser.goto(htmlC).andThen(Browser.click(Browser.Selector.id("dl"))).andThen(doneC.get)
                 }
                 landedC <- Path.runReadOnly((tempPath / fileNameC).exists)
@@ -191,7 +191,7 @@ class BrowserDownloadTest extends BrowserTest:
                 _      <- Browser.allowDownloads(tempDir)
                 events <- AtomicRef.init(Chunk.empty[Browser.DownloadEvent])
                 seen   <- Promise.init[Browser.DownloadEvent.WillBegin, Any]
-                _ <- Browser.onDownload { (ev: Browser.DownloadEvent) =>
+                _      <- Browser.onDownload { (ev: Browser.DownloadEvent) =>
                     events.updateAndGet(_ :+ ev).andThen {
                         ev match
                             case wb: Browser.DownloadEvent.WillBegin =>
@@ -224,7 +224,7 @@ class BrowserDownloadTest extends BrowserTest:
         // loopback finishes faster than Chromium's download-progress tick, so only the terminal
         // "completed" event fires and the "at least one prior Progress" assertion below races (it failed
         // on Native CI). Streaming the body slowly guarantees at least one in-progress tick.
-        val chunkBytes = Span.fromUnsafe(new Array[Byte](64 * 1024)) // 64 KB
+        val chunkBytes                            = Span.fromUnsafe(new Array[Byte](64 * 1024)) // 64 KB
         val bodyStream: Stream[Span[Byte], Async] = Stream[Span[Byte], Async] {
             Loop(0) { i =>
                 if i >= 16 then Loop.done(())
@@ -246,7 +246,7 @@ class BrowserDownloadTest extends BrowserTest:
                     _      <- Browser.allowDownloads(tempDir)
                     events <- AtomicRef.init(Chunk.empty[Browser.DownloadEvent])
                     done   <- Promise.init[Unit, Any]
-                    _ <- Browser.onDownload(collectEvents(events, done)) {
+                    _      <- Browser.onDownload(collectEvents(events, done)) {
                         Browser.goto(html).andThen(Browser.click(Browser.Selector.id("dl"))).andThen(done.get)
                     }
                     captured <- events.get
@@ -288,7 +288,7 @@ class BrowserDownloadTest extends BrowserTest:
                 _      <- Browser.allowDownloads(tempDir)
                 events <- AtomicRef.init(Chunk.empty[Browser.DownloadEvent])
                 done1  <- Promise.init[Unit, Any]
-                _ <- Browser.onDownload(collectEvents(events, done1)) {
+                _      <- Browser.onDownload(collectEvents(events, done1)) {
                     Browser.goto(html1).andThen(Browser.click(Browser.Selector.id("dl"))).andThen(done1.get)
                 }
                 // After onDownload scope exits, trigger another download. The collector should not see it.
@@ -431,12 +431,12 @@ class BrowserDownloadTest extends BrowserTest:
                 fileNameInside  = s"inside-${now.toNanos}.txt"
                 fileNameOutside = s"outside-${now.toNanos}.txt"
                 dataUrl         = "data:application/octet-stream;base64,SGVsbG8="
-                html =
+                html            =
                     page(s"""<a id='dl1' href='$dataUrl' download='$fileNameInside'>dl1</a>
                             |<a id='dl2' href='$dataUrl' download='$fileNameOutside'>dl2</a>""".stripMargin)
                 events <- AtomicRef.init(Chunk.empty[Browser.DownloadEvent])
                 done   <- Promise.init[Unit, Any]
-                _ <- Browser.onDownload(collectEvents(events, done)) {
+                _      <- Browser.onDownload(collectEvents(events, done)) {
                     Browser.withDownloads(tempDir) {
                         Browser.goto(html).andThen(Browser.click(Browser.Selector.id("dl1"))).andThen(done.get)
                     }
@@ -469,7 +469,7 @@ class BrowserDownloadTest extends BrowserTest:
                 fileB   = s"b-${now.toNanos}.txt"
                 fileC   = s"c-${now.toNanos}.txt"
                 dataUrl = "data:application/octet-stream;base64,SGVsbG8="
-                html = page(
+                html    = page(
                     s"""<a id='a' href='$dataUrl' download='$fileA'>a</a>
                        |<a id='b' href='$dataUrl' download='$fileB'>b</a>
                        |<a id='c' href='$dataUrl' download='$fileC'>c</a>""".stripMargin

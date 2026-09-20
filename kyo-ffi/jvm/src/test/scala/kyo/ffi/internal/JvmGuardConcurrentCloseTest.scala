@@ -34,7 +34,7 @@ class JvmGuardConcurrentCloseTest extends Test:
 
                 var t = 0
                 while t < concurrency do
-                    val idx = t
+                    val idx         = t
                     val r: Runnable = () =>
                         try
                             barrier.await(5, TimeUnit.SECONDS)
@@ -79,7 +79,7 @@ class JvmGuardConcurrentCloseTest extends Test:
                 val errors = new AtomicReference[Throwable](null)
 
                 // Thread A: adopts a spill arena
-                val adopterArena = java.lang.foreign.Arena.ofShared().nn
+                val adopterArena      = java.lang.foreign.Arena.ofShared().nn
                 val adopter: Runnable = () =>
                     try
                         start.await(5, TimeUnit.SECONDS)
@@ -134,7 +134,7 @@ class JvmGuardConcurrentCloseTest extends Test:
             var i           = 0
             while i < iterations do
                 val teardownCount = new AtomicInteger(0)
-                val core = new GuardCore(
+                val core          = new GuardCore(
                     () => discard(teardownCount.incrementAndGet()),
                     () => ()
                 )
@@ -145,7 +145,7 @@ class JvmGuardConcurrentCloseTest extends Test:
 
                 var t = 0
                 while t < concurrency do
-                    val idx = t
+                    val idx         = t
                     val r: Runnable = () =>
                         try
                             barrier.await(5, TimeUnit.SECONDS)

@@ -314,8 +314,8 @@ final private[kyo] case class RemoteObjectValue(
       */
     def text: String =
         `type` match
-            case "undefined"                            => "undefined"
-            case "object" if subtype == Present("null") => "null"
+            case "undefined"                                => "undefined"
+            case "object" if subtype == Present("null")     => "null"
             case "string" | "number" | "boolean" | "bigint" =>
                 unserializableValue.orElse(description).orElse(value.map(RemoteObjectValue.render)).getOrElse(`type`)
             case _ => description.getOrElse(`type`)

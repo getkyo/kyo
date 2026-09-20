@@ -179,7 +179,7 @@ final class MysqlConnection(
                 channel.receive(false).flatMap {
                     case _: OkPacket    => ()
                     case err: ErrPacket => Abort.fail(MysqlErrors.mkServerError(err, Maybe.Absent, 0, Maybe(cid))(using frame))
-                    case other =>
+                    case other          =>
                         Abort.fail(SqlConnectionUnexpectedMessageException(
                             "ping",
                             "OkPacket / ErrPacket",
@@ -318,8 +318,7 @@ final class MysqlConnection(
         Sync.Unsafe.defer(channel.conn.close())
 
     // CLIENT_DEPRECATE_EOF: when negotiated, EOF packets between column defs and rows are replaced by OK packets.
-    private def hasDeprecateEof(caps: Long): Boolean =
-        (caps & Capabilities.CLIENT_DEPRECATE_EOF) != 0L
+    private def hasDeprecateEof(caps: Long): Boolean = (caps & Capabilities.CLIENT_DEPRECATE_EOF) != 0L
 
     /** Reads `serverCapabilities` and `connectionId` once, then runs `f` with the negotiated CLIENT_DEPRECATE_EOF flag and the wrapped
       * connection id: the prologue every query and stream on this connection shares.

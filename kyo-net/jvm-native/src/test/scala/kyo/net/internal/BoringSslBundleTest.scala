@@ -52,7 +52,7 @@ class BoringSslBundleTest extends Test:
     /** Host os-arch in the build-boringssl.sh / staged/<os-arch> naming. */
     private def hostOsArch: String =
         val osName = java.lang.System.getProperty("os.name", "").toLowerCase
-        val os =
+        val os     =
             if osName.contains("mac") then "darwin"
             else if osName.contains("win") then "windows"
             else "linux"

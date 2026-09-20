@@ -100,7 +100,7 @@ class MysqlEncoderTimeTest extends Test:
         // total-day count exceeds Int.MaxValue, carrying the overflowing day count.
         val hugeSeconds = (Int.MaxValue.toLong + 1L) * 86400L
         val value       = java.time.Duration.ofSeconds(hugeSeconds)
-        val ex = intercept[SqlRequestDurationOverflowException] {
+        val ex          = intercept[SqlRequestDurationOverflowException] {
             encode(value)
         }
         assert(ex.totalDays > Int.MaxValue.toLong, s"expected totalDays > Int.MaxValue, got: ${ex.totalDays}")
@@ -142,7 +142,7 @@ class MysqlEncoderTimeTest extends Test:
     "TIME decodes fractional Duration from 12-byte struct" in {
         // 0 days, 0 hours, 0 minutes, 3 seconds, 500_000 micros = 500ms
         val micros = 500_000
-        val body = Array[Byte](
+        val body   = Array[Byte](
             0x00, // is_negative = 0
             0x00,
             0x00,
@@ -163,7 +163,7 @@ class MysqlEncoderTimeTest extends Test:
     "TIME decode raises Decode on unexpected length" in {
         // 5 bytes is not a valid TIME struct length (must be 0, 8, or 12).
         val badBody = Array[Byte](0x00.toByte, 0x01.toByte, 0x02.toByte, 0x03.toByte, 0x04.toByte)
-        val ex = intercept[SqlDecodeException] {
+        val ex      = intercept[SqlDecodeException] {
             decode(badBody)
         }
         assert(

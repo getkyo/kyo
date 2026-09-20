@@ -267,7 +267,7 @@ object DigestComputer:
                                     var running = true
                                     while running do
                                         handle.next() match
-                                            case Maybe.Absent => running = false
+                                            case Maybe.Absent     => running = false
                                             case Maybe.Present(p) =>
                                                 if p.name.exists(_.endsWith(".tasty")) then
                                                     results += p.toString

@@ -39,7 +39,7 @@ private[kyo] object JvmZipHandle:
                                     try Maybe.Present(reader.readEntry(internalPath))
                                     catch
                                         case _: java.io.FileNotFoundException => Maybe.Absent
-                                        case ex: java.io.IOException =>
+                                        case ex: java.io.IOException          =>
                                             Abort.fail(TastyError.FileNotFound(s"$root!/$internalPath: ${ex.getMessage}"))
                                 }
                             def listEntries(suffixes: Chunk[String])(using Frame): Chunk[String] < (Sync & Abort[TastyError]) =

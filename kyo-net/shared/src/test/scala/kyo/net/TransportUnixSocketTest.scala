@@ -53,8 +53,8 @@ class TransportUnixSocketTest extends Test:
                     client <- transport.connectUnix(path).safe.get
                     _      <- Scope.ensure(Sync.defer(client.close()))
                     message = "kyo-uds-roundtrip".getBytes("UTF-8")
-                    _ <- client.outbound.safe.put(Span.fromUnsafe(message))
-                    _ <- accepted.take
+                    _      <- client.outbound.safe.put(Span.fromUnsafe(message))
+                    _      <- accepted.take
                     echoed <- Loop(Array.emptyByteArray) { acc =>
                         if acc.length >= message.length then Loop.done(acc)
                         else client.inbound.safe.take.map(chunk => Loop.continue(acc ++ chunk.toArray))

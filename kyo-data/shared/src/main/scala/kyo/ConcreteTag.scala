@@ -157,7 +157,7 @@ object ConcreteTag:
                     case LiteralTag(literal)    => value == literal
                     case NothingTag             => false
                     case UnitTag                => value.isInstanceOf[Unit]
-                    case AnyValTag =>
+                    case AnyValTag              =>
                         value match
                             case (_: Int | _: Long | _: Double | _: Float | _: Byte | _: Short | _: Char | _: Boolean) =>
                                 true
@@ -238,19 +238,19 @@ object ConcreteTag:
                 case Union(elements)        => elements.forall(_ <:< that)
                 case Intersection(elements) => elements.exists(_ <:< that)
                 case LiteralTag(value)      => that.accepts(value)
-                case _ =>
+                case _                      =>
                     that match
                         case NothingTag             => false
                         case Union(elements)        => elements.exists(self <:< _)
                         case Intersection(elements) => elements.forall(self <:< _)
                         case LiteralTag(value)      => false
-                        case AnyValTag =>
+                        case AnyValTag              =>
                             self match
                                 case AnyValTag | IntTag | LongTag | DoubleTag | FloatTag | ByteTag | ShortTag | CharTag | BooleanTag | UnitTag =>
                                     true
                                 case _ => false
-                        case UnitTag      => self eq UnitTag
-                        case _: Primitive => self eq that
+                        case UnitTag       => self eq UnitTag
+                        case _: Primitive  => self eq that
                         case cls: Class[?] =>
                             self match
                                 case self: Class[?] => cls.isAssignableFrom(self)

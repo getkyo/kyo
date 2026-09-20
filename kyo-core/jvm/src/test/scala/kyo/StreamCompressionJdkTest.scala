@@ -108,8 +108,8 @@ class StreamCompressionJdkTest extends kyo.test.Test[Any]:
 
         "short stream" in {
             for
-                inStream <- Sync.defer(Stream.init(Chunk.from(getBytes(shortText))))
-                inChunk  <- inStream.run
+                inStream       <- Sync.defer(Stream.init(Chunk.from(getBytes(shortText))))
+                inChunk        <- inStream.run
                 deflatedStream <- Sync.defer {
                     val deflatedChunk = jdkDeflate(inChunk, new Deflater(CompressionLevel.Default.value, false))
                     Stream.init(deflatedChunk)
@@ -122,14 +122,14 @@ class StreamCompressionJdkTest extends kyo.test.Test[Any]:
 
         "stream of two deflated inputs" in {
             for
-                inStream1 <- Sync.defer(Stream.init(Chunk.from(getBytes(shortText))))
-                inChunk1  <- inStream1.run
+                inStream1       <- Sync.defer(Stream.init(Chunk.from(getBytes(shortText))))
+                inChunk1        <- inStream1.run
                 deflatedStream1 <- Sync.defer {
                     val deflatedChunk = jdkDeflate(inChunk1, new Deflater(CompressionLevel.Default.value, false))
                     Stream.init(deflatedChunk)
                 }
-                inStream2 <- Sync.defer(Stream.init(Chunk.from(getBytes(otherShortText))))
-                inChunk2  <- inStream2.run
+                inStream2       <- Sync.defer(Stream.init(Chunk.from(getBytes(otherShortText))))
+                inChunk2        <- inStream2.run
                 deflatedStream2 <- Sync.defer {
                     val deflatedChunk = jdkDeflate(inChunk2, new Deflater(CompressionLevel.Default.value, false))
                     Stream.init(deflatedChunk)
@@ -148,7 +148,7 @@ class StreamCompressionJdkTest extends kyo.test.Test[Any]:
                 ))
                 deflatedStream <- Sync.defer(inStream.deflate(noWrap = false))
                 byteChunk      <- deflatedStream.run
-                expected <- Sync.defer {
+                expected       <- Sync.defer {
                     val bos = new ByteArrayOutputStream()
                     val ios = new InflaterOutputStream(bos, new Inflater(false))
                     ios.write(toUnboxByteArray(byteChunk), 0, byteChunk.length)
@@ -170,7 +170,7 @@ class StreamCompressionJdkTest extends kyo.test.Test[Any]:
                     Chunk.from(getBytes(longText)),
                     64
                 ))
-                inChunk <- inStream.run
+                inChunk        <- inStream.run
                 deflatedStream <- Sync.defer {
                     val deflatedChunk = jdkDeflate(inChunk, new Deflater(CompressionLevel.Default.value, false))
                     Stream.init(deflatedChunk)
@@ -187,7 +187,7 @@ class StreamCompressionJdkTest extends kyo.test.Test[Any]:
                     Chunk.from(getBytes(longText)),
                     8
                 ))
-                inChunk <- inStream.run
+                inChunk        <- inStream.run
                 deflatedStream <- Sync.defer {
                     val deflatedChunk = jdkDeflate(inChunk, new Deflater(CompressionLevel.Default.value, false))
                     Stream.init(deflatedChunk)
@@ -200,8 +200,8 @@ class StreamCompressionJdkTest extends kyo.test.Test[Any]:
 
         "long input, nowrap = true" in {
             for
-                inStream <- Sync.defer(Stream.init(Chunk.from(getBytes(longText))))
-                inChunk  <- inStream.run
+                inStream       <- Sync.defer(Stream.init(Chunk.from(getBytes(longText))))
+                inChunk        <- inStream.run
                 deflatedStream <- Sync.defer {
                     val deflatedChunk = jdkDeflate(inChunk, new Deflater(CompressionLevel.BestCompression.value, true))
                     Stream.init(deflatedChunk)
@@ -322,9 +322,9 @@ class StreamCompressionJdkTest extends kyo.test.Test[Any]:
 
         "deflate empty bytes" in {
             for
-                inStream       <- Sync.defer(Stream.empty[Byte])
-                deflatedStream <- Sync.defer(inStream.deflate())
-                deflatedChunk  <- deflatedStream.run
+                inStream         <- Sync.defer(Stream.empty[Byte])
+                deflatedStream   <- Sync.defer(inStream.deflate())
+                deflatedChunk    <- deflatedStream.run
                 jdkDeflatedChunk <-
                     Sync.defer(jdkDeflate(Chunk.empty[Byte], new Deflater(StreamCompression.CompressionLevel.Default.value, false)))
             yield assert(deflatedChunk == jdkDeflatedChunk)
@@ -349,14 +349,14 @@ class StreamCompressionJdkTest extends kyo.test.Test[Any]:
 
         "stream of two gzipped inputs" in {
             for
-                inStream1 <- Sync.defer(Stream.init(Chunk.from(getBytes(shortText))))
-                inChunk1  <- inStream1.run
+                inStream1         <- Sync.defer(Stream.init(Chunk.from(getBytes(shortText))))
+                inChunk1          <- inStream1.run
                 jdkGzippedStream1 <- Sync.defer {
                     val gzipByte = jdkGzip(inChunk1, syncFlush = true)
                     Stream.init(gzipByte)
                 }
-                inStream2 <- Sync.defer(Stream.init(Chunk.from(getBytes(otherShortText))))
-                inChunk2  <- inStream2.run
+                inStream2         <- Sync.defer(Stream.init(Chunk.from(getBytes(otherShortText))))
+                inChunk2          <- inStream2.run
                 jdkGzippedStream2 <- Sync.defer {
                     val gzipByte = jdkGzip(inChunk2, syncFlush = true)
                     Stream.init(gzipByte)
@@ -392,7 +392,7 @@ class StreamCompressionJdkTest extends kyo.test.Test[Any]:
             val headerExtra = Array(0x36, 0x1).map(_.toByte) ++ text
             val comment     = getBytes("Kyo rock!") ++ Array(0.toByte)
             val fileName    = getBytes("kyo-readme.md") ++ Array(0.toByte)
-            val crc16 = locally:
+            val crc16       = locally:
                 val crc32 = new CRC32()
                 crc32.update(header)
                 crc32.update(headerExtra)

@@ -23,7 +23,7 @@ class ReadPumpBackpressureTest extends Test:
     given Frame = Frame.internal
 
     final private class ParkingWriteDriver extends IoDriver[Unit]:
-        @volatile var captured: Boolean = false
+        @volatile var captured: Boolean                                          = false
         var capturedWritable: Promise.Unsafe[Unit, Abort[Closed | NetException]] =
             null.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed | NetException]]]
 
@@ -38,7 +38,7 @@ class ReadPumpBackpressureTest extends Test:
             captured = true
         def awaitConnect(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit = ()
         def awaitAccept(handle: Unit, promise: Promise.Unsafe[Int, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit   = ()
-        def write(handle: Unit, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult =
+        def write(handle: Unit, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult                                      =
             // Partial on first write to park the pump; Done on retry.
             if !captured then WriteResult.Partial(data, math.max(1, data.size / 2))
             else WriteResult.Done
@@ -75,7 +75,7 @@ class ReadPumpBackpressureTest extends Test:
             // While the write pump is parked, inbound must still be drainable.
             // awaitRead in the driver delivered a span synchronously during start(), so the ReadPump
             // placed it into conn.inbound before start() returned.
-            val inboundResult = conn.inbound.poll()
+            val inboundResult  = conn.inbound.poll()
             val inboundHasData = inboundResult match
                 case Result.Success(Maybe.Present(_)) => true
                 case _                                => false
@@ -168,8 +168,8 @@ class ReadPumpBackpressureTest extends Test:
         "a backpressured read arms no further read; with no peer-close detection the handle is held" in {
             val cap = 1
             final class BackpressureFinDriver extends IoDriver[Unit]:
-                val awaitReadCalls   = AtomicInt.Unsafe.init(0)
-                val closeHandleCalls = AtomicInt.Unsafe.init(0)
+                val awaitReadCalls                                             = AtomicInt.Unsafe.init(0)
+                val closeHandleCalls                                           = AtomicInt.Unsafe.init(0)
                 def start()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
                     Promise.Unsafe.init[Unit, Any]().asInstanceOf[Fiber.Unsafe[Unit, Any]]
                 def awaitRead(handle: Unit, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
@@ -223,9 +223,9 @@ class ReadPumpBackpressureTest extends Test:
           * grace polls it on each timer expiry). Counts `closeHandle`.
           */
         final class WatchDriver(cap: Int) extends IoDriver[Unit]:
-            val awaitReadCalls                = AtomicInt.Unsafe.init(0)
-            val closeHandleCalls              = AtomicInt.Unsafe.init(0)
-            @volatile var peerClosed: Boolean = false
+            val awaitReadCalls                                             = AtomicInt.Unsafe.init(0)
+            val closeHandleCalls                                           = AtomicInt.Unsafe.init(0)
+            @volatile var peerClosed: Boolean                              = false
             def start()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
                 Promise.Unsafe.init[Unit, Any]().asInstanceOf[Fiber.Unsafe[Unit, Any]]
             def awaitRead(handle: Unit, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using AllowUnsafe, Frame): Unit =

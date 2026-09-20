@@ -30,7 +30,7 @@ final class ResultsetRowUnmarshaller(numColumns: Int) extends Unmarshaller[Resul
     private def readColumns(buf: MysqlBufferReader)(using
         Frame
     ): Chunk[Maybe[Span[Byte]]] < Abort[SqlDecodeException] =
-        val b = Chunk.newBuilder[Maybe[Span[Byte]]]
+        val b                                                                          = Chunk.newBuilder[Maybe[Span[Byte]]]
         def loop(remaining: Int): Chunk[Maybe[Span[Byte]]] < Abort[SqlDecodeException] =
             if remaining == 0 then b.result()
             else

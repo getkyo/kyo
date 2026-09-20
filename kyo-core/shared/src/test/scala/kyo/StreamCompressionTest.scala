@@ -229,7 +229,7 @@ class StreamCompressionTest extends kyo.test.Test[Any]:
             val headerExtra = Array(extraText.length.toByte, 0.toByte) ++ toArray(extraText)
             val comment     = "kyo rocks".getBytes ++ Array(0.toByte)
             val fileName    = "kyo-readme.md".getBytes ++ Array(0.toByte)
-            val crc16 =
+            val crc16       =
                 val crc32 = new kyo.internal.ZipCodec.Crc32
                 crc32.update(header)
                 crc32.update(headerExtra)

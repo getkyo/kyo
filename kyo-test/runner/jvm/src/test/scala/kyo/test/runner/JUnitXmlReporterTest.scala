@@ -129,7 +129,7 @@ class JUnitXmlReporterTest extends kyo.test.Test[Any]:
         withTempDir { dir =>
             val reporter  = JUnitXmlReporter(dir)
             val suiteInfo = SuiteInfo("CntS", "com.example.CntS", Maybe.empty)
-            val leaves = List(
+            val leaves    = List(
                 LeafInfo("CntS", Chunk("p1"), Set.empty) -> TestResult.Passed(1L.millis),
                 LeafInfo("CntS", Chunk("p2"), Set.empty) -> TestResult.Passed(1L.millis),
                 LeafInfo("CntS", Chunk("f1"), Set.empty) -> TestResult.Failed("fail", Maybe.empty, 1L.millis),
@@ -145,7 +145,7 @@ class JUnitXmlReporterTest extends kyo.test.Test[Any]:
         withTempDir { dir =>
             val reporter  = JUnitXmlReporter(dir)
             val suiteInfo = SuiteInfo("SkCntS", "com.example.SkCntS", Maybe.empty)
-            val leaves = List(
+            val leaves    = List(
                 LeafInfo("SkCntS", Chunk("pending1"), Set.empty) -> TestResult.Pending("waiting"),
                 LeafInfo("SkCntS", Chunk("ignored1"), Set.empty) -> TestResult.Ignored("")
             )
@@ -159,7 +159,7 @@ class JUnitXmlReporterTest extends kyo.test.Test[Any]:
         withTempDir { dir =>
             val reporter  = JUnitXmlReporter(dir)
             val suiteInfo = SuiteInfo("CancS", "com.example.CancS", Maybe.empty)
-            val leaves = List(
+            val leaves    = List(
                 LeafInfo("CancS", Chunk("p1"), Set.empty) -> TestResult.Passed(1L.millis),
                 LeafInfo("CancS", Chunk("c1"), Set.empty) -> TestResult.Cancelled("Needs >4 cores", 1L.millis)
             )
@@ -177,7 +177,7 @@ class JUnitXmlReporterTest extends kyo.test.Test[Any]:
         withTempDir { dir =>
             val reporter  = JUnitXmlReporter(dir)
             val suiteInfo = SuiteInfo("TstCntS", "com.example.TstCntS", Maybe.empty)
-            val leaves = (1 to 4).map { i =>
+            val leaves    = (1 to 4).map { i =>
                 LeafInfo("TstCntS", Chunk(s"test$i"), Set.empty) -> TestResult.Passed(1L.millis)
             }.toList
             runOneSuite(reporter, suiteInfo, leaves)
@@ -216,10 +216,11 @@ class JUnitXmlReporterTest extends kyo.test.Test[Any]:
         withTempDir { dir =>
             val reporter  = JUnitXmlReporter(dir)
             val suiteInfo = SuiteInfo("ParseSuite", "com.example.ParseSuite", Maybe.empty)
-            val leaves = List(
+            val leaves    = List(
                 LeafInfo("ParseSuite", Chunk("passTest"), Set.empty) -> TestResult.Passed(1L.millis),
-                LeafInfo("ParseSuite", Chunk("failTest"), Set.empty) -> TestResult
-                    .Failed("assertion failed", Maybe.empty, 1L.millis)
+                LeafInfo("ParseSuite", Chunk("failTest"), Set.empty) ->
+                    TestResult
+                        .Failed("assertion failed", Maybe.empty, 1L.millis)
             )
             runOneSuite(reporter, suiteInfo, leaves)
             val xml   = Files.readString(dir.resolve("TEST-ParseSuite.xml"))

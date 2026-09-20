@@ -153,7 +153,7 @@ object AssertMacro:
                 val _rec    = new kyo.test.internal.Recorder()
                 val _result = ${ instrument(cond, '{ _rec }, baseCol) }
                 if !_result then
-                    val _baseDiagram = _rec.diagram($sourceLineExpr, $frame)
+                    val _baseDiagram  = _rec.diagram($sourceLineExpr, $frame)
                     val _finalDiagram = $msg match
                         case kyo.Maybe.Present(_m) if _m.nonEmpty => s"${_baseDiagram}\n// message: ${_m}"
                         case _                                    => _baseDiagram

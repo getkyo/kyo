@@ -59,12 +59,12 @@ class SqlClientInsertOutcomeTest extends SqlBackendTest:
         // `.overriding(_.id := Sql.default)` is required rather than decoration: `values(row)` sends every column, and
         // an engine that accepts an explicit value in an identity column without advancing its sequence would
         // otherwise report the ids supplied here.
-        val autoIncPk = backend.autoIncrementPrimaryKey
+        val autoIncPk   = backend.autoIncrementPrimaryKey
         val expectedKey =
             if client.dialect.supportsReturning then SqlClient.InsertOutcome.GeneratedKey.Value(3L)
             else SqlClient.InsertOutcome.GeneratedKey.Value(1L)
         for
-            _ <- client.executeRaw(s"CREATE TABLE account (id $autoIncPk, name VARCHAR(255) NOT NULL)")
+            _      <- client.executeRaw(s"CREATE TABLE account (id $autoIncPk, name VARCHAR(255) NOT NULL)")
             result <- Sql
                 .insert[Account]
                 .values(Account(0L, "ada"), Account(0L, "bob"), Account(0L, "cid"))

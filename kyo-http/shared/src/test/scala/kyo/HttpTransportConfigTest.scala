@@ -111,7 +111,7 @@ class HttpTransportConfigTest extends BaseHttpTest:
                     val url = HttpUrl.parse(s"http://127.0.0.1:${server.port}").getOrThrow
                     // Build a request with headers that exceed 128 bytes total
                     val largeHeaderValue = "x" * 200
-                    val request = HttpRequest.getRaw(HttpUrl.fromUri("/hello"))
+                    val request          = HttpRequest.getRaw(HttpUrl.fromUri("/hello"))
                         .addHeader("X-Large", largeHeaderValue)
                     // The server closes the connection when headers exceed maxHeaderSize.
                     // This manifests as a timeout or connection error on the client side.

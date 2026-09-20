@@ -72,7 +72,7 @@ class LeakCheckTest extends AnyFunSuite with NonImplicitAssertions:
 
     test("fdLeaks reports only new, non-benign, non-allowlisted descriptors") {
         val baseline = Set("socket:[1]", "/app/lib/foo.jar", "pipe:[2]")
-        val current = Set(
+        val current  = Set(
             "socket:[1]",             // in baseline -> not a leak (e.g. the sbt.ForkMain socket)
             "/app/lib/foo.jar",       // baseline jar
             "/app/lib/new.jar",       // new but benign (classloader jar)
@@ -103,7 +103,7 @@ class LeakCheckTest extends AnyFunSuite with NonImplicitAssertions:
 
     test("awaitFdDrain drops a descriptor that closes within the budget") {
         // leaksNow reports the socket on the first two samples, then empty: an async deferred close that completes mid-window.
-        var n = 0
+        var n   = 0
         val out = LeakCheck.awaitFdDrain(
             () =>
                 val r = if n < 2 then Chunk("socket:[42]") else Chunk.empty
@@ -125,7 +125,7 @@ class LeakCheckTest extends AnyFunSuite with NonImplicitAssertions:
     test("awaitFdDrain returns immediately and does not park on an empty first sample") {
         // A clean run: the first sample is empty, so the loop never runs (zero cost).
         var calls = 0
-        val out = LeakCheck.awaitFdDrain(
+        val out   = LeakCheck.awaitFdDrain(
             () =>
                 calls += 1
                 Chunk.empty
@@ -140,8 +140,8 @@ class LeakCheckTest extends AnyFunSuite with NonImplicitAssertions:
         // The process-lifetime transport case: load never reaches zero, but the only carrier holding it is allowlisted. Before quiescence
         // accounted for the allowlist, such a fork parked for the whole budget and was then excused anyway. The loop runs on a virtual clock
         // (park advances it), so "settles without spending the budget" is an exact, load-independent fact, not a wall-clock ceiling.
-        val budget = 2_000_000_000L
-        val clock  = new java.util.concurrent.atomic.AtomicLong(0L)
+        val budget  = 2_000_000_000L
+        val clock   = new java.util.concurrent.atomic.AtomicLong(0L)
         val verdict = LeakCheck.awaitSchedulerIdle(
             budgetNanos = budget,
             settleNanos = 20_000_000L,
@@ -162,8 +162,8 @@ class LeakCheckTest extends AnyFunSuite with NonImplicitAssertions:
     test("awaitSchedulerIdle still spends the budget and reports Busy when work is unaccounted") {
         // The leak this check exists to find: nothing accounts for the running work, so the full settle budget is spent before the verdict.
         // On the virtual clock the loop advances only through park, so it runs to exactly the deadline: spending the full budget is exact.
-        val budget = 200_000_000L
-        val clock  = new java.util.concurrent.atomic.AtomicLong(0L)
+        val budget  = 200_000_000L
+        val clock   = new java.util.concurrent.atomic.AtomicLong(0L)
         val verdict = LeakCheck.awaitSchedulerIdle(
             budgetNanos = budget,
             settleNanos = 20_000_000L,
@@ -183,7 +183,7 @@ class LeakCheckTest extends AnyFunSuite with NonImplicitAssertions:
 
     test("awaitSchedulerIdle reports Idle at zero load without consulting the accounted probe") {
         // busyFiberTraces renders a trace per busy worker, so the expensive branch must stay off the clean path entirely.
-        var probed = 0
+        var probed  = 0
         val verdict = LeakCheck.awaitSchedulerIdle(
             budgetNanos = 2_000_000_000L,
             settleNanos = 20_000_000L,
@@ -199,7 +199,7 @@ class LeakCheckTest extends AnyFunSuite with NonImplicitAssertions:
 
     test("awaitSchedulerIdle requires the accounted state to hold for a full settle window") {
         // Unaccounted on the first probe, accounted after: the window restarts, so a single favourable sample cannot end the wait early.
-        var n = 0
+        var n       = 0
         val verdict = LeakCheck.awaitSchedulerIdle(
             budgetNanos = 5_000_000_000L,
             settleNanos = 30_000_000L,
@@ -255,7 +255,7 @@ class LeakCheckTest extends AnyFunSuite with NonImplicitAssertions:
         // Wait until the spinner is actually mounted and observed as busy load, instead of guessing with a fixed sleep
         // (which races startup). At a real done() a leaked spinner has been running since before the check.
         val observed = awaitTrue(2000)(LeakCheck.busyWorkerFrame().isDefined)
-        val verdict = LeakCheck.awaitSchedulerIdle(
+        val verdict  = LeakCheck.awaitSchedulerIdle(
             budgetNanos = 300_000_000L,
             settleNanos = 150_000_000L,
             pollNanos = 10_000_000L,
@@ -373,7 +373,7 @@ class LeakCheckTest extends AnyFunSuite with NonImplicitAssertions:
 
     test("allowlist match covers a kyo-trace-only frame") {
         import kyo.AllowUnsafe.embrace.danger
-        val stop = new AtomicBoolean(false)
+        val stop                              = new AtomicBoolean(false)
         def kyoBusyLoop(n: Long): Unit < Sync =
             Sync.defer {
                 var x = n
@@ -391,7 +391,7 @@ class LeakCheckTest extends AnyFunSuite with NonImplicitAssertions:
         // instant it is called, so a frame present in one call can be absent from the next: awaiting the frame and then re-sampling to
         // extract it leaves the extraction racing the sampler, and a miss yields an empty token rather than a retry.
         var steadyLine = ""
-        val observed = awaitTrue(2000) {
+        val observed   = awaitTrue(2000) {
             steadyLine = Scheduler.get.busyFiberTraces().iterator
                 .flatMap(_.fiberTrace.linesIterator)
                 .find(_.contains("LeakCheckTest.kyoBusyLoop("))

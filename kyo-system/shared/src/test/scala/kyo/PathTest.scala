@@ -603,7 +603,7 @@ class PathTest extends kyo.test.Test[Any]:
     }
 
     "unsafe size on non-existent path returns FileReadException" in {
-        val file = Path / "kyo-nonexistent-dir-xyzzy" / "nonexistent-size.txt"
+        val file   = Path / "kyo-nonexistent-dir-xyzzy" / "nonexistent-size.txt"
         val result =
             import AllowUnsafe.embrace.danger
             file.unsafe.size()
@@ -1242,7 +1242,7 @@ class PathTest extends kyo.test.Test[Any]:
                 paths <- Scope.run(dir.walk.run)
                 _     <- dir.removeAll
             yield
-                val names = paths.toList.map(_.parts.last).toSet
+                val names   = paths.toList.map(_.parts.last).toSet
                 val missing =
                     (0 until perDir).map(i => s"top-$i.bin").filterNot(names.contains) ++
                         (0 until perDir).map(i => s"deep-$i.bin").filterNot(names.contains)
@@ -1874,7 +1874,7 @@ class PathTest extends kyo.test.Test[Any]:
                 for
                     dir <- Path.tempDir("kyo-path-edge-test")
                     file = dir / "tail.txt"
-                    _ <- file.mkFile
+                    _         <- file.mkFile
                     tailFiber <- Fiber.initUnscoped(
                         Path.run(Scope.run(file.tail(50.millis).take(2).run))
                     )
@@ -1947,7 +1947,7 @@ class PathTest extends kyo.test.Test[Any]:
                 for
                     dir <- Path.tempDir("kyo-path-edge-test")
                     file = dir / "tail-utf8.txt"
-                    _ <- file.mkFile
+                    _         <- file.mkFile
                     tailFiber <- Fiber.initUnscoped(
                         Path.run(Scope.run(file.tail(50.millis, 16.bytes).take(1).run))
                     )
@@ -1971,7 +1971,7 @@ class PathTest extends kyo.test.Test[Any]:
                 for
                     dir <- Path.tempDir("kyo-path-edge-test")
                     file = dir / "tail-partial.txt"
-                    _ <- file.mkFile
+                    _         <- file.mkFile
                     tailFiber <- Fiber.initUnscoped(
                         Path.run(Scope.run(file.tail(50.millis).take(1).run))
                     )
@@ -1997,7 +1997,7 @@ class PathTest extends kyo.test.Test[Any]:
                 for
                     dir <- Path.tempDir("kyo-path-edge-test")
                     file = dir / "tail-multi-partial.txt"
-                    _ <- file.mkFile
+                    _         <- file.mkFile
                     tailFiber <- Fiber.initUnscoped(
                         Path.run(Scope.run(file.tail(50.millis).take(2).run))
                     )
@@ -2023,7 +2023,7 @@ class PathTest extends kyo.test.Test[Any]:
                 for
                     dir <- Path.tempDir("kyo-path-edge-test")
                     file = dir / "tail-no-empty.txt"
-                    _ <- file.mkFile
+                    _         <- file.mkFile
                     tailFiber <- Fiber.initUnscoped(
                         Path.run(Scope.run(file.tail(50.millis).take(1).run))
                     )
@@ -2049,7 +2049,7 @@ class PathTest extends kyo.test.Test[Any]:
                 for
                     dir <- Path.tempDir("kyo-path-edge-test")
                     file = dir / "tail-rapid.txt"
-                    _ <- file.mkFile
+                    _         <- file.mkFile
                     tailFiber <- Fiber.initUnscoped(
                         Path.run(Scope.run(file.tail(50.millis).take(lineCount).run))
                     )
@@ -2156,7 +2156,7 @@ class PathTest extends kyo.test.Test[Any]:
                 for
                     dir <- Path.tempDir("kyo-tailbytes")
                     file = dir / "log.txt"
-                    _ <- file.write("one\ntwo\n")
+                    _     <- file.write("one\ntwo\n")
                     fiber <- Fiber.initUnscoped(
                         Path.runReadOnly(
                             Scope.run(file.tailBytes(Path.Origin.Start, 50.millis).take(12).run)
@@ -2177,7 +2177,7 @@ class PathTest extends kyo.test.Test[Any]:
                 for
                     dir <- Path.tempDir("kyo-tailbytes")
                     file = dir / "log.txt"
-                    _ <- file.write("old\n")
+                    _     <- file.write("old\n")
                     fiber <- Fiber.initUnscoped(
                         Path.runReadOnly(
                             Scope.run(file.tailBytes(Path.Origin.End, 50.millis).take(4).run)
@@ -2287,8 +2287,8 @@ class PathTest extends kyo.test.Test[Any]:
                 for
                     dir <- Path.tempDir("kyo-tailbytes-truncate")
                     file = dir / "log.txt"
-                    _    <- file.write(original)
-                    seen <- AtomicRef.init(Chunk.empty[Byte])
+                    _     <- file.write(original)
+                    seen  <- AtomicRef.init(Chunk.empty[Byte])
                     fiber <- Fiber.initUnscoped(
                         Path.runReadOnly(
                             Scope.run(
@@ -2341,8 +2341,8 @@ class PathTest extends kyo.test.Test[Any]:
                 for
                     dir <- Path.tempDir("kyo-tail-truncate-pending")
                     file = dir / "log.txt"
-                    _     <- file.mkFile
-                    lines <- AtomicRef.init(Chunk.empty[String])
+                    _         <- file.mkFile
+                    lines     <- AtomicRef.init(Chunk.empty[String])
                     tailFiber <- Fiber.initUnscoped(
                         Path.runReadOnly(
                             Scope.run(file.tail(50.millis).take(2).foreach(line => lines.updateAndGet(_.append(line))))
@@ -2390,8 +2390,8 @@ class PathTest extends kyo.test.Test[Any]:
                     dir <- Path.tempDir("kyo-tailbytes-rotate-recreate")
                     file    = dir / "log.txt"
                     rotated = dir / "log.txt.1"
-                    _    <- file.write(original)
-                    seen <- AtomicRef.init(Chunk.empty[Byte])
+                    _     <- file.write(original)
+                    seen  <- AtomicRef.init(Chunk.empty[Byte])
                     fiber <- Fiber.initUnscoped(
                         Path.runReadOnly(
                             Scope.run(
@@ -2434,8 +2434,8 @@ class PathTest extends kyo.test.Test[Any]:
                     dir <- Path.tempDir("kyo-tailbytes-rename")
                     file    = dir / "log.txt"
                     rotated = dir / "log.txt.1"
-                    _    <- file.write(original)
-                    seen <- AtomicRef.init(Chunk.empty[Byte])
+                    _     <- file.write(original)
+                    seen  <- AtomicRef.init(Chunk.empty[Byte])
                     fiber <- Fiber.initUnscoped(
                         Path.runReadOnly(
                             Abort.run[FileReadException](
@@ -2481,9 +2481,9 @@ class PathTest extends kyo.test.Test[Any]:
                     dir <- Path.tempDir("kyo-tailbytes-replace")
                     file     = dir / "log.txt"
                     incoming = dir / "log.txt.incoming"
-                    _    <- file.write(original)
-                    _    <- incoming.write(replacement)
-                    seen <- AtomicRef.init(Chunk.empty[Byte])
+                    _     <- file.write(original)
+                    _     <- incoming.write(replacement)
+                    seen  <- AtomicRef.init(Chunk.empty[Byte])
                     fiber <- Fiber.initUnscoped(
                         Path.runReadOnly(
                             Scope.run(
@@ -2518,8 +2518,8 @@ class PathTest extends kyo.test.Test[Any]:
                 for
                     dir <- Path.tempDir("kyo-tailbytes-delete")
                     file = dir / "log.txt"
-                    _    <- file.write(original)
-                    seen <- AtomicRef.init(Chunk.empty[Byte])
+                    _     <- file.write(original)
+                    seen  <- AtomicRef.init(Chunk.empty[Byte])
                     fiber <- Fiber.initUnscoped(
                         Path.runReadOnly(
                             Scope.run(
@@ -2555,8 +2555,8 @@ class PathTest extends kyo.test.Test[Any]:
                     file    = dir / "log.txt"
                     rotated = dir / "log.txt.1"
                     // Digits, so that any byte of the pre-existing content is recognisable in the output.
-                    _    <- file.write("0123456789")
-                    seen <- AtomicRef.init(Chunk.empty[Byte])
+                    _     <- file.write("0123456789")
+                    seen  <- AtomicRef.init(Chunk.empty[Byte])
                     fiber <- Fiber.initUnscoped(
                         Path.runReadOnly(
                             Abort.run[FileReadException](
@@ -2713,7 +2713,7 @@ class PathTest extends kyo.test.Test[Any]:
         Path.run {
             for
                 captured <- AtomicRef.init[Maybe[Path]](Absent)
-                _ <- Scope.run {
+                _        <- Scope.run {
                     Path.temp().map { p =>
                         captured.set(Present(p)).andThen(p)
                     }
@@ -2729,7 +2729,7 @@ class PathTest extends kyo.test.Test[Any]:
         Path.run {
             for
                 captured <- AtomicRef.init[Maybe[Path]](Absent)
-                _ <- Scope.run {
+                _        <- Scope.run {
                     Path.tempUnscoped().map { p =>
                         captured.set(Present(p)).andThen(p)
                     }
@@ -2746,7 +2746,7 @@ class PathTest extends kyo.test.Test[Any]:
         Path.run {
             for
                 captured <- AtomicRef.init[Maybe[Path]](Absent)
-                _ <- Scope.run {
+                _        <- Scope.run {
                     Path.tempDirUnscoped("kyotestdir-unscoped").map { p =>
                         captured.set(Present(p)).andThen(p)
                     }
@@ -2982,7 +2982,7 @@ class PathTest extends kyo.test.Test[Any]:
                 for
                     dir <- Path.tempDir("kyo-test")
                     file = dir / "tail-truncate.txt"
-                    _ <- file.write("initial content\n")
+                    _         <- file.write("initial content\n")
                     tailFiber <- Fiber.initUnscoped(
                         Path.run(Scope.run(file.tail(50.millis).take(1).run))
                     )
@@ -3250,7 +3250,7 @@ class PathTest extends kyo.test.Test[Any]:
         Scope.run(Path.run {
             for
                 root <- isRoot
-                _ <-
+                _    <-
                     if root then Kyo.lift(succeed("skipped: running as root, permission checks do not apply"))
                     else
                         for
@@ -3264,7 +3264,7 @@ class PathTest extends kyo.test.Test[Any]:
                             _      <- dir.removeAll
                         yield result match
                             case Result.Failure(_: FileStructureException) => succeed("expected exception type")
-                            case Result.Success(_) =>
+                            case Result.Success(_)                         =>
                                 fail("removeAll should fail when subdirectory is inaccessible, but it succeeded silently")
                         end for
             yield ()
@@ -3275,7 +3275,7 @@ class PathTest extends kyo.test.Test[Any]:
         Scope.run(Path.run {
             for
                 root <- isRoot
-                _ <-
+                _    <-
                     if root then Kyo.lift(succeed("skipped: running as root, permission checks do not apply"))
                     else
                         for
@@ -3289,7 +3289,7 @@ class PathTest extends kyo.test.Test[Any]:
                             _      <- dir.removeAll
                         yield result match
                             case Result.Failure(_: FileStructureException) => succeed("expected exception type")
-                            case Result.Success(_) =>
+                            case Result.Success(_)                         =>
                                 fail("removeAll should fail when files cannot be deleted, but it succeeded silently")
                         end for
             yield ()
@@ -3370,7 +3370,7 @@ class PathTest extends kyo.test.Test[Any]:
             for
                 dir <- Path.tempDir("kyo-openwrite-append-reopen")
                 file = dir / "rounds.txt"
-                _ =
+                _    =
                     (0 until 4).foreach { round =>
                         val handle = file.unsafe.openWrite(append = true, Path.WriteOptions(createFolders = false)).getOrThrow
                         try
@@ -3493,7 +3493,7 @@ class PathTest extends kyo.test.Test[Any]:
             for
                 dir <- Path.tempDir("kyo-openwrite-charset")
                 latin = dir / "latin1.txt"
-                _ =
+                _     =
                     val handle = latin.unsafe.openWrite(append = false, Path.WriteOptions(createFolders = false)).getOrThrow
                     try
                         assert(handle.writeString(text, StandardCharsets.ISO_8859_1).isSuccess)
@@ -3516,7 +3516,7 @@ class PathTest extends kyo.test.Test[Any]:
             for
                 dir <- Path.tempDir("kyo-openwrite-create-folders")
                 file = dir / "a" / "b" / "deep.txt"
-                _ =
+                _    =
                     val handle = file.unsafe.openWrite(append = true, Path.WriteOptions(createFolders = true)).getOrThrow
                     try
                         assert(handle.writeBytes(utf8("deep")).isSuccess)

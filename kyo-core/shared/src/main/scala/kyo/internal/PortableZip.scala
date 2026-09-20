@@ -541,8 +541,7 @@ private[kyo] object PortableZip:
             out.writeBits(FixedLitCodes(EndOfBlock), FixedLitLengths(EndOfBlock))
         end fixedBlock
 
-        private def hash(at: Int): Int =
-            (((input(at) & 0xff) << 10) ^ ((input(at + 1) & 0xff) << 5) ^ (input(at + 2) & 0xff)) & 0x7fff
+        private def hash(at: Int): Int = (((input(at) & 0xff) << 10) ^ ((input(at + 1) & 0xff) << 5) ^ (input(at + 2) & 0xff)) & 0x7fff
 
         /** How many earlier positions sharing the same three bytes the search walks. This is what the level buys. */
         private def maxChain: Int =

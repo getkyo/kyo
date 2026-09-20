@@ -81,7 +81,7 @@ private[kyo] object Orchestrator:
                 .filter(_.expect == Block.Expectation.Skipped)
                 .map(block => BlockOutcome.Skipped(block, fromCache = false))
             val activeBlocks = blocks.filter(_.expect != Block.Expectation.Skipped)
-            val withPredef =
+            val withPredef   =
                 if activeBlocks.isEmpty then activeBlocks
                 else injectPredef(activeBlocks, config.predef, sourcePath)
             val units = CompileUnit.group(withPredef)
@@ -196,7 +196,7 @@ private[kyo] object Orchestrator:
         fromCache: Boolean,
         warnings: Int
     ): BlockOutcome =
-        val block = wb.block
+        val block                                                            = wb.block
         val effectiveResult: Result.Partial[String, RuntimeExecutor.Outcome] = result match
             case thrown: RuntimeExecutor.Outcome.Threw =>
                 posMap.translateRuntime(kyo.Path(thrown.synthFile), thrown.synthLine) match

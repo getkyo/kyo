@@ -85,7 +85,7 @@ private[kyo] object SharedChrome:
                                             _ <- Async.never
                                         yield ()
                                     }.map {
-                                        case Result.Success(_) => Kyo.unit
+                                        case Result.Success(_)  => Kyo.unit
                                         case Result.Failure(ex) =>
                                             Sync.Unsafe.defer(discard(generation.url.complete(Result.Failure(ex))))
                                         case Result.Panic(t) =>

@@ -48,7 +48,8 @@ class PostgresDialectGroupedViewRenderTest extends Test:
             .select(view => (view.deptId, view.age.avg))
         val r = q.render(PostgresDialect)
         assert(
-            r.onlySql.get == """SELECT "p"."deptId", AVG("p"."age") FROM "person" "p" GROUP BY "p"."deptId" HAVING (COUNT("p"."deptId") > $1)"""
+            r.onlySql.get ==
+                """SELECT "p"."deptId", AVG("p"."age") FROM "person" "p" GROUP BY "p"."deptId" HAVING (COUNT("p"."deptId") > $1)"""
         )
         assert(r.params.size == 1)
     }
@@ -60,7 +61,8 @@ class PostgresDialectGroupedViewRenderTest extends Test:
             .select(view => (view.deptId, view.age.sum))
         val r = q.render(PostgresDialect)
         assert(
-            r.onlySql.get == """SELECT "p"."deptId", SUM("p"."age") FROM "person" "p" GROUP BY "p"."deptId" HAVING (COUNT("p"."deptId") > $1)"""
+            r.onlySql.get ==
+                """SELECT "p"."deptId", SUM("p"."age") FROM "person" "p" GROUP BY "p"."deptId" HAVING (COUNT("p"."deptId") > $1)"""
         )
     }
 

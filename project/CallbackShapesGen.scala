@@ -43,7 +43,7 @@ object CallbackShapesGen {
             val retTag   = if (result == V) "U" else result.tag
             s"${paramTag}_$retTag"
         }
-        def arity: Int = params.length
+        def arity: Int         = params.length
         def userFnType: String =
             if (params.isEmpty) s"() => ${result.user}" else s"(${params.map(_.user).mkString(", ")}) => ${result.user}"
         def cFuncPtrType: String      = s"CFuncPtr$arity[${(params.map(_.scala) :+ result.scala).mkString(", ")}]"
@@ -326,7 +326,7 @@ object CallbackShapesGen {
         sb.append("    // The stack stores a `TaggedCallback` pair so the trampoline can name the binding + method when the user\n")
         sb.append("    // callback throws.\n")
         shapes.foreach { s =>
-            val n = s.name
+            val n         = s.name
             val applyCall =
                 if (s.params.isEmpty) s"tagged.fn.asInstanceOf[${s.userFnType}].apply()"
                 else s"tagged.fn.asInstanceOf[${s.userFnType}].apply(${s.argList})"
@@ -346,7 +346,8 @@ object CallbackShapesGen {
             sb.append(s"    def popTransient_$n(): Unit =\n")
             sb.append(s"        val _ = transientStack_$n.get().nn.pop()\n")
             sb.append(
-                "    private def peekTransient_" + n + "(): TaggedCallback = mustPeek(transientStack_" + n + ", \"" + n + "\").asInstanceOf[TaggedCallback]\n"
+                "    private def peekTransient_" + n + "(): TaggedCallback = mustPeek(transientStack_" + n + ", \"" + n +
+                    "\").asInstanceOf[TaggedCallback]\n"
             )
             sb.append(s"    def trampolineT_$n(${s.paramListDecl}): ${s.result.scala} =\n")
             sb.append(s"        val tagged = peekTransient_$n()\n")
@@ -429,7 +430,7 @@ object CallbackShapesGen {
     }
 
     private def emitRetainedTrampolinesForShape(s: CallbackShape, poolSize: Int): String = {
-        val sb = new StringBuilder
+        val sb       = new StringBuilder
         val zeroExpr = s.result match {
             case CType.V => "()"
             case CType.I => "0"

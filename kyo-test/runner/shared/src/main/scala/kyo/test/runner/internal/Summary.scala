@@ -60,7 +60,7 @@ private[internal] object Summary:
         end withDiscovery
 
         val failingLeaves = allLeaves.filter { case (_, r) => isFailure(r) }
-        val rendered =
+        val rendered      =
             if failingLeaves.isEmpty then
                 withDiscovery
             else

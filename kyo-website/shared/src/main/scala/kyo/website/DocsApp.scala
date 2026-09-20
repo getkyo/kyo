@@ -349,8 +349,8 @@ object DocsApp:
         // and the first module's prev points back to the overview ("Overview", targeting `/<prefix>/`).
         // Each side is a card carrying a direction eyebrow and the target module's name; a missing side
         // renders an invisible `pn-spacer` so the present card stays pinned to its own edge.
-        val overviewRoute = s"/$prefix/"
-        val idx           = modules.indexWhere(m => currentRoute.endsWith(s"/${m.slug}/"))
+        val overviewRoute        = s"/$prefix/"
+        val idx                  = modules.indexWhere(m => currentRoute.endsWith(s"/${m.slug}/"))
         val (prevSlot, nextSlot) =
             if idx < 0 then
                 val next = modules.headMaybe match

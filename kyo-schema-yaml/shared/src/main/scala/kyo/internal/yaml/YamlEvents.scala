@@ -751,11 +751,11 @@ private[kyo] object YamlEvents:
             @tailrec def loop(i: Int): Unit =
                 if i < value.length then
                     value.charAt(i) match
-                        case '"'  => out.append("\\\"")
-                        case '\\' => out.append("\\\\")
-                        case '\n' => out.append("\\n")
-                        case '\r' => out.append("\\r")
-                        case '\t' => out.append("\\t")
+                        case '"'          => out.append("\\\"")
+                        case '\\'         => out.append("\\\\")
+                        case '\n'         => out.append("\\n")
+                        case '\r'         => out.append("\\r")
+                        case '\t'         => out.append("\\t")
                         case c if c < ' ' =>
                             out.append("\\u")
                             out.append(Hex.charAt((c >> 12) & 0xf))
@@ -858,9 +858,9 @@ private[kyo] object YamlEvents:
         private def chompingIndicator(value: String, config: Yaml.WriterConfig): String =
             import Yaml.WriterConfig.Chomping.*
             config.chomping match
-                case Strip => "-"
-                case Keep  => "+"
-                case Clip  => ""
+                case Strip    => "-"
+                case Keep     => "+"
+                case Clip     => ""
                 case Preserve =>
                     if !value.endsWith("\n") then "-"
                     else if trailingNewlineCount(value) > 1 then "+"

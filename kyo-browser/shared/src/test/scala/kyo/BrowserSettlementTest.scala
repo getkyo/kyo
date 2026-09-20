@@ -315,7 +315,7 @@ class BrowserSettlementTest extends BrowserTest:
         )
         withBrowser {
             for
-                _ <- Browser.goto(p)
+                _       <- Browser.goto(p)
                 outcome <-
                     Abort.run[BrowserAssertionException] {
                         Browser.withConfig(_.mutationSettlementTimeout(500.millis))(Browser.click(Browser.Selector.id("b")))
@@ -719,8 +719,8 @@ class BrowserSettlementTest extends BrowserTest:
               |  // can never open a quiet window, yet the load event fires on the initial HTML parse.
               |  setInterval(() => { fetch('/ping').catch(() => {}); }, 50);
               |</script></body></html>""".stripMargin
-        val htmlBytes = Span.fromUnsafe(html.getBytes("UTF-8"))
-        val pingBytes = Span.fromUnsafe("ok".getBytes("UTF-8"))
+        val htmlBytes   = Span.fromUnsafe(html.getBytes("UTF-8"))
+        val pingBytes   = Span.fromUnsafe("ok".getBytes("UTF-8"))
         val htmlHandler = HttpRoute.getRaw("/").response(_.bodyBinary).handler { _ =>
             HttpResponse.ok(htmlBytes).addHeader("Content-Type", "text/html; charset=utf-8")
         }
@@ -904,8 +904,8 @@ class BrowserSettlementTest extends BrowserTest:
               |    setTimeout(() => { fetch('/ping?n=3').then(() => { window.__done++; }, () => { window.__done++; }); }, 300);
               |  });
               |</script></body></html>""".stripMargin
-        val htmlBytes = Span.fromUnsafe(html.getBytes("UTF-8"))
-        val pingBytes = Span.fromUnsafe("ok".getBytes("UTF-8"))
+        val htmlBytes   = Span.fromUnsafe(html.getBytes("UTF-8"))
+        val pingBytes   = Span.fromUnsafe("ok".getBytes("UTF-8"))
         val htmlHandler = HttpRoute.getRaw("/").response(_.bodyBinary).handler { _ =>
             HttpResponse.ok(htmlBytes).addHeader("Content-Type", "text/html; charset=utf-8")
         }
@@ -992,7 +992,7 @@ class BrowserSettlementTest extends BrowserTest:
         val html =
             """<!doctype html><html><body><h1>slow-image</h1>
               |<img src="/slow-image.gif" alt="slow"/></body></html>""".stripMargin
-        val htmlBytes = Span.fromUnsafe(html.getBytes("UTF-8"))
+        val htmlBytes   = Span.fromUnsafe(html.getBytes("UTF-8"))
         val htmlHandler = HttpRoute.getRaw("/").response(_.bodyBinary).handler { _ =>
             HttpResponse.ok(htmlBytes).addHeader("Content-Type", "text/html; charset=utf-8")
         }
@@ -1359,7 +1359,7 @@ class BrowserSettlementTest extends BrowserTest:
                         kyo.internal.MutationSettlement.waitForStable(300.millis)
                     }.map {
                         case Result.Failure(_: BrowserAssertionTimedOutException) => succeed
-                        case other =>
+                        case other                                                =>
                             fail(s"expected Result.Failure(BrowserAssertionTimedOutException) but got $other")
                     }
                 }
@@ -1384,7 +1384,7 @@ class BrowserSettlementTest extends BrowserTest:
                         kyo.internal.MutationSettlement.settleForCapture
                     }.map {
                         case Result.Success(()) => succeed
-                        case other =>
+                        case other              =>
                             fail(s"expected Result.Success(()) from settleForCapture on never-quiescing page but got $other")
                     }
                 }

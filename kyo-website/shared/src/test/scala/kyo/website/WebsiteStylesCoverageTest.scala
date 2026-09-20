@@ -91,7 +91,7 @@ class WebsiteStylesCoverageTest extends WebsiteTest:
             // "channels" matches the kyo-core heading "Channels and queues" (a heading hit), so the
             // dropdown renders search-result + search-result-title + search-result-sub rows.
             queryRef <- Signal.initRef("channels")
-            view <- SiteApp.view(
+            view     <- SiteApp.view(
                 versions,
                 home,
                 Signal.initConst(searchIndex),
@@ -112,7 +112,7 @@ class WebsiteStylesCoverageTest extends WebsiteTest:
         yield html.headMaybe.getOrElse("")
 
     private def docsHtml(using Frame): String < Async =
-        val mod = WebsiteModule("kyo-core", "Foundation", "kyo-core", "", WebsiteModule.Platforms.everywhere)
+        val mod     = WebsiteModule("kyo-core", "Foundation", "kyo-core", "", WebsiteModule.Platforms.everywhere)
         val content = WebsiteContent(
             intro = "",
             groups = Chunk(WebsiteContent.Group("Foundation", Chunk(mod))),
@@ -143,7 +143,7 @@ class WebsiteStylesCoverageTest extends WebsiteTest:
         for
             route    <- Signal.initRef[String]("/v0.9.0/kyo-core/")
             routeStr <- route.current
-            body <- DocsApp.body(
+            body     <- DocsApp.body(
                 content,
                 "v0.9.0",
                 route,

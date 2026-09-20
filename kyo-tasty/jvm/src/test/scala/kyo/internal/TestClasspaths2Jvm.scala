@@ -26,7 +26,7 @@ private[kyo] object TestClasspaths2Jvm:
       */
     def withWarningSink[A, S](f: TestClasspaths2.WarningSink => A < S)(using Frame): A < S =
         import AllowUnsafe.embrace.danger
-        val bufRef = AtomicRef.Unsafe.init(Chunk.empty[String])
+        val bufRef                 = AtomicRef.Unsafe.init(Chunk.empty[String])
         val sinkLogger: Log.Unsafe = new Log.Unsafe:
             def level: Log.Level                                                       = Log.Level.warn
             def name: String                                                           = "kyo.tasty.test"
@@ -37,7 +37,7 @@ private[kyo] object TestClasspaths2Jvm:
             def debug(msg: => String, t: => Throwable)(using Frame, AllowUnsafe): Unit = ()
             def info(msg: => String)(using Frame, AllowUnsafe): Unit                   = ()
             def info(msg: => String, t: => Throwable)(using Frame, AllowUnsafe): Unit  = ()
-            def warn(msg: => String)(using Frame, AllowUnsafe): Unit =
+            def warn(msg: => String)(using Frame, AllowUnsafe): Unit                   =
                 val m = msg; discard(bufRef.updateAndGet(_ :+ m))
             def warn(msg: => String, t: => Throwable)(using Frame, AllowUnsafe): Unit =
                 val m = msg; discard(bufRef.updateAndGet(_ :+ m))
@@ -52,7 +52,7 @@ private[kyo] object TestClasspaths2Jvm:
     /** Load the standard classpath with a warning sink. */
     def loadStandardWithSink(using Frame): (Tasty.Classpath, TestClasspaths2.WarningSink) < (Async & Scope & Abort[TastyError]) =
         import AllowUnsafe.embrace.danger
-        val bufRef = AtomicRef.Unsafe.init(Chunk.empty[String])
+        val bufRef                 = AtomicRef.Unsafe.init(Chunk.empty[String])
         val sinkLogger: Log.Unsafe = new Log.Unsafe:
             def level: Log.Level                                                       = Log.Level.warn
             def name: String                                                           = "kyo.tasty.test"
@@ -63,7 +63,7 @@ private[kyo] object TestClasspaths2Jvm:
             def debug(msg: => String, t: => Throwable)(using Frame, AllowUnsafe): Unit = ()
             def info(msg: => String)(using Frame, AllowUnsafe): Unit                   = ()
             def info(msg: => String, t: => Throwable)(using Frame, AllowUnsafe): Unit  = ()
-            def warn(msg: => String)(using Frame, AllowUnsafe): Unit =
+            def warn(msg: => String)(using Frame, AllowUnsafe): Unit                   =
                 val m = msg; discard(bufRef.updateAndGet(_ :+ m))
             def warn(msg: => String, t: => Throwable)(using Frame, AllowUnsafe): Unit =
                 val m = msg; discard(bufRef.updateAndGet(_ :+ m))
@@ -99,7 +99,7 @@ private[kyo] object TestClasspaths2Jvm:
     /** Load the standard classpath plus java.base JDK classfiles. */
     private val platformCpFuture: java.util.concurrent.Future[Either[Throwable, Tasty.Classpath]] =
         val executor = java.util.concurrent.Executors.newSingleThreadExecutor()
-        val future = executor.submit(new java.util.concurrent.Callable[Either[Throwable, Tasty.Classpath]]:
+        val future   = executor.submit(new java.util.concurrent.Callable[Either[Throwable, Tasty.Classpath]]:
             def call(): Either[Throwable, Tasty.Classpath] =
                 try
                     import AllowUnsafe.embrace.danger
@@ -121,7 +121,7 @@ private[kyo] object TestClasspaths2Jvm:
         Sync.defer(platformCpFuture.get()).map { either =>
             either match
                 case Right(classpath) => classpath
-                case Left(t) =>
+                case Left(t)          =>
                     Abort.fail(TastyError.ClassfileFormatError(
                         "<platform-modules-cache>",
                         t.getMessage,

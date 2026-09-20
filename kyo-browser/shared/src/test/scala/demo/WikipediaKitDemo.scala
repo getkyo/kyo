@@ -48,7 +48,7 @@ final class WikipediaKitDemo extends BrowserDemo[WikipediaKitDemo.KitResult]("wi
 
             _        <- step(6, "Render infobox PNG inline to the terminal")
             rendered <- infoboxImg.renderToConsole(charsWidth = 40)
-            _ <- rendered match
+            _        <- rendered match
                 case Present(s) => Console.printLine(s)
                 case Absent     => Console.printLine(s"    (PNG: ${infoboxImg.binary.size} bytes; iTerm2/Kitty needed for inline render)")
         yield KitResult(content.length, infoboxImg.binary.size, pdf.size)

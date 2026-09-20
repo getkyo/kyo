@@ -190,10 +190,10 @@ object DocsMarkdownRender:
         Frame
     ): Chunk[(DocsMarkdown.Heading, String, Chunk[String])] < Sync =
         Sync.defer {
-            val cleaned    = stripDoctest(source)
-            val blocks     = splitBlocks(cleaned)
-            val out        = new mutable.ArrayBuffer[(DocsMarkdown.Heading, String, Chunk[String])]()
-            val slugCounts = new mutable.HashMap[String, Int]()
+            val cleaned                         = stripDoctest(source)
+            val blocks                          = splitBlocks(cleaned)
+            val out                             = new mutable.ArrayBuffer[(DocsMarkdown.Heading, String, Chunk[String])]()
+            val slugCounts                      = new mutable.HashMap[String, Int]()
             def uniqueSlug(raw: String): String =
                 val count = slugCounts.getOrElse(raw, 0)
                 slugCounts(raw) = count + 1
@@ -562,7 +562,7 @@ object DocsMarkdownRender:
                 val inlineNodes   = parseInline(text)
                 // The parser returns Chunk[UI]; convert to Seq[HtmlChildVal] for the spread operator.
                 val inlineChildren = html(inlineNodes)
-                val heading: UI = level match
+                val heading: UI    = level match
                     case 1 => UI.h1.id(slug)(inlineChildren*)
                     case 2 => UI.h2.id(slug)(inlineChildren*)
                     case 3 => UI.h3.id(slug)(inlineChildren*)
@@ -718,7 +718,7 @@ object DocsMarkdownRender:
             val headerCells = parseRowCells(tableLines.head)
             val bodyRows    = if tableLines.length > 2 then tableLines.drop(2) else Chunk.empty[String]
             val headerTr    = UI.tr(html(headerCells.map(cell => UI.th(html(parseInline(cell))*)))*)
-            val bodyTrs = bodyRows.map { row =>
+            val bodyTrs     = bodyRows.map { row =>
                 val cells = parseRowCells(row)
                 UI.tr(html(cells.map(cell => UI.td(html(parseInline(cell))*)))*)
             }
@@ -898,7 +898,7 @@ object DocsMarkdownRender:
     private def resolveRepoPath(repoSubdir: String, target: String): String =
         val baseSegs   = repoSubdir.split("/").iterator.filter(_.nonEmpty).toList
         val targetSegs = target.stripPrefix("./").split("/").toList
-        val resolved = targetSegs.foldLeft(baseSegs.reverse) { (stack, seg) =>
+        val resolved   = targetSegs.foldLeft(baseSegs.reverse) { (stack, seg) =>
             seg match
                 case "" | "." => stack
                 case ".."     => if stack.isEmpty then stack else stack.tail
@@ -969,8 +969,8 @@ object DocsMarkdownRender:
       * adjacent literal characters into single `Ast.Text` leaves.
       */
     private def coalesceText(tokens: Chunk[Token])(using Frame): Chunk[UI] =
-        val out = new mutable.ArrayBuffer[UI]()
-        val buf = new mutable.StringBuilder()
+        val out           = new mutable.ArrayBuffer[UI]()
+        val buf           = new mutable.StringBuilder()
         def flush(): Unit =
             if buf.nonEmpty then
                 out += Ast.Text(buf.toString)
@@ -1214,7 +1214,7 @@ object DocsMarkdownRender:
             _: MetaToken.FunctionArrow | _: MetaToken.Underscore | _: MetaToken.Hash |
             _: MetaToken.Subtype | _: MetaToken.Supertype =>
             Present(TokenKind.Operator)
-        case id: MetaToken.Ident if isOperatorIdent(id.text) => Present(TokenKind.Operator)
+        case id: MetaToken.Ident if isOperatorIdent(id.text)                                     => Present(TokenKind.Operator)
         case _: MetaToken.Ident if prev.exists { case _: MetaToken.At => true; case _ => false } =>
             Present(TokenKind.Annotation)
         case id: MetaToken.Ident if isTypeIdent(id.text, prev) => Present(TokenKind.Type)

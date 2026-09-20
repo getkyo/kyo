@@ -86,10 +86,10 @@ object SqlFragmentMacro:
             case Apply(_, List(Typed(Repeated(elems, _), _))) => readStrings(elems)
             case Apply(_, List(Repeated(elems, _)))           => readStrings(elems)
             case Apply(_, elems)                              => readStrings(elems)
-            case Ident(_) =>
+            case Ident(_)                                     =>
                 t.symbol.tree match
                     case ValDef(_, _, Some(rhs)) => extractStringLiterals(rhs)
-                    case _ =>
+                    case _                       =>
                         report.errorAndAbort(s"sql interpolator requires a literal StringContext, got: ${t.show}")
             case other =>
                 report.errorAndAbort(s"sql interpolator could not extract string parts from: ${other.show(using Printer.TreeStructure)}")

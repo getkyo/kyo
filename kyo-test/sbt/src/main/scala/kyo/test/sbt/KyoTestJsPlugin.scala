@@ -23,7 +23,9 @@ object KyoTestJsPlugin extends AutoPlugin {
 
     object autoImport {
         val kyoTestBrowserEnv: TaskKey[JSEnv] =
-            taskKey[JSEnv]("A Scala.js environment that runs the linked tests in Chrome; assign it to jsEnv, e.g. Test / jsEnv := kyoTestBrowserEnv.value")
+            taskKey[JSEnv](
+                "A Scala.js environment that runs the linked tests in Chrome; assign it to jsEnv, e.g. Test / jsEnv := kyoTestBrowserEnv.value"
+            )
         val kyoTestBrowserClasspath: TaskKey[Seq[File]] =
             taskKey[Seq[File]]("The runtime classpath of kyo-test-browser, the program kyoTestBrowserEnv starts for each run")
         val kyoTestChromeVersion: SettingKey[Option[String]] =
@@ -41,7 +43,7 @@ object KyoTestJsPlugin extends AutoPlugin {
     val browserGlobalSettings: Seq[Setting[?]] = Seq(
         kyoTestChromeVersion      := None,
         kyoTestBrowserJavaOptions := Seq("-Xmx1g"),
-        kyoTestBrowserClasspath := {
+        kyoTestBrowserClasspath   := {
             throw new MessageOnlyException(
                 "kyoTestBrowserClasspath is not set: enable SbtKyoTestPlugin, which resolves kyo-test-browser, " +
                     "or set it to kyo-test-browser's runtime classpath"
@@ -50,9 +52,10 @@ object KyoTestJsPlugin extends AutoPlugin {
     )
 
     override def projectSettings: Seq[Setting[?]] = Seq(
-        testFrameworks := testFrameworks.value
-            .filterNot(_.implClassNames.contains("kyo.test.runner.SbtFramework")) :+
-            new TestFramework("kyo.test.runner.JsFramework")
+        testFrameworks :=
+            testFrameworks.value
+                .filterNot(_.implClassNames.contains("kyo.test.runner.SbtFramework")) :+
+                new TestFramework("kyo.test.runner.JsFramework")
     ) ++ browserSettings
 
     /** The environment `kyoTestBrowserEnv` builds, for a Scala.js project that does not enable this plugin; add [[browserGlobalSettings]]

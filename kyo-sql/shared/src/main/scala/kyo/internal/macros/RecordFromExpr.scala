@@ -351,7 +351,7 @@ object RecordFromExpr:
                         naming    <- resolveNaming(namingArg)
                     yield SqlMacros.renameMapOf(tpt.tpe).get(scalaName) match
                         case Some(renamed) => renamed
-                        case None =>
+                        case None          =>
                             naming match
                                 case Maybe.Present(n) => n.columnName(scalaName)
                                 case Maybe.Absent     => scalaName
@@ -387,7 +387,7 @@ object RecordFromExpr:
                 case Block(stats, inner) =>
                     captureBindings(stats)
                     unwrap(inner)
-                case Typed(inner, _) => unwrap(inner)
+                case Typed(inner, _)                                                => unwrap(inner)
                 case TypeApply(Select(inner, "asInstanceOf" | "$asInstanceOf$"), _) =>
                     unwrap(inner)
                 // `MacroSupport.narrowPhantom[X](inner)`, which IS the `asInstanceOf` above behind a named def, so it strips for the same

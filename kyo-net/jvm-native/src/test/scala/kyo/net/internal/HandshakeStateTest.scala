@@ -95,7 +95,7 @@ class HandshakeStateTest extends Test:
         "fromCode is stable: same code returns equal states across calls" in {
             @scala.annotation.tailrec
             def loop(i: Int, codes: List[Int]): Unit = codes match
-                case Nil => ()
+                case Nil          => ()
                 case code :: rest =>
                     val s1 = HandshakeState.fromCode(code)
                     val s2 = HandshakeState.fromCode(code)

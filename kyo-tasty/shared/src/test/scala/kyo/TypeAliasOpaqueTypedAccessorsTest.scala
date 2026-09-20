@@ -63,7 +63,7 @@ class TypeAliasOpaqueTypedAccessorsTest extends kyo.test.Test[Any]:
         )
 
     "TypeAlias.body field holds the alias body as a Type" in {
-        val intId = SymbolId(0)
+        val intId     = SymbolId(0)
         val intSymbol = Tasty.Symbol.Class(
             intId,
             Tasty.Name("Int"),
@@ -107,7 +107,7 @@ class TypeAliasOpaqueTypedAccessorsTest extends kyo.test.Test[Any]:
         val typeAlias = makeTypeAlias(2, "Foo", Maybe.Absent, typeParamIds = Chunk(SymbolId(0), SymbolId(1)))
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(tpA, tpB, typeAlias)).map { classpath =>
             given Tasty.Classpath = classpath
-            val tps = typeAlias.typeParamIds.flatMap(id => classpath.symbol(id).toChunk).collect {
+            val tps               = typeAlias.typeParamIds.flatMap(id => classpath.symbol(id).toChunk).collect {
                 case tp: Tasty.Symbol.TypeParam => tp
             }
             assert(tps.length == 2, s"Expected 2 type params but got ${tps.length}")
@@ -119,7 +119,7 @@ class TypeAliasOpaqueTypedAccessorsTest extends kyo.test.Test[Any]:
     }
 
     "OpaqueType.body holds the underlying Type" in {
-        val longId = SymbolId(0)
+        val longId     = SymbolId(0)
         val longSymbol = Tasty.Symbol.Class(
             longId,
             Tasty.Name("Long"),
@@ -158,7 +158,7 @@ class TypeAliasOpaqueTypedAccessorsTest extends kyo.test.Test[Any]:
     }
 
     "OpaqueType.bounds field exposes TypeBounds with correct upper type" in {
-        val intId = SymbolId(0)
+        val intId     = SymbolId(0)
         val intSymbol = Tasty.Symbol.Class(
             intId,
             Tasty.Name("Int"),
@@ -203,7 +203,7 @@ class TypeAliasOpaqueTypedAccessorsTest extends kyo.test.Test[Any]:
         val opaqueType = makeOpaqueType(1, "Box", Maybe.Absent, bounds, typeParamIds = Chunk(SymbolId(0)))
         Tasty.Classpath.fromPicklesWithSymbols(Chunk(tpA, opaqueType)).map { classpath =>
             given Tasty.Classpath = classpath
-            val tps = opaqueType.typeParamIds.flatMap(id => classpath.symbol(id).toChunk).collect {
+            val tps               = opaqueType.typeParamIds.flatMap(id => classpath.symbol(id).toChunk).collect {
                 case tp: Tasty.Symbol.TypeParam => tp
             }
             assert(tps.length == 1, s"Expected 1 type param but got ${tps.length}")
@@ -305,7 +305,7 @@ class TypeAliasOpaqueTypedAccessorsTest extends kyo.test.Test[Any]:
         import kyo.internal.tasty.symbol.SymbolKind
         import kyo.internal.tasty.symbol.TypedSymbolFactory
         val accErrors = new scala.collection.mutable.ArrayBuffer[TastyError]()
-        val d = new SymbolDescriptor(
+        val d         = new SymbolDescriptor(
             id = 7,
             kind = SymbolKind.Parameter,
             flags = Tasty.Flags.empty,
@@ -346,7 +346,7 @@ class TypeAliasOpaqueTypedAccessorsTest extends kyo.test.Test[Any]:
 
         // TypeAlias with absent body
         val accTa = new scala.collection.mutable.ArrayBuffer[TastyError]()
-        val dTa = new SymbolDescriptor(
+        val dTa   = new SymbolDescriptor(
             id = 10,
             kind = SymbolKind.TypeAlias,
             flags = Tasty.Flags.empty,
@@ -372,7 +372,7 @@ class TypeAliasOpaqueTypedAccessorsTest extends kyo.test.Test[Any]:
 
         // OpaqueType with absent body
         val accOt = new scala.collection.mutable.ArrayBuffer[TastyError]()
-        val dOt = new SymbolDescriptor(
+        val dOt   = new SymbolDescriptor(
             id = 11,
             kind = SymbolKind.OpaqueType,
             flags = Tasty.Flags.empty,

@@ -153,7 +153,7 @@ class ConstructorsTest extends kyo.test.Test[Any]:
         "suspend" - {
             "should suspend an effect using Sync" in {
                 var executed = false
-                val effect = Kyo.defer {
+                val effect   = Kyo.defer {
                     executed = true
                     42
                 }
@@ -214,7 +214,7 @@ class ConstructorsTest extends kyo.test.Test[Any]:
         }
 
         "defer" in {
-            var state = 0
+            var state  = 0
             val effect = Kyo.defer:
                 state += 1
             assert(state == 0)

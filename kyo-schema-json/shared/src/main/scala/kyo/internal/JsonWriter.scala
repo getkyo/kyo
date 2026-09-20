@@ -335,8 +335,8 @@ final class JsonWriter private (
     // ASCII chars requiring escape, 2/3/4-byte UTF-8, and surrogate pairs.
     // Called with `start` = first index the fast-path scan stopped at.
     private def writeQuotedStringSlow(s: String, start: Int): Unit =
-        val escapeTable = JsonWriter.EscapeTable
-        val len         = s.length
+        val escapeTable                 = JsonWriter.EscapeTable
+        val len                         = s.length
         @tailrec def loop(i: Int): Unit =
             if i < len then
                 val c = s.charAt(i)

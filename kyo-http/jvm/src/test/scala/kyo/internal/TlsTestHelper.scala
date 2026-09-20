@@ -88,7 +88,7 @@ object TlsTestHelper:
         finally fis.close()
 
         // Export certificate as PEM
-        val cert = ks.getCertificate("server")
+        val cert    = ks.getCertificate("server")
         val certPem = "-----BEGIN CERTIFICATE-----\n" + java.util.Base64.getMimeEncoder(
             64,
             "\n".getBytes
@@ -100,7 +100,7 @@ object TlsTestHelper:
         cw.close()
 
         // Export private key as PEM (PKCS#8)
-        val key = ks.getKey("server", password).asInstanceOf[java.security.PrivateKey]
+        val key    = ks.getKey("server", password).asInstanceOf[java.security.PrivateKey]
         val keyPem = "-----BEGIN PRIVATE KEY-----\n" + java.util.Base64.getMimeEncoder(
             64,
             "\n".getBytes

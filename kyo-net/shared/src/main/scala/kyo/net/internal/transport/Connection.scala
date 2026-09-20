@@ -172,7 +172,7 @@ final private[kyo] class Connection[Handle] private (
     ): Fiber.Unsafe[kyo.net.Connection, Abort[kyo.net.NetException]] =
         upgradeFn match
             case Present(fn) => fn(tls, frame)
-            case Absent =>
+            case Absent      =>
                 given Frame = frame
                 Fiber.Unsafe.fromResult(Result.fail(kyo.net.NetNotUpgradableException()))
     end doUpgradeToTls
@@ -426,9 +426,9 @@ private[kyo] object Connection:
         val closedFlag     = AtomicBoolean.Unsafe.init(false)
         val closingPromise = Promise.Unsafe.init[Unit, Any]()
         new kyo.net.Connection:
-            def inbound: Channel.Unsafe[Span[Byte]]  = in
-            def outbound: Channel.Unsafe[Span[Byte]] = out
-            def isOpen(using AllowUnsafe): Boolean   = !closedFlag.get()
+            def inbound: Channel.Unsafe[Span[Byte]]     = in
+            def outbound: Channel.Unsafe[Span[Byte]]    = out
+            def isOpen(using AllowUnsafe): Boolean      = !closedFlag.get()
             def close()(using AllowUnsafe, Frame): Unit =
                 // Close both channels; there is no driver to cancel or handle to close. Idempotent via the CAS.
                 if closedFlag.compareAndSet(false, true) then

@@ -17,7 +17,7 @@ class GuardCoreBufferCloseThrowsTest extends Test:
     private def throwingBuffer(): (Buffer[Byte], () => Boolean) =
         import AllowUnsafe.embrace.danger
         @volatile var closerCalled = false
-        val closer: () => Unit = () =>
+        val closer: () => Unit     = () =>
             closerCalled = true
             throw new RuntimeException("deliberate close failure")
         val seg       = java.lang.foreign.Arena.ofShared().nn.allocate(1L)

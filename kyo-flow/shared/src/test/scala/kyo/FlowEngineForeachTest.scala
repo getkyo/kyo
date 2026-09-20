@@ -36,7 +36,7 @@ class FlowEngineForeachTest extends FlowEngineSupport:
                     AtomicInt.init(0).map { charges =>
                         val items = 5
                         val wfId  = Flow.Id.Workflow("fanout-handoff")
-                        val flow = Flow.init("fanout-handoff")
+                        val flow  = Flow.init("fanout-handoff")
                             .foreach("charges", concurrency = 1)(_ => (1 to items).toSeq) { item =>
                                 // Counted once the card is really charged, so an item interrupted in flight counts for nothing
                                 // and the assertion below is about charges that actually happened.
@@ -62,7 +62,7 @@ class FlowEngineForeachTest extends FlowEngineSupport:
                             }
                             before <- charges.get
                             _      <- tc.advance(10.seconds)
-                            _ <- Scope.run {
+                            _      <- Scope.run {
                                 FlowEngine.init(store, config, flow)([v] => (c: v < Async) => c).map { _ =>
                                     settle(tc, step = 250.millis, maxRounds = 200)(
                                         store.getExecution(eid).map(_.exists(_.status.isTerminal))
@@ -144,7 +144,7 @@ class FlowEngineForeachTest extends FlowEngineSupport:
                             case _ => (500.millis, 4.seconds)
                         val flow = Flow.init("fanout-concurrent-handoff")
                             .foreach("charges", concurrency = 3)(_ => (0 until items).toSeq) { item =>
-                                val (until, hold) = timing(item)
+                                val (until, hold)     = timing(item)
                                 val body: Int < Async =
                                     Async.sleep(until)
                                         .andThen(charges.updateAndGet(_.append(item)))
@@ -176,7 +176,7 @@ class FlowEngineForeachTest extends FlowEngineSupport:
                             held   <- recorded(eid)
                             before <- charges.get
                             _      <- tc.advance(10.seconds)
-                            _ <- Scope.run {
+                            _      <- Scope.run {
                                 FlowEngine.init(store, config, flow)([v] => (c: v < Async) => c).map { _ =>
                                     settle(tc, step = 250.millis, maxRounds = 200)(
                                         store.getExecution(eid).map(_.exists(_.status.isTerminal))
@@ -328,7 +328,7 @@ class FlowEngineForeachTest extends FlowEngineSupport:
                     AtomicRef.init(Chunk.empty[Int]).map { refunded =>
                         val items = 5
                         val wfId  = Flow.Id.Workflow("fanout-unwind")
-                        val flow = Flow.init("fanout-unwind")
+                        val flow  = Flow.init("fanout-unwind")
                             .foreachCompensated("charges", concurrency = 1)(_ => (1 to items).toSeq) { item =>
                                 val body: Int < Async = Async.sleep(1.second).andThen(item * 10)
                                 body
@@ -354,7 +354,7 @@ class FlowEngineForeachTest extends FlowEngineSupport:
                             }
                             partial <- refunded.get
                             _       <- tc.advance(10.seconds)
-                            _ <- Scope.run {
+                            _       <- Scope.run {
                                 FlowEngine.init(store, config, flow).map { _ =>
                                     settle(tc, step = 250.millis, maxRounds = 200)(
                                         store.getExecution(eid).map(_.exists(_.status.isTerminal))

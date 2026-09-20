@@ -151,9 +151,7 @@ object Aspect:
           *   Additional cuts to apply in sequence
           */
         def andThen[I[_], O[_], S](a: Cut[I, O, S], b: Cut[I, O, S])(using Frame): Cut[I, O, S] =
-            Cut[I, O, S](
-                [C] => (input, cont) => a(input, b(_, cont))
-            )
+            Cut[I, O, S]([C] => (input, cont) => a(input, b(_, cont)))
     end Cut
 
     /** Initializes a new aspect with default pass-through behavior.

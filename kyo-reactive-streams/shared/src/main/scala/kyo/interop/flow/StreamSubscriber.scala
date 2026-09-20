@@ -259,7 +259,7 @@ final private[kyo] class StreamSubscriber[V](
             Loop.foreach {
                 await
                     .map {
-                        case true => request.andThen(Loop.continue)
+                        case true  => request.andThen(Loop.continue)
                         case false => poll.map {
                                 case Result.Success(nextChunk)  => Emit.value(nextChunk).andThen(Loop.continue)
                                 case Result.Error(e: Throwable) => Abort.panic(e)

@@ -77,7 +77,7 @@ class SqlEndToEndTest extends SqlContainerTest:
                         _ <- client.executeRaw(
                             """CREATE TABLE person (id BIGINT PRIMARY KEY, name TEXT NOT NULL, age INT NOT NULL)"""
                         )
-                        _ <- client.executeRaw("""INSERT INTO person VALUES (1, 'alice', 30), (2, 'bob', 25)""")
+                        _    <- client.executeRaw("""INSERT INTO person VALUES (1, 'alice', 30), (2, 'bob', 25)""")
                         rows <- Sql
                             .from[Person]("p")
                             .where(c => c.p.age >= 30)
@@ -100,7 +100,7 @@ class SqlEndToEndTest extends SqlContainerTest:
                         _ <- client.executeRaw(
                             "CREATE TABLE person (id BIGINT PRIMARY KEY, name VARCHAR(128) NOT NULL, age INT NOT NULL)"
                         )
-                        _ <- client.executeRaw("INSERT INTO person VALUES (1, 'alice', 30), (2, 'bob', 25)")
+                        _    <- client.executeRaw("INSERT INTO person VALUES (1, 'alice', 30), (2, 'bob', 25)")
                         rows <- Sql
                             .from[Person]("p")
                             .where(c => c.p.age >= 30)
@@ -395,7 +395,7 @@ class SqlEndToEndTest extends SqlContainerTest:
                         _ <- client.executeRaw(
                             """CREATE TABLE person (id BIGINT PRIMARY KEY, name TEXT NOT NULL, age INT NOT NULL)"""
                         )
-                        _ <- client.executeRaw("""INSERT INTO person VALUES (1, 'alice', 30), (2, 'bob', 30), (3, 'carol', 25)""")
+                        _     <- client.executeRaw("""INSERT INTO person VALUES (1, 'alice', 30), (2, 'bob', 30), (3, 'carol', 25)""")
                         count <- Sql
                             .update[Person]
                             .set(_.age := 31)
@@ -417,7 +417,7 @@ class SqlEndToEndTest extends SqlContainerTest:
                         _ <- client.executeRaw(
                             "CREATE TABLE person (id BIGINT PRIMARY KEY, name VARCHAR(128) NOT NULL, age INT NOT NULL)"
                         )
-                        _ <- client.executeRaw("INSERT INTO person VALUES (1, 'alice', 30), (2, 'bob', 30), (3, 'carol', 25)")
+                        _     <- client.executeRaw("INSERT INTO person VALUES (1, 'alice', 30), (2, 'bob', 30), (3, 'carol', 25)")
                         count <- Sql
                             .update[Person]
                             .set(_.age := 31)
@@ -439,7 +439,7 @@ class SqlEndToEndTest extends SqlContainerTest:
                         _ <- client.executeRaw(
                             """CREATE TABLE person (id BIGINT PRIMARY KEY, name TEXT NOT NULL, age INT NOT NULL)"""
                         )
-                        _ <- client.executeRaw("""INSERT INTO person VALUES (1, 'alice', 30), (2, 'bob', 25)""")
+                        _     <- client.executeRaw("""INSERT INTO person VALUES (1, 'alice', 30), (2, 'bob', 25)""")
                         count <- Sql
                             .delete[Person]
                             .where(_.age == 25)
@@ -460,7 +460,7 @@ class SqlEndToEndTest extends SqlContainerTest:
                         _ <- client.executeRaw(
                             "CREATE TABLE person (id BIGINT PRIMARY KEY, name VARCHAR(128) NOT NULL, age INT NOT NULL)"
                         )
-                        _ <- client.executeRaw("INSERT INTO person VALUES (1, 'alice', 30), (2, 'bob', 25)")
+                        _     <- client.executeRaw("INSERT INTO person VALUES (1, 'alice', 30), (2, 'bob', 25)")
                         count <- Sql
                             .delete[Person]
                             .where(_.age == 25)
@@ -566,7 +566,7 @@ class SqlEndToEndTest extends SqlContainerTest:
                         _ <- client.executeRaw(
                             "CREATE TABLE person (id BIGINT PRIMARY KEY, name VARCHAR(128) NOT NULL, age INT NOT NULL)"
                         )
-                        _ <- client.executeRaw("INSERT INTO person VALUES (1, 'alice', 30), (2, 'bob', 25)")
+                        _    <- client.executeRaw("INSERT INTO person VALUES (1, 'alice', 30), (2, 'bob', 25)")
                         rows <- Sql
                             .from[Person]("p")
                             .where(c => sql"${c.p.age} >= $minAge".as[Boolean])
@@ -1158,7 +1158,7 @@ class SqlEndToEndTest extends SqlContainerTest:
                         emptyTotal    <- metrics.where(c => c.m.amount > 1000).sum(_.m.amount).run
                         quotient      <- metrics.where(c => c.m.id == 1L).select(c => c.m.amount / c.m.divisor).run
                         truncated     <- metrics.where(c => c.m.id == 1L).select(c => c.m.amount.divideTruncating(c.m.divisor)).run
-                        rolledUp <- metrics.groupByRollup(c => c.m.region).select(v => (v.region, v.amount.sum)).to[
+                        rolledUp      <- metrics.groupByRollup(c => c.m.region).select(v => (v.region, v.amount.sum)).to[
                             RegionTotal
                         ].run
                     yield
@@ -1213,7 +1213,7 @@ class SqlEndToEndTest extends SqlContainerTest:
                         emptyTotal    <- metrics.where(c => c.m.amount > 1000).sum(_.m.amount).run
                         quotient      <- metrics.where(c => c.m.id == 1L).select(c => c.m.amount / c.m.divisor).run
                         truncated     <- metrics.where(c => c.m.id == 1L).select(c => c.m.amount.divideTruncating(c.m.divisor)).run
-                        rolledUp <- metrics.groupByRollup(c => c.m.region).select(v => (v.region, v.amount.sum)).to[
+                        rolledUp      <- metrics.groupByRollup(c => c.m.region).select(v => (v.region, v.amount.sum)).to[
                             RegionTotal
                         ].run
                     yield

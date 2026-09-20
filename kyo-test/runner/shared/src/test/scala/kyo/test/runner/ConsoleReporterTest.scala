@@ -140,7 +140,7 @@ class ConsoleReporterTest extends kyo.test.Test[Any]:
             5.millis
         )
         val report = TestReport(Chunk(suiteA, suiteB))
-        val out = capture() { r =>
+        val out    = capture() { r =>
             r.onRunComplete(report)
         }
         assert(out.contains("Results:"))
@@ -195,7 +195,7 @@ class ConsoleReporterTest extends kyo.test.Test[Any]:
         )
         val suite  = SuiteReport("A", suiteResults, 10L.millis)
         val report = TestReport(Chunk(suite))
-        val out = capture(useColors = false) { r =>
+        val out    = capture(useColors = false) { r =>
             r.onRunComplete(report)
         }
         assert(out.contains("3 passed"), s"Expected '3 passed' in:\n$out")
@@ -211,7 +211,7 @@ class ConsoleReporterTest extends kyo.test.Test[Any]:
 
     "phase10-suite-1: onSuiteComplete with a failing leaf emits FAILURES block with path and diagram" in {
         val suiteInfo = SuiteInfo("MySuite", "my.MySuite", Maybe.empty)
-        val report = SuiteReport(
+        val report    = SuiteReport(
             "MySuite",
             Chunk(
                 Chunk("MySuite", "pass1") -> TestResult.Passed(1L.millis),
@@ -231,7 +231,7 @@ class ConsoleReporterTest extends kyo.test.Test[Any]:
 
     "phase10-suite-2: onSuiteComplete with all-passing suite emits no FAILURES block" in {
         val suiteInfo = SuiteInfo("GreenSuite", "my.GreenSuite", Maybe.empty)
-        val report = SuiteReport(
+        val report    = SuiteReport(
             "GreenSuite",
             Chunk(
                 Chunk("p1") -> TestResult.Passed(1L.millis),
@@ -248,7 +248,7 @@ class ConsoleReporterTest extends kyo.test.Test[Any]:
     "phase10-suite-3: long diagram is truncated to MaxDiagramLines with (truncated) marker" in {
         val longDiagram = (1 to (ConsoleReporter.MaxDiagramLines + 5)).map(i => s"line$i").mkString("\n")
         val suiteInfo   = SuiteInfo("TruncSuite", "my.TruncSuite", Maybe.empty)
-        val report = SuiteReport(
+        val report      = SuiteReport(
             "TruncSuite",
             Chunk(
                 Chunk("longfail") -> TestResult.Failed(longDiagram, Maybe.empty, 1L.millis)
@@ -266,7 +266,7 @@ class ConsoleReporterTest extends kyo.test.Test[Any]:
 
     "phase10-suite-4: only TimedOut/Failed are failures; Cancelled, Pending, Ignored are not in the FAILURES block" in {
         val suiteInfo = SuiteInfo("MixSuite", "my.MixSuite", Maybe.empty)
-        val report = SuiteReport(
+        val report    = SuiteReport(
             "MixSuite",
             Chunk(
                 Chunk("MixSuite", "tout")  -> TestResult.TimedOut(10L.seconds),

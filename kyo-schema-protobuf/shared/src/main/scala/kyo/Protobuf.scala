@@ -4,7 +4,7 @@ import scala.annotation.tailrec
 
 final class Protobuf(val config: Protobuf.Config) extends Codec:
     def this() = this(Protobuf.Config.Default)
-    def newWriter(): Codec.Writer = new kyo.internal.ProtobufWriter()
+    def newWriter(): Codec.Writer                               = new kyo.internal.ProtobufWriter()
     def newReader(input: Span[Byte])(using Frame): Codec.Reader =
         new kyo.internal.ProtobufReader(input.toArray)
 
@@ -127,7 +127,7 @@ object Protobuf:
         // global name set (carried immutably): each distinct type need only be CHECKED once.
         @tailrec def loop(stack: List[Structure.Type], seen: Set[String]): Unit =
             stack match
-                case Nil => ()
+                case Nil       => ()
                 case t :: rest =>
                     t match
                         case Structure.Type.Mapping(_, _, key, value) =>
@@ -139,7 +139,7 @@ object Protobuf:
                             loop(key :: value :: rest, seen)
                         case Structure.Type.Collection(_, _, elem) => loop(elem :: rest, seen)
                         case Structure.Type.Optional(_, _, inner)  => loop(inner :: rest, seen)
-                        case p: Structure.Type.Product =>
+                        case p: Structure.Type.Product             =>
                             if seen.contains(p.name) then loop(rest, seen)
                             else loop(p.fields.foldRight(rest)((f, a) => f.fieldType :: a), seen + p.name)
                         case s: Structure.Type.Sum =>
@@ -243,7 +243,7 @@ object Protobuf:
         def resolve(field: Structure.Field): (Int, Boolean) =
             overrides.get(field.name) match
                 case Some(n) => (n, pinnedNames.contains(field.name))
-                case None =>
+                case None    =>
                     field.annotations.collectFirst { case fn: kyo.schema.proto.fieldNumber => fn.number } match
                         case Some(n) => (n, true)
                         case None    => (kyo.internal.CodecMacro.fieldId(field.name), false)
@@ -262,7 +262,7 @@ object Protobuf:
         // walk O(1) on the call stack. `children` is a tightly-scoped local accumulator per node.
         @tailrec def loop(stack: List[Frame]): Unit =
             stack match
-                case Nil => ()
+                case Nil                                  => ()
                 case Frame(prefix, tpe, ancestry) :: rest =>
                     tpe match
                         case p: Structure.Type.Product if !ancestry.contains(p.name) =>
@@ -515,7 +515,7 @@ object Protobuf:
                     case Structure.PrimitiveKind.BigInt | Structure.PrimitiveKind.BigDecimal => "string"
                     case Structure.PrimitiveKind.Bytes                                       => "bytes"
                     case Structure.PrimitiveKind.Instant | Structure.PrimitiveKind.Duration  => "sint64"
-                    case Structure.PrimitiveKind.Unit =>
+                    case Structure.PrimitiveKind.Unit                                        =>
                         throw new IllegalArgumentException(
                             "Unit-typed fields are not supported in Protobuf; omit the field or wrap in Option[T]"
                         )

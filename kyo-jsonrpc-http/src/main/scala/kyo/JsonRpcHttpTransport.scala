@@ -78,7 +78,7 @@ object JsonRpcHttpTransport:
             inbound  <- Channel.initUnscoped[JsonRpcEnvelope](64)
             outbound <- Channel.initUnscoped[HttpWebSocket.Payload](64)
             doneRef  <- Fiber.Promise.init[Unit, Async]
-            _ <- Scope.ensure(
+            _        <- Scope.ensure(
                 doneRef.completeUnitDiscard.andThen(Abort.run[Closed](inbound.close).unit)
                     .andThen(Abort.run[Closed](outbound.close).unit)
             )

@@ -227,7 +227,8 @@ final class IonWriter private (private val out: StringBuilder, private val confi
     end isIdentifier
 
     private def isIdentifierStart(c: Char): Boolean =
-        (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c == '$'
+        (c >= 'a' && c <= 'z') ||
+            (c >= 'A' && c <= 'Z') || c == '_' || c == '$'
 
     private def isIdentifierPart(c: Char): Boolean =
         isIdentifierStart(c) || (c >= '0' && c <= '9')
@@ -245,7 +246,7 @@ final class IonWriter private (private val out: StringBuilder, private val confi
                 case '\n' => out.append("\\n")
                 case '\r' => out.append("\\r")
                 case '\t' => out.append("\\t")
-                case _ =>
+                case _    =>
                     if c < 0x20 then
                         out.append("\\u")
                         val hex = Integer.toHexString(c.toInt)

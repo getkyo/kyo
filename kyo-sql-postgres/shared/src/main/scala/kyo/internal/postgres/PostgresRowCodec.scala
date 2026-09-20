@@ -51,7 +51,7 @@ final private[kyo] case class PostgresRowCodec(format: Format) extends SqlPositi
       */
     override def text(row: SqlRow, idx: Int)(using Frame): String < Abort[SqlDecodeException] =
         import SqlRow.ColumnKind
-        val typeToken = row.columns(idx).typeToken
+        val typeToken                                           = row.columns(idx).typeToken
         inline def renderWith(decoder: PostgresDecoder[String]) =
             PostgresRowCodec.columnDecoded[String](row, idx)(using summon[Frame], decoder)
         // The interval is the one routed under both formats, for the session-setting reason above.

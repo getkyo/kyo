@@ -28,7 +28,7 @@ class HostFilterTest extends AsyncFreeSpec with NonImplicitAssertions:
     final case class Db(url: String)
 
     private val browserHosts = Seq(Platform.Host.BrowserMain, Platform.Host.BrowserWorker)
-    private val otherHosts =
+    private val otherHosts   =
         Seq(Platform.Host.Jvm, Platform.Host.Native, Platform.Host.Node, Platform.Host.Bun, Platform.Host.Deno, Platform.Host.OtherJs)
 
     private def runLeaf[S <: kyo.test.Test[Any]](make: => S): Future[(Chunk[String], TestResult)] =
@@ -158,9 +158,8 @@ class HostFilterTest extends AsyncFreeSpec with NonImplicitAssertions:
             val runs = new AtomicInteger(0)
             runLeaf {
                 new kyo.test.Test[Any]:
-                    "x".onlyBrowser.handle[Env[Db]](
-                        [A] => (b: A < (Env[Db] & Async & Abort[Any] & Scope)) => Env.run(Db("test"))(b)
-                    ) in Env.get[Db].map(_ => Sync.defer(runs.incrementAndGet())).andThen(succeed)
+                    "x".onlyBrowser.handle[Env[Db]]([A] => (b: A < (Env[Db] & Async & Abort[Any] & Scope)) => Env.run(Db("test"))(b)) in
+                        Env.get[Db].map(_ => Sync.defer(runs.incrementAndGet())).andThen(succeed)
             }.map { case (path, result) =>
                 assert(path == Chunk("x"))
                 expectHost(inBrowser = true, result, runs, "runs only in a browser")
@@ -264,9 +263,8 @@ class HostFilterTest extends AsyncFreeSpec with NonImplicitAssertions:
             runLeaf {
                 new kyo.test.Test[Any]:
                     override protected def hostFilters = Chunk(HostFilter.NotBrowser)
-                    "x".handle[Env[Db]](
-                        [A] => (b: A < (Env[Db] & Async & Abort[Any] & Scope)) => Env.run(Db("test"))(b)
-                    ) in Env.get[Db].map(_ => Sync.defer(runs.incrementAndGet())).andThen(succeed)
+                    "x".handle[Env[Db]]([A] => (b: A < (Env[Db] & Async & Abort[Any] & Scope)) => Env.run(Db("test"))(b)) in
+                        Env.get[Db].map(_ => Sync.defer(runs.incrementAndGet())).andThen(succeed)
             }.map { case (path, result) =>
                 assert(path == Chunk("x"))
                 expectHost(inBrowser = false, result, runs, "does not run in a browser")

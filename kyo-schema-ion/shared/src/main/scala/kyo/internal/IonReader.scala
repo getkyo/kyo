@@ -204,7 +204,7 @@ final class IonReader private (
     def bytes(): Span[Byte] =
         value match
             case Blob(v) => v
-            case Str(v) =>
+            case Str(v)  =>
                 try Span.fromUnsafe(kyo.internal.Base64s.decodeExact(v))
                 catch
                     case e: IllegalArgumentException =>
@@ -218,8 +218,8 @@ final class IonReader private (
 
     def bigDecimal(): BigDecimal =
         value match
-            case DecNum(v) => v
-            case IntNum(v) => BigDecimal(v)
+            case DecNum(v)   => v
+            case IntNum(v)   => BigDecimal(v)
             case FloatNum(v) =>
                 if v.isNaN || v.isInfinite then mismatch("finite decimal", FloatNum(v))
                 else BigDecimal(v)
@@ -361,9 +361,9 @@ final private class IonTextParser(
             case '{' =>
                 if nextIs('{') then parseLob()
                 else parseStruct(depth)
-            case '[' => parseList(depth)
-            case '(' => parseSexp(depth)
-            case '"' => Str(parseQuoted('"'))
+            case '['  => parseList(depth)
+            case '('  => parseSexp(depth)
+            case '"'  => Str(parseQuoted('"'))
             case '\'' =>
                 if startsWithTripleQuote then Str(parseLongStringConcat())
                 else Symbol(parseQuoted('\''))
@@ -548,13 +548,13 @@ final private class IonTextParser(
 
     private def parseBigInt(cleaned: String): BigInt =
         val first = cleaned.charAt(0)
-        val sign =
+        val sign  =
             if first == '-' then -1
             else 1
         val body =
             if first == '-' || first == '+' then cleaned.substring(1)
             else cleaned
-        val lower = body.toLowerCase(java.util.Locale.ROOT)
+        val lower  = body.toLowerCase(java.util.Locale.ROOT)
         val parsed =
             if lower.startsWith("0x") then BigInt(lower.drop(2), 16)
             else if lower.startsWith("0b") then BigInt(lower.drop(2), 2)
@@ -610,7 +610,7 @@ final private class IonTextParser(
         if token.isEmpty then false
         else
             val first = token.charAt(0)
-            val body =
+            val body  =
                 if first == '-' then token.substring(1)
                 else if first == '+' then ""
                 else token
@@ -640,11 +640,11 @@ final private class IonTextParser(
                 if expIndex < 0 then true
                 else
                     val exponent = body.substring(expIndex + 1)
-                    val digits =
+                    val digits   =
                         if exponent.startsWith("+") || exponent.startsWith("-") then exponent.substring(1)
                         else exponent
                     validDigits(digits, isDecimalDigit)
-            val dotIndex = mantissa.indexOf('.')
+            val dotIndex   = mantissa.indexOf('.')
             val mantissaOk =
                 if dotIndex >= 0 then
                     if mantissa.indexOf('.', dotIndex + 1) >= 0 then false
@@ -799,7 +799,7 @@ final private class IonTextParser(
             case '?'  => sb.append('?'); pos += 1
             case '\\' => sb.append('\\'); pos += 1
             case '/'  => sb.append('/'); pos += 1
-            case 'x' =>
+            case 'x'  =>
                 pos += 1
                 sb.append(readHex(2).toChar)
             case 'u' =>
@@ -932,7 +932,8 @@ final private class IonTextParser(
         isIonWhitespace(c) || c == ',' || c == ']' || c == '}' || c == ')'
 
     private def isIdentifierStart(c: Char): Boolean =
-        (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c == '$'
+        (c >= 'a' && c <= 'z') ||
+            (c >= 'A' && c <= 'Z') || c == '_' || c == '$'
 
     private def isIonWhitespace(c: Char): Boolean =
         c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\u000b'

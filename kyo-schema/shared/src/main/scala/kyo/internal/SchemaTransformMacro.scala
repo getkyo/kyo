@@ -112,7 +112,7 @@ object SchemaTransformMacro:
         val tildeType    = TypeRepr.of[Record.~]
         val toNameType   = ConstantType(StringConstant(toStr))
         val newField     = tildeType.appliedTo(List(toNameType, valueType))
-        val newType =
+        val newType      =
             if withoutField =:= TypeRepr.of[Any] then newField
             else AndType(withoutField, newField)
 
@@ -208,7 +208,7 @@ object SchemaTransformMacro:
         val expanded = ExpandMacro.expandType(fType)
 
         // Validate each name exists and collect name -> valueType pairs
-        val tildeType = TypeRepr.of[Record.~]
+        val tildeType  = TypeRepr.of[Record.~]
         val fieldTypes = names.map { name =>
             val valueType = NavigationMacro.findValueType(expanded, name).getOrElse {
                 val available = MacroUtils.collectFields(expanded).map(_._1)
@@ -264,7 +264,7 @@ object SchemaTransformMacro:
         val tildeType = TypeRepr.of[Record.~]
 
         // For each field, check if its value type is a case class
-        val flattenedPairs = scala.collection.mutable.ListBuffer.empty[(String, String)]
+        val flattenedPairs     = scala.collection.mutable.ListBuffer.empty[(String, String)]
         val resultFieldEntries = fields.flatMap { (name, valueType) =>
             val sym = valueType.dealias.typeSymbol
             if sym.isClassDef && sym.flags.is(Flags.Case) then
@@ -358,7 +358,7 @@ object SchemaTransformMacro:
                                     else
                                         val rawValue    = product.productElement($idxExpr)
                                         val sourceField = $meta.sourceFields.lift($idxExpr)
-                                        val fld = Field[n, v](
+                                        val fld         = Field[n, v](
                                             ${ Expr(fieldName).asExprOf[n] },
                                             $tagExpr,
                                             sourceField.map(_.nested).getOrElse(Nil),
@@ -389,7 +389,7 @@ object SchemaTransformMacro:
 
             // Renamed fields (runtime: erased types)
             // Resolve rename chains: name->userName, userName->displayName => name->displayName
-            val forwardMap = theMeta.renamedFields.toMap
+            val forwardMap                          = theMeta.renamedFields.toMap
             def resolveTarget(name: String): String =
                 forwardMap.get(name) match
                     case Some(next) => resolveTarget(next)
@@ -480,7 +480,7 @@ object SchemaTransformMacro:
 
         findFieldName(lambda) match
             case Some(name) => name
-            case None =>
+            case None       =>
                 report.errorAndAbort(
                     s"Cannot extract field name from lambda. Use a simple field access like _.fieldName"
                 )
@@ -547,8 +547,8 @@ object SchemaTransformMacro:
                     case None              => name
                 end match
             end sourceFieldName
-            val fieldName   = sourceFieldName(${ Expr(nameStr) })
-            val fieldSchema = scala.compiletime.summonInline[Schema[V]]
+            val fieldName    = sourceFieldName(${ Expr(nameStr) })
+            val fieldSchema  = scala.compiletime.summonInline[Schema[V]]
             val fieldDefault = Schema.FieldDefault(
                 () => $supplier,
                 (value: Any, writer: Codec.Writer) =>
@@ -592,8 +592,8 @@ object SchemaTransformMacro:
         read: Maybe[Expr[Codec.Reader => V]]
     )(using Quotes): Expr[Schema[A] { type Focused = F }] =
         import quotes.reflect.*
-        val nameStr = extractFocusFieldName(focus.asTerm)
-        val schema  = meta.asExprOf[Schema[A] { type Focused = F }]
+        val nameStr                                             = extractFocusFieldName(focus.asTerm)
+        val schema                                              = meta.asExprOf[Schema[A] { type Focused = F }]
         val writeExpr: Expr[Maybe[(Any, Codec.Writer) => Unit]] =
             write match
                 case Maybe.Present(writeFn) =>
@@ -616,7 +616,7 @@ object SchemaTransformMacro:
         val replaceRead  = Expr(read.isDefined)
         '{
             val fieldSchema = scala.compiletime.summonInline[Schema[V]]
-            val next = Schema.FieldTransform[A](
+            val next        = Schema.FieldTransform[A](
                 get = (value: A) =>
                     val selected = $focus($schema.rootSelect)
                     selected.getter(value) match
@@ -666,7 +666,7 @@ object SchemaTransformMacro:
         // Extract individual lambda expressions from varargs
         val lambdaExprs = focuses match
             case Varargs(exprs) => exprs
-            case _ =>
+            case _              =>
                 report.errorAndAbort("select requires lambda literal arguments")
 
         if lambdaExprs.isEmpty then

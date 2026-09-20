@@ -24,8 +24,8 @@ class SqlPipelineConformanceTest extends SqlBackendTest:
 
     forEachBackend() { (_, client, _) =>
         for
-            _ <- client.executeRaw("CREATE TABLE pipelinerow (id BIGINT PRIMARY KEY, payload VARCHAR(64) NOT NULL)")
-            _ <- Sql.insert[PipelineRow].values(PipelineRow(conflictingId, "pre-existing")).run
+            _       <- client.executeRaw("CREATE TABLE pipelinerow (id BIGINT PRIMARY KEY, payload VARCHAR(64) NOT NULL)")
+            _       <- Sql.insert[PipelineRow].values(PipelineRow(conflictingId, "pre-existing")).run
             results <- client.pipeline { p =>
                 Kyo.foreachDiscard(1 to 5)(i => p.execute(Sql.insert[PipelineRow].values(PipelineRow(i.toLong, s"row$i"))))
             }

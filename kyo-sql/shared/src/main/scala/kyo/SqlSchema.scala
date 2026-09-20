@@ -298,7 +298,7 @@ object SqlSchema extends kyo.internal.LowPrioritySqlSchema:
         private[kyo] def write(value: M, writer: SqlCodec.Writer): Unit =
             unwrap(value) match
                 case Maybe.Present(p) => inner.write(p, writer)
-                case _ =>
+                case _                =>
                     var i = 0
                     while i < inner.width do
                         writer.nil()

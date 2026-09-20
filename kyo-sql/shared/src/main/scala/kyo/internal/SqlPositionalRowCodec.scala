@@ -54,7 +54,7 @@ abstract class SqlPositionalRowCodec extends SqlRow.Codec:
             SqlRow.Codec.catchingColumn(Maybe(idx))(summon[SqlSchema[A]].read(newReader(sliced, Maybe.empty)))
         end read
         format match
-            case Format.Text => super.text(row, idx)
+            case Format.Text   => super.text(row, idx)
             case Format.Binary =>
                 columnKind(row.columns(idx).typeToken) match
                     case ColumnKind.Integer => read[Long].map(_.toString)
@@ -88,14 +88,14 @@ abstract class SqlPositionalRowCodec extends SqlRow.Codec:
     final def read[A](schema: SqlSchema[A], row: SqlRow, offset: Int, naming: Maybe[SqlNaming], fieldMatch: SqlRow.FieldMatch)(using
         Frame
     ): A < Abort[SqlDecodeException] =
-        val sliced = row.slice(offset, offset + schema.width)
+        val sliced  = row.slice(offset, offset + schema.width)
         val missing =
             fieldMatch match
                 case SqlRow.FieldMatch.ByName => SqlFieldMatcher.missingByName(schema.fieldNames, sliced.columnNames, naming)
                 case _                        => Maybe.empty[String]
         missing match
             case Maybe.Present(name) => Abort.fail(SqlDecodeColumnNotFoundException(name, sliced.columnNames))
-            case Maybe.Absent =>
+            case Maybe.Absent        =>
                 SqlRow.Codec.catching(
                     schema.read(newReader(sliced, Maybe(SqlFieldMatcher.of(schema.fieldNames, sliced.columnNames, naming, fieldMatch))))
                 )

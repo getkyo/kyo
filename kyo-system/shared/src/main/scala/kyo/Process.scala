@@ -201,7 +201,7 @@ object Process:
                 value match
                     case Success       => "ExitCode.Success"
                     case Failure(code) => s"ExitCode.Failure($code)"
-                    case Signaled(n) =>
+                    case Signaled(n)   =>
                         val name = value.signalName.getOrElse(s"signal $n")
                         s"ExitCode.Signaled($n, $name)"
         end given

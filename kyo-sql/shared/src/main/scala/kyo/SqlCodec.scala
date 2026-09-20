@@ -160,7 +160,7 @@ object SqlCodec:
             // format refusal would name the backend for something no flavor's composite wire form can express.
             val head = params.head
             encoded(head) match
-                case Maybe.Absent => throw SqlUnsupportedAbsentElementException(typeName)
+                case Maybe.Absent         => throw SqlUnsupportedAbsentElementException(typeName)
                 case Maybe.Present(bytes) =>
                     if !formatMatches(head) then
                         throw SqlUnsupportedElementFormatException(typeName, format, dialectId)

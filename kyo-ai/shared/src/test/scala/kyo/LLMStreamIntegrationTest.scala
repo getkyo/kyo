@@ -23,7 +23,7 @@ class LLMStreamIntegrationTest extends BaseAITest:
                             s"Stream exactly this string and nothing else: $expectedText"
                         )
                         textChunks <- ai.stream[String].map(_.run)
-                        _ <- ai.userMessage(
+                        _          <- ai.userMessage(
                             s"Stream exactly two objects. Use marker '$marker' exactly, indexes 1 and 2, " +
                                 "and text values 'first' and 'second'."
                         )
@@ -42,7 +42,7 @@ class LLMStreamIntegrationTest extends BaseAITest:
                                 "Return only those two values, with no other text in either field."
                         )
                         memory <- ai.gen[StreamMemory]
-                        _ <- ai.userMessage(
+                        _      <- ai.userMessage(
                             // The value is NOT restated here, which is the whole point: it appears only in
                             // the turn the model itself streamed earlier. Asking for a string the prompt
                             // also contains would pass on a backend that never had the history at all,
@@ -75,31 +75,32 @@ class LLMStreamIntegrationTest extends BaseAITest:
 
     // Both command harnesses ride the MCP result tool and share this streaming path, so the property is
     // asserted for every CLI backend rather than the one it was written against.
-    "the harness streaming path rides the MCP result tool and surfaces a resultless turn as a typed AIStreamIncompleteException" - runBackendsWhere(
-        _.cli.isDefined
-    ) { backend =>
-        // The failure arms (a resultless capture raising AIStreamIncompleteException, a timeout/kill surfacing
-        // a typed stream failure) follow from streamFragments' exhaustive Present/Absent match on the captured
-        // result by construction, not from a live-fault-injection proof; this test proves the happy path end
-        // to end: the captured envelope streams as the single fragment with no --json-schema round trip.
-        for
-            marker <- marker
-            result <- Abort.run[AIException] {
-                Kyo.lift(()).andThen {
-                    AI.initWith { ai =>
-                        for
-                            _          <- ai.systemMessage(s"Preserve marker '$marker' exactly.")
-                            _          <- ai.userMessage(s"Stream exactly this string and nothing else: cc-stream-$marker")
-                            textChunks <- ai.stream[String].map(_.run)
-                        yield textChunks
+    "the harness streaming path rides the MCP result tool and surfaces a resultless turn as a typed AIStreamIncompleteException" -
+        runBackendsWhere(
+            _.cli.isDefined
+        ) { backend =>
+            // The failure arms (a resultless capture raising AIStreamIncompleteException, a timeout/kill surfacing
+            // a typed stream failure) follow from streamFragments' exhaustive Present/Absent match on the captured
+            // result by construction, not from a live-fault-injection proof; this test proves the happy path end
+            // to end: the captured envelope streams as the single fragment with no --json-schema round trip.
+            for
+                marker <- marker
+                result <- Abort.run[AIException] {
+                    Kyo.lift(()).andThen {
+                        AI.initWith { ai =>
+                            for
+                                _          <- ai.systemMessage(s"Preserve marker '$marker' exactly.")
+                                _          <- ai.userMessage(s"Stream exactly this string and nothing else: cc-stream-$marker")
+                                textChunks <- ai.stream[String].map(_.run)
+                            yield textChunks
+                        }
                     }
                 }
-            }
-            textChunks <- unwrap(backend, result)
-            _ = assert(textChunks.mkString == s"cc-stream-$marker", s"CC streaming result mismatch: $textChunks")
-        yield ()
-        end for
-    }
+                textChunks <- unwrap(backend, result)
+                _ = assert(textChunks.mkString == s"cc-stream-$marker", s"CC streaming result mismatch: $textChunks")
+            yield ()
+            end for
+        }
 
     "deliver stream[String] as the declared capability says" - runBackends { backend =>
         // The defect this guards was silent: `stream[String]` on a harness backend returned the whole
@@ -120,7 +121,7 @@ class LLMStreamIntegrationTest extends BaseAITest:
                 s"${backend.label} answered too briefly for this leaf to mean anything: ${chunks.mkString.length} chars"
             )
             incremental = backend.provider.completion.streamsIncrementally
-            _ = if incremental then
+            _           = if incremental then
                 assert(
                     chunks.size > 1,
                     s"${backend.label} declares incremental streaming but delivered ${chunks.size} chunk(s)"

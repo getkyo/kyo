@@ -118,7 +118,7 @@ class BrowserLauncherPlatformTest extends BaseBrowserTest:
         try
             val javaBin   = java.lang.System.getProperty("java.home") + "/bin/java"
             val classpath = java.lang.System.getProperty("java.class.path")
-            val cmd = java.util.List.of(
+            val cmd       = java.util.List.of(
                 javaBin,
                 "-cp",
                 classpath,
@@ -150,7 +150,7 @@ class BrowserLauncherPlatformTest extends BaseBrowserTest:
 
             // Verify the shutdown hook killed the inner proc by waiting on its termination, not sampling liveness: ProcessHandle.of(pid) is empty
             // once reaped, else onExit completes the instant it terminates. The 30s is a hang backstop, not a pass/fail bound (only a broken hook reaches it).
-            val handleOpt = java.lang.ProcessHandle.of(pid)
+            val handleOpt   = java.lang.ProcessHandle.of(pid)
             val innerExited =
                 if !handleOpt.isPresent then true
                 else

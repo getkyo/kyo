@@ -115,9 +115,9 @@ class OccurrenceIndexTest extends kyo.test.Test[Any]:
     "scanFile yields a use-site occurrence resolving to the referenced symbol" in {
         Abort.run[TastyError](
             boundedFixture.map { (classpath, boundedSym, body, ctx) =>
-                val sourceFile = sourceFileOf(boundedSym)
-                val positions  = positionsFor(body, ctx, sourceFile)
-                val syms       = classpath.symbols
+                val sourceFile            = sourceFileOf(boundedSym)
+                val positions             = positionsFor(body, ctx, sourceFile)
+                val syms                  = classpath.symbols
                 val (_, addrToNode, _, _) = TreeUnpickler.decodeWithAddrs(
                     body,
                     boundedSym,
@@ -144,7 +144,7 @@ class OccurrenceIndexTest extends kyo.test.Test[Any]:
     "scanFile drops synthetic-node addresses (no Positions entry), never aborts" in {
         Abort.run[TastyError](
             boundedFixture.map { (classpath, boundedSym, body, ctx) =>
-                val syms = classpath.symbols
+                val syms                               = classpath.symbols
                 val (_, addrToNode, _, typeAddrToType) = TreeUnpickler.decodeWithAddrs(
                     body,
                     boundedSym,
@@ -175,13 +175,13 @@ class OccurrenceIndexTest extends kyo.test.Test[Any]:
     "occurrenceMemo decodes a file at most once" in {
         Abort.run[TastyError](
             boundedFixture.map { (classpath, boundedSym, body, ctx) =>
-                val sourceFile = sourceFileOf(boundedSym)
-                val positions  = positionsFor(body, ctx, sourceFile)
-                var callCount  = 0
+                val sourceFile                              = sourceFileOf(boundedSym)
+                val positions                               = positionsFor(body, ctx, sourceFile)
+                var callCount                               = 0
                 def scanWithMemo(): Chunk[Tasty.Occurrence] =
                     Option(ctx.occurrenceMemo.get(sourceFile)) match
                         case Some(cached) => cached
-                        case None =>
+                        case None         =>
                             callCount += 1
                             val occ = OccurrenceScanner.scanFile(sourceFile, classpath, Chunk((boundedSym.id, body)), positions)
                             ctx.occurrenceMemo.put(sourceFile, occ)

@@ -48,7 +48,7 @@ class SharedChromeTest extends BaseBrowserTest:
         val callers = 8
         for
             allSawFirst <- Latch.init(callers)
-            results <- Async.foreach(1 to callers, callers) { _ =>
+            results     <- Async.foreach(1 to callers, callers) { _ =>
                 shared.withUrl { url =>
                     if url == "ws://fake-1" then
                         allSawFirst.release.andThen(allSawFirst.await).andThen(

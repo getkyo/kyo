@@ -64,7 +64,7 @@ class OTLPTraceContextFilterTest extends kyo.test.Test[Any]:
         }
 
         "passes through with invalid traceparent - wrong traceId length" in {
-            val filter = OTLPTraceContextFilter.server
+            val filter  = OTLPTraceContextFilter.server
             val request = HttpRequest(HttpMethod.GET, testUrl)
                 .addHeader("traceparent", "00-short-b7ad6b7169203331-01")
 
@@ -87,7 +87,7 @@ class OTLPTraceContextFilterTest extends kyo.test.Test[Any]:
         }
 
         "passes through with invalid traceparent - wrong spanId length" in {
-            val filter = OTLPTraceContextFilter.server
+            val filter  = OTLPTraceContextFilter.server
             val request = HttpRequest(HttpMethod.GET, testUrl)
                 .addHeader("traceparent", "00-0af7651916cd43dd8448eb211c80319c-short-01")
 
@@ -110,7 +110,7 @@ class OTLPTraceContextFilterTest extends kyo.test.Test[Any]:
         }
 
         "passes through with invalid traceparent - too few parts" in {
-            val filter = OTLPTraceContextFilter.server
+            val filter  = OTLPTraceContextFilter.server
             val request = HttpRequest(HttpMethod.GET, testUrl)
                 .addHeader("traceparent", "0af7651916cd43dd8448eb211c80319c")
 
@@ -133,7 +133,7 @@ class OTLPTraceContextFilterTest extends kyo.test.Test[Any]:
         }
 
         "passes through with empty traceparent" in {
-            val filter = OTLPTraceContextFilter.server
+            val filter  = OTLPTraceContextFilter.server
             val request = HttpRequest(HttpMethod.GET, testUrl)
                 .addHeader("traceparent", "")
 

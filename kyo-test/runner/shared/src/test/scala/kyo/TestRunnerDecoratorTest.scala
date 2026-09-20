@@ -125,9 +125,8 @@ private object TestRunnerDecoratorFixtures:
     // ── 6. handle ─────────────────────────────────────────────────────────────────────────────
 
     class HandleSuite extends TestBase[Any]:
-        "uses-env".handle[Env[Int]](
-            [A] => (b: A < (Env[Int] & Async & Abort[Any] & Scope)) => Env.run(42)(b)
-        ) in Env.get[Int].map(v => assert(v == 42))
+        "uses-env".handle[Env[Int]]([A] => (b: A < (Env[Int] & Async & Abort[Any] & Scope)) => Env.run(42)(b)) in
+            Env.get[Int].map(v => assert(v == 42))
     end HandleSuite
 
     // ── 7. typeCheck suite macros ─────────────────────────────────────────────────────────────
@@ -330,7 +329,7 @@ class TestRunnerDecoratorTest extends AsyncFreeSpec with NonImplicitAssertions:
     "wasm platform filters: the registered leaves follow the JS or WasmGC link" in {
         discharge(TestRunner.runReport(classOf[TestRunnerDecoratorFixtures.WasmPlatformSuite])).map { report =>
             val registered = report.suiteReports.flatMap(_.leafResults.map(_._1.mkString("/"))).toSet
-            val expected =
+            val expected   =
                 if Platform.isWasm then Set("only-wasm", "only-wasm-group/in-only-wasm-group")
                 else if Platform.isNative then Set("not-wasm", "not-wasm-group/in-not-wasm-group")
                 else Set("not-wasm", "not-native-not-wasm", "not-wasm-group/in-not-wasm-group")

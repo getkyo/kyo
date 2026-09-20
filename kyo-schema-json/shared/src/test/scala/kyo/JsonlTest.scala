@@ -184,7 +184,7 @@ class JsonlTest extends kyo.test.Test[Any]:
             def emittedBeforeAbort(chunkSize: Int)(using kyo.test.AssertScope) =
                 for
                     seen <- AtomicRef.init(Chunk.empty[Event])
-                    r <- Abort.run[DecodeException](
+                    r    <- Abort.run[DecodeException](
                         byteStream(in, chunkSize).into(Jsonl.pipe[Event]()).foreach(e => seen.updateAndGet(_ :+ e))
                     )
                     emitted <- seen.get
@@ -208,7 +208,7 @@ class JsonlTest extends kyo.test.Test[Any]:
             val in = "{\"name\":\"a\",\"count\":1}\n{\"name\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"count\":2}\n"
             for
                 seen <- AtomicRef.init(Chunk.empty[Event])
-                r <- Abort.run[DecodeException](
+                r    <- Abort.run[DecodeException](
                     byteStream(in).into(Jsonl.pipe[Event](maxLineSize = 30.bytes)).foreach(e =>
                         seen.updateAndGet(_ :+ e)
                     )
@@ -233,7 +233,7 @@ class JsonlTest extends kyo.test.Test[Any]:
             val in = "{\"name\":\"a\",\"count\":1}\n" + oversizedLine + "\n{\"name\":\"c\",\"count\":3}\n"
             for
                 seen <- AtomicRef.init(Chunk.empty[Event])
-                r <- Abort.run[DecodeException](
+                r    <- Abort.run[DecodeException](
                     byteStream(in).into(Jsonl.pipe[Event](maxLineSize = 30.bytes)).foreach(e => seen.updateAndGet(_ :+ e))
                 )
                 emitted <- seen.get
@@ -331,7 +331,7 @@ class JsonlTest extends kyo.test.Test[Any]:
                     file = dir / "mixed.jsonl"
                     _    <- file.write("{\"name\":\"a\",\"count\":1}\n{\"nope\":true}\n{\"name\":\"c\",\"count\":3}\n")
                     seen <- AtomicRef.init(Chunk.empty[Event])
-                    r <- Abort.run[DecodeException](
+                    r    <- Abort.run[DecodeException](
                         Scope.run(Jsonl.read[Event](file).foreach(e => seen.updateAndGet(_ :+ e)))
                     )
                     emitted <- seen.get
@@ -367,7 +367,7 @@ class JsonlTest extends kyo.test.Test[Any]:
                     file = dir / "oversized.jsonl"
                     _    <- file.write(in)
                     seen <- AtomicRef.init(Chunk.empty[Event])
-                    r <- Abort.run[DecodeException](
+                    r    <- Abort.run[DecodeException](
                         Scope.run(Jsonl.read[Event](file, maxLineSize = 30.bytes).foreach(e => seen.updateAndGet(_ :+ e)))
                     )
                     emitted <- seen.get
@@ -416,8 +416,8 @@ class JsonlTest extends kyo.test.Test[Any]:
                 for
                     dir <- Path.tempDir("kyo-jsonl-read-limits")
                     file = dir / "bag.jsonl"
-                    _     <- file.write(bagLine + "\n")
-                    depth <- Abort.run[DecodeException](Scope.run(Jsonl.read[Bag](file, maxDepth = 1, maxCollectionSize = 50).run))
+                    _          <- file.write(bagLine + "\n")
+                    depth      <- Abort.run[DecodeException](Scope.run(Jsonl.read[Bag](file, maxDepth = 1, maxCollectionSize = 50).run))
                     collection <- Abort.run[DecodeException](
                         Scope.run(Jsonl.read[Bag](file, maxDepth = 8, maxCollectionSize = 4).run)
                     )
@@ -611,7 +611,7 @@ class JsonlTest extends kyo.test.Test[Any]:
                     for
                         dir <- Path.tempDir("kyo-jsonl-watch")
                         file = dir / "t.jsonl"
-                        _ <- file.write("{\"name\":\"a\",\"count\":1}\n")
+                        _     <- file.write("{\"name\":\"a\",\"count\":1}\n")
                         fiber <- Fiber.initUnscoped(
                             Path.runReadOnly(
                                 Scope.run(Jsonl.watch[Event](file, pollDelay = pollDelay).take(2).run)
@@ -634,7 +634,7 @@ class JsonlTest extends kyo.test.Test[Any]:
                     for
                         dir <- Path.tempDir("kyo-jsonl-watch-end")
                         file = dir / "t.jsonl"
-                        _ <- file.write("{\"name\":\"old\",\"count\":0}\n")
+                        _     <- file.write("{\"name\":\"old\",\"count\":0}\n")
                         fiber <- Fiber.initUnscoped(
                             Path.runReadOnly(
                                 Scope.run(Jsonl.watch[Event](file, Path.Origin.End, pollDelay).take(1).run)
@@ -657,7 +657,7 @@ class JsonlTest extends kyo.test.Test[Any]:
                 for
                     dir <- Path.tempDir("kyo-jsonl-watch-offset")
                     file = dir / "t.jsonl"
-                    _ <- file.write(first + "{\"name\":\"b\",\"count\":2}\n")
+                    _   <- file.write(first + "{\"name\":\"b\",\"count\":2}\n")
                     got <- Scope.run(
                         Jsonl.watch[Event](file, Path.Origin.Offset(first.length.toLong), pollDelay).take(1).run
                     )
@@ -677,7 +677,7 @@ class JsonlTest extends kyo.test.Test[Any]:
                     file = dir / "t.jsonl"
                     _    <- file.write(in)
                     seen <- AtomicRef.init(Chunk.empty[Event])
-                    r <- Abort.run[DecodeException](
+                    r    <- Abort.run[DecodeException](
                         Scope.run(
                             Jsonl.watch[Event](file, pollDelay = pollDelay)
                                 .take(3)
@@ -729,8 +729,8 @@ class JsonlTest extends kyo.test.Test[Any]:
                     for
                         dir <- Path.tempDir("kyo-jsonl-watch-split")
                         file = dir / "t.jsonl"
-                        _    <- file.write(existing)
-                        seen <- AtomicRef.init(Chunk.empty[Event])
+                        _     <- file.write(existing)
+                        seen  <- AtomicRef.init(Chunk.empty[Event])
                         fiber <- Fiber.initUnscoped(
                             Path.runReadOnly(
                                 Scope.run(
@@ -767,8 +767,8 @@ class JsonlTest extends kyo.test.Test[Any]:
                     for
                         dir <- Path.tempDir("kyo-jsonl-watch-truncate")
                         file = dir / "t.jsonl"
-                        _    <- file.write(existing)
-                        seen <- AtomicRef.init(Chunk.empty[Result[DecodeException, Event]])
+                        _     <- file.write(existing)
+                        seen  <- AtomicRef.init(Chunk.empty[Result[DecodeException, Event]])
                         fiber <- Fiber.initUnscoped(
                             Path.runReadOnly(
                                 Scope.run(
@@ -808,8 +808,8 @@ class JsonlTest extends kyo.test.Test[Any]:
                     for
                         dir <- Path.tempDir("kyo-jsonl-watch-truncate-strict")
                         file = dir / "t.jsonl"
-                        _    <- file.write(existing)
-                        seen <- AtomicRef.init(Chunk.empty[Event])
+                        _     <- file.write(existing)
+                        seen  <- AtomicRef.init(Chunk.empty[Event])
                         fiber <- Fiber.initUnscoped(
                             Path.runReadOnly(
                                 Abort.run[DecodeException](
@@ -848,8 +848,8 @@ class JsonlTest extends kyo.test.Test[Any]:
                     for
                         dir <- Path.tempDir("kyo-jsonl-watch-truncate-boundary")
                         file = dir / "t.jsonl"
-                        _    <- file.write(existing)
-                        seen <- AtomicRef.init(Chunk.empty[Event])
+                        _     <- file.write(existing)
+                        seen  <- AtomicRef.init(Chunk.empty[Event])
                         fiber <- Fiber.initUnscoped(
                             Path.runReadOnly(
                                 Scope.run(
@@ -885,8 +885,8 @@ class JsonlTest extends kyo.test.Test[Any]:
                     for
                         dir <- Path.tempDir("kyo-jsonl-watch-skip")
                         file = dir / "t.jsonl"
-                        _    <- file.write(existing)
-                        seen <- AtomicRef.init(Chunk.empty[Result[DecodeException, Event]])
+                        _     <- file.write(existing)
+                        seen  <- AtomicRef.init(Chunk.empty[Result[DecodeException, Event]])
                         fiber <- Fiber.initUnscoped(
                             Path.runReadOnly(
                                 Scope.run(
@@ -930,7 +930,7 @@ class JsonlTest extends kyo.test.Test[Any]:
                     file = dir / "t.jsonl"
                     _    <- file.write(in)
                     seen <- AtomicRef.init(Chunk.empty[Event])
-                    r <- Abort.run[DecodeException](
+                    r    <- Abort.run[DecodeException](
                         Scope.run(
                             Jsonl.watch[Event](file, pollDelay = pollDelay, maxLineSize = 30.bytes)
                                 .take(2)
@@ -964,8 +964,8 @@ class JsonlTest extends kyo.test.Test[Any]:
                     for
                         dir <- Path.tempDir("kyo-jsonl-watch-breach")
                         file = dir / "t.jsonl"
-                        _    <- file.write(existing)
-                        seen <- AtomicRef.init(Chunk.empty[Result[DecodeException, Event]])
+                        _     <- file.write(existing)
+                        seen  <- AtomicRef.init(Chunk.empty[Result[DecodeException, Event]])
                         fiber <- Fiber.initUnscoped(
                             Path.runReadOnly(
                                 Scope.run(
@@ -1011,7 +1011,7 @@ class JsonlTest extends kyo.test.Test[Any]:
                     file = dir / "t.jsonl"
                     _    <- file.write(in)
                     seen <- AtomicRef.init(Chunk.empty[Event])
-                    r <- Abort.run[DecodeException](
+                    r    <- Abort.run[DecodeException](
                         Scope.run(
                             Jsonl.watch[Event](file, pollDelay = pollDelay, maxLineSize = 30.bytes)
                                 .take(2)
@@ -1043,7 +1043,7 @@ class JsonlTest extends kyo.test.Test[Any]:
                 for
                     dir <- Path.tempDir("kyo-jsonl-watch-limits")
                     file = dir / "bag.jsonl"
-                    _ <- file.write(bagLine + "\n")
+                    _     <- file.write(bagLine + "\n")
                     depth <- Abort.run[DecodeException](
                         Scope.run(Jsonl.watch[Bag](file, pollDelay = pollDelay, maxDepth = 1, maxCollectionSize = 50).take(1).run)
                     )
@@ -1067,7 +1067,7 @@ class JsonlTest extends kyo.test.Test[Any]:
                 for
                     dir <- Path.tempDir("kyo-jsonl-watch-results-limits")
                     file = dir / "bag.jsonl"
-                    _ <- file.write(bagLine + "\n")
+                    _     <- file.write(bagLine + "\n")
                     depth <- Scope.run(
                         Jsonl.watchResults[Bag](file, pollDelay = pollDelay, maxDepth = 1, maxCollectionSize = 50).take(1).run
                     )
@@ -1140,7 +1140,7 @@ class JsonlTest extends kyo.test.Test[Any]:
             // emit three of 23, and both are visible here without measuring a heap.
             for
                 sizes <- AtomicRef.init(Chunk.empty[Int])
-                _ <- Jsonl.encode(Stream.init(Chunk(Event("a", 1), Event("b", 2), Event("c", 3)), 2))
+                _     <- Jsonl.encode(Stream.init(Chunk(Event("a", 1), Event("b", 2), Event("c", 3)), 2))
                     .foreachChunk(bytes => sizes.updateAndGet(_ :+ bytes.size))
                 got <- sizes.get
             yield assert(got == Chunk(46, 23))
@@ -1334,9 +1334,10 @@ class JsonlTest extends kyo.test.Test[Any]:
                 // the arithmetic errors buffering hides have somewhere to accumulate: a chunk written twice, a chunk
                 // dropped, or a newline emitted per chunk instead of per record. Reading the file back pins the
                 // record count independently of the length. The chunk-at-a-time write is pinned by the test above.
-                val n = 50000
-                val expectedSize =
-                    (0 until n).foldLeft(0L)((acc, i) => acc + Json.encode(Event("e", i)).getBytes(StandardCharsets.UTF_8).length + 1L)
+                val n            = 50000
+                val expectedSize = (0 until n).foldLeft(0L)((acc, i) =>
+                    acc + Json.encode(Event("e", i)).getBytes(StandardCharsets.UTF_8).length + 1L
+                )
                 for
                     dir <- Path.tempDir("kyo-jsonl-write-large")
                     file = dir / "large.jsonl"

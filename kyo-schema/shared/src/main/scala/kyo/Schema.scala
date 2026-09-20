@@ -163,11 +163,12 @@ abstract class Schema[A] @publicInBinary private[kyo] (
             case Maybe.Present((name, tag)) =>
                 @tailrec def loop(rest: List[Schema[?]]): Maybe[Schema[A]] =
                     rest match
-                        case Nil => Maybe.empty
+                        case Nil       => Maybe.empty
                         case s :: tail =>
-                            val matches = (s ne this) && (s.nominalIdentity match
-                                case Maybe.Present((n, t)) => n == name && t.equals(tag)
-                                case _                     => false)
+                            val matches = (s ne this) &&
+                                (s.nominalIdentity match
+                                    case Maybe.Present((n, t)) => n == name && t.equals(tag)
+                                    case _                     => false)
                             if matches then Maybe(s.asInstanceOf[Schema[A]])
                             else loop(tail)
                 loop(overrides)
@@ -362,7 +363,7 @@ abstract class Schema[A] @publicInBinary private[kyo] (
       *   a new Schema with the check accumulated
       */
     def check(pred: A => Boolean, msg: String)(using frame: Frame): Schema[A] { type Focused = Schema.this.Focused } =
-        val segs = segments
+        val segs                                           = segments
         val rootCheck: A => Seq[ValidationFailedException] = (root: A) =>
             if pred(root) then Seq.empty
             else Seq(ValidationFailedException(segs, msg)(using frame))
@@ -1479,7 +1480,7 @@ abstract class Schema[A] @publicInBinary private[kyo] (
         val product = ev(value)
 
         // Resolve rename chains: name->userName, userName->displayName => name->displayName
-        val forwardMap = renamedFields.toMap
+        val forwardMap                          = renamedFields.toMap
         def resolveTarget(name: String): String =
             forwardMap.get(name) match
                 case Some(next) => resolveTarget(next)
@@ -1606,7 +1607,7 @@ object Schema:
     private[kyo] def writerWithAnnotations(structure: Structure.Type, writer: Writer): Writer =
         if !writer.canWriteAnnotations then writer
         else
-            val rootAnnotations = annotationsFor(structure)
+            val rootAnnotations  = annotationsFor(structure)
             val fieldAnnotations = structure match
                 case product: Structure.Type.Product =>
                     product.fields.foldLeft(Map.empty[String, Chunk[Any]]) { (acc, field) =>
@@ -1635,7 +1636,7 @@ object Schema:
         override def codecName: String                  = delegate.codecName
         override def capabilities: Codec.Capabilities   = delegate.capabilities
 
-        override def supportsFieldIdOverrides: Boolean = delegate.supportsFieldIdOverrides
+        override def supportsFieldIdOverrides: Boolean                            = delegate.supportsFieldIdOverrides
         override def withFieldIdOverrides(overrides: Map[String, Int]): this.type =
             val _ = delegate.withFieldIdOverrides(overrides)
             this
@@ -2723,7 +2724,7 @@ object Schema:
                     case "inf"   => scala.concurrent.duration.Duration.Inf
                     case "-inf"  => scala.concurrent.duration.Duration.MinusInf
                     case "undef" => scala.concurrent.duration.Duration.Undefined
-                    case s =>
+                    case s       =>
                         try scala.concurrent.duration.Duration.fromNanos(s.toLong)
                         catch case _: NumberFormatException => throw TypeMismatchException(Seq.empty, "Duration", s)(using r.frame)
             ,
@@ -3044,7 +3045,7 @@ object Schema:
             writeFn = (value, writer) =>
                 value match
                     case Maybe.Present(v) => inner.serializeWrite(v, writer)
-                    case _ =>
+                    case _                =>
                         writer.nil()
             ,
             readFn = reader =>
@@ -3069,7 +3070,7 @@ object Schema:
             writeFn = (value, writer) =>
                 value match
                     case Some(v) => inner.serializeWrite(v, writer)
-                    case None =>
+                    case None    =>
                         writer.nil()
             ,
             readFn = reader =>
@@ -3250,7 +3251,7 @@ object Schema:
                 typeName.get match
                     case "success" => Result.succeed(aSchema.serializeRead(capturedReader))
                     case "failure" => Result.fail(eSchema.serializeRead(capturedReader))
-                    case "panic" =>
+                    case "panic"   =>
                         val msg: Maybe[String] =
                             if capturedReader.isNil() then Maybe.empty
                             else Maybe(capturedReader.string())
@@ -3757,7 +3758,7 @@ object Schema:
         ):
             type Focused = E
             @publicInBinary override private[kyo] val flattenedReadFields: Chunk[(String, String)] = flattenedReadFields0
-            @publicInBinary def serializeWrite(value: A, writer: Writer): Unit =
+            @publicInBinary def serializeWrite(value: A, writer: Writer): Unit                     =
                 val writeWriter           = writerForAnnotations(writer)
                 val priorFieldIdOverrides = threadFieldIdOverridesForWrite(writeWriter)
                 try

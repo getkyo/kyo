@@ -40,7 +40,7 @@ private[kyo] object LayerMacros:
                 val nodes = layers.map(layerToNode(_))
                 val graph = Graph(nodes.toSet)(_ <:< _)
 
-                val targets = flattenAnd(TypeRepr.of[Target])
+                val targets     = flattenAnd(TypeRepr.of[Target])
                 val targetLayer = graph.buildTargets(targets, None) match
                     case Validated.Success(value) =>
                         value
@@ -197,7 +197,7 @@ private[kyo] object LayerMacros:
             seen: Set[Node[Key, Value]] = Set.empty
         ): Validated[GraphError[Key, Value], LayerLike[Node[Key, Value]]] =
             for
-                nodes <- findNodesWithOutputs(targets, parent, seen)
+                nodes  <- findNodesWithOutputs(targets, parent, seen)
                 values <- Validated.traverse(nodes) { node =>
                     if node.inputs.isEmpty then Validated.succeed(LayerLike.Value(node))
                     else

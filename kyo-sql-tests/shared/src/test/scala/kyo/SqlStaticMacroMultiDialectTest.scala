@@ -105,7 +105,7 @@ class SqlStaticMacroMultiDialectTest extends Test:
     case class Contact(id: Long, name: String, email: Maybe[String]) derives SqlSchema
 
     "a bind that is a runtime val folds, and the val reaches the emitted params" in {
-        val minAge = 18 + scala.util.Random.nextInt(1)
+        val minAge   = 18 + scala.util.Random.nextInt(1)
         val rendered = SqlStaticProbe.render(
             Sql.from[Person]("p").where(c => c.p.age >= minAge).select(c => c.p.id)
         )
@@ -123,7 +123,7 @@ class SqlStaticMacroMultiDialectTest extends Test:
     "a runtime bind of an arbitrary type folds too" in {
         // The point of the hole: the emitted code splices the caller's expression, so the bind's type needs no
         // lifting machinery at all. A `String` computed at run time could never have been re-lifted as a constant.
-        val name = "ada".toUpperCase
+        val name     = "ada".toUpperCase
         val rendered = SqlStaticProbe.render(
             Sql.from[Person]("p").where(c => c.p.name == name)
         )
@@ -187,7 +187,7 @@ class SqlStaticMacroMultiDialectTest extends Test:
     // The same evidence at the call site a user writes. `.runStatic` requires the fold, so it is a compile error
     // when the AST does not reduce, and this definition existing is the assertion.
     "a Maybe bind folds under .runStatic" in {
-        val wanted: Maybe[String] = Maybe("ada@example.com")
+        val wanted: Maybe[String]                                        = Maybe("ada@example.com")
         def shape(using Frame): Chunk[Long] < (Abort[SqlException] & DB) =
             Sql.from[Contact]("c").where(x => x.c.email == wanted).select(x => x.c.id).runStatic
         succeed
@@ -198,7 +198,7 @@ class SqlStaticMacroMultiDialectTest extends Test:
     // have produced no constant at all.
     "the same Maybe bind folds to one placeholder in a Query" in {
         val wanted: Maybe[String] = Maybe("ada@example.com")
-        val rendered = SqlStaticProbe.render(
+        val rendered              = SqlStaticProbe.render(
             Sql.from[Contact]("c").where(x => x.c.email == wanted).select(x => x.c.id)
         )
         assert(rendered.sqlFor(Idiom.Id("postgres")).get == """SELECT "c"."id" FROM "contact" "c" WHERE ("c"."email" = $1)""")

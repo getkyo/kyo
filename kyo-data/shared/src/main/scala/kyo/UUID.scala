@@ -257,8 +257,8 @@ object UUID:
 
         /** Renders this UUID in canonical lowercase `8-4-4-4-12` hex form. */
         def show: String =
-            val msb = self.msb
-            val lsb = self.lsb
+            val msb                   = self.msb
+            val lsb                   = self.lsb
             def nibbleAt(n: Int): Int =
                 if n < 16 then ((msb >>> ((15 - n) * 4)) & 0x0fL).toInt
                 else ((lsb >>> ((31 - n) * 4)) & 0x0fL).toInt
@@ -293,8 +293,7 @@ object UUID:
         end bytes
 
         /** Returns the version nibble (bits 12-15 of the time_hi_and_version field), e.g. `5` for a [[UUID.v5]] value. */
-        def version: Int =
-            ((self.msb >>> 12) & 0x0fL).toInt
+        def version: Int = ((self.msb >>> 12) & 0x0fL).toInt
 
         /** Returns the RFC 9562 variant encoded in this UUID's variant bits. */
         def variant: Variant =

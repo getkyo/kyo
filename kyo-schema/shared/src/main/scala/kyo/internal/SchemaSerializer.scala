@@ -151,7 +151,7 @@ private[kyo] object SchemaSerializer:
         // wire-shape hint (topShape) share one computation. forwardMap/resolveTarget/resolvedRenames
         // are schema-level (independent of the captured value), so computing them once here is safe
         // regardless of whether schema.structure turns out to be a Product or something else.
-        val forwardMap = schema.renamedFields.toMap
+        val forwardMap                          = schema.renamedFields.toMap
         def resolveTarget(name: String): String =
             forwardMap.get(name) match
                 case Some(next) => resolveTarget(next)
@@ -259,7 +259,7 @@ private[kyo] object SchemaSerializer:
         // where a non-object payload is still intact (the flatten's non-record drop is what NOT
         // injecting into a Record avoids).
         val selected = selectRepresentation(schema, writer)
-        val output = selected match
+        val output   = selected match
             case Schema.UnionRepresentation.External =>
                 transformed
             case Schema.UnionRepresentation.Internal(tagKey) =>
@@ -299,7 +299,7 @@ private[kyo] object SchemaSerializer:
             case Some(Schema.OmitPolicy.WhenNone)        => isNullValue(value)
             case Some(Schema.OmitPolicy.WhenEmpty)       => isEmptyOmittableCollection(schema, sourceName, value)
             case Some(Schema.OmitPolicy.When(predicate)) => predicate(value)
-            case Some(Schema.OmitPolicy.WhenDefault) =>
+            case Some(Schema.OmitPolicy.WhenDefault)     =>
                 schema.fieldMaterializedDefaults.collectFirst { case (n, default) if n == sourceName => default } match
                     case Some(default) => default == value
                     case None          => false
@@ -346,7 +346,7 @@ private[kyo] object SchemaSerializer:
                 val caps = writer.capabilities
                 chain.find(rep => Schema.representationExpressibleBy(rep, caps)) match
                     case Some(rep) => rep
-                    case None =>
+                    case None      =>
                         throw RepresentationUnsupportedException(writer.codecName, chain.mkString(", "))
                 end match
             case Maybe.Absent =>
@@ -361,10 +361,10 @@ private[kyo] object SchemaSerializer:
       * no declared representation).
       */
     def readChain[A](schema: Schema[A], reader: Reader, chain: Chunk[Schema.UnionRepresentation]): A =
-        given Frame = reader.frame
+        given Frame  = reader.frame
         val captured = reader.captureValue() match
             case ir: Codec.IntrospectingReader => ir.readStructure()
-            case _ =>
+            case _                             =>
                 throw SchemaNotSerializableException(
                     "representation-chain decode requires a self-describing reader (such as: Json, Yaml, Ion, MsgPack)"
                 )
@@ -500,7 +500,7 @@ private[kyo] object SchemaSerializer:
     ): Structure.Value =
         value match
             case Structure.Value.VariantCase(variantName, payload) =>
-                val wireName = resolveWire(variantName)
+                val wireName    = resolveWire(variantName)
                 val fieldValues = payload match
                     case Structure.Value.Record(payloadFields) => payloadFields.map(_._2)
                     case _                                     => Chunk.empty
@@ -552,7 +552,7 @@ private[kyo] object SchemaSerializer:
     )(using Frame): Chunk[(String, Structure.Value)] =
         schema.variantNaming.fieldCase match
             case Maybe.Present(nc) =>
-                val fn = NameCaseConversion.convert(nc)
+                val fn     = NameCaseConversion.convert(nc)
                 val mapped = fields.map { (name, v) =>
                     if renamedTargetNames.contains(name) then (name, name, v)
                     else (fn(name), name, v)
@@ -711,7 +711,7 @@ private[kyo] object SchemaSerializer:
             writer.getResult
         end materializeDefault
 
-        val defaultByName = schema.fieldDefaults.toMap
+        val defaultByName   = schema.fieldDefaults.toMap
         val syntheticFields =
             schema.sourceFields.flatMap { field =>
                 if schema.droppedFields.contains(field.name) then None
@@ -790,7 +790,7 @@ private[kyo] object SchemaSerializer:
     private def fieldNamingReverse[A](schema: Schema[A], renameReverse: Map[String, String]): Map[String, String] =
         val naming         = schema.variantNaming
         val renamedTargets = renameReverse.values.toSet
-        val conventionMap = naming.fieldCase match
+        val conventionMap  = naming.fieldCase match
             case Maybe.Present(nc) =>
                 val fn = NameCaseConversion.convert(nc)
                 schema.sourceFields.iterator
@@ -804,7 +804,7 @@ private[kyo] object SchemaSerializer:
         // those so an alias registered against a rename target (e.g. alias("given","g") after
         // rename("firstName","given")) resolves on decode.
         val wireToSource = conventionMap ++ renameReverse ++ schema.sourceFields.map(sf => sf.name -> sf.name)
-        val aliasMap = naming.fieldAliases.flatMap { (alias, primaryWire) =>
+        val aliasMap     = naming.fieldAliases.flatMap { (alias, primaryWire) =>
             wireToSource.get(primaryWire).map(src => alias -> src)
         }.toMap
         aliasMap ++ conventionMap
@@ -955,7 +955,7 @@ private[kyo] object SchemaSerializer:
                 writer.variantStart(name, name, name.getBytes(java.nio.charset.StandardCharsets.UTF_8), 0)
                 writeStructureValue(writer, v)
                 writer.variantEnd()
-            case Structure.Value.Str(s) => writer.string(s)
+            case Structure.Value.Str(s)     => writer.string(s)
             case Structure.Value.Integer(l) =>
                 if l >= Int.MinValue && l <= Int.MaxValue then writer.int(l.toInt)
                 else writer.long(l)
@@ -1177,16 +1177,16 @@ private[kyo] object SchemaSerializer:
             case Structure.Type.Sum(name, _, _, _, _, _) if name == "Union" =>
                 readUnionMultiProbe(schema, reader)
             case _ =>
-                given Frame = reader.frame
+                given Frame               = reader.frame
                 val tree: Structure.Value =
                     reader.captureValue() match
                         case ir: Codec.IntrospectingReader => ir.readStructure()
-                        case _ =>
+                        case _                             =>
                             throw SchemaNotSerializableException(
                                 "untagged decode requires a self-describing reader (Json, Yaml, Ion, MsgPack)"
                             )
-                val decoders  = schema.variantDecoders
-                val wireNames = untaggedVariantWireNames(schema)
+                val decoders                      = schema.variantDecoders
+                val wireNames                     = untaggedVariantWireNames(schema)
                 @tailrec def attempt(idx: Int): A =
                     if idx >= decoders.size then
                         throw NoVariantMatchException(Seq.empty, wireNames)
@@ -1222,9 +1222,9 @@ private[kyo] object SchemaSerializer:
       */
     def readUnionMultiProbe[A](schema: Schema[A], reader: Reader): A =
         given Frame = reader.frame
-        val tree = reader.captureValue() match
+        val tree    = reader.captureValue() match
             case ir: Codec.IntrospectingReader => ir.readStructure()
-            case _ =>
+            case _                             =>
                 throw SchemaNotSerializableException(
                     "untagged union decode requires a self-describing reader (such as: Json, Yaml, Ion, MsgPack)"
                 )
@@ -2007,12 +2007,12 @@ private[kyo] object SchemaSerializer:
         //   flattened-parent checks (which know the source name) match it on either codec.
         // List, not Chunk: these are drained head/tail as the reader yields each pending field,
         // and List gives O(1) head/tail on this hot decode path.
-        private var _pendingSyntheticFields: List[SyntheticField]      = syntheticFields
-        private var _pendingFlattened: List[(String, Structure.Value)] = Nil
-        private var _flattenedPrepared: Boolean                        = false
-        private var _syntheticActive: Boolean                          = false
-        private var _syntheticDepth: Int                               = 0
-        private var _syntheticReader: Maybe[Reader]                    = Maybe.empty
+        private var _pendingSyntheticFields: List[SyntheticField]                                                      = syntheticFields
+        private var _pendingFlattened: List[(String, Structure.Value)]                                                 = Nil
+        private var _flattenedPrepared: Boolean                                                                        = false
+        private var _syntheticActive: Boolean                                                                          = false
+        private var _syntheticDepth: Int                                                                               = 0
+        private var _syntheticReader: Maybe[Reader]                                                                    = Maybe.empty
         private val _flattenedValues: scala.collection.mutable.LinkedHashMap[String, Chunk[(String, Structure.Value)]] =
             scala.collection.mutable.LinkedHashMap.empty[String, Chunk[(String, Structure.Value)]]
         private val _seenFromWire: scala.collection.mutable.HashSet[WireKey.Key] =
@@ -2041,7 +2041,7 @@ private[kyo] object SchemaSerializer:
                 _syntheticField = false
                 val renamedAway = renamedSources.contains(rawName)
                 val mapped      = reverseMap.get(rawName)
-                val translated = mapped.getOrElse(
+                val translated  = mapped.getOrElse(
                     if renamedAway then "\u0000_invalid_renamed_field"
                     else rawName
                 )
@@ -2106,9 +2106,9 @@ private[kyo] object SchemaSerializer:
                 clearSynthetic()
             else if !_syntheticField && !_matchedField && flattenedReadFields.contains(_rawFieldName) then
                 val (parent, child) = flattenedReadFields(_rawFieldName)
-                val captured = inner.captureValue() match
+                val captured        = inner.captureValue() match
                     case reader: Codec.IntrospectingReader => reader.readStructure()
-                    case other =>
+                    case other                             =>
                         throw TypeMismatchException(Seq.empty, "introspecting reader", other.getClass.getName)(using frame)
                 val current = _flattenedValues.getOrElse(parent, Chunk.empty)
                 _flattenedValues.update(parent, current :+ (child -> captured))

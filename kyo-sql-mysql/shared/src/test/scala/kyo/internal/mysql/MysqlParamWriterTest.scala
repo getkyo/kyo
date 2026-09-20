@@ -61,7 +61,7 @@ class MysqlParamWriterTest extends Test:
         val param = singleParam(_.boolean(true))
         assert(param.encoder.mysqlType == MysqlEncoder.TYPE_TINY, s"mysqlType mismatch: got 0x${param.encoder.mysqlType.toHexString}")
         param.encoded match
-            case Maybe.Absent => fail("expected encoded bytes for true")
+            case Maybe.Absent         => fail("expected encoded bytes for true")
             case Maybe.Present(bytes) =>
                 assert(bytes.size == 1, s"expected 1 byte, got ${bytes.size}")
                 assert(bytes(0) == 1.toByte, "true should encode to byte 1")
@@ -72,7 +72,7 @@ class MysqlParamWriterTest extends Test:
         val param = singleParam(_.boolean(false))
         assert(param.encoder.mysqlType == MysqlEncoder.TYPE_TINY, s"mysqlType mismatch: got 0x${param.encoder.mysqlType.toHexString}")
         param.encoded match
-            case Maybe.Absent => fail("expected encoded bytes for false")
+            case Maybe.Absent         => fail("expected encoded bytes for false")
             case Maybe.Present(bytes) =>
                 assert(bytes.size == 1, s"expected 1 byte, got ${bytes.size}")
                 assert(bytes(0) == 0.toByte, "false should encode to byte 0")
@@ -230,7 +230,7 @@ class MysqlParamWriterTest extends Test:
                 s"mysqlType mismatch for $v: got 0x${param.encoder.mysqlType.toHexString}"
             )
             param.encoded match
-                case Maybe.Absent => fail(s"expected encoded bytes for byte $v")
+                case Maybe.Absent         => fail(s"expected encoded bytes for byte $v")
                 case Maybe.Present(bytes) =>
                     assert(bytes.size == 1, s"expected 1 byte for byte $v, got ${bytes.size}")
                     assert(bytes(0) == v, s"byte value mismatch: got ${bytes(0)}, expected $v")
@@ -286,7 +286,7 @@ class MysqlParamWriterTest extends Test:
         assertBytesMatch(param.encoded, encode(java.time.Duration.ZERO, MysqlEncoder.durationEncoder), "ZERO")
         // Verify the encoded byte sequence: just a single 0x00 length byte.
         param.encoded match
-            case Maybe.Absent => fail("expected Present bytes for ZERO duration")
+            case Maybe.Absent         => fail("expected Present bytes for ZERO duration")
             case Maybe.Present(bytes) =>
                 assert(bytes.size == 1, s"expected 1 byte for ZERO, got ${bytes.size}")
                 assert(bytes(0) == 0x00.toByte, s"expected length=0 byte, got 0x${(bytes(0) & 0xff).toHexString}")
@@ -299,7 +299,7 @@ class MysqlParamWriterTest extends Test:
         assert(param.encoder.mysqlType == MysqlEncoder.TYPE_TIME, s"mysqlType mismatch: got 0x${param.encoder.mysqlType.toHexString}")
         assertBytesMatch(param.encoded, encode(value, MysqlEncoder.durationEncoder), "1h30m15s")
         param.encoded match
-            case Maybe.Absent => fail("expected Present bytes")
+            case Maybe.Absent         => fail("expected Present bytes")
             case Maybe.Present(bytes) =>
                 assert(bytes.size == 9, s"expected 9 bytes (1 length + 8 body), got ${bytes.size}")
                 assert(bytes(0) == 0x08.toByte, s"expected length=8 byte, got 0x${(bytes(0) & 0xff).toHexString}")
@@ -314,7 +314,7 @@ class MysqlParamWriterTest extends Test:
         assert(param.encoder.mysqlType == MysqlEncoder.TYPE_TIME, s"mysqlType mismatch: got 0x${param.encoder.mysqlType.toHexString}")
         assertBytesMatch(param.encoded, encode(value, MysqlEncoder.durationEncoder), "3s500ms")
         param.encoded match
-            case Maybe.Absent => fail("expected Present bytes")
+            case Maybe.Absent         => fail("expected Present bytes")
             case Maybe.Present(bytes) =>
                 assert(bytes.size == 13, s"expected 13 bytes (1 length + 12 body), got ${bytes.size}")
                 assert(bytes(0) == 0x0c.toByte, s"expected length=12 byte, got 0x${(bytes(0) & 0xff).toHexString}")
@@ -328,7 +328,7 @@ class MysqlParamWriterTest extends Test:
         assert(param.encoder.mysqlType == MysqlEncoder.TYPE_TIME, s"mysqlType mismatch: got 0x${param.encoder.mysqlType.toHexString}")
         assertBytesMatch(param.encoded, encode(value, MysqlEncoder.durationEncoder), "-8h")
         param.encoded match
-            case Maybe.Absent => fail("expected Present bytes")
+            case Maybe.Absent         => fail("expected Present bytes")
             case Maybe.Present(bytes) =>
                 assert(bytes.size == 9, s"expected 9 bytes (1 length + 8 body), got ${bytes.size}")
                 assert(bytes(0) == 0x08.toByte, "length should be 8")
@@ -341,7 +341,7 @@ class MysqlParamWriterTest extends Test:
         // day-count overflow eagerly and raises the typed SqlRequestDurationOverflowException leaf.
         val hugeSeconds = (Int.MaxValue.toLong + 1L) * 86400L
         val value       = java.time.Duration.ofSeconds(hugeSeconds)
-        val ex = intercept[SqlRequestDurationOverflowException] {
+        val ex          = intercept[SqlRequestDurationOverflowException] {
             singleParam(_.duration(value))
         }
         assert(ex.totalDays > Int.MaxValue.toLong, s"expected totalDays > Int.MaxValue, got: ${ex.totalDays}")
@@ -354,7 +354,7 @@ class MysqlParamWriterTest extends Test:
         // with Math.toIntExact, which throws an unchecked ArithmeticException. MysqlParamWriter.calendarInterval()
         // guards this eagerly and raises the typed SqlRequestPeriodOverflowException leaf instead.
         val value = java.time.Period.of(Int.MaxValue, 12, 0)
-        val ex = intercept[SqlRequestPeriodOverflowException] {
+        val ex    = intercept[SqlRequestPeriodOverflowException] {
             singleParam(_.calendarInterval(value))
         }
         val expectedTotalMonths = Int.MaxValue.toLong * 12L + 12L
@@ -371,7 +371,7 @@ class MysqlParamWriterTest extends Test:
         // would make this suite depend on the other backend's module.
         val foreign = Idiom.Id("acme")
         val w       = new MysqlParamWriter()
-        val ex = intercept[SqlUnsupportedTypeOnBackendException] {
+        val ex      = intercept[SqlUnsupportedTypeOnBackendException] {
             w.extension(SqlCodec.Writer.Payload(foreign, "hstore", Format.Binary, Span.empty))
         }
         assert(ex.dialect == foreign)
@@ -381,7 +381,7 @@ class MysqlParamWriterTest extends Test:
     }
 
     "extension rejects a MySQL-claimed payload, this backend implements no extension types" in {
-        val w = new MysqlParamWriter()
+        val w  = new MysqlParamWriter()
         val ex = intercept[SqlUnsupportedCustomTypeException] {
             w.extension(SqlCodec.Writer.Payload(MysqlEncoder.dialectId, "geometry", Format.Binary, Span.empty))
         }
@@ -408,7 +408,7 @@ class MysqlParamWriterTest extends Test:
             ,
             r => r.int()
         )
-        val w = new MysqlParamWriter()
+        val w  = new MysqlParamWriter()
         val ex = intercept[kyo.SqlUnsupportedMultiColumnElementException] {
             val _ = w.encodeElement(twoColumns, 1, "TwoColumnInt", Format.Binary)
         }
@@ -418,7 +418,7 @@ class MysqlParamWriterTest extends Test:
     }
 
     "encodeElement rejects an absent element, which a composite payload cannot express" in {
-        val w = new MysqlParamWriter()
+        val w  = new MysqlParamWriter()
         val ex = intercept[kyo.SqlUnsupportedAbsentElementException] {
             val _ = w.encodeElement(summon[kyo.SqlSchema.Column[Maybe[Int]]], Maybe.Absent, "Maybe[Int]", Format.Binary)
         }
@@ -428,7 +428,7 @@ class MysqlParamWriterTest extends Test:
     "encodeElement refuses a text demand, MySQL bound parameters are binary by construction" in {
         // Unlike the two leaves above, this one is the backend's own limit and names it: BoundMysqlParam.encoded
         // has no format to pick, so there is no text rendering for a composite to inline.
-        val w = new MysqlParamWriter()
+        val w  = new MysqlParamWriter()
         val ex = intercept[kyo.SqlUnsupportedElementFormatException] {
             val _ = w.encodeElement(kyo.SqlSchema.int, 1, "Int", Format.Text)
         }

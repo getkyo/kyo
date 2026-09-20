@@ -47,7 +47,7 @@ class KyoAppTest extends kyo.test.Test[Any]:
         assume(!Platform.isNative, "KyoApp.main too slow on Native")
         val x       = new ListBuffer[Int]
         val promise = scala.concurrent.Promise[Unit]()
-        val app = new KyoApp:
+        val app     = new KyoApp:
             run { Async.delay(10.millis)(Sync.defer(x += 1)) }
             run { Async.delay(10.millis)(Sync.defer(x += 2)) }
             run { Async.delay(10.millis)(Sync.defer(x += 3)) }
@@ -73,7 +73,7 @@ class KyoAppTest extends kyo.test.Test[Any]:
 
     "effects in JS".notJs in {
         val promise = scala.concurrent.Promise[Unit]()
-        val app = new KyoApp:
+        val app     = new KyoApp:
             run {
                 for
                     _ <- Clock.repeatAtInterval(1.second, 1.second)(())
@@ -89,7 +89,7 @@ class KyoAppTest extends kyo.test.Test[Any]:
     }
 
     "exit on error".notJs in {
-        var exitCode = -1
+        var exitCode                   = -1
         def app(fail: Boolean): KyoApp = new KyoApp:
             override def exit(code: Int)(using AllowUnsafe): Unit = exitCode = code
             run(Abort.when(fail)(new IllegalArgumentException("Aborts!")))

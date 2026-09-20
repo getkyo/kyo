@@ -122,7 +122,7 @@ class FileSystemTest extends kyo.test.Test[Any]:
 
     "top-level FileSystem installs through runWith" in {
         isolatedFileSystem("kyo-fs-top-level").map { service =>
-            val p = Path("a")
+            val p                                                   = Path("a")
             val program: Unit < (Sync & Abort[FileSystemException]) =
                 Path.runWith(service)(p.write("x"))
             program.andThen {

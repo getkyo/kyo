@@ -89,10 +89,10 @@ class LspBuiltInRoutesTest extends Test:
         }
 
         "initialize route is named initialize" in {
-            val enc  = encRef()
-            val caps = AtomicRef.Unsafe.init[Maybe[LspCapabilities.Client.Client]](Absent)(using AllowUnsafe.embrace.danger).safe
-            val info = AtomicRef.Unsafe.init[Maybe[LspInfo]](Absent)(using AllowUnsafe.embrace.danger).safe
-            val wf   = AtomicRef.Unsafe.init[Maybe[Chunk[LspHandler.WorkspaceFolder]]](Absent)(using AllowUnsafe.embrace.danger).safe
+            val enc   = encRef()
+            val caps  = AtomicRef.Unsafe.init[Maybe[LspCapabilities.Client.Client]](Absent)(using AllowUnsafe.embrace.danger).safe
+            val info  = AtomicRef.Unsafe.init[Maybe[LspInfo]](Absent)(using AllowUnsafe.embrace.danger).safe
+            val wf    = AtomicRef.Unsafe.init[Maybe[Chunk[LspHandler.WorkspaceFolder]]](Absent)(using AllowUnsafe.embrace.danger).safe
             val route = LspBuiltInRoutes.initialize(
                 LspConfig.default,
                 LspCapabilities.Server.empty,
@@ -146,7 +146,7 @@ class LspBuiltInRoutesTest extends Test:
                 val route    = LspBuiltInRoutes.notebookDocumentDidChange(registry)
                 val cellUri  = uri("notebook-cell:///nb.ipynb#cell1")
                 val cellItem = LspHandler.TextDocumentItem(cellUri, "python", 1, "print('hello')")
-                val change = LspHandler.NotebookDocumentChangeEvent(cells =
+                val change   = LspHandler.NotebookDocumentChangeEvent(cells =
                     Present(
                         LspHandler.NotebookDocumentChangeEvent.CellChanges(
                             structure = Present(LspHandler.NotebookDocumentChangeEvent.CellStructureChange(

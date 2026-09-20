@@ -73,7 +73,7 @@ class PollerIoDriverUpgradeDetachTest extends Test:
                     driver.awaitRead(handle, p)
                     awaitOutcome(p, 10.seconds).map {
                         case Present(Result.Failure(_)) => succeed
-                        case Absent =>
+                        case Absent                     =>
                             assert(
                                 false,
                                 "read deposited after the upgrade sweep was stranded: nothing completed it " +
@@ -184,7 +184,7 @@ class PollerIoDriverUpgradeDetachTest extends Test:
                     driver.armUpgradeProducerRead(handle)
                     awaitOutcome(p, 10.seconds).map {
                         case Present(Result.Failure(_)) => succeed
-                        case Absent =>
+                        case Absent                     =>
                             assert(
                                 false,
                                 "stray deposit in the sweep-to-marker gap was stranded: the producer arm did not fail the occupant " +

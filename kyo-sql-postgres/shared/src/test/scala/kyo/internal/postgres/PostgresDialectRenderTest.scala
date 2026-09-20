@@ -56,7 +56,8 @@ class PostgresDialectRenderTest extends Test:
         val q  = Sql.from[Person]("p").where(c => c.p.age >= 18 && c.p.name != "")
         val rp = q.render(PostgresDialect)
         assert(
-            rp.onlySql.get == """SELECT "p"."id", "p"."name", "p"."age", "p"."deptId" FROM "person" "p" WHERE (("p"."age" >= $1) AND ("p"."name" <> $2))"""
+            rp.onlySql.get ==
+                """SELECT "p"."id", "p"."name", "p"."age", "p"."deptId" FROM "person" "p" WHERE (("p"."age" >= $1) AND ("p"."name" <> $2))"""
         )
         assert(rp.params.size == 2)
         val bv0: kyo.Sql.BoundValue[?] = rp.params(0)
@@ -72,7 +73,7 @@ class PostgresDialectRenderTest extends Test:
         // `Select` carries the source's column record, so the hand-built node takes it from the source rather
         // than inventing one. `B` appears only in `extends Query[B]` and so cannot be inferred from any
         // argument; the ascription supplies it, while `A` comes from `src` and `F` from `src.columns`.
-        val src = Sql.from[Person]("p")
+        val src              = Sql.from[Person]("p")
         val q: Query[String] = Select(
             src,
             src.columns,
@@ -94,7 +95,8 @@ class PostgresDialectRenderTest extends Test:
             .limit(10)
         val rp = q.render(PostgresDialect)
         assert(
-            rp.onlySql.get == """SELECT "p"."id", "p"."name", "p"."age", "p"."deptId" FROM "person" "p" WHERE ("p"."age" >= $1) ORDER BY "p"."age" DESC LIMIT 10"""
+            rp.onlySql.get ==
+                """SELECT "p"."id", "p"."name", "p"."age", "p"."deptId" FROM "person" "p" WHERE ("p"."age" >= $1) ORDER BY "p"."age" DESC LIMIT 10"""
         )
         assert(rp.params.size == 1)
         val bv: kyo.Sql.BoundValue[?] = rp.params.head
@@ -189,7 +191,8 @@ class PostgresDialectRenderTest extends Test:
         )
         val rp = q.render(PostgresDialect)
         assert(
-            rp.onlySql.get == """SELECT "p"."id", "p"."name", "p"."age", "p"."deptId" FROM "person" "p" WHERE ((("p"."age" >= $1) AND ("p"."name" <> $2)) AND ("p"."deptId" = $3))"""
+            rp.onlySql.get ==
+                """SELECT "p"."id", "p"."name", "p"."age", "p"."deptId" FROM "person" "p" WHERE ((("p"."age" >= $1) AND ("p"."name" <> $2)) AND ("p"."deptId" = $3))"""
         )
         assert(rp.params.size == 3)
     }

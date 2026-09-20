@@ -55,7 +55,7 @@ class TransportConcurrentEchoTest extends Test:
     end driveConnection
 
     "many plaintext connections each echo concurrently and every response matches its request, on every backend" in {
-        val transport = NetPlatform.transport
+        val transport                         = NetPlatform.transport
         val serverHandler: Connection => Unit = serverConn =>
             discard(Sync.Unsafe.evalOrThrow {
                 Fiber.initUnscoped {

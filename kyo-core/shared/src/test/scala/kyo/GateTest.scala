@@ -746,9 +746,9 @@ class GateTest extends kyo.test.Test[Any]:
 
         "pass and close" in {
             (for
-                parties <- Choice.eval(1, 2, 3, 10)
-                gate    <- Gate.initUnscoped(parties)
-                latch   <- Latch.init(1)
+                parties   <- Choice.eval(1, 2, 3, 10)
+                gate      <- Gate.initUnscoped(parties)
+                latch     <- Latch.init(1)
                 passFiber <- Fiber.initUnscoped(
                     latch.await.andThen(Async.fill(parties, parties)(Abort.run[Closed](gate.pass)))
                 )
@@ -767,9 +767,9 @@ class GateTest extends kyo.test.Test[Any]:
 
         "pass and arrive" in {
             (for
-                parties <- Choice.eval(2, 3, 5)
-                gate    <- Gate.initUnscoped(parties)
-                latch   <- Latch.init(1)
+                parties   <- Choice.eval(2, 3, 5)
+                gate      <- Gate.initUnscoped(parties)
+                latch     <- Latch.init(1)
                 passFiber <- Fiber.initUnscoped(
                     latch.await.andThen(Async.fill(parties - 1, parties - 1)(Abort.run[Closed](gate.pass)))
                 )
@@ -787,9 +787,9 @@ class GateTest extends kyo.test.Test[Any]:
 
         "concurrent close attempts" in {
             (for
-                parties <- Choice.eval(1, 2, 3, 10)
-                gate    <- Gate.initUnscoped(parties)
-                latch   <- Latch.init(1)
+                parties    <- Choice.eval(1, 2, 3, 10)
+                gate       <- Gate.initUnscoped(parties)
+                latch      <- Latch.init(1)
                 closeFiber <- Fiber.initUnscoped(
                     latch.await.andThen(Async.fill(10, 10)(gate.close))
                 )
@@ -813,8 +813,8 @@ class GateTest extends kyo.test.Test[Any]:
 
         "arrive contention with 1 party" in {
             (for
-                gate  <- Gate.initUnscoped(1)
-                latch <- Latch.init(1)
+                gate   <- Gate.initUnscoped(1)
+                latch  <- Latch.init(1)
                 fibers <- Async.fill(10, 10)(
                     Fiber.initUnscoped(latch.await.andThen(gate.arrive))
                 )
@@ -1206,9 +1206,9 @@ class GateTest extends kyo.test.Test[Any]:
 
             "join races with pass" in {
                 (for
-                    parties <- Choice.eval(2, 3, 5)
-                    gate    <- Gate.Dynamic.initUnscoped(parties)
-                    latch   <- Latch.init(1)
+                    parties   <- Choice.eval(2, 3, 5)
+                    gate      <- Gate.Dynamic.initUnscoped(parties)
+                    latch     <- Latch.init(1)
                     passFiber <- Fiber.initUnscoped(
                         latch.await.andThen(Async.fill(parties, parties)(Abort.run[Closed](gate.pass)))
                     )
@@ -1232,9 +1232,9 @@ class GateTest extends kyo.test.Test[Any]:
 
             "subgroup contention" in {
                 (for
-                    parent <- Gate.Dynamic.initUnscoped(1)
-                    subs   <- Kyo.foreach(1 to 3)(_ => parent.subgroup(1))
-                    latch  <- Latch.init(1)
+                    parent      <- Gate.Dynamic.initUnscoped(1)
+                    subs        <- Kyo.foreach(1 to 3)(_ => parent.subgroup(1))
+                    latch       <- Latch.init(1)
                     parentFiber <- Fiber.initUnscoped(
                         latch.await.andThen(Abort.run[Closed](parent.pass))
                     )
@@ -1252,9 +1252,9 @@ class GateTest extends kyo.test.Test[Any]:
 
             "close subgroup during parent arrive contention" in {
                 (for
-                    parent <- Gate.Dynamic.initUnscoped(1)
-                    sub    <- parent.subgroup(1)
-                    latch  <- Latch.init(1)
+                    parent     <- Gate.Dynamic.initUnscoped(1)
+                    sub        <- parent.subgroup(1)
+                    latch      <- Latch.init(1)
                     closeFiber <- Fiber.initUnscoped(
                         latch.await.andThen(sub.close)
                     )

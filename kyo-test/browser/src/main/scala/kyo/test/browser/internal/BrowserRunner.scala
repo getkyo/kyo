@@ -49,26 +49,26 @@ private[browser] object BrowserRunner:
             }
             pairs.collectFirst { case Left(arg) => arg } match
                 case Some(arg) => Result.fail(s"unrecognized argument '$arg'; $usage")
-                case None =>
-                    val values = pairs.collect { case Right(pair) => pair }.toMap
-                    val known  = Set("dir", "module", "kind", "com-port", "chrome-version")
+                case None      =>
+                    val values                                         = pairs.collect { case Right(pair) => pair }.toMap
+                    val known                                          = Set("dir", "module", "kind", "com-port", "chrome-version")
                     def required(name: String): Result[String, String] =
                         values.get(name).filter(_.nonEmpty) match
                             case Some(value) => Result.succeed(value)
                             case None        => Result.fail(s"missing --$name; $usage")
                     values.keys.find(!known.contains(_)) match
                         case Some(unknown) => Result.fail(s"unrecognized argument '--$unknown'; $usage")
-                        case None =>
+                        case None          =>
                             for
                                 dir     <- required("dir")
                                 module  <- required("module")
                                 kindArg <- required("kind")
-                                kind <- kindArg match
+                                kind    <- kindArg match
                                     case "esmodule" => Result.succeed(PageServer.ModuleKind.ESModule)
                                     case "script"   => Result.succeed(PageServer.ModuleKind.Script)
                                     case other      => Result.fail(s"--kind must be esmodule or script, got '$other'")
                                 portArg <- required("com-port")
-                                port <- portArg.toIntOption.filter(p => p > 0 && p < 65536) match
+                                port    <- portArg.toIntOption.filter(p => p > 0 && p < 65536) match
                                     case Some(p) => Result.succeed(p)
                                     case None    => Result.fail(s"--com-port must be a port number, got '$portArg'")
                             yield Config(Path(dir), module, kind, port, Maybe.fromOption(values.get("chrome-version").filter(_.nonEmpty)))
@@ -92,7 +92,7 @@ private[browser] object BrowserRunner:
     )(using Frame): Int < (Async & Abort[SetupError]) =
         Scope.run {
             for
-                files <- PageServer.load(config.dir)
+                files  <- PageServer.load(config.dir)
                 server <- HttpServer.init(HttpServerConfig.default.withoutAutoFilters)(PageServer.handlers(
                     PageServer.page(config.module, config.kind),
                     files
@@ -117,7 +117,7 @@ private[browser] object BrowserRunner:
     private def openPage(backend: CdpBackend)(using Frame): CdpBackend < (Async & Scope & Abort[BrowserReadException]) =
         for
             context <- CdpBackend.createBrowserContext(backend)
-            _ <- Scope.ensure(Abort.run(CdpBackend.disposeBrowserContext(
+            _       <- Scope.ensure(Abort.run(CdpBackend.disposeBrowserContext(
                 backend,
                 DisposeBrowserContextParams(context.browserContextId)
             )).unit)
@@ -139,7 +139,7 @@ private[browser] object BrowserRunner:
 
     /** Console calls to the output, uncaught exceptions and a crashed renderer to a failed run. */
     private def routeConsole(page: CdpBackend, output: Output, exit: Promise[Int, Any])(using Frame): Unit < Sync =
-        val key = page.sessionId.map(_.value).getOrElse("")
+        val key                                      = page.sessionId.map(_.value).getOrElse("")
         val handler: CdpEvent.Generic => Unit < Sync = event =>
             event.params match
                 case call: ConsoleApiCalledWire =>
@@ -164,7 +164,7 @@ private[browser] object BrowserRunner:
         exit: Promise[Int, Any],
         ready: Latch
     )(using Frame): Unit < (Async & Abort[BrowserReadException]) =
-        val key = page.sessionId.map(_.value).getOrElse("")
+        val key                                       = page.sessionId.map(_.value).getOrElse("")
         val handler: CdpEvent.Generic => Unit < Async = event =>
             event.params match
                 case call: BindingCalledWire if call.name == PageServer.sendBinding =>

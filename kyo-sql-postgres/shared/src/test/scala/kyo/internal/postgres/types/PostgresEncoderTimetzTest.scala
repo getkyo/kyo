@@ -39,15 +39,12 @@ class PostgresEncoderTimetzTest extends kyo.Test:
         val expectedMicros = 48_600_000_000L
         val hi             = ((expectedMicros >> 32) & 0xffffffffL).toInt
         val lo             = (expectedMicros & 0xffffffffL).toInt
-        val actualHi =
-            ((bytes(0) & 0xff) << 24) | ((bytes(1) & 0xff) << 16) | ((bytes(2) & 0xff) << 8) | (bytes(3) & 0xff)
-        val actualLo =
-            ((bytes(4) & 0xff) << 24) | ((bytes(5) & 0xff) << 16) | ((bytes(6) & 0xff) << 8) | (bytes(7) & 0xff)
+        val actualHi       = ((bytes(0) & 0xff) << 24) | ((bytes(1) & 0xff) << 16) | ((bytes(2) & 0xff) << 8) | (bytes(3) & 0xff)
+        val actualLo       = ((bytes(4) & 0xff) << 24) | ((bytes(5) & 0xff) << 16) | ((bytes(6) & 0xff) << 8) | (bytes(7) & 0xff)
         assert(actualHi == hi)
         assert(actualLo == lo)
         // offset field: negated getTotalSeconds → UTC+02:00 has +7200 s → stored as -7200
-        val actualOffset =
-            ((bytes(8) & 0xff) << 24) | ((bytes(9) & 0xff) << 16) | ((bytes(10) & 0xff) << 8) | (bytes(11) & 0xff)
+        val actualOffset = ((bytes(8) & 0xff) << 24) | ((bytes(9) & 0xff) << 16) | ((bytes(10) & 0xff) << 8) | (bytes(11) & 0xff)
         assert(actualOffset == -7200)
     }
 
@@ -60,15 +57,12 @@ class PostgresEncoderTimetzTest extends kyo.Test:
         val expectedMicros = 28_800_000_000L
         val hi             = ((expectedMicros >> 32) & 0xffffffffL).toInt
         val lo             = (expectedMicros & 0xffffffffL).toInt
-        val actualHi =
-            ((bytes(0) & 0xff) << 24) | ((bytes(1) & 0xff) << 16) | ((bytes(2) & 0xff) << 8) | (bytes(3) & 0xff)
-        val actualLo =
-            ((bytes(4) & 0xff) << 24) | ((bytes(5) & 0xff) << 16) | ((bytes(6) & 0xff) << 8) | (bytes(7) & 0xff)
+        val actualHi       = ((bytes(0) & 0xff) << 24) | ((bytes(1) & 0xff) << 16) | ((bytes(2) & 0xff) << 8) | (bytes(3) & 0xff)
+        val actualLo       = ((bytes(4) & 0xff) << 24) | ((bytes(5) & 0xff) << 16) | ((bytes(6) & 0xff) << 8) | (bytes(7) & 0xff)
         assert(actualHi == hi)
         assert(actualLo == lo)
         // UTC-05:00 has getTotalSeconds = -18000 → stored as +18000
-        val actualOffset =
-            ((bytes(8) & 0xff) << 24) | ((bytes(9) & 0xff) << 16) | ((bytes(10) & 0xff) << 8) | (bytes(11) & 0xff)
+        val actualOffset = ((bytes(8) & 0xff) << 24) | ((bytes(9) & 0xff) << 16) | ((bytes(10) & 0xff) << 8) | (bytes(11) & 0xff)
         assert(actualOffset == 18000)
     }
 

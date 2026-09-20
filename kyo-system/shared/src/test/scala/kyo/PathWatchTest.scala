@@ -123,7 +123,7 @@ class PathWatchTest extends FileSystemWatchTestSuite:
 
     private def glob(value: String): Glob =
         Glob.parse(value) match
-            case Result.Success(glob) => glob
+            case Result.Success(glob)  => glob
             case Result.Failure(error) =>
                 throw new AssertionError(s"invalid test glob at ${error.offset}: ${error.reason}")
             case Result.Panic(error) => throw error
@@ -161,7 +161,7 @@ class PathWatchTest extends FileSystemWatchTestSuite:
                                 for
                                     _       <- (root / "seed.txt").write("seed")
                                     watcher <- root.openWatcher()
-                                    walk <- Fiber.initUnscoped(
+                                    walk    <- Fiber.initUnscoped(
                                         Scope.run(
                                             Path.runReadOnlyWith(fileSystem)(
                                                 root.walk
@@ -483,7 +483,7 @@ class PathWatchTest extends FileSystemWatchTestSuite:
             val root       = dir / "glob-root"
             val ignored    = root / "other" / "FILE.TXT"
             val selected   = root / "selected" / "FILE.TXT"
-            val options = WatchOptions(
+            val options    = WatchOptions(
                 depth = WatchDepth.Recursive,
                 glob = glob("selected/*.txt"),
                 caseSensitivity = MatchCase.Insensitive
@@ -521,7 +521,7 @@ class PathWatchTest extends FileSystemWatchTestSuite:
                             _               <- root.mkDir
                             watcher         <- root.openWatcher(WatchOptions(glob = glob("*.txt")))
                             caseSensitivity <- fileSystem.defaultCaseSensitivity
-                            _ <- caseSensitivity match
+                            _               <- caseSensitivity match
                                 case Glob.CaseSensitivity.Sensitive   => upper.write("ignored").andThen(lower.write("selected"))
                                 case Glob.CaseSensitivity.Insensitive => upper.write("selected")
                             expected = caseSensitivity match

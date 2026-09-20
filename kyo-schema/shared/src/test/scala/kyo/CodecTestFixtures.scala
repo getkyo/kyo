@@ -157,10 +157,10 @@ end Token
 class TestWriter extends Writer:
     val tokens = scala.collection.mutable.ListBuffer[Token]()
 
-    def objectStart(name: String, size: Int): Unit = tokens += Token.ObjectStart(name, size)
-    def objectEnd(): Unit                          = tokens += Token.ObjectEnd
-    def arrayStart(size: Int): Unit                = tokens += Token.ArrayStart(size)
-    def arrayEnd(): Unit                           = tokens += Token.ArrayEnd
+    def objectStart(name: String, size: Int): Unit           = tokens += Token.ObjectStart(name, size)
+    def objectEnd(): Unit                                    = tokens += Token.ObjectEnd
+    def arrayStart(size: Int): Unit                          = tokens += Token.ArrayStart(size)
+    def arrayEnd(): Unit                                     = tokens += Token.ArrayEnd
     def fieldBytes(nameBytes: Array[Byte], index: Int): Unit =
         tokens += Token.FieldName(new String(nameBytes, java.nio.charset.StandardCharsets.UTF_8))
     override def field(name: String, index: Int): Unit = tokens += Token.FieldName(name)
@@ -237,14 +237,16 @@ class TestReader(tokens: List[Token])(using _frame: Frame) extends Codec.Introsp
     def lastFieldName(): String = _lastField
 
     def hasNextField(): Boolean =
-        pos < tokens.size && (peek() match
-            case Token.FieldName(_) => true
-            case _                  => false)
+        pos < tokens.size &&
+            (peek() match
+                case Token.FieldName(_) => true
+                case _                  => false)
 
     def hasNextElement(): Boolean =
-        pos < tokens.size && (peek() match
-            case Token.ArrayEnd => false
-            case _              => true)
+        pos < tokens.size &&
+            (peek() match
+                case Token.ArrayEnd => false
+                case _              => true)
 
     def string(): String = next() match
         case Token.Str(v) => v

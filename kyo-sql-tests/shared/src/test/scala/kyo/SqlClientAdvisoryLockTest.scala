@@ -42,7 +42,7 @@ class SqlClientAdvisoryLockTest extends SqlBackendTest:
             events        <- AtomicRef.init(Chunk.empty[String])
             holderInside  <- Latch.init(1)
             releaseHolder <- Latch.init(1)
-            holder <- Fiber.init {
+            holder        <- Fiber.init {
                 client.withAdvisoryLock(key) {
                     events.updateAndGet(_.append("holder-enter"))
                         .andThen(holderInside.release)
@@ -80,7 +80,7 @@ class SqlClientAdvisoryLockTest extends SqlBackendTest:
             holderInside  <- Latch.init(1)
             releaseHolder <- Latch.init(1)
             ranOther      <- AtomicBoolean.init(false)
-            holder <- Fiber.init {
+            holder        <- Fiber.init {
                 client.withAdvisoryLock(heldKey) {
                     holderInside.release.andThen(releaseHolder.await)
                 }
@@ -102,8 +102,8 @@ class SqlClientAdvisoryLockTest extends SqlBackendTest:
         // engine-specific SQL.
         val key = 55123L
         for
-            _ <- client.executeRaw("CREATE TABLE lockprobe (body VARCHAR(64) NOT NULL)")
-            _ <- Sql.insert[LockProbe].values(LockProbe("routed")).run
+            _   <- client.executeRaw("CREATE TABLE lockprobe (body VARCHAR(64) NOT NULL)")
+            _   <- Sql.insert[LockProbe].values(LockProbe("routed")).run
             got <- client.withAdvisoryLock(key) {
                 Sql.from[LockProbe]("p").select(c => c.p.body).run
             }
@@ -118,7 +118,7 @@ class SqlClientAdvisoryLockTest extends SqlBackendTest:
         val key = 424242L
         for
             holderInside <- Latch.init(1)
-            holder <- Fiber.init {
+            holder       <- Fiber.init {
                 client.withAdvisoryLock(key) {
                     holderInside.release.andThen(Async.never)
                 }

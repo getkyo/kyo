@@ -1079,7 +1079,7 @@ class SpanTest extends kyo.test.Test[Any]:
 
     "collect" - {
         "collects elements using partial function" in {
-            val arr = Span(1, 2, 3, 4, 5)
+            val arr    = Span(1, 2, 3, 4, 5)
             val result = arr.collect {
                 case x if x % 2 == 0 => x * 2
             }
@@ -1089,7 +1089,7 @@ class SpanTest extends kyo.test.Test[Any]:
         }
 
         "returns empty Span when no elements match" in {
-            val arr = Span(1, 3, 5)
+            val arr    = Span(1, 3, 5)
             val result = arr.collect {
                 case x if x % 2 == 0 => x
             }
@@ -1099,7 +1099,7 @@ class SpanTest extends kyo.test.Test[Any]:
 
     "collectFirst" - {
         "returns first matching element transformed by partial function" in {
-            val arr = Span(1, 2, 3, 4, 5)
+            val arr    = Span(1, 2, 3, 4, 5)
             val result = arr.collectFirst {
                 case x if x % 2 == 0 => x * 2
             }
@@ -1107,7 +1107,7 @@ class SpanTest extends kyo.test.Test[Any]:
         }
 
         "returns Absent when no elements match" in {
-            val arr = Span(1, 3, 5)
+            val arr    = Span(1, 3, 5)
             val result = arr.collectFirst {
                 case x if x % 2 == 0 => x
             }

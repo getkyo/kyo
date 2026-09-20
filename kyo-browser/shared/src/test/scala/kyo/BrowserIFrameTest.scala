@@ -718,7 +718,7 @@ class BrowserIFrameTest extends BrowserTest:
         // BrowserIFrameInvalidException is still exercised elsewhere via the detached-frame and context-destroyed
         // paths (e.g. the "withIFrame followed by withNewTab" test below).
         withBrowser {
-            val inner = """<body><span id="g">sandboxed</span></body>"""
+            val inner    = """<body><span id="g">sandboxed</span></body>"""
             val parentOk = s"""<body>
                 <iframe id="frame" data-testid="frame" sandbox="allow-same-origin allow-scripts" srcdoc="${BrowserTest.htmlAttributeEscape(
                     inner
@@ -780,15 +780,15 @@ class BrowserIFrameTest extends BrowserTest:
     // observed behavior of a scoped action: it may succeed (kyo-browser routes Runtime.evaluate by contextId
     // so basic reads work even cross-origin) or raise a typed `BrowserIFrameException`/`BrowserReadException`.
     "cross-origin iframe: Browser.iframe(sel) returns a usable IFrame handle and withIFrame action surfaces typed result" in {
-        val innerHtml  = """<html><body><span id="x">cross</span></body></html>"""
-        val innerBytes = Span.fromUnsafe(innerHtml.getBytes("UTF-8"))
+        val innerHtml    = """<html><body><span id="x">cross</span></body></html>"""
+        val innerBytes   = Span.fromUnsafe(innerHtml.getBytes("UTF-8"))
         val innerHandler = HttpRoute.getRaw("/inner").response(_.bodyBinary).handler { _ =>
             HttpResponse.ok(innerBytes).addHeader("Content-Type", "text/html; charset=utf-8")
         }
         withLocalhostServer(innerHandler) { (innerHost, innerPort) =>
             val parentHtml =
                 s"""<html><body><iframe id="f" data-testid="f" src="http://$innerHost:$innerPort/inner"></iframe></body></html>"""
-            val parentBytes = Span.fromUnsafe(parentHtml.getBytes("UTF-8"))
+            val parentBytes   = Span.fromUnsafe(parentHtml.getBytes("UTF-8"))
             val parentHandler = HttpRoute.getRaw("/parent").response(_.bodyBinary).handler { _ =>
                 HttpResponse.ok(parentBytes).addHeader("Content-Type", "text/html; charset=utf-8")
             }

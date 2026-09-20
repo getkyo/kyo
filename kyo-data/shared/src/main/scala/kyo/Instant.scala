@@ -260,8 +260,7 @@ object Instant:
           * @return
           *   true if this Instant is between start and end (inclusive)
           */
-        def between(start: Instant, end: Instant): Boolean =
-            (instant >= start) && (instant <= end)
+        def between(start: Instant, end: Instant): Boolean = (instant >= start) && (instant <= end)
 
         /** Clamps this Instant between two bounds.
           *
@@ -352,10 +351,10 @@ object Instant:
             val trimmed = s.trim
             InstantText.parse(trimmed) match
                 case Result.Success(instant) => Right(instant)
-                case primary =>
+                case primary                 =>
                     InstantText.parse(trimmed, secondsOptional = true) match
                         case Result.Success(instant) => Right(instant)
-                        case _ =>
+                        case _                       =>
                             Left(new IllegalArgumentException(s"Invalid Instant format: $s", primary.failure.getOrElse(null)))
             end match
         end apply

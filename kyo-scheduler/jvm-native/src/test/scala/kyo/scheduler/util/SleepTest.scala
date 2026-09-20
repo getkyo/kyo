@@ -25,7 +25,7 @@ class SleepTest extends AnyFreeSpec with NonImplicitAssertions {
         val entered  = new CountDownLatch(1)
         val returned = new AtomicBoolean(false)
         val threadId = new AtomicLong(0L)
-        val thread = new Thread((() => {
+        val thread   = new Thread((() => {
             threadId.set(ThreadUserTime.currentThreadId())
             entered.countDown()
             // The test's final interrupt releases this thread where Sleep is interruptible; catching it keeps it quiet. The duration is 10 minutes,
@@ -67,7 +67,7 @@ class SleepTest extends AnyFreeSpec with NonImplicitAssertions {
       */
     private def assertReturns(ms: Int): Unit = {
         val returned = new CountDownLatch(1)
-        val thread = new Thread((() => {
+        val thread   = new Thread((() => {
             Sleep(ms)
             returned.countDown()
         }): Runnable)

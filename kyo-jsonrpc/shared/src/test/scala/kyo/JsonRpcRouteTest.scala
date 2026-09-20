@@ -40,7 +40,7 @@ class JsonRpcRouteTest extends JsonRpcTest:
 
     "handler Abort.fail propagates the failure without transformation" in {
         makeCtx(Absent, Absent, Absent).flatMap: ctx =>
-            val err = JsonRpcInvalidParamsError("fail", Absent, Chunk.empty)
+            val err    = JsonRpcInvalidParamsError("fail", Absent, Chunk.empty)
             val method = JsonRpcRoute.request[Int, String]("fail") {
                 (_, _) => Abort.fail(err)
             }
@@ -67,7 +67,7 @@ class JsonRpcRouteTest extends JsonRpcTest:
     "params decode failure produces invalidParams before the handler body runs" in {
         makeCtx(Absent, Absent, Absent).flatMap: ctx =>
             var handlerCalled = false
-            val method = JsonRpcRoute.request[Int, String]("typed") {
+            val method        = JsonRpcRoute.request[Int, String]("typed") {
                 (_, _) =>
                     handlerCalled = true
                     "ok"
@@ -97,7 +97,7 @@ class JsonRpcRouteTest extends JsonRpcTest:
         val extrasValue = Structure.Value.Record(Chunk("k" -> Structure.Value.Str("v")))
         makeCtx(Absent, Present(extrasValue), Absent).flatMap: ctx =>
             var observed: Maybe[Structure.Value] = Absent
-            val method = JsonRpcRoute.request[Int, Unit]("obs") {
+            val method                           = JsonRpcRoute.request[Int, Unit]("obs") {
                 (_, c) => observed = c.extras
             }
             val params = Structure.encode[Int](1)
@@ -151,7 +151,7 @@ class JsonRpcRouteTest extends JsonRpcTest:
 
     "dispatch unknown name returns Absent" in {
         val addM = JsonRpcRoute.request[AddReq, AddResp]("add") { (r, _) => AddResp(r.a + r.b) }
-        val ctx = JsonRpcRoute.Context.forTest(
+        val ctx  = JsonRpcRoute.Context.forTest(
             Fiber.Promise.Unsafe.init[Unit, Sync]()(using AllowUnsafe.embrace.danger).safe,
             Absent,
             Absent,
@@ -163,7 +163,7 @@ class JsonRpcRouteTest extends JsonRpcTest:
 
     "dispatch known notification returns Present Null" in {
         val counter = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
-        val logM = JsonRpcRoute.notification[LogMsg]("log") {
+        val logM    = JsonRpcRoute.notification[LogMsg]("log") {
             (_, _) => Sync.defer(discard(counter.incrementAndGet()(using AllowUnsafe.embrace.danger)))
         }
         Sync.defer(Structure.encode(LogMsg("x"))).map { params =>
@@ -216,7 +216,7 @@ class JsonRpcRouteTest extends JsonRpcTest:
         makeCtx(Absent, Absent, Absent).flatMap: ctx =>
             val id       = JsonRpcId(1L)
             val response = JsonRpcResponse.success(id, Structure.Value.Str("early"))
-            val method = JsonRpcRoute.request[Int, String]("early") { (_, _) =>
+            val method   = JsonRpcRoute.request[Int, String]("early") { (_, _) =>
                 JsonRpcResponse.halt(response)
             }
             val params = Structure.encode[Int](1)

@@ -43,9 +43,10 @@ object ContainerPredef:
       * it would mask exactly the failure this health check exists to report.
       */
     private[kyo] def retryableExecFailure(state: Result[ContainerException, Container.State], retriesLeft: Int): Boolean =
-        retriesLeft > 0 && (state match
-            case Result.Success(Container.State.Running) => true
-            case _                                       => false)
+        retriesLeft > 0 &&
+            (state match
+                case Result.Success(Container.State.Running) => true
+                case _                                       => false)
 
     /** One readiness attempt and the retry decision after it, over the two effects it actually depends on rather than over a `Container`.
       *
@@ -72,7 +73,7 @@ object ContainerPredef:
         runProbe().map {
             case Result.Success(r) if r.isSuccess => Kyo.unit
             case Result.Success(r)                => onProbeReportedDown(r.stderr.trim)
-            case Result.Failure(cause) =>
+            case Result.Failure(cause)            =>
                 readState().map {
                     case st if retryableExecFailure(st, retriesLeft) =>
                         readinessAttempt(runProbe, readState, onProbeReportedDown, onExecFailed, retriesLeft - 1)
@@ -460,7 +461,7 @@ object ContainerPredef:
                 (if c.password.nonEmpty then Chunk(s"-p${c.password}") else Chunk.empty) ++
                 Chunk(c.database, "-N", "-e", "SELECT 1")
             val commandLine: Chunk[String] = Chunk("mysqld") ++ defaultServerArgs ++ c.serverArgs
-            val base = Container.Config(c.image)
+            val base                       = Container.Config(c.image)
                 .env("MYSQL_DATABASE", c.database)
                 .port(c.port, 0)
                 .command(commandLine*)

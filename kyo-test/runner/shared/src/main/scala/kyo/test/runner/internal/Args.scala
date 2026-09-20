@@ -107,7 +107,7 @@ private[runner] object Args:
             if remaining.isEmpty then
                 error match
                     case Maybe.Present(msg) => Result.Error(msg)
-                    case Maybe.Absent =>
+                    case Maybe.Absent       =>
                         val config = RunConfig(
                             filter = TestFilter(
                                 pathInclude = acc.pathIncludes,
@@ -126,7 +126,7 @@ private[runner] object Args:
                 val rest = remaining.drop(1)
                 error match
                     case Maybe.Present(msg) => Result.Error(msg)
-                    case Maybe.Absent =>
+                    case Maybe.Absent       =>
                         if arg == "--help" || arg == "-h" then
                             Result.Help
                         else if arg == "--verbose" then
@@ -207,7 +207,7 @@ private[runner] object Args:
                 end while
                 errorMsg match
                     case Maybe.Present(msg) => Result.Error(msg)
-                    case Maybe.Absent =>
+                    case Maybe.Absent       =>
                         val resolvedReporter =
                             if reporters.size == 1 then Maybe(reporters.head)
                             else Maybe(CombinedReporter(reporters*))

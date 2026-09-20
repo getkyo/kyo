@@ -75,8 +75,8 @@ class RuntimeTest extends Test:
         def rollbackIfOpenTransaction(using Frame): Unit < (Async & Abort[SqlException]) = ()
         def drainToIdle(using Frame): Boolean < (Async & Abort[SqlException])            = true
 
-        def isOpen(using Frame): Boolean < Sync = Sync.Unsafe.defer(!closedFlag.get())
-        def close(using Frame): Unit < Async    = Sync.Unsafe.defer(closedFlag.set(true))
+        def isOpen(using Frame): Boolean < Sync      = Sync.Unsafe.defer(!closedFlag.get())
+        def close(using Frame): Unit < Async         = Sync.Unsafe.defer(closedFlag.set(true))
         def closeNow(using Frame, AllowUnsafe): Unit =
             closedFlag.set(true)
     end StubSession
@@ -302,7 +302,7 @@ class RuntimeTest extends Test:
         val attempts = AtomicInt.Unsafe.init(0)
         Runtime.init(urlOf(), SqlConfig(minConnections = 1), factory).map { runtime =>
             val retrying = SqlConfig(retrySchedule = Present(Schedule.fixed(Duration.Zero).take(3)))
-            val leased = runtime.lease(retrying) { _ =>
+            val leased   = runtime.lease(retrying) { _ =>
                 Sync.Unsafe.defer {
                     discard(attempts.incrementAndGet())
                     Abort.fail[SqlException](SqlConnectionConnectFailedException("localhost", 5432, new Exception("transient")))
