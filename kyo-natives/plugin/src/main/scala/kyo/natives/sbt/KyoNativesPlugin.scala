@@ -48,7 +48,8 @@ object KyoNativesPlugin extends AutoPlugin {
 
         val kyoNativesDirectory = settingKey[File]("Directory the unpacked libraries are written under, one subdirectory per target.")
 
-        val kyoNativesResolvedTargets = taskKey[Seq[String]]("The targets in effect, after deriving the ones `kyoNativesTargets` left open.")
+        val kyoNativesResolvedTargets =
+            taskKey[Seq[String]]("The targets in effect, after deriving the ones `kyoNativesTargets` left open.")
 
         val kyoNativesReport = taskKey[Unit]("Print what each library resolved to, and what it is wired into.")
 

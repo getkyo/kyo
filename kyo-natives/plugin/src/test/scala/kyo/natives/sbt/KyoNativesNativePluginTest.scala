@@ -29,7 +29,11 @@ class KyoNativesNativePluginTest extends AnyFunSuite with Matchers {
 
     test("a triple agreeing with the wanted target passes") {
         error(Some("arm64-apple-darwin23.3.0")) shouldBe None
-        error(Some("x86_64-unknown-linux-musl"), compilerTarget = Some("linux-musl-x86_64"), wanted = Some("linux-musl-x86_64")) shouldBe None
+        error(
+            Some("x86_64-unknown-linux-musl"),
+            compilerTarget = Some("linux-musl-x86_64"),
+            wanted = Some("linux-musl-x86_64")
+        ) shouldBe None
     }
 
     test("a triple naming another pole is named, with both values and the fix") {
