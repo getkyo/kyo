@@ -26,7 +26,6 @@ val zioVersion       = "2.1.26"
 val catsVersion      = "3.7.1"
 val oxVersion        = "1.0.7"
 val scalaTestVersion = "3.2.20"
-val turboliftVersion = "0.126.0"
 
 val compilerOptionFailDiscard = "-Wconf:msg=(unused.*value|discarded.*value|pure.*statement):error"
 
@@ -767,7 +766,7 @@ lazy val `kyo-data` =
         .jsSettings(`js-settings`)
         .wasmSettings(`wasm-settings`)
 
-// Cross-library ports of KernelBench's rows (ZIO, cats-effect, Turbolift),
+// Cross-library ports of KernelBench's rows (ZIO, cats-effect),
 // for comparison boards. A separate unpublished project so the external dependencies never
 // reach a published kyo artifact's pom; row names match KernelBench's so result tables join
 // by name.
@@ -801,10 +800,9 @@ lazy val `kyo-kernel` =
             // The comparison benches under bench/cross; jmh-scoped so the frameworks stay off
             // the Compile and Test classpaths.
             libraryDependencies ++= Seq(
-                "dev.zio"            %% "zio"             % zioVersion,
-                "org.typelevel"      %% "cats-effect"     % catsVersion,
-                "io.github.marcinzh" %% "turbolift-core"  % turboliftVersion,
-                "org.scala-lang"     %% "scala3-compiler" % scalaVersion.value
+                "dev.zio"        %% "zio"             % zioVersion,
+                "org.typelevel"  %% "cats-effect"     % catsVersion,
+                "org.scala-lang" %% "scala3-compiler" % scalaVersion.value
             ).map(_ % "jmh"),
             // The Safepoint overflow suite fills the global slot table; a suite running
             // concurrently in the same classloader would see its threads degraded to the
