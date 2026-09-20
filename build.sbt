@@ -3619,8 +3619,10 @@ lazy val `kyo-website` =
             // SiteAppHeapTest mounts the real browser bundle, so the fullLinkJS output must exist before
             // the JVM test scope runs. `main.js` is discovered under kyo-website-bundle's target tree the
             // same way WebsiteMain discovers it, so the link task is the only wiring needed here.
-            Test / test := (Test / test).dependsOn(`kyo-website-bundle`.js / Compile / fullLinkJS).value,
-            Test / testOnly := (Test / testOnly).dependsOn(`kyo-website-bundle`.js / Compile / fullLinkJS).evaluated
+            // Referenced by project id, not by the `kyo-website-bundle` lazy val: that project depends on
+            // this one, and naming its val here would make this val recursive.
+            Test / test := (Test / test).dependsOn(LocalProject("kyo-website-bundleJS") / Compile / fullLinkJS).value,
+            Test / testOnly := (Test / testOnly).dependsOn(LocalProject("kyo-website-bundleJS") / Compile / fullLinkJS).evaluated
         )
         .jsSettings(
             `js-settings`,

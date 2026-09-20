@@ -1291,6 +1291,7 @@ class SignalTest extends kyo.test.Test[Any]:
                 after == 0,
                 s"every waiter was interrupted and awaited, so none is left to notify, but $after remain registered"
             )
+            end for
         }
 
         /** `observe` holds a value's scope open by racing the next change against a repair timer, so each time that
@@ -1308,12 +1309,12 @@ class SignalTest extends kyo.test.Test[Any]:
             val ticks          = 20
             Clock.withTimeControl { control =>
                 for
-                    ref   <- Signal.initRef(0)
-                    seen  <- AtomicRef.init(Chunk.empty[Int])
-                    fiber <- Fiber.initUnscoped(ref.observe(repairInterval)(recordValue(seen, _)))
-                    _     <- assertEventually(seen.get.map(_ == Chunk(0)))  // the first value is set up
-                    _     <- assertEventually(ref.waiters.map(_ == 1))      // and the loop is parked on the next change
-                    _     <- Kyo.foreachDiscard(1 to ticks)(_ => control.advance(repairInterval))
+                    ref    <- Signal.initRef(0)
+                    seen   <- AtomicRef.init(Chunk.empty[Int])
+                    fiber  <- Fiber.initUnscoped(ref.observe(repairInterval)(recordValue(seen, _)))
+                    _      <- assertEventually(seen.get.map(_ == Chunk(0))) // the first value is set up
+                    _      <- assertEventually(ref.waiters.map(_ == 1))     // and the loop is parked on the next change
+                    _      <- Kyo.foreachDiscard(1 to ticks)(_ => control.advance(repairInterval))
                     parked <- ref.waiters
                     // Liveness: the loop survived every repair tick and still delivers, so `parked` describes a
                     // working observer rather than one that stopped re-arming.

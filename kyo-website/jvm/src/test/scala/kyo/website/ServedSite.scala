@@ -104,14 +104,13 @@ private[website] object ServedSite:
       * `WebsiteMain` does, because a forked test's working directory is the module directory, not the root.
       */
     private def repoRoot(using Frame): Path < (Sync & Abort[FileSystemException]) =
-        def loop(dir: Path): Path < (Sync & Abort[FileSystemException]) =
-            (dir / "build.sbt").exists.map {
-                case true => dir
-                case false =>
-                    dir.parent match
-                        case Present(parent) => loop(parent)
-                        case Absent          => Abort.fail(FileNotFoundException(dir / "build.sbt"))
-            }
+        def loop(dir: Path): Path < (Sync & Abort[FileSystemException] & PathRead) = (dir / "build.sbt").exists.map {
+            case true  => dir
+            case false =>
+                dir.parent match
+                    case Present(parent) => loop(parent)
+                    case Absent          => Abort.fail(FileNotFoundException(dir / "build.sbt"))
+        }
         Path.runReadOnly(loop(Path(java.lang.System.getProperty("user.dir").nn)))
     end repoRoot
 
@@ -125,14 +124,16 @@ private[website] object ServedSite:
                 scalaDirs <- childDirsMatching(targetDir, _.startsWith("scala-"))
                 optDirs   <- Kyo.foreach(scalaDirs)(childDirsMatching(_, _.endsWith("-opt"))).map(_.flattenChunk)
                 flagged   <- Kyo.foreach(optDirs)(d => (d / "main.js").isRegularFile.map(_ -> d))
-                dir <- flagged.collect { case (true, d) => d }.headMaybe match
-                    case Present(d) => d
+                dir       <- flagged.collect { case (true, d) => d }.headMaybe match
+                    case Present(d) => d: Path < Abort[FileSystemException]
                     case Absent     => Abort.fail(FileNotFoundException(targetDir / "scala-*" / "*-opt" / "main.js"))
             yield dir
         }
     end bundleDir
 
-    private def childDirsMatching(dir: Path, p: String => Boolean)(using Frame): Chunk[Path] < (Sync & Abort[FileSystemException] & PathRead) =
+    private def childDirsMatching(dir: Path, p: String => Boolean)(using
+        Frame
+    ): Chunk[Path] < (Sync & Abort[FileSystemException] & PathRead) =
         dir.list.map(entries =>
             Kyo.foreach(entries)(d => d.isDirectory.map(_ -> d)).map(
                 _.collect { case (true, d) if d.name.exists(p) => d }.sortBy(_.toString)

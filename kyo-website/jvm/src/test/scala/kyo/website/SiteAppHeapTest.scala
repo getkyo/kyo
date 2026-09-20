@@ -26,7 +26,11 @@ class SiteAppHeapTest extends WebsiteTest:
 
     override def timeout = 10.minutes
 
-    override def config = super.config.sequential.failOnNoAssertion(false)
+    // The shared Chrome is held for the whole run, so its CDP socket and the process's stdio pipes are opaque-inode
+    // descriptors no allowlist can match. Only those two categories are disabled; thread and fiber detection stay on.
+    // Same rationale as kyo-browser's BaseBrowserTest and kyo-ui's UITest.
+    override def config =
+        super.config.sequential.leakCheckSockets(false).leakCheckFileDescriptors(false)
 
     /** The idle window the heap is measured across. Long enough that a per-second leak accumulates well clear of
       * allocation noise, short enough to keep the leaf inside its budget.
