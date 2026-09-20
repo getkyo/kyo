@@ -97,4 +97,64 @@ absent_out=$(
 )
 expect_eq "missing ps" "$absent_out" ""
 
+# Sockets: `netstat -ano -p tcp` rows are indented and carry a state column only for TCP; the count that
+# matters is TIME_WAIT against the dynamic range `netsh` reports. Same parse-bug exposure as proc_top,
+# and it decides whether a WSAENOBUFS leg ran out of ports or out of something else.
+cat > "$test_dir/bin/netstat" <<'STUB'
+#!/usr/bin/env bash
+cat <<'ROWS'
+
+Active Connections
+
+  Proto  Local Address          Foreign Address        State           PID
+  TCP    127.0.0.1:49152        127.0.0.1:9222         ESTABLISHED     1234
+  TCP    127.0.0.1:49153        127.0.0.1:9222         TIME_WAIT       0
+  TCP    127.0.0.1:49154        127.0.0.1:9222         TIME_WAIT       0
+  TCP    0.0.0.0:135            0.0.0.0:0              LISTENING       900
+ROWS
+STUB
+chmod +x "$test_dir/bin/netstat"
+
+cat > "$test_dir/bin/netsh" <<'STUB'
+#!/usr/bin/env bash
+cat <<'ROWS'
+
+Protocol tcp Dynamic Port Range
+---------------------------------
+Start Port      : 49152
+Number of Ports : 16384
+ROWS
+STUB
+chmod +x "$test_dir/bin/netsh"
+
+sockets_out=$(
+    PATH="$test_dir/bin:$PATH" OS=MINGW64_NT-10.0 bash -c "
+        $(sed -n '/^sockets_headline()/,/^}/p' "$script_dir/ci-monitor.sh")
+        sockets_headline
+    "
+)
+
+# All four TCP rows count; only the two TIME_WAIT ones count again. The banner lines carry no leading
+# TCP token and must not inflate the total.
+expect_eq "windows sockets" "$sockets_out" 'tcp=4 timeWait=2 ephemeral=16384'
+
+# The posix branch has no port range small enough to exhaust, so the headline is absent entirely rather
+# than reporting a partial line.
+posix_sockets_out=$(
+    PATH="$test_dir/bin:$PATH" OS=Linux bash -c "
+        $(sed -n '/^sockets_headline()/,/^}/p' "$script_dir/ci-monitor.sh")
+        sockets_headline
+    "
+)
+expect_eq "posix sockets" "$posix_sockets_out" ""
+
+# Absent netstat must print nothing and exit zero, for the same reason proc_top must.
+absent_sockets_out=$(
+    PATH="$test_dir/empty" OS=MINGW64_NT-10.0 "$bash_bin" -c "
+        $(sed -n '/^sockets_headline()/,/^}/p' "$script_dir/ci-monitor.sh")
+        sockets_headline
+    " || fail "a missing netstat made sockets_headline exit non-zero"
+)
+expect_eq "missing netstat" "$absent_sockets_out" ""
+
 printf 'ci-monitor-selftest: ok\n'
