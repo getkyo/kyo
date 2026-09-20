@@ -398,6 +398,31 @@ class PathTest extends kyo.test.Test[Any]:
         })
     }
 
+    // Files.readAllLines ends a line at "\r\n", "\r" or "\n" alike, and every platform is held to that: a file
+    // written where the line separator is CRLF reads back as its lines, not as lines carrying a trailing '\r'.
+    // The terminators are written literally rather than taken from the host, so every host runs every case.
+    "readLines ends a line at CRLF, CR or LF" in {
+        Scope.run(Path.run {
+            for
+                dir <- Path.tempDir("kyo-path-read-test")
+                crlf  = dir / "read-lines-crlf.txt"
+                cr    = dir / "read-lines-cr.txt"
+                mixed = dir / "read-lines-mixed.txt"
+                _         <- crlf.write("line1\r\nline2\r\nline3\r\n")
+                _         <- cr.write("line1\rline2\rline3")
+                _         <- mixed.write("line1\r\nline2\nline3\r")
+                crlfRead  <- crlf.readLines
+                crRead    <- cr.readLines
+                mixedRead <- mixed.readLines
+                _         <- dir.removeAll
+            yield
+                assert(crlfRead == Chunk("line1", "line2", "line3"), s"CRLF read as $crlfRead")
+                assert(crRead == Chunk("line1", "line2", "line3"), s"CR read as $crRead")
+                assert(mixedRead == Chunk("line1", "line2", "line3"), s"mixed read as $mixedRead")
+            end for
+        })
+    }
+
     "readLines with explicit charset decodes lines correctly" in {
         Scope.run(Path.run {
             val charset = StandardCharsets.ISO_8859_1

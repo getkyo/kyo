@@ -56,6 +56,9 @@ class PathPlatformSpecificJsTest extends kyo.test.Test[Any]:
 
     "without process.getBuiltinModule" - {
         "a file read fails naming the host" in {
+            // Windows path syntax comes from the same module, so a Windows host without it refuses at the syntax rather
+            // than reaching the read: a different refusal, already held by the cwd leaf below.
+            assume(!Platform.isWindows, "Windows path syntax comes from the host's node:path")
             val result = withoutGetBuiltinModule(Path("kyo-path-platform-no-builtin.txt").unsafe.read())
             assert(refusalOf(result) == refusal(Platform.host))
         }
@@ -85,6 +88,8 @@ class PathPlatformSpecificJsTest extends kyo.test.Test[Any]:
         }
 
         "a file read fails naming the host instead of throwing ReferenceError" in {
+            // As above: without `process` a Windows host has no node:path either, so it refuses at the syntax first.
+            assume(!Platform.isWindows, "Windows path syntax comes from the host's node:path")
             val (result, host) = withoutProcessGlobal((Path("kyo-path-platform-no-process.txt").unsafe.read(), Platform.host))
             assert(refusalOf(result) == refusal(host))
         }

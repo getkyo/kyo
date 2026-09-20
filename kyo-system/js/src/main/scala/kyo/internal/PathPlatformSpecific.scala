@@ -941,11 +941,12 @@ final private[kyo] class NodePathUnsafe(raw: String) extends Path.Unsafe:
 
     // --- Private helpers ---
 
-    /** Splits content by newlines, dropping a single trailing empty element if the content ends with '\n'. This matches the behaviour of
-      * java.nio.file.Files.readAllLines.
+    /** Splits content into lines, dropping a single trailing empty element when the content ends with a terminator. This matches the
+      * behaviour of java.nio.file.Files.readAllLines, which ends a line at "\r\n", "\r" or "\n" alike: a file written on a host whose line
+      * separator is CRLF is read back as its lines, not as lines each carrying a trailing '\r'.
       */
     private def splitLines(content: String): Seq[String] =
-        val parts = content.split("\n", -1).toSeq
+        val parts = content.split("\r\n|\r|\n", -1).toSeq
         if parts.nonEmpty && parts.last.isEmpty then parts.init else parts
     end splitLines
 
