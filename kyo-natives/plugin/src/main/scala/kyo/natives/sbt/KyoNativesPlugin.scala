@@ -21,6 +21,11 @@ import sbt._
   *
   * Nothing here knows which kyo modules exist. Each artifact declares the shared libraries it delivers and the
   * classifier carrying them, and this reads those declarations off the project's own classpath.
+  *
+  * It reads that classpath and writes under that project's `target`, so in a multi-project build it is enabled on
+  * each project that runs or packages the natives, not once at the root. A root aggregate has no classpath of its
+  * own and delivers nothing. On a crossProject, `enablePlugins` covers every leg and
+  * `.nativeConfigure(_.enablePlugins(KyoNativesPlugin))` covers one.
   */
 object KyoNativesPlugin extends AutoPlugin {
 
@@ -85,7 +90,10 @@ object KyoNativesPlugin extends AutoPlugin {
         kyoNativesReport    := reportTask.value,
         // The JVM loader extracts from the classpath, so the classifier jars go on it. Through `unmanagedJars` rather
         // than `libraryDependencies`: a dependency reaches `makePom`, which would pin this build host's architecture
-        // onto everyone who then depends on this project.
+        // onto everyone who then depends on this project. `unmanagedJars` reaches `Runtime` and `Test` `fullClasspath`,
+        // which is what `run`, `test`, sbt-assembly and sbt-native-packager read, and reaches neither `makePom` nor
+        // `packageBin`. `Compile` as well, for a task that reads the compile classpath to decide what a build holds.
+        Compile / unmanagedJars ++= jvmJars.value,
         Runtime / unmanagedJars ++= jvmJars.value,
         Test / unmanagedJars ++= jvmJars.value
     )

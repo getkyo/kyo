@@ -81,4 +81,8 @@ class KyoNativesNativePluginTest extends AnyFunSuite with Matchers {
         Seq("darwin-aarch64", "darwin-x86_64", "linux-x86_64", "linux-aarch64", "linux-musl-x86_64", "linux-musl-aarch64")
             .foreach(target => KyoNativesNativePlugin.undeliverable(target) shouldBe None)
     }
+
+    test("a target kyo publishes nothing for is left to the check that names the supported set") {
+        KyoNativesNativePlugin.undeliverable("solaris-sparc") shouldBe None
+    }
 }

@@ -1506,6 +1506,22 @@ object KyoFfiPlugin extends AutoPlugin {
                         (if (extra.nonEmpty) s"Declared but not packaged: ${extra.toSeq.sorted.mkString(", ")}. " else "") +
                         "A Native or Node consumer reads this declaration to find the artifact carrying each library."
                 )
+            // A pattern naming a classifier this module does not publish resolves nothing in a consumer's build, and
+            // says so only as a warning there. The ids above cannot catch it, since a typo leaves the id right and the
+            // artifact wrong. Matching one supported target is enough: a module declares the poles it builds for, and
+            // this is asking whether the pattern names an artifact at all.
+            val declared = artifacts.value.flatMap(_.classifier).toSet
+            delivery.foreach { case (id, entry) =>
+                val pattern = entry.classifierPattern
+                val names =
+                    pattern.isEmpty ||
+                        NativeTargets.supported.exists(tag => declared.contains(pattern.replace(NativeDelivery.targetToken, tag)))
+                if (!names)
+                    sys.error(
+                        s"[kyo-ffi-plugin] ${name.value} declares $id in the classifier '$pattern', which names no artifact " +
+                            s"it publishes. Declared classifiers: ${declared.toSeq.sorted.mkString(", ")}."
+                    )
+            }
         }
         writeFfiManifest((Compile / resourceManaged).value, NativeDelivery.dir, name.value + ".properties", NativeDelivery.render(delivery))
     }

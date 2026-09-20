@@ -85,9 +85,12 @@ object KyoNativesNativePlugin extends AutoPlugin {
       * so the delivery would end in a linker error naming a library the release does not publish in a linkable form.
       * Saying so and delivering nothing leaves the binary in the state it is in on every other platform where a
       * library is missing: it links, and the capability reports itself unavailable when it is used.
+      *
+      * A target kyo publishes nothing at all for passes through rather than being reported here, so the message it
+      * gets is the one that names the supported set.
       */
     private[sbt] def undeliverable(target: String): Option[String] =
-        if (NativeTargets.osOf(target) == "windows")
+        if (NativeTargets.supported.contains(target) && NativeTargets.osOf(target) == "windows")
             Some(s"$target publishes a DLL and no import library, which a Native link cannot use")
         else None
 

@@ -4,7 +4,9 @@
 > appNative/kyoNativesReport
 > appJS/kyoNativesReport
 > appJVM/run
-$ exec sh -c 'cat out-jvm.txt; grep -q "CONSUMER jvm=2" out-jvm.txt'
+# Found rather than named: a forked run's working directory is a setting, and which directory of a crossProject it
+# resolves to is not what this fixture is about.
+$ exec sh -c 'set -eu; out=$(find . -name out-jvm.txt | head -n1); test -n "$out"; cat "$out"; grep -q "CONSUMER jvm=2" "$out"'
 # The Native binary needs the library beside it, which nativeLink stages, so it is run from the directory it
 # landed in rather than from here.
 > appNative/nativeLink

@@ -5,6 +5,10 @@
 > kyoNativesReport
 > fastLinkJS
 $ exec sh -c 'set -eu; test -f target/node_modules/koffi/package.json'
-$ exec node -e "const path=require('path'),fs=require('fs');const os=process.platform==='darwin'?'darwin':process.platform==='win32'?'windows':'linux';const arch=process.arch==='x64'?'x86_64':process.arch==='arm64'?'aarch64':process.arch;const ext=os==='darwin'?'dylib':os==='windows'?'dll':'so';const out=fs.readdirSync('target').find(d=>d.startsWith('scala-'));const dir=path.resolve('target',out);const spec='@kyo/ffi-native/native/'+os+'-'+arch+'/libkyo_doltlite.'+ext;const r=require('module').createRequire(path.join(dir,'x.js'));console.log('resolved',r.resolve(spec));"
+# The os is derived the way `NativeLoader.detectOsWith` derives it, musl included: process.platform says linux for
+# both libcs, and a glibc library does not open under musl, so asking for the wrong pole here would report a miss
+# that is this test's rather than the delivery's. The specifier is resolved from the linked output's own directory,
+# which is where the application resolves it from.
+$ exec node -e "const path=require('path'),fs=require('fs');const musl=fs.existsSync('/lib/ld-musl-x86_64.so.1')||fs.existsSync('/lib/ld-musl-aarch64.so.1');const os=process.platform==='darwin'?'darwin':process.platform==='win32'?'windows':(musl?'linux-musl':'linux');const arch=process.arch==='x64'?'x86_64':process.arch==='arm64'?'aarch64':process.arch;const ext=os==='darwin'?'dylib':os==='windows'?'dll':'so';const dirs=fs.readdirSync('target').filter(d=>d.startsWith('scala-'));if(dirs.length!==1)throw new Error('expected one scala- output directory, found '+dirs.join(', '));const out=fs.readdirSync(path.join('target',dirs[0])).filter(d=>d.endsWith('-fastopt'));if(out.length!==1)throw new Error('expected one -fastopt directory, found '+out.join(', '));const anchor=path.resolve('target',dirs[0],out[0],'main.js');const spec='@kyo/ffi-native/native/'+os+'-'+arch+'/libkyo_doltlite.'+ext;const r=require('module').createRequire(anchor);console.log('resolved',r.resolve(spec));"
 > run
 $ exec sh -c 'cat out.txt; grep -q "CONSUMER doltlite=2" out.txt'

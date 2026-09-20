@@ -239,19 +239,11 @@ private[sbt] object CCompiler {
             // are unaffected: both extract to a path of their own and load that path.
             // The name the ARTIFACT carries, not the build output's: packaging strips the `-<os>-<arch>`
             // suffix, and the install name has to match what a consumer links against.
-            val libraryName = {
-                val name = outFile.getName
-                val dot  = name.lastIndexOf('.')
-                if (dot < 0) name
-                else {
-                    val base = name.substring(0, dot)
-                    val ext  = name.substring(dot)
-                    supportedOsArchTags.sortBy(-_.length)
-                        .find(tag => base.endsWith("-" + tag))
-                        .map(tag => base.substring(0, base.length - tag.length - 1) + ext)
-                        .getOrElse(name)
-                }
-            }
+            // parseArtifactName owns the rule, so this cannot strip a different suffix than the packaging does.
+            val libraryName =
+                parseArtifactName(outFile.getName)
+                    .map { case (libId, libOs, _) => libPrefix(libOs) + libId + "." + libExtension(libOs) }
+                    .getOrElse(outFile.getName)
             val nameFlags =
                 if (os == "darwin") Seq("-Wl,-install_name,@rpath/" + libraryName)
                 else if (os == "windows") Nil
