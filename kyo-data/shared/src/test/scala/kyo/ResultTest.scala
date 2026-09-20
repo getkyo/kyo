@@ -380,11 +380,14 @@ class ResultTest extends kyo.test.Test[Any]:
             assert(!nestedResult.isFailure)
         }
 
-        "should handle exceptions in deeply nested transformations" in {
+        "should catch an exception where it is thrown and carry it outward as a value" in {
+            // The innermost map catches the throw as its own Panic; each enclosing map receives that Panic as a plain
+            // value and keeps it in its success lane, exactly as it would a Failure, so only a flatten reaches it.
             val nested = Success(Success(Success(1)))
             val ex     = new RuntimeException("nested error")
             val result = nested.map(_.map(_.map(_ => throw ex)))
-            assert(result == Panic(ex))
+            assert(result == Success(Success(Panic(ex))))
+            assert(result.flatten.flatten == Panic(ex))
         }
 
         "should maintain correct error type through nested flatMaps" in {
@@ -1511,6 +1514,36 @@ class ResultTest extends kyo.test.Test[Any]:
             )
         }
 
+    }
+
+    "a success carrying a Panic" - {
+        // The unboxed representation makes a success that carries an error indistinguishable from the error itself, which is
+        // what SuccessError exists to box, for a Panic as for a Failure: a success whose value is a Panic (a fiber's result
+        // handed on as data, say) must not read as the panic of whoever holds it.
+        val ex = new Exception("carried")
+
+        "Success keeps a Panic as its value" in {
+            val r: Result[Nothing, Result[Nothing, Int]] = Success(Panic(ex))
+            assert(r.isSuccess, s"the carried panic was read as the outer result's own: $r")
+            assert(r.exists(_.isPanic))
+        }
+
+        "succeed keeps a Panic as its value" in {
+            val r: Result[Nothing, Result[Nothing, Int]] = Result.succeed(Result.panic(ex))
+            assert(r.isSuccess, s"the carried panic was read as the outer result's own: $r")
+            assert(r.exists(_.isPanic))
+        }
+
+        "flatten of a success carrying a Panic is that Panic, and only after the flatten" in {
+            val r: Result[Nothing, Result[Nothing, Int]] = Success(Panic(ex))
+            assert(r.isSuccess)
+            assert(r.flatten.isPanic)
+        }
+
+        "map keeps a Panic produced as a value inside the success lane" in {
+            val r: Result[Nothing, Result[Nothing, Int]] = Success(1).map(_ => Panic(ex))
+            assert(r.isSuccess, s"the panic the function produced as a value was read as the outer result's own: $r")
+        }
     }
 
 end ResultTest

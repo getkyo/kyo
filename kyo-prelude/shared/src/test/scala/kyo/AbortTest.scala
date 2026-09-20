@@ -402,9 +402,11 @@ class AbortTest extends kyo.test.Test[Any]:
                 }
 
                 "does not convert matching Panic to Failure" in {
+                    // The partial run lets the panic through, so it is the outer run's own ending rather than a value
+                    // the outer run carries.
                     val ex     = new RuntimeException("Test exception")
                     val result = Abort.run(Abort.runPartial[RuntimeException](Abort.panic(ex))).eval
-                    assert(result == Result.Success(Result.Panic(ex)))
+                    assert(result == Result.Panic(ex))
                 }
 
                 "doesn't affect Success" in {
@@ -419,12 +421,24 @@ class AbortTest extends kyo.test.Test[Any]:
                 }
 
                 "works with nested Aborts" in {
+                    // Neither partial run catches a panic, so it passes through both and ends the outer run.
                     val ex     = new RuntimeException("Inner exception")
                     val nested = Abort.runPartial[IllegalArgumentException] {
                         Abort.runPartial[RuntimeException](Abort.panic(ex))
                     }
                     val result = Abort.run(nested).eval
-                    assert(result == Result.Success(Result.Success(Result.Panic(ex))))
+                    assert(result == Result.Panic(ex))
+                }
+
+                "a Result.Panic the body produces as a value is not taken as the run's own panic" in {
+                    // The run boxes the body's value into the success lane, so a Result.Panic the body produces as a
+                    // plain value (a fiber's getResult handed on as data, say) comes back as the success carrying it,
+                    // never as the run's own panic.
+                    val ex                            = new Exception("carried")
+                    val v: Result[Nothing, Int] < Any = Result.panic(ex)
+                    val r                             = Abort.run[Throwable](v).eval
+                    assert(r.isSuccess, s"the carried panic was read as the run's own: $r")
+                    assert(r == Result.Success(Result.panic(ex)))
                 }
             }
         }

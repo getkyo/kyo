@@ -54,7 +54,7 @@ class McpServerTest extends Test:
         val counter = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
         JsonRpcTransport.inMemory.map { (ta, _) =>
             class CountingTransport(inner: JsonRpcTransport) extends JsonRpcTransport:
-                def send(env: JsonRpcEnvelope)(using Frame): Unit < (Async & Abort[Closed]) =
+                def send(env: JsonRpcEnvelope)(using Frame): Unit < (Async & Abort[Closed | JsonRpcError]) =
                     Sync.defer(discard(counter.incrementAndGet()(using AllowUnsafe.embrace.danger))).andThen(inner.send(env))
                 def incoming(using Frame): Stream[JsonRpcEnvelope, Async & Abort[Closed]] =
                     inner.incoming
@@ -283,7 +283,7 @@ class McpServerTest extends Test:
         val counter = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
         JsonRpcTransport.inMemory.map { (ta, _) =>
             class CountingTransport(inner: JsonRpcTransport) extends JsonRpcTransport:
-                def send(env: JsonRpcEnvelope)(using Frame): Unit < (Async & Abort[Closed]) =
+                def send(env: JsonRpcEnvelope)(using Frame): Unit < (Async & Abort[Closed | JsonRpcError]) =
                     Sync.defer(discard(counter.incrementAndGet()(using AllowUnsafe.embrace.danger))).andThen(inner.send(env))
                 def incoming(using Frame): Stream[JsonRpcEnvelope, Async & Abort[Closed]] =
                     inner.incoming

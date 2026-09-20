@@ -27,8 +27,7 @@ class BlockingMeterTest extends Test:
             // than the pool having absorbed it.
             val burst = 2000
             // Fire every dispatch synchronously in ONE macrotask (no await between calls), the exact shape that exhausts the pool.
-            val fibers: Seq[Fiber.Unsafe[Circle, Any]] =
-                (1 to burst).map(_ => b.kyoItMakeCircleBlocking(1.0, 2.0, 3.0))
+            val fibers: Seq[Fiber.Unsafe[Circle, Any]] = (1 to burst).map(_ => b.kyoItMakeCircleBlocking(1.0, 2.0, 3.0))
             Async.foreach(fibers)(_.safe.get).map { results =>
                 assert(results.size == burst)
                 assert(results.forall(_ == Circle(Center(1.0, 2.0), 3.0)))

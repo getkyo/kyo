@@ -102,4 +102,30 @@ class SystemPlatformSpecificJsWasmTest extends kyo.test.Test[Any]:
         }
     }
 
+    "availableProcessors" - {
+
+        // The oracle is Node's own count, so this leaf needs the host that reports it. Read through
+        // `process.getBuiltinModule` rather than a static `@JSImport("node:os")`: a static import resolves
+        // when the module graph loads, so it would fail this module's bundle in a page before any gate was
+        // consulted, taking every other leaf here down with it.
+        "reports the host's logical processor count, not the Scala.js stub".notBrowser in {
+            // The control: Scala.js's javalib stub answers 1 on every host, which is what
+            // machine.cpu.cores reported on a 12-core Mac. It is also the denominator every per-core
+            // normalisation divides by, and the input the CPU histogram's buckets are derived from.
+            assert(Runtime.getRuntime.availableProcessors() == 1)
+            val expected = sjs.Dynamic.global.process.getBuiltinModule("node:os").availableParallelism().asInstanceOf[Int]
+            assert(SystemPlatformSpecific.availableProcessors() == expected)
+        }
+
+        "is stable across calls" in {
+            assert(SystemPlatformSpecific.availableProcessors() == SystemPlatformSpecific.availableProcessors())
+        }
+
+        // In a page there is no process global to begin with, so this is the page's own path:
+        // navigator.hardwareConcurrency, or the stub. Either way a count, never a ReferenceError.
+        "falls back to a positive count with no process global" in {
+            assert(withoutProcessGlobal(SystemPlatformSpecific.availableProcessors()) >= 1)
+        }
+    }
+
 end SystemPlatformSpecificJsWasmTest

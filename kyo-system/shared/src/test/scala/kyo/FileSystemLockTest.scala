@@ -2,14 +2,20 @@ package kyo
 
 import kyo.test.HostFilter
 
-/** Shared behavioral contract for [[FileSystem.Read]] lock implementations. */
-abstract class FileSystemLockTest extends kyo.test.Test[Any]:
+/** Shared behavioral contract for [[FileSystem.Read]] lock implementations.
+  *
+  * `S >: Async` bounds the backend effect as described on [[FileSystemReadTest]].
+  */
+abstract class FileSystemLockTest[S >: Async] extends kyo.test.Test[Any]:
 
     // Takes host file locks, which a browser has not.
     override protected def hostFilters = Chunk(HostFilter.NotBrowser)
 
+    /** Runs one assertion against a fresh backend and a path to lock. See [[FileSystemReadTest.withFileSystem]] for
+      * why the suite cannot fix the backend effect.
+      */
     protected def withFileSystem(
-        use: (FileSystem.Read[Sync], Path) => Unit < (Async & Sync & Scope & Abort[FileSystemException])
+        use: (FileSystem.Read[S], Path) => Unit < (S & Async & Sync & Scope & Abort[FileSystemException])
     )(using Frame): Unit < (Async & Sync & Scope & Abort[FileSystemException])
 
     private def assertImmediate(first: Path.LockMode, second: Path.LockMode, expected: Boolean)(using
@@ -203,7 +209,10 @@ abstract class FileSystemLockTest extends kyo.test.Test[Any]:
                                     case _ => Present(available)
                                 }
                                 Fiber.initUnscoped(
-                                    Abort.run[FileLockException](Scope.run(FileSystem.awaitLock(
+                                    // Pinned to Async rather than inferred: the synthetic attempt never touches the
+                                    // backend, so inferring the suite's own S would put an undischargeable effect
+                                    // inside the fiber.
+                                    Abort.run[FileLockException](Scope.run(FileSystem.awaitLock[Async](
                                         path,
                                         Path.LockWait.Until(deadline)
                                     )(attempt)))

@@ -1,4 +1,5 @@
 package kyo.internal.mysql
+
 import kyo.Chunk
 import kyo.Frame
 import kyo.Instant
@@ -9,6 +10,7 @@ import kyo.SqlRequestPeriodOverflowException
 import kyo.SqlSchema
 import kyo.SqlUnsupportedCustomTypeException
 import kyo.SqlUnsupportedTypeOnBackendException
+import kyo.internal.SqlJsonArray
 import kyo.internal.mysql.types.MysqlEncoder
 
 /** Maps `Codec.Writer` primitive calls to MySQL [[BoundMysqlParam]] instances.
@@ -106,13 +108,12 @@ final class MysqlParamWriter()(using frame: Frame) extends SqlCodec.Writer(frame
         _params += BoundMysqlParam(BigDecimal(value), MysqlEncoder.bigDecimalEncoder)
 
     override def duration(value: java.time.Duration): Unit =
-        // Guard against day-count overflow before the encoder writes bytes.
-        // Duration.toDays() returns getSeconds()/86400; check eagerly so the caller
-        // receives a typed leaf rather than an unchecked ArithmeticException.
-        val abs       = if value.isNegative then value.negated() else value
-        val totalDays = abs.toDays
-        if totalDays > Int.MaxValue.toLong then
-            throw SqlRequestDurationOverflowException(totalDays, "the MySQL TIME day-count range")
+        // The bound is the span a TIME column holds, not the day count the wire struct carries: the struct's field is
+        // four bytes and takes any span, while the column tops out at 838:59:59 and silently CLAMPS anything past it,
+        // reporting the write as successful.
+        val abs = if value.isNegative then value.negated() else value
+        if abs.getSeconds > MysqlTime.MaxSpanSeconds then
+            throw SqlRequestDurationOverflowException(abs.getSeconds, MysqlTime.SpanLimitDescription)
         end if
         _params += BoundMysqlParam(value, MysqlEncoder.durationEncoder)
     end duration
@@ -176,10 +177,10 @@ final class MysqlParamWriter()(using frame: Frame) extends SqlCodec.Writer(frame
     end calendarInterval
 
     override def arrayOfInt(values: Chunk[Int]): Unit =
-        string(MysqlJsonArray.encodeInts(values))
+        string(SqlJsonArray.encodeInts(values))
 
     override def arrayOfString(values: Chunk[String]): Unit =
-        string(MysqlJsonArray.encodeStrings(values))
+        string(SqlJsonArray.encodeStrings(values))
 
     override def arrayOfJson(values: Chunk[String]): Unit =
         // Each element is already a JSON document, so the array is their concatenation with separators.

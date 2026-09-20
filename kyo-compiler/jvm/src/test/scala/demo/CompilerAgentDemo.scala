@@ -39,10 +39,10 @@ import kyo.Compiler.Uri
   */
 object CompilerAgentDemo extends KyoApp:
 
-    /** The running compiler version. Must equal `build.sbt` `scala3Version` so the version-matched,
-      * `isolate = false` config routes to the in-process backend (no forked worker provisioned here).
+    /** The version of the compiler on this JVM's classpath, so the version-matched, `isolate = false`
+      * config routes to the in-process backend (no forked worker provisioned here).
       */
-    private val scalaVersion: String = "3.8.4"
+    private val scalaVersion: String = dotty.tools.dotc.config.Properties.versionNumberString
 
     /** The model's compile request. A one-field object because LLM tool-calling requires the parameter
       * schema to be a JSON object; the result reuses [[Compiler.Diagnostic]] directly.

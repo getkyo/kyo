@@ -7,4 +7,9 @@ import kyo.AllowUnsafe
   */
 private[kyo] object SystemPlatformSpecific:
     def userName()(using AllowUnsafe): String = HostConfig.property("user.name")
+
+    /** Both runtimes report the count available to this process, so the runtime's own answer is the right one here. The Scala.js shim is the
+      * one that has to look elsewhere, because Scala.js stubs this to 1 on every host.
+      */
+    def availableProcessors()(using AllowUnsafe): Int = Runtime.getRuntime.availableProcessors()
 end SystemPlatformSpecific

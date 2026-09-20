@@ -2,8 +2,8 @@ package kyo.stats.machine
 
 import kyo.*
 
-/** The single detached fiber that samples the host once per second straight into retained `kyo.Stat`
-  * handles.
+/** The single detached fiber that samples the host on a fixed cadence straight into retained `kyo.Stat`
+  * handles, at the `kyo.machine.interval` cadence.
   *
   * The READ, DECODE and OBSERVE path of a steady-state tick allocates ZERO heap bytes on every supported
   * OS, and that claim is MEASURED, on the real per-OS decode callbacks, at a per-op bound of zero bytes. It
@@ -119,9 +119,9 @@ private[kyo] object MachineSampler:
       * drift-corrected tick loop under this Scope, so the loop and the retained handles share one lifetime.
       *
       * Two fibers run under this Scope. The FAST fiber reads the in-kernel and proc families on a
-      * drift-corrected 1 Hz anchored schedule. The DISK fiber reads the one genuinely blockable family on its
-      * OWN cadence, and the fast fiber never awaits it, so a slow or dead mount can never delay a fast read of
-      * the same or the next tick. Both fibers are registered with the Scope for interrupt BEFORE the effect
+      * drift-corrected anchored schedule at the configured interval. The DISK fiber reads the one genuinely
+      * blockable family on its OWN fiber at the same interval, and the fast fiber never awaits it, so a slow
+      * or dead mount can never delay a fast read of the same or the next tick. Both fibers are registered with the Scope for interrupt BEFORE the effect
       * parks, and the buffer-closing finalizer is registered FIRST so it runs LAST (Scope finalizers are
       * LIFO): closing the Scope interrupts both fibers, then closes the reader's buffers and file handles, so
       * no fiber can read a closed handle. Awaiting the fast fiber's `get` (it never returns) keeps the Scope
@@ -142,7 +142,8 @@ private[kyo] object MachineSampler:
       */
     private[machine] def runWith(
         handles: MachineHandles,
-        buildMachine: MachineSampler => Machine < Sync
+        buildMachine: MachineSampler => Machine < Sync,
+        interval: Duration = kyo.machine.interval()
     )(using Frame): Unit < (Async & Scope) =
         for
             sampler  <- Sync.Unsafe.defer(new MachineSampler(handles))
@@ -153,27 +154,33 @@ private[kyo] object MachineSampler:
                 sampler.closeHandles()
                 diskExec.close()
             })
-            disk <- Clock.repeatAtInterval(diskInterval)(readDisksBounded(sampler, machine, diskExec))
+            disk <- Clock.repeatAtInterval(interval)(readDisksBounded(sampler, machine, diskExec))
             _    <- Scope.ensure(disk.interrupt.unit)
-            fast <- Clock.repeatAtInterval(Schedule.anchored(1.second))(readFast(machine))
+            fast <- Clock.repeatAtInterval(Schedule.anchored(interval))(readFast(machine))
             _    <- Scope.ensure(fast.interrupt.unit)
             _    <- fast.get
         yield ()
     end runWith
 
-    /** The disk read runs at this cadence on its own fiber. A cycle waits at most `diskReadTimeout` before it
-      * yields to the next cycle CHECK; the in-flight guard then keeps that next cycle from launching a second
-      * read while a timed-out one is still parked in its syscall. The timeout only bounds the DISK fiber; the
-      * fast fiber never waits on it, so its value is decoupled from the fast-read cadence.
+    /** Everything downstream of the sampler inherits its cadence: a consumer polling faster sees the same
+      * value repeated, because the signal only changes when the sampler ticks. A dashboard that wants
+      * sub-second host behaviour cannot get it by polling harder, which is why the producer's rate is
+      * settable at all. One sample a second is the default: one shared sampler at 1 Hz costs the host far
+      * less than N consumers polling `/proc` themselves.
       */
-    private val diskInterval    = 1.second
-    private val diskReadTimeout = 4.seconds
-
     /** The fast tick: reads every non-disk family straight into the retained cells. It never touches the disk
       * read, so nothing on this path can block on a mount.
       */
     private def readFast(machine: Machine)(using Frame): Unit < Async =
-        Sync.Unsafe.defer(machine.read())
+        Sync.Unsafe.defer {
+            // The reader degrades each family it cannot read, so a throw reaching here is an unexpected one.
+            // The loop still survives it: a sampler that dies takes every metric with it and says nothing,
+            // which is the failure mode this module can least afford. The cause is reported once.
+            try machine.read()
+            catch
+                case ex: Throwable if Machine.degradable(ex) =>
+                    discard(Machine.reportDegraded("the host reader's periodic tick", ex))
+        }
 
     /** One disk cycle on the detached disk fiber. It skips itself when a prior read is still outstanding
       * (parked in a blocking syscall), so a dead mount is read exactly once and never overlapped. Otherwise it
@@ -189,7 +196,7 @@ private[kyo] object MachineSampler:
             if !began then ()
             else
                 Abort.run[Timeout](
-                    Async.timeout(diskReadTimeout)(
+                    Async.timeout(kyo.machine.diskReadTimeout())(
                         diskExec.run {
                             try machine.readDisks()
                             finally sampler.diskReadDone()

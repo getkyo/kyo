@@ -1,6 +1,7 @@
 package kyo.internal.mysql
 
 import kyo.*
+import kyo.MysqlSessionVariableChangedException
 import kyo.SqlConnectionClosedException
 import kyo.SqlConnectionProtocolCorruptedException
 import kyo.SqlConnectionProtocolDecodeException
@@ -136,6 +137,26 @@ final class MysqlChannel(
       * drain) when the cleanup itself fails, meaning the TCP stream framing is irrecoverably broken.
       */
     private[mysql] def markCorrupted(operation: String)(using Frame): Unit < Sync = _corrupted.set(Maybe.Present(operation))
+
+    /** This connection's session view. On the channel because it is the one thing every packet passes through. */
+    private[mysql] val sessionState: MysqlSessionState = new MysqlSessionState
+
+    /** Folds a packet's status flags and session-state block into [[sessionState]], failing when the session moved under the driver.
+      *
+      * The statement that changed the variable is the one that fails, which is the only point a caller can still see which did it. It
+      * succeeded on the server, so the connection is marked unusable rather than reused.
+      */
+    private[mysql] def observeStatus(statusFlags: Short, warnings: Short, sessionStateInfo: Maybe[Span[Byte]])(using
+        Frame
+    ): Unit < (Async & Abort[SqlException]) =
+        Sync.defer(sessionState.observe(statusFlags & 0xffff, warnings & 0xffff, sessionStateInfo)).flatMap {
+            case Present(detail) =>
+                markCorrupted(s"session variable changed ($detail)").andThen(
+                    Abort.fail(MysqlSessionVariableChangedException(detail))
+                )
+            case Absent => ()
+        }
+    end observeStatus
 
     /** Registers a cleanup latch that blocks subsequent channel operations until cleanup finishes.
       *

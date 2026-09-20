@@ -1,4 +1,4 @@
-ThisBuild / scalaVersion := "3.8.3"
+ThisBuild / scalaVersion := sys.props("kyo.scalaVersion")
 ThisBuild / version      := "0.1.0-SNAPSHOT"
 
 // SDL2 worked example, event-loop style callbacks against a stub C ABI.

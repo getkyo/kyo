@@ -277,9 +277,10 @@ object JsonRpcEndpointImpl:
                     // Unsafe: written from the Sync-only decode callback, which has no Async to wait in.
                     val notificationTail = AtomicRef.Unsafe.init[Fiber[Unit, Any]](Fiber.unit)(using AllowUnsafe.embrace.danger)
 
-                    // Encode callback: runs in Sync-only context inside Exchange.apply.
-                    // Uses Kyo effect chaining (returns < Sync).
-                    val encodeCallback: (JsonRpcId, OutboundReq) => String < Sync =
+                    // Encode callback: runs inside Exchange.apply. An envelope the codec cannot encode
+                    // (extras carrying a reserved key) aborts JsonRpcError here, so the call fails naming
+                    // what actually failed instead of encoding to "" and surfacing as a wire decode error.
+                    val encodeCallback: (JsonRpcId, OutboundReq) => String < (Sync & Abort[JsonRpcError]) =
                         (id, req) =>
                             // Resolve extras with the now-known id; frame captured from initEngine
                             req.extras.resolve(id)(using frame).map { extrasVal =>
@@ -298,10 +299,9 @@ object JsonRpcEndpointImpl:
                                     // JsonRpcError for the unencodable cases; Abort.run reifies that so the
                                     // Success/non-Success branch shape is preserved.
                                     val env = JsonRpcRequest(id, req.method, req.encodedParams, extrasVal)
-                                    Abort.run[JsonRpcError](Structure.encode[JsonRpcEnvelope](env)(using config.codec, frame)).map {
-                                        case Result.Success(sv) => Json.encode[Structure.Value](sv)
-                                        case _                  => ""
-                                    }
+                                    Abort.catching[JsonRpcError](
+                                        Structure.encode[JsonRpcEnvelope](env)(using config.codec, frame)
+                                    ).map(Json.encode[Structure.Value](_))
                                 }
                             }
 
@@ -815,7 +815,7 @@ object JsonRpcEndpointImpl:
                                     Kyo.foreachDiscard(chunk) { msg =>
                                         msg match
                                             case WriterMsg.SendEnvelope(env) =>
-                                                Abort.run[Closed](transport.send(env)(using frame)).unit
+                                                Abort.run[Closed | JsonRpcError](transport.send(env)(using frame)).unit
 
                                             case WriterMsg.SuppressIfCancelled(id, env) =>
                                                 val shouldDrop: Boolean =
@@ -831,7 +831,7 @@ object JsonRpcEndpointImpl:
                                                 // Unsafe: remove from pendingInbound in writer loop (outside fiber)
                                                 Sync.Unsafe.defer(pendingInbound.remove(id)).andThen {
                                                     if shouldDrop then Kyo.unit
-                                                    else Abort.run[Closed](transport.send(env)(using frame)).unit
+                                                    else Abort.run[Closed | JsonRpcError](transport.send(env)(using frame)).unit
                                                 }
                                     }
                                 }

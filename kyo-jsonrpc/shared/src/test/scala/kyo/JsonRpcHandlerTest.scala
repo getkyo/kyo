@@ -25,7 +25,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
     private class CountingTransport(inner: JsonRpcTransport, val counter: AtomicInt.Unsafe)
         extends JsonRpcTransport:
 
-        def send(env: JsonRpcEnvelope)(using Frame): Unit < (Async & Abort[Closed]) =
+        def send(env: JsonRpcEnvelope)(using Frame): Unit < (Async & Abort[Closed | JsonRpcError]) =
             Sync.defer(discard(counter.incrementAndGet()(using AllowUnsafe.embrace.danger))).andThen(inner.send(env))
 
         def incoming(using Frame): Stream[JsonRpcEnvelope, Async & Abort[Closed]] =

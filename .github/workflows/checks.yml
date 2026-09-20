@@ -17,10 +17,11 @@ on:
     branches:
       - main
 
-# Without this, rapid pushes each hold a slot to completion while validating a commit that
-# is already stale, which is expensive when the job runs ~50 minutes.
+# A pull request keys on the PR number, so a new commit supersedes the run validating the previous
+# one. A push to main keys on the commit, so every main commit is validated rather than only the
+# newest.
 concurrency:
-  group: checks-${{ github.event.pull_request.number || github.ref }}
+  group: checks-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: true
 
 jobs:
@@ -77,17 +78,46 @@ jobs:
         uses: rhysd/actionlint@v1.7.12
 
       # --- then formatting (~3m) ---
-      - uses: coursier/cache-action@v8.1.1
-      - uses: coursier/setup-action@v3.0.2
+      # Same key namespace as .github/actions/setup, rather than coursier/cache-action's own. That action
+      # mints a cache entry per job name, each around 1.6 GB and each holding the same coursier tree the
+      # deps-<os>- entries already hold. Three of them resident at once take roughly half of GitHub's 10 GB
+      # per-repo budget, and eviction is what pushed the deps and kyo-browser entries out: a run on
+      # 2026-09-19 missed even the bare deps-windows-x64- and kyo-browser-windows-x64- prefixes, so the leg
+      # refetched every dependency and redownloaded chrome-headless-shell inside a test with a 60s timeout.
+      # Sharing the namespace both removes that pressure and warms this job from the far more frequent ci runs.
+      # This job runs on ubuntu-24.04-arm, which is the linux-arm64 pole.
+      #
+      # restore, not the full cache action: a key is immutable once written, so a job that saves first owns
+      # it. This job resolves scalafmt, actionlint and the doctest set, which is not the whole dependency
+      # tree a ci leg on this pole pulls, and minting the key from it would lock out the fuller save for
+      # that hash. The ci legs are the writers; every consumer here restores.
+      - uses: actions/cache/restore@v6
+        env:
+          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+        with:
+          path: |
+            ~/.cache/coursier
+            ~/Library/Caches/Coursier
+            ~/AppData/Local/Coursier/Cache
+            ~/.sbt
+            ~/.ivy2/cache
+          key: deps-linux-arm64-${{ hashFiles('build.sbt', 'project/build.properties', 'project/plugins.sbt', 'project/*.scala') }}
+          restore-keys: deps-linux-arm64-
+      - uses: coursier/setup-action@v3.0.3
         with:
           jvm: corretto:25
           apps: sbt
 
+      # scalafmtAll aggregates from the CURRENT project, and build.sbt makes that kyoJVM unless
+      # -Dplatform says otherwise, so a bare `sbt scalafmtAll` only ever reaches the JVM project set:
+      # every js/, native/ and js-wasm/ source stays unformatted and undetected. All four aggregates
+      # exist in every session regardless of -Dplatform, so naming them covers the whole tree in one
+      # project load (seconds, not a fourfold job).
       - name: Check formatting
         run: |
-          sbt scalafmtAll scalafmtSbt
+          sbt kyoJVM/scalafmtAll kyoJS/scalafmtAll kyoNative/scalafmtAll kyoWasm/scalafmtAll scalafmtSbt
           if ! git diff --quiet; then
-            echo "::error::Files are not formatted. Run 'sbt scalafmtAll scalafmtSbt' locally."
+            echo "::error::Files are not formatted. Run 'sbt kyoJVM/scalafmtAll kyoJS/scalafmtAll kyoNative/scalafmtAll kyoWasm/scalafmtAll scalafmtSbt' locally."
             git diff
             exit 1
           fi
@@ -109,6 +139,21 @@ jobs:
           # target is not preinstalled.
           bash scripts/apt-install.sh --if-missing cmake uuid-dev
           bash kyo-aeron/scripts/build-aeron.sh linux-aarch64
+
+      # SQLite (build-time only): `sbt doctest` compiles kyo-sql-sqlite's C shim together with the
+      # vendored engine from the gitignored staged tree. Same reason as the two above, and repeated
+      # here for the same reason: this workflow does not use .github/actions/setup. No os-arch, since
+      # SQLite is one architecture-independent source the plugin compiles per platform.
+      - name: Prepare SQLite
+        shell: bash
+        run: bash kyo-sql-sqlite/scripts/build-sqlite.sh
+
+      # DoltLite, for the same reason: `sbt doctest` compiles its shim against the staged library.
+      # Per os-arch, unlike SQLite, because it stages a compiled library rather than source, and this
+      # runner is pinned to ubuntu-24.04-arm.
+      - name: Prepare DoltLite
+        shell: bash
+        run: bash kyo-sql-doltlite/scripts/build-doltlite.sh linux-aarch64
 
       # Doctest result cache. Entries are keyed by SHA-256 over the block body, the scope closure
       # (preceding blocks and the predef), the classpath fingerprint, the Scala version and the

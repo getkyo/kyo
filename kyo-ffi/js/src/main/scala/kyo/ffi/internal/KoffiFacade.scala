@@ -255,7 +255,7 @@ object KoffiFacade:
         val lib = Koffi.load(libPath)
         val bag = js.Dynamic.literal()
         fns.foreach { fn =>
-            val args = js.Array(fn.args*)
+            val args     = js.Array(fn.args*)
             val fnHandle =
                 lib.applyDynamic("func")(fn.cSymbol.asInstanceOf[js.Any], fn.result.asInstanceOf[js.Any], args)
             bag.updateDynamic(fn.scalaName)(fnHandle)
@@ -366,7 +366,7 @@ object KoffiFacade:
       * "Duplicate type name" errors when the same struct is marshalled across multiple FFI calls.
       */
     private var protoIdCounter: Int = 0
-    def nextProtoId(): Int =
+    def nextProtoId(): Int          =
         protoIdCounter += 1
         protoIdCounter
 

@@ -276,17 +276,17 @@ private[kyo] object NodePathLock:
         cleanup: Result[FileLockException, Unit]
     )(using Frame): Result[FileLockException, A] =
         cleanup match
-            case Result.Success(_) => primary
+            case Result.Success(_)       => primary
             case Result.Failure(cleanup) =>
                 primary match
                     case Result.Success(_)       => Result.fail(cleanup)
                     case Result.Failure(primary) => Result.fail(FileLockCleanupException(target, primary, cleanup))
-                    case Result.Panic(primary) =>
+                    case Result.Panic(primary)   =>
                         primary.addSuppressed(cleanup)
                         Result.panic(primary)
             case Result.Panic(cleanup) =>
                 primary match
-                    case Result.Success(_) => Result.panic(cleanup)
+                    case Result.Success(_)       => Result.panic(cleanup)
                     case Result.Failure(primary) =>
                         cleanup.addSuppressed(primary)
                         Result.panic(cleanup)
@@ -330,8 +330,8 @@ private[kyo] object NodePathLock:
         owner: Owner,
         beforeCleanup: String => Unit
     )(using Frame): Result[FileLockException, Boolean] =
-        val temporary      = publicationPath(path, owner)
-        var temporaryOwned = false
+        val temporary                                     = publicationPath(path, owner)
+        var temporaryOwned                                = false
         val published: Result[FileLockException, Boolean] =
             try
                 if publicationBlocked(path) then Result.succeed(false)
@@ -357,7 +357,7 @@ private[kyo] object NodePathLock:
                     case e: Throwable                                                 => Result.panic(e)
         cleanup match
             case Result.Success(_) => published
-            case cleanupFailure =>
+            case cleanupFailure    =>
                 published match
                     case Result.Success(true) =>
                         withCleanup(target, cleanupFailure, releaseOwned(target, path, owner)) match
@@ -454,7 +454,7 @@ private[kyo] object NodePathLock:
                     case Result.Failure(error) => Result.fail(error)
                     case Result.Panic(error)   => Result.panic(error)
                     case Result.Success(false) => Result.fail(FileLockUnavailableException(target))
-                    case Result.Success(true) =>
+                    case Result.Success(true)  =>
                         gateAcquired = true
                         claimPublications(base).foreach(reclaimPublicationIfProvenDead)
                         val result =
@@ -491,7 +491,7 @@ private[kyo] object NodePathLock:
         if !gateAcquired then acquired
         else
             releaseOwned(target, gate, gateOwner) match
-                case Result.Success(_) => acquired
+                case Result.Success(_)     => acquired
                 case Result.Failure(error) =>
                     val gateFailure: Result[FileLockException, Path.RawLock] = Result.fail(error)
                     createdClaim match
@@ -1334,7 +1334,7 @@ abstract private[kyo] class PathPlatformSpecific extends PathDirectories:
             else
                 // Don't prepend separator for Windows drive-letter paths (e.g. "C:")
                 val hasDrive = nonEmpty.headOption.exists(s => s.length == 2 && s(1) == ':')
-                val raw =
+                val raw      =
                     if isAbs && !hasDrive then "/" + nonEmpty.mkString("/")
                     else if hasDrive then
                         // A drive designator head is the volume root, matching the JVM/Native

@@ -7,7 +7,7 @@ import scala.scalajs.js
 import scala.scalajs.js.annotation.*
 import scala.scalajs.js.typedarray.*
 import kyo.ffi.*
-import kyo.ffi.internal.{AbiCheck, JsRawSegment, KoffiFacade, KoffiFn, NativeLoader, StructAbiCheck}
+import kyo.ffi.internal.{AbiCheck, JsRawSegment, KoffiFacade, KoffiFn, NativeFacade, NativeLoader, StructAbiCheck}
 
 final class BorrowedBufferBindingsImpl extends BorrowedBufferBindings:
     import BorrowedBufferBindingsImpl.*
@@ -22,8 +22,8 @@ end BorrowedBufferBindingsImpl
 
 object BorrowedBufferBindingsImpl:
     AbiCheck.verify(1, "kyo.example.BorrowedBufferBindings")
-    private val facade = KoffiFacade.load(
-        NativeLoader.jsResolve("kyo_borrowed_buf"),
+    private val facade = NativeFacade.load(
+        "kyo_borrowed_buf",
         Seq(
             KoffiFn("mallocChunk", "malloc_chunk", "void*", Seq[js.Any]("int64".asInstanceOf[js.Any]))
         )

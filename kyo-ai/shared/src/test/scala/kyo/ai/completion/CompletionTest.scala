@@ -105,6 +105,57 @@ class CompletionTest extends kyo.test.Test[Any]:
         assert(ex.isInstanceOf[AITransientException], "a transport failure retries")
     }
 
+    "classifyHttp maps 408 to a transient AIProviderUnavailableException" in {
+        val ex = Completion.classifyHttp(Config.OpenAI.default, HttpStatusException(HttpStatus(408), "POST", "https://example.test"))
+        assert(ex.isInstanceOf[AIProviderUnavailableException])
+        assert(ex.isInstanceOf[AITransientException], "the server gave up on the request; try again")
+    }
+
+    "retryAfterOf reads retry-after-ms, delta-seconds, and an HTTP-date against the response date or now" in {
+        val now = Instant.parse("2026-09-18T10:00:00Z").getOrThrow
+        assert(Completion.retryAfterOf(HttpHeaders.empty, now) == Absent)
+        assert(Completion.retryAfterOf(HttpHeaders.empty.add("retry-after", "5"), now) == Present(5.seconds))
+        assert(Completion.retryAfterOf(HttpHeaders.empty.add("Retry-After", " 7 "), now) == Present(7.seconds))
+        assert(Completion.retryAfterOf(HttpHeaders.empty.add("retry-after-ms", "250").add("retry-after", "5"), now) == Present(250.millis))
+        assert(Completion.retryAfterOf(HttpHeaders.empty.add("retry-after", "Fri, 18 Sep 2026 10:00:30 GMT"), now) == Present(30.seconds))
+        assert(
+            Completion.retryAfterOf(
+                HttpHeaders.empty.add("retry-after", "Fri, 18 Sep 2026 10:00:30 GMT").add("date", "Fri, 18 Sep 2026 10:00:20 GMT"),
+                now
+            ) == Present(10.seconds)
+        )
+        assert(Completion.retryAfterOf(
+            HttpHeaders.empty.add("retry-after", "Fri, 18 Sep 2026 09:00:00 GMT"),
+            now
+        ) == Present(Duration.Zero))
+        assert(Completion.retryAfterOf(HttpHeaders.empty.add("retry-after", "soon"), now) == Absent)
+        assert(Completion.retryAfterOf(HttpHeaders.empty.add("retry-after", "-3"), now) == Absent)
+    }
+
+    "awaitRetryAfter sleeps the asked wait, capped at the deadline, then re-raises; other failures pass through" in {
+        Clock.withTimeControl { control =>
+            val throttled: Unit < (Async & Abort[AIGenException]) = Abort.fail(AIRateLimitException("p", "slow", Present(5.seconds)))
+            for
+                fiber   <- Fiber.init(Abort.run[AIGenException](Completion.awaitRetryAfter(60.seconds)(throttled)))
+                _       <- control.awaitPendingSleepers(1)
+                _       <- control.advance(4.seconds, 50.millis)
+                early   <- fiber.done
+                _       <- control.advance(2.seconds, 50.millis)
+                result  <- fiber.get
+                capped  <- Fiber.init(Abort.run[AIGenException](Completion.awaitRetryAfter(1.second)(throttled)))
+                _       <- control.awaitPendingSleepers(1)
+                _       <- control.advance(1.second, 50.millis)
+                cappedR <- capped.get
+                other <- Abort.run[AIGenException](Completion.awaitRetryAfter(60.seconds)(Abort.fail(AIProviderAuthException("p", "401"))))
+            yield
+                assert(!early, "the failure must not re-raise before the asked wait")
+                assert(result.failure.exists(_.isInstanceOf[AIRateLimitException]))
+                assert(cappedR.failure.exists(_.isInstanceOf[AIRateLimitException]), "a wait past the deadline is cut to it")
+                assert(other.failure.exists(_.isInstanceOf[AIProviderAuthException]))
+            end for
+        }
+    }
+
     // Stands up the failing endpoint itself rather than scripting one, so the provider-server gate does not cover it.
     "the streaming error path types an HTTP failure identically to gen (routed through classifyHttp, not blanket AITransportException)".notBrowser in {
         val route = HttpRoute.postRaw("unauthorized").request(_.bodyText).handler { _ => HttpResponse.unauthorized }

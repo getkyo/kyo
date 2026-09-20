@@ -138,7 +138,10 @@ object System:
                     end match
                 end architecture
 
-                def availableProcessors()(using AllowUnsafe): Int = Runtime.getRuntime.availableProcessors()
+                // Delegated to the platform shim for the same reason `osName` is: Scala.js's
+                // `Runtime.getRuntime.availableProcessors()` is a stub that answers 1 on every host, so the
+                // JS shim reads the count Node (or the browser) actually reports.
+                def availableProcessors()(using AllowUnsafe): Int = SystemPlatformSpecific.availableProcessors()
         )
 
     /** A System whose environment variables and system properties are exactly `env` and `properties`, whatever the host holds, and whose

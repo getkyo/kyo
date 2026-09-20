@@ -1,4 +1,4 @@
-ThisBuild / scalaVersion := "3.8.3"
+ThisBuild / scalaVersion := sys.props("kyo.scalaVersion")
 ThisBuild / version      := "0.1.0-SNAPSHOT"
 
 // With ffiStrictBlocking := true, a method whose resolved C symbol is on the

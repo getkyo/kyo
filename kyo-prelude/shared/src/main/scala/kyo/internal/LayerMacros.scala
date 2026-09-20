@@ -2,8 +2,18 @@ package kyo.internal
 
 import kyo.*
 import kyo.Ansi.*
+import scala.annotation.publicInBinary
 import scala.quoted.*
 
+/** Builds dependency compositions for [[kyo.Layer]].
+  *
+  * The public inline layer factory invokes this implementation while compiling a caller.
+  * It resolves the supplied layers into a graph for the requested target type.
+  * Missing inputs, ambiguous inputs, and dependency cycles produce compilation errors.
+  *
+  * Public binary visibility supports inline callers while Scala access remains restricted to kyo.
+  */
+@publicInBinary
 private[kyo] object LayerMacros:
 
     transparent inline def reflect(using q: Quotes): q.reflectModule = q.reflect

@@ -56,11 +56,27 @@ object StartupExchange:
         mechanismCapture: Maybe[AtomicRef[String]],
         applicationName: Maybe[String] = Absent
     )(using Frame): StartupResult < (Async & Abort[SqlException]) =
+        // `TimeZone` and `DateStyle` are pinned for the reason `client_encoding` is: each decides how the server
+        // spells a value the driver has to read back, and a session that inherits the server's default leaves the
+        // driver reading a shape it did not choose. `TimeZone` moves a timestamptz's fields and offset, and a
+        // non-ISO `DateStyle` reorders a date's, which a parse expecting ISO reads as a different date rather than
+        // as a failure (`01/02/2026` is January 2nd under one setting and February 1st under another).
+        //
+        // The rendering path does not depend on this: it parses whatever offset arrives and normalises to UTC. The
+        // pin is what makes the typed decoders' assumption true by construction rather than by luck.
+        //
+        // `default_transaction_isolation` because the engines default to DIFFERENT levels, so a transaction naming
+        // none means different things per deployment. Both implement all four, so this is session state the driver
+        // owes an answer for. READ COMMITTED rather than the stricter level, which here is snapshot isolation and can
+        // abort with a serialization failure the caller must retry.
         val params = Chunk(
             ("user", user),
             ("database", db),
             ("application_name", applicationName.getOrElse(defaultApplicationName)),
-            ("client_encoding", "UTF8")
+            ("client_encoding", "UTF8"),
+            ("TimeZone", "UTC"),
+            ("DateStyle", "ISO"),
+            ("default_transaction_isolation", "read committed")
         )
         val startupMarshaller = channel.marshallers.startupMessage
         channel.send(StartupMessage(params))(using startupMarshaller).andThen {

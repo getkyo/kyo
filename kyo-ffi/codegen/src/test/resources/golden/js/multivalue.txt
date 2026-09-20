@@ -7,7 +7,7 @@ import scala.scalajs.js
 import scala.scalajs.js.annotation.*
 import scala.scalajs.js.typedarray.*
 import kyo.ffi.*
-import kyo.ffi.internal.{AbiCheck, JsRawSegment, KoffiFacade, KoffiFn, NativeLoader, StructAbiCheck}
+import kyo.ffi.internal.{AbiCheck, JsRawSegment, KoffiFacade, KoffiFn, NativeFacade, NativeLoader, StructAbiCheck}
 
 final class MultiValueBindingsImpl extends MultiValueBindings:
     import MultiValueBindingsImpl.*
@@ -24,8 +24,8 @@ end MultiValueBindingsImpl
 object MultiValueBindingsImpl:
     AbiCheck.verify(1, "kyo.example.MultiValueBindings")
     private val readResultKoffiType: js.Dynamic = KoffiFacade.struct("ReadResult", js.Dynamic.literal("bytesRead" -> "int".asInstanceOf[js.Any], "eof" -> "int".asInstanceOf[js.Any]))
-    private val facade = KoffiFacade.load(
-        NativeLoader.jsResolve("kyo_mv"),
+    private val facade = NativeFacade.load(
+        "kyo_mv",
         Seq(
             KoffiFn("readInto", "read_into", "int", Seq[js.Any]("int".asInstanceOf[js.Any], "void*".asInstanceOf[js.Any], "int*".asInstanceOf[js.Any]))
         )

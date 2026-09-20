@@ -1,7 +1,7 @@
 import scala.scalanative.sbtplugin.ScalaNativePlugin
 import scala.scalanative.sbtplugin.ScalaNativePlugin.autoImport._
 
-ThisBuild / scalaVersion := "3.8.3"
+ThisBuild / scalaVersion := sys.props("kyo.scalaVersion")
 ThisBuild / version      := "0.1.0-SNAPSHOT"
 
 // Native-only end-to-end: Scala Native project that binds to a C lib. The

@@ -779,28 +779,37 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
                 assert(preempted)
             }
         }
-        "drains queue only once when transitioning to stalled state" in withWorker { worker =>
-            scheduled.set(0)
-            val cdl         = new CountDownLatch(1)
-            val stalledTask = TestTask(_run = () => {
-                cdl.await()
-                Task.Done
-            })
-            worker.enqueue(stalledTask)
+        "drains the queue on the transition to stalled and again for what arrives while the task stays over its slice" in withWorker {
+            worker =>
+                scheduled.set(0)
+                val cdl         = new CountDownLatch(1)
+                val stalledTask = TestTask(_run = () => {
+                    cdl.await()
+                    Task.Done
+                })
+                worker.enqueue(stalledTask)
 
-            for (_ <- 1 to 5) {
+                for (_ <- 1 to 5) {
+                    worker.enqueue(TestTask())
+                }
+
+                // The first check past the slice takes the Running -> Stalled edge and drains the five queued tasks.
+                eventually(assert(!worker.checkAvailability(System.currentTimeMillis())))
+                assert(scheduled.get() == 5)
+                // The worker is already Stalled, and its task is still over its slice: a task that arrives now is drained
+                // by the next check rather than left behind a task that is not yielding. A check with nothing queued drains
+                // nothing.
+                assert(!worker.checkAvailability(System.currentTimeMillis()))
+                assert(scheduled.get() == 5)
                 worker.enqueue(TestTask())
-            }
+                assert(!worker.checkAvailability(System.currentTimeMillis()))
+                assert(scheduled.get() == 6)
+                worker.enqueue(TestTask())
+                assert(!worker.checkAvailability(System.currentTimeMillis()))
+                assert(scheduled.get() == 7)
 
-            eventually(assert(!worker.checkAvailability(System.currentTimeMillis())))
-            worker.enqueue(TestTask())
-            assert(!worker.checkAvailability(System.currentTimeMillis()))
-            worker.enqueue(TestTask())
-            assert(!worker.checkAvailability(System.currentTimeMillis()))
-
-            assert(scheduled.get() == 5)
-            cdl.countDown()
-            eventually(assert(worker.checkAvailability(System.currentTimeMillis())))
+                cdl.countDown()
+                eventually(assert(worker.checkAvailability(System.currentTimeMillis())))
         }
         "a Stalled worker still preempts its CPU-bound task when fresh work queues up (wedge regression)" in withWorker { worker =>
             // Regression for the scheduler wedge (kyo-core AsyncTest hang under CPU-bound load):
@@ -915,6 +924,46 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
             worker.blocked = false
             done.countDown()
             eventually(assert(blocking.executions == 1))
+        }
+
+        "a task enqueued after the worker stalled on a task that ignores preemption is still drained" in {
+            val drained = new java.util.concurrent.ConcurrentLinkedQueue[Task]()
+            val started = new CountDownLatch(1)
+            val release = new CountDownLatch(1)
+            val worker  = createWorker(
+                executor = executor,
+                scheduleTask = (t, _) => { val _ = drained.add(t) }
+            )
+            // Runs past its slice without honoring the preemption issued for it, the way a nested evaluation (a
+            // finalizer, an unsafe run) or a step with no suspension point does. It spins rather than parks, so the
+            // BlockingMonitor never flags the worker blocked: the worker is Stalled and nothing else.
+            val spinning = TestTask(_run = () => {
+                started.countDown()
+                while (release.getCount() > 0) {}
+                Task.Done
+            })
+            worker.enqueue(spinning)
+            assert(started.await(5, TimeUnit.SECONDS))
+
+            // First check past the slice takes the Running -> Stalled edge and drains whatever was queued at that instant.
+            eventually {
+                assert(!worker.checkAvailability(System.currentTimeMillis()))
+            }
+            drained.clear()
+
+            // A task lands here now, with the worker already Stalled and its task not yielding. Only the worker itself
+            // serves its queue, and it will not before the task yields, so without a drain the task sits for as long as
+            // the spin lasts, however many other workers are idle: an idle worker is only woken by an enqueue onto itself.
+            val stranded = TestTask()
+            worker.enqueue(stranded)
+            val _ = worker.checkAvailability(System.currentTimeMillis())
+            assert(
+                drained.contains(stranded),
+                "a task enqueued onto a stalled worker whose task ignores preemption must be drained, or it strands until that task yields"
+            )
+
+            release.countDown()
+            eventually(assert(spinning.executions == 1))
         }
 
         "cleared blocked flag restores availability" in {

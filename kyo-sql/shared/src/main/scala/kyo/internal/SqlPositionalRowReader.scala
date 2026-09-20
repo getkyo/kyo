@@ -45,7 +45,7 @@ abstract class SqlPositionalRowReader(row: SqlRow, matchesFieldAt: Maybe[(Int, S
     /** Resolves the row field the column at `index` belongs to, through the matcher the codec built; positional when no matcher or no
       * field matches. See the block comment on [[SqlFieldMatcher]] for why a blanket positional accept would corrupt a by-name decode.
       */
-    override private[kyo] def fieldIndex(index: Int, names: Chunk[String]): Int =
+    override def fieldIndex(index: Int, names: Chunk[String]): Int =
         var j = 0
         while j < names.size do
             if matches(index, names(j)) then return j
@@ -68,7 +68,7 @@ object SqlPositionalRowReader:
       * decode failure is thrown, as everywhere in the reader contract. The backend supplies its own unspecified type token, its own row
       * codec, and the reader to run.
       */
-    private[kyo] def readSingleValue[A](
+    def readSingleValue[A](
         column: SqlSchema.Column[A],
         bytes: Span[Byte],
         unspecifiedToken: Int,

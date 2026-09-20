@@ -116,9 +116,9 @@ private[kyo] object DomBackend:
             _ <- Sync.defer(diagnostics.drainInstalled(drain))
             // Finalizers are LIFO. Register the drain first, then the channel, then listeners, so teardown
             // removes callbacks before closing their queue and finally interrupts and joins the drain.
-            _ <- Scope.ensure(events.close.andThen(Sync.defer(diagnostics.channelClosed())).unit)
-            _ <- setupEventDelegation(dispatch.handle, events)
-            _ <- setupInputMasking()
+            _           <- Scope.ensure(events.close.andThen(Sync.defer(diagnostics.channelClosed())).unit)
+            _           <- setupEventDelegation(dispatch.handle, events)
+            _           <- setupInputMasking()
             dragRuntime <- DomDragRuntime.install(
                 container,
                 event =>
@@ -152,7 +152,7 @@ private[kyo] object DomBackend:
       */
     private def resolveLocal(sessionId: String, decision: Drag.Decision)(using Frame): Unit < Async =
         Sync.defer {
-            val detail = Json.encode[HtmlOp](HtmlOp.ResolveDrag(sessionId, decision))
+            val detail  = Json.encode[HtmlOp](HtmlOp.ResolveDrag(sessionId, decision))
             val publish = () =>
                 val event = js.Dynamic.newInstance(dom.window.asInstanceOf[js.Dynamic].CustomEvent)(
                     "kyo:resolve-drag",
@@ -325,7 +325,7 @@ private[kyo] object DomBackend:
     end LocalExchange
 
     private def readSelection(el: dom.Element): (Maybe[Int], Maybe[Int]) =
-        val dyn = el.asInstanceOf[scalajs.js.Dynamic]
+        val dyn                                      = el.asInstanceOf[scalajs.js.Dynamic]
         def asInt(v: scalajs.js.Dynamic): Maybe[Int] =
             if scalajs.js.typeOf(v) == "number" then Present(v.asInstanceOf[Int]) else Absent
         (asInt(dyn.selectionStart), asInt(dyn.selectionEnd))
@@ -347,7 +347,7 @@ private[kyo] object DomBackend:
       * one that was already on screen: an echo re-render of an open overlay must not steal focus back from the user.
       */
     private def focusAutoPaths(root: dom.Element): Set[String] =
-        val els = root.querySelectorAll("[data-kyo-focus-auto]")
+        val els         = root.querySelectorAll("[data-kyo-focus-auto]")
         val descendants = (0 until els.length).flatMap { i =>
             Maybe(els(i).asInstanceOf[dom.Element].getAttribute("data-kyo-path")).toList
         }.toSet
@@ -377,7 +377,7 @@ private[kyo] object DomBackend:
             val p = el.getAttribute("data-kyo-path")
             p != null && !oldSet.contains(p)
         }.foreach { el =>
-            val ae = document.activeElement
+            val ae  = document.activeElement
             val ret =
                 if ae != null && (ae ne document.body) then Maybe(ae.getAttribute("data-kyo-path"))
                 else Absent
@@ -414,7 +414,7 @@ private[kyo] object DomBackend:
         val byPath = locator.path.flatMap { path =>
             Maybe.fromOption(roots.iterator.flatMap { root =>
                 val descendants = root.querySelectorAll("[data-kyo-path]")
-                val candidates =
+                val candidates  =
                     Iterator.single(root) ++ (0 until descendants.length).iterator.map { i =>
                         descendants(i).asInstanceOf[dom.Element]
                     }
@@ -646,7 +646,7 @@ private[kyo] object DomBackend:
                     if t == "click" then
                         val targetId = Maybe(e.target.asInstanceOf[dom.Element].id).filter(_.nonEmpty)
                         val me       = e.asInstanceOf[dom.MouseEvent]
-                        val mouse = MouseEventData(
+                        val mouse    = MouseEventData(
                             modifiers = UI.Modifiers(me.ctrlKey, me.altKey, me.shiftKey, me.metaKey),
                             targetId = targetId
                         )
@@ -687,7 +687,7 @@ private[kyo] object DomBackend:
                         if clickSubmitGuard then Absent
                         else
                             val submitTargetId = Maybe(e.target.asInstanceOf[dom.Element].id).filter(_.nonEmpty)
-                            val submitMouse = MouseEventData(
+                            val submitMouse    = MouseEventData(
                                 modifiers = UI.Modifiers.none,
                                 targetId = submitTargetId
                             )
@@ -798,7 +798,7 @@ private[kyo] object DomBackend:
     /** The set of `data-kyo-path` values of every `data-kyo-enter` element inside `root`, `root` itself included. */
     private def enterPaths(root: dom.Element): Set[String] =
         val els = root.querySelectorAll("[data-kyo-enter]")
-        val ds = (0 until els.length).flatMap { i =>
+        val ds  = (0 until els.length).flatMap { i =>
             Maybe(els(i).asInstanceOf[dom.Element].getAttribute("data-kyo-path")).toList
         }.toSet
         if root.hasAttribute("data-kyo-enter") && root.hasAttribute("data-kyo-path") then
@@ -817,7 +817,7 @@ private[kyo] object DomBackend:
 
     private def seedEnter(newRoots: Seq[dom.Element], oldSet: Set[String]): Unit =
         newRoots.foreach { newRoot =>
-            val els = newRoot.querySelectorAll("[data-kyo-enter]")
+            val els  = newRoot.querySelectorAll("[data-kyo-enter]")
             val cand =
                 (if newRoot.hasAttribute("data-kyo-enter") then Seq(newRoot) else Seq.empty) ++
                     (0 until els.length).map(els(_).asInstanceOf[dom.Element])
@@ -839,7 +839,7 @@ private[kyo] object DomBackend:
     private def leavePaths(roots: Seq[dom.Element]): Set[String] =
         roots.iterator.flatMap { root =>
             val descendants = root.querySelectorAll("[data-kyo-leave]")
-            val elements =
+            val elements    =
                 (if root.hasAttribute("data-kyo-leave") then Iterator.single(root) else Iterator.empty) ++
                     (0 until descendants.length).iterator.map(descendants(_).asInstanceOf[dom.Element])
             elements.flatMap(element => Maybe(element.getAttribute("data-kyo-path")).toList)
@@ -911,7 +911,7 @@ private[kyo] object DomBackend:
             val cls     = leave.split("\\s+").filter(_.nonEmpty)
             val clsList = g.asInstanceOf[scalajs.js.Dynamic].classList
             discard(dom.window.requestAnimationFrame((_: Double) => cls.foreach(c => clsList.add(c))))
-            var done = false
+            var done            = false
             def cleanup(): Unit =
                 if !done then
                     done = true
@@ -960,9 +960,9 @@ private[kyo] object DomBackend:
                 val filt        = if isTextField then el.getAttribute("data-kyo-filter") else null
                 val mask        = if isTextField then el.getAttribute("data-kyo-mask") else null
                 if filt != null || mask != null then
-                    val t   = tRaw.asInstanceOf[dom.html.Input]
-                    val dyn = e.asInstanceOf[scalajs.js.Dynamic]
-                    val it  = if scalajs.js.typeOf(dyn.inputType) == "string" then dyn.inputType.asInstanceOf[String] else ""
+                    val t             = tRaw.asInstanceOf[dom.html.Input]
+                    val dyn           = e.asInstanceOf[scalajs.js.Dynamic]
+                    val it            = if scalajs.js.typeOf(dyn.inputType) == "string" then dyn.inputType.asInstanceOf[String] else ""
                     def selStart: Int =
                         val d = t.asInstanceOf[scalajs.js.Dynamic]
                         if scalajs.js.typeOf(d.selectionStart) == "number" then d.selectionStart.asInstanceOf[Int] else t.value.length
@@ -1044,7 +1044,7 @@ private[kyo] object DomBackend:
                 val filt = el.getAttribute("data-kyo-filter")
                 val mask = el.getAttribute("data-kyo-mask")
                 val v    = t.value
-                val nv =
+                val nv   =
                     if filt != null then InputMasking.filterStr(filt, v, "")
                     else if mask != null then InputMasking.maskNormalize(mask, v)
                     else v

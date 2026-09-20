@@ -94,7 +94,7 @@ class MysqlDialectRenderTest extends Test:
         val rm = q.render(MysqlDialect)
         assert(
             rm.onlySql.get ==
-                "SELECT `p`.`id`, `p`.`name`, `p`.`age`, `p`.`deptId` FROM `person` `p` WHERE (`p`.`age` >= ?) ORDER BY `p`.`age` DESC LIMIT 10"
+                "SELECT `p`.`id`, `p`.`name`, `p`.`age`, `p`.`deptId` FROM `person` `p` WHERE (`p`.`age` >= ?) ORDER BY `p`.`age` IS NOT NULL, `p`.`age` DESC LIMIT 10"
         )
         assert(rm.params.size == 1)
         val bv: kyo.Sql.BoundValue[?] = rm.params.head

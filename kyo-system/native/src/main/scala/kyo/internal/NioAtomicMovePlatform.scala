@@ -40,7 +40,7 @@ private[kyo] object NioAtomicMovePlatform:
             if Platform.isWindows then
                 val replaceFlag = if replace == Path.Replace.Existing then MOVEFILE_REPLACE_EXISTING else 0.toUInt
                 val flags       = MOVEFILE_WRITE_THROUGH | replaceFlag
-                val moved = MoveFileExW(
+                val moved       = MoveFileExW(
                     toCWideStringUTF16LE(sourceAbsolute),
                     toCWideStringUTF16LE(targetAbsolute),
                     flags

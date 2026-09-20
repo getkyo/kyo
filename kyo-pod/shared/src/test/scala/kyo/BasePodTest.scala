@@ -98,15 +98,15 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
                     }
                 }
 
-                // The shell arm shells out to the runtime's CLI, so it is gated on the CLI the way the http arm is
-                // gated on the socket. A host that reaches a daemon over a socket alone (a mounted socket inside a
-                // container) has no CLI to run, and registering the arm there produced a leaf per shell test that
-                // could only fail on a missing binary.
-                if ContainerRuntime.cliExists(runtime) then
-                    "shell" in {
-                        Container.withBackendConfig(_.Shell(runtime))(checkingContainerLeak(v))
-                    }
-                end if
+                "shell" in {
+                    // The http arm above needs a socket to talk to; this one needs a CLI that reaches the
+                    // daemon. A runtime reached through a mounted socket with no CLI installed (a build
+                    // container, and any CI runner wired the same way) is genuinely available for HTTP and
+                    // cannot serve Shell at all. Cancelled rather than unregistered so the skip is visible in
+                    // the run's own totals instead of the leaf silently not existing.
+                    requireRuntimeCli(runtime)
+                    Container.withBackendConfig(_.Shell(runtime))(checkingContainerLeak(v))
+                }
             }
         }
 
@@ -127,15 +127,15 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
                     }
                 }
 
-                // The shell arm shells out to the runtime's CLI, so it is gated on the CLI the way the http arm is
-                // gated on the socket. A host that reaches a daemon over a socket alone (a mounted socket inside a
-                // container) has no CLI to run, and registering the arm there produced a leaf per shell test that
-                // could only fail on a missing binary.
-                if ContainerRuntime.cliExists(runtime) then
-                    "shell" in {
-                        Container.withBackendConfig(_.Shell(runtime))(checkingContainerLeak(v))
-                    }
-                end if
+                "shell" in {
+                    // The http arm above needs a socket to talk to; this one needs a CLI that reaches the
+                    // daemon. A runtime reached through a mounted socket with no CLI installed (a build
+                    // container, and any CI runner wired the same way) is genuinely available for HTTP and
+                    // cannot serve Shell at all. Cancelled rather than unregistered so the skip is visible in
+                    // the run's own totals instead of the leaf silently not existing.
+                    requireRuntimeCli(runtime)
+                    Container.withBackendConfig(_.Shell(runtime))(checkingContainerLeak(v))
+                }
             }
         }
 

@@ -1,0 +1,77 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>doltlite persistence in a browser</title>
+<!--
+  Whether a database can OUTLIVE the page. The default VFS keeps it in memory; persistence goes through the `opfs`
+  VFS, which needs a cross-origin-isolated page (serve.py sends the headers) and a worker.
+
+  Driven through the package's OWN worker1 promiser. Two nearby routes are easy to reach for and do not work: the
+  pooled `opfs-sahpool` VFS installs and opens a database, then fails every statement including `SELECT 1` with
+  SQLITE_NOTFOUND, because this engine replaces SQLite's storage layer and needs file-control operations that VFS
+  does not implement; and a worker that loads the module itself registers the `opfs` VFS name but never completes
+  its async-proxy handshake, leaving a null function pointer at open time and logging nothing.
+
+  Run it with ../browser-check.sh.
+-->
+<div id="out">PENDING</div>
+<script type="module">
+  const out = document.getElementById('out');
+  const lines = [];
+  try {
+    lines.push('ISOLATED=' + self.crossOriginIsolated);
+    // The module's DEFAULT export is sqlite3Worker1Promiser.v2 itself, not a namespace holding it.
+    const promiserFactory = (await import(
+      './node_modules/@dolthub/doltlite-wasm/sqlite3-worker1-promiser.mjs'
+    )).default;
+    const promiser = await promiserFactory();
+    lines.push('PROMISER=ready');
+
+    const cfg = await promiser('config-get', {});
+    lines.push('VFSES=' + (cfg.result.vfsList || []).join(','));
+
+    // A clean slate, so the reopen below reads THIS run's write and not an earlier run's leftovers.
+    try {
+      const root = await navigator.storage.getDirectory();
+      await root.removeEntry('persist.db', { recursive: true });
+    } catch (e) { /* absent on the first run, which is the normal case */ }
+
+    const open = async () => {
+      const r = await promiser('open', { filename: 'file:persist.db?vfs=opfs' });
+      return r.dbId;
+    };
+
+    let dbId = await open();
+    lines.push('OPENED');
+    await promiser('exec', { dbId, sql: 'CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)' });
+    await promiser('exec', { dbId, sql: "INSERT INTO t VALUES (1, 'kept')" });
+    const committed = await promiser('exec', {
+      dbId, sql: "SELECT dolt_commit('-Am','persisted')", rowMode: 'array', returnValue: 'resultRows'
+    });
+    lines.push('WROTE commit=' + String(committed.result.resultRows[0][0]).slice(0, 12));
+    await promiser('close', { dbId });
+
+    // A NEW connection to the same OPFS file, after the first was closed.
+    dbId = await open();
+    const read = await promiser('exec', {
+      dbId, sql: 'SELECT v FROM t WHERE id = 1', rowMode: 'array', returnValue: 'resultRows'
+    });
+    const log = await promiser('exec', {
+      dbId, sql: 'SELECT COUNT(*) FROM dolt_log', rowMode: 'array', returnValue: 'resultRows'
+    });
+    await promiser('close', { dbId });
+
+    const value = read.result.resultRows[0][0];
+    const commits = log.result.resultRows[0][0];
+    lines.push('REOPENED value=' + value + ' commits=' + commits);
+    if (value !== 'kept') throw new Error('the row did not survive the reopen');
+    if (!(Number(commits) >= 1)) throw new Error('the commit history did not survive the reopen, got ' + commits);
+    lines.push('RESULT OK');
+  } catch (e) {
+    lines.push('RESULT FAILED ' + (e && e.message ? e.message : (e && e.result ? e.result.message : String(e))));
+  }
+  const report = lines.join(' | ');
+  out.textContent = report;
+  // Reported to the SERVER, not just written into the DOM, because --dump-dom waits for a Chrome exit that a
+  // page holding a WebAssembly module never reaches.
+  try { await fetch('/done?report=' + encodeURIComponent(report)); } catch (e) { /* the log is the channel */ }
+</script>

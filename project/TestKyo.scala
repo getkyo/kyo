@@ -15,7 +15,7 @@ import scala.sys.process.*
   *   - `testKyo` diff vs origin/main, all platforms, every Scala version
   *   - `testKyo JVM` diff vs origin/main, JVM only
   *   - `testKyo --all Native` full test, Native only
-  *   - `testKyo --scala 2.13.18 JVM` diff, Scala 2.13, JVM only (auto-discovers modules)
+  *   - `testKyo --scala 2 JVM` diff, the Scala 2 cross-build, JVM only (auto-discovers modules)
   *   - `testKyo --scala 3 --all JVM` full test, primary Scala 3 version only
   *   - `testKyo --cross JVM` the Scala 2.x cross-build passes only
   *   - `testKyo --exclude kyo-aeron,kyo-sql --all Native` full test minus those cross-projects
@@ -711,7 +711,9 @@ object TestKyo {
         allRefs.map(ref => ref -> closure(ref, Set(ref))).toMap
     }
 
-    /** Resolve shorthand scala versions: "2" → "2.13.18", "3" → "3.8.2", or pass through exact versions. */
+    /** Resolve shorthand scala versions: "2" to the Scala 2 version in crossScalaVersions, "3" to the
+      * build's scalaVersion, or pass through exact versions.
+      */
     private def resolveScalaVersion(input: String, extracted: Extracted): String =
         input match {
             case "2" =>

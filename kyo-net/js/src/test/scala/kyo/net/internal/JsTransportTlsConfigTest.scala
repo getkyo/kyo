@@ -59,7 +59,7 @@ class JsTransportTlsConfigTest extends Test:
         val tls       = NetTlsConfig(certChainPath = Present(unreadablePath()), privateKeyPath = Present(keyPath))
         Abort.run[NetException](transport.listenTls("127.0.0.1", 0, 128, tls)(_ => ()).safe.get).map {
             case Result.Failure(_: NetTlsConfigException) => succeed
-            case Result.Success(listener) =>
+            case Result.Success(listener)                 =>
                 listener.close()
                 fail("a listen with an unreadable configured certChainPath must not bind")
             case other => fail(s"expected Failure(NetTlsConfigException) on the declared channel, got: $other")
@@ -71,7 +71,7 @@ class JsTransportTlsConfigTest extends Test:
         val tls       = NetTlsConfig(caCertPath = Present(unreadablePath()))
         Abort.run[NetException](transport.connectTls("127.0.0.1", 1, tls).safe.get).map {
             case Result.Failure(_: NetTlsConfigException) => succeed
-            case Result.Success(conn) =>
+            case Result.Success(conn)                     =>
                 conn.close()
                 fail("a connect with an unreadable configured caCertPath must not succeed")
             case other => fail(s"expected Failure(NetTlsConfigException) on the declared channel, got: $other")

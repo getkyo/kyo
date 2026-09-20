@@ -1086,7 +1086,7 @@ object Tasty:
       * carried as fields so the caller can report the mismatch.
       */
     final case class Version(major: Int, minor: Int, experimental: Int):
-        /** Render the version as `"<major>.<minor>.<experimental>"` (e.g. `"28.8.0"`). */
+        /** Render the version as `"<major>.<minor>.<experimental>"` (e.g. `"28.9.0"`). */
         def show: String = s"$major.$minor.$experimental"
 
     /** The Scala 3 TASTy format version this kyo-tasty release targets.
@@ -1094,10 +1094,10 @@ object Tasty:
       * Pickles whose major version differs from this value fail to load with
       * `TastyError.UnsupportedVersion(found, supported)`. The minor version is the tail of a backwards-compatible
       * range: pickles with a minor at or below this number are accepted. Bump this value when picking up a new
-      * Scala 3 minor release in CI; the `Version.show` rendering (e.g. `"28.8.0"`) is what `TastyError` carries
+      * Scala 3 minor release in CI; the `Version.show` rendering (e.g. `"28.9.0"`) is what `TastyError` carries
       * to the caller for human-readable diagnostics.
       */
-    val supportedTastyVersion: Version = Version(28, 8, 0)
+    val supportedTastyVersion: Version = Version(28, 9, 0)
 
     // ── Names and flags ─────────────────────────────────────────────────────
 

@@ -3,14 +3,18 @@ package kyo.internal.server
 import java.nio.charset.StandardCharsets
 import kyo.*
 import kyo.kernel.ArrowEffect
+import scala.annotation.publicInBinary
 import scala.annotation.tailrec
 
 /** Shared codec toolkit for translating between typed route definitions (Record-based) and wire-level HTTP primitives. Used internally by
   * backend implementations to avoid duplicating marshalling logic across platforms (Netty, curl, fetch).
   *
   * Encode methods use continuations to avoid intermediate tuple allocations. Decode methods return typed HttpRequest/HttpResponse directly
-  * — all unsafe Dict[String, Any] access is encapsulated here.
+  * with all unsafe Dict[String, Any] access encapsulated here.
+  *
+  * Public binary visibility supports inline callers while Scala access remains restricted to kyo.
   */
+@publicInBinary
 private[kyo] object RouteUtil:
 
     private val utf8 = StandardCharsets.UTF_8

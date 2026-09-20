@@ -19,16 +19,26 @@ class StandardClasspathFidelityTest extends kyo.test.Test[Any]:
     // jrt:/ cold loads can still be slow on a contended runner; keep a generous per-leaf budget.
     override def timeout = Duration.fromJava(java.time.Duration.ofMinutes(3))
 
-    // Given-enumeration fidelity is pinned to scala-library, the one root with a fixed external version (scala 3.8.4). The full `standard`
+    // Given-enumeration fidelity is pinned to scala-library, the one root with a fixed external version. The full `standard`
     // classpath also carries kyo-tasty/kyo-data/fixtures, whose given count shifts with every kyo change; measured against scala-library
     // alone it only moves on a deliberate stdlib bump (where re-pinning re-validates the decoder). The leaves below still use the full corpus.
-    "given-instance count on scala-library is exactly 409 (scala 3.8.4)" in {
+    // The pin records the version it was validated against, so a bump fails here until the count is re-checked, even when it is unchanged.
+    private val pinnedScalaLibrary = "scala-library-3.9.0.jar"
+    private val pinnedGivenCount   = 409
+
+    "given-instance count on scala-library matches the count pinned for its version" in {
+        val jar = java.nio.file.Paths.get(TestClasspaths.scala3LibraryJar).getFileName.toString
+        assert(
+            jar == pinnedScalaLibrary,
+            s"the given-instance count is pinned for $pinnedScalaLibrary but the classpath carries $jar: re-check the count against " +
+                "the new scala-library and re-pin both values"
+        )
         TestClasspaths.withClasspath(TestClasspaths.scalaLibrary)(Tasty.classpath).map { classpath =>
             val count = classpath.symbols.count(_.isGiven)
             assert(
-                count == 409,
-                s"Expected exactly 409 given instances in scala-library 3.8.4; found $count. If scala-library was bumped, re-pin this " +
-                    "count; otherwise the decoder's given enumeration regressed."
+                count == pinnedGivenCount,
+                s"Expected exactly $pinnedGivenCount given instances in $pinnedScalaLibrary; found $count: the decoder's given " +
+                    "enumeration regressed."
             )
             succeed
         }

@@ -454,8 +454,8 @@ object DocsClient:
                     else if c == '"' then inStr = !inStr
                     else if !inStr then
                         c match
-                            case '{' | '[' => depth += 1
-                            case '}' | ']' => depth -= 1
+                            case '{' | '['         => depth += 1
+                            case '}' | ']'         => depth -= 1
                             case ',' if depth == 0 =>
                                 items += inner.substring(start, i).trim
                                 start = i + 1
@@ -496,14 +496,14 @@ object DocsClient:
                 val c = s.charAt(i)
                 if c == '\\' && i + 1 < s.length then
                     s.charAt(i + 1) match
-                        case '"'  => sb.append('"'); i += 2
-                        case '\\' => sb.append('\\'); i += 2
-                        case '/'  => sb.append('/'); i += 2
-                        case 'n'  => sb.append('\n'); i += 2
-                        case 't'  => sb.append('\t'); i += 2
-                        case 'r'  => sb.append('\r'); i += 2
-                        case 'b'  => sb.append('\b'); i += 2
-                        case 'f'  => sb.append('\f'); i += 2
+                        case '"'                     => sb.append('"'); i += 2
+                        case '\\'                    => sb.append('\\'); i += 2
+                        case '/'                     => sb.append('/'); i += 2
+                        case 'n'                     => sb.append('\n'); i += 2
+                        case 't'                     => sb.append('\t'); i += 2
+                        case 'r'                     => sb.append('\r'); i += 2
+                        case 'b'                     => sb.append('\b'); i += 2
+                        case 'f'                     => sb.append('\f'); i += 2
                         case 'u' if i + 5 < s.length =>
                             val hex = s.substring(i + 2, i + 6)
                             // Justified: a confined char-decode degrade in the hand-rolled JSON

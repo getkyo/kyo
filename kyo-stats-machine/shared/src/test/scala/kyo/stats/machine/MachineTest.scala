@@ -16,13 +16,9 @@ class MachineTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
-    /** The registered `machine.*` keys across all four stores. Enumerates keys directly rather than through
-      * `MachineRegistrySnapshot.read`, which dereferences each entry's `WeakReference` and is JVM-only:
-      * Scala.js has no linkable `java.lang.ref.Reference`, and on Scala Native `WeakReference` does not
-      * extend it (a `ClassCastException` at the dereference), so `MachineRegistrySnapshot`'s every other
-      * caller is `.onlyJvm`-gated. This leaf needs no VALUE, only the registered key set, so a plain
-      * `ConcurrentHashMap.keySet()` walk (a standard, cross-platform-safe collections call) sidesteps the
-      * dereference entirely and stays genuinely cross-platform.
+    /** The registered `machine.*` keys across all four stores. This reads keys without dereferencing the
+      * stored weak references, so the null-reader check also runs on Scala.js and Wasm, which lack
+      * `java.lang.ref.Reference`. Registry value readers run on JVM and Native.
       */
     private def machineKeys(): Set[List[String]] =
         val registry                                           = kyo.stats.internal.StatsRegistry.internal
@@ -38,8 +34,7 @@ class MachineTest extends kyo.test.Test[Any]:
         keys.toSet
     end machineKeys
 
-    // Value readers for a metric path (scope, family, leaf), mirroring the other suites' helpers. The
-    // WeakReference dereference these perform is JVM-only, so their callers are `.onlyJvm`-gated.
+    // Registry value readers use the platform WeakReference implementation on JVM and Native.
     private def gaugePath(path: String*): Double =
         StatsRegistry.internal.gauges.get(path.toList.reverse, "", new UnsafeGauge(() => -1d)).collect()
 
@@ -48,6 +43,66 @@ class MachineTest extends kyo.test.Test[Any]:
 
     private def histogramRegistered(path: String*): Boolean =
         StatsRegistry.internal.histograms.map.containsKey(path.toList)
+
+    "degradable" - {
+
+        "a native library that fails to initialize is degradable, not propagated" in {
+            // The exact shape a missing bundled native produces: the generated binding's class initializer
+            // throws, the JVM wraps it in ExceptionInInitializerError, and every later touch of the poisoned
+            // class throws NoClassDefFoundError. Both are LinkageErrors, which scala.util.control.NonFatal
+            // excludes, so a reader guarded by NonFatal alone let exactly the failure it exists to absorb
+            // escape into the sampler's fibers and killed the whole tick loop.
+            // The control for this leaf: NonFatal, the predicate the readers used before, rejects the very
+            // error the guard exists for, which is how it escaped into the sampler's fibers.
+            assert(!scala.util.control.NonFatal(new ExceptionInInitializerError(new RuntimeException("no such library"))))
+            assert(Machine.degradable(new ExceptionInInitializerError(new RuntimeException("no such library"))))
+            assert(Machine.degradable(new NoClassDefFoundError("kyo/stats/machine/MacosBindingsImpl$")))
+            assert(Machine.degradable(new UnsatisfiedLinkError("machine_macos_host_cpu_load")))
+        }
+
+        "an ordinary read failure is degradable" in {
+            assert(Machine.degradable(new RuntimeException("statfs failed")))
+            assert(Machine.degradable(new IllegalStateException("buffer closed")))
+        }
+
+        "a genuinely fatal error is not degradable" in {
+            assert(!Machine.degradable(new OutOfMemoryError("heap")))
+            assert(!Machine.degradable(new StackOverflowError()))
+        }
+    }
+
+    "degraded reporting" - {
+
+        "the report names the family and carries the cause's own diagnosis" in {
+            // What the JS leg was missing entirely: on the JVM a failed load raises an FfiLoadError whose
+            // message names the searched paths, the missing symbol and the override property, and that
+            // message is what the user needs. The same line now reaches a JS user, where the failure used to
+            // produce no error, no warning and no log line at all.
+            val cause = new kyo.ffi.FfiLoadError.LibraryNotFound(
+                "machine_macos",
+                Chunk("/META-INF/native/darwin-aarch64/libmachine_macos.dylib"),
+                "Native library 'machine_macos' is not bundled for darwin-aarch64; set " +
+                    "-Dkyo.ffi.machine_macos.path or KYO_FFI_MACHINE_MACOS_PATH",
+                null
+            )
+            val message = Machine.degradedMessage("the macOS host reader's native library (machine_macos)", cause)
+            assert(message.contains("kyo-stats-machine"))
+            assert(message.contains("machine_macos"))
+            assert(message.contains("darwin-aarch64"))
+            assert(message.contains("KYO_FFI_MACHINE_MACOS_PATH"))
+            assert(message.contains("stay absent"))
+            // One line, so a per-tick failure cannot turn into a stack trace in an unrelated app's stderr.
+            assert(!message.contains("\n"))
+        }
+
+        "a degraded family is reported once, however many times it fails" in {
+            val label = "mtest-degraded-" + java.util.UUID.randomUUID().toString
+            val cause = new ExceptionInInitializerError(new RuntimeException("no such library"))
+            assert(Machine.reportDegraded(label, cause))
+            assert(!Machine.reportDegraded(label, cause))
+            assert(!Machine.reportDegraded(label, cause))
+        }
+    }
 
     "NullMachine read/readDisks/close are no-ops that register zero machine.* series and never throw" in {
         // Captured back-to-back on one thread with no suspension in between, the same zero-window idiom
@@ -61,7 +116,7 @@ class MachineTest extends kyo.test.Test[Any]:
         assert(after == before)
     }
 
-    "the fully assembled host reader runs one tick and populates every family the host produces (standing-invariant re-verify anchor)".onlyJvm in {
+    "the fully assembled host reader runs one tick and populates every family the host produces (standing-invariant re-verify anchor)".notJs.notWasm in {
         val hostOs = System.live.unsafe.operatingSystem()
         assume(
             hostOs == System.OS.Linux || hostOs == System.OS.MacOS || hostOs == System.OS.Windows,
@@ -100,7 +155,7 @@ class MachineTest extends kyo.test.Test[Any]:
         end for
     }
 
-    "the assembled host reader wires memory.total in bytes: a plausible RAM total dominating available and free".onlyJvm in {
+    "the assembled host reader wires memory.total in bytes: a plausible RAM total dominating available and free".notJs.notWasm in {
         val hostOs = System.live.unsafe.operatingSystem()
         assume(
             hostOs == System.OS.Linux || hostOs == System.OS.MacOS || hostOs == System.OS.Windows,

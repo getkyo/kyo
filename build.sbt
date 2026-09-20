@@ -7,29 +7,23 @@ import org.scalajs.jsenv.nodejs.*
 import sbtdynver.DynVerPlugin.autoImport.*
 import scala.scalanative.build.NativeConfig
 
-val scala3Version    = "3.8.4"
-val scala3LTSVersion = "3.3.8"
-val scala213Version  = "2.13.18"
-
-// Scaladoc runs from a newer release than the compiler that produced the code. It reads TASTy, and
-// TASTy is backward compatible, so the tool version moves independently of `scala3Version`. This one
-// carries scala/scala3#25779, without which rendering a method signature can fail with a null
-// SignatureBuilder.content on Linux x86_64 and abort the publish.
-val scaladocVersion = "3.9.0-RC4"
-
-// The scaladoc release used for a module: the fixed one for the current series, the module's own
-// everywhere else. Only the current series can read what the fixed tool carries.
-val scaladocToolVersion = Def.setting {
-    if (scalaVersion.value == scala3Version) scaladocVersion else scalaVersion.value
-}
+val scala39Version  = "3.9.0"
+val scala33Version  = "3.3.8"
+val scala213Version = "2.13.18"
 
 // Holds the scaladoc tool and its dependencies. Hidden so it stays out of published poms, and
 // separate from the compile classpath so the tool's own Scala version never reaches user code.
 lazy val ScaladocTool = config("scaladocTool").hide
 
+// Holds kyo-tasty's real-world fixture jars. Tests read them from `java.class.path` as data and never
+// compile against them, so they join the test runtime classpath only. They are intransitive, and a
+// compile classpath with dangling parents (`zio.Tag` extends the absent `izumi.reflect.Tag`) crashes
+// scalac 3.9.0 when it searches the classpath for import suggestions.
+lazy val TastyFixtureJars = config("tastyFixtureJars").hide
+
 val zioVersion       = "2.1.26"
-val catsVersion      = "3.7.0"
-val oxVersion        = "1.0.5"
+val catsVersion      = "3.7.1"
+val oxVersion        = "1.0.7"
 val scalaTestVersion = "3.2.20"
 
 val compilerOptionFailDiscard = "-Wconf:msg=(unused.*value|discarded.*value|pure.*statement):error"
@@ -46,7 +40,7 @@ val compilerOptions = Set(
     ScalacOptions.advancedKindProjector
 )
 
-ThisBuild / scalaVersion := scala3Version
+ThisBuild / scalaVersion := scala39Version
 publish / skip           := true
 
 inThisBuild(List(
@@ -132,8 +126,8 @@ lazy val release17 = Seq(
 
 lazy val `kyo-settings` = Seq(
     fork               := true,
-    scalaVersion       := scala3Version,
-    crossScalaVersions := List(scala3Version),
+    scalaVersion       := scala39Version,
+    crossScalaVersions := List(scala39Version),
     scalacOptions ++= scalacOptionTokens(compilerOptions).value,
     // Re-check every macro expansion against the compiler's tree invariants. The macros kyo does ship sit
     // where most programs land (Tag, Frame, Schema derivation, Sql `.run`, `assert`) and read trees that
@@ -151,19 +145,16 @@ lazy val `kyo-settings` = Seq(
     scalacOptions ++= (if (sys.env.get("KYO_RETAIN_TREES").contains("true")) Seq("-Yretain-trees") else Nil),
     Test / scalacOptions --= scalacOptionTokens(Set(ScalacOptions.warnNonUnitStatement)).value,
     // Not in CI: parallel cross-version compilations of one module format the same shared
-    // sources concurrently, and the loser logs "scalafmt: failed for 1 sources" on every
+    // sources concurrently, and the loser reports a formatting failure on every
     // Native job. The scalafmt workflow (scalafmtAll plus a dirty-tree check) is the CI
     // enforcement; compile-time formatting is a local convenience only.
     scalafmtOnCompile := !insideCI.value,
     ivyConfigurations += ScaladocTool,
     // The tool ships its own standard library, so it can only read a module whose library it agrees
-    // with. That holds for the current series and not for the LTS one, whose `scala.caps` differs
-    // and leaves two of it on the classpath, at which point resolving anything from `Predef` fails.
-    // The LTS modules therefore document with their own version and forgo the fix, which they have
-    // never needed: the crash it addresses appears in the current series.
+    // with: each module documents with the scaladoc release of its own Scala version.
     libraryDependencies ++= (
         if (!scalaVersion.value.startsWith("3")) Nil
-        else Seq("org.scala-lang" % "scaladoc_3" % scaladocToolVersion.value % ScaladocTool.name)
+        else Seq("org.scala-lang" % "scaladoc_3" % scalaVersion.value % ScaladocTool.name)
     ),
     // Render the API from TASTy with a forked scaladoc rather than sbt's in-process one. Forking is
     // what bounds a tool crash to the module that provoked it: sbt's `doc` shares one JVM across
@@ -180,7 +171,7 @@ lazy val `kyo-settings` = Seq(
         // depending on it is what compiles this module before its TASTy is read.
         val classes     = (Compile / products).value
         val opts        = (Compile / doc / scalacOptions).value
-        val toolVersion = scaladocToolVersion.value
+        val toolVersion = scalaVersion.value
         // This tool reads TASTy, which only the Scala 3 series emits, so the 2.13 and 2.12 modules
         // (the kyo-scheduler family and the sbt plugins) have nothing it can read. They document
         // empty, the same way modules that opt out via `Compile / doc / sources := Seq.empty` do:
@@ -241,20 +232,20 @@ lazy val `kyo-settings` = Seq(
     // keeps the auto-scaling default so small machines are not over-committed.
     Test / javaOptions ++= (if (sys.env.contains("CI")) Seq("-Xmx5g") else Nil),
     doctestPredef := Seq("import kyo.*"),
-    // Non-LTS modules pick up kyo-doctest through Test/unmanagedJars so Test/fullClasspath
-    // dedups naturally. LTS fallback modules (3.3.7) must NOT have kyo-doctest on the Test
-    // compile classpath, because its scala3-library 3.8.3 clashes with the project's 3.3.7
+    // Scala 3.9 modules pick up kyo-doctest through Test/unmanagedJars so Test/fullClasspath
+    // dedups naturally. Scala 3.3 modules must NOT have kyo-doctest on the Test
+    // compile classpath, because its scala3-library 3.9 clashes with the module's 3.3
     // ("package scala contains object and package with same name: caps"). For those the
     // plugin's doctestExtraClasspath path supplies kyo-doctest at fork time only, and
     // reconcileClasspath strips the mismatched scala3-library before the fork starts.
     Test / unmanagedJars ++= {
-        if (scalaVersion.value == scala3Version)
+        if (scalaVersion.value == scala39Version)
             (LocalProject("kyo-doctestJVM") / Compile / fullClasspath).value
         else
             Seq.empty[Attributed[File]]
     },
     doctestExtraClasspath := {
-        if (scalaVersion.value == scala3Version)
+        if (scalaVersion.value == scala39Version)
             Seq.empty[File]
         else
             (LocalProject("kyo-doctestJVM") / Compile / fullClasspath).value.files
@@ -406,6 +397,8 @@ lazy val kyoJVM: Project = project
         `kyo-sql`.jvm,
         `kyo-sql-postgres`.jvm,
         `kyo-sql-mysql`.jvm,
+        `kyo-sql-sqlite-driver`.jvm,
+        `kyo-sql-sqlite`.jvm,
         `kyo-sql-tests`.jvm,
         `kyo-system`.jvm,
         `kyo-http`.jvm,
@@ -499,6 +492,8 @@ lazy val kyoJS = project
         `kyo-sql`.js,
         `kyo-sql-postgres`.js,
         `kyo-sql-mysql`.js,
+        `kyo-sql-sqlite-driver`.js,
+        `kyo-sql-sqlite`.js,
         `kyo-sql-tests`.js,
         `kyo-system`.js,
         `kyo-http`.js,
@@ -565,6 +560,8 @@ lazy val kyoNative = project
         `kyo-sql`.native,
         `kyo-sql-postgres`.native,
         `kyo-sql-mysql`.native,
+        `kyo-sql-sqlite-driver`.native,
+        `kyo-sql-sqlite`.native,
         `kyo-sql-tests`.native,
         `kyo-system`.native,
         `kyo-http`.native,
@@ -606,12 +603,12 @@ lazy val `kyo-scheduler` =
             release17,
             libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
             scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
-            crossScalaVersions := List(scala3LTSVersion, scala213Version)
+            crossScalaVersions := List(scala33Version, scala213Version)
         )
         .jvmSettings(mimaCheck(false))
         .nativeSettings(
             `native-settings`,
-            crossScalaVersions                         := List(scala3LTSVersion),
+            crossScalaVersions                         := List(scala33Version),
             libraryDependencies += "org.scala-native" %%% "scala-native-java-logging" % "1.0.0"
         )
         .jsSettings(
@@ -626,14 +623,14 @@ lazy val `kyo-scheduler-zio` = sbtcrossproject.CrossProject("kyo-scheduler-zio",
         `kyo-settings`,
         release17,
         scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
-        crossScalaVersions                      := List(scala3LTSVersion, scala213Version),
+        crossScalaVersions                      := List(scala33Version, scala213Version),
         libraryDependencies += "dev.zio"       %%% "zio"       % zioVersion,
         libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test
     )
     .jvmSettings(mimaCheck(false))
     .nativeSettings(
         `native-settings`,
-        crossScalaVersions := List(scala3LTSVersion)
+        crossScalaVersions := List(scala33Version)
     )
 
 lazy val `kyo-scheduler-pekko` =
@@ -644,14 +641,14 @@ lazy val `kyo-scheduler-pekko` =
         .settings(
             `kyo-settings`,
             release17,
-            libraryDependencies += "org.apache.pekko" %%% "pekko-actor"   % "1.6.0",
-            libraryDependencies += "org.apache.pekko" %%% "pekko-testkit" % "1.6.0"          % Test,
+            libraryDependencies += "org.apache.pekko" %%% "pekko-actor"   % "1.7.0",
+            libraryDependencies += "org.apache.pekko" %%% "pekko-testkit" % "1.7.0"          % Test,
             libraryDependencies += "org.scalatest"    %%% "scalatest"     % scalaTestVersion % Test
         )
         .jvmSettings(mimaCheck(false))
         .settings(
             scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
-            crossScalaVersions := List(scala3LTSVersion, scala213Version)
+            crossScalaVersions := List(scala33Version, scala213Version)
         )
 
 lazy val `kyo-scheduler-finagle` =
@@ -669,7 +666,7 @@ lazy val `kyo-scheduler-finagle` =
                     Seq.empty
             },
             scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
-            crossScalaVersions                   := Seq(scala213Version, scala3LTSVersion),
+            crossScalaVersions                   := Seq(scala213Version, scala33Version),
             publish / skip                       := scalaVersion.value != scala213Version,
             Compile / unmanagedSourceDirectories := {
                 if (scalaVersion.value == scala213Version)
@@ -710,7 +707,7 @@ lazy val `kyo-kernel` =
         .in(file("kyo-kernel"))
         .settings(
             `kyo-settings`,
-            libraryDependencies += "org.javassist" % "javassist" % "3.32.0-GA" % Test,
+            libraryDependencies += "org.javassist" % "javassist" % "3.33.0-GA" % Test,
             Test / sourceGenerators += TestVariant.generate.taskValue
         )
         .jvmSettings(mimaCheck(false))
@@ -728,7 +725,7 @@ lazy val `kyo-prelude` =
         .in(file("kyo-prelude"))
         .settings(
             `kyo-settings`,
-            libraryDependencies += "dev.zio" %%% "zio-laws-laws" % "1.0.0-RC47" % Test,
+            libraryDependencies += "dev.zio" %%% "zio-laws-laws" % "1.0.0-RC48" % Test,
             libraryDependencies += "dev.zio" %%% "zio-test-sbt"  % zioVersion   % Test
         )
         .jvmSettings(mimaCheck(false))
@@ -812,7 +809,7 @@ lazy val `kyo-schema-tests` =
             doctestSources := Seq((ThisBuild / baseDirectory).value / "kyo-schema" / "README.md"),
             // Differential-oracle deps (ProtobufDifferentialTest): protobuf-java is the wire
             // oracle, Proteus the code-first schema-mapping oracle. JVM test scope only.
-            libraryDependencies += "com.google.protobuf"    % "protobuf-java" % "4.35.0" % Test,
+            libraryDependencies += "com.google.protobuf"    % "protobuf-java" % "4.36.2" % Test,
             libraryDependencies += "com.github.ghostdogpr" %% "proteus-core"  % "0.6.0"  % Test
         ))
         .nativeSettings(`native-settings`)
@@ -909,8 +906,10 @@ lazy val `kyo-sql` =
         // X509_free, ...), so a Native binary that reaches them must link libssl/libcrypto or nativeLink fails.
         .nativeSettings(`native-settings`, `openssl-native-settings`, `tzdb-test-data`)
 
-// The two backend modules below are deliberately symmetric (same platforms, edges, settings); a difference is
-// a bug unless it names a wire feature only one engine has. Both take `test->test` on `kyo-sql` (not just
+// The two network backends below are deliberately symmetric (same platforms, edges, settings); a difference is
+// a bug unless it names a wire feature only one engine has. `kyo-sql-sqlite` is not held to this symmetry: it
+// speaks no protocol, so it takes `kyo-ffi` and the C toolchain settings instead of `kyo-net`. Both take
+// `test->test` on `kyo-sql` (not just
 // `compile->compile`) to reuse its test fixtures (`Test`, `FakeServer`, `OwnContainer`, `StubConnection`, the
 // mocks) rather than duplicate them. Other edges (`kyo-core`, `kyo-net`, `kyo-schema-json`) arrive transitively;
 // `kyo-pod` is redeclared because `kyo-sql` takes it test-scope only and that does not propagate.
@@ -957,11 +956,357 @@ lazy val `kyo-sql-mysql` =
         )
         .nativeSettings(`native-settings`, `openssl-native-settings`, `tzdb-test-data`)
 
+// The vocabulary the versioned backends share: `DoltClient` as an ABSTRACT class plus the records its operations
+// answer with. `kyo-sql-dolt` (a MySQL-wire server) and `kyo-sql-doltlite` (an embedded SQLite fork) each supply a
+// concrete subclass, so a caller names `DoltClient` and never the backend.
+//
+// Separate from `kyo-sql-dolt` so the embedded backend does not depend on a MySQL wire implementation and kyo-net
+// to reach a handful of case classes, the shape `kyo-stats-registry` takes under `kyo-stats-otlp`.
+lazy val `kyo-sql-dolt-api` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
+        .crossType(CrossType.Full)
+        .dependsOn(`kyo-sql` % "test->test;compile->compile")
+        .in(file("kyo-sql-dolt-api"))
+        .withKyoTest
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
+        // No README of its own: it is the vocabulary the two backends document, and each names it there.
+        .jvmConfigure(_.settings(doctestSources := Seq.empty))
+        .jsSettings(
+            `js-settings`,
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
+            // The client surface both engines implement. It opens nothing itself, but a page can run neither
+            // implementation behind it: one needs a socket, the other a native library. Its own suites are
+            // environment-neutral, and a page runs the same V8 the Node row does. No browser row.
+            kyoBrowserRow := false
+        )
+        .nativeSettings(`native-settings`, `openssl-native-settings`)
+
+// Dolt speaks the MySQL wire protocol, so this module takes `kyo-sql-mysql` rather than restating the
+// connection, codecs, param writer, exchanges and auth. A Dolt server answers 8.0.31 to `version()`, the floor
+// `MysqlDialect` already pins. Everything Dolt reaches is already `private[kyo]`, so this backend-on-backend edge
+// needs no extracted wire module.
+//
+// What it adds is version control, which on Dolt is ordinary SQL rather than a protocol extension: stored
+// procedures, system tables, table functions, and the `db/branch` revision naming. It is a network backend and is
+// held to the symmetry contract above.
+lazy val `kyo-sql-dolt` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
+        .crossType(CrossType.Full)
+        .dependsOn(`kyo-sql` % "test->test;compile->compile")
+        .dependsOn(`kyo-sql-dolt-api` % "test->test;compile->compile")
+        .dependsOn(`kyo-sql-mysql` % "test->test;compile->compile")
+        .dependsOn(`kyo-pod` % "test->compile")
+        .in(file("kyo-sql-dolt"))
+        .withKyoTest
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
+        .jsSettings(
+            `js-settings`,
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
+            // Speaks Dolt's wire protocol over kyo-net, so it needs the socket a page has not. No browser row.
+            kyoBrowserRow := false
+        )
+        .nativeSettings(`native-settings`, `openssl-native-settings`)
+
+// The SQLite DRIVER: connection, pool plumbing, codecs, row reader, dialect and URL parsing, plus the binding
+// trait as DECLARATIONS ONLY. No C, no FFI plugin, no engine.
+//
+// Split from the engine because on Scala Native an FFI module's C is compiled INTO the binary, so a module
+// depending on an engine module links that engine in. kyo-sql-doltlite reuses this driver with a DIFFERENT
+// engine and so cannot depend on kyo-sql-sqlite: its Native binary would carry the vendored sqlite3.c as
+// well, and the sqlite3_* calls could bind to either. Depending on declarations carries no C, so each engine
+// module links exactly one.
+lazy val `kyo-sql-sqlite-driver` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
+        .crossType(CrossType.Full)
+        .dependsOn(`kyo-sql` % "test->test;compile->compile")
+        .dependsOn(`kyo-ffi`)
+        .in(file("kyo-sql-sqlite-driver"))
+        .withKyoTest
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
+        .jsSettings(
+            `js-settings`,
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
+            // Loads its vendored engine through koffi, which needs a Node-like `process` a page has not. No browser row.
+            kyoBrowserRow := false
+        )
+        .nativeSettings(`native-settings`, `openssl-native-settings`)
+
+// The embedded engine: the dialect, row codec and type mapping of the other two backends with none of their
+// wire machinery, over a vendored C library, which is why this is the only kyo-sql module enabling KyoFfiPlugin.
+//
+// SQLite's C source is fetched at a pinned version by kyo-sql-sqlite/scripts/build-sqlite.sh and staged under
+// build/sqlite/, the shape kyo-aeron and kyo-net use; the staged tree is a gitignored build artifact. Compiling
+// from source rather than linking a host libsqlite3 pins the VERSION, which several conformance answers depend
+// on (a current macOS ships 3.43.2 against the 3.53.4 pinned here). Nothing is staged per os-arch: SQLite is one
+// architecture-independent .c, and the FfiLibrary already compiles per platform.
+lazy val `kyo-sql-sqlite` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
+        .crossType(CrossType.Full)
+        .enablePlugins(KyoFfiPlugin)
+        .dependsOn(`kyo-sql` % "test->test;compile->compile")
+        .dependsOn(`kyo-sql-sqlite-driver` % "test->test;compile->compile")
+        .dependsOn(`kyo-ffi`)
+        // Declared rather than left to transitivity through kyo-sql's own test->compile, matching the other two
+        // backend modules: SqlTestBackend names Container.Config, so the descriptor needs it on the test classpath.
+        .dependsOn(`kyo-pod` % "test->compile")
+        .in(file("kyo-sql-sqlite"))
+        .withKyoTest
+        .settings(
+            `kyo-settings`,
+            // Hand the plugin the codegen project's classpath, as kyo-aeron does, so a cold build compiles the
+            // codegen first rather than falling back to a bundled resource absent on a clean checkout.
+            ffiCodegenClasspath := (LocalProject("kyo-ffi-codegen") / Compile / fullClasspath).value.map(_.data),
+            ffiLibraries        := {
+                // baseDirectory is the per-platform dir for a cross-project, so the shim and the staged SQLite
+                // source are one level up. The shim is ours and lives in the repo; SQLite's own source is staged
+                // by scripts/build-sqlite.sh. Both compile into one shared library.
+                val sharedBase   = baseDirectory.value / ".." / "shared"
+                val sqliteStaged = baseDirectory.value / ".." / "build" / "sqlite" / "staged"
+                // Named unconditionally rather than guarded by a staged check. ffiLibraries is a SETTING, so
+                // erroring here fails project LOAD for every sbt invocation, and the build has to load for
+                // scalafmt, the README doctests and the release probe, none of which compile this C. An unstaged
+                // tree therefore surfaces at ffiCompile, where cc names the file it cannot find, which is where
+                // kyo-aeron's staged archive reports the same thing.
+                val foundSources  = (sqliteStaged * "*.c").get
+                val stagedSources = if (foundSources.nonEmpty) foundSources else Seq(sqliteStaged / "sqlite3.c")
+                Seq(
+                    FfiLibrary(
+                        id = "kyo_sqlite",
+                        cSources = (sharedBase / "src" / "main" / "c" ** "*.c").get ++ stagedSources,
+                        // Scala Native copies the declared C beside its own generated sources and compiles it
+                        // THERE, so includeDirs does not reach it: every header the sources include has to be
+                        // bundled too. Omitting sqlite3.h still built on macOS, whose SDK ships one that silently
+                        // satisfied the include while the vendored sqlite3.c was linked, and failed on Linux,
+                        // which has no system copy.
+                        cHeaders = (sharedBase / "src" / "main" / "c" ** "*.h").get ++ (sqliteStaged * "*.h").get,
+                        // The staged directory carries sqlite3.h, which the shim includes.
+                        includeDirs = Seq(sharedBase / "src" / "main" / "c", sqliteStaged),
+                        // THREADSAFE=1 because connections in a pool are handed between carrier threads.
+                        // Column metadata is deliberately NOT enabled: sqlite3_column_decltype, which the
+                        // codec dispatches on, needs no flag, and only sqlite3_column_origin_name would,
+                        // which nothing here uses.
+                        //
+                        // SQLITE_API on Windows because most bindings call a sqlite3_* symbol directly, and
+                        // MSVC, which compiles this on windows-arm64, exports only what is declared: without
+                        // it the DLL loads and koffi then finds none of them. The shim's own entry points
+                        // carry KYO_SQLITE_API for the same reason. MinGW auto-exports and is unharmed.
+                        cFlags = Seq("-DSQLITE_THREADSAFE=1", "-DSQLITE_ENABLE_MATH_FUNCTIONS=1") ++
+                            (if (ffiHostOsArch.startsWith("windows")) Seq("-DSQLITE_API=__declspec(dllexport)") else Nil),
+                        staticLink = false
+                    )
+                )
+            }
+        )
+        .jvmSettings(
+            mimaCheck(false),
+            // Publish the compiled engine per platform, so a consumer needs no C toolchain.
+            kyoSqlSqliteClassifierArtifacts := ffiClassifierArtifacts(
+                "kyo-sql-sqlite",
+                (Compile / managedResources).value,
+                version.value,
+                crossTarget.value
+            ),
+            // Project-scoped `packagedArtifacts` is what publish/ci-release uploads.
+            packagedArtifacts ++= kyoSqlSqliteClassifierArtifacts.value
+        )
+        .jsSettings(
+            `js-settings`,
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
+            // The driver loads its vendored library through koffi on Node, so the runtime needs both the compiled path
+            // and koffi itself.
+            kyoNodeEnv     := kyoSqliteFfiEnvMap(target.value, target.value),
+            Test / compile := (Test / compile).dependsOn(kyoSqliteKoffiInstall).value,
+            // Registers a backend whose driver loads the engine through koffi, which needs a Node-like `process`
+            // a page has not. No browser row.
+            kyoBrowserRow := false
+        )
+        .nativeSettings(
+            // The transitive kyo-net TLS shim needs libssl at link time even though nothing in this module
+            // authenticates or encrypts anything.
+            `native-settings`,
+            `openssl-native-settings`
+        )
+
 // Unpublished; it holds the suites whose SUBJECT spans both engines and so have no single-module home: the
 // cross-backend suites that name both clients/factories to prove they behave the same through one abstract
 // surface, and the container-driven suites sharing `internal/SqlSharedContainers`. That fixture connects to
 // both engines directly, so it can live neither in core (which must compile with no backend) nor in one engine
 // module (the other's suites could not see it). `test->test` on all three lets the suites reuse core's `Test`
+// Every platform DoltLite is built and bundled for, which is every one the build supports except Windows.
+//
+// `linkFlags` below links the static archive INTO the shim, so the engine travels with it. Upstream
+// publishes no archive for Windows: the win-x64 release carries `doltlite.h` and `libdoltlite.dll` and
+// nothing else, with no import library either, and there is no win-arm64 release at all. Linking the DLL
+// instead is not a substitute, for the reason recorded on `linkFlags`: the shim is extracted to a temp
+// directory the DLL is not in, so a dynamic link resolves at build time and fails at run time with
+// "Cannot open library".
+//
+// So the module declares itself absent on Windows and the engine reports that as a typed
+// `DoltLiteEngineUnavailableException`, which its suites already assume on. Per os-arch rather than
+// `osTargets`, because the list is otherwise arch-granular.
+//
+// kyo-sql-sqlite is unaffected and stays on every platform: it compiles C source, which MSVC handles.
+def kyoSqlDoltLiteOsArchTargets: Seq[String] = Seq(
+    "darwin-aarch64",
+    "darwin-x86_64",
+    "linux-aarch64",
+    "linux-x86_64",
+    "linux-musl-aarch64",
+    "linux-musl-x86_64"
+)
+
+// The embedded VERSIONED engine: DoltLite is a SQLite fork that keeps the sqlite3_* API and replaces the storage
+// engine with a content-addressed prolly tree, so one file carries branches, commits, merges and diffs.
+//
+// libdoltlite exports all 32 sqlite3 symbols this driver's bindings call, so the connection, codecs and row
+// reader are reused rather than rewritten; `kyo-sql-dolt-api` carries the version-control vocabulary it shares
+// with the server backend.
+//
+// Unlike kyo-sql-sqlite the library is not compiled from source: DoltLite publishes a prebuilt per platform,
+// fetched at a pinned version by scripts/build-doltlite.sh and staged per os-arch under build/. Only the shim is
+// compiled, and it is kyo-sql-sqlite's own, built against doltlite.h instead of sqlite3.h.
+lazy val `kyo-sql-doltlite` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
+        .crossType(CrossType.Full)
+        .enablePlugins(KyoFfiPlugin)
+        .dependsOn(`kyo-sql` % "test->test;compile->compile")
+        .dependsOn(`kyo-sql-dolt-api` % "test->test;compile->compile")
+        // The DRIVER, not the engine module: depending on the latter would link the vendored SQLite into this
+        // module's Native binary alongside the prebuilt DoltLite archive, and the sqlite3_* calls would bind to
+        // the wrong one.
+        .dependsOn(`kyo-sql-sqlite-driver` % "test->test;compile->compile")
+        .dependsOn(`kyo-ffi`)
+        .in(file("kyo-sql-doltlite"))
+        .withKyoTest
+        .settings(
+            `kyo-settings`,
+            // In-build codegen: feeds the plugin the codegen project's own classpath, so nothing has to be
+            // resolved or publishLocal'd. Every other FFI module in this build does the same.
+            ffiCodegenClasspath := (LocalProject("kyo-ffi-codegen") / Compile / fullClasspath).value.map(_.data),
+            ffiLibraries        := {
+                // baseDirectory is the per-platform dir for a cross-project, so the staged library and the
+                // sibling module's shim are both reached from one level up.
+                val moduleBase = baseDirectory.value / ".."
+                val osArch     = ffiHostOsArch
+                // Not guarded by a staged check, for the reason given on kyo_sqlite: this is a setting, and an
+                // error here fails project load for every sbt invocation rather than only the ones that build C.
+                val staged = moduleBase / "build" / "doltlite" / "staged" / osArch
+                // The shim is kyo-sql-sqlite's, compiled against this engine's header. One copy, two engines.
+                val shim = moduleBase / ".." / "kyo-sql-sqlite" / "shared" / "src" / "main" / "c"
+                Seq(
+                    FfiLibrary(
+                        id = "kyo_doltlite",
+                        cSources = (shim ** "*.c").get,
+                        // Bundled for Native for the reason given on kyo_sqlite: the header travels with the
+                        // sources or the Native compile cannot find it. doltlite.h is the staged one, and there is
+                        // no system copy of it on any platform, so this fails everywhere rather than just Linux.
+                        cHeaders = (shim ** "*.h").get ++ (staged * "*.h").get,
+                        includeDirs = Seq(shim, staged),
+                        // The ARCHIVE is linked by path rather than `-ldoltlite`, so the engine ends up inside the
+                        // shim library instead of beside it. A dynamic link resolves at build time and then fails at
+                        // run time with "Cannot open library", because the shim is extracted to a temp directory
+                        // where libdoltlite.dylib is not.
+                        linkFlags = Seq((staged / "libdoltlite.a").getAbsolutePath),
+                        cFlags = Seq("-DKYO_SQLITE_HEADER=\"doltlite.h\""),
+                        staticLink = false,
+                        osArchTargets = kyoSqlDoltLiteOsArchTargets
+                    )
+                )
+            }
+        )
+        .jvmSettings(
+            mimaCheck(false),
+            // Publish the linked engine per platform. DoltLite ships prebuilt libraries, so unlike the vendored
+            // build beside it there is no compile step a consumer could fall back on.
+            kyoSqlDoltLiteClassifierArtifacts := ffiClassifierArtifacts(
+                "kyo-sql-doltlite",
+                (Compile / managedResources).value,
+                version.value,
+                crossTarget.value
+            ),
+            packagedArtifacts ++= kyoSqlDoltLiteClassifierArtifacts.value
+        )
+        .jsSettings(
+            `js-settings`,
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
+            // The driver loads its linked library through koffi on Node, so the runtime needs both the compiled path
+            // and koffi itself, or every leaf fails on LibraryNotFound.
+            kyoNodeEnv     := kyoDoltLiteFfiEnvMap(target.value, target.value),
+            Test / compile := (Test / compile).dependsOn(kyoDoltLiteKoffiInstall).value,
+            // Registers a backend whose driver loads the engine through koffi, which needs a Node-like `process`
+            // a page has not. The WebAssembly engine a page could host is a different build, and nothing links it
+            // here. No browser row.
+            kyoBrowserRow := false
+        )
+        .nativeSettings(
+            `native-settings`,
+            `openssl-native-settings`,
+            nativeConfig := {
+                val base = nativeConfig.value
+                base.withLinkingOptions(base.linkingOptions :+ doltLiteNativeArchive(baseDirectory.value / ".."))
+            }
+        )
+
+// A filesystem whose storage is a version-controlled database, so an ordinary program written against `Path` gets
+// branches, commits, diffs and merges over its file tree and can query that tree in SQL.
+//
+// It takes `kyo-sql-dolt-api` rather than either backend, so the same filesystem runs on a Dolt server or a local
+// DoltLite file: `DoltClient` is the type it programs against, and which engine answers is the caller's choice.
+lazy val `kyo-system-doltfs` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
+        .crossType(CrossType.Full)
+        .dependsOn(`kyo-system` % "test->test;compile->compile")
+        .dependsOn(`kyo-sql-dolt-api` % "test->test;compile->compile")
+        // Test-only, and only one of the two engines: the conformance fixtures need a real engine and the embedded one
+        // needs no container. The store speaks portable SQL, so what passes here is what a server runs. Compile scope
+        // stays on the shared API, which keeps the filesystem engine-agnostic.
+        .dependsOn(`kyo-sql-doltlite` % "test->test;test->compile")
+        .in(file("kyo-system-doltfs"))
+        .withKyoTest
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
+        // Doctests run on the test classpath, so the README's Scala blocks reach the test-scope engine the same way
+        // the conformance fixtures do.
+        .jvmConfigure(_.settings(doctestSources := Seq(baseDirectory.value / ".." / "README.md")))
+        .jsSettings(
+            `js-settings`,
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
+            // On Node the fixtures need koffi plus a path to the library kyo-sql-doltlite's plugin compiled into
+            // ITS target: this module declares no FFI of its own and only borrows the engine for tests.
+            kyoNodeEnv     := kyoDoltLiteFfiEnvMap((`kyo-sql-doltlite`.js / target).value, target.value),
+            Test / compile := (Test / compile).dependsOn(kyoDoltLiteKoffiInstall).value,
+            // The conformance fixtures borrow kyo-sql-doltlite's engine, which loads through koffi. No browser row.
+            kyoBrowserRow := false
+        )
+        .nativeSettings(
+            `native-settings`,
+            `openssl-native-settings`,
+            // `native-settings` folds a dependency's FFI link flags in from the COMPILE classpath only, and the engine
+            // is a TEST-scope dependency here, so without reading the test classpath too the test binary fails with
+            // "library 'kyo_doltlite' not found". Compile scope stays clean, keeping this filesystem independent of
+            // either engine.
+            nativeConfig := {
+                val base         = nativeConfig.value
+                val cp           = (Test / dependencyClasspath).value
+                val linkExtra    = readFfiNativeManifest(cp, KyoFfiPlugin.ffiNativeLinkFlagsDir, KyoFfiPlugin.ffiNativeInBuildLinkFlagsDir)
+                val compileExtra =
+                    readFfiNativeManifest(cp, KyoFfiPlugin.ffiNativeCompileFlagsDir, KyoFfiPlugin.ffiNativeInBuildCompileFlagsDir)
+                // The engine archive as well: the shim compiled into this binary calls sqlite3_*, and the only
+                // copy of those is the prebuilt DoltLite the sibling module staged.
+                val archive = doltLiteNativeArchive(baseDirectory.value / ".." / ".." / "kyo-sql-doltlite")
+                // Deduped against what is already there, because the test classpath CONTAINS the compile one:
+                // every dependency on both carries its flags twice otherwise, and a static archive named twice
+                // is every one of its symbols defined twice. kyo-net's libssl.a is the one that fails the link.
+                val newLink    = (linkExtra :+ archive).filterNot(base.linkingOptions.contains)
+                val withLink   = base.withLinkingOptions(base.linkingOptions ++ newLink)
+                val newCompile = compileExtra.filterNot(withLink.compileOptions.contains)
+                if (newCompile.isEmpty) withLink else withLink.withCompileOptions(withLink.compileOptions ++ newCompile)
+            }
+        )
+
 // base and mocks plus each engine's fixtures; `publish / skip` keeps the shipped artifact count at three.
 lazy val `kyo-sql-tests` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform)
@@ -969,6 +1314,8 @@ lazy val `kyo-sql-tests` =
         .dependsOn(`kyo-sql` % "test->test;compile->compile")
         .dependsOn(`kyo-sql-postgres` % "test->test;compile->compile")
         .dependsOn(`kyo-sql-mysql` % "test->test;compile->compile")
+        .dependsOn(`kyo-sql-sqlite` % "test->test;compile->compile")
+        .dependsOn(`kyo-sql-dolt` % "test->test;compile->compile")
         .dependsOn(`kyo-pod` % "test->compile")
         .in(file("kyo-sql-tests"))
         .withKyoTest
@@ -982,7 +1329,14 @@ lazy val `kyo-sql-tests` =
             // Shares kyo-sql's test fixtures, which reach node:os and node:process through TestNodeBuiltins at the
             // call rather than through an import, and connects over a socket a page has not. The wire codec suites are
             // environment-neutral, and a page runs the same V8 the Node row does. No browser row.
-            kyoBrowserRow := false
+            kyoBrowserRow := false,
+            // The battery registers SQLite as a backend, so this module's Node runtime has to reach the engine:
+            // the library out of kyo-sql-sqlite's target, koffi out of this one. Without them every SQLite leaf
+            // panics on a null facade instead of reporting an engine it could not load. Stated as kyoNodeEnv it
+            // serves both Node rows: the Wasm row links the same classes and builds its jsEnv from the same two
+            // settings, adding only the exnref flag.
+            kyoNodeEnv     := kyoSqliteFfiEnvMap((`kyo-sql-sqlite`.js / target).value, target.value),
+            Test / compile := (Test / compile).dependsOn(kyoSqliteKoffiInstall).value
         )
         .nativeSettings(
             `native-settings`,
@@ -991,7 +1345,9 @@ lazy val `kyo-sql-tests` =
             // also enlisted here; without this, runtime backend discovery finds nothing on Native.
             Test / nativeConfig ~= (_.withServiceProviders(Map("kyo.db.Backend" -> Seq(
                 "kyo.internal.postgres.PostgresBackendFactory",
-                "kyo.internal.mysql.MysqlBackendFactory"
+                "kyo.internal.mysql.MysqlBackendFactory",
+                "kyo.internal.sqlite.SqliteBackendFactory",
+                "kyo.internal.dolt.DoltBackendFactory"
             ))))
         )
 
@@ -1176,8 +1532,8 @@ lazy val `kyo-ffi-plugin` =
         // (same as kyo-compat-plugin and kyo-doctest-plugin).
         .disablePlugins(KyoDoctestPlugin)
         .settings(
-            scalaVersion       := "2.12.20",
-            crossScalaVersions := Seq("2.12.20"),
+            scalaVersion       := "2.12.21",
+            crossScalaVersions := Seq("2.12.21"),
             name               := "kyo-ffi-plugin",
             sbtPlugin          := true,
             // Bake this plugin's version into a resource so it can resolve the matching
@@ -1197,17 +1553,18 @@ lazy val `kyo-ffi-plugin` =
                         "-Dplugin.version=" + version.value,
                         "-Dkyo.version=" + version.value,
                         // The sub-builds link against kyo artifacts this build publishLocal'd, so their
-                        // Scala.js and Scala Native plugins must be the ones those artifacts were built
-                        // with. Pinning the versions here rather than in each fixture's plugins.sbt
-                        // keeps the two from drifting: a stale sbt-scala-native fails at nativeLink on
-                        // an undefined runtime symbol, a stale sbt-scalajs at fastLinkJS on an IR
-                        // version it cannot read. Mirrors kyo-doctest-plugin's scalaVersion pin.
+                        // Scala version and their Scala.js and Scala Native plugins must be the ones
+                        // those artifacts were built with. Pinning them here rather than in each
+                        // fixture keeps the two from drifting: a stale Scala cannot read the artifacts'
+                        // TASTy, a stale sbt-scala-native fails at nativeLink on an undefined runtime
+                        // symbol, a stale sbt-scalajs at fastLinkJS on an IR version it cannot read.
+                        "-Dkyo.scalaVersion=" + scala39Version,
                         "-Dscalajs.version=" + scalaJSVersion,
                         "-Dscalanative.version=" + nativeVersion
                     )
             },
             scriptedBufferLog                      := false,
-            libraryDependencies += "org.scalatest" %% "scalatest" % "3.2.19" % Test,
+            libraryDependencies += "org.scalatest" %% "scalatest" % "3.2.20" % Test,
             // Publish kyo-ffi + transitive deps locally across all three platforms before
             // scripted runs: scripted tests resolve `"io.getkyo" %% "kyo-ffi"` from Ivy.
             // kyo-ffi depends on kyo-core, so the full closure must be published or Ivy
@@ -1284,7 +1641,7 @@ lazy val `kyo-direct` =
         .withKyoTest
         .settings(
             `kyo-settings`,
-            libraryDependencies += "io.github.dotty-cps-async" %%% "dotty-cps-async" % "1.3.3",
+            libraryDependencies += "io.github.dotty-cps-async" %%% "dotty-cps-async" % "1.3.4",
             Test / sourceGenerators += TestVariant.generate.taskValue
         )
         .jvmSettings(mimaCheck(false))
@@ -1337,22 +1694,25 @@ lazy val `kyo-tasty` =
             // StackOverflowError under scoverage instrumentation.
             coverageMinimumStmtTotal := 75.3,
             coverageFailOnMinimum    := true,
-            // FROZEN: do not bump as part of routine dependency upgrades. The tasty-query oracle
-            // and the real-world fixture jars below are a deliberate spread of versions chosen to
-            // exercise TASTy decoding across compiler releases; changing them alters test-coverage
-            // intent rather than upgrading a dependency.
-            // Differential testing against tasty-query 1.7.0. JVM-only because
-            // tasty-query's ClasspathLoaders requires java.nio.
-            libraryDependencies += "ch.epfl.scala" %% "tasty-query" % "1.7.0" % Test,
+            // FROZEN: do not bump as part of routine dependency upgrades. The real-world fixture jars
+            // below are a deliberate spread of versions chosen to exercise TASTy decoding across compiler
+            // releases; changing them alters test-coverage intent rather than upgrading a dependency.
+            // Differential testing against tasty-query 1.9.0. JVM-only because
+            // tasty-query's ClasspathLoaders requires java.nio. Unlike the fixture jars, this oracle
+            // follows scalaVersion: it reads the fixtures this build compiles, and tasty-query rejects
+            // TASTy with a newer minor version than its own (1.9.0 reads up to 28.9, Scala 3.9).
+            libraryDependencies += "ch.epfl.scala" %% "tasty-query" % "1.9.0" % Test,
             // Real-world classpath fidelity targets. Each jar is intransitive to avoid
             // downloading large transitive closures (Spark: ~5 GB; Play: ~500 MB). kyo-tasty
             // loads only .tasty files in the jar; missing transitive deps produce
             // Symbol.Unresolved stubs (not TastyError entries), so errors.isEmpty holds.
-            libraryDependencies += "com.typesafe.akka"  % "akka-actor_3"    % "2.6.20" % Test intransitive (),
-            libraryDependencies += "org.apache.pekko"  %% "pekko-actor"     % "1.1.3"  % Test intransitive (),
-            libraryDependencies += "org.playframework" %% "play"            % "3.0.2"  % Test intransitive (),
-            libraryDependencies += "org.apache.spark"   % "spark-core_2.13" % "3.5.1"  % Test intransitive (),
-            libraryDependencies += "dev.zio"           %% "zio"             % "2.0.15" % Test intransitive ()
+            ivyConfigurations += TastyFixtureJars,
+            libraryDependencies += "com.typesafe.akka"  % "akka-actor_3"    % "2.6.20" % TastyFixtureJars intransitive (),
+            libraryDependencies += "org.apache.pekko"  %% "pekko-actor"     % "1.1.3"  % TastyFixtureJars intransitive (),
+            libraryDependencies += "org.playframework" %% "play"            % "3.0.2"  % TastyFixtureJars intransitive (),
+            libraryDependencies += "org.apache.spark"   % "spark-core_2.13" % "3.5.1"  % TastyFixtureJars intransitive (),
+            libraryDependencies += "dev.zio"           %% "zio"             % "2.0.15" % TastyFixtureJars intransitive (),
+            Test / fullClasspath ++= Attributed.blankSeq(update.value.select(configurationFilter(TastyFixtureJars.name)))
         )
         .nativeSettings(`native-settings`)
         .jsSettings(
@@ -1391,8 +1751,8 @@ lazy val `kyo-logging-slf4j` =
         .withKyoTest
         .settings(
             `kyo-settings`,
-            libraryDependencies += "org.slf4j"      % "slf4j-api"       % "2.0.18",
-            libraryDependencies += "ch.qos.logback" % "logback-classic" % "1.5.35" % Test
+            libraryDependencies += "org.slf4j"      % "slf4j-api"       % "2.0.19",
+            libraryDependencies += "ch.qos.logback" % "logback-classic" % "1.6.3" % Test
         )
         .jvmSettings(mimaCheck(false))
 
@@ -1406,7 +1766,7 @@ lazy val `kyo-stats-registry` =
             release17,
             libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
             scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
-            crossScalaVersions := List(scala3LTSVersion, scala213Version)
+            crossScalaVersions := List(scala33Version, scala213Version)
         )
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
@@ -1421,7 +1781,7 @@ lazy val `kyo-config` =
             release17,
             libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
             scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
-            crossScalaVersions := List(scala3LTSVersion, scala213Version),
+            crossScalaVersions := List(scala33Version, scala213Version),
             // The tests of Platform.linkTimeIf on a condition the linker resolves (isWasm, canSplitModules). On Scala.js that
             // expands to LinkingInfo.linkTimeIf, which the Scala.js backend of Scala 3.3 does not resolve (its link fails with
             // "Referring to non-existent method LinkingInfo$.linkTimeIf"), so only Scala.js on the 3.3 LTS line leaves them out.
@@ -1677,6 +2037,93 @@ val kyoNetKoffiInstall: Def.Initialize[Task[Unit]] = Def.task {
     }
 }
 
+// Koffi bootstrap for the SQLite module's Node-run test platforms, the same shape as kyoNetKoffiInstall and for the same reason: the driver
+// reaches its vendored library through koffi at first native-load, so koffi has to be in the target's node_modules before tests run.
+val kyoSqliteKoffiInstall: Def.Initialize[Task[Unit]] = Def.task {
+    val log        = streams.value.log
+    val targetBase = target.value
+    val nodeMods   = targetBase / "node_modules"
+    val marker     = nodeMods / "koffi" / "package.json"
+    val koffiRange = "^2.7" // must match kyo.ffi.internal.FfiErrors.KoffiSupportedRange
+    val pjContent  = s"""{"name":"kyo-sql-sqlite-node-test","private":true,"dependencies":{"koffi":"$koffiRange"}}"""
+    val pj         = targetBase / "package.json"
+    if (!pj.exists() || IO.read(pj) != pjContent) {
+        IO.createDirectory(targetBase)
+        IO.write(pj, pjContent)
+    }
+    if (!marker.exists()) {
+        log.info(s"[kyo-sql-sqlite] installing koffi@$koffiRange into $targetBase ...")
+        val rc = scala.sys.process.Process(
+            Seq(npmCommand, "install", "--no-audit", "--no-fund", "--silent"),
+            targetBase
+        ).!
+        if (rc != 0) sys.error(s"npm install koffi failed (exit $rc)")
+    }
+}
+
+// The staged DoltLite archive, as a Scala Native linking option.
+//
+// `FfiLibrary.linkFlags` covers the shared library the plugin builds for the JVM and Node transports. Scala Native
+// takes a different path: the shim's C is compiled into the binary, and nothing there consults those flags, so the
+// archive has to be named again here or every sqlite3_* symbol the shim and the generated binding call is
+// undefined at link. `moduleBase` is the module directory, one level up from the per-platform project dir.
+def doltLiteNativeArchive(moduleBase: File): String =
+    (moduleBase / "build" / "doltlite" / "staged" / ffiHostOsArch / "libdoltlite.a").getAbsolutePath
+
+// Koffi bootstrap for the DoltLite module's Node-run test platforms, the same shape and reason as the two above: the driver reaches its
+// linked library through koffi at first native-load, so koffi has to be in the target's node_modules before tests run.
+val kyoDoltLiteKoffiInstall: Def.Initialize[Task[Unit]] = Def.task {
+    val log        = streams.value.log
+    val targetBase = target.value
+    val nodeMods   = targetBase / "node_modules"
+    val marker     = nodeMods / "@dolthub" / "doltlite-wasm" / "package.json"
+    val koffiRange = "^2.7" // must match kyo.ffi.internal.FfiErrors.KoffiSupportedRange
+    // The WebAssembly build of the engine rides along with koffi, pinned to the SAME version the native library
+    // is staged at, because the two transports must be the same engine for the suites to mean anything when they
+    // run over either one.
+    val wasmVersion = "0.50.10"
+    val pjContent   =
+        s"""{"name":"kyo-doltlite-node-test","private":true,"dependencies":{"koffi":"$koffiRange","@dolthub/doltlite-wasm":"$wasmVersion"}}"""
+    val pj = targetBase / "package.json"
+    if (!pj.exists() || IO.read(pj) != pjContent) {
+        IO.createDirectory(targetBase)
+        IO.write(pj, pjContent)
+    }
+    if (!marker.exists()) {
+        log.info(s"[kyo-doltlite] installing koffi@$koffiRange into $targetBase ...")
+        val rc = scala.sys.process.Process(
+            Seq(npmCommand, "install", "--no-audit", "--no-fund", "--silent"),
+            targetBase
+        ).!
+        if (rc != 0) sys.error(s"npm install koffi failed (exit $rc)")
+    }
+}
+
+// Points the Node/Wasm test runtime at the plugin-compiled DoltLite library. Two directories rather than one, because the module that
+// BUILDS the library and the module that RUNS against it are not always the same: kyo-system-doltfs has no FFI of its own and reads the
+// library out of kyo-sql-doltlite's target, while koffi is installed in whichever target the tests run from.
+def kyoDoltLiteFfiEnvMap(libraryTarget: File, koffiTarget: File): Map[String, String] = {
+    val ffiOut = libraryTarget / "ffi"
+    Map(
+        "KYO_FFI_KYO_DOLTLITE_PATH" -> (ffiOut / ffiArtifactName("kyo_doltlite", ffiHostOsArch)).getAbsolutePath,
+        // The Wasm (ESModule) leg has no `require` global, so koffi resolves through node:module.createRequire,
+        // which searches NODE_PATH. Harmless on the CommonJS (js) leg.
+        "NODE_PATH" -> (koffiTarget / "node_modules").getAbsolutePath
+    )
+}
+
+// Points the Node/Wasm test runtime at the plugin-compiled SQLite library. The plugin owns the artifact-naming convention and the host
+// os/arch, so re-deriving them here is what makes the path right on every host rather than only the obvious one.
+def kyoSqliteFfiEnvMap(libraryTarget: File, koffiTarget: File): Map[String, String] = {
+    val ffiOut = libraryTarget / "ffi"
+    Map(
+        "KYO_FFI_KYO_SQLITE_PATH" -> (ffiOut / ffiArtifactName("kyo_sqlite", ffiHostOsArch)).getAbsolutePath,
+        // The Wasm (ESModule) leg has no `require` global, so koffi resolves through node:module.createRequire,
+        // which searches NODE_PATH. Harmless on the CommonJS (js) leg.
+        "NODE_PATH" -> (koffiTarget / "node_modules").getAbsolutePath
+    )
+}
+
 // The natives a JS test row loads through koffi, staged beside the row's linked test program by the kyo FFI plugin's ffiWithJsNatives,
 // exactly as an application stages them, so a row finds them the way a user's program does rather than through a KYO_FFI_<ID>_PATH
 // variable only the build sets. The natives come from the test classpath, where ffiPackage files them under kyo-ffi/native/<os>-<arch>/.
@@ -1699,6 +2146,38 @@ val kyoNetNativeClassifierGuard = taskKey[Unit](
 // P2b classifier slice: the per-os-arch native classifier jars + the all-natives aggregator, appended to
 // `Compile / packagedArtifacts` (via `++=`, never a self-referential `:=`). Separate task so the extension is
 // non-cyclic. DECISION-P2b-classifier.md Decisions 1 + 3.
+/** Slices an FFI module's compiled natives into per-os-arch classifier jars plus an `all-natives` aggregator.
+  *
+  * The plugin already writes each library to `META-INF/native/<os-arch>/lib<id>.<ext>` in the managed resources; what
+  * this adds is publishing them as their own artifacts, so a consumer gets a prebuilt library for their platform
+  * instead of needing a C toolchain. kyo-net does the same thing with its own task, which carries extra rules about
+  * which library families earn a classifier; a module with a single library needs none of that, so the shared shape
+  * lives here and kyo-net keeps its own.
+  */
+def ffiClassifierArtifacts(base: String, resources: Seq[File], version: String, out: File): Map[Artifact, File] = {
+    val natives = resources.filter { f =>
+        (f.getName.endsWith(".so") || f.getName.endsWith(".dylib") || f.getName.endsWith(".dll")) &&
+        f.getParentFile.getParentFile.getName == "native"
+    }
+    def sliceJar(classifier: String, files: Seq[File]): (Artifact, File) = {
+        val jar     = out / s"$base-$version-$classifier-natives.jar"
+        val entries = files.map(f => f -> s"META-INF/native/${f.getParentFile.getName}/${f.getName}")
+        IO.zip(entries, jar, None)
+        Artifact(base).withType("jar").withExtension("jar").withClassifier(Some(classifier)) -> jar
+    }
+    val perOsArch = natives.groupBy(_.getParentFile.getName).map { case (osArch, files) => sliceJar(osArch, files) }
+    val all       = if (natives.nonEmpty) Map(sliceJar("all-natives", natives)) else Map.empty[Artifact, File]
+    perOsArch ++ all
+}
+
+val kyoSqlSqliteClassifierArtifacts = taskKey[Map[Artifact, File]](
+    "Per-os-arch native classifier jars for the vendored SQLite build, plus the `all-natives` aggregator."
+)
+
+val kyoSqlDoltLiteClassifierArtifacts = taskKey[Map[Artifact, File]](
+    "Per-os-arch native classifier jars for the linked DoltLite build, plus the `all-natives` aggregator."
+)
+
 val kyoNetClassifierArtifacts = taskKey[Map[Artifact, File]](
     "Per-os-arch native classifier jars (transport-native `<os-arch>`, vendored-BoringSSL `<os-arch>-boringssl`) + the `all-natives` aggregator."
 )
@@ -2231,8 +2710,8 @@ lazy val `kyo-caliban` =
         .withKyoTest
         .settings(
             `kyo-settings`,
-            libraryDependencies += "com.github.ghostdogpr"                 %% "caliban"               % "3.1.2",
-            libraryDependencies += "com.github.plokhotnyuk.jsoniter-scala" %% "jsoniter-scala-macros" % "2.38.16" % "provided"
+            libraryDependencies += "com.github.ghostdogpr"                 %% "caliban"               % "3.1.5",
+            libraryDependencies += "com.github.plokhotnyuk.jsoniter-scala" %% "jsoniter-scala-macros" % "2.40.1" % "provided"
         )
         .jvmSettings(mimaCheck(false))
 
@@ -2283,10 +2762,10 @@ lazy val `kyo-compat-future` =
             `kyo-settings`,
             release17,
             libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
-            // Default compile under scala3Version so unidoc reads consistent TASTy with the rest of the build.
-            // `+publish` still only emits LTS artifacts (crossScalaVersions + publish/skip guard).
-            crossScalaVersions := List(scala3LTSVersion),
-            publish / skip     := scalaVersion.value != scala3LTSVersion,
+            // Default compile under scala39Version so unidoc reads consistent TASTy with the rest of the build.
+            // `+publish` still only emits Scala 3.3 artifacts (crossScalaVersions + publish/skip guard).
+            crossScalaVersions := List(scala33Version),
+            publish / skip     := scalaVersion.value != scala33Version,
             scalacOptions += "-Xmax-inlines:1024",
             // Cross-platform: shared sources use atomics + ConcurrentLinkedQueue
             // (both polyfilled on JS and natively supported on Native).
@@ -2351,8 +2830,8 @@ lazy val `kyo-compat-zio` =
             `kyo-settings`,
             release17,
             libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
-            crossScalaVersions                      := List(scala3LTSVersion),
-            publish / skip                          := scalaVersion.value != scala3LTSVersion,
+            crossScalaVersions                      := List(scala33Version),
+            publish / skip                          := scalaVersion.value != scala33Version,
             scalacOptions += "-Xmax-inlines:1024",
             libraryDependencies += "dev.zio" %%% "zio"            % zioVersion,
             libraryDependencies += "dev.zio" %%% "zio-concurrent" % zioVersion,
@@ -2385,8 +2864,8 @@ lazy val `kyo-compat-ox` =
             `kyo-settings`,
             release17,
             libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
-            crossScalaVersions                      := List(scala3LTSVersion),
-            publish / skip                          := scalaVersion.value != scala3LTSVersion,
+            crossScalaVersions                      := List(scala33Version),
+            publish / skip                          := scalaVersion.value != scala33Version,
             scalacOptions += "-Xmax-inlines:1024",
             libraryDependencies += "com.softwaremill.ox" %% "core" % oxVersion,
             Test / unmanagedSourceDirectories += {
@@ -2415,8 +2894,8 @@ lazy val `kyo-compat-twitter-future` =
             `kyo-settings`,
             release17,
             libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
-            crossScalaVersions                      := List(scala3LTSVersion),
-            publish / skip                          := scalaVersion.value != scala3LTSVersion,
+            crossScalaVersions                      := List(scala33Version),
+            publish / skip                          := scalaVersion.value != scala33Version,
             scalacOptions += "-Xmax-inlines:1024",
             libraryDependencies += ("com.twitter" %% "util-core" % "24.2.0")
                 .exclude("org.scala-lang.modules", "scala-collection-compat_2.13"),
@@ -2451,8 +2930,8 @@ lazy val `kyo-compat-tests` =
             `kyo-settings`,
             release17,
             libraryDependencies += "org.scalatest" %% "scalatest" % scalaTestVersion % Test,
-            scalaVersion                           := scala3LTSVersion,
-            crossScalaVersions                     := List(scala3LTSVersion),
+            scalaVersion                           := scala33Version,
+            crossScalaVersions                     := List(scala33Version),
             scalacOptions += "-Xmax-inlines:1024",
             publish / skip := true,
             mimaCheck(false),
@@ -2899,7 +3378,7 @@ lazy val `kyo-website` =
             // The exclude on sourcecode resolves the _2.13 vs _3 cross-version conflict that arises
             // because scalameta_3 transitively pulls in trees_2.13 -> common_2.13 -> sourcecode_2.13
             // while the rest of the project uses sourcecode_3.
-            libraryDependencies += ("org.scalameta" %% "scalameta" % "4.17.0")
+            libraryDependencies += ("org.scalameta" %% "scalameta" % "4.17.4")
                 .exclude("com.lihaoyi", "sourcecode_2.13")
         )
         .jsSettings(
@@ -2999,7 +3478,7 @@ lazy val `kyo-bench` =
                     )
                 }
             },
-            libraryDependencies += "dev.zio"              %% "izumi-reflect"       % "3.0.9",
+            libraryDependencies += "dev.zio"              %% "izumi-reflect"       % "3.0.10",
             libraryDependencies += "org.typelevel"        %% "cats-effect"         % catsVersion,
             libraryDependencies += "org.typelevel"        %% "log4cats-core"       % "2.8.0",
             libraryDependencies += "org.typelevel"        %% "log4cats-slf4j"      % "2.8.0",
@@ -3012,21 +3491,21 @@ lazy val `kyo-bench` =
             libraryDependencies += "dev.zio"              %% "zio-concurrent"      % zioVersion,
             libraryDependencies += "dev.zio"              %% "zio-query"           % "0.7.8",
             libraryDependencies += "dev.zio"              %% "zio-parser"          % "0.1.11",
-            libraryDependencies += "dev.zio"              %% "zio-prelude"         % "1.0.0-RC47",
-            libraryDependencies += "co.fs2"               %% "fs2-core"            % "3.13.0",
-            libraryDependencies += "org.http4s"           %% "http4s-ember-client" % "1.0.0-M46",
-            libraryDependencies += "org.http4s"           %% "http4s-ember-server" % "1.0.0-M46",
-            libraryDependencies += "org.http4s"           %% "http4s-dsl"          % "1.0.0-M46",
-            libraryDependencies += "dev.zio"              %% "zio-http"            % "3.11.2",
-            libraryDependencies += "io.vertx"              % "vertx-core"          % "5.1.3",
-            libraryDependencies += "io.vertx"              % "vertx-web"           % "5.1.3",
+            libraryDependencies += "dev.zio"              %% "zio-prelude"         % "1.0.0-RC48",
+            libraryDependencies += "co.fs2"               %% "fs2-core"            % "3.14.0",
+            libraryDependencies += "org.http4s"           %% "http4s-ember-client" % "1.0.0-M48",
+            libraryDependencies += "org.http4s"           %% "http4s-ember-server" % "1.0.0-M48",
+            libraryDependencies += "org.http4s"           %% "http4s-dsl"          % "1.0.0-M48",
+            libraryDependencies += "dev.zio"              %% "zio-http"            % "3.11.6",
+            libraryDependencies += "io.vertx"              % "vertx-core"          % "5.2.0",
+            libraryDependencies += "io.vertx"              % "vertx-web"           % "5.2.0",
             // JSON serialization benchmarks
-            libraryDependencies += "com.github.plokhotnyuk.jsoniter-scala" %% "jsoniter-scala-core"   % "2.38.16",
-            libraryDependencies += "com.github.plokhotnyuk.jsoniter-scala" %% "jsoniter-scala-macros" % "2.38.16" % "provided",
-            libraryDependencies += "dev.zio"                               %% "zio-json"              % "0.9.2",
-            libraryDependencies += "io.circe"                              %% "circe-core"            % "0.14.15",
-            libraryDependencies += "io.circe"                              %% "circe-generic"         % "0.14.15",
-            libraryDependencies += "io.circe"                              %% "circe-parser"          % "0.14.15",
+            libraryDependencies += "com.github.plokhotnyuk.jsoniter-scala" %% "jsoniter-scala-core"   % "2.40.1",
+            libraryDependencies += "com.github.plokhotnyuk.jsoniter-scala" %% "jsoniter-scala-macros" % "2.40.1" % "provided",
+            libraryDependencies += "dev.zio"                               %% "zio-json"              % "1.1.0",
+            libraryDependencies += "io.circe"                              %% "circe-core"            % "0.14.16",
+            libraryDependencies += "io.circe"                              %% "circe-generic"         % "0.14.16",
+            libraryDependencies += "io.circe"                              %% "circe-parser"          % "0.14.16",
             libraryDependencies += "dev.zio"                               %% "zio-blocks-schema"     % "0.017"
         )
 
@@ -3044,7 +3523,7 @@ lazy val `kyo-doctest` =
         .jvmConfigure(_.disablePlugins(KyoDoctestPlugin))
         .settings(
             `kyo-settings`,
-            libraryDependencies += "org.scala-lang" %% "scala3-compiler" % scala3Version
+            libraryDependencies += "org.scala-lang" %% "scala3-compiler" % scala39Version
         )
 
 // Validates the root README.md (repo-level, outside any module directory).
@@ -3128,8 +3607,10 @@ def readFfiNativeManifest(cp: Seq[Attributed[File]], relDir: Seq[String], inBuil
 // the kyoNative aggregate (which has no native sources, hence no Test / nativeLink to transform) can
 // take these without the per-module link hook below.
 lazy val `native-settings-base` = Seq(
-    fork       := false,
-    bspEnabled := false,
+    fork := false,
+    // Native test binaries do not consume JVM process options.
+    Test / javaOptions := Nil,
+    bspEnabled         := false,
     // One test task per module, not one per suite. The scala-native TestAdapter keys its runner
     // processes by sbt task thread id, and sbt's cached task pool reaps a thread after 60s idle, so
     // one task per suite gives one FRESH runner process per suite whenever consecutive suites are
@@ -3147,9 +3628,14 @@ lazy val `native-settings-base` = Seq(
     // nativeConfig does not propagate across a project dependency, so fold each dep's FFI compile/link flags in
     // here or the link fails (SSL_CTX_ctrl macro / undefined io_uring_*).
     nativeConfig := {
-        val base         = nativeConfig.value
-        val cp           = (Compile / dependencyClasspath).value
-        val linkExtra    = readFfiNativeManifest(cp, KyoFfiPlugin.ffiNativeLinkFlagsDir, KyoFfiPlugin.ffiNativeInBuildLinkFlagsDir)
+        val base                = nativeConfig.value
+        val cp                  = (Compile / dependencyClasspath).value
+        val dependencyLinkExtra = readFfiNativeManifest(cp, KyoFfiPlugin.ffiNativeLinkFlagsDir, KyoFfiPlugin.ffiNativeInBuildLinkFlagsDir)
+        // Scala Native 0.5.12 omits GNU-stack notes in its safepoint assembly (upstream #4956).
+        // Mark Linux binaries' stacks non-executable until a release carries those notes.
+        val triple       = base.targetTriple.getOrElse(scala.scalanative.build.Discover.targetTriple(base))
+        val isLinux      = triple.split("-").contains("linux")
+        val linkExtra    = dependencyLinkExtra ++ (if (isLinux) Seq("-Wl,-z,noexecstack") else Nil)
         val compileExtra = readFfiNativeManifest(cp, KyoFfiPlugin.ffiNativeCompileFlagsDir, KyoFfiPlugin.ffiNativeInBuildCompileFlagsDir)
         val withLink     = if (linkExtra.isEmpty) base else base.withLinkingOptions(base.linkingOptions ++ linkExtra)
         if (compileExtra.isEmpty) withLink else withLink.withCompileOptions(withLink.compileOptions ++ compileExtra)
@@ -3238,8 +3724,8 @@ lazy val `kyo-doctest-plugin` = (project in file("kyo-doctest/plugin"))
     .disablePlugins(KyoDoctestPlugin)
     .settings(
         moduleName         := "kyo-doctest-plugin",
-        scalaVersion       := "2.12.20",
-        crossScalaVersions := Seq("2.12.20"),
+        scalaVersion       := "2.12.21",
+        crossScalaVersions := Seq("2.12.21"),
         sbtPlugin          := true,
         // scalafmt-dynamic powers the `doctestFormat` task (rewrite-in-place of README scala
         // blocks using the repo's .scalafmt.conf). Pinned to the .scalafmt.conf version.
@@ -3252,7 +3738,7 @@ lazy val `kyo-doctest-plugin` = (project in file("kyo-doctest/plugin"))
             // The sub-builds compile against the same Scala the runner classpath was built with.
             // Pinning it here rather than in each build.sbt keeps the two from drifting apart, which
             // breaks with a NoSuchMethodError once the two versions disagree on the standard library.
-            "-Dkyo.doctest.scalaVersion=" + scala3Version
+            "-Dkyo.scalaVersion=" + scala39Version
         ),
         scriptedBufferLog := false,
         // Provide the kyo-doctest runner's built classpath to the scripted forks without ivy
@@ -3293,8 +3779,8 @@ lazy val `kyo-compat-plugin` = (project in file("kyo-compat/plugin"))
     .disablePlugins(KyoDoctestPlugin)
     .settings(
         moduleName         := "kyo-compat-plugin",
-        scalaVersion       := "2.12.20",
-        crossScalaVersions := Seq("2.12.20"),
+        scalaVersion       := "2.12.21",
+        crossScalaVersions := Seq("2.12.21"),
         sbtPlugin          := true,
         // Plugin code adds rows to a `ProjectMatrix` programmatically, so
         // it compiles against sbt-projectmatrix; it also references the
@@ -3310,8 +3796,8 @@ lazy val `kyo-compat-plugin` = (project in file("kyo-compat/plugin"))
         // pins winning conflict resolution, resolving this project reaches those two
         // hosts, and any runner that cannot reach them fails the build.
         addSbtPlugin("com.eed3si9n"       % "sbt-projectmatrix"             % "0.11.0"),
-        addSbtPlugin("org.portable-scala" % "sbt-scalajs-crossproject"      % "1.3.2"),
-        addSbtPlugin("org.portable-scala" % "sbt-scala-native-crossproject" % "1.3.2"),
+        addSbtPlugin("org.portable-scala" % "sbt-scalajs-crossproject"      % "1.4.0"),
+        addSbtPlugin("org.portable-scala" % "sbt-scala-native-crossproject" % "1.4.0"),
         addSbtPlugin("org.scala-js"       % "sbt-scalajs"                   % "1.22.0"),
         addSbtPlugin("org.scala-native"   % "sbt-scala-native"              % "0.5.12"),
         scriptedLaunchOpts := Seq(
@@ -3500,8 +3986,8 @@ lazy val `kyo-test-sbt` =
         .settings(
             name               := "sbt-kyo-test",
             sbtPlugin          := true,
-            scalaVersion       := "2.12.20",
-            crossScalaVersions := Seq("2.12.20"),
+            scalaVersion       := "2.12.21",
+            crossScalaVersions := Seq("2.12.21"),
             // Must never lag project/plugins.sbt: a consumer who takes ScalaJSPlugin through this
             // plugin links kyo's published artifacts with these versions, and Scala.js IR is
             // forward-incompatible. Scala Native NIR has the same directional constraint.
@@ -3524,18 +4010,18 @@ lazy val `kyo-test-sbt-publish` =
         .settings(
             name                                   := "sbt-kyo-test-publish",
             sbtPlugin                              := true,
-            scalaVersion                           := "2.12.20",
-            crossScalaVersions                     := Seq("2.12.20"),
+            scalaVersion                           := "2.12.21",
+            crossScalaVersions                     := Seq("2.12.21"),
             buildInfoKeys                          := Seq[BuildInfoKey](BuildInfoKey.map(version) { case (_, v) => ("kyoVersion", v) }),
             buildInfoPackage                       := "kyo.test.sbt",
             buildInfoObject                        := "BuildInfo",
-            libraryDependencies += "org.scalatest" %% "scalatest" % "3.2.19" % Test,
+            libraryDependencies += "org.scalatest" %% "scalatest" % "3.2.20" % Test,
             scriptedLaunchOpts                     := Seq(
                 // The native sub-build links a real binary in this JVM; 1G (enough for the other
                 // three) OOMs inside nativeLink.
                 "-Xmx4G",
                 "-Dplugin.version=" + version.value,
-                "-Dkyo.scalaVersion=" + scala3Version
+                "-Dkyo.scalaVersion=" + scala39Version
             ),
             scriptedBufferLog := false,
             // The sub-builds resolve kyo-test-runner (and js-browser resolves kyo-test-browser) from

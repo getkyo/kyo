@@ -7,7 +7,7 @@ final private[kyo] class InMemoryTransport(
     in: Channel[JsonRpcEnvelope]
 ) extends JsonRpcTransport:
 
-    def send(env: JsonRpcEnvelope)(using Frame): Unit < (Async & Abort[Closed]) =
+    def send(env: JsonRpcEnvelope)(using Frame): Unit < (Async & Abort[Closed | JsonRpcError]) =
         out.put(env)
 
     def incoming(using Frame): Stream[JsonRpcEnvelope, Async & Abort[Closed]] =

@@ -98,8 +98,8 @@ final class PostgresParamWriter(registry: TypeRegistry, binaryElements: Boolean 
       *
       * PostgreSQL's `"char"` pseudo-type (OID 18) is an internal type not intended for application use. The standard `CHAR(1)` column type
       * resolves to `BPCHAR` (OID 1042) in the wire protocol and accepts a plain text string. Encoding via `textText` ensures compatibility
-      * with both `TEXT` and `CHAR(1)` columns. An empty `Char` (Unicode U+0000) encodes as an empty string; a multi-char `Char` is impossible
-      * in Scala (each `Char` is exactly one UTF-16 code unit).
+      * with both `TEXT` and `CHAR(1)` columns. A `Char` is exactly one UTF-16 code unit, so there is no multi-char case; `'\u0000'` encodes
+      * as a one-character string holding NUL, which the server then rejects, since PostgreSQL's text types cannot store that byte.
       */
     override def char(value: Char): Unit =
         _params += BoundParam(value.toString, PostgresEncoder.textText)
@@ -121,7 +121,7 @@ final class PostgresParamWriter(registry: TypeRegistry, binaryElements: Boolean 
         catch
             case _: ArithmeticException =>
                 given Frame = frame
-                throw SqlRequestDurationOverflowException(value.getSeconds / 86_400L, "the PostgreSQL interval microsecond range")
+                throw SqlRequestDurationOverflowException(value.getSeconds, "the PostgreSQL interval microsecond range")
         end try
         _params += BoundParam(value, PostgresEncoder.intervalBinary)
     end duration

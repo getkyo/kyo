@@ -56,11 +56,11 @@ import kyo.Compiler.Uri
   */
 object IdeSessionDemo extends KyoApp:
 
-    /** The running compiler version. Must equal `build.sbt` `scala3Version`: the pool routes a
-      * version-matched, `isolate = false` config to the in-process backend, and a stale value here would
-      * force a forked worker that this demo does not provision a pc classpath for.
+    /** The version of the compiler on this JVM's classpath: the pool routes a version-matched,
+      * `isolate = false` config to the in-process backend, and any other value would force a forked
+      * worker that this demo does not provision a pc classpath for.
       */
-    private val scalaVersion: String = "3.8.4"
+    private val scalaVersion: String = dotty.tools.dotc.config.Properties.versionNumberString
 
     // Full run: open the pool, run `flow`, validate, narrate, and surface a `Present` verdict or an op
     // abort as a failure so the app exits non-zero.

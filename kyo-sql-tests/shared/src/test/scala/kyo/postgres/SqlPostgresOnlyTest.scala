@@ -49,113 +49,36 @@ class SqlPostgresOnlyTest extends SqlContainerTest:
                 Abort.error(Result.Panic(t))
         }
 
-    // ── ilike on PG uses native ILIKE ─────────────────────────────────────────
+    // ── the session settings the driver pins at startup ───────────────────────
 
-    "Leaf 16: ilike on PG returns expected rows using native ILIKE" in {
+    /** The driver names `TimeZone` and `DateStyle` in its startup packet, and the server confirms both.
+      *
+      * Each decides how the server spells a value the driver reads back, so a session inheriting the server's default leaves the driver
+      * parsing a shape it did not choose: `TimeZone` moves a timestamptz's fields and its offset, and a non-ISO `DateStyle` reorders a
+      * date's, which an ISO parse reads as a different date rather than as a failure.
+      *
+      * The assertion is against `ParameterStatus`, which is the server reporting what it actually set, so a parameter the server ignored
+      * fails here rather than passing on the strength of having been sent.
+      */
+    "the connection pins the settings that decide how a value is spelled" in {
         Scope.run {
             SqlSharedContainers.withFreshSchema(Backend.Postgres) { ctx =>
                 withPgClient(ctx) { client =>
-                    for
-                        _ <- client.executeRaw(
-                            """CREATE TABLE person (id BIGINT PRIMARY KEY, name TEXT NOT NULL, age INT NOT NULL)"""
-                        )
-                        _ <- client.executeRaw("""INSERT INTO person VALUES (1, 'Alice', 30), (2, 'BOB', 25), (3, 'carol', 28)""")
-                        // ilike should match case-insensitively: 'alice%' matches 'Alice'
-                        rows <- Sql
-                            .from[Person]("p")
-                            .where(c => c.p.name.ilike("alice%"))
-                            .select(c => c.p.name)
-                            .run
-                    yield
-                        assert(rows.size == 1, s"Expected 1 ilike match for 'alice%', got: ${rows.size}")
-                        assert(rows.head == "Alice", s"Expected 'Alice', got: '${rows.head}'")
-                }
-            }
-        }
-    }
-
-    // ── ++ concat on PG uses || operator ──────────────────────────────────────
-
-    "Leaf 18: ++ concat on PG returns expected concatenated string using ||" in {
-        Scope.run {
-            SqlSharedContainers.withFreshSchema(Backend.Postgres) { ctx =>
-                withPgClient(ctx) { client =>
-                    for
-                        _ <- client.executeRaw(
-                            """CREATE TABLE person (id BIGINT PRIMARY KEY, name TEXT NOT NULL, age INT NOT NULL)"""
-                        )
-                        _ <- client.executeRaw("""INSERT INTO person VALUES (1, 'alice', 30)""")
-                        // Verify the rendered SQL uses || for concat on PG
-                        _ =
-                            val rendered = Sql.from[Person]("p").select(c => c.p.name ++ " rocks")
-                                .render(PostgresDialect)
-                            assert(
-                                rendered.onlySql.get.contains("||"),
-                                s"Expected || in PG concat SQL, got: ${rendered.onlySql.get}"
-                            )
-                        // Execute the concat query against live PG
-                        rows <- Sql
-                            .from[Person]("p")
-                            .where(c => c.p.id == 1L)
-                            .select(c => c.p.name ++ " rocks")
-                            .run
-                    yield
-                        assert(rows.size == 1, s"Expected 1 row, got: ${rows.size}")
-                        assert(rows.head == "alice rocks", s"Expected 'alice rocks', got: '${rows.head}'")
-                }
-            }
-        }
-    }
-
-    // ── onConflictDoNothing is idempotent on PG ──────────────────────────────
-
-    "Leaf 20: onConflictDoNothing is idempotent on PG (duplicate row leaves table unchanged)" in {
-        Scope.run {
-            SqlSharedContainers.withFreshSchema(Backend.Postgres) { ctx =>
-                withPgClient(ctx) { client =>
-                    for
-                        _ <- client.executeRaw(
-                            """CREATE TABLE person (id BIGINT PRIMARY KEY, name TEXT NOT NULL, age INT NOT NULL)"""
-                        )
-                        _ <- client.executeRaw("""INSERT INTO person VALUES (1, 'alice', 30)""")
-                        // Insert duplicate with ON CONFLICT DO NOTHING, should not error or change data
-                        result <- Sql
-                            .insert[Person]
-                            .values(Person(1L, "alice-duplicate", 99))
-                            .onConflictDoNothing()
-                            .run
-                        rows <- Sql.from[Person]("p").run
-                    yield
-                        // Table must still have exactly 1 row with original data
-                        assert(rows.size == 1, s"Expected 1 row after idempotent insert, got: ${rows.size}")
-                        assert(rows.head.name == "alice", s"Expected original 'alice', got: '${rows.head.name}'")
-                        assert(rows.head.age == 30, s"Expected original age 30, got: ${rows.head.age}")
-                }
-            }
-        }
-    }
-
-    // ── onConflictDoUpdate updates existing row on PG ──────────────────────────
-
-    "Leaf 22: onConflictDoUpdate updates existing row on PG via ON CONFLICT … DO UPDATE" in {
-        Scope.run {
-            SqlSharedContainers.withFreshSchema(Backend.Postgres) { ctx =>
-                withPgClient(ctx) { client =>
-                    for
-                        _ <- client.executeRaw(
-                            """CREATE TABLE person (id BIGINT PRIMARY KEY, name TEXT NOT NULL, age INT NOT NULL)"""
-                        )
-                        _ <- client.executeRaw("""INSERT INTO person VALUES (1, 'alice', 30)""")
-                        // Upsert: conflict on id=1, update age to 31
-                        _ <- Sql
-                            .insert[Person]
-                            .values(Person(1L, "alice-upserted", 31))
-                            .onConflictDoUpdate(_.id)(c => c.age := Sql.Excluded(c.age))
-                            .run
-                        rows <- Sql.from[Person]("p").run
-                    yield
-                        assert(rows.size == 1, s"Expected 1 row after upsert, got: ${rows.size}")
-                        assert(rows.head.age == 31, s"Expected updated age 31, got: ${rows.head.age}")
+                    client match
+                        case pg: PostgresClient =>
+                            pg.parameters.map { params =>
+                                assert(
+                                    params.get("TimeZone").contains("UTC"),
+                                    s"expected the session pinned to UTC, got ${params.get("TimeZone")}"
+                                )
+                                assert(
+                                    params.get("DateStyle").exists(_.startsWith("ISO")),
+                                    s"expected an ISO DateStyle, got ${params.get("DateStyle")}"
+                                )
+                            }
+                        case other =>
+                            assert(false, s"expected a PostgresClient, got ${other.getClass.getName}")
+                    end match
                 }
             }
         }

@@ -2,25 +2,31 @@ package kyo
 
 import kyo.test.HostFilter
 
-/** Reusable behavioral contract for mutable filesystem backends. */
-abstract class FileSystemWriteTest extends kyo.test.Test[Any]:
+/** Reusable behavioral contract for mutable filesystem backends.
+  *
+  * `S >: Async` bounds the backend effect as described on [[FileSystemReadTest]].
+  */
+abstract class FileSystemWriteTest[S >: Async] extends kyo.test.Test[Any]:
 
     // Writes through the host file system, which a browser has not.
     override protected def hostFilters = Chunk(HostFilter.NotBrowser)
 
-    protected def createFileSystem(using
-        Frame
-    ): (FileSystem.Write[Sync], Path) < (Sync & Scope & Abort[FileSystemException])
+    /** Runs one assertion against a fresh backend and a root to work under, shaped as a continuation for the reason
+      * given on [[FileSystemReadTest.withFileSystem]].
+      */
+    protected def withFileSystem[A](
+        use: (FileSystem.Write[S], Path) => A < (S & Async & Scope & Abort[FileSystemException])
+    )(using Frame): A < (Async & Scope & Abort[FileSystemException])
 
     "write suite round-trips a concrete value" in {
-        createFileSystem.map { (fileSystem, root) =>
+        withFileSystem { (fileSystem, root) =>
             val file = root / "value.txt"
             fileSystem.write(file, "value", Path.WriteOptions()).andThen(fileSystem.read(file)).map(value => assert(value == "value"))
         }
     }
 
     "write suite reports missing parents" in {
-        createFileSystem.map { (fileSystem, root) =>
+        withFileSystem { (fileSystem, root) =>
             val file = root / "missing" / "value.txt"
             Abort.run[FileWriteException](fileSystem.write(file, "value", Path.WriteOptions(createFolders = false))).map {
                 case Result.Failure(_: FileNotFoundException) => assert(true)
@@ -30,13 +36,14 @@ abstract class FileSystemWriteTest extends kyo.test.Test[Any]:
     }
 
     "write suite preserves concurrent sibling writes" in {
-        createFileSystem.map { (fileSystem, root) =>
+        withFileSystem { (fileSystem, root) =>
             val first  = root / "first.txt"
             val second = root / "second.txt"
             for
-                gate   <- Latch.init(1)
-                left   <- Fiber.initUnscoped(gate.await.andThen(fileSystem.write(first, "left", Path.WriteOptions())))
-                right  <- Fiber.initUnscoped(gate.await.andThen(fileSystem.write(second, "right", Path.WriteOptions())))
+                gate  <- Latch.init(1)
+                left  <- Fiber.initUnscoped(gate.await.andThen(fileSystem.write(first, "left", Path.WriteOptions())))
+                right <-
+                    Fiber.initUnscoped(gate.await.andThen(fileSystem.write(second, "right", Path.WriteOptions())))
                 _      <- gate.release
                 _      <- left.get
                 _      <- right.get
@@ -47,7 +54,7 @@ abstract class FileSystemWriteTest extends kyo.test.Test[Any]:
     }
 
     "write suite gives distinct temporary directories for one prefix" in {
-        createFileSystem.map { (fileSystem, _) =>
+        withFileSystem { (fileSystem, _) =>
             // Two calls with the same prefix, which is the ordinary case: Path.tempDir defaults its
             // prefix to a literal, and literals are interned, so both calls receive the identical
             // String instance. A name derived from that instance is the same name twice, and the
@@ -63,7 +70,7 @@ abstract class FileSystemWriteTest extends kyo.test.Test[Any]:
     }
 
     "write suite agrees with its declared case sensitivity" in {
-        createFileSystem.map { (fileSystem, root) =>
+        withFileSystem { (fileSystem, root) =>
             // Asserted against observed behaviour rather than against the declared value, which is
             // what makes this two-sided: a backend that reports the wrong policy fails here no
             // matter which value it reports. Checking a policy by branching on that same policy is
@@ -84,7 +91,7 @@ abstract class FileSystemWriteTest extends kyo.test.Test[Any]:
     }
 
     "write suite releases scoped channels" in {
-        createFileSystem.map { (fileSystem, root) =>
+        withFileSystem { (fileSystem, root) =>
             Scope.run(fileSystem.openWriteChannel(root / "scoped.bin", FileSystem.WriteOpen.Create)).map { channel =>
                 Abort.run[FileWriteException](channel.writeAt(0L, Span(1.toByte))).map(result => assert(result.isFailure))
             }

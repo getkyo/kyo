@@ -3,8 +3,18 @@ package kyo.internal
 import kyo.Chunk
 import kyo.ConcreteTag
 import kyo.ConcreteTag.*
+import scala.annotation.publicInBinary
 import scala.quoted.*
 
+/** Derives the concrete type descriptions used by [[kyo.ConcreteTag]].
+  *
+  * The public inline factory invokes this implementation while compiling a caller.
+  * Derivation validates supported types and builds the corresponding runtime tag.
+  * Unsupported types produce a diagnostic at the factory's call site.
+  *
+  * Public binary visibility supports inline callers while Scala access remains restricted to kyo.
+  */
+@publicInBinary
 private[kyo] object ConcreteTagMacro:
 
     def derive[A: Type](using Quotes): Expr[ConcreteTag[A]] =

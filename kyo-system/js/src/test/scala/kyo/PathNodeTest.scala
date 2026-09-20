@@ -56,7 +56,7 @@ class PathNodeTest extends kyo.test.Test[Any]:
                     val path = dir / "create.bin"
                     path.writeBytes(bytes(1, 2, 3)).andThen {
                         for
-                            gate <- Latch.init(1)
+                            gate   <- Latch.init(1)
                             fibers <- Kyo.fill(32)(Fiber.initUnscoped {
                                 gate.await.andThen {
                                     Abort.run[FileSystemException](

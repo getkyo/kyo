@@ -118,7 +118,7 @@ class PathPlatformSpecificLockJsTest extends kyo.test.Test[Any]:
     "a publication from a separate live worker blocks without serial litter growth" in {
         withTarget { target =>
             Sync.Unsafe.defer {
-                val gate = target + ".kyo-lock.gate"
+                val gate        = target + ".kyo-lock.gate"
                 val publication = NodePathLock.publicationPath(
                     gate,
                     NodeModules.os.hostname(),
@@ -166,7 +166,7 @@ class PathPlatformSpecificLockJsTest extends kyo.test.Test[Any]:
     "a publication owned by a proven dead process is reclaimed from its filename" in {
         withTarget { target =>
             Sync.Unsafe.defer {
-                val gate = target + ".kyo-lock.gate"
+                val gate        = target + ".kyo-lock.gate"
                 val publication = NodePathLock.publicationPath(
                     gate,
                     NodeModules.os.hostname(),

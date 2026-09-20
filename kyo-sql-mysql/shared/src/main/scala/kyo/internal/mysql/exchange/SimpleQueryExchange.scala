@@ -45,8 +45,11 @@ private[mysql] object SimpleQueryExchange:
                 if firstByte == 0x00 || (firstByte == 0xfe && payload.size >= 7) then
                     // OkPacket (no result set).
                     // 0x00: standard OK; 0xFE with len>=7: CLIENT_DEPRECATE_EOF OK marker.
-                    ProtocolDecode.decode("OK", payload.slice(1, payload.size), channel.unmarshallers.okPacket).map { ok =>
-                        (Chunk.empty[MysqlRow], ok.affectedRows)
+                    ProtocolDecode.decode("OK", payload.slice(1, payload.size), channel.unmarshallers.okPacket).flatMap { ok =>
+                        // The path a `SET` reaches the server by, so it is the one that must notice a session
+                        // variable the driver decodes against being changed underneath it.
+                        channel.observeStatus(ok.statusFlags, ok.warnings, ok.sessionStateInfo)
+                            .andThen((Chunk.empty[MysqlRow], ok.affectedRows))
                     }
                 else if firstByte == 0xff then
                     // ErrPacket

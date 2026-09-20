@@ -22,7 +22,7 @@ class SqlPipelineConformanceTest extends SqlBackendTest:
       */
     private val conflictingId = 3L
 
-    forEachBackend() { (_, client, _) =>
+    forEachBackend() { (backend, client, _) =>
         for
             _       <- client.executeRaw("CREATE TABLE pipelinerow (id BIGINT PRIMARY KEY, payload VARCHAR(64) NOT NULL)")
             _       <- Sql.insert[PipelineRow].values(PipelineRow(conflictingId, "pre-existing")).run
@@ -38,9 +38,14 @@ class SqlPipelineConformanceTest extends SqlBackendTest:
                 if i.toLong == conflictingId then
                     outcome match
                         case Result.Failure(e: SqlServerConstraintViolationException) =>
+                            // The descriptor's own state rather than class 23, for the reason the error-mapping suite documents: one
+                            // engine files every failure under the general state, and its driver relays that untouched while
+                            // classifying the typed family from the error number. The TYPE above is the cross-engine assertion; this
+                            // pins that the state a caller sees is the one the server really sent.
                             assert(
-                                e.sqlState.startsWith("23"),
-                                s"expected SQLSTATE class 23 (integrity constraint violation), got ${e.sqlState}"
+                                e.sqlState == backend.uniqueViolationSqlState,
+                                s"${backend.label}: expected its own duplicate-key SQLSTATE ${backend.uniqueViolationSqlState}, " +
+                                    s"got ${e.sqlState}"
                             )
                         case other =>
                             fail(

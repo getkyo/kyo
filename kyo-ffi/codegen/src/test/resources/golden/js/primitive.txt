@@ -7,7 +7,7 @@ import scala.scalajs.js
 import scala.scalajs.js.annotation.*
 import scala.scalajs.js.typedarray.*
 import kyo.ffi.*
-import kyo.ffi.internal.{AbiCheck, JsRawSegment, KoffiFacade, KoffiFn, NativeLoader, StructAbiCheck}
+import kyo.ffi.internal.{AbiCheck, JsRawSegment, KoffiFacade, KoffiFn, NativeFacade, NativeLoader, StructAbiCheck}
 
 final class PrimitiveBindingsImpl extends PrimitiveBindings:
     import PrimitiveBindingsImpl.*
@@ -19,8 +19,8 @@ end PrimitiveBindingsImpl
 
 object PrimitiveBindingsImpl:
     AbiCheck.verify(1, "kyo.example.PrimitiveBindings")
-    private val facade = KoffiFacade.load(
-        NativeLoader.jsResolve("kyo_prim"),
+    private val facade = NativeFacade.load(
+        "kyo_prim",
         Seq(
             KoffiFn("add", "add", "int", Seq[js.Any]("int".asInstanceOf[js.Any], "int".asInstanceOf[js.Any]))
         )

@@ -15,8 +15,9 @@ import kyo.*
   * until the readyState (and optionally the network idle window) matches the requested settle mode. This keeps the CDP event channel free
   * for other subscribers (downloads, tests).
   *
-  * Navigation failure is detected via `performance.getEntriesByType('navigation')[0].responseStatus`: a 4xx/5xx there raises
-  * [[BrowserNavigationFailedException]] when `throwOnFailure = true`.
+  * Navigation failure is detected two ways, both raising [[BrowserNavigationFailedException]] when `throwOnFailure = true`: a 4xx/5xx in
+  * `performance.getEntriesByType('navigation')[0].responseStatus`, and a commit to Chrome's `chrome-error://` document, which is where a
+  * navigation that failed below HTTP lands and which carries no status to check.
   */
 private[kyo] object NavigationWatcher:
 
@@ -321,6 +322,10 @@ private[kyo] object NavigationWatcher:
                                         )
                                     else Async.sleep(pollInterval).andThen(Loop.continue(()))
                                 }
+                            else if isTransportFailure(navUrl) then
+                                Abort.fail(
+                                    BrowserNavigationFailedException(navUrl, transportFailureReason)
+                                )
                             else if throwOnFailure && status >= 400 && status < 600 then
                                 Abort.fail(
                                     BrowserNavigationFailedException(navUrl, s"HTTP $status")
@@ -380,6 +385,11 @@ private[kyo] object NavigationWatcher:
           */
         final case class AbortNavigationNeverCommitted(snapshotUrl: String, settle: Browser.Settle) extends PendingDecision
 
+        /** `Settle.Load` reprobe came back Ready on Chrome's error document: the navigation failed below HTTP, so there is no status to
+          * check. Ordered ahead of [[AbortHttpError]] because such a reprobe reads status 0 and would otherwise degrade to success.
+          */
+        final case class AbortTransportFailure(navUrl: String) extends PendingDecision
+
         /** `Settle.Load` reprobe came back Ready with a 4xx/5xx response and the caller asked for HTTP-status enforcement. */
         final case class AbortHttpError(navUrl: String, status: Int) extends PendingDecision
 
@@ -417,6 +427,8 @@ private[kyo] object NavigationWatcher:
                             case Absent        => true
                         if !urlChanged then
                             PendingDecision.AbortNavigationNeverCommitted(expectedDifferentFrom.fold(navUrl)(_.url), settle)
+                        else if isTransportFailure(navUrl) then
+                            PendingDecision.AbortTransportFailure(navUrl)
                         else if throwOnFailure && status >= 400 && status < 600 then
                             PendingDecision.AbortHttpError(navUrl, status)
                         else
@@ -447,6 +459,8 @@ private[kyo] object NavigationWatcher:
                     snapshotUrl,
                     s"navigation never committed (still at original URL); settle mode ${settle}"
                 ))
+            case PendingDecision.AbortTransportFailure(navUrl) =>
+                Abort.fail(BrowserNavigationFailedException(navUrl, transportFailureReason))
             case PendingDecision.AbortHttpError(navUrl, status) =>
                 Abort.fail(BrowserNavigationFailedException(navUrl, s"HTTP $status"))
             case PendingDecision.AbortLoadEventNeverFired(urlHint) =>
@@ -481,6 +495,24 @@ private[kyo] object NavigationWatcher:
         settle match
             case Browser.Settle.NetworkIdle => BrowserNetworkTracker.ensureInstalled
             case _                          => ()
+
+    /** True when `navUrl` is Chrome's own error document, which is where a navigation that failed below HTTP lands: DNS failure, refused or
+      * reset connection, or a host that has run out of sockets.
+      *
+      * Such a navigation passes both of the other checks. It commits, so the URL changes and the "never committed" test does not fire, and
+      * there is no HTTP response behind it, so `responseStatus` reads 0 and the 4xx/5xx test does not fire either. Without this the caller
+      * is told the navigation succeeded and finds out only when the page turns out to be empty, which reads as a missing element several
+      * calls later rather than as the navigation failure it is.
+      *
+      * Not gated on `throwOnFailure`, unlike the status check beside it. That flag is `failOnHttpError` at the public surface and exists so
+      * a caller can read the body of an error *response*; a transport failure has no response, only Chrome's error document, so the reason
+      * to suppress it never applies.
+      */
+    private[internal] def isTransportFailure(navUrl: String): Boolean =
+        navUrl.startsWith("chrome-error://")
+
+    private[internal] val transportFailureReason: String =
+        "navigation failed below HTTP (no response); the page is Chrome's error document"
 
     /** Builds the settle-state JS template for the given settle mode and network-idle window (in ms).
       *

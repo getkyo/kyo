@@ -3,7 +3,7 @@
 // GUIDE.md has a passing fence. README.md has a failing fence.
 // By pointing doctestSources only at GUIDE.md, doctest should succeed.
 
-ThisBuild / scalaVersion := sys.props("kyo.doctest.scalaVersion")
+ThisBuild / scalaVersion := sys.props("kyo.scalaVersion")
 
 lazy val root = (project in file("."))
     .enablePlugins(KyoDoctestPlugin)

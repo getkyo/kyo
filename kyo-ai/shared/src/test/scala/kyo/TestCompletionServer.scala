@@ -34,11 +34,11 @@ final class TestCompletionServer private (
     def enqueueStream(chunks: Chunk[String])(using Frame): Unit < Async =
         scripts.updateAndGet(_.append(TestCompletionServer.Scripted.Sse(chunks))).unit
 
-    /** Enqueues a non-2xx status response with the given body, returned by the next completion call (the
-      * non-streaming route only); drives the client-side status classification and retry paths.
+    /** Enqueues a non-2xx status response with the given body and headers, returned by the next completion
+      * call (the non-streaming route only); drives the client-side status classification and retry paths.
       */
-    def enqueueStatus(code: Int, body: String)(using Frame): Unit < Async =
-        scripts.updateAndGet(_.append(TestCompletionServer.Scripted.Status(code, body))).unit
+    def enqueueStatus(code: Int, body: String, headers: Seq[(String, String)] = Seq.empty)(using Frame): Unit < Async =
+        scripts.updateAndGet(_.append(TestCompletionServer.Scripted.Status(code, body, headers))).unit
 
     /** Enqueues a request the server never answers: the handler blocks on a latch that is never released,
       * so the connection stays open until the client's own timeout fires. Drives a client-side timeout.
@@ -66,7 +66,7 @@ object TestCompletionServer:
     enum Scripted derives CanEqual:
         case Body(json: String)
         case Sse(chunks: Chunk[String])
-        case Status(code: Int, json: String)
+        case Status(code: Int, json: String, headers: Seq[(String, String)])
         case Never
         // Emits its chunks and then stalls without a terminator, the shape of a provider that stops
         // producing mid-stream while the connection stays open.
@@ -159,7 +159,8 @@ object TestCompletionServer:
         HttpRoute.postRaw(path).request(_.bodyText).response(_.bodyText).handler { req =>
             received.getAndUpdate(_.append(Captured(path, req.fields.body))).andThen {
                 popNext(scripts).map {
-                    case Present(Scripted.Status(code, body)) => HttpResponse(HttpStatus(code)).addField("body", body)
+                    case Present(Scripted.Status(code, body, headers)) =>
+                        headers.foldLeft(HttpResponse(HttpStatus(code)))((r, h) => r.addHeader(h._1, h._2)).addField("body", body)
                     // A stall script reaching the non-streaming route means the test bound the wrong server;
                     // holding the connection surfaces that as the caller's timeout rather than a handler panic.
                     case Present(Scripted.Never) | Present(Scripted.SseStall(_)) =>
@@ -184,8 +185,9 @@ object TestCompletionServer:
         HttpRoute.postRaw(path).request(_.bodyText).response(_.bodySseText).handler { req =>
             received.getAndUpdate(_.append(Captured(path, req.fields.body))).andThen {
                 popNext(scripts).map {
-                    case Present(Scripted.Status(code, body)) =>
-                        HttpResponse(HttpStatus(code)).addField("body", Stream.init(Chunk(body)).map(HttpSseEvent(_)))
+                    case Present(Scripted.Status(code, body, headers)) =>
+                        headers.foldLeft(HttpResponse(HttpStatus(code)))((r, h) => r.addHeader(h._1, h._2))
+                            .addField("body", Stream.init(Chunk(body)).map(HttpSseEvent(_)))
                     case Present(Scripted.Never) =>
                         Latch.init(1).map(_.await).andThen(HttpResponse.ok.addField("body", Stream.empty[HttpSseEvent[String]]))
                     case Present(Scripted.SseStall(cs)) =>

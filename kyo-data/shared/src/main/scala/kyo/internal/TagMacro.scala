@@ -5,11 +5,21 @@ import kyo.Tag.*
 import kyo.Tag.internal.*
 import kyo.Tag.internal.Type.*
 import kyo.Tag.internal.Type.Entry.*
+import scala.annotation.publicInBinary
 import scala.annotation.tailrec
 import scala.collection.immutable
 import scala.collection.immutable.HashMap
 import scala.quoted.{Type as SType, *}
 
+/** Derives the type encodings used by [[kyo.Tag]].
+  *
+  * The public inline factories invoke this implementation while compiling a caller.
+  * Static types become encoded constants; abstract types can retain dynamic tag inputs.
+  * The resulting tags use the same comparison and rendering operations at run time.
+  *
+  * Public binary visibility supports inline callers while Scala access remains restricted to kyo.
+  */
+@publicInBinary
 private[kyo] object TagMacro:
     // Per-compilation-run memo of the derived static encoding. The cache key is the
     // dealiased type's normalized `show` string concatenated with the source-position

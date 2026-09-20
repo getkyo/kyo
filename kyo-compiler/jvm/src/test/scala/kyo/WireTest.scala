@@ -48,7 +48,7 @@ class WireTest extends kyo.test.Test[Any]:
             ))),
             Response.Symbol(Absent),
             Response.Closed,
-            Response.Failed(CompilerWorkerReadyException("3.8.4", 30.seconds))
+            Response.Failed(CompilerWorkerReadyException("3.0.0", 30.seconds))
         )
         responses.foreach(resp => assert(roundTrip[Response](resp) == resp))
 

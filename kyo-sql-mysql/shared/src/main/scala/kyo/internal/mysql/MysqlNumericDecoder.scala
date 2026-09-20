@@ -110,7 +110,13 @@ private[kyo] object MysqlNumericDecoder:
 
     /** The exact integral value a numeric column carries, in either wire format. */
     private def integralValueOf(bytes: Span[Byte], format: Format, token: Int, scalaType: String)(using Frame): Long =
-        if isBits(token) then readBitsBigEndian(bytes, scalaType)
+        if isBits(token) then
+            // Refused rather than wrapped: a BIT(64) with its top bit set has no Long to widen into, exactly as a
+            // BIGINT UNSIGNED above 2^63 does not. `bitsMagnitude` is the path for the targets with room to carry it.
+            val magnitude = bitsMagnitude(bytes, scalaType)
+            if magnitude > BigInt(Long.MaxValue) then
+                throw SqlDecodeValueRangeException(scalaType, magnitude.toString, "BIT column")
+            else magnitude.toLong
         else integralValueByFormat(bytes, format, token, scalaType)
 
     private def integralValueByFormat(bytes: Span[Byte], format: Format, token: Int, scalaType: String)(using Frame): Long = format match
@@ -127,7 +133,7 @@ private[kyo] object MysqlNumericDecoder:
     private def approximateValueOf(bytes: Span[Byte], format: Format, token: Int, whenUnknown: Wire, scalaType: String)(using
         Frame
     ): Double =
-        if isBits(token) then readBitsBigEndian(bytes, scalaType).toDouble
+        if isBits(token) then bitsMagnitude(bytes, scalaType).toDouble
         else approximateValueByFormat(bytes, format, token, whenUnknown, scalaType)
 
     private def approximateValueByFormat(bytes: Span[Byte], format: Format, token: Int, whenUnknown: Wire, scalaType: String)(using
@@ -151,7 +157,7 @@ private[kyo] object MysqlNumericDecoder:
     private def decimalValueOf(bytes: Span[Byte], format: Format, token: Int, whenUnknown: Wire, scalaType: String)(using
         Frame
     ): BigDecimal =
-        if isBits(token) then BigDecimal(readBitsBigEndian(bytes, scalaType))
+        if isBits(token) then BigDecimal(bitsMagnitude(bytes, scalaType))
         else decimalValueByFormat(bytes, format, token, whenUnknown, scalaType)
 
     private def decimalValueByFormat(bytes: Span[Byte], format: Format, token: Int, whenUnknown: Wire, scalaType: String)(using
@@ -176,19 +182,22 @@ private[kyo] object MysqlNumericDecoder:
       *
       * It is resolved before the format branch for exactly that reason. A text-protocol `BIT` is raw bytes and not digits, so parsing it as an
       * ASCII rendering fails on the zero byte, and a binary-protocol `BIT` wider than one byte read little-endian gives the byte-reversed value.
+      *
+      * Answers a `BigInt` because a `BIT` is UNSIGNED and reaches 64 bits: accumulating into a `Long` makes `BIT(64)` holding all ones answer
+      * `-1`, a silently wrong value under both protocols and so invisible to a cross-protocol comparison.
       */
-    private def readBitsBigEndian(bytes: Span[Byte], scalaType: String)(using Frame): Long =
+    private def bitsMagnitude(bytes: Span[Byte], scalaType: String)(using Frame): BigInt =
         if bytes.isEmpty || bytes.size > 8 then
             throw SqlDecodeValueRangeException(scalaType, s"${bytes.size} bytes", "BIT column")
         end if
-        var acc = 0L
+        var acc = BigInt(0)
         var i   = 0
         while i < bytes.size do
-            acc = (acc << 8) | (bytes(i) & 0xffL)
+            acc = (acc << 8) | BigInt(bytes(i) & 0xff)
             i += 1
         end while
         acc
-    end readBitsBigEndian
+    end bitsMagnitude
 
     // --- Binary reads, width from the column ---
 

@@ -82,6 +82,7 @@ class ContainerItTest extends BasePodTest:
         }
 
         "auto-detect passes meter to backend" - runRuntimes { runtime =>
+            requireRuntimeCli(runtime)
             Meter.initSemaphore(4).map { meter =>
                 requireRuntimeCli(runtime)
                 Container.withBackendConfig(_.Shell(runtime, meter)) {
@@ -99,6 +100,7 @@ class ContainerItTest extends BasePodTest:
         }
 
         "Shell with explicit command path" - runRuntimes { runtime =>
+            requireRuntimeCli(runtime)
             val cmd = if runtime == "docker" then "docker" else "podman"
             requireRuntimeCli(runtime)
             Container.withBackendConfig(_.Shell(cmd)) {
@@ -2720,6 +2722,10 @@ class ContainerItTest extends BasePodTest:
 
     "container with mounts" - {
         "bind mount — host file visible in container" - runBackends {
+            assume(
+                ContainerRuntime.daemonSharesFilesystem,
+                "the daemon is a sibling container; a locally-written path is not the path it mounts"
+            )
             val hostDir = Path("/tmp/" + uniqueName("kyo-bind"))
             Path.run {
                 for
@@ -2754,6 +2760,10 @@ class ContainerItTest extends BasePodTest:
         }
 
         "bind mount from /tmp works on macOS" - runBackends {
+            assume(
+                ContainerRuntime.daemonSharesFilesystem,
+                "the daemon is a sibling container; a locally-written path is not the path it mounts"
+            )
             val hostDir  = Path("/tmp/" + uniqueName("kyo-tmp-bind"))
             val filename = "test-data.txt"
             Path.run {
@@ -3090,6 +3100,15 @@ class ContainerItTest extends BasePodTest:
     "copy edge cases" - {
         // CVE-2018-15664 — symlink traversal in archive path
         "copy file with unicode name roundtrip" - runBackends {
+            // The DESTINATION below is a path inside the container, but it is built with kyo.Path, which on
+            // the JVM is java.nio.file.Path and so is constrained by THIS process's sun.jnu.encoding. Under a
+            // non-UTF-8 locale (a bare Linux container sets ANSI_X3.4-1968) the name is unmappable and the
+            // construction throws before any container is involved. Cancel rather than fail: the encoding of
+            // the local JVM says nothing about whether kyo-pod round-trips the name.
+            assume(
+                scala.util.Try(Path("/tmp/" + "файл")).isSuccess,
+                "this JVM's filename encoding cannot represent a non-ASCII path (locale is not UTF-8)"
+            )
             val localPath = Path("/tmp/" + uniqueName("kyo-unicode"))
             Container.init(alpine).map { c =>
                 Path.run {
@@ -3595,6 +3614,7 @@ class ContainerItTest extends BasePodTest:
     }
 
     "NotFound references container id, not rename target (shell backend)" - runRuntimes { runtime =>
+        requireRuntimeCli(runtime)
         // Force shell backend. The HTTP backend passes ids explicitly to its error-mapping layer;
         // only the shell backend uses args.lastOption in mapError.
         requireRuntimeCli(runtime)
@@ -3704,6 +3724,7 @@ class ContainerItTest extends BasePodTest:
     }
 
     "128KB single line arrives intact via logStream" - runRuntimes { runtime =>
+        requireRuntimeCli(runtime)
         // Force shell backend where chunk boundaries are observable.
         // Container emits exactly ONE line of 128KB then a newline.
         // The line-splitting must handle lines that straddle chunk boundaries —

@@ -7,7 +7,7 @@ import scala.scalajs.js
 import scala.scalajs.js.annotation.*
 import scala.scalajs.js.typedarray.*
 import kyo.ffi.*
-import kyo.ffi.internal.{AbiCheck, JsRawSegment, KoffiFacade, KoffiFn, NativeLoader, StructAbiCheck}
+import kyo.ffi.internal.{AbiCheck, JsRawSegment, KoffiFacade, KoffiFn, NativeFacade, NativeLoader, StructAbiCheck}
 
 final class StructBindingsImpl extends StructBindings:
     import StructBindingsImpl.*
@@ -24,8 +24,8 @@ object StructBindingsImpl:
     AbiCheck.verify(1, "kyo.example.StructBindings")
     private val pointKoffiType: js.Dynamic = KoffiFacade.struct("Point", js.Dynamic.literal("x" -> "int".asInstanceOf[js.Any], "y" -> "int".asInstanceOf[js.Any]))
     StructAbiCheck.verifyByteSize("kyo.example.StructBindings", "Point", 8L, KoffiFacade.sizeof(pointKoffiType.asInstanceOf[js.Any]).toLong)
-    private val facade = KoffiFacade.load(
-        NativeLoader.jsResolve("kyo_struct"),
+    private val facade = NativeFacade.load(
+        "kyo_struct",
         Seq(
             KoffiFn("move", "move", "void", Seq[js.Any]("Point*".asInstanceOf[js.Any], "Point*".asInstanceOf[js.Any], "int".asInstanceOf[js.Any]))
         )

@@ -9,7 +9,41 @@ description: >-
 runs:
   using: composite
   steps:
-    - uses: coursier/cache-action@v8.1.1
+    # The deps-<pole>- namespace .github/actions/setup uses, not coursier/cache-action's own. That action
+    # keys on the job name, so release and the probe each mint their own entry of roughly 1.6 GB holding
+    # the same coursier tree the ci poles already cache. Against GitHub's 10 GB per-repo budget that is
+    # what evicts the deps and kyo-browser entries: a run on 2026-09-19 missed even the bare
+    # deps-windows-x64- and kyo-browser-windows-x64- prefixes. Sharing the namespace removes the pressure
+    # and warms both callers from the far more frequent ci runs.
+    #
+    # The two callers run on different architectures, the same split the staged natives below handle, so
+    # the pole is resolved from the runner rather than pinned. The names here are ci's (linux-x64,
+    # linux-arm64), which differ from the os-arch values below (linux-x86_64, linux-aarch64).
+    - name: Resolve cache pole
+      id: pole
+      shell: bash
+      run: |
+        case "$(uname -m)" in
+          x86_64)          echo "value=linux-x64" >> "$GITHUB_OUTPUT" ;;
+          aarch64 | arm64) echo "value=linux-arm64" >> "$GITHUB_OUTPUT" ;;
+          *)               echo "release-setup: unsupported machine $(uname -m)" >&2; exit 1 ;;
+        esac
+
+    # restore, not the full cache action: a key is immutable once written, so whichever job saves first
+    # owns it for that hash. Releases are infrequent and the ci legs on these poles are not, so ci writes
+    # and both callers here restore.
+    - uses: actions/cache/restore@v6
+      env:
+        FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      with:
+        path: |
+          ~/.cache/coursier
+          ~/Library/Caches/Coursier
+          ~/AppData/Local/Coursier/Cache
+          ~/.sbt
+          ~/.ivy2/cache
+        key: deps-${{ steps.pole.outputs.value }}-${{ hashFiles('build.sbt', 'project/build.properties', 'project/plugins.sbt', 'project/*.scala') }}
+        restore-keys: deps-${{ steps.pole.outputs.value }}-
 
     # The staged trees below are per-architecture, and the two callers do not share one: publish
     # runs on x64, the probe on arm64. Resolve it from the runner rather than pinning a value that
@@ -50,7 +84,22 @@ runs:
         bash scripts/apt-install.sh --if-missing cmake uuid-dev
         bash kyo-aeron/scripts/build-aeron.sh "${{ steps.osarch.outputs.value }}"
 
-    - uses: coursier/setup-action@v3.0.0
+    # The staged SQLite source is gitignored like the two above, and ffiCompileAll compiles this
+    # module's shim together with it. No os-arch argument, unlike them: SQLite is one
+    # architecture-independent .c that the FFI plugin compiles per platform, so one tree serves any
+    # runner this probe lands on.
+    - name: Prepare SQLite
+      shell: bash
+      run: bash kyo-sql-sqlite/scripts/build-sqlite.sh
+
+    # DoltLite stages a compiled library rather than source, so it is per os-arch and takes the tag
+    # the step above resolved. Upstream publishes one for this probe's architecture; the platforms it
+    # does not publish for build the same pinned tag from source.
+    - name: Prepare DoltLite
+      shell: bash
+      run: bash kyo-sql-doltlite/scripts/build-doltlite.sh "${{ steps.osarch.outputs.value }}"
+
+    - uses: coursier/setup-action@v3.0.3
       with:
         jvm: corretto:25
         apps: sbt

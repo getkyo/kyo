@@ -23,7 +23,7 @@ class JsEmitterTest extends kyo.test.Test[Any]:
         assert(src.contains("import scala.scalajs.js.typedarray.*"))
         assert(src.contains("import kyo.ffi.*"))
         assert(src.contains(
-            "import kyo.ffi.internal.{AbiCheck, JsRawSegment, KoffiFacade, KoffiFn, NativeLoader, StructAbiCheck}"
+            "import kyo.ffi.internal.{AbiCheck, JsRawSegment, KoffiFacade, KoffiFn, NativeFacade, NativeLoader, StructAbiCheck}"
         ))
     }
 
@@ -41,7 +41,7 @@ class JsEmitterTest extends kyo.test.Test[Any]:
         assert(!src.contains("scala.scalajs.reflect"))
     }
 
-    "companion calls AbiCheck.verify and loads via NativeLoader.jsResolve" in {
+    "companion calls AbiCheck.verify and loads through the transport dispatcher" in {
         val spec = mkTrait(
             "TcpBindings",
             "kyo_tcp",
@@ -49,8 +49,11 @@ class JsEmitterTest extends kyo.test.Test[Any]:
         )
         val src = JsEmitter.emit(spec)
         assert(src.contains("""AbiCheck.verify(1, "kyo.example.TcpBindings")"""))
-        assert(src.contains("""NativeLoader.jsResolve("kyo_tcp")"""))
-        assert(src.contains("private val facade = KoffiFacade.load("))
+        // The library ID rather than a resolved path: resolution belongs to the transport, and the browser
+        // transport has no path to resolve.
+        assert(src.contains("""NativeFacade.load("""))
+        assert(src.contains(""""kyo_tcp","""))
+        assert(!src.contains("NativeLoader.jsResolve"), "the emitter must not resolve a path itself")
     }
 
     // -------------------------------------------------------------------------

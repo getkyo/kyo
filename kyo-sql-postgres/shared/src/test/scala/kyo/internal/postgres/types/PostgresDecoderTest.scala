@@ -258,6 +258,15 @@ class PostgresDecoderTest extends Test:
     // is below the type's significant-digit count and switches after: FLT_DIG (6) for a float4, DBL_DIG (15)
     // for a float8. So a float4 1e6 is `1e+06` where a float8 1e6 is `1000000`.
 
+    /** Decodes with `decoder` and renders the value, which together are what `SqlRow.text` answers.
+      *
+      * The two steps are separate now: a decoder produces a [[kyo.SqlValue]] and [[kyo.internal.SqlValueRender]] spells it, so a backend has
+      * nowhere to choose a spelling. These leaves assert the spelling, so they run both halves, and a column OID of zero because every
+      * decoder below is reached through its own type rather than resolved from one.
+      */
+    private def renderOf(decoder: PostgresDecoder[kyo.SqlValue], format: Format, bytes: Span[Byte]): String =
+        kyo.internal.SqlValueRender.render(decoder.read(format, bytes, 0))
+
     private def binaryFloat4(value: Float): Span[Byte] =
         val bits = java.lang.Float.floatToIntBits(value)
         Span.from(Array.tabulate(4)(i => (bits >>> (24 - i * 8)).toByte))
@@ -267,10 +276,10 @@ class PostgresDecoderTest extends Test:
         Span.from(Array.tabulate(8)(i => (bits >>> (56 - i * 8)).toByte))
 
     private def renderFloat4(value: Float): String =
-        PostgresDecoder.float4Text.read(Format.Binary, binaryFloat4(value))
+        renderOf(PostgresDecoder.float4Value, Format.Binary, binaryFloat4(value))
 
     private def renderFloat8(value: Double): String =
-        PostgresDecoder.float8Text.read(Format.Binary, binaryFloat8(value))
+        renderOf(PostgresDecoder.float8Value, Format.Binary, binaryFloat8(value))
 
     "float8 drops the .0 Java appends to a whole value" in {
         assert(renderFloat8(1.0) == "1", s"1.0: expected 1, got ${renderFloat8(1.0)}")
@@ -379,13 +388,13 @@ class PostgresDecoderTest extends Test:
     "numeric renders a small value plainly, as numeric_out does" in {
         // 0.0000001: one base-10000 digit of 10, at weight -2, with dscale 7 (10 * 10000^-2 = 1e-7).
         val bytes = numericBinaryBytes(Seq(10), weight = -2, sign = 0, dscale = 7)
-        assert(PostgresDecoder.numericText.read(Format.Binary, bytes) == "0.0000001")
+        assert(renderOf(PostgresDecoder.numericValue, Format.Binary, bytes) == "0.0000001")
     }
 
     "numeric keeps the trailing zeros its scale carries" in {
         // 2.50: digits 2 and 5000 at weight 0, with dscale 2.
         val bytes = numericBinaryBytes(Seq(2, 5000), weight = 0, sign = 0, dscale = 2)
-        assert(PostgresDecoder.numericText.read(Format.Binary, bytes) == "2.50")
+        assert(renderOf(PostgresDecoder.numericValue, Format.Binary, bytes) == "2.50")
     }
 
     // ── the era, the wide years, and a second-precision zone ────────────────────────
@@ -412,35 +421,38 @@ class PostgresDecoderTest extends Test:
 
     "a date in the BC era is written with its era's year, not the proleptic one" in {
         // 1 BC is proleptic year 0, and 44 BC is -43.
-        val one = PostgresDecoder.dateText.read(Format.Binary, dateBytes(java.time.LocalDate.of(0, 1, 1)))
+        val one = renderOf(PostgresDecoder.dateValue, Format.Binary, dateBytes(java.time.LocalDate.of(0, 1, 1)))
         assert(one == "0001-01-01 BC", s"expected 0001-01-01 BC, got $one")
-        val ides = PostgresDecoder.dateText.read(Format.Binary, dateBytes(java.time.LocalDate.of(-43, 3, 15)))
+        val ides = renderOf(PostgresDecoder.dateValue, Format.Binary, dateBytes(java.time.LocalDate.of(-43, 3, 15)))
         assert(ides == "0044-03-15 BC", s"expected 0044-03-15 BC, got $ides")
     }
 
     "a date past four digits is written without the + LocalDate prefixes" in {
-        val wide = PostgresDecoder.dateText.read(Format.Binary, dateBytes(java.time.LocalDate.of(10000, 1, 1)))
+        val wide = renderOf(PostgresDecoder.dateValue, Format.Binary, dateBytes(java.time.LocalDate.of(10000, 1, 1)))
         assert(wide == "10000-01-01", s"expected 10000-01-01, got $wide")
     }
 
     "an ordinary date still pads its year to four digits" in {
-        val padded = PostgresDecoder.dateText.read(Format.Binary, dateBytes(java.time.LocalDate.of(100, 2, 3)))
+        val padded = renderOf(PostgresDecoder.dateValue, Format.Binary, dateBytes(java.time.LocalDate.of(100, 2, 3)))
         assert(padded == "0100-02-03", s"expected 0100-02-03, got $padded")
-        val plain = PostgresDecoder.dateText.read(Format.Binary, dateBytes(java.time.LocalDate.of(2026, 8, 25)))
+        val plain = renderOf(PostgresDecoder.dateValue, Format.Binary, dateBytes(java.time.LocalDate.of(2026, 8, 25)))
         assert(plain == "2026-08-25", s"expected 2026-08-25, got $plain")
     }
 
     "a timetz zone keeps its seconds" in {
         // '12:00:00+05:30:33', which the server accepts and writes back whole.
         val offset   = 5 * 3600 + 30 * 60 + 33
-        val rendered = PostgresDecoder.timetzText.read(Format.Binary, timetzBytes(java.time.LocalTime.NOON, offset))
+        val rendered = renderOf(PostgresDecoder.timetzValue, Format.Binary, timetzBytes(java.time.LocalTime.NOON, offset))
         assert(rendered == "12:00:00+05:30:33", s"expected 12:00:00+05:30:33, got $rendered")
     }
 
-    "a timetz zone on the hour or the minute stays short" in {
-        val onHour = PostgresDecoder.timetzText.read(Format.Binary, timetzBytes(java.time.LocalTime.of(10, 0), 2 * 3600))
-        assert(onHour == "10:00:00+02", s"expected 10:00:00+02, got $onHour")
-        val onMinute = PostgresDecoder.timetzText.read(Format.Binary, timetzBytes(java.time.LocalTime.NOON, 5 * 3600 + 30 * 60))
+    // A whole-hour zone keeps its minutes field rather than shortening to `+02`, which is what PostgreSQL writes on
+    // its own: `+02` is a spelling the other engine rejects in a temporal literal, and the rendering is one form for
+    // every backend rather than each engine's.
+    "a timetz zone always carries hours and minutes" in {
+        val onHour = renderOf(PostgresDecoder.timetzValue, Format.Binary, timetzBytes(java.time.LocalTime.of(10, 0), 2 * 3600))
+        assert(onHour == "10:00:00+02:00", s"expected 10:00:00+02:00, got $onHour")
+        val onMinute = renderOf(PostgresDecoder.timetzValue, Format.Binary, timetzBytes(java.time.LocalTime.NOON, 5 * 3600 + 30 * 60))
         assert(onMinute == "12:00:00+05:30", s"expected 12:00:00+05:30, got $onMinute")
     }
 

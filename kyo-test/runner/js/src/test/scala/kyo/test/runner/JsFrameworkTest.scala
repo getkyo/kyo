@@ -43,7 +43,7 @@ end JsNextMixedSuite
 // ── Test infrastructure ──────────────────────────────────────────────────────────────────────────
 
 class JsCapturingEventHandler extends EventHandler:
-    private val _events = scala.collection.mutable.ListBuffer.empty[Event]
+    private val _events        = scala.collection.mutable.ListBuffer.empty[Event]
     def handle(e: Event): Unit =
         _events += e
         ()

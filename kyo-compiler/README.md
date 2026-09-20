@@ -14,7 +14,7 @@ val symbolOffset     = text.indexOf("xs.su")                  // on `xs`
 val signatureOffset  = text.indexOf("List(") + "List(".length // inside List(...)
 
 val config = Compiler.Config(
-    toolchain = Compiler.Toolchain("3.8.4", Chunk(Path("/cp/scala3-presentation-compiler_3-3.8.4.jar"))),
+    toolchain = Compiler.Toolchain("3.9.0", Chunk(Path("/cp/scala3-presentation-compiler_3-3.9.0.jar"))),
     classpath = Chunk.empty,
     scalacOptions = Chunk.empty,
     sourceRoots = Chunk.empty
@@ -100,10 +100,10 @@ A handle is bound to exactly one configuration, and that configuration is the in
 
 ```scala
 val toolchain = Compiler.Toolchain(
-    scalaVersion = "3.8.4",
-    compilerClasspath = Chunk(Path("/cp/scala3-presentation-compiler_3-3.8.4.jar"))
+    scalaVersion = "3.9.0",
+    compilerClasspath = Chunk(Path("/cp/scala3-presentation-compiler_3-3.9.0.jar"))
 )
-assert(toolchain.scalaVersion == "3.8.4")
+assert(toolchain.scalaVersion == "3.9.0")
 ```
 
 > **Note:** `compilerClasspath` is the caller-resolved `scala3-presentation-compiler_3:vN` (and its transitive) JAR paths. kyo-compiler does not resolve them. A caller that wants coursier resolution composes it above and passes the paths in.
@@ -114,7 +114,7 @@ assert(toolchain.scalaVersion == "3.8.4")
 
 ```scala
 val cfg = Compiler.Config(
-    toolchain = Compiler.Toolchain("3.8.4", Chunk(Path("/cp/scala3-presentation-compiler_3-3.8.4.jar"))),
+    toolchain = Compiler.Toolchain("3.9.0", Chunk(Path("/cp/scala3-presentation-compiler_3-3.9.0.jar"))),
     classpath = Chunk.empty,
     scalacOptions = Chunk.empty,
     sourceRoots = Chunk.empty

@@ -3,8 +3,10 @@ package kyo.internal
 import com.example.stub.StubBackend
 import kyo.AllowUnsafe
 import kyo.AtomicBoolean
+import kyo.DoltServer
 import kyo.MysqlClient
 import kyo.PostgresClient
+import kyo.SqliteClient
 import kyo.db.Backend
 
 /** Registers the test program's backends for runtime discovery on the JVM and Scala Native, the platforms where a services scan cannot reach
@@ -23,6 +25,8 @@ object TestBackendRegistration:
         if done.compareAndSet(false, true) then
             PostgresClient.register()
             MysqlClient.register()
+            DoltServer.register()
+            SqliteClient.register()
             Backend.register(new StubBackend())
             registerTestBackends()
     end ensure

@@ -189,9 +189,9 @@ object Result:
           */
         def apply[A](value: A): Success[A] =
             value match
-                case v: SuccessError[?]       => v.nest.asInstanceOf[Success[A]]
-                case v: Failure[A] @unchecked => SuccessError(v)
-                case v                        => v
+                case v: SuccessError[?]     => v.nest.asInstanceOf[Success[A]]
+                case v: Error[A] @unchecked => SuccessError(v)
+                case v                      => v
 
         /** Extracts the value from a Success Result.
           *
