@@ -27,7 +27,7 @@ import kyo.net.NetTlsConfig
   *     session (a caller-issued `LISTEN` through the statement API) deposits land in a buffer nobody reads and are discarded, bounded by
   *     the channel's capacity. The buffer still exists on every connection because the dedicated path needs it during its own statement
   *     windows: a `NOTIFY` racing the `LISTEN` exchange itself is deposited here and delivered once the pump starts.
-  *   - [[preparedStmts]], per-connection LRU cache of server-side prepared statements, keyed by SQL hash.
+  *   - [[preparedStmtsRef]], per-connection LRU cache of server-side prepared statements, keyed by SQL hash.
   *
   * All public methods are safe (no [[AllowUnsafe]]). A single [[PostgresConnection]] must NOT be used concurrently, the caller is
   * responsible for ensuring serial access (the connection pool enforces this via acquire/release semantics).
@@ -39,7 +39,13 @@ final class PostgresConnection(
     val secretKey: Int,
     val transactionStatus: AtomicRef[Byte],
     val notifications: Channel[NotificationResponse],
-    private[postgres] val preparedStmts: Cache[String, PreparedStmt],
+    // Held behind a ref rather than as the cache itself because `DISCARD ALL` deallocates every server-side
+    // statement at once, and there is no bulk clear: `Cache` removes by key and enumerating them is a
+    // diagnostics-only operation. Replacing the whole cache is how a session scrub and this cache stay in
+    // agreement. See `discardPreparedStatements`.
+    private[postgres] val preparedStmtsRef: AtomicRef[Cache[String, PreparedStmt]],
+    private[postgres] val stmtCacheSize: Int,
+    private[postgres] val stmtCacheTtl: Duration,
     private[kyo] val pendingCloses: AtomicRef[Chunk[String]],
     // Per-connection monotonic counter used to synthesise a UNIQUE server-side prepared statement
     // name on every `Parse`. Keying stmt names on `s_$hash` alone would collide with a still-live
@@ -86,16 +92,18 @@ final class PostgresConnection(
       *   parameter values, one per placeholder, in order
       */
     def extendedQuery(sql: String, params: Chunk[BoundParam[?]])(using Frame): Chunk[SqlRow] < (Async & Abort[SqlException]) =
-        drainPendingCloses.andThen(ExtendedQueryExchange.query(
-            channel,
-            preparedStmts,
-            stmtCounter,
-            sql,
-            params,
-            processId.toLong,
-            updateParam,
-            sendNotification
-        ))
+        drainPendingCloses.andThen(preparedStmtsRef.get).flatMap { stmts =>
+            ExtendedQueryExchange.query(
+                channel,
+                stmts,
+                stmtCounter,
+                sql,
+                params,
+                processId.toLong,
+                updateParam,
+                sendNotification
+            )
+        }
 
     /** Streams rows from a parameterised query using the Postgres portal protocol.
       *
@@ -118,10 +126,10 @@ final class PostgresConnection(
         batchSize: Int
     )(using Frame): Stream[SqlRow, Async & Abort[SqlException] & Scope] =
         Stream:
-            drainPendingCloses.andThen(
+            drainPendingCloses.andThen(preparedStmtsRef.get).flatMap { stmts =>
                 StreamQueryExchange.stream(
                     channel,
-                    preparedStmts,
+                    stmts,
                     stmtCounter,
                     sql,
                     params,
@@ -130,7 +138,7 @@ final class PostgresConnection(
                     updateParam,
                     sendNotification
                 ).emit
-            )
+            }
 
     /** Executes a parameterised DML statement using the extended protocol and returns the number of affected rows.
       *
@@ -140,16 +148,18 @@ final class PostgresConnection(
       *   parameter values, one per placeholder, in order
       */
     def extendedExecute(sql: String, params: Chunk[BoundParam[?]])(using Frame): Long < (Async & Abort[SqlException]) =
-        drainPendingCloses.andThen(ExtendedQueryExchange.execute(
-            channel,
-            preparedStmts,
-            stmtCounter,
-            sql,
-            params,
-            processId.toLong,
-            updateParam,
-            sendNotification
-        ))
+        drainPendingCloses.andThen(preparedStmtsRef.get).flatMap { stmts =>
+            ExtendedQueryExchange.execute(
+                channel,
+                stmts,
+                stmtCounter,
+                sql,
+                params,
+                processId.toLong,
+                updateParam,
+                sendNotification
+            )
+        }
 
     /** Runs an extended INSERT and returns an [[SqlClient.InsertOutcome]].
       *
@@ -224,15 +234,17 @@ final class PostgresConnection(
     def pipelined(
         stmts: Chunk[(String, Chunk[BoundParam[?]])]
     )(using Frame): Chunk[Result[SqlException, SqlClient.PipelineBuilder.Outcome]] < (Async & Abort[SqlException]) =
-        drainPendingCloses.andThen(PipelineExchange.prepare(
-            channel,
-            preparedStmts,
-            stmtCounter,
-            stmts,
-            processId.toLong,
-            updateParam,
-            sendNotification
-        ))
+        drainPendingCloses.andThen(preparedStmtsRef.get).flatMap { cache =>
+            PipelineExchange.prepare(
+                channel,
+                cache,
+                stmtCounter,
+                stmts,
+                processId.toLong,
+                updateParam,
+                sendNotification
+            )
+        }
 
     // --- Transaction control ---
 
@@ -311,6 +323,21 @@ final class PostgresConnection(
     def close(using Frame): Unit < Sync =
         // Unsafe: kyo-net Connection.close is unsafe-tier; closes the socket without suspending.
         Sync.Unsafe.defer(channel.conn.close())
+
+    /** Drops this connection's record of its server-side prepared statements, for a caller that has just deallocated them all.
+      *
+      * `DISCARD ALL` includes `DEALLOCATE ALL`, so after it the server holds none of the statements this cache names. Left as it is, the
+      * next request reusing one of that SQL would Bind a name the server no longer has and the session would answer
+      * `26000 prepared statement "s_..." does not exist`, and go on answering it, since the entry stays cached.
+      *
+      * The whole cache is replaced rather than emptied: `Cache` removes by key, and reading its keys back is a diagnostics-only operation.
+      * The pending-close queue goes with it, because those statements are gone too and closing a name the server does not hold buys
+      * nothing.
+      */
+    private[postgres] def discardPreparedStatements(using Frame): Unit < Sync =
+        PostgresConnection.mkStmtCache(pendingCloses, stmtCacheSize, stmtCacheTtl).flatMap { fresh =>
+            preparedStmtsRef.set(fresh).andThen(pendingCloses.set(Chunk.empty))
+        }
 
     /** Sends `Close 'S' <name>` for each name accumulated in [[pendingCloses]] since the last drain, clearing the queue.
       *
@@ -471,7 +498,8 @@ object PostgresConnection:
         preparedStmtCacheSize: Int,
         preparedStmtTtl: Duration,
         applicationName: Maybe[String] = Absent,
-        socketTimeout: Duration = Duration.Infinity
+        socketTimeout: Duration = Duration.Infinity,
+        searchPath: Maybe[String] = Absent
     )(using Frame): PostgresConnection < (Async & Abort[SqlException]) =
         kyo.db.Connection.openSocket(host, port, t => onConnectPanic(t, "connect", host, port), (c: PostgresConnection) => c.close) {
             rawConn =>
@@ -483,10 +511,11 @@ object PostgresConnection:
                     // so openSocket's outer bracket would not close the upgraded fd if startup or auth then fails.
                     kyo.db.Connection.closingOnFailure(conn) {
                         PostgresChannel(conn, socketTimeout).flatMap { channel =>
-                            StartupExchange.run(channel, user, db, password, Absent, Absent, applicationName).flatMap { result =>
-                                // Duration.Infinity means "no time-based expiry"; pass Duration.Zero to Cache.init.
-                                val ttl = if preparedStmtTtl == Duration.Infinity then Duration.Zero else preparedStmtTtl
-                                mkConnection(channel, result, preparedStmtCacheSize, ttl)
+                            StartupExchange.run(channel, user, db, password, Absent, Absent, applicationName, searchPath).flatMap {
+                                result =>
+                                    // Duration.Infinity means "no time-based expiry"; pass Duration.Zero to Cache.init.
+                                    val ttl = if preparedStmtTtl == Duration.Infinity then Duration.Zero else preparedStmtTtl
+                                    mkConnection(channel, result, preparedStmtCacheSize, ttl)
                             }
                         }
                     }
@@ -550,7 +579,8 @@ object PostgresConnection:
         preparedStmtCacheSize: Int,
         preparedStmtTtl: Duration,
         applicationName: Maybe[String] = Absent,
-        socketTimeout: Duration = Duration.Infinity
+        socketTimeout: Duration = Duration.Infinity,
+        searchPath: Maybe[String] = Absent
     )(using Frame): PostgresConnection < (Async & Abort[SqlException]) =
         kyo.db.Connection.openSocket(
             host,
@@ -573,7 +603,7 @@ object PostgresConnection:
                 // upgraded fd rather than the raw socket whose close is by then a no-op.
                 kyo.db.Connection.closingOnFailure(conn) {
                     PostgresChannel(conn, socketTimeout).flatMap { channel =>
-                        StartupExchange.run(channel, user, db, password, Absent, Absent, applicationName).flatMap { result =>
+                        StartupExchange.run(channel, user, db, password, Absent, Absent, applicationName, searchPath).flatMap { result =>
                             val ttl = if preparedStmtTtl == Duration.Infinity then Duration.Zero else preparedStmtTtl
                             mkConnection(channel, result, preparedStmtCacheSize, ttl)
                         }
@@ -606,7 +636,8 @@ object PostgresConnection:
         mechanismCapture: Maybe[AtomicRef[String]],
         preparedStmtCacheSize: Int,
         applicationName: Maybe[String] = Absent,
-        socketTimeout: Duration = Duration.Infinity
+        socketTimeout: Duration = Duration.Infinity,
+        searchPath: Maybe[String] = Absent
     )(using Frame): PostgresConnection < (Async & Abort[SqlException]) =
         kyo.db.Connection.openSocket(
             host,
@@ -622,7 +653,16 @@ object PostgresConnection:
                 // it has upgraded, so a startup failure would otherwise leak the upgraded fd.
                 kyo.db.Connection.closingOnFailure(conn) {
                     PostgresChannel(conn, socketTimeout).flatMap { channel =>
-                        StartupExchange.run(channel, user, db, password, certHashOverride, mechanismCapture, applicationName).flatMap {
+                        StartupExchange.run(
+                            channel,
+                            user,
+                            db,
+                            password,
+                            certHashOverride,
+                            mechanismCapture,
+                            applicationName,
+                            searchPath
+                        ).flatMap {
                             result =>
                                 // connectWithCertHashOverride is test-only; no TTL parameter, use Duration.Zero directly.
                                 mkConnection(channel, result, preparedStmtCacheSize, Duration.Zero)
@@ -652,6 +692,7 @@ object PostgresConnection:
             closesRef   <- AtomicRef.init(Chunk.empty[String])
             stmtCounter <- AtomicLong.init(0L)
             stmtCache   <- PostgresConnection.mkStmtCache(closesRef, preparedStmtCacheSize, ttl)
+            stmtRef     <- AtomicRef.init(stmtCache)
         yield new PostgresConnection(
             channel,
             params,
@@ -659,7 +700,9 @@ object PostgresConnection:
             result.secretKey,
             txStatus,
             notifChan,
-            stmtCache,
+            stmtRef,
+            preparedStmtCacheSize,
+            ttl,
             closesRef,
             stmtCounter
         )
