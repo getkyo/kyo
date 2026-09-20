@@ -57,7 +57,7 @@ sealed trait BrowserElementException extends BrowserException with BrowserReadEx
 /** Marker for failures triggered while loading a URL.
   *
   * @see
-  *   [[BrowserNavigationFailedException]].
+  *   [[BrowserNavigationFailedException]], [[BrowserNavigationTransportFailedException]].
   */
 sealed trait BrowserNavigationException extends BrowserException
 
@@ -288,13 +288,34 @@ end BrowserElementNotActionableException
 
 // --- Navigation failures ---
 
-/** Navigation to a URL failed (network error, navigation aborted, protocol error).
+/** Navigation to a URL failed: an HTTP error status, a navigation that never committed, or a settle mode whose deadline expired.
+  *
+  * @see
+  *   [[BrowserNavigationException]] for the topical marker.
+  * @see
+  *   [[BrowserNavigationTransportFailedException]] for the variant where the request never reached a server.
+  */
+final case class BrowserNavigationFailedException(url: String, error: String)(using Frame)
+    extends BrowserException(s"Navigation failed: $url -- $error")
+    with BrowserNavigationException with BrowserReadException derives CanEqual
+
+/** The navigation committed to Chrome's error document: it failed below HTTP, so no response exists behind it.
+  *
+  * A DNS failure, a refused or reset connection, or a host that has run out of sockets all land here.
+  *
+  * Separate from [[BrowserNavigationFailedException]] because the two want opposite handling. An HTTP status failure carries a real
+  * response, so retrying re-fetches the same 404 and callers assert on it. A transport failure carries no response at all, so it is the one
+  * navigation failure a caller can sensibly retry, and `failOnHttpError` never reaches it (there is no status to suppress).
+  *
+  * `url` is Chrome's `chrome-error://` document, not the URL the caller asked for. Chrome discards the requested URL on the error commit.
   *
   * @see
   *   [[BrowserNavigationException]] for the topical marker.
   */
-final case class BrowserNavigationFailedException(url: String, error: String)(using Frame)
-    extends BrowserException(s"Navigation failed: $url -- $error")
+final case class BrowserNavigationTransportFailedException(url: String)(using Frame)
+    extends BrowserException(
+        s"Navigation failed: $url -- navigation failed below HTTP (no response); the page is Chrome's error document"
+    )
     with BrowserNavigationException with BrowserReadException derives CanEqual
 
 /** `back` was called when the tab is already at the earliest history entry (no prior entry exists).
