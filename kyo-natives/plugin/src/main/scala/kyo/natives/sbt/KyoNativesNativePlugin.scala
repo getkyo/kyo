@@ -1,6 +1,7 @@
 package kyo.natives.sbt
 
 import kyo.ffi.sbt.FfiLibrary
+import kyo.ffi.sbt.NativeSystemLibraries
 import kyo.ffi.sbt.NativeTargets
 import sbt._
 import sbt.Keys._
@@ -8,12 +9,19 @@ import scala.scalanative.build.Discover
 import scala.scalanative.sbtplugin.ScalaNativePlugin
 import scala.scalanative.sbtplugin.ScalaNativePlugin.autoImport._
 
-/** The Scala Native half of [[KyoNativesPlugin]]: link the binary against the libraries the artifacts carry.
+/** The Scala Native half of [[KyoNativesPlugin]]: give the binary every native thing its kyo dependencies need.
   *
-  * Scala Native has no runtime loader, so a library cannot be extracted and opened the way the JVM does it. Instead
-  * the artifact's C shim, which Scala Native compiles into the binary from the sources the Native jar ships, is
-  * compiled to nothing, and the binary is linked against the prebuilt library directly. Without that the link holds
-  * two definitions of every entry point, the shim's stubs and the library's real ones.
+  * Two separate needs, because a shim can sit over either kind of library and a module may have both.
+  *
+  * A shim over a VENDORED library (BoringSSL, Aeron) needs the library kyo published. Scala Native has no runtime
+  * loader, so it cannot be extracted and opened the way the JVM does it. Instead the artifact's C shim, which Scala
+  * Native compiles into the binary from the sources the Native jar ships, is compiled to nothing, and the binary is
+  * linked against the prebuilt library directly. Without that the link holds two definitions of every entry point,
+  * the shim's stubs and the library's real ones.
+  *
+  * A shim over a SYSTEM library (OpenSSL, liburing) needs the library on the machine doing the linking, so the
+  * artifact carries only what to look for and this build probes for it. That probe has to run here rather than in the
+  * producing module because `nativeConfig` is per-project and does not cross a dependency edge, while the C does.
   *
   * The binary records `@rpath/lib<id>.dylib` (`\$ORIGIN` on linux) and the libraries are staged beside it, so a linked
   * binary runs from anywhere and deploys as a directory. That directory has to travel with it: a Native application
@@ -27,6 +35,14 @@ object KyoNativesNativePlugin extends AutoPlugin {
     import KyoNativesPlugin.autoImport._
     import KyoNativesPlugin.kyoNativesFetched
     import KyoNativesPlugin.kyoNativesRequests
+
+    object autoImport {
+        val kyoNativesSystemLibraries = taskKey[Seq[NativeSystemLibraries.Resolved]](
+            "System libraries this project's kyo dependencies declare, resolved against this machine."
+        )
+    }
+
+    import autoImport._
 
     override def projectSettings: Seq[Setting[?]] = Seq(
         // A binary is built for one target, so more than one is a contradiction rather than a wider delivery.
@@ -58,26 +74,83 @@ object KyoNativesNativePlugin extends AutoPlugin {
                 }
             }.toSeq
         },
+        kyoNativesSystemLibraries := systemLibrariesTask.value,
         nativeConfig := {
-            val base    = nativeConfig.value
-            val fetched = kyoNativesFetched.value
-            if (fetched.isEmpty) base
-            else {
-                val dirs    = fetched.map(_._2.library.getParentFile).distinct
-                val defines = fetched.map { case (_, f) => "-D" + FfiLibrary.externalDefineFor(f.libId) }.distinct
-                val links   = fetched.map { case (_, f) => "-l" + f.libId }.distinct
-                // Both forms mean "beside the binary", so the link records no path from this machine.
-                val rpaths = fetched.map(_._1).distinct.map { t =>
-                    if (NativeTargets.osOf(t) == "darwin") "-Wl,-rpath,@loader_path" else "-Wl,-rpath,$ORIGIN"
-                }.distinct
-                base
-                    .withCompileOptions(base.compileOptions ++ defines)
-                    .withLinkingOptions(base.linkingOptions ++ dirs.map("-L" + _.getAbsolutePath) ++ links ++ rpaths)
+            val base   = nativeConfig.value
+            val stages = Seq(deliveredFlags(kyoNativesFetched.value), systemFlags(kyoNativesSystemLibraries.value))
+            // Delivered and system libraries are independent: a module can declare both, either, or neither, and an
+            // empty delivery says nothing about whether the machine has the system library this binary still needs.
+            stages.foldLeft(base) { case (config, (compile, link)) =>
+                if (compile.isEmpty && link.isEmpty) config
+                else
+                    config
+                        .withCompileOptions(config.compileOptions ++ compile)
+                        .withLinkingOptions(config.linkingOptions ++ link)
             }
         },
         Compile / nativeLink := stageBeside((Compile / nativeLink).dependsOn(crossTargetCheck)).value,
         Test / nativeLink    := stageBeside((Test / nativeLink).dependsOn(crossTargetCheck)).value
     )
+
+    /** The compile and link flags for the libraries kyo published and this build fetched. */
+    private def deliveredFlags(fetched: Seq[(String, Delivery.Fetched)]): (Seq[String], Seq[String]) =
+        if (fetched.isEmpty) (Nil, Nil)
+        else {
+            val dirs    = fetched.map(_._2.library.getParentFile).distinct
+            val defines = fetched.map { case (_, f) => "-D" + FfiLibrary.externalDefineFor(f.libId) }.distinct
+            val links   = fetched.map { case (_, f) => "-l" + f.libId }.distinct
+            // Both forms mean "beside the binary", so the link records no path from this machine.
+            val rpaths = fetched.map(_._1).distinct.map { t =>
+                if (NativeTargets.osOf(t) == "darwin") "-Wl,-rpath,@loader_path" else "-Wl,-rpath,$ORIGIN"
+            }.distinct
+            (defines, dirs.map("-L" + _.getAbsolutePath) ++ links ++ rpaths)
+        }
+
+    /** The compile and link flags for the system libraries this machine turned out to have. */
+    private def systemFlags(resolved: Seq[NativeSystemLibraries.Resolved]): (Seq[String], Seq[String]) =
+        (resolved.flatMap(_.compileFlags).distinct, resolved.flatMap(_.linkFlags))
+
+    /** Probes this machine for every system library the dependencies declare.
+      *
+      * The OS is the one the binary is being built for, not the one this build runs on, so a cross-compiling build
+      * probes for the right libraries rather than the host's. `kyoNativesTargets` is preferred over the compiler's own
+      * triple for the same reason `kyoNativesResolvedTargets` prefers it: a build that cross-compiles says so there.
+      *
+      * A declared library that does not link is not an error. The producer's shim compiles its stub branch and the
+      * capability reports itself unavailable at runtime, which is the same outcome every other platform gives for a
+      * library that is not present.
+      */
+    private def systemLibrariesTask: Def.Initialize[Task[Seq[NativeSystemLibraries.Resolved]]] = Def.task {
+        val log     = streams.value.log
+        val cp      = (Compile / dependencyClasspath).value.map(_.data)
+        val workDir = target.value / "kyo-natives" / "system-library-probes"
+        val os      = probeOs(kyoNativesTargets.value.headOption)
+        if (kyoNativesSource.value == NativesSource.Disabled || os.isEmpty) Nil
+        else {
+            // The compiler Scala Native will link with, so a machine whose LLVM_BIN clang differs from the one on the
+            // PATH is probed with the one that matters.
+            val cc = Discover.clang().toString
+            NativeSystemLibraries.readJars(cp).flatMap { declared =>
+                val probe    = NativeSystemLibraries.probeWith(cc, declared.system.headers, workDir / declared.id, log)
+                val resolved = NativeSystemLibraries.resolve(declared, os.get, probe)
+                resolved match {
+                    case Some(r) =>
+                        log.info(s"[kyo-natives] ${r.id}: linking the system library (${r.linkFlags.mkString(" ")})")
+                    case None =>
+                        log.info(
+                            s"[kyo-natives] ${declared.id}: ${declared.system.headers.mkString(", ")} with " +
+                                s"${declared.system.resolvedLinkLibs(os.get).mkString(", ")} does not link on this " +
+                                "machine; its shim compiles stubs."
+                        )
+                }
+                resolved
+            }
+        }
+    }
+
+    /** The OS to probe for: the named target's, else the one the compiler on this machine targets. */
+    private def probeOs(named: Option[String]): Option[String] =
+        named.orElse(NativeTargets.ofTriple(Discover.targetTriple(Discover.clang()))).map(NativeTargets.osOf)
 
     /** Why `target`'s libraries cannot reach a Scala Native link, or None when they can.
       *

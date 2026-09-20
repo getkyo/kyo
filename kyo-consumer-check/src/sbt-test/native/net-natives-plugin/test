@@ -1,0 +1,22 @@
+# kyo-net on Scala Native through kyo-natives-plugin alone: no kyo-ffi-plugin enabled and no hand-written
+# nativeConfig, which is what the net-plugin fixture beside this one needs to reach the same round trip.
+> kyoNativesReport
+
+# The system-library probe belongs to this plugin now. It runs here with only kyo-natives-plugin enabled, which is the
+# half that used to require enabling kyo-ffi-plugin as well.
+> writeSystemLibraries
+# Which libraries resolve is the machine's answer, not this fixture's: a Linux host with liburing-dev links io_uring,
+# one without it compiles the shim's stubs and epoll serves. Either is a pass. What must hold is that a resolved
+# library carries link flags, since an id on its own is a resolution that contributes no library.
+$ exec sh -c 'set -eu; cat system-libraries.txt; grep -qE "^[^ ]+$" system-libraries.txt && { echo "a resolved system library carries no link flags" >&2; exit 1; }; exit 0'
+
+> nativeLink
+
+# The delivered BoringSSL library is staged beside the binary, which is how it resolves at run time.
+$ exec sh -c 'set -eu; bin=$(find target -type f -perm -u+x -name consumer | head -n1); [ -n "$bin" ] || { echo "no consumer binary under target/" >&2; exit 1; }; ls "$(dirname "$bin")"/libkyonet_boringssl.* > /dev/null'
+
+# The round trip itself, run from an unrelated working directory so the rpath is what resolves the library.
+$ exec sh -c 'set -eu; bin=$(find target -type f -perm -u+x -name consumer | head -n1); "$bin" > out.txt 2>&1 || { cat out.txt; exit 1; }; cat out.txt; grep -q "CONSUMER tls=hello" out.txt'
+
+# The library is a real dependency, not a copy the binary happens to ignore: without it the program fails naming it.
+$ exec sh -c 'set -eu; bin=$(find target -type f -perm -u+x -name consumer | head -n1); rm -f "$(dirname "$bin")"/libkyonet_boringssl.*; here=$(pwd); cd /; if "$here/$bin" > "$here/missing.txt" 2>&1; then echo "expected the program to fail without its library"; exit 1; fi; cat "$here/missing.txt"; grep -qi "kyonet_boringssl" "$here/missing.txt"'
