@@ -1,13 +1,11 @@
 package kyo.ai.completion
 
-import java.time.Instant as JInstant
-import java.time.format.DateTimeFormatter
-import java.time.format.DateTimeParseException
 import kyo.*
 import kyo.Json.JsonSchema
 import kyo.Tool
 import kyo.ai.*
 import kyo.ai.Context.*
+import kyo.internal.HttpDate
 
 /** The provider completion-backend contract: turn a config + conversation + tool set into transcript messages.
   *
@@ -220,9 +218,7 @@ object Completion:
         def seconds(s: String): Maybe[Duration] =
             Maybe.fromOption(s.trim.toLongOption).filter(_ >= 0).map(_.seconds)
         def httpDate(s: String): Maybe[Instant] =
-            Result.catching[DateTimeParseException](
-                Instant.fromJava(JInstant.from(DateTimeFormatter.RFC_1123_DATE_TIME.parse(s.trim)))
-            ).toMaybe
+            HttpDate.parse(s, now)
         def until(at: Instant): Duration =
             val reference = headers.get("date").flatMap(httpDate).getOrElse(now)
             if at <= reference then Duration.Zero else at - reference

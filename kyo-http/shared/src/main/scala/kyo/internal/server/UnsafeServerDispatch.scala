@@ -2,7 +2,7 @@ package kyo.internal.server
 
 import java.nio.charset.StandardCharsets
 import kyo.*
-import kyo.internal.Civil
+import kyo.internal.HttpDate
 import kyo.internal.codec.*
 import kyo.internal.http1.*
 import kyo.internal.util.*
@@ -43,15 +43,6 @@ private[kyo] object UnsafeServerDispatch:
 
     // -- Date header caching (RFC 9110 section 6.6.1) --
 
-    /** The day and month names an IMF-fixdate carries. RFC 9110 section 5.6.7 fixes them to these English abbreviations for every sender in
-      * every locale, so they are written out rather than formatted: a `DateTimeFormatter` resolves names through a locale provider, and on
-      * Scala.js that provider brings the fallback CLDR tables into the link of every program that has this file in it, a client with no
-      * server in it included.
-      */
-    private val dayNames   = Array("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
-    private val monthNames =
-        Array("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
-
     @volatile private var cachedDateSecond: Long  = 0L
     @volatile private var cachedDateValue: String = ""
 
@@ -59,35 +50,11 @@ private[kyo] object UnsafeServerDispatch:
     private[internal] def currentDate(): String =
         val nowSecond = java.lang.System.currentTimeMillis() / 1000
         if nowSecond != cachedDateSecond then
-            cachedDateValue = imfFixdate(nowSecond)
+            cachedDateValue = HttpDate.format(nowSecond)
             cachedDateSecond = nowSecond
         end if
         cachedDateValue
     end currentDate
-
-    /** The `Date` header value for an epoch second, as the IMF-fixdate RFC 9110 section 5.6.7 requires: `Sun, 06 Nov 1994 08:49:37 GMT`. */
-    private[internal] def imfFixdate(epochSecond: Long): String =
-        val civil = Civil.of(epochSecond)
-        val sb    = new java.lang.StringBuilder(29)
-        sb.append(dayNames(civil.dayOfWeek)).append(", ")
-        appendPadded(sb, civil.day, 2).append(' ')
-        sb.append(monthNames(civil.month - 1)).append(' ')
-        appendPadded(sb, civil.year, 4).append(' ')
-        appendPadded(sb, civil.hour, 2).append(':')
-        appendPadded(sb, civil.minute, 2).append(':')
-        appendPadded(sb, civil.second, 2).append(" GMT")
-        sb.toString
-    end imfFixdate
-
-    /** Appends `value` right-aligned in `width` digits, zero-padded, which is the fixed width every IMF-fixdate field has. */
-    private def appendPadded(sb: java.lang.StringBuilder, value: Int, width: Int): java.lang.StringBuilder =
-        val text = Integer.toString(value)
-        var pad  = width - text.length
-        while pad > 0 do
-            sb.append('0')
-            pad -= 1
-        sb.append(text)
-    end appendPadded
 
     /** Set up parser-driven dispatch for a connection.
       *

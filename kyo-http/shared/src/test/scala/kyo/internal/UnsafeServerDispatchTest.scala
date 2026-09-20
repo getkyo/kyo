@@ -570,29 +570,8 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             assert(rfc9110Pattern.findFirstIn(date).isDefined, s"Date '$date' does not match RFC 9110 format")
         }
 
-        // The header is assembled from arithmetic rather than formatted by java.time, because a ZonedDateTime reaches
-        // IsoChronology, which names DateTimeFormatter, which names Locale, which on Scala.js puts the CLDR tables in
-        // every program that links this file. These are the values the java.time path produced, so the arithmetic is
-        // pinned to them, including the cases where flooring and the Gregorian century rules decide the answer.
-        "Date header carries the IMF-fixdate of the second it names" in {
-            val cases = Seq(
-                0L            -> "Thu, 01 Jan 1970 00:00:00 GMT", // the epoch, a Thursday
-                784111777L    -> "Sun, 06 Nov 1994 08:49:37 GMT", // the example in RFC 9110 section 5.6.7
-                1705312245L   -> "Mon, 15 Jan 2024 09:50:45 GMT",
-                951782400L    -> "Tue, 29 Feb 2000 00:00:00 GMT", // midnight, where the seconds of the day are all zero
-                951825600L    -> "Tue, 29 Feb 2000 12:00:00 GMT", // a leap day in a century that has one
-                1709208000L   -> "Thu, 29 Feb 2024 12:00:00 GMT", // and the next one
-                -1L           -> "Wed, 31 Dec 1969 23:59:59 GMT", // one second before the epoch: the day floors, not truncates
-                -86400L       -> "Wed, 31 Dec 1969 00:00:00 GMT", // a whole day before it
-                -2208988800L  -> "Mon, 01 Jan 1900 00:00:00 GMT", // 1900 is not a leap year: a century that is not divisible by 400
-                253402300799L -> "Fri, 31 Dec 9999 23:59:59 GMT"  // the last second the four-digit year field can carry
-            )
-            cases.foreach { (epochSecond, expected) =>
-                val got = UnsafeServerDispatch.imfFixdate(epochSecond)
-                assert(got == expected, s"epoch second $epochSecond read as '$got', expected '$expected'")
-            }
-            succeed
-        }
+        // The value itself is assembled from arithmetic rather than formatted by java.time; HttpDateTest pins that
+        // arithmetic against the values the java.time path produced, in both directions.
 
         "Content-Length exceeds max returns 413" in {
             val handler = HttpHandler.getText("hello")(_ => "world")
