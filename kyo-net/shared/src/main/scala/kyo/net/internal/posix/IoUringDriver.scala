@@ -129,7 +129,9 @@ final private[net] class IoUringDriver private[posix] (
     // nothing open, so they re-arm unconditionally and never reach this field.
     //
     // No atomic and no recheck after the store: on JS the scheduler, every submit and every `@Ffi.blocking` completion run on the Node main
-    // thread, so the store and the read in `wakeReapLoop` cannot interleave. `private[posix]` for the test that pins the park and the resume.
+    // thread, and the JS scheduler always defers to the macrotask queue, so a resumed turn never runs on the submitting call's own stack. The
+    // store and the read in `wakeReapLoop` cannot interleave. `private[posix]` for `IoUringDriverIdleTest`, which pins the park and the
+    // resume on a host that has a ring.
     private[posix] var idleTask: Task = null
 
     // Cross-carrier submission handoff: every SQ operation (get_sqe + prep + submit) and every TLS engine op for every connection on this driver
@@ -1818,18 +1820,30 @@ final private[net] class IoUringDriver private[posix] (
         end if
     end afterWait
 
-    /** Whether the driver has nothing outstanding: no submitted operation awaiting its completion, no close obligation, no queued engine op,
-      * and nothing parked on a full submission queue.
+    /** Whether the driver has nothing outstanding: no submitted operation awaiting its completion, no cancel awaiting one, no close
+      * obligation, no queued engine op, and nothing parked on a full submission queue.
       *
       * Read on the reap carrier after a turn's drain. `pending` and `pendingCloses` are the pair [[start]]'s diagnostics probe calls `pending`,
       * and the three stalled queues plus `closeAfterDrain` are the same set `runCycle` refuses to park indefinitely on, for the same reason:
       * each is re-driven by a turn rather than by a completion, so parking on one would strand it.
       *
+      * `cancelTargets` is here because a cancel is keyed there and NOT in `pending`, and the kernel does not order a cancel's completion
+      * against its target's. So the target can reap and leave `pending` empty with the cancel's own completion still owed, and parking then
+      * would be parking with a completion in the ring. Nothing strands if it does, since the deferred close is discharged on the target's
+      * completion and a late cancel receipt is a no-op, but the state this method reports would be a lie and the diagnostics line would read
+      * `idle=true` with the ring non-empty.
+      *
       * `inFlight` is deliberately not among them. Its entries can sit at zero for a handle that has no operation outstanding, so it reports
-      * activity that `pending` does not, and a driver keyed on it would never park.
+      * activity that `pending` does not, and a driver keyed on it would never park. Nothing is lost: `register` increments both, so a handle
+      * with work outstanding has an entry in `pending` by construction.
+      *
+      * A server process stays alive here for a different reason than in the poller, where a listener sits in `activeFds` continuously. Accept
+      * is single-shot, so a listener between one accept's completion and the handler's next `awaitAccept` is genuinely idle and the chain
+      * parks. What carries the process across that gap is the re-arm itself: it arrives through `submitEngineOp` as a macrotask, which is work
+      * Node is already counting.
       */
     private[posix] def idleNow: Boolean =
-        pending.isEmpty && pendingCloses.isEmpty && engineQueue.isEmpty &&
+        pending.isEmpty && pendingCloses.isEmpty && engineQueue.isEmpty && cancelTargets.isEmpty &&
             stalledSends.isEmpty && stalledSubmits.isEmpty && stalledCancels.isEmpty && closeAfterDrain.isEmpty
 
     /** Re-arm the next turn onto a DIFFERENT carrier, so the one that just ran the turn is free to run the completions it produced.
