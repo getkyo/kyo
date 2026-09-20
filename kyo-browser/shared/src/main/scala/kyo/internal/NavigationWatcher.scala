@@ -15,8 +15,9 @@ import kyo.*
   * until the readyState (and optionally the network idle window) matches the requested settle mode. This keeps the CDP event channel free
   * for other subscribers (downloads, tests).
   *
-  * Navigation failure is detected via `performance.getEntriesByType('navigation')[0].responseStatus`: a 4xx/5xx there raises
-  * [[BrowserNavigationFailedException]] when `throwOnFailure = true`.
+  * Navigation failure is detected two ways, both raising [[BrowserNavigationFailedException]] when `throwOnFailure = true`: a 4xx/5xx in
+  * `performance.getEntriesByType('navigation')[0].responseStatus`, and a commit to Chrome's `chrome-error://` document, which is where a
+  * navigation that failed below HTTP lands and which carries no status to check.
   */
 private[kyo] object NavigationWatcher:
 
@@ -321,6 +322,10 @@ private[kyo] object NavigationWatcher:
                                         )
                                     else Async.sleep(pollInterval).andThen(Loop.continue(()))
                                 }
+                            else if throwOnFailure && isTransportFailure(navUrl) then
+                                Abort.fail(
+                                    BrowserNavigationFailedException(navUrl, transportFailureReason)
+                                )
                             else if throwOnFailure && status >= 400 && status < 600 then
                                 Abort.fail(
                                     BrowserNavigationFailedException(navUrl, s"HTTP $status")
@@ -481,6 +486,20 @@ private[kyo] object NavigationWatcher:
         settle match
             case Browser.Settle.NetworkIdle => BrowserNetworkTracker.ensureInstalled
             case _                          => ()
+
+    /** True when `navUrl` is Chrome's own error document, which is where a navigation that failed below HTTP lands: DNS failure, refused or
+      * reset connection, or a host that has run out of sockets.
+      *
+      * Such a navigation passes both of the other checks. It commits, so the URL changes and the "never committed" test does not fire, and
+      * there is no HTTP response behind it, so `responseStatus` reads 0 and the 4xx/5xx test does not fire either. Without this the caller
+      * is told the navigation succeeded and finds out only when the page turns out to be empty, which reads as a missing element several
+      * calls later rather than as the navigation failure it is.
+      */
+    private[internal] def isTransportFailure(navUrl: String): Boolean =
+        navUrl.startsWith("chrome-error://")
+
+    private[internal] val transportFailureReason: String =
+        "navigation failed below HTTP (no response); the page is Chrome's error document"
 
     /** Builds the settle-state JS template for the given settle mode and network-idle window (in ms).
       *

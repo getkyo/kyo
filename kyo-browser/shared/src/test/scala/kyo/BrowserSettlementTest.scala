@@ -17,6 +17,39 @@ class BrowserSettlementTest extends BrowserTest:
         }
     }
 
+    "goto fails when the navigation fails below HTTP rather than reporting success" in {
+        // A host reserved by RFC 2606 to never resolve, so Chrome commits its error document with no HTTP
+        // response behind it. That is the shape every transport failure takes, including the socket exhaustion
+        // that makes Windows CI legs fail: without the transport check the navigation reads as a success and the
+        // caller only finds out via a missing element several calls later.
+        withBrowser {
+            Browser.withConfig(_.loadSchedule(Schedule.fixed(50.millis).maxDuration(10.seconds))) {
+                Abort.run[BrowserNavigationException] {
+                    Browser.goto("http://kyo-transport-failure.invalid/")
+                }.map {
+                    case Result.Failure(ex: BrowserNavigationFailedException) =>
+                        assert(ex.url.startsWith("chrome-error://"), s"Expected a chrome-error URL but got '${ex.url}'")
+                    case other =>
+                        fail(s"Expected Result.Failure(BrowserNavigationFailedException) but got $other")
+                }
+            }
+        }
+    }
+
+    "goto with failOnHttpError = false still surfaces the error page for inspection" in {
+        // The transport check is gated on the same flag as the HTTP-status check, so a caller that opted out of
+        // navigation failures keeps the error page instead of an abort.
+        withBrowser {
+            Browser.withConfig(_.loadSchedule(Schedule.fixed(50.millis).maxDuration(10.seconds))) {
+                Abort.run[BrowserNavigationException] {
+                    Browser.goto("http://kyo-transport-failure.invalid/", failOnHttpError = false)
+                }.map { result =>
+                    assert(result.isSuccess, s"Expected the navigation to be reported as a success but got $result")
+                }
+            }
+        }
+    }
+
     // ---- expectNavigation ----
 
     "expectNavigation completes when the trigger causes a navigation" in {
