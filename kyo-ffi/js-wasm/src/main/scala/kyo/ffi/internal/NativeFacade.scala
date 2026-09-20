@@ -25,7 +25,13 @@ object NativeFacade:
         else
             WasmFacadeRegistry.get(libraryId) match
                 case Some(provider) => provider(fns)
-                case None           =>
+                // Outside a browser koffi is the only route left, so take it rather than report the gate's answer.
+                // `koffiAvailable` is a boolean: it cannot say whether koffi is absent or present and failing to
+                // load, which is what a prebuilt addon against the wrong libc does. Loading for real raises
+                // LibraryNotFound carrying that failure as its cause, where reporting the gate would name a
+                // browser on a machine that is not one and bury the reason koffi did not come up.
+                case None if !NativeLoader.detectBrowser() => KoffiFacade.load(NativeLoader.jsResolve(libraryId), fns)
+                case None                                  =>
                     throw new FfiLoadError.Unsupported(
                         s"No way to reach native library '$libraryId' on this JS runtime. koffi is unavailable, " +
                             "which is expected in a browser, and no WebAssembly provider is registered for this " +
