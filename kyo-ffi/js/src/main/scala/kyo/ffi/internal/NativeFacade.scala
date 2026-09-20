@@ -1,6 +1,7 @@
 package kyo.ffi.internal
 
 import kyo.ffi.FfiLoadError
+import kyo.internal.PlatformJs
 import scala.scalajs.js
 
 /** Where a generated JS impl gets its dispatch table, and the one place that decides which transport backs it.
@@ -45,18 +46,23 @@ object NativeFacade:
     private def preferred(): String =
         sys.props.getOrElse("kyo.ffi.js.transport", "")
 
-    /** Whether koffi can be required in this runtime. A presence check on `require` and the module itself rather
-      * than a browser heuristic: a bundler can leave a `require` shim in a browser bundle, and a Node process can
-      * be missing the optional koffi dependency.
+    /** Whether koffi can be required in this runtime. A presence check on the require function and the module
+      * itself rather than a browser heuristic: a bundler can leave a `require` shim in a browser bundle, and a
+      * Node process can be missing the optional koffi dependency.
+      *
+      * Asks for the require function the same way [[KoffiFacade]] does, through `PlatformJs.moduleRequire`. A bare
+      * `require` global is only half the answer: under the ESModule kind there is none, and the module resolves
+      * one from `node:module`'s `createRequire` instead. Reading the global directly made this answer false on
+      * every ESModule link, which is both kyo-ffi's own JS axis and the Wasm row of every JS project, so a runtime
+      * that could load native code was turned away to the WebAssembly registry and failed there with
+      * `FfiLoadError.Unsupported` while [[KoffiFacade.resolve]] on the same runtime would have found koffi.
       */
     private def koffiAvailable(): Boolean =
         try
-            val req = js.Dynamic.global.selectDynamic("require")
-            if js.isUndefined(req) || req == null then false
-            else
+            PlatformJs.moduleRequire.fold(false) { req =>
                 val koffi = req.asInstanceOf[js.Function1[String, js.Dynamic]]("koffi")
                 !js.isUndefined(koffi) && koffi != null
-            end if
+            }
         catch case _: Throwable => false
 
 end NativeFacade
