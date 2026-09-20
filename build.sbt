@@ -3604,6 +3604,10 @@ lazy val `kyo-website` =
         .settings(`kyo-settings`)
         .settings(publish / skip := true)
         .disablePlugins(MimaPlugin)
+        // SiteAppHeapTest serves the generated site to a real Chrome and measures the tab's retained
+        // heap, so the JVM test scope needs the browser driver. JVM-only: the JS test link is a
+        // CommonJS Node bundle with no Chrome to drive.
+        .jvmConfigure(_.dependsOn(`kyo-browser`.jvm % Test))
         .jvmSettings(
             // scalameta tokenizers: JVM-only build-time Scala highlighter; must not reach the JS
             // link classpath. WebsiteBuildGraphTest enforces this placement.
@@ -3611,7 +3615,12 @@ lazy val `kyo-website` =
             // because scalameta_3 transitively pulls in trees_2.13 -> common_2.13 -> sourcecode_2.13
             // while the rest of the project uses sourcecode_3.
             libraryDependencies += ("org.scalameta" %% "scalameta" % "4.17.4")
-                .exclude("com.lihaoyi", "sourcecode_2.13")
+                .exclude("com.lihaoyi", "sourcecode_2.13"),
+            // SiteAppHeapTest mounts the real browser bundle, so the fullLinkJS output must exist before
+            // the JVM test scope runs. `main.js` is discovered under kyo-website-bundle's target tree the
+            // same way WebsiteMain discovers it, so the link task is the only wiring needed here.
+            Test / test := (Test / test).dependsOn(`kyo-website-bundle`.js / Compile / fullLinkJS).value,
+            Test / testOnly := (Test / testOnly).dependsOn(`kyo-website-bundle`.js / Compile / fullLinkJS).evaluated
         )
         .jsSettings(
             `js-settings`,

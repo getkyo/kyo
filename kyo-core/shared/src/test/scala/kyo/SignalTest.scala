@@ -1269,4 +1269,64 @@ class SignalTest extends kyo.test.Test[Any]:
         }
     }
 
+    "waiter registration" - {
+
+        /** A waiter that goes away must stop counting against the signal.
+          *
+          * `waiters` counts callbacks registered on the signal's next-change promise. A fiber parked in `next` and then
+          * interrupted has no one left to notify, so its registration is dead weight; if it survives the interrupt, the
+          * count only ever climbs on a signal whose value does not change, and every dead entry keeps its fiber's
+          * continuation reachable. The fences are causal, not timed: each waiter is observed parked before it is
+          * interrupted, and every interrupt is awaited to completion before the count is read.
+          */
+        "interrupting a parked waiter deregisters it" in {
+            val waiterCount = 20
+            for
+                ref    <- Signal.initRef(0)
+                fibers <- Kyo.foreach(1 to waiterCount)(_ => Fiber.initUnscoped(ref.next))
+                _      <- assertEventually(ref.waiters.map(_ == waiterCount)) // all parked on the next change
+                _      <- Kyo.foreachDiscard(fibers)(f => f.interrupt.andThen(f.getResult))
+                after  <- ref.waiters
+            yield assert(
+                after == 0,
+                s"every waiter was interrupted and awaited, so none is left to notify, but $after remain registered"
+            )
+        }
+
+        /** `observe` holds a value's scope open by racing the next change against a repair timer, so each time that
+          * timer wins it interrupts the change-waiter it armed and arms a fresh one. On a signal that never changes
+          * that is the only thing the loop does, so the waiter count is what says whether re-arming REPLACES the
+          * previous registration or stacks on top of it.
+          *
+          * Virtual time drives the repair ticks, so the leaf neither sleeps nor depends on how fast the host runs; the
+          * count is monotone (a registration that survives is already counted), so reading it after the advances cannot
+          * pass by catching the loop mid-re-arm. The observer is proven still live afterwards, so a loop that died and
+          * stopped re-arming cannot pass either.
+          */
+        "a parked observe does not accumulate waiters across repair ticks" in {
+            val repairInterval = 1.second
+            val ticks          = 20
+            Clock.withTimeControl { control =>
+                for
+                    ref   <- Signal.initRef(0)
+                    seen  <- AtomicRef.init(Chunk.empty[Int])
+                    fiber <- Fiber.initUnscoped(ref.observe(repairInterval)(recordValue(seen, _)))
+                    _     <- assertEventually(seen.get.map(_ == Chunk(0)))  // the first value is set up
+                    _     <- assertEventually(ref.waiters.map(_ == 1))      // and the loop is parked on the next change
+                    _     <- Kyo.foreachDiscard(1 to ticks)(_ => control.advance(repairInterval))
+                    parked <- ref.waiters
+                    // Liveness: the loop survived every repair tick and still delivers, so `parked` describes a
+                    // working observer rather than one that stopped re-arming.
+                    _ <- ref.set(1)
+                    _ <- assertEventually(seen.get.map(_.contains(1)))
+                    _ <- fiber.interrupt
+                yield assert(
+                    parked == 1,
+                    s"after $ticks repair ticks on an unchanged signal the observer holds $parked registrations; " +
+                        "re-arming must replace the previous waiter, not add to it"
+                )
+            }
+        }
+    }
+
 end SignalTest
