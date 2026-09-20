@@ -9,15 +9,24 @@
  * not tryClaim. Each driver/client handle is bundled with its context so the context
  * outlives the handle close.
  *
- * Link gate: the real shim compiles only under KYO_FFI_LINKED_KYO_AERON, which kyo-ffi defines
- * in exactly the build that links the Aeron archive. On Scala Native this file is compiled by the
- * consumer's build, and the archive does not travel in the artifact, so a consumer that does not
- * link Aeron compiles the #else branch: every entry point is defined as a stub, the binary links,
- * and kyo_aeron_linked returns 0 so kyo-aeron refuses to start with FfiLoadError.LibraryNotFound
- * instead of failing inside the first call.
+ * Link gate, three states, because on Scala Native this file is compiled by the consumer's build:
+ *
+ *   KYO_FFI_LINKED_KYO_AERON    the Aeron archive is on this link, so the real shim compiles.
+ *   KYO_FFI_EXTERNAL_KYO_AERON  the build links the prebuilt shim library the artifact carries, so
+ *                               this file compiles to nothing and every entry point resolves there.
+ *                               Defining anything here would shadow the library with a stub.
+ *   neither                     no Aeron anywhere: every entry point is a stub, the binary links,
+ *                               and kyo_aeron_linked returns 0, so kyo-aeron refuses to start with
+ *                               FfiLoadError.LibraryNotFound instead of failing inside the first call.
  */
 
-#if defined(KYO_FFI_LINKED_KYO_AERON)
+#if defined(KYO_FFI_EXTERNAL_KYO_AERON)
+
+/* Deliberately empty: the entry points come from the linked library. An empty translation unit is not
+ * valid C, so give it one declaration. */
+typedef int kyo_aeron_external_translation_unit;
+
+#elif defined(KYO_FFI_LINKED_KYO_AERON)
 
 #include <aeronc.h>
 #include <aeronmd.h>

@@ -231,10 +231,35 @@ private[sbt] object CCompiler {
             // The Native archive link (ffiNativeLinkingOptions) already appends linkFlags after the
             // archives; this matches that order. linkFlags is empty for every other library, so the order
             // is a no-op there.
+            // Name the library by what it is, not by where it was built. A darwin dylib records its install
+            // name in every binary that links it, and the default is the output path, so a library published
+            // from a build machine resolves only on that machine. `@rpath/lib<id>.dylib` moves the decision
+            // to whoever links it, which is what lets a Scala Native binary link the library this artifact
+            // carries and find it beside itself. A soname does the same on linux. The JVM and Node loaders
+            // are unaffected: both extract to a path of their own and load that path.
+            // The name the ARTIFACT carries, not the build output's: packaging strips the `-<os>-<arch>`
+            // suffix, and the install name has to match what a consumer links against.
+            val libraryName = {
+                val name = outFile.getName
+                val dot  = name.lastIndexOf('.')
+                if (dot < 0) name
+                else {
+                    val base = name.substring(0, dot)
+                    val ext  = name.substring(dot)
+                    supportedOsArchTags.sortBy(-_.length)
+                        .find(tag => base.endsWith("-" + tag))
+                        .map(tag => base.substring(0, base.length - tag.length - 1) + ext)
+                        .getOrElse(name)
+                }
+            }
+            val nameFlags =
+                if (os == "darwin") Seq("-Wl,-install_name,@rpath/" + libraryName)
+                else if (os == "windows") Nil
+                else Seq("-Wl,-soname," + libraryName)
             splitCc(cc) ++ Seq("-shared") ++ targetCFlags ++ includeFlags ++
                 sources.map(_.getAbsolutePath) ++
                 Seq("-o", outFile.getAbsolutePath) ++
-                linkLibFlags ++ linkFlags
+                nameFlags ++ linkLibFlags ++ linkFlags
     }
 
     /** Translate a gcc/clang-style flag to its MSVC equivalent. Unknown flags pass
