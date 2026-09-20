@@ -21,60 +21,6 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
     final override def enter(frame: Frame, value: Any) =
         !shouldPreempt()
 
-    // The promise this task is parked on, with the callback it registered there, or null when the task is
-    // running. Volatile because the writer is this task's own worker and the reader is whichever thread
-    // completes the task; see `releaseJoin` for why that pairing is what makes the handoff safe.
-    @volatile private var join: JoinLink = null
-
-    // The parent whose interrupt cascades into this task, or null for a detached task. Held so the link can be
-    // dropped when this task completes; a parent that outlives many children would otherwise accumulate one
-    // registration per child it ever forked. Written once before this task is published (see IOTask.apply).
-    @volatile private var parentLink: IOPromise[?, ?] = null
-
-    private[scheduler] def linkParent(p: IOPromise[?, ?]): Unit =
-        parentLink = p
-        p.interrupts(this)
-    end linkParent
-
-    /** Drops this task's registration on its parent. A completed task has nothing left to interrupt, so the link is
-      * dead weight, and on a parent that keeps forking (a supervisor, a poll loop) the dead links accumulate for as
-      * long as the parent lives.
-      */
-    private def releaseParentLink(): Unit =
-        val parent = parentLink
-        if parent ne null then
-            parentLink = null
-            parent.remove(this)
-    end releaseParentLink
-
-    /** Takes this task off the promise it is parked on.
-      *
-      * A parked task is reachable from that promise's waiter chain through the callback it registered, and the
-      * callback holds this task's continuation. Nothing completes a promise that no longer has a reason to
-      * complete, so a task that dies while parked would otherwise keep itself, its trace, and its continuation
-      * reachable from that promise for as long as the promise lives.
-      *
-      * Claimed with getAndSet semantics (read, then null) so the release runs once even though the parking
-      * worker may be running the post-registration recheck concurrently. Removing twice is harmless anyway:
-      * the second walk finds nothing.
-      */
-    private def releaseJoin(): Unit =
-        val claimed = join
-        if claimed ne null then
-            join = null
-            claimed.promise.remove(claimed)
-    end releaseJoin
-
-    // Fires on BOTH completion paths once this task's own waiters have been notified, which is the invariant
-    // the release wants: the registration must live exactly as long as the task is waiting, and the task stops
-    // waiting when it completes for ANY reason, not only when it is interrupted. Deliberately NOT onComplete:
-    // interrupting this task cascades into the promise it awaits, and that promise completing is what
-    // reschedules this task to run its finalizers. Releasing before the flush would cut that off.
-    final override def onSettled(): Unit =
-        releaseJoin()
-        releaseParentLink()
-    end onSettled
-
     final override def onComplete() =
         doPreempt()
         // The promise just completed (value or interrupt): drop accumulated runtime so a
@@ -150,30 +96,11 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
                                             cont(r.asInstanceOf[Result[Nothing, C]])
                                         case Absent =>
                                             curr = nullResult
-                                            val link =
-                                                new JoinLink(input):
-                                                    def apply(r: Result[Any, Any]): Unit =
-                                                        // Resuming: the registration is being consumed, so stop
-                                                        // tracking it before this task can complete and try to
-                                                        // remove a callback that has already fired.
-                                                        join = null
-                                                        IOTask.this.removeInterrupt(input)
-                                                        curr = Sync.defer(cont(r.asInstanceOf[Result[Nothing, C]]))
-                                                        Scheduler.get.schedule(IOTask.this)
-                                                    end apply
-                                            // Publish BEFORE registering: a task interrupted after this point is
-                                            // released by `onComplete`, and one interrupted before it is caught by
-                                            // the recheck below. Between them the two cover every interleaving.
-                                            join = link
-                                            input.asInstanceOf[IOPromise[Any, C]]
-                                                .onComplete(link.asInstanceOf[Result[Any, C] => Any])
-                                            // The interrupt may have landed while this task was registering, in
-                                            // which case `onComplete` already ran and saw no registration to take.
-                                            // Ordering argument: this read of the task's state and the interrupt's
-                                            // write of it are both volatile, as are the two accesses of `join`, so
-                                            // if the interrupt's release missed the link then its state write
-                                            // precedes this read, and this branch removes the link instead.
-                                            if !isPending() then releaseJoin()
+                                            input.onComplete { r =>
+                                                this.removeInterrupt(input)
+                                                curr = Sync.defer(cont(r.asInstanceOf[Result[Nothing, C]]))
+                                                Scheduler.get.schedule(this)
+                                            }
                                             nullResult
                                     end match
                                 }
@@ -261,12 +188,6 @@ end IOTask
 
 object IOTask:
 
-    /** A task's registration on the promise it is parked on, carrying the promise so the task can take the
-      * registration back without a second field. It replaces the closure the join would allocate anyway, so
-      * parking costs no more than it did.
-      */
-    abstract private[scheduler] class JoinLink(val promise: IOPromise[?, ?]) extends (Result[Any, Any] => Unit)
-
     private val _frame                = Frame.internal
     private inline given frame: Frame = _frame
 
@@ -299,7 +220,7 @@ object IOTask:
         // Link the parent to interrupt this task BEFORE it is scheduled, so a parent interrupt that lands
         // while children are still launching cannot orphan a child that started but was not yet registered.
         // The caller reads the parent once and passes it, instead of this reading the Safepoint per task.
-        parent.foreach(task.linkParent)
+        parent.foreach(p => p.interrupts(task))
         Scheduler.get.schedule(task)
         task
     end apply
