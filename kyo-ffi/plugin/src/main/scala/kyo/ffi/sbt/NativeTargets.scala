@@ -30,10 +30,13 @@ object NativeTargets {
     /** The tag a Scala Native target triple names, or None when the triple is not one kyo publishes for.
       *
       * Scala Native writes the triple as `<arch>-<vendor>-<os>[-<abi>]`, and the abi is where musl appears, which is a
-      * separate pole here because a glibc library does not load under musl.
+      * separate pole here because a glibc library does not load under musl. Android is the other abi that matters, and
+      * it is not a pole: `aarch64-linux-android` carries `linux` and would otherwise take glibc libraries into a
+      * bionic binary, which is the same mistake musl would make with no diagnostic.
       */
     def ofTriple(triple: String): Option[String] = {
         val parts = triple.split('-').toSeq
+        if (parts.exists(_.startsWith("android"))) return None
         val arch = parts.headOption.map {
             case "aarch64" | "arm64"     => "aarch64"
             case "x86_64" | "amd64"      => "x86_64"

@@ -41,6 +41,11 @@
 ** engine that does not understand it. This definition is outside every branch so the duplicate survives
 ** whatever the gate says, and it is a strong definition rather than a tentative one so -fcommon cannot
 ** merge the two.
+**
+** The guard holds only because both artifacts compile THIS file. Giving kyo-sql-doltlite an entry file of
+** its own would put this definition in one copy and silently remove the collision;
+** native/two-sqlite-engines-natives-plugin is what would catch that, so it is the fixture that keeps this
+** honest rather than the comment.
 */
 int kyo_sql_one_embedded_sqlite_engine_per_binary = 0;
 

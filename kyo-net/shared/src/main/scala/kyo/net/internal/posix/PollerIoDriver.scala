@@ -173,8 +173,9 @@ final private[net] class PollerIoDriver private[posix] (
     // nothing open, so they re-arm unconditionally and never reach this field.
     //
     // No atomic and no recheck after the store: on JS the scheduler, every submit and every `@Ffi.blocking` completion run on the Node main
-    // thread (`BlockingBridge` dispatches the call itself to a worker and delivers its result back on the main thread), so the store below and
-    // the read in `triggerWake` cannot interleave. `private[posix]` for the test that pins the park and the resume.
+    // thread (`BlockingBridge` dispatches the call itself to a worker and delivers its result back on the main thread), and the JS scheduler
+    // always defers to the macrotask queue, so a resumed cycle never runs on the submitting call's own stack. The store below and the read in
+    // `triggerWake` cannot interleave. `private[posix]` for `PollerIoDriverIdleTest`, which pins the park and the resume.
     private[posix] var idleTask: Task = null
 
     // readFd -> handle, parallel to activeFds and maintained at the same register/deregister/clear sites. It exists so a FIN/error edge that lands
@@ -638,6 +639,10 @@ final private[net] class PollerIoDriver private[posix] (
       *
       * `activeFds` covers a listener as well as a connection, so a driver holding an open server socket is never idle, which is what keeps a
       * server process alive.
+      *
+      * The idle branch skips the `kevent` that would submit kqueue's staged changelist, which is safe rather than lucky: `change` only
+      * accumulates for an `EV_ADD`, a delete goes through `keventNow` at once, and an `EV_ADD` staged by this cycle's drain put its fd in
+      * `activeFds`. So a staged batch and an idle cycle cannot coexist.
       */
     private[posix] def idleNow: Boolean =
         activeFds.size == 0 && !changeQueue.peekNonEmpty() && engineQueue.isEmpty() && pendingCloses.isEmpty()

@@ -111,7 +111,8 @@ object KyoNativesNativePlugin extends AutoPlugin {
         // The compiler the finished config names, which is the one that will run, rather than the one the delivery
         // derived its target from.
         val compilerTarget = NativeTargets.ofTriple(Discover.targetTriple(config.clang))
-        crossTargetError(config.targetTriple, compilerTarget, targets, requests.nonEmpty).foreach(sys.error)
+        crossTargetError(config.targetTriple, compilerTarget, targets, requests.nonEmpty, kyoNativesTargets.value.nonEmpty)
+            .foreach(sys.error)
     }
 
     /** The error a build gets when the target its binary is built for and the libraries it asks to have linked into it
@@ -140,7 +141,8 @@ object KyoNativesNativePlugin extends AutoPlugin {
         triple: Option[String],
         compilerTarget: Option[String],
         wanted: Seq[String],
-        requested: Boolean
+        requested: Boolean,
+        named: Boolean = true
     ): Option[String] =
         if (!requested) None
         else
@@ -163,7 +165,13 @@ object KyoNativesNativePlugin extends AutoPlugin {
                         }
                     case None =>
                         compilerTarget.filter(_ != target).map { host =>
-                            s"[kyo-natives] kyoNativesTargets names $target, but the compiler builds for $host and no " +
+                            // A build reaches this either by naming the target or by having it derived from the clang on the
+                            // PATH, and telling the second kind to change a setting it never wrote sends it looking in the
+                            // wrong place. A `withClang` naming another toolchain is how that happens.
+                            val source =
+                                if (named) s"kyoNativesTargets names $target"
+                                else s"the libraries were resolved for $target, derived from the clang on the PATH"
+                            s"[kyo-natives] $source, but the compiler this build uses targets $host and no " +
                                 s"targetTriple says otherwise, so $target's libraries would be linked into a $host binary."
                         }
                 }

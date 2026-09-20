@@ -14,6 +14,14 @@ class NativeTargetsTest extends AnyFunSuite with Matchers {
         NativeTargets.supported should contain(NativeTargets.host)
     }
 
+    test("an android triple is not a linux pole, though it names linux") {
+        // bionic, not glibc: matching `linux` here would deliver glibc libraries into an Android binary, which is the
+        // mistake musl would make and the one this whole tag scheme exists to prevent.
+        NativeTargets.ofTriple("aarch64-linux-android") shouldBe None
+        NativeTargets.ofTriple("aarch64-linux-android21") shouldBe None
+        NativeTargets.ofTriple("x86_64-linux-android") shouldBe None
+    }
+
     test("darwin triples") {
         NativeTargets.ofTriple("arm64-apple-darwin23.3.0") shouldBe Some("darwin-aarch64")
         NativeTargets.ofTriple("x86_64-apple-darwin23.3.0") shouldBe Some("darwin-x86_64")

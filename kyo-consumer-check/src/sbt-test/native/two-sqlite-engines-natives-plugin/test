@@ -2,3 +2,9 @@
 # doltlite:// call reaches kyo-sql-sqlite's engine instead of DoltLite's.
 -> nativeLink
 $ exec sh -c 'set -eu; if find target -type f -perm -u+x -name consumer | grep -q .; then echo "a binary holding both engines was produced"; exit 1; fi'
+# The positive control, without which the step above passes on any failure at all: a dependency that does not
+# resolve or a Main that does not compile would read as the collision under test. With one engine dropped, the same
+# application must link, so the only thing left that can fail the step above is the pairing.
+> set libraryDependencies := libraryDependencies.value.filterNot(_.name.contains("doltlite"))
+> nativeLink
+$ exec sh -c 'set -eu; find target -type f -perm -u+x -name consumer | grep -q . || { echo "one engine alone must link"; exit 1; }'

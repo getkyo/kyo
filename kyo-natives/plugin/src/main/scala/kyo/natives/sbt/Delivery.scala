@@ -69,8 +69,12 @@ private[sbt] object Delivery {
       * be answered from here: kyo's snapshots carry a timestamp, and any version string that changes on republish
       * changes the key. A mutable `-SNAPSHOT` republished DURING one sbt session is the case this would hold
       * stale, and reloading the build clears it.
+      *
+      * Successes only. A resolution that failed may have failed on the network, and holding that answer for the
+      * session would turn one bad moment into "this release carries no library" for every later task, which under
+      * `Auto` is a warning and a binary without the capability.
       */
-    private val resolved = new java.util.concurrent.ConcurrentHashMap[String, Either[String, File]]()
+    private val resolved = new java.util.concurrent.ConcurrentHashMap[String, File]()
 
     /** Resolves `module` to its single jar, or a message saying why not.
       *
@@ -79,11 +83,11 @@ private[sbt] object Delivery {
       */
     def resolve(depRes: DependencyResolution, module: ModuleID, log: Logger): Either[String, File] = {
         val key = s"${module.organization}:${module.name}:${module.revision}:${module.explicitArtifacts.flatMap(_.classifier).mkString(",")}"
-        Option(resolved.get(key)) match {
-            case Some(hit) if hit.right.toOption.forall(_.isFile) => hit
-            case _ =>
+        Option(resolved.get(key)).filter(_.isFile) match {
+            case Some(jar) => Right(jar)
+            case None =>
                 val answer = resolveUncached(depRes, module, log)
-                resolved.put(key, answer)
+                answer.right.foreach(jar => resolved.put(key, jar))
                 answer
         }
     }

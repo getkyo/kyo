@@ -5,3 +5,9 @@ $ exec sh -c 'set -eu; if find target -type f -perm -u+x -name consumer | grep -
 # Delivery itself does not fail: it reports the pole it was pointed at, and it is linking that pole into this host's
 # binary that is refused.
 > kyoNativesReport
+# The positive control, without which the step above passes on any failure at all: a dependency that does not resolve
+# or a Main that does not compile would read as the disagreement under test. Pointed at this host's own pole, the same
+# application must link, so the only thing left that can fail the step above is the disagreement.
+> set kyoNativesTargets := Seq(sys.props("kyo.hostOsArch"))
+> nativeLink
+$ exec sh -c 'set -eu; find target -type f -perm -u+x -name consumer | grep -q . || { echo "the host target must link"; exit 1; }'

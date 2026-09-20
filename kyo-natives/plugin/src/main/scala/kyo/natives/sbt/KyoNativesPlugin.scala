@@ -101,9 +101,10 @@ object KyoNativesPlugin extends AutoPlugin {
     /** The carrier jars, on the JVM only. The Native and JS legs link or copy the libraries instead, and a jar on their
       * classpath would put a second copy of every native into the application's own artifact.
       *
-      * Each carries the coordinate it was resolved from. sbt-assembly's dedup and sbt-native-packager's `lib/` naming
-      * both read `moduleID` off a classpath entry, and an entry without one shows up as an anonymous file rather than
-      * as the kyo artifact it is.
+      * Each carries the coordinate it was resolved from, and the artifact within it. sbt-assembly's dedup reads
+      * `moduleID`; sbt-native-packager's `lib/` naming builds a name from the two TOGETHER and falls back to the bare
+      * file name when either is missing, so attaching only the coordinate would have left the jars named as they are
+      * on disk. The artifact carries the classifier, which is what keeps kyo-net's two apart.
       */
     private def jvmJars: Def.Initialize[Task[Seq[Attributed[File]]]] = Def.task {
         val platform = Platform.of(thisProject.value.autoPlugins.map(_.label).toSet)
@@ -111,7 +112,10 @@ object KyoNativesPlugin extends AutoPlugin {
         if (platform != Platform.Jvm) Nil
         else
             fetched.map(_._2).groupBy(_.jar).toSeq.map { case (jar, group) =>
-                Attributed.blank(jar).put(Keys.moduleID.key, group.head.module)
+                val module     = group.head.module
+                val classifier = module.explicitArtifacts.flatMap(_.classifier).headOption
+                val artifact   = classifier.foldLeft(Artifact(module.name))((a, c) => a.withClassifier(Some(c)))
+                Attributed.blank(jar).put(Keys.moduleID.key, module).put(Keys.artifact.key, artifact)
             }
     }
 
